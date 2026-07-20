@@ -9,3 +9,6 @@ unity_build = false
 
 [dependencies]
 public = core domain
+
+[dependencies.windows]
+private = d3d11 dxgi dwmapi ntdll windowsapp

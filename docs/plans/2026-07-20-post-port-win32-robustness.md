@@ -77,6 +77,36 @@ impact: the static gate was extended with `BringWindowToTop`,
 `SwitchToThisWindow`, `AttachThreadInput`, `SetActiveWindow`; the delivery
 choke point now rejects NULL/`HWND_BROADCAST` fail-closed.
 
+## WGC capture (controller 03c), adjudicated 2026-07-20
+
+The capture safety panel found no direct C++ data race, torn read, or
+callback use-after-free (the FrameSlot and frame pool are captured by
+value; all newest-frame access is under the slot mutex). These items are
+faithful ports of the Rust behavior (checked against the Rust source) and
+are deferred to the product phase:
+
+- **A late in-flight FrameArrived callback can repopulate the frame slot
+  after teardown clears it**, retaining that frame until session
+  destruction. Rust's `close` likewise only `RemoveFrameArrived` without
+  draining in-flight callbacks, and neither implementation checks a
+  closed flag inside the callback. The slot is shared-owned and the frame
+  is released at session destruction — not UB, not a permanent leak.
+  Product-phase: add a shared closed flag the callback checks before
+  publishing.
+- **`close()` cannot interrupt a `capture()` wait.** Both take the
+  operation mutex and `close` does not notify the frame condvar, so a
+  concurrent close blocks until the capture timeout elapses. Rust's close
+  also does not notify the wait; irrelevant on the single-threaded demo
+  consumer path. Product-phase: add a shutdown signal that notifies the
+  waiter.
+
+Taken NOW (not deferred), as safety hardening beyond the Rust reference
+(Rust shares the latent issue) with no observable-behavior change:
+`ID3D11Multithread::SetMultithreadProtected(TRUE)` is enabled on the
+capture D3D11 device, because the immediate context is shared with the
+free-threaded WGC frame-pool worker and an unprotected context is UB-class
+(driver corruption) — worth closing before real-machine capture testing.
+
 None of the deferred items block the M0 path: the demo runs single-window
 against a known target, and the DPI helper runs once at startup before any
 override.

@@ -58,6 +58,10 @@ if(TARGET ${PROJECT_NAME}_controller)
     cpp_add_test(
         NAME test-controller
         SOURCES
+            controller/test-capture-d3d.cpp
+            controller/test-capture-os-build.cpp
+            controller/test-capture-stall.cpp
+            controller/test-capture-wgc.cpp
             controller/test-discovery.cpp
             controller/test-dpi.cpp
             controller/test-input-guard.cpp
