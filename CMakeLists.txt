@@ -48,3 +48,17 @@ if(CPP_BUILD_TESTS)
     enable_testing()
     add_subdirectory(tests)
 endif()
+
+# Refresh build/compile_commands.json on every build so clangd — which searches
+# the build/ subdirectory by default — always sees the current build, whichever
+# preset's binary directory produced it. Runs each build so it never goes stale.
+if(CMAKE_EXPORT_COMPILE_COMMANDS AND NOT CMAKE_BINARY_DIR STREQUAL "${CMAKE_SOURCE_DIR}/build")
+    add_custom_target(copy_compile_commands ALL
+        ${CMAKE_COMMAND} -E copy_if_different
+            "${CMAKE_BINARY_DIR}/compile_commands.json"
+            "${CMAKE_SOURCE_DIR}/build/compile_commands.json"
+        BYPRODUCTS "${CMAKE_SOURCE_DIR}/build/compile_commands.json"
+        COMMENT "Refreshing build/compile_commands.json for clangd"
+        VERBATIM
+    )
+endif()
