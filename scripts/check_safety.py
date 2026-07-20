@@ -10,9 +10,10 @@ from dataclasses import dataclass
 from pathlib import Path
 
 
-SOURCE_EXTENSIONS = {".cpp", ".hpp"}
+SOURCE_EXTENSIONS = {".cpp", ".h", ".hpp"}
 SOURCE_ROOTS = ("modules", "entry")
 UNSAFE_DIRECTORY_NAMES = {"external", "ffi", "platform", "unsafe"}
+VENDORED_DIRECTORY_NAMES = {"external", "third_party"}
 SAFETY_COMMENT = "// SAFETY:"
 
 
@@ -112,6 +113,10 @@ def is_unsafe_boundary(path: Path) -> bool:
     return any(part.lower() in UNSAFE_DIRECTORY_NAMES for part in path.parts)
 
 
+def is_vendored(path: Path) -> bool:
+    return any(part.lower() in VENDORED_DIRECTORY_NAMES for part in path.parts)
+
+
 def has_safety_comment(lines: list[str], line_index: int) -> bool:
     first = max(0, line_index - 3)
     return any(SAFETY_COMMENT in line for line in lines[first:line_index])
@@ -126,7 +131,11 @@ def source_files(root: Path) -> list[Path]:
         files.extend(
             path
             for path in directory.rglob("*")
-            if path.is_file() and path.suffix in SOURCE_EXTENSIONS
+            if (
+                path.is_file()
+                and path.suffix in SOURCE_EXTENSIONS
+                and not is_vendored(path.relative_to(root))
+            )
         )
     return sorted(files)
 

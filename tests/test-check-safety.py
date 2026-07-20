@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -35,6 +36,25 @@ class SafetyRuleTests(unittest.TestCase):
         )
 
         self.assertEqual(actual, expected)
+
+    def test_source_files_include_first_party_h_and_exclude_vendored_headers(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            included = root / "entry" / "ffi" / "wrapper.h"
+            external = root / "entry" / "ffi" / "external" / "vendor.h"
+            third_party = root / "modules" / "third_party" / "vendor.hpp"
+            for path in (included, external, third_party):
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text("// test\n", encoding="utf-8")
+
+            actual = {
+                path.relative_to(root).as_posix()
+                for path in check_safety.source_files(root)
+            }
+
+        self.assertEqual(actual, {"entry/ffi/wrapper.h"})
 
 
 if __name__ == "__main__":

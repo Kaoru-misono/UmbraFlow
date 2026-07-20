@@ -75,6 +75,21 @@ if(TARGET ${PROJECT_NAME}_controller)
     )
 endif()
 
+if(TARGET ${PROJECT_NAME}_m0_demo_support)
+    cpp_add_test(
+        NAME test-m0-demo
+        SOURCES
+            m0-demo/test-args.cpp
+            m0-demo/test-guard.cpp
+            m0-demo/test-log-jsonl.cpp
+            m0-demo/test-pacing.cpp
+            m0-demo/test-pipeline.cpp
+            m0-demo/test-shutdown.cpp
+        LIBS
+            ${PROJECT_NAME}_m0_demo_support
+    )
+endif()
+
 find_package(Python3 COMPONENTS Interpreter QUIET)
 if(Python3_Interpreter_FOUND)
     add_test(
