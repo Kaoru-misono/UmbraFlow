@@ -21,8 +21,8 @@ not declare link dependencies. `scripts/check_modules.py` enforces both rules.
 - `modules/domain/`: platform-free UmbraFlow frames, coordinates, detections,
   identifiers, leases, and automation errors.
 - `modules/vision/`: platform-free grayscale conversion and SAD template matching.
-- `modules/controller/`: Windows-only discovery and target lifecycle, with capture
-  and strict-background input adapters added in later slices.
+- `modules/controller/`: Windows-only discovery, target lifecycle, and
+  strict-background input, with capture added in a later slice.
 - `entry/`: executable targets and composition roots.
 - `tests/`: deterministic offline tests.
 - `cmake/`: module loading, platform selection, caching, warnings, hardening,

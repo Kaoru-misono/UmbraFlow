@@ -44,5 +44,39 @@ redefined (the phase where improving on the Rust design is in scope).
   Product-phase: query the process default directly if a stronger
   guarantee is wanted.
 
-None of these block the M0 path: the demo runs single-window against a
-known target, and the DPI helper runs once at startup before any override.
+## Input chain (controller 03b), adjudicated 2026-07-20
+
+The ADR-011 safety panel confirmed no code path reaches any forbidden
+foreground/global-input API. These additional input-side items are
+faithful ports of the Rust behavior (checked against the Rust source) and
+are deferred to the product phase:
+
+- **Up compensation posts to a stored, possibly-recycled HWND.**
+  `releaseHeld`/`release_all` post best-effort Ups to the stored handle
+  without live process-instance revalidation. Rust `held.rs::release_all`
+  is identical; DESIGN §9.2 defines Up compensation as best-effort.
+  Product-phase: optionally revalidate identity before each Up.
+- **Held state is cleared before Up attempts.** On post failure the retry
+  state is gone. Faithful to Rust (both clear-before-attempt). Product-
+  phase: consider retry/persisted-held semantics if reliability demands.
+- **DeliveryTarget carries no compatibility-verified proof.** End-to-end
+  fail-closed on an unverified action type belongs to the capability/
+  compatibility wave (DESIGN §6.2, `TargetCompatibilityUnverified`), not
+  the input port.
+- **MapVirtualKeyW zero (no translation) becomes scan code 0.** An
+  unmapped key posts with an unverifiable encoding. Faithful to Rust.
+  Product-phase: reject unmapped keys with `ActionRejected`.
+- **check_safety.py static ADR-011 gate is a backstop, not a boundary.**
+  It catches direct calls and address-taking, and correctly ignores the
+  forbidden-name string list and comments, but a regex cannot catch
+  `GetProcAddress("SetForegroundWindow")` or token-pasted names. We are
+  the authors; this is an accepted limitation, not a defended boundary.
+
+Taken NOW (not deferred), as ADR-011 hardening with no Rust-fidelity
+impact: the static gate was extended with `BringWindowToTop`,
+`SwitchToThisWindow`, `AttachThreadInput`, `SetActiveWindow`; the delivery
+choke point now rejects NULL/`HWND_BROADCAST` fail-closed.
+
+None of the deferred items block the M0 path: the demo runs single-window
+against a known target, and the DPI helper runs once at startup before any
+override.

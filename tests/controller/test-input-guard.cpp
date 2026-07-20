@@ -1,0 +1,51 @@
+#include <controller/detail/input-guard.hpp>
+#include <controller/input.hpp>
+
+#include <doctest/doctest.h>
+
+#include <algorithm>
+#include <array>
+#include <cstdint>
+#include <string_view>
+
+TEST_CASE("runtime forbidden list matches the Rust guard names")
+{
+    CHECK(uf::g_forbiddenBackgroundApis.size() == 6U);
+    for (auto const name : std::array<std::string_view, 6>{
+        "SetForegroundWindow",
+        "SetFocus",
+        "SendInput",
+        "mouse_event",
+        "keybd_event",
+        "SetCursorPos",
+    })
+    {
+        CHECK(std::ranges::find(uf::g_forbiddenBackgroundApis, name) != uf::g_forbiddenBackgroundApis.end());
+    }
+}
+
+TEST_CASE("audit log appends one record per delivery")
+{
+    auto log = uf::AuditLog{};
+    CHECK(log.empty());
+    uf::controller_detail::AuditLogAccess::record(
+        log,
+        uf::WindowHandle{0x1234},
+        0x0201U,
+        0x0001U,
+        0x00C8'0064
+    );
+    uf::controller_detail::AuditLogAccess::record(
+        log,
+        uf::WindowHandle{0x1234},
+        0x0202U,
+        0x0000U,
+        0x00C8'0064
+    );
+
+    REQUIRE(log.size() == 2U);
+    CHECK(log.records()[0].m_target == 0x1234U);
+    CHECK(log.records()[0].m_message == 0x0201U);
+    CHECK(log.records()[0].m_wParam == 0x0001U);
+    CHECK(log.records()[1].m_message == 0x0202U);
+}

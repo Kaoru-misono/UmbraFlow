@@ -8,6 +8,16 @@
 #include <optional>
 #include <vector>
 
+namespace uf
+{
+    class AuditLog;
+
+    namespace controller_detail
+    {
+        struct PostSpec;
+    }
+}
+
 namespace uf::controller_platform
 {
     struct DpiSetObservation final
@@ -23,4 +33,11 @@ namespace uf::controller_platform
     [[nodiscard]]
     auto processStartTime(ProcessId process) -> std::optional<ProcessStartTime>;
     [[nodiscard]] auto setPerMonitorAwareV2() noexcept -> DpiSetObservation;
+    [[nodiscard]] auto scanCodeFor(std::uint16_t virtualKey) noexcept -> std::uint8_t;
+    [[nodiscard]]
+    auto postInputMessage(
+        WindowHandle windowHandle,
+        controller_detail::PostSpec spec,
+        AuditLog& audit
+    ) -> Status;
 }

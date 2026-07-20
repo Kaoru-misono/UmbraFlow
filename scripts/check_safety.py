@@ -34,6 +34,36 @@ RULES = (
     ),
     Rule("direct unreachable UB", re.compile(r"\bstd::unreachable\s*\("), False),
     Rule("detached thread", re.compile(r"\.detach\s*\("), False),
+    Rule(
+        "ADR-011 forbidden SetForegroundWindow use",
+        re.compile(r"\bSetForegroundWindow\b"),
+        False,
+    ),
+    Rule("ADR-011 forbidden SetFocus use", re.compile(r"\bSetFocus\b"), False),
+    Rule("ADR-011 forbidden SendInput use", re.compile(r"\bSendInput\b"), False),
+    Rule("ADR-011 forbidden mouse_event use", re.compile(r"\bmouse_event\b"), False),
+    Rule("ADR-011 forbidden keybd_event use", re.compile(r"\bkeybd_event\b"), False),
+    Rule("ADR-011 forbidden SetCursorPos use", re.compile(r"\bSetCursorPos\b"), False),
+    Rule(
+        "ADR-011 forbidden BringWindowToTop use",
+        re.compile(r"\bBringWindowToTop\b"),
+        False,
+    ),
+    Rule(
+        "ADR-011 forbidden SwitchToThisWindow use",
+        re.compile(r"\bSwitchToThisWindow\b"),
+        False,
+    ),
+    Rule(
+        "ADR-011 forbidden AttachThreadInput use",
+        re.compile(r"\bAttachThreadInput\b"),
+        False,
+    ),
+    Rule(
+        "ADR-011 forbidden SetActiveWindow use",
+        re.compile(r"\bSetActiveWindow\b"),
+        False,
+    ),
 )
 
 MUST_USE_FUNCTION = re.compile(

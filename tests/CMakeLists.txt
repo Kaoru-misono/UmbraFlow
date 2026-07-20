@@ -60,6 +60,11 @@ if(TARGET ${PROJECT_NAME}_controller)
         SOURCES
             controller/test-discovery.cpp
             controller/test-dpi.cpp
+            controller/test-input-guard.cpp
+            controller/test-input-held.cpp
+            controller/test-input-message.cpp
+            controller/test-input-revalidation.cpp
+            controller/test-input.cpp
             controller/test-target.cpp
         LIBS
             ${PROJECT_NAME}_controller
@@ -76,7 +81,11 @@ if(Python3_Interpreter_FOUND)
         NAME check-safety
         COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/scripts/check_safety.py
     )
-    set_tests_properties(check-modules check-safety PROPERTIES
+    add_test(
+        NAME test-check-safety
+        COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tests/test-check-safety.py
+    )
+    set_tests_properties(check-modules check-safety test-check-safety PROPERTIES
         TIMEOUT 30
         LABELS "CI"
     )
