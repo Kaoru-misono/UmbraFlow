@@ -40,6 +40,7 @@ EXCLUDED_DIRECTORY_NAMES = {
     ".cache",
     ".codex",
     ".git",
+    ".reference",
     ".idea",
     ".worktrees",
     ".vscode",

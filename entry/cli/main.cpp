@@ -7,7 +7,7 @@ auto main() -> int
 {
     try
     {
-        std::cout << umbra_flow::projectName << '\n';
+        std::cout << uf::projectName << '\n';
         return EXIT_SUCCESS;
     }
     catch (...)

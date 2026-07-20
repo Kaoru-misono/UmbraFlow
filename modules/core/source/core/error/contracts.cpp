@@ -4,7 +4,7 @@
 #include <iostream>
 #include <string_view>
 
-namespace umbra_flow::detail
+namespace uf::detail
 {
     namespace
     {

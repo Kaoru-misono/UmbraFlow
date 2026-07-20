@@ -5,7 +5,7 @@
 #include <type_traits>
 #include <utility>
 
-namespace umbra_flow
+namespace uf
 {
     template <typename Enum>
     concept FlagEnum = (

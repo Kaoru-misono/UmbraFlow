@@ -33,12 +33,29 @@ cpp_add_test(
         ${PROJECT_NAME}_core
 )
 
+cpp_add_test(
+    NAME test-domain
+    SOURCES
+        domain/test-detection.cpp
+        domain/test-error.cpp
+        domain/test-frame.cpp
+        domain/test-ids.cpp
+        domain/test-space.cpp
+        domain/test-time.cpp
+    LIBS
+        ${PROJECT_NAME}_domain
+)
+
+cpp_add_test(
+    NAME test-vision
+    SOURCES
+        vision/test-sad.cpp
+    LIBS
+        ${PROJECT_NAME}_vision
+)
+
 find_package(Python3 COMPONENTS Interpreter QUIET)
 if(Python3_Interpreter_FOUND)
-    add_test(
-        NAME test-repository-tools
-        COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tests/repository/test-repository-tools.py
-    )
     add_test(
         NAME check-modules
         COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/scripts/check_modules.py
@@ -47,7 +64,7 @@ if(Python3_Interpreter_FOUND)
         NAME check-safety
         COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/scripts/check_safety.py
     )
-    set_tests_properties(test-repository-tools check-modules check-safety PROPERTIES
+    set_tests_properties(check-modules check-safety PROPERTIES
         TIMEOUT 30
         LABELS "CI"
     )

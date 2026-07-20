@@ -42,7 +42,7 @@ These facilities fill a material C++23 gap without creating a parallel runtime:
 
 | Facility | Capability | Deliberate limit |
 | --- | --- | --- |
-| `Result<T>`, `Status`, `fail`, and `UMBRA_FLOW_TRY*` | Structured errors, context, and value propagation | Aliases `std::expected`; `fail` only creates `std::unexpected<Error>`; no wrapper container |
+| `Result<T>`, `Status`, `fail`, and `UF_TRY*` | Structured errors, context, and value propagation | Aliases `std::expected`; `fail` only creates `std::unexpected<Error>`; no wrapper container |
 | `Overload` and `matchVariant` | Concise, compile-time-complete handling of `std::variant` alternatives | No attempt to parse or emulate language patterns |
 | `ControlFlow` | Named early exit with optional break/continue values | A closed sum type, not coroutine control flow |
 | `NonZero<T>` | Makes zero invalid after construction | No Rust-style niche-layout or ABI guarantee |
@@ -83,7 +83,7 @@ enum class BuildState
     Failed = 9
 };
 
-UMBRA_FLOW_REFLECT_ENUM(
+UF_REFLECT_ENUM(
     BuildState,
     BuildState::Idle,
     BuildState::Running,

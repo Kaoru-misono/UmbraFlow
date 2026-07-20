@@ -13,7 +13,7 @@ namespace
     template <typename Range>
     concept SupportsTryAt = requires(Range&& values)
     {
-        umbra_flow::tryAt(std::forward<Range>(values), std::size_t{0});
+        uf::tryAt(std::forward<Range>(values), std::size_t{0});
     };
 }
 
@@ -25,17 +25,17 @@ TEST_CASE("checked access rejects invalid indices without accepting temporary ow
 {
     auto values = std::vector<int>{4, 8, 15};
 
-    auto* const p_value = umbra_flow::tryAt(values, std::size_t{1});
+    auto* const p_value = uf::tryAt(values, std::size_t{1});
     REQUIRE(p_value != nullptr);
     *p_value = 9;
 
-    CHECK(umbra_flow::checkedAt(values, std::size_t{1}) == 9);
-    CHECK(umbra_flow::tryAt(values, values.size()) == nullptr);
+    CHECK(uf::checkedAt(values, std::size_t{1}) == 9);
+    CHECK(uf::tryAt(values, values.size()) == nullptr);
 
     auto const& constValues = values;
     static_assert(std::is_same_v<
-        decltype(umbra_flow::tryAt(constValues, std::size_t{0})),
+        decltype(uf::tryAt(constValues, std::size_t{0})),
         int const*
     >);
-    CHECK(umbra_flow::checkedAt(std::span{constValues}, std::size_t{2}) == 15);
+    CHECK(uf::checkedAt(std::span{constValues}, std::size_t{2}) == 15);
 }

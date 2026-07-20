@@ -5,7 +5,7 @@
 #include <sstream>
 #include <utility>
 
-namespace umbra_flow
+namespace uf
 {
     Error::Error(
         ErrorCode code,
@@ -13,7 +13,19 @@ namespace umbra_flow
         std::int64_t nativeCode,
         std::source_location location
     )
+        : Error{code, std::error_code{}, std::move(message), nativeCode, location}
+    {
+    }
+
+    Error::Error(
+        ErrorCode code,
+        std::error_code detailCode,
+        std::string message,
+        std::int64_t nativeCode,
+        std::source_location location
+    )
         : m_code{code}
+        , m_detailCode{detailCode}
         , m_message{std::move(message)}
         , m_nativeCode{nativeCode}
         , m_location{location}
@@ -21,6 +33,7 @@ namespace umbra_flow
     }
 
     auto Error::code() const noexcept -> ErrorCode { return m_code; }
+    auto Error::detailCode() const noexcept -> std::error_code { return m_detailCode; }
     auto Error::message() const noexcept -> std::string_view { return m_message; }
     auto Error::nativeCode() const noexcept -> std::int64_t { return m_nativeCode; }
     auto Error::location() const noexcept -> std::source_location { return m_location; }
@@ -53,7 +66,7 @@ namespace umbra_flow
         case ErrorCode::Internal: return "Internal";
         }
 
-        UMBRA_FLOW_UNREACHABLE_MSG("Unknown ErrorCode value");
+        UF_UNREACHABLE_MSG("Unknown ErrorCode value");
     }
 
     auto toString(Error const& error) -> std::string

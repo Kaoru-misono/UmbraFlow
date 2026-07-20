@@ -4,7 +4,7 @@
 #include <type_traits>
 #include <variant>
 
-namespace umbra_flow
+namespace uf
 {
     template <typename Value = std::monostate>
     struct Continue final

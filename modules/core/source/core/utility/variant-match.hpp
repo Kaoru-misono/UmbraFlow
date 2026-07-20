@@ -4,7 +4,7 @@
 #include <utility>
 #include <variant>
 
-namespace umbra_flow
+namespace uf
 {
     template <typename... Handlers>
     struct Overload : Handlers...

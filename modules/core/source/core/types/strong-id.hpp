@@ -7,7 +7,7 @@
 #include <limits>
 #include <optional>
 
-namespace umbra_flow
+namespace uf
 {
     template <typename Tag, std::unsigned_integral Representation = std::uint64_t>
     using StrongId = StrongValue<Tag, Representation>;

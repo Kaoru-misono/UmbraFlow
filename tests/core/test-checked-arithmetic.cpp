@@ -9,11 +9,11 @@
 
 TEST_CASE("checked integer arithmetic rejects overflow")
 {
-    using umbra_flow::checkedAdd;
-    using umbra_flow::checkedDivide;
-    using umbra_flow::checkedMultiply;
-    using umbra_flow::checkedRemainder;
-    using umbra_flow::checkedSubtract;
+    using uf::checkedAdd;
+    using uf::checkedDivide;
+    using uf::checkedMultiply;
+    using uf::checkedRemainder;
+    using uf::checkedSubtract;
 
     auto constexpr unsignedMaximum = std::numeric_limits<std::uint32_t>::max();
     CHECK(
@@ -43,8 +43,8 @@ TEST_CASE("checked integer arithmetic rejects overflow")
 
 TEST_CASE("checked casts reject narrowing and non-finite input")
 {
-    using umbra_flow::checkedCast;
-    using umbra_flow::checkedIntegralCast;
+    using uf::checkedCast;
+    using uf::checkedIntegralCast;
 
     CHECK(checkedCast<std::uint16_t>(std::uint32_t{42}) == std::uint16_t{42});
     CHECK_FALSE(checkedCast<std::uint16_t>(std::uint32_t{70'000}).has_value());

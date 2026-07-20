@@ -1,19 +1,22 @@
 #pragma once
 
+#include "core/safety/annotations.hpp"
+
 #include <array>
 #include <cstddef>
 #include <optional>
 #include <string_view>
 #include <type_traits>
 
-namespace umbra_flow
+namespace uf
 {
     template <typename Enum>
         requires std::is_enum_v<Enum>
     struct EnumEntry final
     {
-        Enum value;
-        std::string_view name;
+        Enum m_value;
+        // Names must reference static storage; UF_REFLECT_ENUM supplies a string literal.
+        std::string_view m_name;
     };
 
     template <typename Enum>
@@ -25,13 +28,15 @@ namespace umbra_flow
     namespace detail
     {
         template <typename Type, typename Enum>
-        inline constexpr bool isEnumEntryArray = false;
+        inline constexpr bool g_isEnumEntryArray = false;
 
         template <typename Enum, std::size_t Size>
-        inline constexpr bool isEnumEntryArray<std::array<EnumEntry<Enum>, Size>, Enum> = true;
+        inline constexpr bool g_isEnumEntryArray<std::array<EnumEntry<Enum>, Size>, Enum> = true;
 
         [[nodiscard]]
-        constexpr auto trimEnumToken(std::string_view token) noexcept -> std::string_view
+        constexpr auto trimEnumToken(
+            std::string_view token UF_LIFETIME_BOUND
+        ) noexcept -> std::string_view
         {
             while (!token.empty() && (token.front() == ' ' || token.front() == '\t'))
             {
@@ -46,7 +51,8 @@ namespace umbra_flow
             auto const qualifier = token.rfind("::");
             if (qualifier != std::string_view::npos)
             {
-                token.remove_prefix(qualifier + 2);
+                token.remove_prefix(qualifier);
+                token.remove_prefix(2);
             }
 
             return token;
@@ -61,21 +67,27 @@ namespace umbra_flow
         ) noexcept -> std::array<EnumEntry<Enum>, Size>
         {
             auto entries = std::array<EnumEntry<Enum>, Size>{};
-            auto tokenBegin = std::size_t{0};
+            auto remainingNames = names;
 
             for (auto index = std::size_t{0}; index < Size; ++index)
             {
-                auto tokenEnd = names.find(',', tokenBegin);
-                if (tokenEnd == std::string_view::npos)
+                auto const tokenEnd = remainingNames.find(',');
+                auto token = remainingNames;
+                if (tokenEnd != std::string_view::npos)
                 {
-                    tokenEnd = names.size();
+                    token = remainingNames.substr(0, tokenEnd);
+                    remainingNames.remove_prefix(tokenEnd);
+                    remainingNames.remove_prefix(1);
+                }
+                else
+                {
+                    remainingNames = {};
                 }
 
                 entries[index] = EnumEntry<Enum>{
                     values[index],
-                    trimEnumToken(names.substr(tokenBegin, tokenEnd - tokenBegin))
+                    trimEnumToken(token)
                 };
-                tokenBegin = tokenEnd < names.size() ? tokenEnd + 1 : tokenEnd;
             }
 
             return entries;
@@ -85,9 +97,9 @@ namespace umbra_flow
     template <typename Enum>
     concept ReflectedEnum = (
         std::is_enum_v<Enum>
-        && requires { EnumTraits<Enum>::entries; }
-        && detail::isEnumEntryArray<
-            std::remove_cv_t<decltype(EnumTraits<Enum>::entries)>,
+        && requires { EnumTraits<Enum>::s_entries; }
+        && detail::g_isEnumEntryArray<
+            std::remove_cv_t<decltype(EnumTraits<Enum>::s_entries)>,
             Enum
         >
     );
@@ -98,7 +110,7 @@ namespace umbra_flow
         [[nodiscard]]
         consteval auto enumReflectionIsValid() noexcept -> bool
         {
-            auto const& entries = EnumTraits<Enum>::entries;
+            auto const& entries = EnumTraits<Enum>::s_entries;
             if (entries.empty())
             {
                 return false;
@@ -106,7 +118,7 @@ namespace umbra_flow
 
             for (auto index = std::size_t{0}; index < entries.size(); ++index)
             {
-                if (entries[index].name.empty())
+                if (entries[index].m_name.empty())
                 {
                     return false;
                 }
@@ -114,8 +126,8 @@ namespace umbra_flow
                 for (auto previous = std::size_t{0}; previous < index; ++previous)
                 {
                     if (
-                        entries[index].value == entries[previous].value
-                        || entries[index].name == entries[previous].name
+                        entries[index].m_value == entries[previous].m_value
+                        || entries[index].m_name == entries[previous].m_name
                     )
                     {
                         return false;
@@ -129,13 +141,13 @@ namespace umbra_flow
 
     template <ReflectedEnum Enum>
     [[nodiscard]]
-    constexpr auto enumEntries() noexcept -> decltype((EnumTraits<Enum>::entries))
+    constexpr auto enumEntries() noexcept -> decltype((EnumTraits<Enum>::s_entries))
     {
         static_assert(
             detail::enumReflectionIsValid<Enum>(),
             "Enum reflection requires non-empty, unique names and values."
         );
-        return EnumTraits<Enum>::entries;
+        return EnumTraits<Enum>::s_entries;
     }
 
     template <ReflectedEnum Enum>
@@ -144,9 +156,9 @@ namespace umbra_flow
     {
         for (auto const& entry : enumEntries<Enum>())
         {
-            if (entry.value == value)
+            if (entry.m_value == value)
             {
-                return entry.name;
+                return entry.m_name;
             }
         }
 
@@ -159,9 +171,9 @@ namespace umbra_flow
     {
         for (auto const& entry : enumEntries<Enum>())
         {
-            if (entry.name == name)
+            if (entry.m_name == name)
             {
-                return entry.value;
+                return entry.m_value;
             }
         }
 
@@ -169,16 +181,16 @@ namespace umbra_flow
     }
 }
 
-#define UMBRA_FLOW_REFLECT_ENUM(enumType, ...) \
+#define UF_REFLECT_ENUM(enumType, ...) \
     template <> \
-    struct umbra_flow::EnumTraits<enumType> final \
+    struct uf::EnumTraits<enumType> final \
     { \
-        static constexpr auto entries = ::umbra_flow::detail::makeEnumEntries( \
+        static constexpr auto s_entries = ::uf::detail::makeEnumEntries( \
             ::std::to_array<enumType>({__VA_ARGS__}), \
             #__VA_ARGS__ \
         ); \
     }; \
     static_assert( \
-        ::umbra_flow::detail::enumReflectionIsValid<enumType>(), \
+        ::uf::detail::enumReflectionIsValid<enumType>(), \
         "Enum reflection requires non-empty, unique names and values." \
     )

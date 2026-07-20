@@ -6,7 +6,7 @@
 
 TEST_CASE("recoverable errors preserve structured context")
 {
-    using namespace umbra_flow;
+    using namespace uf;
 
     auto result = Result<int>{fail(ErrorCode::InvalidArgument, "invalid project input")};
     REQUIRE_FALSE(result.has_value());
@@ -22,15 +22,15 @@ TEST_CASE("recoverable errors preserve structured context")
 
 TEST_CASE("result context helper preserves the original failure")
 {
-    auto result = umbra_flow::withContext(
-        umbra_flow::Result<int>{
-            umbra_flow::fail(umbra_flow::ErrorCode::NotFound, "missing")
+    auto result = uf::withContext(
+        uf::Result<int>{
+            uf::fail(uf::ErrorCode::NotFound, "missing")
         },
         "loading template"
     );
 
     REQUIRE_FALSE(result.has_value());
-    CHECK(result.error().code() == umbra_flow::ErrorCode::NotFound);
+    CHECK(result.error().code() == uf::ErrorCode::NotFound);
     REQUIRE(result.error().context().size() == 1);
     CHECK(result.error().context().front() == "loading template");
 }
@@ -38,28 +38,28 @@ TEST_CASE("result context helper preserves the original failure")
 namespace
 {
     [[nodiscard]]
-    auto failValidation() -> umbra_flow::Status
+    auto failValidation() -> uf::Status
     {
-        return umbra_flow::fail(
-            umbra_flow::ErrorCode::FailedPrecondition,
+        return uf::fail(
+            uf::ErrorCode::FailedPrecondition,
             "validation failed"
         );
     }
 
     [[nodiscard]]
-    auto propagateValidation() -> umbra_flow::Status
+    auto propagateValidation() -> uf::Status
     {
-        UMBRA_FLOW_TRY_CONTEXT(failValidation(), "preparing project");
-        return umbra_flow::ok();
+        UF_TRY_CONTEXT(failValidation(), "preparing project");
+        return uf::ok();
     }
 
     [[nodiscard]]
-    auto loadVersion(bool available) -> umbra_flow::Result<int>
+    auto loadVersion(bool available) -> uf::Result<int>
     {
         if (!available)
         {
-            return umbra_flow::fail(
-                umbra_flow::ErrorCode::NotFound,
+            return uf::fail(
+                uf::ErrorCode::NotFound,
                 "version is unavailable"
             );
         }
@@ -68,9 +68,9 @@ namespace
     }
 
     [[nodiscard]]
-    auto propagateValue(bool available) -> umbra_flow::Result<int>
+    auto propagateValue(bool available) -> uf::Result<int>
     {
-        UMBRA_FLOW_TRY_VALUE_CONTEXT(version, loadVersion(available), "loading version");
+        UF_TRY_VALUE_CONTEXT(version, loadVersion(available), "loading version");
         return version + 1;
     }
 }

@@ -20,10 +20,10 @@ authoritative:
 - Use `std::byte` for untyped binary storage and `emplace_back` for every
   `std::vector` append operation.
 - Recoverable failures use `Result<T>`/`Status`; debug invariants use
-  `UMBRA_FLOW_ASSERT`; release-active invariants use `UMBRA_FLOW_CHECK`;
-  impossible paths use `UMBRA_FLOW_UNREACHABLE`.
+  `UF_ASSERT`; release-active invariants use `UF_CHECK`;
+  impossible paths use `UF_UNREACHABLE`.
 - Return every recoverable failure with the unified `fail(...)` helper. Use
-  `UMBRA_FLOW_TRY*` or normal `std::expected` operations to propagate it, and
+  `UF_TRY*` or normal `std::expected` operations to propagate it, and
   mark result-returning functions `[[nodiscard]]`.
 - Do not use `Result<T>` for ordinary absence, expected lookup misses, normal
   control flow, or per-frame hot-path signaling.

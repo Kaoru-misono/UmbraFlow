@@ -4,7 +4,7 @@
 
 TEST_CASE("monotonic time addition reports overflow")
 {
-    using Instant = umbra_flow::MonotonicInstant;
+    using Instant = uf::MonotonicInstant;
     using Duration = Instant::Duration;
     using TimePoint = Instant::TimePoint;
 
@@ -25,7 +25,7 @@ TEST_CASE("monotonic time addition reports overflow")
 
 TEST_CASE("monotonic duration subtraction saturates")
 {
-    using Instant = umbra_flow::MonotonicInstant;
+    using Instant = uf::MonotonicInstant;
     using Duration = Instant::Duration;
     using TimePoint = Instant::TimePoint;
 

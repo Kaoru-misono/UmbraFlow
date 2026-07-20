@@ -6,9 +6,9 @@
 | Recoverable failure without a value | `Status` |
 | Ordinary absence, lookup miss, or optional data | `std::optional<T>` |
 | Normal branching or traversal state | `bool`, an enum, a variant, or `ControlFlow` |
-| Programmer error or broken invariant | `UMBRA_FLOW_ASSERT` |
-| Release-active mandatory invariant | `UMBRA_FLOW_CHECK` |
-| Impossible control flow | `UMBRA_FLOW_UNREACHABLE` |
+| Programmer error or broken invariant | `UF_ASSERT` |
+| Release-active mandatory invariant | `UF_CHECK` |
+| Impossible control flow | `UF_UNREACHABLE` |
 | Safe local degradation | Log once at the site, then skip or clamp |
 
 ## Representation and construction
@@ -57,17 +57,17 @@ Every function returning `Result<T>` or `Status` must be `[[nodiscard]]`.
 Use the propagation form that matches the success value:
 
 ```cpp
-UMBRA_FLOW_TRY(validateProject(project));
-UMBRA_FLOW_TRY_CONTEXT(validateProject(project), "opening project");
+UF_TRY(validateProject(project));
+UF_TRY_CONTEXT(validateProject(project), "opening project");
 
-UMBRA_FLOW_TRY_VALUE(project, loadProject(path));
-UMBRA_FLOW_TRY_VALUE_CONTEXT(project, loadProject(path), "starting editor");
+UF_TRY_VALUE(project, loadProject(path));
+UF_TRY_VALUE_CONTEXT(project, loadProject(path), "starting editor");
 ```
 
-- `UMBRA_FLOW_TRY` propagates an error when the success value is not needed.
-- `UMBRA_FLOW_TRY_CONTEXT` also appends one meaningful context frame.
-- `UMBRA_FLOW_TRY_VALUE` declares the named value after successful extraction.
-- `UMBRA_FLOW_TRY_VALUE_CONTEXT` extracts the value and adds context on
+- `UF_TRY` propagates an error when the success value is not needed.
+- `UF_TRY_CONTEXT` also appends one meaningful context frame.
+- `UF_TRY_VALUE` declares the named value after successful extraction.
+- `UF_TRY_VALUE_CONTEXT` extracts the value and adds context on
   failure.
 - The value forms expand to multiple statements. Use them only as standalone
   statements inside a braced block.

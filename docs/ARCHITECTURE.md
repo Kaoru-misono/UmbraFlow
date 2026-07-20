@@ -6,7 +6,9 @@ of `modules/` with a `manifest.txt` becomes a CMake library target named
 
 ```text
 entry/${PROJECT_NAME} -> core
-tests              -> modules under test
+domain                -> core
+vision                -> core, domain
+tests                 -> modules under test
 ```
 
 The module graph must remain acyclic. `core` is the platform-free leaf and may
@@ -15,11 +17,14 @@ not declare link dependencies. `scripts/check_modules.py` enforces both rules.
 ## Repository layout
 
 - `modules/`: reusable libraries with manifest-declared dependencies.
+- `modules/domain/`: platform-free UmbraFlow frames, coordinates, detections,
+  identifiers, leases, and automation errors.
+- `modules/vision/`: platform-free grayscale conversion and SAD template matching.
 - `entry/`: executable targets and composition roots.
 - `tests/`: deterministic offline tests.
 - `cmake/`: module loading, platform selection, caching, warnings, hardening,
   sanitizers, and static-analysis policy.
-- `scripts/`: initialization, formatting, and local CI tools.
+- `scripts/`: formatting and local CI tools.
 - `.claude/skills/`: repository-local engineering workflows.
 
 ## Module manifest

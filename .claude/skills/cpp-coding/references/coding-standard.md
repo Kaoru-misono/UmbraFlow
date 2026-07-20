@@ -6,7 +6,8 @@
 - Use textual `.hpp` and `.cpp` files; do not introduce named C++ modules.
 - Filenames use kebab-case.
 - Use `#pragma once` in headers.
-- The project root namespace is `umbra_flow`.
+- The project root namespace is `uf` (the deliberate short form of
+  UmbraFlow; the long `umbra_flow` form is not used).
 
 ## Naming
 
@@ -15,7 +16,9 @@
 - Pointer and smart-pointer parameters: `p_camelCase`.
 - Types: `PascalCase`; interfaces: `IPascalCase`.
 - Avoid globals; unavoidable globals/statics use `g_` or `s_`.
-- Macros use `UPPER_CASE_WITH_UNDERSCORES` and the initialized project prefix.
+- Macros use `UPPER_CASE_WITH_UNDERSCORES` with the project macro prefix
+  `UF_` (the deliberate short form of UmbraFlow; the long
+  `UMBRA_FLOW_` form is not used).
 
 ## Formatting
 
@@ -200,14 +203,14 @@ own header with quotes.
 - Return failures with `fail(...)` for both `Result<T>` and `Status`. Do not use
   templated failure factories or a separate status failure helper.
 - Mark every function returning `Result<T>` or `Status` as `[[nodiscard]]`.
-- Use `UMBRA_FLOW_TRY*` for linear propagation and `std::expected` monadic
+- Use `UF_TRY*` for linear propagation and `std::expected` monadic
   operations when they express composition more clearly. Value-extracting
   macros are standalone statements inside a braced block.
 - Use `std::optional`, `bool`, a domain enum, `std::variant`, or `ControlFlow`
   instead of `Result<T>` for ordinary absence and normal control flow.
-- Broken internal invariants use `UMBRA_FLOW_ASSERT`.
-- Mandatory release-active invariants use `UMBRA_FLOW_CHECK`.
-- Exhausted impossible branches use `UMBRA_FLOW_UNREACHABLE`.
+- Broken internal invariants use `UF_ASSERT`.
+- Mandatory release-active invariants use `UF_CHECK`.
+- Exhausted impossible branches use `UF_UNREACHABLE`.
 - Do not log and return at every layer. Add context while propagating and log once at a boundary.
 - A local degrade/skip path must log why it degraded.
 

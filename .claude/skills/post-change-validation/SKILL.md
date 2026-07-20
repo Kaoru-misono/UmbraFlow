@@ -20,8 +20,4 @@ Use `python` on Windows and `python3` on Linux or macOS in the commands below.
 8. Run any project-specific integration or hardware checks required by the changed subsystem.
 9. Report every command and its exit status. Do not call a change verified when a required toolchain or environment was unavailable.
 
-When changing template identity or initialization behavior, also run
-`python scripts/initialize_project.py SampleProject --dry-run` and exercise the
-initializer in a disposable copy of the repository.
-
 Read `references/test-patterns.md` when adding tests.

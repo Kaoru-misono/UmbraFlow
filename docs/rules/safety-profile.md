@@ -84,13 +84,13 @@ invalid combinations.
 
 - Recoverable runtime failure with a value: `Result<T>`.
 - Recoverable runtime failure without a value: `Status`.
-- Debug-only invariant evidence: `UMBRA_FLOW_ASSERT`.
-- Mandatory release invariant: `UMBRA_FLOW_CHECK`.
-- Impossible control flow: `UMBRA_FLOW_UNREACHABLE`.
+- Debug-only invariant evidence: `UF_ASSERT`.
+- Mandatory release invariant: `UF_CHECK`.
+- Impossible control flow: `UF_UNREACHABLE`.
 
 `Result<T>` is an alias for `std::expected<T, Error>`, and `Status` is
 `Result<void>`. Return either failure with the unified `fail(...)` helper. Use
-`UMBRA_FLOW_TRY*` for linear propagation or normal `std::expected` operations
+`UF_TRY*` for linear propagation or normal `std::expected` operations
 for monadic composition. The value-extracting macros are standalone statements
 and require a braced block. Result-returning functions are `[[nodiscard]]`.
 

@@ -2,7 +2,7 @@
 
 #include <string_view>
 
-namespace umbra_flow
+namespace uf
 {
     inline constexpr auto projectName = std::string_view{"UmbraFlow"};
 }

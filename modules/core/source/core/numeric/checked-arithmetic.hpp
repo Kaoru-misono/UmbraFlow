@@ -5,7 +5,7 @@
 #include <optional>
 #include <type_traits>
 
-namespace umbra_flow
+namespace uf
 {
     template <typename Value>
     concept CheckedInteger = (

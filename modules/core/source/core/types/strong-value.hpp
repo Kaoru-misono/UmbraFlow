@@ -6,7 +6,7 @@
 #include <type_traits>
 #include <utility>
 
-namespace umbra_flow
+namespace uf
 {
     template <typename Tag, typename Representation>
     class StrongValue final
@@ -27,7 +27,19 @@ namespace umbra_flow
 
         auto operator<=>(StrongValue const&) const = default;
 
-        [[nodiscard]] constexpr auto value() const& noexcept -> Representation const& { return m_value; }
+        [[nodiscard]]
+        constexpr auto value() const& noexcept -> Representation
+            requires std::is_scalar_v<Representation>
+        {
+            return m_value;
+        }
+
+        [[nodiscard]]
+        constexpr auto value() const& noexcept -> Representation const&
+            requires (!std::is_scalar_v<Representation>)
+        {
+            return m_value;
+        }
 
         [[nodiscard]]
         constexpr auto value() && noexcept(

@@ -7,7 +7,7 @@
 #include <concepts>
 #include <optional>
 
-namespace umbra_flow
+namespace uf
 {
     class MonotonicInstant final
     {
@@ -16,18 +16,18 @@ namespace umbra_flow
         using Duration = Clock::duration;
         using TimePoint = Clock::time_point;
 
+        static_assert(CheckedInteger<Duration::rep>);
+
     private:
         TimePoint m_timePoint;
 
-        explicit MonotonicInstant(TimePoint timePoint) noexcept
+        constexpr explicit MonotonicInstant(TimePoint timePoint) noexcept
             : m_timePoint{timePoint}
         {
         }
 
     public:
-        static_assert(CheckedInteger<Duration::rep>);
-
-        auto operator<=>(MonotonicInstant const&) const = default;
+        auto operator<=>(MonotonicInstant const&) const -> std::strong_ordering = default;
 
         [[nodiscard]] static auto now() noexcept -> MonotonicInstant;
 
@@ -42,7 +42,7 @@ namespace umbra_flow
         [[nodiscard]]
         constexpr auto checkedAdd(Duration duration) const noexcept -> std::optional<MonotonicInstant>
         {
-            auto const count = umbra_flow::checkedAdd(
+            auto const count = uf::checkedAdd(
                 m_timePoint.time_since_epoch().count(),
                 duration.count()
             );
@@ -64,7 +64,7 @@ namespace umbra_flow
                 return Duration::zero();
             }
 
-            auto const difference = umbra_flow::checkedSubtract(currentCount, earlierCount);
+            auto const difference = uf::checkedSubtract(currentCount, earlierCount);
             if (!difference)
             {
                 return Duration::max();

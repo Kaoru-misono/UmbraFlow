@@ -12,11 +12,11 @@ Read `references/coding-standard.md` completely before changing C++ code. Then c
 1. Target C++23 with textual `.hpp` and `.cpp` files.
 2. Reuse the standard library and the existing `core` module before adding helpers or dependencies.
 3. Use `Result<T>` or `Status` for recoverable failures,
-   `UMBRA_FLOW_ASSERT` for debug-only invariant evidence,
-   `UMBRA_FLOW_CHECK` for mandatory release-active invariants, and
-   `UMBRA_FLOW_UNREACHABLE` for impossible flow.
+   `UF_ASSERT` for debug-only invariant evidence,
+   `UF_CHECK` for mandatory release-active invariants, and
+   `UF_UNREACHABLE` for impossible flow.
 4. Return recoverable failures with `fail(...)`; propagate them with
-   `UMBRA_FLOW_TRY*` or normal `std::expected` operations. Do not use results
+   `UF_TRY*` or normal `std::expected` operations. Do not use results
    for ordinary absence or normal control flow.
 5. Log propagated failures once at the CLI or subsystem boundary.
 6. Use values by default, `std::unique_ptr` for exclusive ownership, and prefer

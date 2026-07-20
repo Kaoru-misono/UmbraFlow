@@ -5,7 +5,7 @@
 #include <compare>
 #include <optional>
 
-namespace umbra_flow
+namespace uf
 {
     template <CheckedInteger Value>
     class NonZero final

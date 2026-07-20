@@ -9,7 +9,7 @@
 #include <span>
 #include <type_traits>
 
-namespace umbra_flow
+namespace uf
 {
     namespace detail
     {
@@ -25,7 +25,7 @@ namespace umbra_flow
     template <typename Element, std::size_t Extent>
     [[nodiscard]]
     constexpr auto tryAt(
-        std::span<Element, Extent> values UMBRA_FLOW_LIFETIME_BOUND,
+        std::span<Element, Extent> values UF_LIFETIME_BOUND,
         std::size_t index
     ) noexcept -> Element*
     {
@@ -40,10 +40,9 @@ namespace umbra_flow
     template <detail::CheckedAccessRange Range>
     [[nodiscard]]
     constexpr auto tryAt(
-        Range&& values UMBRA_FLOW_LIFETIME_BOUND,
+        Range&& values UF_LIFETIME_BOUND,
         std::size_t index
-    ) noexcept(noexcept(tryAt(std::span{values}, index)))
-        -> decltype(tryAt(std::span{values}, index))
+    ) noexcept(noexcept(tryAt(std::span{values}, index))) -> decltype(tryAt(std::span{values}, index))
     {
         return tryAt(std::span{values}, index);
     }
@@ -51,22 +50,21 @@ namespace umbra_flow
     template <typename Element, std::size_t Extent>
     [[nodiscard]]
     constexpr auto checkedAt(
-        std::span<Element, Extent> values UMBRA_FLOW_LIFETIME_BOUND,
+        std::span<Element, Extent> values UF_LIFETIME_BOUND,
         std::size_t index
     ) noexcept -> Element&
     {
-        auto* const p_element = tryAt(values, index);
-        UMBRA_FLOW_CHECK(p_element != nullptr);
-        return *p_element;
+        auto* const element = tryAt(values, index);
+        UF_CHECK(element != nullptr);
+        return *element;
     }
 
     template <detail::CheckedAccessRange Range>
     [[nodiscard]]
     constexpr auto checkedAt(
-        Range&& values UMBRA_FLOW_LIFETIME_BOUND,
+        Range&& values UF_LIFETIME_BOUND,
         std::size_t index
-    ) noexcept(noexcept(checkedAt(std::span{values}, index)))
-        -> decltype(checkedAt(std::span{values}, index))
+    ) noexcept(noexcept(checkedAt(std::span{values}, index))) -> decltype(checkedAt(std::span{values}, index))
     {
         return checkedAt(std::span{values}, index);
     }

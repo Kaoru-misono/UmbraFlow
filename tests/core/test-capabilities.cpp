@@ -8,8 +8,10 @@
 
 #include <doctest/doctest.h>
 
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <string>
 #include <thread>
 #include <variant>
@@ -35,21 +37,21 @@ namespace test_types
     };
 }
 
-UMBRA_FLOW_REFLECT_ENUM(
+UF_REFLECT_ENUM(
     test_types::BuildState,
     test_types::BuildState::Idle,
     test_types::BuildState::Running,
     test_types::BuildState::Failed
 );
 
-static_assert(umbra_flow::ReflectedEnum<test_types::BuildState>);
+static_assert(uf::ReflectedEnum<test_types::BuildState>);
 
 TEST_CASE("variant matching requires one explicit handler per state")
 {
     auto state = std::variant<int, std::string>{std::string{"ready"}};
-    auto const size = umbra_flow::matchVariant(
+    auto const size = uf::matchVariant(
         state,
-        [](int value) -> std::size_t { return static_cast<std::size_t>(value); },
+        [](int) -> std::size_t { return 0; },
         [](std::string const& value) -> std::size_t { return value.size(); }
     );
 
@@ -58,7 +60,7 @@ TEST_CASE("variant matching requires one explicit handler per state")
 
 TEST_CASE("enum reflection round-trips sparse values and rejects unknown names")
 {
-    auto const name = umbra_flow::enumName(test_types::BuildState::Running);
+    auto const name = uf::enumName(test_types::BuildState::Running);
     if (!name.has_value())
     {
         FAIL("The reflected enum value did not have a name");
@@ -66,7 +68,7 @@ TEST_CASE("enum reflection round-trips sparse values and rejects unknown names")
     }
     CHECK(*name == "Running");
 
-    auto const value = umbra_flow::enumFromName<test_types::BuildState>("Failed");
+    auto const value = uf::enumFromName<test_types::BuildState>("Failed");
     if (!value.has_value())
     {
         FAIL("A known enum name did not produce a value");
@@ -74,22 +76,22 @@ TEST_CASE("enum reflection round-trips sparse values and rejects unknown names")
     }
     CHECK(*value == test_types::BuildState::Failed);
 
-    CHECK_FALSE(umbra_flow::enumName(static_cast<test_types::BuildState>(2)).has_value());
-    CHECK_FALSE(umbra_flow::enumFromName<test_types::BuildState>("running").has_value());
-    CHECK(umbra_flow::enumEntries<test_types::BuildState>().size() == 3);
+    CHECK_FALSE(uf::enumName(static_cast<test_types::BuildState>(2)).has_value());
+    CHECK_FALSE(uf::enumFromName<test_types::BuildState>("running").has_value());
+    CHECK(uf::enumEntries<test_types::BuildState>().size() == 3);
 }
 
 TEST_CASE("control flow distinguishes early exit and carries its value")
 {
-    auto flow = umbra_flow::ControlFlow<int>{umbra_flow::Break<int>{42}};
+    auto flow = uf::ControlFlow<int>{uf::Break<int>{42}};
 
-    CHECK(umbra_flow::isBreak(flow));
-    CHECK_FALSE(umbra_flow::isContinue(flow));
+    CHECK(uf::isBreak(flow));
+    CHECK_FALSE(uf::isContinue(flow));
     CHECK(
-        umbra_flow::matchVariant(
+        uf::matchVariant(
             flow,
-            [](umbra_flow::Continue<>) -> int { return 0; },
-            [](umbra_flow::Break<int> stop) -> int { return stop.value; }
+            [](uf::Continue<>) -> int { return 0; },
+            [](uf::Break<int> stop) -> int { return stop.value; }
         )
         == 42
     );
@@ -97,8 +99,8 @@ TEST_CASE("control flow distinguishes early exit and carries its value")
 
 TEST_CASE("non-zero values and flags preserve their declared invariants")
 {
-    auto const zero = umbra_flow::NonZero<int>::create(0);
-    auto const divisor = umbra_flow::NonZero<int>::create(-3);
+    auto const zero = uf::NonZero<int>::create(0);
+    auto const divisor = uf::NonZero<int>::create(-3);
 
     CHECK_FALSE(zero.has_value());
     if (!divisor.has_value())
@@ -108,58 +110,68 @@ TEST_CASE("non-zero values and flags preserve their declared invariants")
     }
     CHECK(divisor->value() == -3);
 
-    auto permissions = umbra_flow::Flags<Permission>{Permission::Read, Permission::Write};
-    CHECK(permissions.containsAll(umbra_flow::Flags<Permission>{Permission::Read}));
-    CHECK_FALSE(permissions.containsAny(umbra_flow::Flags<Permission>{Permission::Execute}));
+    auto permissions = uf::Flags<Permission>{Permission::Read, Permission::Write};
+    CHECK(permissions.containsAll(uf::Flags<Permission>{Permission::Read}));
+    CHECK_FALSE(permissions.containsAny(uf::Flags<Permission>{Permission::Execute}));
 
-    permissions.remove(umbra_flow::Flags<Permission>{Permission::Write});
-    CHECK(permissions == umbra_flow::Flags<Permission>{Permission::Read});
+    permissions.remove(uf::Flags<Permission>{Permission::Write});
+    CHECK(permissions == uf::Flags<Permission>{Permission::Read});
 }
 
 TEST_CASE("scope exit executes exactly while it remains armed")
 {
-    auto executions = 0;
+    auto executions = std::make_shared<std::atomic<int>>(0);
     {
-        [[maybe_unused]] auto cleanup = umbra_flow::scopeExit([&executions]() noexcept
-        {
-            ++executions;
-        });
+        [[maybe_unused]] auto cleanup = uf::scopeExit(
+            [executions]() noexcept -> void
+            {
+                executions->fetch_add(1, std::memory_order_relaxed);
+            }
+        );
     }
 
     {
-        auto cleanup = umbra_flow::scopeExit([&executions]() noexcept
-        {
-            ++executions;
-        });
+        auto cleanup = uf::scopeExit(
+            [executions]() noexcept -> void
+            {
+                executions->fetch_add(1, std::memory_order_relaxed);
+            }
+        );
         cleanup.release();
     }
 
-    CHECK(executions == 1);
+    CHECK(executions->load(std::memory_order_relaxed) == 1);
 }
 
 TEST_CASE("synchronized operations preserve every concurrent update")
 {
-    auto counter = umbra_flow::Synchronized<int>{0};
+    auto counter = std::make_shared<uf::Synchronized<int>>(0);
     {
         auto workers = std::vector<std::jthread>{};
         for (auto worker = 0; worker < 4; ++worker)
         {
-            workers.emplace_back([&counter]
-            {
-                for (auto iteration = 0; iteration < 1'000; ++iteration)
+            workers.emplace_back(
+                [counter]() -> void
                 {
-                    counter.withLock([](int& value) -> void
+                    for (auto iteration = 0; iteration < 1'000; ++iteration)
                     {
-                        ++value;
-                    });
+                        counter->withLock(
+                            [](int& value) -> void
+                            {
+                                ++value;
+                            }
+                        );
+                    }
                 }
-            });
+            );
         }
     }
 
-    auto const value = counter.withLock([](int const& current) -> int
-    {
-        return current;
-    });
+    auto const value = counter->withLock(
+        [](int const& current) -> int
+        {
+            return current;
+        }
+    );
     CHECK(value == 4'000);
 }

@@ -1,8 +1,8 @@
 # Logging and Assertions
 
-- `UMBRA_FLOW_ASSERT` reports debug-only programmer errors and invariants.
-- `UMBRA_FLOW_CHECK` reports mandatory invariants in every build configuration.
-- `UMBRA_FLOW_UNREACHABLE` marks impossible flow.
+- `UF_ASSERT` reports debug-only programmer errors and invariants.
+- `UF_CHECK` reports mandatory invariants in every build configuration.
+- `UF_UNREACHABLE` marks impossible flow.
 - Recoverable runtime failures travel through `Result<T>` or `Status`.
 - `fail(...)` only constructs an error and never logs it.
 - Log a propagated error once at the application or subsystem boundary.

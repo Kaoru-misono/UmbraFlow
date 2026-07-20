@@ -8,7 +8,7 @@
 #include <optional>
 #include <utility>
 
-namespace umbra_flow
+namespace uf
 {
     template <CheckedInteger To, CheckedInteger From>
     [[nodiscard]]
