@@ -1,0 +1,17 @@
+# ccache as the compiler launcher for Ninja builds. Missing ccache is a silent no-op.
+option(CPP_USE_CCACHE "Use ccache as the compiler launcher (Ninja only; no-op if ccache absent)" ON)
+if(CPP_USE_CCACHE AND CMAKE_GENERATOR MATCHES "Ninja")
+    find_program(CCACHE_PROGRAM ccache)
+    if(CCACHE_PROGRAM)
+        message(STATUS "ccache: ${CCACHE_PROGRAM}")
+        set(CMAKE_CXX_COMPILER_LAUNCHER "${CCACHE_PROGRAM}" CACHE STRING "" FORCE)
+        set(CMAKE_C_COMPILER_LAUNCHER "${CCACHE_PROGRAM}" CACHE STRING "" FORCE)
+        if(MSVC)
+            # ccache cannot cache /Zi PDB data. Use embedded /Z7 debug information instead.
+            cmake_policy(SET CMP0141 NEW)
+            add_compile_options(/Z7)
+        endif()
+    else()
+        message(STATUS "ccache not found; building without it (ok).")
+    endif()
+endif()

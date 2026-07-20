@@ -1,0 +1,274 @@
+{
+  "version": 3,
+  "cmakeMinimumRequired": {
+    "major": 3,
+    "minor": 30
+  },
+  "configurePresets": [
+    {
+      "name": "windows-base",
+      "hidden": true,
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Windows"
+      }
+    },
+    {
+      "name": "ninja-base",
+      "hidden": true,
+      "inherits": "windows-base",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/${presetName}",
+      "installDir": "${sourceDir}/install/${presetName}",
+      "cacheVariables": {
+        "CMAKE_CXX_COMPILER": "cl.exe",
+        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON"
+      }
+    },
+    {
+      "name": "x64-debug",
+      "displayName": "x64 Debug (Ninja)",
+      "inherits": "ninja-base",
+      "architecture": {
+        "value": "x64",
+        "strategy": "external"
+      },
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug"
+      }
+    },
+    {
+      "name": "x64-release",
+      "displayName": "x64 Release (Ninja)",
+      "inherits": "ninja-base",
+      "architecture": {
+        "value": "x64",
+        "strategy": "external"
+      },
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release"
+      }
+    },
+    {
+      "name": "vs2022",
+      "displayName": "Visual Studio 2022 Solution",
+      "inherits": "windows-base",
+      "generator": "Visual Studio 17 2022",
+      "binaryDir": "${sourceDir}/build/vs2022",
+      "installDir": "${sourceDir}/install/vs2022",
+      "architecture": {
+        "value": "x64",
+        "strategy": "set"
+      }
+    },
+    {
+      "name": "x64-asan",
+      "displayName": "x64 AddressSanitizer (Ninja)",
+      "inherits": "x64-debug",
+      "cacheVariables": {
+        "CPP_ENABLE_ADDRESS_SANITIZER": "ON"
+      }
+    },
+    {
+      "name": "x64-analysis",
+      "displayName": "x64 clang-tidy (Ninja)",
+      "inherits": "x64-debug",
+      "cacheVariables": {
+        "CPP_ENABLE_CLANG_TIDY": "ON"
+      }
+    },
+    {
+      "name": "linux-base",
+      "hidden": true,
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Linux"
+      },
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/${presetName}",
+      "installDir": "${sourceDir}/install/${presetName}",
+      "cacheVariables": {
+        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON"
+      }
+    },
+    {
+      "name": "linux-debug",
+      "displayName": "Linux Debug (Ninja)",
+      "inherits": "linux-base",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug"
+      }
+    },
+    {
+      "name": "linux-release",
+      "displayName": "Linux Release (Ninja)",
+      "inherits": "linux-base",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release"
+      }
+    },
+    {
+      "name": "linux-asan",
+      "displayName": "Linux AddressSanitizer",
+      "inherits": "linux-debug",
+      "cacheVariables": {
+        "CPP_ENABLE_ADDRESS_SANITIZER": "ON"
+      }
+    },
+    {
+      "name": "linux-ubsan",
+      "displayName": "Linux UndefinedBehaviorSanitizer",
+      "inherits": "linux-debug",
+      "cacheVariables": {
+        "CPP_ENABLE_UNDEFINED_SANITIZER": "ON"
+      }
+    },
+    {
+      "name": "linux-tsan",
+      "displayName": "Linux ThreadSanitizer",
+      "inherits": "linux-debug",
+      "cacheVariables": {
+        "CPP_ENABLE_THREAD_SANITIZER": "ON"
+      }
+    },
+    {
+      "name": "linux-analysis",
+      "displayName": "Linux clang-tidy",
+      "inherits": "linux-debug",
+      "cacheVariables": {
+        "CMAKE_CXX_COMPILER": "clang++",
+        "CPP_ENABLE_CLANG_TIDY": "ON",
+        "CPP_REQUIRE_CLANG_LIFETIME_SAFETY": "ON"
+      }
+    },
+    {
+      "name": "macos-base",
+      "hidden": true,
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Darwin"
+      },
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/${presetName}",
+      "installDir": "${sourceDir}/install/${presetName}",
+      "cacheVariables": {
+        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON"
+      }
+    },
+    {
+      "name": "macos-debug",
+      "displayName": "macOS Debug (Ninja)",
+      "inherits": "macos-base",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug"
+      }
+    },
+    {
+      "name": "macos-release",
+      "displayName": "macOS Release (Ninja)",
+      "inherits": "macos-base",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release"
+      }
+    },
+    {
+      "name": "macos-asan",
+      "displayName": "macOS AddressSanitizer",
+      "inherits": "macos-debug",
+      "cacheVariables": {
+        "CPP_ENABLE_ADDRESS_SANITIZER": "ON"
+      }
+    },
+    {
+      "name": "macos-ubsan",
+      "displayName": "macOS UndefinedBehaviorSanitizer",
+      "inherits": "macos-debug",
+      "cacheVariables": {
+        "CPP_ENABLE_UNDEFINED_SANITIZER": "ON"
+      }
+    },
+    {
+      "name": "macos-analysis",
+      "displayName": "macOS clang-tidy",
+      "inherits": "macos-debug",
+      "cacheVariables": {
+        "CPP_ENABLE_CLANG_TIDY": "ON"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "x64-debug",
+      "configurePreset": "x64-debug"
+    },
+    {
+      "name": "x64-release",
+      "configurePreset": "x64-release"
+    },
+    {
+      "name": "vs2022-debug",
+      "configurePreset": "vs2022",
+      "configuration": "Debug"
+    },
+    {
+      "name": "vs2022-release",
+      "configurePreset": "vs2022",
+      "configuration": "Release"
+    },
+    {
+      "name": "x64-asan",
+      "configurePreset": "x64-asan"
+    },
+    {
+      "name": "x64-analysis",
+      "configurePreset": "x64-analysis"
+    },
+    {
+      "name": "linux-debug",
+      "configurePreset": "linux-debug"
+    },
+    {
+      "name": "linux-release",
+      "configurePreset": "linux-release"
+    },
+    {
+      "name": "linux-asan",
+      "configurePreset": "linux-asan"
+    },
+    {
+      "name": "linux-ubsan",
+      "configurePreset": "linux-ubsan"
+    },
+    {
+      "name": "linux-tsan",
+      "configurePreset": "linux-tsan"
+    },
+    {
+      "name": "linux-analysis",
+      "configurePreset": "linux-analysis"
+    },
+    {
+      "name": "macos-debug",
+      "configurePreset": "macos-debug"
+    },
+    {
+      "name": "macos-release",
+      "configurePreset": "macos-release"
+    },
+    {
+      "name": "macos-asan",
+      "configurePreset": "macos-asan"
+    },
+    {
+      "name": "macos-ubsan",
+      "configurePreset": "macos-ubsan"
+    },
+    {
+      "name": "macos-analysis",
+      "configurePreset": "macos-analysis"
+    }
+  ]
+}

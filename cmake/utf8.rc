@@ -1,0 +1,4 @@
+// Embed UTF-8 activeCodePage manifest so std::filesystem::path::string()
+// returns UTF-8 on Windows. Required for CJK filenames.
+#include <winuser.h>
+1 RT_MANIFEST "utf8.manifest"

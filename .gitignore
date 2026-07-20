@@ -1,0 +1,36 @@
+# Build output
+build/
+install/
+.cache/
+*.obj
+*.pdb
+*.lib
+*.dll
+*.exe
+
+# Runtime artifacts
+logs/
+*.log
+
+# Local configuration
+.env
+.env.*
+!.env.example
+
+# Editors and agent worktrees
+.vscode/
+.idea/
+.worktrees/
+.claude/worktrees/
+.Codex/
+
+# Operating system
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Python tooling
+__pycache__/
+*.pyc
+
+.reference/

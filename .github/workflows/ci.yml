@@ -1,0 +1,124 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  repository-gates:
+    name: Repository gates
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+      - name: Check source normalization
+        run: python scripts/fix_format.py --check
+      - name: Check module graph
+        run: python scripts/check_modules.py
+      - name: Check safe C++ boundaries
+        run: python scripts/check_safety.py
+
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Linux GCC
+            os: ubuntu-latest
+            configure: cmake --preset linux-debug
+            build: cmake --build --preset linux-debug
+            test: ctest --test-dir build/linux-debug -L CI --output-on-failure
+          - name: Linux GCC Release
+            os: ubuntu-latest
+            configure: cmake --preset linux-release
+            build: cmake --build --preset linux-release
+            test: ctest --test-dir build/linux-release -L CI --output-on-failure
+          - name: macOS Clang
+            os: macos-latest
+            configure: cmake --preset macos-debug
+            build: cmake --build --preset macos-debug
+            test: ctest --test-dir build/macos-debug -L CI --output-on-failure
+          - name: Windows MSVC
+            os: windows-latest
+            configure: cmake -S . -B build/windows -A x64
+            build: cmake --build build/windows --config Debug
+            test: ctest --test-dir build/windows -C Debug -L CI --output-on-failure
+          - name: Windows MSVC Release
+            os: windows-latest
+            configure: cmake -S . -B build/windows -A x64
+            build: cmake --build build/windows --config Release
+            test: ctest --test-dir build/windows -C Release -L CI --output-on-failure
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+      - name: Configure
+        run: ${{ matrix.configure }}
+      - name: Build
+        run: ${{ matrix.build }}
+      - name: Test
+        run: ${{ matrix.test }}
+
+  clang-analysis:
+    name: Clang lifetime, bounds, thread safety, and tidy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+      - name: Install pinned LLVM toolchain
+        run: |
+          wget --quiet https://apt.llvm.org/llvm.sh --output-document="${RUNNER_TEMP}/llvm.sh"
+          chmod +x "${RUNNER_TEMP}/llvm.sh"
+          sudo "${RUNNER_TEMP}/llvm.sh" 23
+          sudo apt-get install --yes clang-tidy-23
+      - name: Configure required analysis
+        run: >-
+          cmake --preset linux-analysis
+          -DCMAKE_CXX_COMPILER=clang++-23
+          -DCPP_CLANG_TIDY_EXECUTABLE=/usr/bin/clang-tidy-23
+      - name: Build with analysis
+        run: cmake --build --preset linux-analysis
+      - name: Test analysis build
+        run: ctest --test-dir build/linux-analysis -L CI --output-on-failure
+
+  sanitizers:
+    name: ${{ matrix.name }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: AddressSanitizer
+            preset: linux-asan
+          - name: UndefinedBehaviorSanitizer
+            preset: linux-ubsan
+          - name: ThreadSanitizer
+            preset: linux-tsan
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+      - name: Configure
+        run: cmake --preset ${{ matrix.preset }}
+      - name: Build
+        run: cmake --build --preset ${{ matrix.preset }}
+      - name: Test
+        run: >-
+          ctest --test-dir build/${{ matrix.preset }}
+          -L CI --output-on-failure

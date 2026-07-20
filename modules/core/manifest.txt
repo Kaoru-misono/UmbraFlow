@@ -1,0 +1,7 @@
+[module]
+name = core
+type = static
+version = 0.2.0
+
+[build]
+unity_build = false

@@ -1,0 +1,15 @@
+include_guard(GLOBAL)
+
+include(${CMAKE_CURRENT_LIST_DIR}/compiler-safety-analysis.cmake)
+include(${CMAKE_CURRENT_LIST_DIR}/hardening.cmake)
+include(${CMAKE_CURRENT_LIST_DIR}/sanitizers.cmake)
+include(${CMAKE_CURRENT_LIST_DIR}/static-analysis.cmake)
+include(${CMAKE_CURRENT_LIST_DIR}/warnings.cmake)
+
+function(cpp_apply_safety_profile TARGET_NAME)
+    cpp_apply_warnings(${TARGET_NAME})
+    cpp_apply_hardening(${TARGET_NAME})
+    cpp_apply_sanitizers(${TARGET_NAME})
+    cpp_apply_compiler_safety_analysis(${TARGET_NAME})
+    cpp_apply_static_analysis(${TARGET_NAME})
+endfunction()
