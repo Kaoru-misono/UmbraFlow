@@ -26,6 +26,16 @@ function(cpp_define_module MODULE_ROOT_DIR DIR_NAME)
         set(MODULE_DISPLAY_NAME "${MODULE_NAME}")
     endif()
 
+    cpp_manifest_supports_current_platform(
+        "${MANIFEST_MODULE_PLATFORMS}"
+        MODULE_PLATFORM_SUPPORTED
+    )
+    if(NOT MODULE_PLATFORM_SUPPORTED)
+        cpp_get_platform_key(CURRENT_PLATFORM)
+        message(STATUS "[AutoLoader] Skipping: ${MODULE_DISPLAY_NAME} (unsupported on ${CURRENT_PLATFORM})")
+        return()
+    endif()
+
     cpp_manifest_normalize_module_type("${MANIFEST_MODULE_TYPE}" MODULE_KIND)
 
     message(STATUS "[AutoLoader] Configuring: ${MODULE_DISPLAY_NAME} (v${MODULE_VERSION})")

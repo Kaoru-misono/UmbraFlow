@@ -8,6 +8,7 @@ of `modules/` with a `manifest.txt` becomes a CMake library target named
 entry/${PROJECT_NAME} -> core
 domain                -> core
 vision                -> core, domain
+controller (Windows)  -> core, domain
 tests                 -> modules under test
 ```
 
@@ -20,6 +21,8 @@ not declare link dependencies. `scripts/check_modules.py` enforces both rules.
 - `modules/domain/`: platform-free UmbraFlow frames, coordinates, detections,
   identifiers, leases, and automation errors.
 - `modules/vision/`: platform-free grayscale conversion and SAD template matching.
+- `modules/controller/`: Windows-only discovery and target lifecycle, with capture
+  and strict-background input adapters added in later slices.
 - `entry/`: executable targets and composition roots.
 - `tests/`: deterministic offline tests.
 - `cmake/`: module loading, platform selection, caching, warnings, hardening,
@@ -40,6 +43,10 @@ version = 0.1.0
 [dependencies]
 public = core
 ```
+
+Windows-only modules add `platforms = windows` under `[module]`. The loader
+omits their CMake target on every other host, and consumers gate optional tests
+or composition code on that target's existence.
 
 Place sources under `modules/example/source/example/`. Same-module includes use
 quotes; other project modules use angle brackets. Keep dependency direction

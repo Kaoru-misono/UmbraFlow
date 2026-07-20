@@ -54,6 +54,18 @@ cpp_add_test(
         ${PROJECT_NAME}_vision
 )
 
+if(TARGET ${PROJECT_NAME}_controller)
+    cpp_add_test(
+        NAME test-controller
+        SOURCES
+            controller/test-discovery.cpp
+            controller/test-dpi.cpp
+            controller/test-target.cpp
+        LIBS
+            ${PROJECT_NAME}_controller
+    )
+endif()
+
 find_package(Python3 COMPONENTS Interpreter QUIET)
 if(Python3_Interpreter_FOUND)
     add_test(

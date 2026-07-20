@@ -1,0 +1,11 @@
+[module]
+name = controller
+type = static
+version = 0.1.0
+platforms = windows
+
+[build]
+unity_build = false
+
+[dependencies]
+public = core domain
