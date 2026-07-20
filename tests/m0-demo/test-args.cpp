@@ -13,8 +13,10 @@
 #include <cstdint>
 #include <filesystem>
 #include <initializer_list>
+#include <limits>
 #include <optional>
 #include <ranges>
+#include <span>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -278,4 +280,244 @@ TEST_CASE("m0 arguments reject a threshold above the grayscale range")
         uf::AutomationErrorKind::InvalidResource
     );
     CHECK(result.error().message().find("0..=255") != std::string_view::npos);
+}
+
+TEST_CASE("m0 capture arguments require output and apply capture defaults")
+{
+    auto const raw = argumentsOf(
+        {
+            "--title",
+            "Capture Target",
+            "--out",
+            "capture.png",
+        }
+    );
+    auto const result = uf::m0_demo::parseCaptureArguments(raw);
+
+    REQUIRE(result.has_value());
+    CHECK(result->m_selector.m_title == std::optional<std::string>{"Capture Target"});
+    CHECK(result->m_output == std::filesystem::path{"capture.png"});
+    CHECK(result->m_frames == uf::m0_demo::g_defaultCaptureFrames);
+    CHECK(result->m_interval == uf::m0_demo::g_defaultCaptureInterval);
+    CHECK_FALSE(result->m_log.has_value());
+
+    auto const missingOutput = uf::m0_demo::parseCaptureArguments(
+        std::span<std::string const>{}
+    );
+    REQUIRE_FALSE(missingOutput.has_value());
+    test_m0_demo::requireErrorKind(
+        missingOutput.error(),
+        uf::AutomationErrorKind::InvalidResource
+    );
+}
+
+TEST_CASE("m0 capture arguments reuse selectors and keep the last duplicate")
+{
+    auto const raw = argumentsOf(
+        {
+            "--pid",
+            "10",
+            "--pid",
+            "20",
+            "--hwnd",
+            "12",
+            "--hwnd",
+            "0x1A2B",
+            "--title",
+            "old",
+            "--title",
+            "new",
+            "--out",
+            "old.png",
+            "--out",
+            "new.png",
+            "--frames",
+            "2",
+            "--frames",
+            "3",
+            "--interval-ms",
+            "10",
+            "--interval-ms",
+            "25",
+            "--log",
+            "capture.jsonl",
+        }
+    );
+    auto const result = uf::m0_demo::parseCaptureArguments(raw);
+
+    REQUIRE(result.has_value());
+    CHECK(result->m_selector.m_process == std::optional<std::uint32_t>{20});
+    CHECK(result->m_selector.m_windowHandle == std::optional<std::intptr_t>{0x1A2B});
+    CHECK(result->m_selector.m_title == std::optional<std::string>{"new"});
+    CHECK(result->m_output == std::filesystem::path{"new.png"});
+    CHECK(result->m_frames == 3U);
+    CHECK(
+        result->m_interval
+        == std::chrono::duration_cast<uf::MonotonicInstant::Duration>(
+            std::chrono::milliseconds{25}
+        )
+    );
+    CHECK(result->m_log == std::optional<std::filesystem::path>{"capture.jsonl"});
+}
+
+TEST_CASE("m0 capture arguments fail closed at selector and numeric bounds")
+{
+    auto const cases = std::vector<std::vector<std::string>>{
+        argumentsOf({"--out", "capture.png", "--pid", "not-a-pid"}),
+        argumentsOf({"--out", "capture.png", "--hwnd", "0xnot-a-handle"}),
+        argumentsOf({"--out", "capture.png", "--class", "NotAllowed"}),
+        argumentsOf({"--out", "capture.png", "--frames", "0"}),
+        argumentsOf({"--out", "capture.png", "--frames", "4294967296"}),
+        argumentsOf({"--out", "capture.png", "--interval-ms", "-1"}),
+        argumentsOf(
+            {
+                "--out",
+                "capture.png",
+                "--interval-ms",
+                "18446744073709551615",
+            }
+        ),
+        argumentsOf({"--out", ""}),
+        argumentsOf({"--out"}),
+    };
+
+    for (auto const& raw : cases)
+    {
+        auto const result = uf::m0_demo::parseCaptureArguments(raw);
+        REQUIRE_FALSE(result.has_value());
+        test_m0_demo::requireErrorKind(
+            result.error(),
+            uf::AutomationErrorKind::InvalidResource
+        );
+    }
+
+    auto const boundary = uf::m0_demo::parseCaptureArguments(
+        argumentsOf(
+            {
+                "--out",
+                "capture.png",
+                "--frames",
+                "4294967295",
+                "--interval-ms",
+                "0",
+            }
+        )
+    );
+    REQUIRE(boundary.has_value());
+    CHECK(boundary->m_frames == std::numeric_limits<std::uint32_t>::max());
+    CHECK(boundary->m_interval == uf::MonotonicInstant::Duration::zero());
+}
+
+TEST_CASE("m0 input-agent arguments require file IPC paths and apply defaults")
+{
+    auto const result = uf::m0_demo::parseInputAgentArguments(
+        argumentsOf(
+            {
+                "--hwnd",
+                "0x1A2B",
+                "--queue",
+                "commands.jsonl",
+                "--results",
+                "results.jsonl",
+                "--output-dir",
+                "agent-output",
+            }
+        )
+    );
+
+    REQUIRE(result.has_value());
+    CHECK(result->m_windowHandle == std::intptr_t{0x1A2B});
+    CHECK(result->m_queue == std::filesystem::path{"commands.jsonl"});
+    CHECK(result->m_results == std::filesystem::path{"results.jsonl"});
+    CHECK(result->m_outputDirectory == std::filesystem::path{"agent-output"});
+    CHECK(result->m_idleTimeout == uf::m0_demo::g_defaultInputAgentIdleTimeout);
+}
+
+TEST_CASE("m0 input-agent arguments reject missing and invalid values")
+{
+    auto const cases = std::vector<std::vector<std::string>>{
+        argumentsOf({}),
+        argumentsOf(
+            {
+                "--queue",
+                "commands.jsonl",
+                "--results",
+                "results.jsonl",
+                "--output-dir",
+                "agent-output",
+            }
+        ),
+        argumentsOf(
+            {
+                "--hwnd",
+                "0x1",
+                "--queue",
+                "commands.jsonl",
+                "--results",
+                "results.jsonl",
+            }
+        ),
+        argumentsOf(
+            {
+                "--hwnd",
+                "0x1",
+                "--queue",
+                "commands.jsonl",
+                "--results",
+                "results.jsonl",
+                "--output-dir",
+                "",
+            }
+        ),
+        argumentsOf(
+            {
+                "--hwnd",
+                "0x1",
+                "--queue",
+                "",
+                "--results",
+                "results.jsonl",
+                "--output-dir",
+                "agent-output",
+            }
+        ),
+        argumentsOf(
+            {
+                "--hwnd",
+                "0x1",
+                "--queue",
+                "commands.jsonl",
+                "--results",
+                "results.jsonl",
+                "--output-dir",
+                "agent-output",
+                "--idle-timeout-s",
+                "0",
+            }
+        ),
+        argumentsOf(
+            {
+                "--hwnd",
+                "0x1",
+                "--queue",
+                "commands.jsonl",
+                "--results",
+                "results.jsonl",
+                "--output-dir",
+                "agent-output",
+                "--pid",
+                "1",
+            }
+        ),
+    };
+
+    for (auto const& raw : cases)
+    {
+        auto const result = uf::m0_demo::parseInputAgentArguments(raw);
+        REQUIRE_FALSE(result.has_value());
+        test_m0_demo::requireErrorKind(
+            result.error(),
+            uf::AutomationErrorKind::InvalidResource
+        );
+    }
 }

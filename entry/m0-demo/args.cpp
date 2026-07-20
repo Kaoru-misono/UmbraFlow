@@ -52,6 +52,46 @@ namespace
     }
 
     [[nodiscard]]
+    auto isSelectorFlag(std::string_view flag) noexcept -> bool
+    {
+        auto constexpr flags = std::array<std::string_view, 4>{
+            "--pid",
+            "--hwnd",
+            "--class",
+            "--title",
+        };
+        return std::ranges::find(flags, flag) != flags.end();
+    }
+
+    [[nodiscard]]
+    auto isCaptureValueFlag(std::string_view flag) noexcept -> bool
+    {
+        auto constexpr flags = std::array<std::string_view, 7>{
+            "--pid",
+            "--hwnd",
+            "--title",
+            "--out",
+            "--frames",
+            "--interval-ms",
+            "--log",
+        };
+        return std::ranges::find(flags, flag) != flags.end();
+    }
+
+    [[nodiscard]]
+    auto isInputAgentValueFlag(std::string_view flag) noexcept -> bool
+    {
+        auto constexpr flags = std::array<std::string_view, 5>{
+            "--hwnd",
+            "--queue",
+            "--results",
+            "--output-dir",
+            "--idle-timeout-s",
+        };
+        return std::ranges::find(flags, flag) != flags.end();
+    }
+
+    [[nodiscard]]
     auto invalid(std::string message) -> std::unexpected<uf::Error>
     {
         return uf::fail(
@@ -124,6 +164,39 @@ namespace
     }
 
     [[nodiscard]]
+    auto parseSelectorValue(
+        uf::m0_demo::SelectorArgs& selector,
+        std::string_view flag,
+        std::string const& value
+    ) -> uf::Status
+    {
+        if (flag == "--pid")
+        {
+            UF_TRY_VALUE(parsed, parseInteger<std::uint32_t>(value, flag));
+            selector.m_process = parsed;
+            return uf::ok();
+        }
+        if (flag == "--hwnd")
+        {
+            UF_TRY_VALUE(parsed, parseWindowHandle(value, flag));
+            selector.m_windowHandle = parsed;
+            return uf::ok();
+        }
+        if (flag == "--class")
+        {
+            selector.m_windowClass = value;
+            return uf::ok();
+        }
+        if (flag == "--title")
+        {
+            selector.m_title = value;
+            return uf::ok();
+        }
+
+        return invalid(std::format("unknown selector argument \"{}\"", flag));
+    }
+
+    [[nodiscard]]
     auto parseMode(std::string_view value) -> uf::Result<uf::m0_demo::Mode>
     {
         if (value == "guard")
@@ -143,19 +216,12 @@ namespace
     }
 
     [[nodiscard]]
-    auto parseDuration(
+    auto parseMilliseconds(
         std::string_view value,
         std::string_view flag
     ) -> uf::Result<uf::MonotonicInstant::Duration>
     {
         UF_TRY_VALUE(milliseconds, parseInteger<std::uint64_t>(value, flag));
-        if (milliseconds == 0U)
-        {
-            return invalid(
-                std::format("{} must be a positive millisecond count", flag)
-            );
-        }
-
         using Milliseconds = std::chrono::milliseconds;
         using Duration = uf::MonotonicInstant::Duration;
         auto const maximum = std::chrono::duration_cast<Milliseconds>(Duration::max());
@@ -176,6 +242,52 @@ namespace
         }
 
         return std::chrono::duration_cast<Duration>(Milliseconds{*count});
+    }
+
+    [[nodiscard]]
+    auto parsePositiveDuration(
+        std::string_view value,
+        std::string_view flag
+    ) -> uf::Result<uf::MonotonicInstant::Duration>
+    {
+        UF_TRY_VALUE(duration, parseMilliseconds(value, flag));
+        if (duration == uf::MonotonicInstant::Duration::zero())
+        {
+            return invalid(
+                std::format("{} must be a positive millisecond count", flag)
+            );
+        }
+        return duration;
+    }
+
+    [[nodiscard]]
+    auto parsePositiveSeconds(
+        std::string_view value,
+        std::string_view flag
+    ) -> uf::Result<uf::MonotonicInstant::Duration>
+    {
+        UF_TRY_VALUE(seconds, parseInteger<std::uint64_t>(value, flag));
+        if (seconds == 0U)
+        {
+            return invalid(
+                std::format("{} must be a positive second count", flag)
+            );
+        }
+
+        using Seconds = std::chrono::seconds;
+        using Duration = uf::MonotonicInstant::Duration;
+        auto const maximum = std::chrono::duration_cast<Seconds>(Duration::max());
+        auto const maximumCount = uf::checkedCast<std::uint64_t>(maximum.count());
+        if (!maximumCount || seconds > *maximumCount)
+        {
+            return invalid(std::format("{} second count is too large", flag));
+        }
+        auto const count = uf::checkedCast<Seconds::rep>(seconds);
+        if (!count)
+        {
+            return invalid(std::format("{} second count is too large", flag));
+        }
+        return std::chrono::duration_cast<Duration>(Seconds{*count});
     }
 
     [[nodiscard]]
@@ -345,23 +457,9 @@ namespace uf::m0_demo
             }
             auto const& value = raw[index + 1U];
 
-            if (flag == "--pid")
+            if (isSelectorFlag(flag))
             {
-                UF_TRY_VALUE(parsed, parseInteger<std::uint32_t>(value, flag));
-                selector.m_process = parsed;
-            }
-            else if (flag == "--hwnd")
-            {
-                UF_TRY_VALUE(parsed, parseWindowHandle(value, flag));
-                selector.m_windowHandle = parsed;
-            }
-            else if (flag == "--class")
-            {
-                selector.m_windowClass = value;
-            }
-            else if (flag == "--title")
-            {
-                selector.m_title = value;
+                UF_TRY(parseSelectorValue(selector, flag, value));
             }
             else if (flag == "--home-template")
             {
@@ -407,12 +505,12 @@ namespace uf::m0_demo
             }
             else if (flag == "--max-action-frame-age")
             {
-                UF_TRY_VALUE(parsed, parseDuration(value, flag));
+                UF_TRY_VALUE(parsed, parsePositiveDuration(value, flag));
                 maxActionFrameAge = parsed;
             }
             else if (flag == "--stall-timeout")
             {
-                UF_TRY_VALUE(parsed, parseDuration(value, flag));
+                UF_TRY_VALUE(parsed, parsePositiveDuration(value, flag));
                 stallTimeout = parsed;
             }
             else if (flag == "--click-delay-ms")
@@ -481,6 +579,155 @@ namespace uf::m0_demo
         };
     }
 
+    auto parseCaptureArguments(
+        std::span<std::string const> raw
+    ) -> Result<CaptureArgs>
+    {
+        auto selector = SelectorArgs{};
+        auto output = std::optional<std::filesystem::path>{};
+        auto frames = g_defaultCaptureFrames;
+        auto interval = g_defaultCaptureInterval;
+        auto log = std::optional<std::filesystem::path>{};
+
+        auto index = std::size_t{0};
+        while (index < raw.size())
+        {
+            auto const& flag = raw[index];
+            if (!isCaptureValueFlag(flag))
+            {
+                return invalid(std::format("unknown capture argument \"{}\"", flag));
+            }
+            if (index + 1U >= raw.size())
+            {
+                return invalid(std::format("missing value for {}", flag));
+            }
+            auto const& value = raw[index + 1U];
+
+            if (isSelectorFlag(flag))
+            {
+                UF_TRY(parseSelectorValue(selector, flag, value));
+            }
+            else if (flag == "--out")
+            {
+                output = std::filesystem::path{value};
+            }
+            else if (flag == "--frames")
+            {
+                UF_TRY_VALUE(parsed, parseInteger<std::uint32_t>(value, flag));
+                frames = parsed;
+            }
+            else if (flag == "--interval-ms")
+            {
+                UF_TRY_VALUE(parsed, parseMilliseconds(value, flag));
+                interval = parsed;
+            }
+            else if (flag == "--log")
+            {
+                log = std::filesystem::path{value};
+            }
+            index += 2U;
+        }
+
+        if (frames == 0U)
+        {
+            return invalid("--frames must be at least 1, got 0");
+        }
+
+        UF_TRY_VALUE(requiredOutput, require(std::move(output), "--out"));
+        if (requiredOutput.empty())
+        {
+            return invalid("--out must not be empty");
+        }
+
+        return CaptureArgs{
+            .m_selector = std::move(selector),
+            .m_output = std::move(requiredOutput),
+            .m_frames = frames,
+            .m_interval = interval,
+            .m_log = std::move(log),
+        };
+    }
+
+    auto parseInputAgentArguments(
+        std::span<std::string const> raw
+    ) -> Result<InputAgentArgs>
+    {
+        auto windowHandle = std::optional<std::intptr_t>{};
+        auto queue = std::optional<std::filesystem::path>{};
+        auto results = std::optional<std::filesystem::path>{};
+        auto outputDirectory = std::optional<std::filesystem::path>{};
+        auto idleTimeout = g_defaultInputAgentIdleTimeout;
+
+        auto index = std::size_t{0};
+        while (index < raw.size())
+        {
+            auto const& flag = raw[index];
+            if (!isInputAgentValueFlag(flag))
+            {
+                return invalid(
+                    std::format("unknown input-agent argument \"{}\"", flag)
+                );
+            }
+            if (index + 1U >= raw.size())
+            {
+                return invalid(std::format("missing value for {}", flag));
+            }
+            auto const& value = raw[index + 1U];
+
+            if (flag == "--hwnd")
+            {
+                UF_TRY_VALUE(parsed, parseWindowHandle(value, flag));
+                windowHandle = parsed;
+            }
+            else if (flag == "--queue")
+            {
+                queue = std::filesystem::path{value};
+            }
+            else if (flag == "--results")
+            {
+                results = std::filesystem::path{value};
+            }
+            else if (flag == "--output-dir")
+            {
+                outputDirectory = std::filesystem::path{value};
+            }
+            else if (flag == "--idle-timeout-s")
+            {
+                UF_TRY_VALUE(parsed, parsePositiveSeconds(value, flag));
+                idleTimeout = parsed;
+            }
+            index += 2U;
+        }
+
+        UF_TRY_VALUE(requiredWindowHandle, require(windowHandle, "--hwnd"));
+        UF_TRY_VALUE(requiredQueue, require(std::move(queue), "--queue"));
+        UF_TRY_VALUE(requiredResults, require(std::move(results), "--results"));
+        UF_TRY_VALUE(
+            requiredOutputDirectory,
+            require(std::move(outputDirectory), "--output-dir")
+        );
+        if (requiredQueue.empty())
+        {
+            return invalid("--queue must not be empty");
+        }
+        if (requiredResults.empty())
+        {
+            return invalid("--results must not be empty");
+        }
+        if (requiredOutputDirectory.empty())
+        {
+            return invalid("--output-dir must not be empty");
+        }
+
+        return InputAgentArgs{
+            .m_windowHandle = requiredWindowHandle,
+            .m_queue = std::move(requiredQueue),
+            .m_results = std::move(requiredResults),
+            .m_outputDirectory = std::move(requiredOutputDirectory),
+            .m_idleTimeout = idleTimeout,
+        };
+    }
+
     auto usageText() noexcept -> std::string_view
     {
         return
@@ -503,5 +750,31 @@ namespace uf::m0_demo
             "  --seed N                     Deterministic pacing seed\n"
             "  --log PATH                   Write JSONL to a file instead of stdout\n"
             "  --help                       Show this help without accessing a window\n";
+    }
+
+    auto captureUsageText() noexcept -> std::string_view
+    {
+        return
+            "Usage: m0-demo capture [selector] --out PATH [options]\n"
+            "\n"
+            "Selector (optional; an empty selector requires exactly one candidate):\n"
+            "  --pid N                      Target process id\n"
+            "  --hwnd N|0xHEX               Target window handle\n"
+            "  --title TEXT                 Exact window title\n"
+            "\n"
+            "Options:\n"
+            "  --frames N                   Default: 1; must be at least 1\n"
+            "  --interval-ms N              Default: 0; delay between frames\n"
+            "  --log PATH                   Write JSONL to a file instead of stdout\n";
+    }
+
+    auto inputAgentUsageText() noexcept -> std::string_view
+    {
+        return
+            "Usage: m0-demo input-agent --hwnd N|0xHEX --queue PATH "
+            "--results PATH --output-dir DIR [options]\n"
+            "\n"
+            "Options:\n"
+            "  --idle-timeout-s N           Default: 120; must be positive\n";
     }
 }

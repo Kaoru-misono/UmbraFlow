@@ -1,5 +1,7 @@
 #pragma once
 
+#include "png-limits.hpp"
+
 #include <core/error/result.hpp>
 
 #include <cstddef>
@@ -11,8 +13,8 @@
 
 namespace uf::m0_demo::ffi
 {
-    inline constexpr auto g_maximumTemplateDimension = std::uint32_t{8192};
-    inline constexpr auto g_maximumTemplatePixels = std::size_t{8192} * 8192U;
+    inline constexpr auto g_maximumTemplateDimension = g_maximumPngDimension;
+    inline constexpr auto g_maximumTemplatePixels = g_maximumPngPixels;
     inline constexpr auto g_maximumTemplateFileBytes = std::size_t{64} * 1024U * 1024U;
 
     struct RgbaImage final

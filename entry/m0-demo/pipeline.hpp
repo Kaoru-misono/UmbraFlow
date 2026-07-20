@@ -2,6 +2,7 @@
 
 #include "guard.hpp"
 #include "pacing.hpp"
+#include "target-setup.hpp"
 
 #include <controller/capture.hpp>
 #include <controller/discovery.hpp>
@@ -110,8 +111,6 @@ namespace uf::m0_demo
 
     [[nodiscard]] auto rgbaToBgra(std::vector<std::byte> rgba) -> std::vector<std::byte>;
 
-    [[nodiscard]] auto ensureClientAreaUsable(ClientSize client) -> Status;
-
     [[nodiscard]] auto requireUnchangedTarget(RevalidateOutcome outcome) -> Status;
 
     [[nodiscard]]
@@ -128,8 +127,6 @@ namespace uf::m0_demo
         std::uint32_t templateHeight,
         std::uint64_t maximumAverageSad
     ) noexcept -> std::optional<SadMatch>;
-
-    [[nodiscard]] auto buildSelector(SelectorArgs const& selector) -> TargetSelector;
 
     [[nodiscard]]
     auto cropBgra(

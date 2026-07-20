@@ -1073,22 +1073,6 @@ namespace uf::m0_demo
         return rgba;
     }
 
-    auto ensureClientAreaUsable(ClientSize client) -> Status
-    {
-        if (client.width() == 0U || client.height() == 0U)
-        {
-            return fail(
-                AutomationErrorKind::TargetUnavailable,
-                std::format(
-                    "target client area is empty; minimized? ({}x{})",
-                    client.width(),
-                    client.height()
-                )
-            );
-        }
-        return ok();
-    }
-
     auto requireUnchangedTarget(RevalidateOutcome outcome) -> Status
     {
         switch (outcome)
@@ -1155,28 +1139,6 @@ namespace uf::m0_demo
             return std::nullopt;
         }
         return found;
-    }
-
-    auto buildSelector(SelectorArgs const& selector) -> TargetSelector
-    {
-        auto built = TargetSelector{};
-        if (selector.m_process)
-        {
-            built = built.withProcess(ProcessId{*selector.m_process});
-        }
-        if (selector.m_windowHandle)
-        {
-            built = built.withWindowHandle(WindowHandle{*selector.m_windowHandle});
-        }
-        if (selector.m_windowClass)
-        {
-            built = built.withWindowClass(*selector.m_windowClass);
-        }
-        if (selector.m_title)
-        {
-            built = built.withTitle(*selector.m_title);
-        }
-        return built;
     }
 
     auto cropBgra(

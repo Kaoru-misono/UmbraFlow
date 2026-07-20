@@ -1,5 +1,7 @@
 #include "log-jsonl.hpp"
 
+#include "json-string.hpp"
+
 #include <core/error/contracts.hpp>
 #include <domain/error.hpp>
 #include <domain/time.hpp>
@@ -48,42 +50,6 @@ namespace
         return {};
     }
 
-    [[nodiscard]]
-    auto escapedJsonString(std::string_view value) -> std::string
-    {
-        auto output = std::string{"\""};
-        output.reserve(value.size() + 2U);
-        auto constexpr hex = std::string_view{"0123456789abcdef"};
-        for (auto const character : value)
-        {
-            auto const byte = static_cast<unsigned char>(character);
-            switch (byte)
-            {
-            case '"': output += "\\\""; break;
-            case '\\': output += "\\\\"; break;
-            case '\b': output += "\\b"; break;
-            case '\f': output += "\\f"; break;
-            case '\n': output += "\\n"; break;
-            case '\r': output += "\\r"; break;
-            case '\t': output += "\\t"; break;
-            default:
-                if (byte < 0x20U)
-                {
-                    output += "\\u00";
-                    output += hex[byte >> 4U];
-                    output += hex[byte & 0x0FU];
-                }
-                else
-                {
-                    output += static_cast<char>(byte);
-                }
-                break;
-            }
-        }
-        output += '"';
-        return output;
-    }
-
     template <typename Value>
     auto appendOptionalNumber(
         std::string& output,
@@ -114,9 +80,9 @@ namespace
         output += ",\"loop_idx\":";
         appendOptionalNumber(output, line.m_loopIndex);
         output += ",\"phase\":";
-        output += escapedJsonString(line.m_phase);
+        output += uf::m0_demo::escapeJsonString(line.m_phase);
         output += ",\"event\":";
-        output += escapedJsonString(line.m_event);
+        output += uf::m0_demo::escapeJsonString(line.m_event);
         output += ",\"frame_id\":";
         appendOptionalNumber(output, line.m_frameId);
         output += ",\"target_generation\":";
@@ -126,9 +92,9 @@ namespace
         output += ",\"lease_ok\":";
         appendOptionalBoolean(output, line.m_leaseOk);
         output += ",\"outcome\":";
-        output += escapedJsonString(line.m_outcome);
+        output += uf::m0_demo::escapeJsonString(line.m_outcome);
         output += ",\"detail\":";
-        output += escapedJsonString(line.m_detail);
+        output += uf::m0_demo::escapeJsonString(line.m_detail);
         output += '}';
         return output;
     }
@@ -260,7 +226,7 @@ namespace uf::m0_demo
         {
             return
                 "{\"event\":\"log_serialize_error\",\"detail\":"
-                + escapedJsonString(error.what())
+                + escapeJsonString(error.what())
                 + '}';
         }
     }

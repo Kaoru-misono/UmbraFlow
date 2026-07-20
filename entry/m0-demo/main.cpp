@@ -1,5 +1,7 @@
 #include "args.hpp"
+#include "capture-mode.hpp"
 #include "guard.hpp"
+#include "input-agent.hpp"
 #include "log-jsonl.hpp"
 #include "pipeline.hpp"
 #include "shutdown.hpp"
@@ -262,6 +264,35 @@ auto main(int argumentCount, char const* const* p_arguments) -> int
         {
             raw.emplace_back(p_arguments[index]);
         }
+        if (!raw.empty() && raw.front() == "capture")
+        {
+            auto const captureRaw = std::span<std::string const>{raw}.subspan(1);
+            auto const outcome = uf::m0_demo::runCapture(captureRaw);
+            if (!outcome)
+            {
+                std::cerr
+                    << "m0-demo capture error: "
+                    << uf::m0_demo::formatAutomationError(outcome.error())
+                    << '\n';
+                return EXIT_FAILURE;
+            }
+            return EXIT_SUCCESS;
+        }
+        if (!raw.empty() && raw.front() == "input-agent")
+        {
+            auto const agentRaw = std::span<std::string const>{raw}.subspan(1);
+            auto const outcome = uf::m0_demo::runInputAgent(agentRaw);
+            if (!outcome)
+            {
+                std::cerr
+                    << "m0-demo input-agent error: "
+                    << uf::m0_demo::formatAutomationError(outcome.error())
+                    << '\n';
+                return EXIT_FAILURE;
+            }
+            return EXIT_SUCCESS;
+        }
+
         auto const outcome = run(raw);
         if (!outcome)
         {

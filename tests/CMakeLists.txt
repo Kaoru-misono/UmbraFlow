@@ -80,10 +80,13 @@ if(TARGET ${PROJECT_NAME}_m0_demo_support)
         NAME test-m0-demo
         SOURCES
             m0-demo/test-args.cpp
+            m0-demo/test-capture-mode.cpp
             m0-demo/test-guard.cpp
+            m0-demo/test-input-agent.cpp
             m0-demo/test-log-jsonl.cpp
             m0-demo/test-pacing.cpp
             m0-demo/test-pipeline.cpp
+            m0-demo/test-png-encoder.cpp
             m0-demo/test-shutdown.cpp
         LIBS
             ${PROJECT_NAME}_m0_demo_support

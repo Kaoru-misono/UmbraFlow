@@ -6,6 +6,7 @@
 #include <core/time/monotonic-time.hpp>
 #include <domain/space.hpp>
 
+#include <chrono>
 #include <cstdint>
 #include <filesystem>
 #include <optional>
@@ -15,6 +16,14 @@
 
 namespace uf::m0_demo
 {
+    inline constexpr auto g_defaultCaptureFrames = std::uint32_t{1};
+    inline constexpr auto g_defaultCaptureInterval = MonotonicInstant::Duration::zero();
+    inline constexpr auto g_defaultInputAgentIdleTimeout = (
+        std::chrono::duration_cast<MonotonicInstant::Duration>(
+            std::chrono::seconds{120}
+        )
+    );
+
     enum class Mode
     {
         Guard,
@@ -52,8 +61,42 @@ namespace uf::m0_demo
         auto operator==(Args const&) const -> bool = default;
     };
 
+    struct CaptureArgs final
+    {
+        SelectorArgs m_selector;
+        std::filesystem::path m_output;
+        std::uint32_t m_frames;
+        MonotonicInstant::Duration m_interval;
+        std::optional<std::filesystem::path> m_log;
+
+        auto operator==(CaptureArgs const&) const -> bool = default;
+    };
+
+    struct InputAgentArgs final
+    {
+        std::intptr_t m_windowHandle;
+        std::filesystem::path m_queue;
+        std::filesystem::path m_results;
+        std::filesystem::path m_outputDirectory;
+        MonotonicInstant::Duration m_idleTimeout;
+
+        auto operator==(InputAgentArgs const&) const -> bool = default;
+    };
+
     [[nodiscard]]
     auto parseArguments(std::span<std::string const> raw) -> Result<Args>;
 
+    [[nodiscard]]
+    auto parseCaptureArguments(
+        std::span<std::string const> raw
+    ) -> Result<CaptureArgs>;
+
+    [[nodiscard]]
+    auto parseInputAgentArguments(
+        std::span<std::string const> raw
+    ) -> Result<InputAgentArgs>;
+
     [[nodiscard]] auto usageText() noexcept -> std::string_view;
+    [[nodiscard]] auto captureUsageText() noexcept -> std::string_view;
+    [[nodiscard]] auto inputAgentUsageText() noexcept -> std::string_view;
 }

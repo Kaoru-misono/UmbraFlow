@@ -16,13 +16,29 @@ if(TARGET ${PROJECT_NAME}_controller)
     add_library(${M0_DEMO_LIBRARY} STATIC
         m0-demo/args.cpp
         m0-demo/args.hpp
+        m0-demo/capture-mode.cpp
+        m0-demo/capture-mode.hpp
+        m0-demo/capture-output.cpp
+        m0-demo/capture-output.hpp
         m0-demo/ffi/external/stb_image.h
+        m0-demo/ffi/external/stb_image_write.h
         m0-demo/ffi/png-decoder.cpp
         m0-demo/ffi/png-decoder.hpp
+        m0-demo/ffi/png-encoder.cpp
+        m0-demo/ffi/png-encoder.hpp
+        m0-demo/ffi/png-limits.hpp
         m0-demo/guard.cpp
         m0-demo/guard.hpp
+        m0-demo/input-agent.cpp
+        m0-demo/input-agent.hpp
+        m0-demo/input-agent-protocol.cpp
+        m0-demo/input-agent-protocol.hpp
+        m0-demo/json-string.cpp
+        m0-demo/json-string.hpp
         m0-demo/log-jsonl.cpp
         m0-demo/log-jsonl.hpp
+        m0-demo/path-validation.cpp
+        m0-demo/path-validation.hpp
         m0-demo/pacing.cpp
         m0-demo/pacing.hpp
         m0-demo/pipeline.cpp
@@ -31,10 +47,16 @@ if(TARGET ${PROJECT_NAME}_controller)
         m0-demo/platform/windows-background-messages.hpp
         m0-demo/platform/windows-console-control.cpp
         m0-demo/platform/windows-console-control.hpp
+        m0-demo/platform/windows-file-writer.cpp
+        m0-demo/platform/windows-file-writer.hpp
         m0-demo/platform/windows-guard.cpp
         m0-demo/platform/windows-guard.hpp
+        m0-demo/platform/windows-path.cpp
+        m0-demo/platform/windows-path.hpp
         m0-demo/shutdown.cpp
         m0-demo/shutdown.hpp
+        m0-demo/target-setup.cpp
+        m0-demo/target-setup.hpp
     )
     cpp_apply_safety_profile(${M0_DEMO_LIBRARY})
     target_include_directories(${M0_DEMO_LIBRARY}
