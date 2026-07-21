@@ -13,14 +13,23 @@
       **返回 `LUA_OK` = 被吞掉**;而 interrupt 里 `lua_yield` 打断死循环、宿主丢弃该线程不再 resume,
       yield 不是 Lua error、Luau 的 pcall 可穿透 yield,故 pcall 吞不掉。D4 Tier C 已规定正确一侧,
       风险纯在实现纪律。前提:任务必须跑在 coroutine / `lua_resume` 上(主 state 上 `lua_yield` 会抛)。
+      **✅ 2026-07-21 spike 实测确认(MSVC/0.730)**:具体原语用 **`lua_break`**(设 `L->status=LUA_BREAK`、
+      不走 `luaD_throw`,比 yield 更干净)——对 `pcall(function() while true do end end)` 500ms 硬停、
+      pcall 抓不到;`luaL_error` 版同一循环被 pcall 吞(返回 LUA_OK)。见
+      [`2026-07-21-luau-integration-plan.md`](2026-07-21-luau-integration-plan.md) §1。
 
 ## 沙箱
 
 - [ ] **宿主 `umbra.*` API 表逐层递归 freeze**。`luaL_sandbox` 只冻内置库/内置 metatable/全局表;
       "递归 readonly" 要宿主自己遍历每张嵌套表 `table.freeze`/设只读。漏一张嵌套表 = 一个 monkey-patch /
       跨运行泄漏洞。加一条显式沙箱测试覆盖嵌套表不可写。
+- [ ] **显式 nil 掉 `luaL_sandbox` 不移除的 5 个全局**(2026-07-21 spike 实测:0.730 上它们仍存活):
+      `getfenv`、`setfenv`、`newproxy`、`coroutine`、`debug`。尤其 **coroutine**(脚本自开协程逃出宿主
+      interrupt 取消,D5 依赖)与 **debug**(卸钩子/越界,D9)。`io`/`package`/`require`/`load*`/`dofile`/
+      `loadfile`/`collectgarbage` 与 `os.execute/getenv/remove/exit` 已被 `luaL_sandbox` 移除、`os.time` 保留,
+      无需再处理。见 [`2026-07-21-luau-integration-plan.md`](2026-07-21-luau-integration-plan.md) §1/§4。
 - [ ] 只收源码、`luaL_sandboxthread` 隔离脚本全局、移除 bytecode 摄取(`string.dump`/load-bytecode)——
-      已在裁决内,实现时确认。
+      已在裁决内,实现时确认(spike 已确认 sandbox 下无 `load`/`loadstring`,脚本侧无法喂 bytecode)。
 - [ ] 记账 allocator 必装:Luau **默认无内存上限**,靠宿主装记账 allocator 才能兑现"无限分配只终止该任务"。
 
 ## 硬取消 / interrupt

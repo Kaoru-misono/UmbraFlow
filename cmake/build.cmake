@@ -40,6 +40,19 @@ function(cpp_define_module MODULE_ROOT_DIR DIR_NAME)
 
     message(STATUS "[AutoLoader] Configuring: ${MODULE_DISPLAY_NAME} (v${MODULE_VERSION})")
 
+    # April2 convention: a module owns its vendored third-party under external/.
+    # When that directory carries a CMakeLists.txt, build it here (Pass 1: Define)
+    # so its targets exist before this module is linked (Pass 2). This keeps a
+    # single-module library confined to the module — nothing leaks to the
+    # top-level build; the module still declares the concrete targets it links
+    # in its manifest [dependencies].
+    if(EXISTS "${MODULE_PATH}/external/CMakeLists.txt")
+        add_subdirectory(
+            "${MODULE_PATH}/external"
+            "${CMAKE_BINARY_DIR}/modules/${DIR_NAME}/external"
+        )
+    endif()
+
     file(GLOB_RECURSE SRC_FILES CONFIGURE_DEPENDS
         "${MODULE_PATH}/source/*.cpp"
     )

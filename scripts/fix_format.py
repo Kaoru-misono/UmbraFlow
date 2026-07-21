@@ -46,6 +46,7 @@ EXCLUDED_DIRECTORY_NAMES = {
     ".vscode",
     "__pycache__",
     "build",
+    "external",
     "install",
 }
 EXCLUDED_PREFIXES = {

@@ -14,8 +14,11 @@ location required by `CLAUDE.md` and `AGENTS.md`.
 
 Active implementation plans (not authorities, executed when entering the phase):
 
+- [Luau integration plan](2026-07-21-luau-integration-plan.md) — P0-B foundation: submodule +
+  `modules/script` layout, sandbox/cancellation recipe, with the two load-bearing vetoes
+  (lua_break cancel, sandbox nil-list) **empirically verified** on MSVC/0.730 via a spike.
 - [P0-B Luau hardening ledger](2026-07-21-p0b-luau-hardening-ledger.md) — implementation-time
-  checklist from two independent reviews of the Luau decision (cancel yield-abandon, deep-freeze,
+  checklist from two independent reviews of the Luau decision (cancel via lua_break, deep-freeze,
   determinism gaps); apply during P0-B.
 - [UI verification runbook](2026-07-20-ui-verification-runbook.md) — real-machine before/after
   click acceptance procedure.

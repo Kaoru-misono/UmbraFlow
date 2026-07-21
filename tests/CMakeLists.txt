@@ -55,6 +55,16 @@ cpp_add_test(
         ${PROJECT_NAME}_vision
 )
 
+if(TARGET ${PROJECT_NAME}_script)
+    cpp_add_test(
+        NAME test-script
+        SOURCES
+            script/test-script.cpp
+        LIBS
+            ${PROJECT_NAME}_script
+    )
+endif()
+
 if(TARGET ${PROJECT_NAME}_controller)
     cpp_add_test(
         NAME test-controller

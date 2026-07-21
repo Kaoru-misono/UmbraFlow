@@ -1,0 +1,3 @@
+[submodule "external/luau"]
+	path = modules/script/external/luau
+	url = https://github.com/luau-lang/luau.git
