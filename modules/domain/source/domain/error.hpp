@@ -41,7 +41,7 @@ namespace uf
         auto operator==(AutomationError const&) const -> bool = default;
 
         [[nodiscard]] auto kind() const noexcept -> AutomationErrorKind;
-        [[nodiscard]] auto message() const UF_LIFETIME_BOUND noexcept -> std::string_view;
+        [[nodiscard]] auto message() const noexcept UF_LIFETIME_BOUND -> std::string_view;
 
         [[nodiscard]] static auto staleObservation(std::string message) -> AutomationError;
         [[nodiscard]] static auto actionRejected(std::string message) -> AutomationError;

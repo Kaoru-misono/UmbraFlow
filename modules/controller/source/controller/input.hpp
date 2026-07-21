@@ -190,7 +190,7 @@ namespace uf
         // CONSTRAINT: Any subsequent audited delivery may grow m_records and
         // invalidate this span. Do not retain it across further input calls.
         [[nodiscard]]
-        auto records() const UF_LIFETIME_BOUND noexcept -> std::span<AuditRecord const>;
+        auto records() const noexcept UF_LIFETIME_BOUND -> std::span<AuditRecord const>;
         [[nodiscard]] auto size() const noexcept -> std::size_t;
         [[nodiscard]] auto empty() const noexcept -> bool;
     };

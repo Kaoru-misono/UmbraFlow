@@ -54,12 +54,12 @@ namespace uf
 
         [[nodiscard]] auto code() const noexcept -> ErrorCode;
         [[nodiscard]] auto detailCode() const noexcept -> std::error_code;
-        [[nodiscard]] auto message() const UF_LIFETIME_BOUND noexcept -> std::string_view;
+        [[nodiscard]] auto message() const noexcept UF_LIFETIME_BOUND -> std::string_view;
         [[nodiscard]] auto nativeCode() const noexcept -> std::int64_t;
         [[nodiscard]] auto location() const noexcept -> std::source_location;
         // SAFETY: The returned span is invalidated by any subsequent addContext() call.
         [[nodiscard]]
-        auto context() const UF_LIFETIME_BOUND noexcept -> std::span<std::string const>;
+        auto context() const noexcept UF_LIFETIME_BOUND -> std::span<std::string const>;
 
         auto addContext(std::string context) UF_LIFETIME_BOUND -> Error&;
     };

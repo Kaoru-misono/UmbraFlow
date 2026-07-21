@@ -16,6 +16,44 @@ import check_safety
 
 
 class SafetyRuleTests(unittest.TestCase):
+    def test_nodiscard_declaration_covers_friend_redeclaration(self) -> None:
+        content = """class Store final
+{
+    friend auto loadValue(int key) -> Result<std::optional<int>>;
+};
+
+[[nodiscard]]
+auto loadValue(int key) -> Result<std::optional<int>>;
+"""
+
+        actual = check_safety.missing_must_use_nodiscard_lines(content)
+
+        self.assertEqual(actual, [])
+
+    def test_unannotated_must_use_function_is_reported(self) -> None:
+        content = (
+            "auto loadValue() const noexcept UF_LIFETIME_BOUND "
+            "-> std::optional<std::span<int>>;\n"
+        )
+
+        actual = check_safety.missing_must_use_nodiscard_lines(content)
+
+        self.assertEqual(actual, [1])
+
+    def test_nodiscard_overload_does_not_cover_friend_redeclaration(self) -> None:
+        content = """[[nodiscard]]
+auto loadValue(int key) -> Result<int>;
+
+class Store final
+{
+    friend auto loadValue(std::string key) -> Result<int>;
+};
+"""
+
+        actual = check_safety.missing_must_use_nodiscard_lines(content)
+
+        self.assertEqual(actual, [6])
+
     def test_adr_011_forbidden_identifier_list(self) -> None:
         actual = tuple(
             rule.pattern.pattern

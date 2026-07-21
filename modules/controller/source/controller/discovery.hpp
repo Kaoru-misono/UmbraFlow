@@ -82,11 +82,11 @@ namespace uf
         [[nodiscard]]
         auto processStartTime() const noexcept -> std::optional<ProcessStartTime>;
         [[nodiscard]]
-        auto executablePath() const UF_LIFETIME_BOUND noexcept
+        auto executablePath() const noexcept UF_LIFETIME_BOUND
             -> std::optional<std::filesystem::path> const&;
         [[nodiscard]]
-        auto windowClass() const UF_LIFETIME_BOUND noexcept -> std::string const&;
-        [[nodiscard]] auto title() const UF_LIFETIME_BOUND noexcept -> std::string const&;
+        auto windowClass() const noexcept UF_LIFETIME_BOUND -> std::string const&;
+        [[nodiscard]] auto title() const noexcept UF_LIFETIME_BOUND -> std::string const&;
         [[nodiscard]] auto clientSize() const noexcept -> ClientSize;
         [[nodiscard]] auto dpi() const noexcept -> Dpi;
         [[nodiscard]] auto isVisible() const noexcept -> bool;

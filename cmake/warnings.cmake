@@ -6,6 +6,8 @@ function(cpp_apply_warnings TARGET_NAME)
     if(MSVC)
         set(WARNING_OPTIONS
             /EHsc
+            /external:env:INCLUDE
+            /external:W0
             /MP
             /W4
             /permissive-

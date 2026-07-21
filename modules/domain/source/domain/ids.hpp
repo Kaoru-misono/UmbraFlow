@@ -49,7 +49,7 @@ namespace uf
         [[nodiscard]] static auto create(std::string value) -> Result<Label>;
 
         [[nodiscard]]
-        auto value() const UF_LIFETIME_BOUND noexcept -> std::string const&;
+        auto value() const noexcept UF_LIFETIME_BOUND -> std::string const&;
     };
 
     [[nodiscard]]

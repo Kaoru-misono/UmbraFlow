@@ -32,10 +32,10 @@ namespace uf
         [[nodiscard]] auto process() const noexcept -> std::optional<ProcessId>;
         [[nodiscard]] auto windowHandle() const noexcept -> std::optional<WindowHandle>;
         [[nodiscard]]
-        auto windowClass() const UF_LIFETIME_BOUND noexcept
+        auto windowClass() const noexcept UF_LIFETIME_BOUND
             -> std::optional<std::string> const&;
         [[nodiscard]]
-        auto title() const UF_LIFETIME_BOUND noexcept -> std::optional<std::string> const&;
+        auto title() const noexcept UF_LIFETIME_BOUND -> std::optional<std::string> const&;
 
         [[nodiscard]] auto matches(TargetCandidate const& candidate) const noexcept -> bool;
     };
@@ -100,7 +100,7 @@ namespace uf
             InstanceUnconfirmed,
         };
 
-        [[nodiscard]] friend auto resolveTarget(
+        friend auto resolveTarget(
             std::span<TargetCandidate const> candidates,
             TargetSelector const& selector
         ) -> Result<ResolvedTarget>;
@@ -119,7 +119,7 @@ namespace uf
         [[nodiscard]] auto clientSize() const noexcept -> ClientSize;
         [[nodiscard]] auto currentGeneration() const noexcept -> TargetGeneration;
         [[nodiscard]]
-        auto identity() const UF_LIFETIME_BOUND noexcept -> TargetIdentity const&;
+        auto identity() const noexcept UF_LIFETIME_BOUND -> TargetIdentity const&;
         [[nodiscard]] auto requiresReresolution() const noexcept -> bool;
 
         [[nodiscard]]

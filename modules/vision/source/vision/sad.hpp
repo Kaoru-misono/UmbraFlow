@@ -51,7 +51,6 @@ namespace uf
     // every matcher call that uses it.
     class GrayImage final
     {
-        [[nodiscard]]
         friend auto matchTemplateSad(
             GrayImage const& haystack,
             GrayImage const& templateImage,
@@ -81,7 +80,7 @@ namespace uf
             std::size_t y,
             std::size_t x,
             std::size_t width
-        ) const UF_LIFETIME_BOUND noexcept -> std::optional<std::span<std::byte const>>;
+        ) const noexcept UF_LIFETIME_BOUND -> std::optional<std::span<std::byte const>>;
 
         [[nodiscard]]
         auto candidateSad(

@@ -69,16 +69,46 @@ RULES = (
 
 MUST_USE_FUNCTION = re.compile(
     r"(?P<nodiscard>\[\[nodiscard(?:\([^\]]*\))?\]\]\s*)?"
-    r"(?:(?:inline|static|constexpr|friend)\s+)*"
-    r"auto\s+[A-Za-z_~][A-Za-z0-9_:~]*\s*"
-    r"\([^;{}]*\)\s*"
+    r"(?P<specifiers>(?:(?:inline|static|constexpr|friend)\s+)*)"
+    r"auto\s+(?P<name>[A-Za-z_~][A-Za-z0-9_:~]*)\s*"
+    r"(?P<parameters>\([^;{}]*\))\s*"
     r"(?:const\s*)?"
     r"(?:noexcept(?:\s*\([^;{}]*\))?\s*)?"
+    r"(?:UF_LIFETIME_BOUND\s*)?"
     r"->\s*"
     r"(?:[A-Za-z_][A-Za-z0-9_:]*::)?"
     r"(?:Result\s*<|Status\b|std::optional\s*<)",
     re.DOTALL,
 )
+
+
+def missing_must_use_nodiscard_lines(masked_content: str) -> list[int]:
+    matches = list(MUST_USE_FUNCTION.finditer(masked_content))
+    annotated_functions = {
+        (
+            match.group("name"),
+            re.sub(r"\s+", " ", match.group("parameters")),
+        )
+        for match in matches
+        if match.group("nodiscard") is not None
+    }
+    missing_lines: list[int] = []
+
+    for match in matches:
+        function_key = (
+            match.group("name"),
+            re.sub(r"\s+", " ", match.group("parameters")),
+        )
+        if match.group("nodiscard") is not None:
+            continue
+
+        specifiers = match.group("specifiers").split()
+        if "friend" in specifiers and function_key in annotated_functions:
+            continue
+
+        missing_lines.append(masked_content.count("\n", 0, match.start()) + 1)
+
+    return missing_lines
 
 
 def strip_line_comment(line: str) -> str:
@@ -192,10 +222,7 @@ def main() -> int:
 
         if path.suffix == ".hpp":
             masked_content = "\n".join(code_lines)
-            for match in MUST_USE_FUNCTION.finditer(masked_content):
-                if match.group("nodiscard") is not None:
-                    continue
-                line_number = masked_content.count("\n", 0, match.start()) + 1
+            for line_number in missing_must_use_nodiscard_lines(masked_content):
                 violations.append(
                     f"{relative.as_posix()}:{line_number}: Result, Status, and optional "
                     "functions must be [[nodiscard]]"
