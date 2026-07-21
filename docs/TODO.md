@@ -1,63 +1,55 @@
-# UmbraFlow C++ — 待办事项
+# UmbraFlow C++ — 当前执行清单
 
-> 状态基线：2026-07-20。Rust→C++ 移植已完成并提交（domain / vision /
-> controller / m0-demo，5 个 commit + clangd 修复 + capture/input-agent）。
-> 从零构建 8/8 CI 全绿。下面是尚未完成的工作，按优先级排列。
+> 状态基线:2026-07-21。产品方向与阶段退出标准以
+> [`2026-07-21-product-form-and-roadmap.md`](plans/2026-07-21-product-form-and-roadmap.md) 为唯一权威;
+> Luau 任务语义以
+> [`2026-07-21-lua-task-model-grill-decisions.md`](plans/2026-07-21-lua-task-model-grill-decisions.md) 为实现层存款。
+> 本文件只记录执行顺序,不重复维护产品裁决。
 
-## 1. 真机验收（当前唯一在途，需开发者启动一次提权）
+## 0. 现有底座与真机收尾
 
-AI 无法自我提权（Claude Code 安全分类器硬拦），所以提权 input-agent 由开发者
-手动启动一次，之后 AI 非提权驱动。步骤见
-[`docs/plans/2026-07-20-ui-verification-runbook.md`](plans/2026-07-20-ui-verification-runbook.md)。
+- [x] Rust→C++ 移植:domain / vision / controller / m0-demo。
+- [x] WGC 真机截图:卡厄斯梦境 1600×900 客户区已验证。
+- [ ] 完成提权 input-agent 的后台点击 before/after 验收,步骤见
+      [`2026-07-20-ui-verification-runbook.md`](plans/2026-07-20-ui-verification-runbook.md)。
+- [ ] 在 P0-C 前补遮挡、最小化/CaptureStalled、投递中 Ctrl-C 与 10–20 分钟长程验证。
 
-- [ ] 开发者跑 runbook 里的那条提权启动命令（一次 UAC）。
-- [ ] AI 驱动 UI 验证：点头像切角色、点标签切内容，带前后对比图给结论。
-- [ ] （可选，源自 Rust U1）guard/coexist 循环、100 连环、遮挡/最小化、
-      live WGC stall、投递中 Ctrl-C——这些需要真实模板与场景。
+## 1. P0-A — 可视化标注系统
 
-## 2. 产品重定义 — Lua 任务模型（承重墙，下一步）
+- [ ] 落锤 manifest/annotation schema、ROI 坐标语义、page signature 组合规则与 authoring UI 技术栈。
+- [ ] 独立 GUI:WGC 抓帧/导入图片、样本列表、画布缩放/平移、框选编辑、undo/redo。
+- [ ] 标注类型:`page_anchor`、`action_target`、`info_region`;属性面板编辑 page、识别方式、阈值及
+      required/forbidden 关系。
+- [ ] 一键生成/更新模板、manifest 与 page signature,无需手改配置。
+- [ ] 使用 runtime 同一识别器 Preview/Test,显示命中框、confidence、Unknown/Ambiguous 原因。
+- [ ] 建立卡厄斯梦境关键页面的正例、负例和易混淆静态截图回归集。
 
-先设计后编码。grill 议程（12 个待敲定问题 + 我的草案立场）见
-[`docs/plans/2026-07-20-lua-task-model-grill.md`](plans/2026-07-20-lua-task-model-grill.md)。
+## 2. P0-B — Luau Engine
 
-- [ ] grill 敲定 Lua API 面：`observe/act/wait` 形态、命令式脚本里怎么保住
-      "不对失效观察下手"（租约 + 全量 trace）、模板放项目包、错误模型、
-      协程取消、弹窗 interrupt、沙箱边界。
-- [ ] 技术底座：Lua 5.4 + sol2。
-- [ ] 日志架构：trace=JSONL、诊断=借 April2 logger、统一 sink 分发
-      （见 memory umbraflow-logging-decision）。
+- [ ] 固定 Luau 精确版本,接入 compiler/VM 与 `IScriptRuntime` 可序列化边界。
+- [ ] 最小 capability API 与 observe/act/wait 引擎循环;manifest 只读 recognizer/page 句柄。
+- [ ] 每任务 VM generation、allocator 配额、interrupt 硬取消、逻辑时钟/RNG 与 generation 热加载。
+- [ ] Fake Controller 帧序列、结构化 trace、资源快照和静态截图回归接入 CI。
+- [ ] 能力/兼容性门、恒等 `CoordinateTransform`、租约校验与动作后强制作废观察。
+- [ ] 通过 Roadmap 第五节的 6 条 Luau 一票否决验证。
 
-## 3. 产品重定义 — 框架层（Rust 从未实现，全新设计）
+## 3. P0-C — 卡厄斯梦境完整每日
 
-- [ ] **执行引擎**：把 m0-demo 的固定循环抽成"读 Lua 脚本、驱动
-      observe/act 周期"的通用引擎（取消/暂停/超时、变量/子任务）。
-- [ ] **Fake Controller**：脚本化帧序列，让 runtime/任务逻辑脱真机可测
-      （力量倍增器——把开发者从"唯一真机测试者"的瓶颈里解放）。
-- [ ] **trace + 关键帧 + 离线回放**。
-- [ ] **实时调试浮层**（游戏窗口上画识别框/状态；WDA_EXCLUDEFROMCAPTURE +
-      WS_EX_NOACTIVATE，不违反后台纪律）。
-- [ ] **能力/兼容性门**（分辨率/目标 fail-closed 校验）。
+- [ ] 分解签到、每日面板、逐项前往、战斗、等结算、领奖、回主界面的真实流程与接管起点。
+- [ ] 用 P0-A 制作全部页面、控件和信息区域资产;文字读取确实阻塞时才提前引入 OCR。
+- [ ] 用 Luau 写完整每日;P0 允许弹窗 `if` 与同文件复制,不提前建设 P1 抽象。
+- [ ] 全程后台、不抢焦点;Unknown/Ambiguous/StaleObservation 均 fail-closed 并留下可诊断 trace。
+- [ ] 整套每日连续稳定跑完一轮,Ctrl-C 500ms 内退出,单轮 10–20 分钟。
 
-## 4. 产品重定义 — 能力模块（可选，日常好用的门槛）
+## 4. P1–P3 后续
 
-- [ ] **分辨率自适应**（现为不匹配即拒；ok-script 的教训是这样日常很烦）。
-- [ ] **OCR**（读数字/文字状态，许多真实任务需要）。
-- [ ] **标注工具**（截图→框选→出模板+元数据；capture 模式已是上游第一块砖）。
-- [ ] **HTML 运行报告**（把 trace 渲染成可点开的时间线）。
-- [ ] **调试 GUI 窗口 / 托盘**（Dear ImGui + D3D11；只读消费 Engine 事件）。
+- [ ] P1:弹窗 interrupt、跨文件子任务、均匀缩放自适应、按需 OCR、标注批量维护与 confusion 诊断。
+- [ ] P2:托盘 App、项目/任务入口、运行时浮层、HTML trace 报告、计划任务、portable/installer。
+- [ ] P3:第二个游戏验证核心零游戏分支。
 
-## 5. 延迟的健壮性项（移植期记录，产品阶段回填）
+## 延迟的健壮性台账
 
-见两份台账：
-
-- [`docs/plans/2026-07-20-post-port-win32-robustness.md`](plans/2026-07-20-post-port-win32-robustness.md)
-  —— HWND 复用竞态、best-effort Up 补发、DPI 边界等（均忠实照搬 Rust，
-  非移植缺陷）。
-- [`docs/plans/2026-07-20-m0-demo-port-deviations.md`](plans/2026-07-20-m0-demo-port-deviations.md)
-  —— 消息措辞、病理输入解析、尺寸配额等有意偏差。
-
-## 杂项
-
-- [ ] LICENSE 版权人已填 Kaoru-misono（MIT）。
-- [ ] `.claude/settings.json` 的提权权限规则是本地授权，不入版控。
-- [ ] Rust 仓库（E:\github\UmbraFlow）已冻结，README 顶部有指向说明。
+- [`2026-07-20-post-port-win32-robustness.md`](plans/2026-07-20-post-port-win32-robustness.md)
+  —— HWND 复用竞态、best-effort Up、DPI 与 capture 取消边界。
+- [`2026-07-20-m0-demo-port-deviations.md`](plans/2026-07-20-m0-demo-port-deviations.md)
+  —— 移植期有意偏差与后续清理项。
