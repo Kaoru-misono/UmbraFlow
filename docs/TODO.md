@@ -14,8 +14,10 @@
 
 - [x] Rust→C++ 移植:domain / vision / controller / m0-demo。
 - [x] WGC 真机截图:卡厄斯梦境 1600×900 客户区已验证。
-- [ ] 完成提权 input-agent 的后台点击 before/after 验收,步骤见
-      [`2026-07-20-ui-verification-runbook.md`](plans/2026-07-20-ui-verification-runbook.md)。
+- [x] 完成提权 input-agent 的后台点击 before/after 验收(2026-07-21 通过):头像切换 ×3、
+      标签切换 ×3、模态识别+安全关闭;严格后台 PostMessage 投递、K2 delta=0;真机首次触发
+      租约 fail-closed(StaleObservation)。发现 WGC 静态页 stall,记入
+      [`2026-07-20-post-port-win32-robustness.md`](plans/2026-07-20-post-port-win32-robustness.md)。
 - [ ] 在 P0-C 前补遮挡、最小化/CaptureStalled、投递中 Ctrl-C 与 10–20 分钟长程验证。
 
 ## 1. P0-A — 可视化标注系统

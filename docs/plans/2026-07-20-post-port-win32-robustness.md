@@ -110,3 +110,36 @@ free-threaded WGC frame-pool worker and an unprotected context is UB-class
 None of the deferred items block the M0 path: the demo runs single-window
 against a known target, and the DPI helper runs once at startup before any
 override.
+
+## Real-machine finding: WGC frame-stall vs. lease staleness (2026-07-21)
+
+Observed during the real-machine UI acceptance run against the live elevated
+game (卡厄思梦境, hwnd 0x51180, client 1600×900, delta=0). The before/after
+click verification PASSED (avatar switch ×3, tab switch ×3, first-time
+"potential" intro overlay recognized and safely dismissed; every delivered
+click went through the strict-background PostMessage chain with K2 crop
+delta=0). Two behaviors surfaced that belong to the product phase:
+
+- **Lease fail-closed fired correctly (not a defect).** Clicks whose
+  before-observation aged past `max_action_frame_age` were rejected with
+  `StaleObservation: lease expired` and `delivered:false` — the
+  "never act on a stale observation" guarantee working on real hardware.
+- **WGC stalls on static / subtly-animated screens, turning that guarantee
+  into a FALSE rejection.** WGC delivers a new GPU frame only on visual
+  change. On the 潛力 potential-tree page (which *looks* animated but did
+  not trigger WGC's dirty-region capture) no fresh GPU frame arrived for
+  >750ms, so the frame each click op captured carried a WGC
+  `SystemRelativeTime` older than `max_action_frame_age`, and every click
+  there fail-closed even though the screen had not actually changed. A
+  standalone `capture` op still "succeeds" (its own frame-id counter
+  advances 23→24), but the underlying GPU frame timestamp is old and the
+  lease judges age by that timestamp — so capture works while click is
+  refused. Auto-farming visits many such screens, so this blocks unattended
+  runs, not just this test. Product-phase options (tie to D1/D2
+  `max_action_frame_age` calibration in
+  [`2026-07-21-lua-task-model-grill-decisions.md`](2026-07-21-lua-task-model-grill-decisions.md)):
+  request a genuinely NEW frame and wait for it before acting; distinguish
+  "no new frame because static" from "capture stalled/occluded" (a static
+  screen is safe to act on, a stalled capture is not); or grant known-static
+  pages a longer staleness budget. Any fix MUST preserve the fail-closed
+  guarantee for genuine staleness.
