@@ -198,7 +198,7 @@ namespace uf
     {
         auto repeatedValues = Synchronized<std::vector<int>>{
             std::in_place,
-            3,
+            std::vector<int>::size_type{3},
             7
         };
         auto const values = repeatedValues.withLock(
