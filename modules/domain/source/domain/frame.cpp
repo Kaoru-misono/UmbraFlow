@@ -2,6 +2,7 @@
 
 #include <core/numeric/checked-arithmetic.hpp>
 #include <core/numeric/checked-cast.hpp>
+#include <core/types/integer.hpp>
 
 #include <format>
 #include <memory>
@@ -23,8 +24,8 @@ namespace uf
     auto FrameBuffer::empty() const noexcept -> bool { return m_data.empty(); }
 
     auto validateBufferGeometry(
-        std::uint32_t width,
-        std::uint32_t height,
+        uint32 width,
+        uint32 height,
         std::size_t stride,
         std::size_t minimumRowBytes,
         std::size_t bufferLength
@@ -88,8 +89,8 @@ namespace uf
         SessionId sessionId,
         TargetGeneration targetGeneration,
         MonotonicInstant capturedAt,
-        std::uint32_t width,
-        std::uint32_t height,
+        uint32 width,
+        uint32 height,
         std::size_t stride,
         PixelFormat pixelFormat,
         std::shared_ptr<FrameBuffer const> p_pixels,
@@ -113,8 +114,8 @@ namespace uf
         SessionId sessionId,
         TargetGeneration targetGeneration,
         MonotonicInstant capturedAt,
-        std::uint32_t width,
-        std::uint32_t height,
+        uint32 width,
+        uint32 height,
         std::size_t stride,
         PixelFormat pixelFormat,
         std::shared_ptr<FrameBuffer const> p_pixels,
@@ -193,8 +194,8 @@ namespace uf
         return m_targetGeneration;
     }
     auto Frame::capturedAt() const noexcept -> MonotonicInstant { return m_capturedAt; }
-    auto Frame::width() const noexcept -> std::uint32_t { return m_width; }
-    auto Frame::height() const noexcept -> std::uint32_t { return m_height; }
+    auto Frame::width() const noexcept -> uint32 { return m_width; }
+    auto Frame::height() const noexcept -> uint32 { return m_height; }
     auto Frame::stride() const noexcept -> std::size_t { return m_stride; }
     auto Frame::pixelFormat() const noexcept -> PixelFormat { return m_pixelFormat; }
     auto Frame::pixels() const noexcept -> std::shared_ptr<FrameBuffer const> { return m_pixels; }

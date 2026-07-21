@@ -1,8 +1,9 @@
 #include <domain/ids.hpp>
 
+#include <core/types/integer.hpp>
+
 #include <doctest/doctest.h>
 
-#include <cstdint>
 #include <limits>
 #include <string>
 #include <type_traits>
@@ -10,14 +11,14 @@
 
 static_assert(!std::is_same_v<uf::EngineRunId, uf::TaskRunId>);
 static_assert(!std::is_same_v<uf::SessionId, uf::FrameId>);
-static_assert(!std::is_convertible_v<uf::FrameId, std::uint64_t>);
-static_assert(!std::is_convertible_v<std::uint64_t, uf::FrameId>);
+static_assert(!std::is_convertible_v<uf::FrameId, uf::uint64>);
+static_assert(!std::is_convertible_v<uf::uint64, uf::FrameId>);
 
 TEST_CASE("domain identifiers are distinct value types")
 {
-    auto const seven = uf::FrameId{std::uint64_t{7}};
-    auto const anotherSeven = uf::FrameId{std::uint64_t{7}};
-    auto const eight = uf::FrameId{std::uint64_t{8}};
+    auto const seven = uf::FrameId{uf::uint64{7}};
+    auto const anotherSeven = uf::FrameId{uf::uint64{7}};
+    auto const eight = uf::FrameId{uf::uint64{8}};
 
     CHECK(seven == anotherSeven);
     CHECK(seven != eight);
@@ -39,14 +40,14 @@ TEST_CASE("target generation increments without wrapping")
 
     REQUIRE(next.has_value());
     CHECK(*next != initial);
-    CHECK(next->value() == std::uint64_t{1});
+    CHECK(next->value() == uf::uint64{1});
     CHECK(initial < *next);
 }
 
 TEST_CASE("target generation overflow is an internal invariant error")
 {
     auto const exhausted = uf::TargetGeneration::fromValue(
-        std::numeric_limits<std::uint64_t>::max()
+        std::numeric_limits<uf::uint64>::max()
     );
     auto const result = exhausted.next();
 

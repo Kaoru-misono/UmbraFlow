@@ -2,7 +2,8 @@
 
 #include "core/safety/annotations.hpp"
 
-#include <cstdint>
+#include <core/types/integer.hpp>
+
 #include <source_location>
 #include <span>
 #include <string>
@@ -12,7 +13,7 @@
 
 namespace uf
 {
-    enum class ErrorCode : std::uint8_t
+    enum class ErrorCode : uint8
     {
         Cancelled,
         Timeout,
@@ -33,7 +34,7 @@ namespace uf
         ErrorCode m_code;
         std::error_code m_detailCode;
         std::string m_message;
-        std::int64_t m_nativeCode;
+        int64 m_nativeCode;
         std::source_location m_location;
         std::vector<std::string> m_context{};
 
@@ -41,21 +42,21 @@ namespace uf
         Error(
             ErrorCode code,
             std::string message,
-            std::int64_t nativeCode = 0,
+            int64 nativeCode = 0,
             std::source_location location = std::source_location::current()
         );
         Error(
             ErrorCode code,
             std::error_code detailCode,
             std::string message,
-            std::int64_t nativeCode = 0,
+            int64 nativeCode = 0,
             std::source_location location = std::source_location::current()
         );
 
         [[nodiscard]] auto code() const noexcept -> ErrorCode;
         [[nodiscard]] auto detailCode() const noexcept -> std::error_code;
         [[nodiscard]] auto message() const noexcept UF_LIFETIME_BOUND -> std::string_view;
-        [[nodiscard]] auto nativeCode() const noexcept -> std::int64_t;
+        [[nodiscard]] auto nativeCode() const noexcept -> int64;
         [[nodiscard]] auto location() const noexcept -> std::source_location;
         // SAFETY: The returned span is invalidated by any subsequent addContext() call.
         [[nodiscard]]

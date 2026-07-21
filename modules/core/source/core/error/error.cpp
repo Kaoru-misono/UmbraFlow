@@ -2,6 +2,8 @@
 
 #include "contracts.hpp"
 
+#include <core/types/integer.hpp>
+
 #include <sstream>
 #include <utility>
 
@@ -10,7 +12,7 @@ namespace uf
     Error::Error(
         ErrorCode code,
         std::string message,
-        std::int64_t nativeCode,
+        int64 nativeCode,
         std::source_location location
     )
         : Error{code, std::error_code{}, std::move(message), nativeCode, location}
@@ -21,7 +23,7 @@ namespace uf
         ErrorCode code,
         std::error_code detailCode,
         std::string message,
-        std::int64_t nativeCode,
+        int64 nativeCode,
         std::source_location location
     )
         : m_code{code}
@@ -35,7 +37,7 @@ namespace uf
     auto Error::code() const noexcept -> ErrorCode { return m_code; }
     auto Error::detailCode() const noexcept -> std::error_code { return m_detailCode; }
     auto Error::message() const noexcept -> std::string_view { return m_message; }
-    auto Error::nativeCode() const noexcept -> std::int64_t { return m_nativeCode; }
+    auto Error::nativeCode() const noexcept -> int64 { return m_nativeCode; }
     auto Error::location() const noexcept -> std::source_location { return m_location; }
     auto Error::context() const noexcept -> std::span<std::string const>
     {

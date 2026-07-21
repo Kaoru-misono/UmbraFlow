@@ -2,9 +2,10 @@
 
 #include "error.hpp"
 
+#include <core/types/integer.hpp>
+
 #include <concepts>
 #include <cstddef>
-#include <cstdint>
 #include <utility>
 
 namespace uf
@@ -102,20 +103,20 @@ namespace uf
 
     class PixelRect final
     {
-        std::uint32_t m_x;
-        std::uint32_t m_y;
-        std::uint32_t m_width;
-        std::uint32_t m_height;
-        std::uint32_t m_right;
-        std::uint32_t m_bottom;
+        uint32 m_x;
+        uint32 m_y;
+        uint32 m_width;
+        uint32 m_height;
+        uint32 m_right;
+        uint32 m_bottom;
 
         constexpr PixelRect(
-            std::uint32_t x,
-            std::uint32_t y,
-            std::uint32_t width,
-            std::uint32_t height,
-            std::uint32_t right,
-            std::uint32_t bottom
+            uint32 x,
+            uint32 y,
+            uint32 width,
+            uint32 height,
+            uint32 right,
+            uint32 bottom
         ) noexcept
             : m_x{x}
             , m_y{y}
@@ -131,41 +132,41 @@ namespace uf
 
         [[nodiscard]]
         static auto create(
-            std::uint32_t x,
-            std::uint32_t y,
-            std::uint32_t width,
-            std::uint32_t height
+            uint32 x,
+            uint32 y,
+            uint32 width,
+            uint32 height
         ) -> Result<PixelRect>;
 
-        [[nodiscard]] constexpr auto x() const noexcept -> std::uint32_t { return m_x; }
-        [[nodiscard]] constexpr auto y() const noexcept -> std::uint32_t { return m_y; }
-        [[nodiscard]] constexpr auto width() const noexcept -> std::uint32_t { return m_width; }
-        [[nodiscard]] constexpr auto height() const noexcept -> std::uint32_t { return m_height; }
-        [[nodiscard]] constexpr auto right() const noexcept -> std::uint32_t { return m_right; }
-        [[nodiscard]] constexpr auto bottom() const noexcept -> std::uint32_t { return m_bottom; }
+        [[nodiscard]] constexpr auto x() const noexcept -> uint32 { return m_x; }
+        [[nodiscard]] constexpr auto y() const noexcept -> uint32 { return m_y; }
+        [[nodiscard]] constexpr auto width() const noexcept -> uint32 { return m_width; }
+        [[nodiscard]] constexpr auto height() const noexcept -> uint32 { return m_height; }
+        [[nodiscard]] constexpr auto right() const noexcept -> uint32 { return m_right; }
+        [[nodiscard]] constexpr auto bottom() const noexcept -> uint32 { return m_bottom; }
 
         [[nodiscard]]
-        auto ensureWithinExtent(std::uint32_t width, std::uint32_t height) const -> Status;
+        auto ensureWithinExtent(uint32 width, uint32 height) const -> Status;
     };
 
     class CoordinateTransform final
     {
         static constexpr auto s_frameBoundsEpsilon = 1e-3F;
-        static constexpr auto s_maxExactFrameDimension = std::uint32_t{1} << 24;
+        static constexpr auto s_maxExactFrameDimension = uint32{1} << 24;
 
         float m_clientOriginX;
         float m_clientOriginY;
         float m_clientWidth;
         float m_clientHeight;
-        std::uint32_t m_frameWidth;
-        std::uint32_t m_frameHeight;
+        uint32 m_frameWidth;
+        uint32 m_frameHeight;
 
         constexpr CoordinateTransform(
             Point<DesktopSpace> clientOrigin,
             float clientWidth,
             float clientHeight,
-            std::uint32_t frameWidth,
-            std::uint32_t frameHeight
+            uint32 frameWidth,
+            uint32 frameHeight
         ) noexcept
             : m_clientOriginX{clientOrigin.x()}
             , m_clientOriginY{clientOrigin.y()}
@@ -189,12 +190,12 @@ namespace uf
             Point<DesktopSpace> clientOrigin,
             float clientWidth,
             float clientHeight,
-            std::uint32_t frameWidth,
-            std::uint32_t frameHeight
+            uint32 frameWidth,
+            uint32 frameHeight
         ) -> Result<CoordinateTransform>;
 
         [[nodiscard]]
-        constexpr auto frameSize() const noexcept -> std::pair<std::uint32_t, std::uint32_t>
+        constexpr auto frameSize() const noexcept -> std::pair<uint32, uint32>
         {
             return {m_frameWidth, m_frameHeight};
         }

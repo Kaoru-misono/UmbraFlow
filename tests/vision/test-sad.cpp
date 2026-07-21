@@ -5,6 +5,7 @@
 #include <core/numeric/checked-arithmetic.hpp>
 #include <core/numeric/checked-cast.hpp>
 #include <core/safety/checked-access.hpp>
+#include <core/types/integer.hpp>
 
 #include <domain/error.hpp>
 
@@ -12,39 +13,39 @@
 
 #include <array>
 #include <cstddef>
-#include <cstdint>
 #include <optional>
 #include <span>
 #include <utility>
+#include <variant>
 #include <vector>
 
 namespace
 {
     [[nodiscard]]
-    constexpr auto asByte(std::uint8_t value) noexcept -> std::byte
+    constexpr auto asByte(uf::uint8 value) noexcept -> std::byte
     {
         return std::byte{value};
     }
 
     class HashedSample final
     {
-        std::uint32_t m_seed;
+        uf::uint32 m_seed;
 
     public:
-        constexpr explicit HashedSample(std::uint32_t seed) noexcept
+        constexpr explicit HashedSample(uf::uint32 seed) noexcept
             : m_seed{seed}
         {
         }
 
         [[nodiscard]]
-        auto operator()(std::uint32_t x, std::uint32_t y) const noexcept -> std::uint8_t
+        auto operator()(uf::uint32 x, uf::uint32 y) const noexcept -> uf::uint8
         {
             return uf::hashedGray(m_seed, x, y);
         }
     };
 
     [[nodiscard]]
-    auto hashed(std::uint32_t seed) noexcept -> HashedSample
+    auto hashed(uf::uint32 seed) noexcept -> HashedSample
     {
         return HashedSample{seed};
     }
@@ -52,8 +53,8 @@ namespace
     [[nodiscard]]
     auto grayOffset(
         std::size_t stride,
-        std::uint32_t x,
-        std::uint32_t y
+        uf::uint32 x,
+        uf::uint32 y
     ) noexcept -> std::size_t
     {
         auto const xSize = uf::checkedCast<std::size_t>(x);
@@ -72,11 +73,11 @@ namespace
     auto grayPixel(
         std::span<std::byte const> data,
         std::size_t stride,
-        std::uint32_t x,
-        std::uint32_t y
-    ) noexcept -> std::uint32_t
+        uf::uint32 x,
+        uf::uint32 y
+    ) noexcept -> uf::uint32
     {
-        return std::to_integer<std::uint32_t>(
+        return std::to_integer<uf::uint32>(
             uf::checkedAt(data, grayOffset(stride, x, y))
         );
     }
@@ -84,7 +85,7 @@ namespace
     auto writeBgraPixel(
         std::vector<std::byte>& data,
         std::size_t offset,
-        std::array<std::uint8_t, 4> pixel
+        std::array<uf::uint8, 4> pixel
     ) -> void
     {
         for (auto index = std::size_t{0}; index < pixel.size(); ++index)
@@ -100,8 +101,8 @@ namespace
     template <typename Sample>
     [[nodiscard]]
     auto build(
-        std::uint32_t width,
-        std::uint32_t height,
+        uf::uint32 width,
+        uf::uint32 height,
         std::size_t stride,
         std::byte padding,
         Sample const& sample
@@ -119,11 +120,11 @@ namespace
             *bufferLength,
             padding
         );
-        for (auto y = std::uint32_t{0}; y < height; ++y)
+        for (auto y = uf::uint32{0}; y < height; ++y)
         {
-            for (auto x = std::uint32_t{0}; x < width; ++x)
+            for (auto x = uf::uint32{0}; x < width; ++x)
             {
-                auto const sampleValue = uf::checkedCast<std::uint8_t>(sample(x, y));
+                auto const sampleValue = uf::checkedCast<uf::uint8>(sample(x, y));
                 UF_CHECK(sampleValue.has_value());
                 uf::checkedAt(buffer, grayOffset(stride, x, y)) = asByte(*sampleValue);
             }
@@ -133,10 +134,10 @@ namespace
 
     [[nodiscard]]
     auto pixelRect(
-        std::uint32_t x,
-        std::uint32_t y,
-        std::uint32_t width,
-        std::uint32_t height
+        uf::uint32 x,
+        uf::uint32 y,
+        uf::uint32 width,
+        uf::uint32 height
     ) -> uf::PixelRect
     {
         auto const result = uf::PixelRect::create(x, y, width, height);
@@ -147,8 +148,8 @@ namespace
     [[nodiscard]]
     auto grayImage(
         std::vector<std::byte> const& data UF_LIFETIME_BOUND,
-        std::uint32_t width,
-        std::uint32_t height,
+        uf::uint32 width,
+        uf::uint32 height,
         std::size_t stride
     ) -> uf::GrayImage
     {
@@ -198,10 +199,10 @@ namespace
         {
             for (auto candidateX = roi.x(); candidateX <= *lastX; ++candidateX)
             {
-                auto score = std::uint64_t{0};
-                for (auto templateY = std::uint32_t{0}; templateY < templateImage.height(); ++templateY)
+                auto score = uf::uint64{0};
+                for (auto templateY = uf::uint32{0}; templateY < templateImage.height(); ++templateY)
                 {
-                    for (auto templateX = std::uint32_t{0}; templateX < templateImage.width(); ++templateX)
+                    for (auto templateX = uf::uint32{0}; templateX < templateImage.width(); ++templateX)
                     {
                         auto const haystackX = uf::checkedAdd(
                             candidateX,
@@ -247,8 +248,8 @@ namespace
 
 TEST_CASE("exact template hit scores zero")
 {
-    auto constexpr haystackWidth = std::uint32_t{96};
-    auto constexpr haystackHeight = std::uint32_t{64};
+    auto constexpr haystackWidth = uf::uint32{96};
+    auto constexpr haystackHeight = uf::uint32{64};
     auto const background = hashed(1);
     auto const haystackData = build(
         haystackWidth,
@@ -264,16 +265,16 @@ TEST_CASE("exact template hit scores zero")
         haystackWidth
     );
 
-    auto constexpr matchX = std::uint32_t{37};
-    auto constexpr matchY = std::uint32_t{21};
-    auto constexpr templateWidth = std::uint32_t{12};
-    auto constexpr templateHeight = std::uint32_t{9};
+    auto constexpr matchX = uf::uint32{37};
+    auto constexpr matchY = uf::uint32{21};
+    auto constexpr templateWidth = uf::uint32{12};
+    auto constexpr templateHeight = uf::uint32{9};
     auto const templateData = build(
         templateWidth,
         templateHeight,
         templateWidth,
         asByte(0),
-        [background](std::uint32_t x, std::uint32_t y) noexcept -> std::uint8_t
+        [background](uf::uint32 x, uf::uint32 y) noexcept -> uf::uint8
         {
             return background(matchX + x, matchY + y);
         }
@@ -294,12 +295,162 @@ TEST_CASE("exact template hit scores zero")
     CHECK(*result == std::optional{uf::SadMatch{matchX, matchY, 0}});
 }
 
+TEST_CASE("template matching enforces exact pixel comparison budgets")
+{
+    auto const haystackData = std::vector<std::byte>{
+        asByte(0),
+        asByte(1),
+    };
+    auto const templateData = std::vector<std::byte>{asByte(255)};
+    auto const haystack = grayImage(haystackData, 2, 1, 2);
+    auto const templateImage = grayImage(templateData, 1, 1, 1);
+    auto const roi = pixelRect(0, 0, 2, 1);
+    auto pollCount = uf::uint32{0};
+    auto const continueSearch = uf::SadSearchPoll{
+        [&pollCount]() noexcept -> uf::SadSearchControl
+        {
+            ++pollCount;
+            return uf::SadSearchControl::Continue;
+        }
+    };
+
+    auto const zeroBudget = uf::matchTemplateSad(
+        haystack,
+        templateImage,
+        roi,
+        0,
+        continueSearch
+    );
+    REQUIRE(zeroBudget.has_value());
+    CHECK(
+        std::get<uf::SadSearchStopReason>(*zeroBudget)
+        == uf::SadSearchStopReason::ComparisonBudgetExhausted
+    );
+    CHECK(pollCount == 0);
+
+    auto const oneComparison = uf::matchTemplateSad(
+        haystack,
+        templateImage,
+        roi,
+        1,
+        continueSearch
+    );
+    REQUIRE(oneComparison.has_value());
+    CHECK(
+        std::get<uf::SadSearchStopReason>(*oneComparison)
+        == uf::SadSearchStopReason::ComparisonBudgetExhausted
+    );
+    CHECK(pollCount == 1);
+
+    auto const exactBudget = uf::matchTemplateSad(
+        haystack,
+        templateImage,
+        roi,
+        2,
+        continueSearch
+    );
+    REQUIRE(exactBudget.has_value());
+    CHECK(
+        std::get<std::optional<uf::SadMatch>>(*exactBudget)
+        == std::optional{uf::SadMatch{1, 0, 254}}
+    );
+}
+
+TEST_CASE("template matching maps synchronous poll interruptions")
+{
+    struct InterruptionCase final
+    {
+        uf::SadSearchControl m_control;
+        uf::SadSearchStopReason m_expected;
+    };
+
+    auto const data = std::vector<std::byte>{asByte(0)};
+    auto const image = grayImage(data, 1, 1, 1);
+    auto const roi = pixelRect(0, 0, 1, 1);
+    auto const cases = std::array{
+        InterruptionCase{
+            uf::SadSearchControl::Cancelled,
+            uf::SadSearchStopReason::Cancelled
+        },
+        InterruptionCase{
+            uf::SadSearchControl::TimedOut,
+            uf::SadSearchStopReason::TimedOut
+        },
+    };
+    for (auto const& testCase : cases)
+    {
+        auto const poll = uf::SadSearchPoll{
+            [control = testCase.m_control]() noexcept -> uf::SadSearchControl
+            {
+                return control;
+            }
+        };
+        auto const result = uf::matchTemplateSad(
+            image,
+            image,
+            roi,
+            1,
+            poll
+        );
+        REQUIRE(result.has_value());
+        CHECK(std::get<uf::SadSearchStopReason>(*result) == testCase.m_expected);
+    }
+}
+
+TEST_CASE("template matching polls within the documented comparison interval")
+{
+    auto constexpr haystackWidth = uf::uint32{4097};
+    static_assert(
+        haystackWidth
+        == uf::g_sadSearchPollIntervalComparisons + uf::uint64{1}
+    );
+    auto const haystackData = std::vector<std::byte>(
+        haystackWidth,
+        asByte(0)
+    );
+    auto const templateData = std::vector<std::byte>{asByte(255)};
+    auto const haystack = grayImage(
+        haystackData,
+        haystackWidth,
+        1,
+        haystackWidth
+    );
+    auto const templateImage = grayImage(templateData, 1, 1, 1);
+    auto pollCount = uf::uint32{0};
+    auto const cancelOnSecondPoll = uf::SadSearchPoll{
+        [&pollCount]() noexcept -> uf::SadSearchControl
+        {
+            ++pollCount;
+            if (pollCount == 2)
+            {
+                return uf::SadSearchControl::Cancelled;
+            }
+            return uf::SadSearchControl::Continue;
+        }
+    };
+
+    auto const result = uf::matchTemplateSad(
+        haystack,
+        templateImage,
+        pixelRect(0, 0, haystackWidth, 1),
+        uf::uint64{haystackWidth},
+        cancelOnSecondPoll
+    );
+
+    REQUIRE(result.has_value());
+    CHECK(
+        std::get<uf::SadSearchStopReason>(*result)
+        == uf::SadSearchStopReason::Cancelled
+    );
+    CHECK(pollCount == 2);
+}
+
 TEST_CASE("template matching agrees with an exhaustive scan")
 {
-    auto constexpr haystackWidth = std::uint32_t{80};
-    auto constexpr haystackHeight = std::uint32_t{60};
-    auto constexpr templateWidth = std::uint32_t{10};
-    auto constexpr templateHeight = std::uint32_t{8};
+    auto constexpr haystackWidth = uf::uint32{80};
+    auto constexpr haystackHeight = uf::uint32{60};
+    auto constexpr templateWidth = uf::uint32{10};
+    auto constexpr templateHeight = uf::uint32{8};
 
     auto const background = hashed(7);
     auto const haystackAData = build(
@@ -320,7 +471,7 @@ TEST_CASE("template matching agrees with an exhaustive scan")
         templateHeight,
         templateWidth,
         asByte(0),
-        [background](std::uint32_t x, std::uint32_t y) noexcept -> std::uint8_t
+        [background](uf::uint32 x, uf::uint32 y) noexcept -> uf::uint8
         {
             return background(20 + x, 15 + y);
         }
@@ -351,7 +502,7 @@ TEST_CASE("template matching agrees with an exhaustive scan")
         haystackHeight,
         haystackWidth,
         asByte(0),
-        [](std::uint32_t x, std::uint32_t y) noexcept -> std::uint32_t
+        [](uf::uint32 x, uf::uint32 y) noexcept -> uf::uint32
         {
             return 100 + ((x ^ y) & 0x07);
         }
@@ -367,7 +518,7 @@ TEST_CASE("template matching agrees with an exhaustive scan")
         templateHeight,
         templateWidth,
         asByte(0),
-        [](std::uint32_t x, std::uint32_t y) noexcept -> std::uint32_t
+        [](uf::uint32 x, uf::uint32 y) noexcept -> uf::uint32
         {
             return (x + y) % 2 == 0 ? 0U : 255U;
         }
@@ -419,14 +570,14 @@ TEST_CASE("template matching agrees with an exhaustive scan")
 
 TEST_CASE("ties resolve to earliest row major placement")
 {
-    auto constexpr haystackWidth = std::uint32_t{4};
-    auto constexpr haystackHeight = std::uint32_t{4};
+    auto constexpr haystackWidth = uf::uint32{4};
+    auto constexpr haystackHeight = uf::uint32{4};
     auto const haystackData = build(
         haystackWidth,
         haystackHeight,
         haystackWidth,
         asByte(0),
-        [](std::uint32_t x, std::uint32_t y) noexcept -> std::uint8_t
+        [](uf::uint32 x, uf::uint32 y) noexcept -> uf::uint8
         {
             return (
                 (x == 3 && y == 0)
@@ -439,7 +590,7 @@ TEST_CASE("ties resolve to earliest row major placement")
         1,
         1,
         asByte(0),
-        [](std::uint32_t, std::uint32_t) noexcept -> std::uint8_t
+        [](uf::uint32, uf::uint32) noexcept -> uf::uint8
         {
             return 255;
         }
@@ -469,8 +620,8 @@ TEST_CASE("ties resolve to earliest row major placement")
 
 TEST_CASE("padded strides are not misread")
 {
-    auto constexpr haystackWidth = std::uint32_t{40};
-    auto constexpr haystackHeight = std::uint32_t{30};
+    auto constexpr haystackWidth = uf::uint32{40};
+    auto constexpr haystackHeight = uf::uint32{30};
     auto constexpr haystackStride = std::size_t{64};
     auto const background = hashed(11);
     auto const haystackData = build(
@@ -487,17 +638,17 @@ TEST_CASE("padded strides are not misread")
         haystackStride
     );
 
-    auto constexpr matchX = std::uint32_t{15};
-    auto constexpr matchY = std::uint32_t{9};
-    auto constexpr templateWidth = std::uint32_t{9};
-    auto constexpr templateHeight = std::uint32_t{7};
+    auto constexpr matchX = uf::uint32{15};
+    auto constexpr matchY = uf::uint32{9};
+    auto constexpr templateWidth = uf::uint32{9};
+    auto constexpr templateHeight = uf::uint32{7};
     auto constexpr templateStride = std::size_t{14};
     auto const templateData = build(
         templateWidth,
         templateHeight,
         templateStride,
         asByte(0xFF),
-        [background](std::uint32_t x, std::uint32_t y) noexcept -> std::uint8_t
+        [background](uf::uint32 x, uf::uint32 y) noexcept -> uf::uint8
         {
             return background(matchX + x, matchY + y);
         }
@@ -517,14 +668,14 @@ TEST_CASE("padded strides are not misread")
 
 TEST_CASE("template fit uses the exact roi boundary")
 {
-    auto constexpr haystackWidth = std::uint32_t{3};
-    auto constexpr haystackHeight = std::uint32_t{3};
+    auto constexpr haystackWidth = uf::uint32{3};
+    auto constexpr haystackHeight = uf::uint32{3};
     auto const haystackData = build(
         haystackWidth,
         haystackHeight,
         haystackWidth,
         asByte(0),
-        [](std::uint32_t x, std::uint32_t y) noexcept -> std::uint32_t
+        [](uf::uint32 x, uf::uint32 y) noexcept -> uf::uint32
         {
             return y * 3 + x;
         }
@@ -534,7 +685,7 @@ TEST_CASE("template fit uses the exact roi boundary")
         2,
         2,
         asByte(0),
-        [](std::uint32_t x, std::uint32_t y) noexcept -> std::uint32_t
+        [](uf::uint32 x, uf::uint32 y) noexcept -> uf::uint32
         {
             return (y + 1) * 3 + x + 1;
         }
@@ -569,8 +720,8 @@ TEST_CASE("template fit uses the exact roi boundary")
 
 TEST_CASE("roi outside haystack is rejected")
 {
-    auto constexpr haystackWidth = std::uint32_t{32};
-    auto constexpr haystackHeight = std::uint32_t{32};
+    auto constexpr haystackWidth = uf::uint32{32};
+    auto constexpr haystackHeight = uf::uint32{32};
     auto const haystackData = build(
         haystackWidth,
         haystackHeight,
@@ -606,8 +757,8 @@ TEST_CASE("invalid gray image is rejected")
     struct InvalidCase final
     {
         std::size_t m_length;
-        std::uint32_t m_width;
-        std::uint32_t m_height;
+        uf::uint32 m_width;
+        uf::uint32 m_height;
         std::size_t m_stride;
     };
 
@@ -636,7 +787,7 @@ TEST_CASE("bgra8 to gray8 uses BT.601 weights")
     struct ConversionCase final
     {
         std::array<std::byte, 4> m_bgra;
-        std::uint8_t m_expected;
+        uf::uint8 m_expected;
     };
 
     auto const cases = std::array{
@@ -652,7 +803,7 @@ TEST_CASE("bgra8 to gray8 uses BT.601 weights")
         auto const result = uf::bgra8ToGray8(testCase.m_bgra, 1, 1, 4);
         REQUIRE(result.has_value());
         REQUIRE(result->size() == 1);
-        CHECK(std::to_integer<std::uint8_t>(result->front()) == testCase.m_expected);
+        CHECK(std::to_integer<uf::uint8>(result->front()) == testCase.m_expected);
     }
 }
 
@@ -707,8 +858,8 @@ TEST_CASE("bgra8 to gray8 rejects bad geometry")
     struct InvalidCase final
     {
         std::size_t m_length;
-        std::uint32_t m_width;
-        std::uint32_t m_height;
+        uf::uint32 m_width;
+        uf::uint32 m_height;
         std::size_t m_stride;
     };
 

@@ -1,6 +1,7 @@
 #include "error.hpp"
 
 #include <core/error/contracts.hpp>
+#include <core/numeric/checked-arithmetic.hpp>
 #include <core/numeric/checked-cast.hpp>
 
 #include <string>
@@ -8,6 +9,16 @@
 
 namespace
 {
+    [[nodiscard]]
+    auto automationErrorDetailValue(uf::AutomationErrorKind kind) noexcept -> int
+    {
+        auto const underlying = uf::checkedCast<int>(std::to_underlying(kind));
+        UF_CHECK(underlying.has_value());
+        auto const encoded = uf::checkedAdd(*underlying, 1);
+        UF_CHECK(encoded.has_value());
+        return *encoded;
+    }
+
     class AutomationErrorCategory final : public std::error_category
     {
     public:
@@ -20,7 +31,7 @@ namespace
         {
             for (auto const& entry : uf::enumEntries<uf::AutomationErrorKind>())
             {
-                if (std::to_underlying(entry.m_value) == value)
+                if (automationErrorDetailValue(entry.m_value) == value)
                 {
                     return std::string{entry.m_name};
                 }
@@ -96,10 +107,8 @@ namespace uf
 
     auto automationErrorDetailCode(AutomationErrorKind kind) noexcept -> std::error_code
     {
-        auto const value = checkedCast<int>(std::to_underlying(kind));
-        UF_CHECK(value.has_value());
         return std::error_code{
-            *value,
+            automationErrorDetailValue(kind),
             automationErrorCategory()
         };
     }
@@ -114,7 +123,7 @@ namespace uf
 
         for (auto const& entry : enumEntries<AutomationErrorKind>())
         {
-            if (std::to_underlying(entry.m_value) == detailCode.value())
+            if (automationErrorDetailValue(entry.m_value) == detailCode.value())
             {
                 return entry.m_value;
             }

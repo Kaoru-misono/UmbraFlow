@@ -1,10 +1,11 @@
 #include <domain/space.hpp>
 
+#include <core/types/integer.hpp>
+
 #include <doctest/doctest.h>
 
 #include <array>
 #include <cmath>
-#include <cstdint>
 #include <limits>
 #include <unordered_set>
 
@@ -43,8 +44,8 @@ TEST_CASE("known coordinate mappings are exact")
     auto const frame = transform.clientToFrame(client);
     auto const normalized = transform.frameToNormalized(frame);
 
-    CHECK(frameWidth == std::uint32_t{800});
-    CHECK(frameHeight == std::uint32_t{450});
+    CHECK(frameWidth == uf::uint32{800});
+    CHECK(frameHeight == uf::uint32{450});
     CHECK(client.x() == 400.0F);
     CHECK(client.y() == 200.0F);
     CHECK(frame.x() == 200.0F);
@@ -157,8 +158,8 @@ TEST_CASE("coordinate transform rejects invalid sizes")
 
     struct FrameSizeCase final
     {
-        std::uint32_t m_width;
-        std::uint32_t m_height;
+        uf::uint32 m_width;
+        uf::uint32 m_height;
     };
 
     auto const validCases = std::array{
@@ -215,10 +216,10 @@ TEST_CASE("pixel conversion floors starts and ceils far edges")
     );
 
     REQUIRE(result.has_value());
-    CHECK(result->x() == std::uint32_t{1});
-    CHECK(result->y() == std::uint32_t{2});
-    CHECK(result->width() == std::uint32_t{10});
-    CHECK(result->height() == std::uint32_t{1});
+    CHECK(result->x() == uf::uint32{1});
+    CHECK(result->y() == uf::uint32{2});
+    CHECK(result->width() == uf::uint32{10});
+    CHECK(result->height() == uf::uint32{1});
 }
 
 TEST_CASE("subpixel rectangles retain at least one covered pixel")
@@ -228,23 +229,23 @@ TEST_CASE("subpixel rectangles retain at least one covered pixel")
     );
 
     REQUIRE(result.has_value());
-    CHECK(result->x() == std::uint32_t{3});
-    CHECK(result->y() == std::uint32_t{5});
-    CHECK(result->width() == std::uint32_t{1});
-    CHECK(result->height() == std::uint32_t{1});
+    CHECK(result->x() == uf::uint32{3});
+    CHECK(result->y() == uf::uint32{5});
+    CHECK(result->width() == uf::uint32{1});
+    CHECK(result->height() == uf::uint32{1});
 }
 
 TEST_CASE("pixel rectangles reject empty and overflowing extents")
 {
     struct InvalidCase final
     {
-        std::uint32_t m_x;
-        std::uint32_t m_y;
-        std::uint32_t m_width;
-        std::uint32_t m_height;
+        uf::uint32 m_x;
+        uf::uint32 m_y;
+        uf::uint32 m_width;
+        uf::uint32 m_height;
     };
 
-    auto constexpr maximum = std::numeric_limits<std::uint32_t>::max();
+    auto constexpr maximum = std::numeric_limits<uf::uint32>::max();
     auto const horizontalEdge = uf::PixelRect::create(
         maximum - 1,
         0,
@@ -289,8 +290,8 @@ TEST_CASE("pixel conversion stays inside the frame")
         uf::Rect<uf::FrameSpace>{799.6F, 0.0F, 0.3F, 1.0F}
     );
     REQUIRE(edge.has_value());
-    CHECK(edge->x() == std::uint32_t{799});
-    CHECK(edge->width() == std::uint32_t{1});
+    CHECK(edge->x() == uf::uint32{799});
+    CHECK(edge->width() == uf::uint32{1});
 
     auto const fullExtent = transform.frameRectToPixelRect(
         uf::Rect<uf::FrameSpace>{
@@ -301,10 +302,10 @@ TEST_CASE("pixel conversion stays inside the frame")
         }
     );
     REQUIRE(fullExtent.has_value());
-    CHECK(fullExtent->x() == std::uint32_t{0});
-    CHECK(fullExtent->y() == std::uint32_t{0});
-    CHECK(fullExtent->width() == std::uint32_t{800});
-    CHECK(fullExtent->height() == std::uint32_t{450});
+    CHECK(fullExtent->x() == uf::uint32{0});
+    CHECK(fullExtent->y() == uf::uint32{0});
+    CHECK(fullExtent->width() == uf::uint32{800});
+    CHECK(fullExtent->height() == uf::uint32{450});
 }
 
 TEST_CASE("pixel conversion rejects unprovable bounds")

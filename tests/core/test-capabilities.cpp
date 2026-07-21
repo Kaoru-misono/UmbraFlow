@@ -2,6 +2,7 @@
 #include <core/control/control-flow.hpp>
 #include <core/types/enum-reflection.hpp>
 #include <core/types/flags.hpp>
+#include <core/types/integer.hpp>
 #include <core/types/non-zero.hpp>
 #include <core/utility/scope-exit.hpp>
 #include <core/utility/variant-match.hpp>
@@ -10,16 +11,16 @@
 
 #include <atomic>
 #include <cstddef>
-#include <cstdint>
 #include <memory>
 #include <string>
 #include <thread>
+#include <utility>
 #include <variant>
 #include <vector>
 
 namespace
 {
-    enum class Permission : std::uint8_t
+    enum class Permission : uf::uint8
     {
         Read = 1,
         Write = 2,
@@ -29,7 +30,7 @@ namespace
 
 namespace test_types
 {
-    enum class BuildState : std::uint8_t
+    enum class BuildState : uf::uint8
     {
         Idle = 1,
         Running = 4,
@@ -174,4 +175,32 @@ TEST_CASE("synchronized operations preserve every concurrent update")
         }
     );
     CHECK(value == 4'000);
+}
+
+TEST_CASE("synchronized default construction value-initializes scalars")
+{
+    uf::Synchronized<int> defaultValue;
+    auto const initialized = defaultValue.withLock(
+        [](int value) noexcept -> int
+        {
+            return value;
+        }
+    );
+    CHECK(initialized == 0);
+}
+
+TEST_CASE("synchronized in-place construction uses parenthesized overload resolution")
+{
+    auto repeatedValues = uf::Synchronized<std::vector<int>>{
+        std::in_place,
+        3,
+        7
+    };
+    auto const values = repeatedValues.withLock(
+        [](std::vector<int> const& value) -> std::vector<int>
+        {
+            return value;
+        }
+    );
+    CHECK(values == std::vector<int>{7, 7, 7});
 }

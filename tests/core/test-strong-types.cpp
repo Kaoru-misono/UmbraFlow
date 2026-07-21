@@ -1,8 +1,8 @@
+#include <core/types/integer.hpp>
 #include <core/types/strong-id.hpp>
 
 #include <doctest/doctest.h>
 
-#include <cstdint>
 #include <limits>
 #include <string>
 #include <string_view>
@@ -22,13 +22,13 @@ namespace
 }
 
 static_assert(!std::is_default_constructible_v<ProjectId>);
-static_assert(!std::is_convertible_v<std::uint64_t, ProjectId>);
-static_assert(!std::is_convertible_v<ProjectId, std::uint64_t>);
+static_assert(!std::is_convertible_v<uf::uint64, ProjectId>);
+static_assert(!std::is_convertible_v<ProjectId, uf::uint64>);
 static_assert(!std::is_same_v<ProjectId, TaskId>);
 static_assert(
     std::is_same_v<
         decltype(std::declval<ProjectId const&>().value()),
-        std::uint64_t
+        uf::uint64
     >
 );
 static_assert(
@@ -40,8 +40,8 @@ static_assert(
 
 TEST_CASE("strong identifiers do not mix domains")
 {
-    auto const first = ProjectId{std::uint64_t{7}};
-    auto const second = ProjectId{std::uint64_t{8}};
+    auto const first = ProjectId{uf::uint64{7}};
+    auto const second = ProjectId{uf::uint64{8}};
 
     CHECK(first < second);
 
@@ -56,7 +56,7 @@ TEST_CASE("strong identifiers do not mix domains")
 
 TEST_CASE("generation overflow is explicit")
 {
-    using Generation = uf::Generation<ProjectTag, std::uint8_t>;
+    using Generation = uf::Generation<ProjectTag, uf::uint8>;
 
     auto const initial = Generation::initial();
     auto const next = initial.next();
@@ -65,8 +65,8 @@ TEST_CASE("generation overflow is explicit")
         FAIL("The initial generation did not have a successor");
         return;
     }
-    CHECK(next->value() == std::uint8_t{1});
+    CHECK(next->value() == uf::uint8{1});
 
-    auto const exhausted = Generation::fromValue(std::numeric_limits<std::uint8_t>::max());
+    auto const exhausted = Generation::fromValue(std::numeric_limits<uf::uint8>::max());
     CHECK_FALSE(exhausted.next().has_value());
 }

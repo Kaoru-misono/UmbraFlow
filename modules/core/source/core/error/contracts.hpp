@@ -1,12 +1,13 @@
 #pragma once
 
-#include <cstdint>
+#include <core/types/integer.hpp>
+
 #include <source_location>
 #include <string_view>
 
 namespace uf::detail
 {
-    enum class ContractKind : std::uint8_t
+    enum class ContractKind : uint8
     {
         Assertion,
         Check,

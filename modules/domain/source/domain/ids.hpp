@@ -2,12 +2,12 @@
 
 #include "error.hpp"
 
+#include <core/types/integer.hpp>
 #include <core/types/strong-id.hpp>
 #include <core/types/strong-value.hpp>
 
 #include <compare>
 #include <cstddef>
-#include <cstdint>
 #include <functional>
 #include <string>
 
@@ -84,12 +84,12 @@ namespace uf
         }
 
         [[nodiscard]]
-        static constexpr auto fromValue(std::uint64_t value) noexcept -> TargetGeneration
+        static constexpr auto fromValue(uint64 value) noexcept -> TargetGeneration
         {
             return TargetGeneration{Storage::fromValue(value)};
         }
 
-        [[nodiscard]] constexpr auto value() const noexcept -> std::uint64_t
+        [[nodiscard]] constexpr auto value() const noexcept -> uint64
         {
             return m_generation.value();
         }
@@ -102,7 +102,7 @@ namespace uf
         [[nodiscard]]
         auto operator()(TargetGeneration generation) const noexcept -> std::size_t
         {
-            return std::hash<std::uint64_t>{}(generation.value());
+            return std::hash<uint64>{}(generation.value());
         }
     };
 }

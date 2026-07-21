@@ -2,17 +2,18 @@
 
 #include "strong-value.hpp"
 
+#include <core/types/integer.hpp>
+
 #include <concepts>
-#include <cstdint>
 #include <limits>
 #include <optional>
 
 namespace uf
 {
-    template <typename Tag, std::unsigned_integral Representation = std::uint64_t>
+    template <typename Tag, std::unsigned_integral Representation = uint64>
     using StrongId = StrongValue<Tag, Representation>;
 
-    template <typename Tag, std::unsigned_integral Representation = std::uint64_t>
+    template <typename Tag, std::unsigned_integral Representation = uint64>
     class Generation final
     {
         Representation m_value;

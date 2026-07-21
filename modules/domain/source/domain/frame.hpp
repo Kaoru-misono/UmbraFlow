@@ -7,16 +7,16 @@
 #include <core/error/contracts.hpp>
 #include <core/safety/annotations.hpp>
 #include <core/types/enum-reflection.hpp>
+#include <core/types/integer.hpp>
 
 #include <cstddef>
-#include <cstdint>
 #include <memory>
 #include <span>
 #include <vector>
 
 namespace uf
 {
-    enum class PixelFormat : std::uint8_t
+    enum class PixelFormat : uint8
     {
         Bgra8,
         Gray8,
@@ -56,8 +56,8 @@ namespace uf
 
     [[nodiscard]]
     auto validateBufferGeometry(
-        std::uint32_t width,
-        std::uint32_t height,
+        uint32 width,
+        uint32 height,
         std::size_t stride,
         std::size_t minimumRowBytes,
         std::size_t bufferLength
@@ -69,8 +69,8 @@ namespace uf
         SessionId m_sessionId;
         TargetGeneration m_targetGeneration;
         MonotonicInstant m_capturedAt;
-        std::uint32_t m_width;
-        std::uint32_t m_height;
+        uint32 m_width;
+        uint32 m_height;
         std::size_t m_stride;
         PixelFormat m_pixelFormat;
         std::shared_ptr<FrameBuffer const> m_pixels;
@@ -81,8 +81,8 @@ namespace uf
             SessionId sessionId,
             TargetGeneration targetGeneration,
             MonotonicInstant capturedAt,
-            std::uint32_t width,
-            std::uint32_t height,
+            uint32 width,
+            uint32 height,
             std::size_t stride,
             PixelFormat pixelFormat,
             std::shared_ptr<FrameBuffer const> p_pixels,
@@ -96,8 +96,8 @@ namespace uf
             SessionId sessionId,
             TargetGeneration targetGeneration,
             MonotonicInstant capturedAt,
-            std::uint32_t width,
-            std::uint32_t height,
+            uint32 width,
+            uint32 height,
             std::size_t stride,
             PixelFormat pixelFormat,
             std::shared_ptr<FrameBuffer const> p_pixels,
@@ -108,8 +108,8 @@ namespace uf
         [[nodiscard]] auto sessionId() const noexcept -> SessionId;
         [[nodiscard]] auto targetGeneration() const noexcept -> TargetGeneration;
         [[nodiscard]] auto capturedAt() const noexcept -> MonotonicInstant;
-        [[nodiscard]] auto width() const noexcept -> std::uint32_t;
-        [[nodiscard]] auto height() const noexcept -> std::uint32_t;
+        [[nodiscard]] auto width() const noexcept -> uint32;
+        [[nodiscard]] auto height() const noexcept -> uint32;
         [[nodiscard]] auto stride() const noexcept -> std::size_t;
         [[nodiscard]] auto pixelFormat() const noexcept -> PixelFormat;
         [[nodiscard]] auto pixels() const noexcept -> std::shared_ptr<FrameBuffer const>;

@@ -29,6 +29,7 @@ cpp_add_test(
         core/test-error.cpp
         core/test-monotonic-time.cpp
         core/test-strong-types.cpp
+        core/test-utf8.cpp
     LIBS
         ${PROJECT_NAME}_core
 )

@@ -3,8 +3,7 @@
 #include "error.hpp"
 
 #include <core/time/monotonic-time.hpp>
-
-#include <cstdint>
+#include <core/types/integer.hpp>
 
 namespace uf
 {
@@ -18,5 +17,5 @@ namespace uf
     auto elapsedNanosecondsSince(
         MonotonicInstant instant,
         MonotonicInstant origin
-    ) noexcept -> std::uint64_t;
+    ) noexcept -> uint64;
 }

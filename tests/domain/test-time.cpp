@@ -1,9 +1,10 @@
 #include <domain/time.hpp>
 
+#include <core/types/integer.hpp>
+
 #include <doctest/doctest.h>
 
 #include <chrono>
-#include <cstdint>
 
 namespace
 {
@@ -44,8 +45,8 @@ TEST_CASE("elapsed nanoseconds saturate at zero")
     auto const second = uf::checkedAddMonotonic(first, threeMicroseconds);
 
     REQUIRE(second.has_value());
-    CHECK(uf::elapsedNanosecondsSince(*second, first) == std::uint64_t{3'000});
-    CHECK(uf::elapsedNanosecondsSince(first, *second) == std::uint64_t{0});
+    CHECK(uf::elapsedNanosecondsSince(*second, first) == uf::uint64{3'000});
+    CHECK(uf::elapsedNanosecondsSince(first, *second) == uf::uint64{0});
 }
 
 TEST_CASE("monotonic deadline overflow is rejected")

@@ -1,10 +1,11 @@
 #include <domain/detection.hpp>
 
+#include <core/types/integer.hpp>
+
 #include <doctest/doctest.h>
 
 #include <chrono>
 #include <cstddef>
-#include <cstdint>
 #include <memory>
 #include <vector>
 
@@ -26,9 +27,9 @@ namespace
     }
 
     auto makeFrame(
-        std::uint64_t session,
+        uf::uint64 session,
         uf::TargetGeneration generation,
-        std::uint64_t id,
+        uf::uint64 id,
         uf::MonotonicInstant capturedAt
     ) -> uf::Frame
     {
@@ -165,18 +166,18 @@ TEST_CASE("observation validation rejects every identity mismatch and expiry")
 
     CHECK(
         lease->validate(
-            uf::SessionId{std::uint64_t{1}},
+            uf::SessionId{uf::uint64{1}},
             generation,
-            uf::FrameId{std::uint64_t{10}},
+            uf::FrameId{uf::uint64{10}},
             lease->expiresAt()
         )
     );
 
     requireStaleObservation(
         lease->validate(
-            uf::SessionId{std::uint64_t{2}},
+            uf::SessionId{uf::uint64{2}},
             generation,
-            uf::FrameId{std::uint64_t{10}},
+            uf::FrameId{uf::uint64{10}},
             frame.capturedAt()
         )
     );
@@ -185,27 +186,27 @@ TEST_CASE("observation validation rejects every identity mismatch and expiry")
     REQUIRE(nextGeneration.has_value());
     requireStaleObservation(
         lease->validate(
-            uf::SessionId{std::uint64_t{1}},
+            uf::SessionId{uf::uint64{1}},
             *nextGeneration,
-            uf::FrameId{std::uint64_t{10}},
+            uf::FrameId{uf::uint64{10}},
             frame.capturedAt()
         )
     );
 
     requireStaleObservation(
         lease->validate(
-            uf::SessionId{std::uint64_t{1}},
+            uf::SessionId{uf::uint64{1}},
             generation,
-            uf::FrameId{std::uint64_t{11}},
+            uf::FrameId{uf::uint64{11}},
             frame.capturedAt()
         )
     );
 
     requireStaleObservation(
         lease->validate(
-            uf::SessionId{std::uint64_t{1}},
+            uf::SessionId{uf::uint64{1}},
             generation,
-            uf::FrameId{std::uint64_t{10}},
+            uf::FrameId{uf::uint64{10}},
             addTime(
                 lease->expiresAt(),
                 uf::MonotonicInstant::Duration{1}

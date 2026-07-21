@@ -100,6 +100,7 @@ TEST_CASE("all automation error kinds survive the generic result channel")
         REQUIRE(kind.has_value());
         CHECK(kind == testCase.m_kind);
         CHECK(result.error().code() == testCase.m_genericCode);
+        CHECK(result.error().detailCode());
         CHECK(result.error().detailCode().message() == testCase.m_name);
     }
 }

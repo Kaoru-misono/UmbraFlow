@@ -7,7 +7,7 @@ auto main() -> int
 {
     try
     {
-        std::cout << uf::projectName << '\n';
+        std::cout << uf::g_projectName << '\n';
         return EXIT_SUCCESS;
     }
     catch (...)

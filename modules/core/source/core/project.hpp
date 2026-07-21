@@ -4,5 +4,5 @@
 
 namespace uf
 {
-    inline constexpr auto projectName = std::string_view{"UmbraFlow"};
+    inline constexpr auto g_projectName = std::string_view{"UmbraFlow"};
 }

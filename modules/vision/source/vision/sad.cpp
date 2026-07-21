@@ -4,11 +4,11 @@
 #include <core/numeric/checked-arithmetic.hpp>
 #include <core/numeric/checked-cast.hpp>
 #include <core/safety/checked-access.hpp>
+#include <core/types/integer.hpp>
 
 #include <domain/frame.hpp>
 
 #include <cstddef>
-#include <cstdint>
 #include <format>
 #include <limits>
 #include <optional>
@@ -50,8 +50,8 @@ namespace uf
 {
     auto GrayImage::create(
         std::span<std::byte const> data,
-        std::uint32_t width,
-        std::uint32_t height,
+        uint32 width,
+        uint32 height,
         std::size_t stride
     ) -> Result<GrayImage>
     {
@@ -116,14 +116,17 @@ namespace uf
         GrayImage const& templateImage,
         std::size_t candidateX,
         std::size_t candidateY,
-        std::uint64_t best
-    ) const noexcept -> std::uint64_t
+        uint64 best,
+        uint64 maximumPixelComparisons,
+        uint64& completedPixelComparisons,
+        SadSearchPoll const& poll
+    ) const -> CandidateOutcome
     {
         auto const templateWidth = checkedCast<std::size_t>(templateImage.m_width);
         auto const templateHeight = checkedCast<std::size_t>(templateImage.m_height);
         UF_CHECK(templateWidth.has_value());
         UF_CHECK(templateHeight.has_value());
-        auto sum = std::uint64_t{0};
+        auto sum = uint64{0};
 
         for (auto templateY = std::size_t{0}; templateY < *templateHeight; ++templateY)
         {
@@ -145,10 +148,32 @@ namespace uf
 
             for (auto templateX = std::size_t{0}; templateX < *templateWidth; ++templateX)
             {
-                auto const haystackPixel = std::to_integer<std::uint32_t>(
+                if (completedPixelComparisons == maximumPixelComparisons)
+                {
+                    return SadSearchStopReason::ComparisonBudgetExhausted;
+                }
+                if (
+                    completedPixelComparisons % g_sadSearchPollIntervalComparisons == 0
+                )
+                {
+                    switch (poll())
+                    {
+                    case SadSearchControl::Continue:
+                        break;
+                    case SadSearchControl::Cancelled:
+                        return SadSearchStopReason::Cancelled;
+                    case SadSearchControl::TimedOut:
+                        return SadSearchStopReason::TimedOut;
+                    default:
+                        UF_UNREACHABLE_MSG("Unknown SadSearchControl value");
+                    }
+                }
+                ++completedPixelComparisons;
+
+                auto const haystackPixel = std::to_integer<uint32>(
                     checkedAt(*haystackRow, templateX)
                 );
-                auto const templatePixel = std::to_integer<std::uint32_t>(
+                auto const templatePixel = std::to_integer<uint32>(
                     checkedAt(*templateRow, templateX)
                 );
                 auto const difference = (
@@ -174,6 +199,35 @@ namespace uf
         PixelRect roi
     ) -> Result<std::optional<SadMatch>>
     {
+        auto const continueSearch = SadSearchPoll{
+            []() noexcept -> SadSearchControl
+            {
+                return SadSearchControl::Continue;
+            }
+        };
+        UF_TRY_VALUE(
+            outcome,
+            matchTemplateSad(
+                haystack,
+                templateImage,
+                roi,
+                std::numeric_limits<uint64>::max(),
+                continueSearch
+            )
+        );
+        UF_CHECK(std::holds_alternative<std::optional<SadMatch>>(outcome));
+        return std::get<std::optional<SadMatch>>(outcome);
+    }
+
+    auto matchTemplateSad(
+        GrayImage const& haystack,
+        GrayImage const& templateImage,
+        PixelRect roi,
+        uint64 maximumPixelComparisons,
+        SadSearchPoll const& poll
+    ) -> Result<SadSearchOutcome>
+    {
+        UF_CHECK(poll != nullptr);
         UF_TRY(roi.ensureWithinExtent(haystack.width(), haystack.height()));
 
         if (
@@ -181,15 +235,16 @@ namespace uf
             || templateImage.height() > roi.height()
         )
         {
-            return std::optional<SadMatch>{};
+            return SadSearchOutcome{std::optional<SadMatch>{}};
         }
 
         auto const lastX = checkedSubtract(roi.right(), templateImage.width());
         auto const lastY = checkedSubtract(roi.bottom(), templateImage.height());
         UF_CHECK(lastX.has_value());
         UF_CHECK(lastY.has_value());
-        auto best = std::numeric_limits<std::uint64_t>::max();
+        auto best = std::numeric_limits<uint64>::max();
         auto bestMatch = std::optional<SadMatch>{};
+        auto completedPixelComparisons = uint64{0};
 
         for (auto candidateY = roi.y(); candidateY <= *lastY; ++candidateY)
         {
@@ -199,31 +254,39 @@ namespace uf
                 auto const candidateYSize = checkedCast<std::size_t>(candidateY);
                 UF_CHECK(candidateXSize.has_value());
                 UF_CHECK(candidateYSize.has_value());
-                auto const score = haystack.candidateSad(
+                auto const candidate = haystack.candidateSad(
                     templateImage,
                     *candidateXSize,
                     *candidateYSize,
-                    best
+                    best,
+                    maximumPixelComparisons,
+                    completedPixelComparisons,
+                    poll
                 );
+                if (auto const* reason = std::get_if<SadSearchStopReason>(&candidate))
+                {
+                    return SadSearchOutcome{*reason};
+                }
+                auto const score = std::get<uint64>(candidate);
                 if (score < best)
                 {
                     best = score;
                     bestMatch.emplace(candidateX, candidateY, score);
                     if (best == 0)
                     {
-                        return bestMatch;
+                        return SadSearchOutcome{bestMatch};
                     }
                 }
             }
         }
 
-        return bestMatch;
+        return SadSearchOutcome{bestMatch};
     }
 
     auto bgra8ToGray8(
         std::span<std::byte const> bgra,
-        std::uint32_t width,
-        std::uint32_t height,
+        uint32 width,
+        uint32 height,
         std::size_t stride
     ) -> Result<std::vector<std::byte>>
     {
@@ -283,22 +346,22 @@ namespace uf
                 auto const redOffset = checkedAdd(*pixelOffset, std::size_t{2});
                 UF_CHECK(greenOffset.has_value());
                 UF_CHECK(redOffset.has_value());
-                auto const blue = std::to_integer<std::uint32_t>(
+                auto const blue = std::to_integer<uint32>(
                     checkedAt(*row, *pixelOffset)
                 );
-                auto const green = std::to_integer<std::uint32_t>(
+                auto const green = std::to_integer<uint32>(
                     checkedAt(*row, *greenOffset)
                 );
-                auto const red = std::to_integer<std::uint32_t>(
+                auto const red = std::to_integer<uint32>(
                     checkedAt(*row, *redOffset)
                 );
                 auto const weightedGray = (
-                    std::uint32_t{77} * red
-                    + std::uint32_t{150} * green
-                    + std::uint32_t{29} * blue
+                    uint32{77} * red
+                    + uint32{150} * green
+                    + uint32{29} * blue
                 );
                 auto const gray = weightedGray >> 8;
-                auto const grayByte = checkedCast<std::uint8_t>(gray);
+                auto const grayByte = checkedCast<uint8>(gray);
                 UF_CHECK(grayByte.has_value());
                 output.emplace_back(std::byte{*grayByte});
             }

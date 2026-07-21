@@ -1,13 +1,13 @@
 #pragma once
 
-#include <cstdint>
+#include <core/types/integer.hpp>
 
 namespace uf
 {
     [[nodiscard]]
     auto hashedGray(
-        std::uint32_t seed,
-        std::uint32_t x,
-        std::uint32_t y
-    ) noexcept -> std::uint8_t;
+        uint32 seed,
+        uint32 x,
+        uint32 y
+    ) noexcept -> uint8;
 }

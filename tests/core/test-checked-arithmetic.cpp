@@ -1,10 +1,10 @@
 #include <core/numeric/checked-arithmetic.hpp>
 #include <core/numeric/checked-cast.hpp>
+#include <core/types/integer.hpp>
 
 #include <doctest/doctest.h>
 
 #include <cmath>
-#include <cstdint>
 #include <limits>
 
 TEST_CASE("checked integer arithmetic rejects overflow")
@@ -15,30 +15,30 @@ TEST_CASE("checked integer arithmetic rejects overflow")
     using uf::checkedRemainder;
     using uf::checkedSubtract;
 
-    auto constexpr unsignedMaximum = std::numeric_limits<std::uint32_t>::max();
+    auto constexpr unsignedMaximum = std::numeric_limits<uf::uint32>::max();
     CHECK(
-        checkedAdd<std::uint32_t>(std::uint32_t{40}, std::uint32_t{2})
-        == std::uint32_t{42}
+        checkedAdd<uf::uint32>(uf::uint32{40}, uf::uint32{2})
+        == uf::uint32{42}
     );
-    CHECK_FALSE(checkedAdd<std::uint32_t>(unsignedMaximum, std::uint32_t{1}).has_value());
-    CHECK_FALSE(checkedSubtract<std::uint32_t>(std::uint32_t{0}, std::uint32_t{1}).has_value());
+    CHECK_FALSE(checkedAdd<uf::uint32>(unsignedMaximum, uf::uint32{1}).has_value());
+    CHECK_FALSE(checkedSubtract<uf::uint32>(uf::uint32{0}, uf::uint32{1}).has_value());
 
-    auto constexpr signedMinimum = std::numeric_limits<std::int64_t>::min();
-    auto constexpr signedMaximum = std::numeric_limits<std::int64_t>::max();
-    CHECK_FALSE(checkedAdd<std::int64_t>(signedMaximum, std::int64_t{1}).has_value());
-    CHECK_FALSE(checkedSubtract<std::int64_t>(signedMinimum, std::int64_t{1}).has_value());
+    auto constexpr signedMinimum = std::numeric_limits<uf::int64>::min();
+    auto constexpr signedMaximum = std::numeric_limits<uf::int64>::max();
+    CHECK_FALSE(checkedAdd<uf::int64>(signedMaximum, uf::int64{1}).has_value());
+    CHECK_FALSE(checkedSubtract<uf::int64>(signedMinimum, uf::int64{1}).has_value());
     CHECK(
-        checkedMultiply<std::int64_t>(std::int64_t{-3}, std::int64_t{7})
-        == std::int64_t{-21}
+        checkedMultiply<uf::int64>(uf::int64{-3}, uf::int64{7})
+        == uf::int64{-21}
     );
-    CHECK(checkedMultiply<std::int64_t>(signedMinimum, std::int64_t{1}) == signedMinimum);
-    CHECK_FALSE(checkedMultiply<std::int64_t>(signedMinimum, std::int64_t{-1}).has_value());
-    CHECK_FALSE(checkedMultiply<std::int64_t>(signedMaximum, std::int64_t{2}).has_value());
-    CHECK_FALSE(checkedDivide<std::int64_t>(signedMinimum, std::int64_t{-1}).has_value());
-    CHECK_FALSE(checkedDivide<std::int64_t>(std::int64_t{1}, std::int64_t{0}).has_value());
-    CHECK(checkedDivide<std::int64_t>(std::int64_t{42}, std::int64_t{7}) == std::int64_t{6});
-    CHECK_FALSE(checkedRemainder<std::int64_t>(signedMinimum, std::int64_t{-1}).has_value());
-    CHECK(checkedRemainder<std::int64_t>(std::int64_t{43}, std::int64_t{7}) == std::int64_t{1});
+    CHECK(checkedMultiply<uf::int64>(signedMinimum, uf::int64{1}) == signedMinimum);
+    CHECK_FALSE(checkedMultiply<uf::int64>(signedMinimum, uf::int64{-1}).has_value());
+    CHECK_FALSE(checkedMultiply<uf::int64>(signedMaximum, uf::int64{2}).has_value());
+    CHECK_FALSE(checkedDivide<uf::int64>(signedMinimum, uf::int64{-1}).has_value());
+    CHECK_FALSE(checkedDivide<uf::int64>(uf::int64{1}, uf::int64{0}).has_value());
+    CHECK(checkedDivide<uf::int64>(uf::int64{42}, uf::int64{7}) == uf::int64{6});
+    CHECK_FALSE(checkedRemainder<uf::int64>(signedMinimum, uf::int64{-1}).has_value());
+    CHECK(checkedRemainder<uf::int64>(uf::int64{43}, uf::int64{7}) == uf::int64{1});
 }
 
 TEST_CASE("checked casts reject narrowing and non-finite input")
@@ -46,18 +46,18 @@ TEST_CASE("checked casts reject narrowing and non-finite input")
     using uf::checkedCast;
     using uf::checkedIntegralCast;
 
-    CHECK(checkedCast<std::uint16_t>(std::uint32_t{42}) == std::uint16_t{42});
-    CHECK_FALSE(checkedCast<std::uint16_t>(std::uint32_t{70'000}).has_value());
-    CHECK_FALSE(checkedCast<std::uint32_t>(std::int32_t{-1}).has_value());
+    CHECK(checkedCast<uf::uint16>(uf::uint32{42}) == uf::uint16{42});
+    CHECK_FALSE(checkedCast<uf::uint16>(uf::uint32{70'000}).has_value());
+    CHECK_FALSE(checkedCast<uf::uint32>(uf::int32{-1}).has_value());
 
-    CHECK(checkedIntegralCast<std::int32_t>(42.0) == std::int32_t{42});
-    CHECK_FALSE(checkedIntegralCast<std::int32_t>(42.5).has_value());
-    CHECK_FALSE(checkedIntegralCast<std::uint8_t>(256.0).has_value());
-    CHECK_FALSE(checkedIntegralCast<std::uint64_t>(std::ldexp(1.0, 64)).has_value());
+    CHECK(checkedIntegralCast<uf::int32>(42.0) == uf::int32{42});
+    CHECK_FALSE(checkedIntegralCast<uf::int32>(42.5).has_value());
+    CHECK_FALSE(checkedIntegralCast<uf::uint8>(256.0).has_value());
+    CHECK_FALSE(checkedIntegralCast<uf::uint64>(std::ldexp(1.0, 64)).has_value());
     CHECK_FALSE(
-        checkedIntegralCast<std::int32_t>(std::numeric_limits<double>::infinity()).has_value()
+        checkedIntegralCast<uf::int32>(std::numeric_limits<double>::infinity()).has_value()
     );
     CHECK_FALSE(
-        checkedIntegralCast<std::int32_t>(std::numeric_limits<double>::quiet_NaN()).has_value()
+        checkedIntegralCast<uf::int32>(std::numeric_limits<double>::quiet_NaN()).has_value()
     );
 }

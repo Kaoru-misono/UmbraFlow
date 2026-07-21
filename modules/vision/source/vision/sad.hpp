@@ -2,28 +2,49 @@
 
 #include <core/error/result.hpp>
 #include <core/safety/annotations.hpp>
+#include <core/types/integer.hpp>
 
 #include <domain/space.hpp>
 
 #include <cstddef>
-#include <cstdint>
+#include <functional>
 #include <optional>
 #include <span>
+#include <variant>
 #include <vector>
 
 namespace uf
 {
+    enum class SadSearchControl : uint8
+    {
+        Continue,
+        Cancelled,
+        TimedOut,
+    };
+
+    enum class SadSearchStopReason : uint8
+    {
+        Cancelled,
+        TimedOut,
+        ComparisonBudgetExhausted,
+    };
+
+    inline constexpr auto g_sadSearchPollIntervalComparisons = uint64{4096};
+
+    // Invoked synchronously during matching and never retained by the matcher.
+    using SadSearchPoll = std::function<SadSearchControl()>;
+
     class SadMatch final
     {
-        std::uint32_t m_x;
-        std::uint32_t m_y;
-        std::uint64_t m_score;
+        uint32 m_x;
+        uint32 m_y;
+        uint64 m_score;
 
     public:
         constexpr SadMatch(
-            std::uint32_t x,
-            std::uint32_t y,
-            std::uint64_t score
+            uint32 x,
+            uint32 y,
+            uint64 score
         ) noexcept
             : m_x{x}
             , m_y{y}
@@ -33,10 +54,15 @@ namespace uf
 
         auto operator==(SadMatch const&) const -> bool = default;
 
-        [[nodiscard]] constexpr auto x() const noexcept -> std::uint32_t { return m_x; }
-        [[nodiscard]] constexpr auto y() const noexcept -> std::uint32_t { return m_y; }
-        [[nodiscard]] constexpr auto score() const noexcept -> std::uint64_t { return m_score; }
+        [[nodiscard]] constexpr auto x() const noexcept -> uint32 { return m_x; }
+        [[nodiscard]] constexpr auto y() const noexcept -> uint32 { return m_y; }
+        [[nodiscard]] constexpr auto score() const noexcept -> uint64 { return m_score; }
     };
+
+    using SadSearchOutcome = std::variant<
+        std::optional<SadMatch>,
+        SadSearchStopReason
+    >;
 
     class GrayImage;
 
@@ -47,25 +73,41 @@ namespace uf
         PixelRect roi
     ) -> Result<std::optional<SadMatch>>;
 
+    [[nodiscard]]
+    auto matchTemplateSad(
+        GrayImage const& haystack,
+        GrayImage const& templateImage,
+        PixelRect roi,
+        uint64 maximumPixelComparisons,
+        SadSearchPoll const& poll
+    ) -> Result<SadSearchOutcome>;
+
     // A read-only Gray8 view. The backing storage must outlive this object and
     // every matcher call that uses it.
     class GrayImage final
     {
+        using CandidateOutcome = std::variant<
+            uint64,
+            SadSearchStopReason
+        >;
+
         friend auto matchTemplateSad(
             GrayImage const& haystack,
             GrayImage const& templateImage,
-            PixelRect roi
-        ) -> Result<std::optional<SadMatch>>;
+            PixelRect roi,
+            uint64 maximumPixelComparisons,
+            SadSearchPoll const& poll
+        ) -> Result<SadSearchOutcome>;
 
         std::span<std::byte const> m_data;
-        std::uint32_t m_width;
-        std::uint32_t m_height;
+        uint32 m_width;
+        uint32 m_height;
         std::size_t m_stride;
 
         constexpr GrayImage(
             std::span<std::byte const> data,
-            std::uint32_t width,
-            std::uint32_t height,
+            uint32 width,
+            uint32 height,
             std::size_t stride
         ) noexcept
             : m_data{data}
@@ -87,28 +129,31 @@ namespace uf
             GrayImage const& templateImage,
             std::size_t candidateX,
             std::size_t candidateY,
-            std::uint64_t best
-        ) const noexcept -> std::uint64_t;
+            uint64 best,
+            uint64 maximumPixelComparisons,
+            uint64& completedPixelComparisons,
+            SadSearchPoll const& poll
+        ) const -> CandidateOutcome;
 
     public:
         [[nodiscard]]
         static auto create(
             std::span<std::byte const> data UF_LIFETIME_BOUND,
-            std::uint32_t width,
-            std::uint32_t height,
+            uint32 width,
+            uint32 height,
             std::size_t stride
         ) -> Result<GrayImage>;
 
-        [[nodiscard]] constexpr auto width() const noexcept -> std::uint32_t { return m_width; }
-        [[nodiscard]] constexpr auto height() const noexcept -> std::uint32_t { return m_height; }
+        [[nodiscard]] constexpr auto width() const noexcept -> uint32 { return m_width; }
+        [[nodiscard]] constexpr auto height() const noexcept -> uint32 { return m_height; }
         [[nodiscard]] constexpr auto stride() const noexcept -> std::size_t { return m_stride; }
     };
 
     [[nodiscard]]
     auto bgra8ToGray8(
         std::span<std::byte const> bgra,
-        std::uint32_t width,
-        std::uint32_t height,
+        uint32 width,
+        uint32 height,
         std::size_t stride
     ) -> Result<std::vector<std::byte>>;
 }

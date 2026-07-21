@@ -2,24 +2,23 @@
 
 #include <core/error/contracts.hpp>
 #include <core/numeric/checked-cast.hpp>
-
-#include <cstdint>
+#include <core/types/integer.hpp>
 
 namespace uf
 {
     auto hashedGray(
-        std::uint32_t seed,
-        std::uint32_t x,
-        std::uint32_t y
-    ) noexcept -> std::uint8_t
+        uint32 seed,
+        uint32 x,
+        uint32 y
+    ) noexcept -> uint8
     {
-        auto value = x * std::uint32_t{0x9E37'79B1};
-        value += y * std::uint32_t{0x85EB'CA77};
-        value += seed * std::uint32_t{0x27D4'EB2F};
+        auto value = x * uint32{0x9E37'79B1};
+        value += y * uint32{0x85EB'CA77};
+        value += seed * uint32{0x27D4'EB2F};
         value ^= value >> 15;
-        value *= std::uint32_t{0x2C1B'3C6D};
+        value *= uint32{0x2C1B'3C6D};
         value ^= value >> 13;
-        auto const lowByte = checkedCast<std::uint8_t>(value & std::uint32_t{0xFF});
+        auto const lowByte = checkedCast<uint8>(value & uint32{0xFF});
         UF_CHECK(lowByte.has_value());
         return *lowByte;
     }

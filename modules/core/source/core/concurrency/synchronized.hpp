@@ -11,7 +11,7 @@ namespace uf
     namespace detail
     {
         template <typename Result>
-        constexpr auto lockResultDoesNotExposeStorage = (
+        constexpr auto g_lockResultDoesNotExposeStorage = (
             !std::is_reference_v<Result>
             && !std::is_pointer_v<std::remove_cv_t<Result>>
         );
@@ -20,7 +20,7 @@ namespace uf
     template <typename Value, typename Mutex = std::mutex>
     class Synchronized final
     {
-        Value m_value;
+        Value m_value{};
         mutable Mutex m_mutex;
 
     public:
@@ -37,7 +37,7 @@ namespace uf
         explicit Synchronized(std::in_place_t, Arguments&&... arguments) noexcept(
             std::is_nothrow_constructible_v<Value, Arguments...>
         )
-            : m_value{std::forward<Arguments>(arguments)...}
+            : m_value(std::forward<Arguments>(arguments)...)
         {
         }
 
@@ -52,7 +52,7 @@ namespace uf
         {
             using Result = std::invoke_result_t<Function, Value&>;
             static_assert(
-                detail::lockResultDoesNotExposeStorage<Result>,
+                detail::g_lockResultDoesNotExposeStorage<Result>,
                 "A synchronized operation cannot return a pointer or reference to protected storage."
             );
 
@@ -66,7 +66,7 @@ namespace uf
         {
             using Result = std::invoke_result_t<Function, Value const&>;
             static_assert(
-                detail::lockResultDoesNotExposeStorage<Result>,
+                detail::g_lockResultDoesNotExposeStorage<Result>,
                 "A synchronized operation cannot return a pointer or reference to protected storage."
             );
 

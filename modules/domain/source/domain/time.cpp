@@ -1,10 +1,10 @@
 #include "time.hpp"
 
 #include <core/numeric/checked-cast.hpp>
+#include <core/types/integer.hpp>
 
 #include <chrono>
 #include <cmath>
-#include <cstdint>
 #include <limits>
 #include <ratio>
 #include <string>
@@ -39,7 +39,7 @@ namespace uf
     auto elapsedNanosecondsSince(
         MonotonicInstant instant,
         MonotonicInstant origin
-    ) noexcept -> std::uint64_t
+    ) noexcept -> uint64
     {
         using Duration = MonotonicInstant::Duration;
         using Period = Duration::period;
@@ -47,8 +47,8 @@ namespace uf
         auto const elapsed = instant.saturatingDurationSince(origin);
         if constexpr (std::ratio_equal_v<Period, std::nano>)
         {
-            return checkedCast<std::uint64_t>(elapsed.count()).value_or(
-                std::numeric_limits<std::uint64_t>::max()
+            return checkedCast<uint64>(elapsed.count()).value_or(
+                std::numeric_limits<uint64>::max()
             );
         }
         else
@@ -57,15 +57,15 @@ namespace uf
             auto const nanoseconds = FloatingNanoseconds{elapsed}.count();
             auto const upperExclusive = std::ldexp(
                 1.0L,
-                std::numeric_limits<std::uint64_t>::digits
+                std::numeric_limits<uint64>::digits
             );
             if (!std::isfinite(nanoseconds) || nanoseconds >= upperExclusive)
             {
-                return std::numeric_limits<std::uint64_t>::max();
+                return std::numeric_limits<uint64>::max();
             }
 
-            return checkedIntegralCast<std::uint64_t>(std::floor(nanoseconds)).value_or(
-                std::numeric_limits<std::uint64_t>::max()
+            return checkedIntegralCast<uint64>(std::floor(nanoseconds)).value_or(
+                std::numeric_limits<uint64>::max()
             );
         }
     }

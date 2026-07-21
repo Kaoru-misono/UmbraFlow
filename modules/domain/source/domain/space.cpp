@@ -3,21 +3,21 @@
 #include <core/error/contracts.hpp>
 #include <core/numeric/checked-arithmetic.hpp>
 #include <core/numeric/checked-cast.hpp>
+#include <core/types/integer.hpp>
 
 #include <algorithm>
 #include <array>
 #include <cmath>
-#include <cstdint>
 #include <format>
 #include <functional>
 
 namespace uf
 {
     auto PixelRect::create(
-        std::uint32_t x,
-        std::uint32_t y,
-        std::uint32_t width,
-        std::uint32_t height
+        uint32 x,
+        uint32 y,
+        uint32 width,
+        uint32 height
     ) -> Result<PixelRect>
     {
         if (width == 0 || height == 0)
@@ -56,8 +56,8 @@ namespace uf
     }
 
     auto PixelRect::ensureWithinExtent(
-        std::uint32_t width,
-        std::uint32_t height
+        uint32 width,
+        uint32 height
     ) const -> Status
     {
         if (m_right > width || m_bottom > height)
@@ -83,8 +83,8 @@ namespace uf
         Point<DesktopSpace> clientOrigin,
         float clientWidth,
         float clientHeight,
-        std::uint32_t frameWidth,
-        std::uint32_t frameHeight
+        uint32 frameWidth,
+        uint32 frameHeight
     ) -> Result<CoordinateTransform>
     {
         auto const allFinite = (
@@ -313,10 +313,10 @@ namespace uf
             std::clamp(rect.y() + rect.height(), 0.0F, frameHeight)
         );
 
-        auto const x = checkedIntegralCast<std::uint32_t>(roundedX);
-        auto const y = checkedIntegralCast<std::uint32_t>(roundedY);
-        auto const right = checkedIntegralCast<std::uint32_t>(roundedRight);
-        auto const bottom = checkedIntegralCast<std::uint32_t>(roundedBottom);
+        auto const x = checkedIntegralCast<uint32>(roundedX);
+        auto const y = checkedIntegralCast<uint32>(roundedY);
+        auto const right = checkedIntegralCast<uint32>(roundedRight);
+        auto const bottom = checkedIntegralCast<uint32>(roundedBottom);
         if (!x || !y || !right || !bottom)
         {
             return fail(
@@ -383,7 +383,7 @@ namespace uf
 
     auto PixelRectHash::operator()(PixelRect const& rect) const noexcept -> std::size_t
     {
-        auto hash = std::hash<std::uint32_t>{}(rect.x());
+        auto hash = std::hash<uint32>{}(rect.x());
         auto const values = std::array{
             rect.y(),
             rect.width(),
@@ -392,7 +392,7 @@ namespace uf
         for (auto const value : values)
         {
             hash ^= (
-                std::hash<std::uint32_t>{}(value)
+                std::hash<uint32>{}(value)
                 + std::size_t{0x9e3779b9U}
                 + (hash << 6)
                 + (hash >> 2)

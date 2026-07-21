@@ -1,12 +1,12 @@
 #include <domain/frame.hpp>
 
 #include <core/safety/checked-access.hpp>
+#include <core/types/integer.hpp>
 
 #include <doctest/doctest.h>
 
 #include <array>
 #include <cstddef>
-#include <cstdint>
 #include <limits>
 #include <memory>
 #include <type_traits>
@@ -36,15 +36,15 @@ namespace
 
     [[nodiscard]]
     auto makeFrame(
-        std::uint32_t width,
-        std::uint32_t height,
+        uf::uint32 width,
+        uf::uint32 height,
         std::size_t stride,
         std::size_t length
     ) -> uf::Result<uf::Frame>
     {
         return uf::Frame::create(
-            uf::FrameId{std::uint64_t{1}},
-            uf::SessionId{std::uint64_t{1}},
+            uf::FrameId{uf::uint64{1}},
+            uf::SessionId{uf::uint64{1}},
             uf::TargetGeneration{},
             uf::MonotonicInstant::fromTimePoint(
                 uf::MonotonicInstant::TimePoint{}
@@ -75,8 +75,8 @@ TEST_CASE("valid frames preserve immutable shared pixels")
         std::vector<std::byte>(32, std::byte{7})
     );
     auto const result = uf::Frame::create(
-        uf::FrameId{std::uint64_t{1}},
-        uf::SessionId{std::uint64_t{1}},
+        uf::FrameId{uf::uint64{1}},
+        uf::SessionId{uf::uint64{1}},
         uf::TargetGeneration{},
         uf::MonotonicInstant::fromTimePoint(
             uf::MonotonicInstant::TimePoint{}
@@ -123,8 +123,8 @@ TEST_CASE("zero frame dimensions are rejected")
 {
     struct InvalidCase final
     {
-        std::uint32_t m_width;
-        std::uint32_t m_height;
+        uf::uint32 m_width;
+        uf::uint32 m_height;
         std::size_t m_stride;
         std::size_t m_length;
     };
@@ -190,8 +190,8 @@ TEST_CASE("frame transform rejects separate width and height mismatches")
 {
     struct MismatchCase final
     {
-        std::uint32_t m_width;
-        std::uint32_t m_height;
+        uf::uint32 m_width;
+        uf::uint32 m_height;
     };
 
     auto const cases = std::array{
@@ -210,8 +210,8 @@ TEST_CASE("frame transform rejects separate width and height mismatches")
         REQUIRE(transform.has_value());
 
         auto const result = uf::Frame::create(
-            uf::FrameId{std::uint64_t{1}},
-            uf::SessionId{std::uint64_t{1}},
+            uf::FrameId{uf::uint64{1}},
+            uf::SessionId{uf::uint64{1}},
             uf::TargetGeneration{},
             uf::MonotonicInstant::fromTimePoint(
                 uf::MonotonicInstant::TimePoint{}
@@ -232,8 +232,8 @@ TEST_CASE("frame transform rejects separate width and height mismatches")
 TEST_CASE("frame construction rejects a null pixel owner")
 {
     auto const result = uf::Frame::create(
-        uf::FrameId{std::uint64_t{1}},
-        uf::SessionId{std::uint64_t{1}},
+        uf::FrameId{uf::uint64{1}},
+        uf::SessionId{uf::uint64{1}},
         uf::TargetGeneration{},
         uf::MonotonicInstant::fromTimePoint(
             uf::MonotonicInstant::TimePoint{}

@@ -3,8 +3,8 @@
 #include <core/error/result.hpp>
 #include <core/safety/annotations.hpp>
 #include <core/types/enum-reflection.hpp>
+#include <core/types/integer.hpp>
 
-#include <cstdint>
 #include <optional>
 #include <source_location>
 #include <string>
@@ -13,7 +13,7 @@
 
 namespace uf
 {
-    enum class AutomationErrorKind : std::uint8_t
+    enum class AutomationErrorKind : uint8
     {
         Cancelled,
         Timeout,
