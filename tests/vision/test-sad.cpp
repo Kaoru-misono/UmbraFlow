@@ -169,7 +169,7 @@ namespace
     {
         auto const kind = uf::automationErrorKind(error);
         REQUIRE(kind.has_value());
-        CHECK(*kind == expected);
+        CHECK(kind.value() == expected);
     }
 
     [[nodiscard]]

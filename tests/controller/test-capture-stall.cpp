@@ -13,7 +13,7 @@ namespace
     {
         auto const kind = uf::automationErrorKind(error);
         REQUIRE(kind.has_value());
-        return *kind;
+        return kind.value();
     }
 
     [[nodiscard]]

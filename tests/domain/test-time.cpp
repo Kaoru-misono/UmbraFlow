@@ -69,7 +69,7 @@ TEST_CASE("monotonic deadline overflow is rejected")
     REQUIRE_FALSE(overflow.has_value());
     auto const kind = uf::automationErrorKind(overflow.error());
     REQUIRE(kind.has_value());
-    CHECK(*kind == uf::AutomationErrorKind::InternalInvariant);
+    CHECK(kind.value() == uf::AutomationErrorKind::InternalInvariant);
 }
 
 TEST_CASE("negative clock durations fail closed")
@@ -82,5 +82,5 @@ TEST_CASE("negative clock durations fail closed")
     REQUIRE_FALSE(result.has_value());
     auto const kind = uf::automationErrorKind(result.error());
     REQUIRE(kind.has_value());
-    CHECK(*kind == uf::AutomationErrorKind::InternalInvariant);
+    CHECK(kind.value() == uf::AutomationErrorKind::InternalInvariant);
 }
