@@ -433,9 +433,16 @@ namespace uf::m0_demo::platform
     {
         UF_TRY_VALUE(filename, relativeFilename(path));
         auto const requestedParent = path.parent_path();
+        UF_TRY_VALUE(
+            canonicalRequestedParent,
+            canonicalizePathForComparison(
+                requestedParent,
+                "input-agent output parent"
+            )
+        );
         if (
             !isPathWithinDirectory(
-                requestedParent,
+                canonicalRequestedParent,
                 canonicalOutputDirectory
             )
         )
@@ -445,25 +452,25 @@ namespace uf::m0_demo::platform
                 std::format(
                     "input-agent output parent {} is outside output "
                     "directory {}",
-                    requestedParent.string(),
+                    canonicalRequestedParent.string(),
                     canonicalOutputDirectory.string()
                 )
             );
         }
 
         auto relativeDirectories = std::vector<std::filesystem::path>{};
-        auto requestedComponent = requestedParent.begin();
+        auto requestedComponent = canonicalRequestedParent.begin();
         for (
             auto rootComponent = canonicalOutputDirectory.begin();
             rootComponent != canonicalOutputDirectory.end();
             ++rootComponent
         )
         {
-            UF_CHECK(requestedComponent != requestedParent.end());
+            UF_CHECK(requestedComponent != canonicalRequestedParent.end());
             ++requestedComponent;
         }
         for (
-            ; requestedComponent != requestedParent.end();
+            ; requestedComponent != canonicalRequestedParent.end();
             ++requestedComponent
         )
         {
