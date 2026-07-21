@@ -25,7 +25,10 @@ grill 进行到 Q10 时,开发者澄清了真实意图,**修正了整个 grill �
 下面 D0–D10 是**实现层的存款**,不是产品方向。它们:
 - 在旧 DESIGN 约束下敲定,脱离后**部分会变**(Q10/D10 已因常驻 App 形态而变);
 - 等新 roadmap 定了、真正进入某阶段实现时**按需取用/复核**,不当作既成约束。
-- **收尾头号事项**:取得开发者的新版 DESIGN(含 ADR-013),diff 旧版(897 行 /e/github/UmbraFlow/DESIGN.md),复核受影响裁决。
+- **收尾头号事项(已解 2026-07-21)**:所谓"897 行止于 ADR-012 的旧版 + 更新版"是误记——
+  `/e/github/UmbraFlow/DESIGN.md` 本身就是 **963 行、§24 已含 ADR-013**(v0.5,commit bb267c3,
+  AI 所写),与 vendored `.reference/rust/DESIGN.md` 逐字节相同。不存在需另取/diff 的第二版;
+  ADR-013 与 D6 裁决一致,无需复核。
 
 ---
 
@@ -166,6 +169,9 @@ grill 进行到 Q10 时,开发者澄清了真实意图,**修正了整个 grill �
 
 **留待(P0-A 开工前必须落锤)**:manifest/annotation schema、recognizer/page 句柄命名空间、ROI 坐标空间、
 required/forbidden 组合与 Unknown/Ambiguous 证据格式(均与 Roadmap P0-A、D8 CoordinateTransform 对齐)。
+—— 这些统一收进**专门的标注设计稿(另出,当前待定,2026-07-21 决定)**,不在本裁决展开;S0 共享地基
+(见 Roadmap 交付顺序)未落锤前不进入标注实现。**⚠ 一条硬约束先记下:页面优先级只用于诊断排序,
+永不压制 Ambiguous**(否则把 fail-closed 的"多命中→AmbiguousScreen→不点击"悄悄变成放行,捅穿"永不点错屏")。
 
 ---
 
@@ -175,10 +181,32 @@ required/forbidden 组合与 Unknown/Ambiguous 证据格式(均与 Roadmap P0-A�
 
 - `bot:on(popup_recognizer, handler)` 注册;宿主在**每个观察周期边界同步**检查已注册 interrupt(不异步、不在动作中途插入,守 §8.3 与 trace 顺序)。
 - 多命中按**注册顺序 first-match**(确定性平局裁决);**handler 期间禁重入**(防无限递归弹窗);同一 interrupt 超 `max_hits` → **显式 raise**(不静默)。
-- **P0 不做通用 interrupt**,随机弹窗先用显式 `if`/wait 分支跑通整套每日;P1 再用 `bot:on` 回填抽象。
+- **P0 拉进最小 D6**(2026-07-21 修订):每个观察周期边界 + **每个长 `wait` 内部**做一次已知弹窗清扫
+  (命中即关、继续);**不做**通用 interrupt 的重机制(注册 API、first-match、max_hits、禁重入)——留 P1 用
+  `bot:on` 回填。理由:战斗结束判定是分钟级阻塞 `wait(结算模板)`,阻塞期散落 `if` 不跑,随机弹窗会漏 →
+  fail-closed 停 → 整轮失败;故最小清扫是 P0-C 稳定性的**必需**,非 P1 可推项。**D7(跨文件复用)才真可推**,
+  与 D6 分开(同文件函数 + 复制粘贴让每日跑起来,代价是可维护性非可行性)。
 
-**⚠ ADR-013 澄清(重大,影响全局)**:开发者确认**手里有比 `/e/github/UmbraFlow/DESIGN.md`(897 行,§24 止于 ADR-012)更新的 DESIGN 版本,其中已含 ADR-013**。因此:
-- **不新写 ADR-013**,以开发者新版 DESIGN 为准。
-- **⚠ 整个 workflow 与决策包基于旧版 DESIGN.md 跑出**——新版若有实质改动,部分裁决依据需复核。**收尾头号事项**:取得新版 DESIGN,diff 旧版,复核受影响裁决。
+**✅ ADR-013 已解(2026-07-21,原为误记)**:并不存在"897 行止于 ADR-012 的旧版 + 更新版"两份
+DESIGN。`/e/github/UmbraFlow/DESIGN.md` 就是 **963 行、§24 含 ADR-013**(v0.5,commit bb267c3,
+AI 所写),与 vendored `.reference/rust/DESIGN.md` 逐字节相同。ADR-013 内容(随机弹窗用任务级
+interrupt,每观察周期先于 state cases 按声明顺序 first-match,max_hits 防死循环)与本题 D6 裁决
+**完全一致**,无需复核,收尾项撤销。
+
+---
+
+## D10. Q10 Engine API 边界 / 进程模型(方向转向后重定)
+
+**结论(已定,承接常驻 App 形态)**:Engine API 语义稳定、领域操作边界在早期就留好接缝
+(§13/ADR-008:load_project/start_task/pause/resume/cancel/query_task/subscribe_events),
+CLI/GUI 不感知 Luau。进程模型分阶段:
+
+- **P0 一次一 run**:每任务全新 Luau VM state,外部计时用 Windows 计划任务,无常驻 Engine、无队列、无并发(§9.4)。
+- **P2 升级为常驻 Engine + 托盘 App**(见 [`2026-07-21-product-form-and-roadmap.md`](2026-07-21-product-form-and-roadmap.md) 第三节 P2)。
+  早留的 API 接缝使 P0→P2 **不改 API 表面**,只换宿主生命周期。
+
+> 此前 product-form 第三节 P2 注"Engine API 边界在更早阶段就留好接缝(见 D10)"即指本节。
+
+**留待**:常驻 Engine 的任务队列 / 并发边界(P2 设计时定)、subscribe_events 的 lag / 权威快照语义在常驻形态下的细化。
 
 **留待**:max_hits / on_exhausted 默认、作用域(run vs step)、handler 能否调子任务、致命弹窗能否中止 run、首任务实际有哪些弹窗。

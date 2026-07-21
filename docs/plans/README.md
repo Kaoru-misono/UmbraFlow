@@ -12,6 +12,14 @@ location required by `CLAUDE.md` and `AGENTS.md`.
 - [Task-model decision package](2026-07-21-lua-task-model-decision-package.md) — research and arguments;
   not authoritative when it conflicts with the two documents above.
 
+Active implementation plans (not authorities, executed when entering the phase):
+
+- [P0-B Luau hardening ledger](2026-07-21-p0b-luau-hardening-ledger.md) — implementation-time
+  checklist from two independent reviews of the Luau decision (cancel yield-abandon, deep-freeze,
+  determinism gaps); apply during P0-B.
+- [UI verification runbook](2026-07-20-ui-verification-runbook.md) — real-machine before/after
+  click acceptance procedure.
+
 The 2026-07-20 Lua grill is retained as historical input. It must not be used
 as the current language or Roadmap decision.
 

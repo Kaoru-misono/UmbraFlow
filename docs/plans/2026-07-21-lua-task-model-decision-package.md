@@ -139,6 +139,11 @@ DESIGN §3.3/§8.6 的"加载时失败原则"是整份设计对"加载时可证�
 
 #### ADR-013 在本文档缺失(§24)
 
+> **【已解 2026-07-21】** 此条基于旧 DESIGN v0.4 写就。现 `/e/github/UmbraFlow/DESIGN.md` 为
+> v0.5(963 行,commit bb267c3,AI 所写),§24 已含 ADR-013(随机弹窗用任务级 interrupt),与 grill
+> 裁决 D6 完全一致。不存在"待写的新 ADR",下文"grill 前必须澄清"已作废,详见
+> [`2026-07-21-lua-task-model-grill-decisions.md`](2026-07-21-lua-task-model-grill-decisions.md) D6。
+
 - **约束**：本 DESIGN.md v0.4 的 §24 只含 ADR-001…ADR-012(ADR-011 严格后台不降级、ADR-012 范围缩容),其后直接进入 §25,不存在 ADR-013。任务/grill 议程却引用 'ADR-001~013'。
 - **对 Lua 迁移的启示**：grill 前必须澄清:要么 ADR-013 在更新版 DESIGN 中(本文件未含),要么 grill 议程预设了一条待写的新 ADR(极可能就是'采用命令式 Lua 任务模型'本身)。不能把 ADR-013 当作本文档已有的权威条款引用。
 
