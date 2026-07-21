@@ -20,6 +20,24 @@
   `UF_` (the deliberate short form of UmbraFlow; the long
   `UMBRA_FLOW_` form is not used).
 
+## Namespaces
+
+- Nest every file-local anonymous namespace inside the narrowest owning `uf`
+  namespace, such as `uf`, `uf::controller_detail`, or `uf::m0_demo`.
+- Never place an anonymous namespace directly at global scope. Keeping internal
+  declarations inside their owning project namespace makes project vocabulary,
+  including integer aliases, available without redundant `uf::` qualification.
+
+```cpp
+namespace uf::m0_demo
+{
+    namespace
+    {
+        constexpr auto g_retryLimit = uint32{3};
+    }
+}
+```
+
 ## Enums
 
 - Use only scoped enums: `enum class` or `enum struct`.
@@ -206,6 +224,43 @@ Construction follows a fixed decision order:
 
 Avoid two-phase initialization. A successfully constructed object must already
 satisfy its invariant.
+
+## Parameter direction and return values
+
+- Parameters are inputs by default. Do not use a reference, pointer, view, span,
+  buffer, or callback parameter as an output channel for a computed result.
+- Return one computed value directly. When a function produces several values,
+  return a named result type. Use `Result<T>` when the operation can fail
+  recoverably.
+- A mutable parameter is allowed only when mutating caller-owned state is the
+  function's primary operation, an external API/ABI or callback signature
+  requires it, or measurement demonstrates that returning the value violates a
+  documented hot-path requirement. Secondary results and counters are output
+  values, not genuine in-out state.
+- Make every non-obvious exception explicit at the declaration and document why
+  a normal return value is unsuitable. Convenience and speculative performance
+  are not sufficient justification.
+- Pass small scalar inputs such as `bool`, `int32`, and `uint64` by value. A
+  mutable scalar reference requires the same exception review as any other
+  output or in-out parameter.
+
+```cpp
+struct ParseOutcome
+{
+    Record m_record;
+    std::size_t m_consumed;
+};
+
+[[nodiscard]]
+auto parseRecord(std::string_view text) -> Result<ParseOutcome>;
+
+// Avoid: results are hidden in the parameter list.
+auto parseRecord(
+    std::string_view text,
+    Record& record,
+    std::size_t& consumed
+) -> Status;
+```
 
 ## Includes
 

@@ -12,6 +12,8 @@ authoritative:
 
 - C++23, textual `.hpp`/`.cpp` units, English-only code and comments.
 - `camelCase` locals, `m_camelCase` members, `PascalCase` types, kebab-case filenames.
+- Nest file-local anonymous namespaces inside the narrowest owning `uf`
+  namespace; never place an anonymous namespace at global scope.
 - Trailing return types, east const, AAA locals, Allman braces.
 - Follow April2's delimiter-based wrapping exactly: start wrapped content after
   `(` or `{`, indent it, and put the matching delimiter on its own aligned line.
@@ -54,6 +56,12 @@ authoritative:
 - Treat `T&` as a required call-scoped borrow and `T*` as an optional,
   non-owning observation of one object. Raw pointers never represent ownership
   or an array.
+- Do not use reference, pointer, view, or callback parameters to return computed
+  values. Return one value directly or return multiple values in a named result
+  type. Allow a mutable parameter only when mutating caller-owned state is the
+  function's primary operation, an external API/ABI contract requires it, or a
+  measured hot-path requirement rules out returning the value; justify every
+  non-obvious exception at the declaration.
 - Do not store pointer, reference, iterator, `span`, or `string_view` members by
   default. Exceptions require an explicit backing-owner lifetime contract.
 - Synchronous non-escaping lambdas may capture references. Stored or asynchronous

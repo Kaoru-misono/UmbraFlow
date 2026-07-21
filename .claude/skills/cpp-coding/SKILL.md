@@ -40,12 +40,21 @@ Read `references/coding-standard.md` completely before changing C++ code. Then c
     maximum-width integer instead of spelling the corresponding `std::*_t`
     names. Include `<core/types/integer.hpp>` directly in every file that uses
     them; do not depend on transitive or compiler-injected inclusion.
+15. Nest every file-local anonymous namespace inside the narrowest owning `uf`
+    namespace. Never put an anonymous namespace directly at global scope.
+16. Do not use parameters as output channels. Return one value directly or
+    return multiple values in a named result type. Mutable parameters are
+    allowed only when mutating caller-owned state is the function's primary
+    operation, an external API/ABI contract requires it, or a measured hot-path
+    requirement rules out returning the value; justify every non-obvious
+    exception at the declaration.
 
 ## Checklist
 
 - Valid C++23 and project formatting
 - Platform types stay behind their owning module
 - Ownership transfer and borrow lifetime are explicit in every changed API
+- No output parameters unless a permitted exception is explicit and justified
 - Stored views, callbacks, and shared mutable state have enforceable lifetime semantics
 - Correct failure mechanism
 - April2 delimiter-based wrapping and LF normalization
