@@ -15,259 +15,262 @@
 #include <utility>
 #include <vector>
 
-namespace
+namespace uf
 {
-    [[nodiscard]]
-    auto target(
-        uf::intptr window,
-        uf::SessionId session = uf::SessionId{1},
-        uf::TargetGeneration generation = uf::TargetGeneration{},
-        uf::uint32 width = 800,
-        uf::uint32 height = 450
-    ) -> uf::DeliveryTarget
+    namespace
     {
-        auto result = uf::DeliveryTarget::create(
-            uf::WindowHandle{window},
-            session,
-            generation,
-            width,
-            height
-        );
-        REQUIRE(result.has_value());
-        return *std::move(result);
-    }
-
-    [[nodiscard]]
-    auto pixel(uf::int32 x, uf::int32 y) -> uf::ClientPixel
-    {
-        auto const result = uf::ClientPixel::create(x, y);
-        REQUIRE(result.has_value());
-        return *result;
-    }
-
-    [[nodiscard]]
-    auto automationKind(uf::Error const& error) -> uf::AutomationErrorKind
-    {
-        auto const kind = uf::automationErrorKind(error);
-        if (!kind.has_value())
+        [[nodiscard]]
+        auto target(
+            intptr window,
+            SessionId session = SessionId{1},
+            TargetGeneration generation = TargetGeneration{},
+            uint32 width = 800,
+            uint32 height = 450
+        ) -> DeliveryTarget
         {
-            FAIL("The error did not contain an automation error kind");
-            return uf::AutomationErrorKind::InternalInvariant;
+            auto result = DeliveryTarget::create(
+                WindowHandle{window},
+                session,
+                generation,
+                width,
+                height
+            );
+            REQUIRE(result.has_value());
+            return *std::move(result);
         }
-        return *kind;
+
+        [[nodiscard]]
+        auto pixel(int32 x, int32 y) -> ClientPixel
+        {
+            auto const result = ClientPixel::create(x, y);
+            REQUIRE(result.has_value());
+            return *result;
+        }
+
+        [[nodiscard]]
+        auto automationKind(Error const& error) -> AutomationErrorKind
+        {
+            auto const kind = automationErrorKind(error);
+            if (!kind.has_value())
+            {
+                FAIL("The error did not contain an automation error kind");
+                return AutomationErrorKind::InternalInvariant;
+            }
+            return *kind;
+        }
+
+        [[nodiscard]]
+        auto observationLease(
+            TargetGeneration generation = TargetGeneration{}
+        ) -> ObservationLease
+        {
+            auto const transform = CoordinateTransform::create(
+                Point<DesktopSpace>{0.0F, 0.0F},
+                1.0F,
+                1.0F,
+                1,
+                1
+            );
+            REQUIRE(transform.has_value());
+            auto const pixels = std::make_shared<FrameBuffer const>(
+                std::vector<std::byte>(4)
+            );
+            auto const frame = Frame::create(
+                FrameId{1},
+                SessionId{1},
+                generation,
+                MonotonicInstant::now(),
+                1,
+                1,
+                4,
+                PixelFormat::Bgra8,
+                pixels,
+                *transform
+            );
+            REQUIRE(frame.has_value());
+            auto const lease = ObservationLease::forFrame(
+                *frame,
+                g_defaultMaxActionFrameAge
+            );
+            REQUIRE(lease.has_value());
+            return *lease;
+        }
     }
 
-    [[nodiscard]]
-    auto observationLease(
-        uf::TargetGeneration generation = uf::TargetGeneration{}
-    ) -> uf::ObservationLease
+    TEST_CASE("delivery targets reject empty client areas as target unavailable")
     {
-        auto const transform = uf::CoordinateTransform::create(
-            uf::Point<uf::DesktopSpace>{0.0F, 0.0F},
-            1.0F,
-            1.0F,
-            1,
-            1
-        );
-        REQUIRE(transform.has_value());
-        auto const pixels = std::make_shared<uf::FrameBuffer const>(
-            std::vector<std::byte>(4)
-        );
-        auto const frame = uf::Frame::create(
-            uf::FrameId{1},
-            uf::SessionId{1},
-            generation,
-            uf::MonotonicInstant::now(),
-            1,
-            1,
-            4,
-            uf::PixelFormat::Bgra8,
-            pixels,
-            *transform
-        );
-        REQUIRE(frame.has_value());
-        auto const lease = uf::ObservationLease::forFrame(
-            *frame,
-            uf::g_defaultMaxActionFrameAge
-        );
-        REQUIRE(lease.has_value());
-        return *lease;
+        struct EmptySize final
+        {
+            uint32 m_width;
+            uint32 m_height;
+        };
+        for (auto const size : std::array{
+            EmptySize{0, 10},
+            EmptySize{10, 0},
+            EmptySize{0, 0},
+        })
+        {
+            auto const result = DeliveryTarget::create(
+                WindowHandle{0x10},
+                SessionId{1},
+                TargetGeneration{},
+                size.m_width,
+                size.m_height
+            );
+            REQUIRE_FALSE(result.has_value());
+            CHECK(automationKind(result.error()) == AutomationErrorKind::TargetUnavailable);
+        }
     }
-}
 
-TEST_CASE("delivery targets reject empty client areas as target unavailable")
-{
-    struct EmptySize final
+    TEST_CASE("release held on a dead target still empties and reports")
     {
-        uf::uint32 m_width;
-        uf::uint32 m_height;
-    };
-    for (auto const size : std::array{
-        EmptySize{0, 10},
-        EmptySize{10, 0},
-        EmptySize{0, 0},
-    })
-    {
-        auto const result = uf::DeliveryTarget::create(
-            uf::WindowHandle{0x10},
-            uf::SessionId{1},
-            uf::TargetGeneration{},
-            size.m_width,
-            size.m_height
-        );
-        REQUIRE_FALSE(result.has_value());
-        CHECK(automationKind(result.error()) == uf::AutomationErrorKind::TargetUnavailable);
-    }
-}
-
-TEST_CASE("release held on a dead target still empties and reports")
-{
-    auto const deliveryTarget = target(uf::intptr{0xDEAD'BEEF});
-    auto held = uf::HeldInputs{};
-    auto const keyDown = uf::controller_detail::HeldInputsAccess::onKeyDown(
-        held,
-        deliveryTarget,
-        uf::KeyInput{0x0041U}
-    );
-    REQUIRE(keyDown.has_value());
-    CHECK(*keyDown);
-    CHECK(
-        uf::controller_detail::HeldInputsAccess::onPointerDown(
+        auto const deliveryTarget = target(intptr{0xDEAD'BEEF});
+        auto held = HeldInputs{};
+        auto const keyDown = controller_detail::HeldInputsAccess::onKeyDown(
             held,
             deliveryTarget,
-            uf::PointerButton::Left,
-            pixel(1, 2)
-        )
-    );
-    auto audit = uf::AuditLog{};
-
-    auto const outcomes = uf::releaseHeld(deliveryTarget, held, audit);
-
-    REQUIRE(outcomes.size() == 2U);
-    CHECK(held.empty());
-    CHECK(audit.size() == 2U);
-    CHECK(
-        std::ranges::all_of(
-            outcomes,
-            [](uf::ReleaseOutcome const& outcome)
-            {
-                return (
-                    !outcome.m_result.has_value()
-                    && automationKind(outcome.m_result.error())
-                        == uf::AutomationErrorKind::ControllerDisconnected
-                );
-            }
-        )
-    );
-}
-
-TEST_CASE("refreshed targets must match window session and generation")
-{
-    auto const original = target(0x10);
-    auto const sameIdentityNewGeometry = target(0x10, uf::SessionId{1}, {}, 640, 360);
-    CHECK(
-        uf::controller_detail::ensureSameDeliveryIdentity(
-            original,
-            sameIdentityNewGeometry
-        )
-    );
-
-    auto const next = original.generation().next();
-    REQUIRE(next.has_value());
-    for (auto const& changed : std::array{
-        target(0x20),
-        target(0x10, uf::SessionId{2}),
-        target(0x10, uf::SessionId{1}, *next),
-    })
-    {
-        auto const result = uf::controller_detail::ensureSameDeliveryIdentity(
-            original,
-            changed
+            KeyInput{0x0041U}
         );
-        REQUIRE_FALSE(result.has_value());
-        CHECK(automationKind(result.error()) == uf::AutomationErrorKind::StaleObservation);
+        REQUIRE(keyDown.has_value());
+        CHECK(*keyDown);
+        CHECK(
+            controller_detail::HeldInputsAccess::onPointerDown(
+                held,
+                deliveryTarget,
+                PointerButton::Left,
+                pixel(1, 2)
+            )
+        );
+        auto audit = AuditLog{};
+
+        auto const outcomes = releaseHeld(deliveryTarget, held, audit);
+
+        REQUIRE(outcomes.size() == 2U);
+        CHECK(held.empty());
+        CHECK(audit.size() == 2U);
+        CHECK(
+            std::ranges::all_of(
+                outcomes,
+                [](ReleaseOutcome const& outcome)
+                {
+                    return (
+                        !outcome.m_result.has_value()
+                        && automationKind(outcome.m_result.error())
+                            == AutomationErrorKind::ControllerDisconnected
+                    );
+                }
+            )
+        );
     }
-}
 
-TEST_CASE("release held never posts to a replacement target")
-{
-    auto const original = target(0x10);
-    auto const next = original.generation().next();
-    REQUIRE(next.has_value());
-    auto const replacement = target(0x20, uf::SessionId{1}, *next);
-    auto held = uf::HeldInputs{};
-    auto const keyDown = uf::controller_detail::HeldInputsAccess::onKeyDown(
-        held,
-        original,
-        uf::KeyInput::numpadEnter()
-    );
-    REQUIRE(keyDown.has_value());
-    CHECK(*keyDown);
-    auto audit = uf::AuditLog{};
+    TEST_CASE("refreshed targets must match window session and generation")
+    {
+        auto const original = target(0x10);
+        auto const sameIdentityNewGeometry = target(0x10, SessionId{1}, {}, 640, 360);
+        CHECK(
+            controller_detail::ensureSameDeliveryIdentity(
+                original,
+                sameIdentityNewGeometry
+            )
+        );
 
-    auto const outcomes = uf::releaseHeld(replacement, held, audit);
-
-    REQUIRE(outcomes.size() == 1U);
-    CHECK(audit.empty());
-    REQUIRE_FALSE(outcomes[0].m_result.has_value());
-    CHECK(
-        automationKind(outcomes[0].m_result.error())
-        == uf::AutomationErrorKind::ActionRejected
-    );
-    CHECK(held.empty());
-}
-
-TEST_CASE("long press rejects a negative hold before delivery")
-{
-    auto const deliveryTarget = target(0);
-    auto held = uf::HeldInputs{};
-    auto audit = uf::AuditLog{};
-    auto refreshCalled = false;
-
-    auto const result = uf::longPress(
-        deliveryTarget,
-        observationLease(),
-        uf::Point<uf::ClientSpace>{0.0F, 0.0F},
-        uf::MonotonicInstant::Duration{-1},
-        held,
-        audit,
-        [&refreshCalled, deliveryTarget]() -> uf::Result<uf::DeliveryTarget>
+        auto const next = original.generation().next();
+        REQUIRE(next.has_value());
+        for (auto const& changed : std::array{
+            target(0x20),
+            target(0x10, SessionId{2}),
+            target(0x10, SessionId{1}, *next),
+        })
         {
-            refreshCalled = true;
-            return deliveryTarget;
+            auto const result = controller_detail::ensureSameDeliveryIdentity(
+                original,
+                changed
+            );
+            REQUIRE_FALSE(result.has_value());
+            CHECK(automationKind(result.error()) == AutomationErrorKind::StaleObservation);
         }
-    );
+    }
 
-    REQUIRE_FALSE(result.has_value());
-    CHECK(automationKind(result.error()) == uf::AutomationErrorKind::ActionRejected);
-    CHECK(result.error().message().contains("duration"));
-    CHECK_FALSE(refreshCalled);
-    CHECK(held.empty());
-    CHECK(audit.empty());
-}
+    TEST_CASE("release held never posts to a replacement target")
+    {
+        auto const original = target(0x10);
+        auto const next = original.generation().next();
+        REQUIRE(next.has_value());
+        auto const replacement = target(0x20, SessionId{1}, *next);
+        auto held = HeldInputs{};
+        auto const keyDown = controller_detail::HeldInputsAccess::onKeyDown(
+            held,
+            original,
+            KeyInput::numpadEnter()
+        );
+        REQUIRE(keyDown.has_value());
+        CHECK(*keyDown);
+        auto audit = AuditLog{};
 
-TEST_CASE("long press rejects an empty refresh callback before delivery")
-{
-    auto const deliveryTarget = target(0);
-    auto held = uf::HeldInputs{};
-    auto audit = uf::AuditLog{};
+        auto const outcomes = releaseHeld(replacement, held, audit);
 
-    auto const result = uf::longPress(
-        deliveryTarget,
-        observationLease(),
-        uf::Point<uf::ClientSpace>{0.0F, 0.0F},
-        uf::MonotonicInstant::Duration::zero(),
-        held,
-        audit,
-        std::move_only_function<uf::Result<uf::DeliveryTarget>()>{}
-    );
+        REQUIRE(outcomes.size() == 1U);
+        CHECK(audit.empty());
+        REQUIRE_FALSE(outcomes[0].m_result.has_value());
+        CHECK(
+            automationKind(outcomes[0].m_result.error())
+            == AutomationErrorKind::ActionRejected
+        );
+        CHECK(held.empty());
+    }
 
-    REQUIRE_FALSE(result.has_value());
-    CHECK(
-        automationKind(result.error())
-        == uf::AutomationErrorKind::InternalInvariant
-    );
-    CHECK(held.empty());
-    CHECK_FALSE(held.holdsPointer(uf::PointerButton::Left));
-    CHECK(audit.empty());
+    TEST_CASE("long press rejects a negative hold before delivery")
+    {
+        auto const deliveryTarget = target(0);
+        auto held = HeldInputs{};
+        auto audit = AuditLog{};
+        auto refreshCalled = false;
+
+        auto const result = longPress(
+            deliveryTarget,
+            observationLease(),
+            Point<ClientSpace>{0.0F, 0.0F},
+            MonotonicInstant::Duration{-1},
+            held,
+            audit,
+            [&refreshCalled, deliveryTarget]() -> Result<DeliveryTarget>
+            {
+                refreshCalled = true;
+                return deliveryTarget;
+            }
+        );
+
+        REQUIRE_FALSE(result.has_value());
+        CHECK(automationKind(result.error()) == AutomationErrorKind::ActionRejected);
+        CHECK(result.error().message().contains("duration"));
+        CHECK_FALSE(refreshCalled);
+        CHECK(held.empty());
+        CHECK(audit.empty());
+    }
+
+    TEST_CASE("long press rejects an empty refresh callback before delivery")
+    {
+        auto const deliveryTarget = target(0);
+        auto held = HeldInputs{};
+        auto audit = AuditLog{};
+
+        auto const result = longPress(
+            deliveryTarget,
+            observationLease(),
+            Point<ClientSpace>{0.0F, 0.0F},
+            MonotonicInstant::Duration::zero(),
+            held,
+            audit,
+            std::move_only_function<Result<DeliveryTarget>()>{}
+        );
+
+        REQUIRE_FALSE(result.has_value());
+        CHECK(
+            automationKind(result.error())
+            == AutomationErrorKind::InternalInvariant
+        );
+        CHECK(held.empty());
+        CHECK_FALSE(held.holdsPointer(PointerButton::Left));
+        CHECK(audit.empty());
+    }
 }

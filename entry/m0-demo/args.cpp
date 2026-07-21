@@ -21,406 +21,406 @@
 #include <utility>
 #include <vector>
 
-namespace
-{
-    constexpr auto g_maximumAveragePixelSad = uf::uint64{255};
-
-    [[nodiscard]]
-    auto isValueFlag(std::string_view flag) noexcept -> bool
-    {
-        auto constexpr flags = std::array<std::string_view, 18>{
-            "--pid",
-            "--hwnd",
-            "--class",
-            "--title",
-            "--home-template",
-            "--home-roi",
-            "--result-template",
-            "--result-roi",
-            "--reset-template",
-            "--reset-roi",
-            "--threshold",
-            "--mode",
-            "--loops",
-            "--max-action-frame-age",
-            "--stall-timeout",
-            "--click-delay-ms",
-            "--seed",
-            "--log",
-        };
-        return std::ranges::find(flags, flag) != flags.end();
-    }
-
-    [[nodiscard]]
-    auto isSelectorFlag(std::string_view flag) noexcept -> bool
-    {
-        auto constexpr flags = std::array<std::string_view, 4>{
-            "--pid",
-            "--hwnd",
-            "--class",
-            "--title",
-        };
-        return std::ranges::find(flags, flag) != flags.end();
-    }
-
-    [[nodiscard]]
-    auto isCaptureValueFlag(std::string_view flag) noexcept -> bool
-    {
-        auto constexpr flags = std::array<std::string_view, 7>{
-            "--pid",
-            "--hwnd",
-            "--title",
-            "--out",
-            "--frames",
-            "--interval-ms",
-            "--log",
-        };
-        return std::ranges::find(flags, flag) != flags.end();
-    }
-
-    [[nodiscard]]
-    auto isInputAgentValueFlag(std::string_view flag) noexcept -> bool
-    {
-        auto constexpr flags = std::array<std::string_view, 5>{
-            "--hwnd",
-            "--queue",
-            "--results",
-            "--output-dir",
-            "--idle-timeout-s",
-        };
-        return std::ranges::find(flags, flag) != flags.end();
-    }
-
-    [[nodiscard]]
-    auto invalid(std::string message) -> std::unexpected<uf::Error>
-    {
-        return uf::fail(
-            uf::AutomationErrorKind::InvalidResource,
-            std::move(message)
-        );
-    }
-
-    template <std::integral Value>
-    [[nodiscard]]
-    auto parseInteger(
-        std::string_view value,
-        std::string_view flag,
-        int base = 10
-    ) -> uf::Result<Value>
-    {
-        auto const supplied = value;
-        if (value.starts_with('+'))
-        {
-            value.remove_prefix(1);
-        }
-        auto parsed = Value{};
-        auto const* const begin = std::to_address(value.begin());
-        auto const* const end = std::to_address(value.end());
-        auto const result = std::from_chars(
-            begin,
-            end,
-            parsed,
-            base
-        );
-        if (result.ec != std::errc{} || result.ptr != end)
-        {
-            return invalid(
-                std::format(
-                    "{} expects an integer, got \"{}\"",
-                    flag,
-                    supplied
-                )
-            );
-        }
-
-        return parsed;
-    }
-
-    [[nodiscard]]
-    auto parseWindowHandle(
-        std::string_view value,
-        std::string_view flag
-    ) -> uf::Result<uf::intptr>
-    {
-        auto base = 10;
-        if (value.starts_with("0x") || value.starts_with("0X"))
-        {
-            value.remove_prefix(2);
-            base = 16;
-        }
-
-        UF_TRY_VALUE(parsed, parseInteger<uf::int64>(value, flag, base));
-        auto const converted = uf::checkedCast<uf::intptr>(parsed);
-        if (!converted)
-        {
-            return invalid(
-                std::format(
-                    "{} window handle is outside the machine-word range",
-                    flag
-                )
-            );
-        }
-        return *converted;
-    }
-
-    [[nodiscard]]
-    auto parseSelectorValue(
-        uf::m0_demo::SelectorArgs& selector,
-        std::string_view flag,
-        std::string const& value
-    ) -> uf::Status
-    {
-        if (flag == "--pid")
-        {
-            UF_TRY_VALUE(parsed, parseInteger<uf::uint32>(value, flag));
-            selector.m_process = parsed;
-            return uf::ok();
-        }
-        if (flag == "--hwnd")
-        {
-            UF_TRY_VALUE(parsed, parseWindowHandle(value, flag));
-            selector.m_windowHandle = parsed;
-            return uf::ok();
-        }
-        if (flag == "--class")
-        {
-            selector.m_windowClass = value;
-            return uf::ok();
-        }
-        if (flag == "--title")
-        {
-            selector.m_title = value;
-            return uf::ok();
-        }
-
-        return invalid(std::format("unknown selector argument \"{}\"", flag));
-    }
-
-    [[nodiscard]]
-    auto parseMode(std::string_view value) -> uf::Result<uf::m0_demo::Mode>
-    {
-        if (value == "guard")
-        {
-            return uf::m0_demo::Mode::Guard;
-        }
-        if (value == "coexist")
-        {
-            return uf::m0_demo::Mode::Coexist;
-        }
-        return invalid(
-            std::format(
-                "--mode expects 'guard' or 'coexist', got \"{}\"",
-                value
-            )
-        );
-    }
-
-    [[nodiscard]]
-    auto parseMilliseconds(
-        std::string_view value,
-        std::string_view flag
-    ) -> uf::Result<uf::MonotonicInstant::Duration>
-    {
-        UF_TRY_VALUE(milliseconds, parseInteger<uf::uint64>(value, flag));
-        using Milliseconds = std::chrono::milliseconds;
-        using Duration = uf::MonotonicInstant::Duration;
-        auto const maximum = std::chrono::duration_cast<Milliseconds>(Duration::max());
-        auto const maximumCount = uf::checkedCast<uf::uint64>(maximum.count());
-        if (!maximumCount || milliseconds > *maximumCount)
-        {
-            return invalid(
-                std::format("{} millisecond count is too large", flag)
-            );
-        }
-
-        auto const count = uf::checkedCast<Milliseconds::rep>(milliseconds);
-        if (!count)
-        {
-            return invalid(
-                std::format("{} millisecond count is too large", flag)
-            );
-        }
-
-        return std::chrono::duration_cast<Duration>(Milliseconds{*count});
-    }
-
-    [[nodiscard]]
-    auto parsePositiveDuration(
-        std::string_view value,
-        std::string_view flag
-    ) -> uf::Result<uf::MonotonicInstant::Duration>
-    {
-        UF_TRY_VALUE(duration, parseMilliseconds(value, flag));
-        if (duration == uf::MonotonicInstant::Duration::zero())
-        {
-            return invalid(
-                std::format("{} must be a positive millisecond count", flag)
-            );
-        }
-        return duration;
-    }
-
-    [[nodiscard]]
-    auto parsePositiveSeconds(
-        std::string_view value,
-        std::string_view flag
-    ) -> uf::Result<uf::MonotonicInstant::Duration>
-    {
-        UF_TRY_VALUE(seconds, parseInteger<uf::uint64>(value, flag));
-        if (seconds == 0U)
-        {
-            return invalid(
-                std::format("{} must be a positive second count", flag)
-            );
-        }
-
-        using Seconds = std::chrono::seconds;
-        using Duration = uf::MonotonicInstant::Duration;
-        auto const maximum = std::chrono::duration_cast<Seconds>(Duration::max());
-        auto const maximumCount = uf::checkedCast<uf::uint64>(maximum.count());
-        if (!maximumCount || seconds > *maximumCount)
-        {
-            return invalid(std::format("{} second count is too large", flag));
-        }
-        auto const count = uf::checkedCast<Seconds::rep>(seconds);
-        if (!count)
-        {
-            return invalid(std::format("{} second count is too large", flag));
-        }
-        return std::chrono::duration_cast<Duration>(Seconds{*count});
-    }
-
-    [[nodiscard]]
-    auto trimmed(std::string_view value) noexcept -> std::string_view
-    {
-        auto constexpr whitespace = std::string_view{" \t\n\r\f\v"};
-        auto const first = value.find_first_not_of(whitespace);
-        if (first == std::string_view::npos)
-        {
-            return {};
-        }
-        auto const last = value.find_last_not_of(whitespace);
-        return value.substr(first, last - first + 1U);
-    }
-
-    [[nodiscard]]
-    auto parseFloat(
-        std::string_view value,
-        std::string_view flag
-    ) -> uf::Result<float>
-    {
-        auto const normalized = trimmed(value);
-        auto parsedText = normalized;
-        if (parsedText.starts_with('+'))
-        {
-            parsedText.remove_prefix(1);
-        }
-        auto parsed = 0.0F;
-        auto const* const begin = std::to_address(parsedText.begin());
-        auto const* const end = std::to_address(parsedText.end());
-        auto const result = std::from_chars(
-            begin,
-            end,
-            parsed,
-            std::chars_format::general
-        );
-        if (result.ec != std::errc{} || result.ptr != end)
-        {
-            return invalid(
-                std::format(
-                    "{} expects a number, got \"{}\"",
-                    flag,
-                    value
-                )
-            );
-        }
-        if (!std::isfinite(parsed))
-        {
-            return invalid(
-                std::format("{} value \"{}\" is not finite", flag, value)
-            );
-        }
-        return parsed;
-    }
-
-    [[nodiscard]]
-    auto parseRoi(
-        std::string_view value,
-        std::string_view flag
-    ) -> uf::Result<uf::Rect<uf::FrameSpace>>
-    {
-        auto parts = std::vector<std::string_view>{};
-        parts.reserve(4);
-        auto remaining = value;
-        while (true)
-        {
-            auto const comma = remaining.find(',');
-            if (comma == std::string_view::npos)
-            {
-                parts.emplace_back(remaining);
-                break;
-            }
-            parts.emplace_back(remaining.substr(0, comma));
-            remaining.remove_prefix(comma + 1U);
-        }
-
-        if (parts.size() != 4U)
-        {
-            return invalid(
-                std::format(
-                    "{} expects 'x,y,width,height', got \"{}\"",
-                    flag,
-                    value
-                )
-            );
-        }
-
-        UF_TRY_VALUE(x, parseFloat(parts[0], flag));
-        UF_TRY_VALUE(y, parseFloat(parts[1], flag));
-        UF_TRY_VALUE(width, parseFloat(parts[2], flag));
-        UF_TRY_VALUE(height, parseFloat(parts[3], flag));
-        return uf::Rect<uf::FrameSpace>{x, y, width, height};
-    }
-
-    [[nodiscard]]
-    auto parseClickDelay(
-        std::string_view value,
-        std::string_view flag
-    ) -> uf::Result<uf::m0_demo::ClickDelay>
-    {
-        auto minimum = value;
-        auto maximum = value;
-        if (auto const dash = value.find('-'); dash != std::string_view::npos)
-        {
-            minimum = value.substr(0, dash);
-            maximum = value.substr(dash + 1U);
-        }
-
-        UF_TRY_VALUE(minimumMilliseconds, parseInteger<uf::uint64>(minimum, flag));
-        UF_TRY_VALUE(maximumMilliseconds, parseInteger<uf::uint64>(maximum, flag));
-        return uf::m0_demo::ClickDelay::create(
-            minimumMilliseconds,
-            maximumMilliseconds
-        );
-    }
-
-    template <typename Value>
-    [[nodiscard]]
-    auto require(
-        std::optional<Value> value,
-        std::string_view flag
-    ) -> uf::Result<Value>
-    {
-        if (!value)
-        {
-            return invalid(std::format("missing required argument {}", flag));
-        }
-        return *std::move(value);
-    }
-}
-
 namespace uf::m0_demo
 {
+    namespace
+    {
+        constexpr auto g_maximumAveragePixelSad = uint64{255};
+
+        [[nodiscard]]
+        auto isValueFlag(std::string_view flag) noexcept -> bool
+        {
+            auto constexpr flags = std::array<std::string_view, 18>{
+                "--pid",
+                "--hwnd",
+                "--class",
+                "--title",
+                "--home-template",
+                "--home-roi",
+                "--result-template",
+                "--result-roi",
+                "--reset-template",
+                "--reset-roi",
+                "--threshold",
+                "--mode",
+                "--loops",
+                "--max-action-frame-age",
+                "--stall-timeout",
+                "--click-delay-ms",
+                "--seed",
+                "--log",
+            };
+            return std::ranges::find(flags, flag) != flags.end();
+        }
+
+        [[nodiscard]]
+        auto isSelectorFlag(std::string_view flag) noexcept -> bool
+        {
+            auto constexpr flags = std::array<std::string_view, 4>{
+                "--pid",
+                "--hwnd",
+                "--class",
+                "--title",
+            };
+            return std::ranges::find(flags, flag) != flags.end();
+        }
+
+        [[nodiscard]]
+        auto isCaptureValueFlag(std::string_view flag) noexcept -> bool
+        {
+            auto constexpr flags = std::array<std::string_view, 7>{
+                "--pid",
+                "--hwnd",
+                "--title",
+                "--out",
+                "--frames",
+                "--interval-ms",
+                "--log",
+            };
+            return std::ranges::find(flags, flag) != flags.end();
+        }
+
+        [[nodiscard]]
+        auto isInputAgentValueFlag(std::string_view flag) noexcept -> bool
+        {
+            auto constexpr flags = std::array<std::string_view, 5>{
+                "--hwnd",
+                "--queue",
+                "--results",
+                "--output-dir",
+                "--idle-timeout-s",
+            };
+            return std::ranges::find(flags, flag) != flags.end();
+        }
+
+        [[nodiscard]]
+        auto invalid(std::string message) -> std::unexpected<Error>
+        {
+            return fail(
+                AutomationErrorKind::InvalidResource,
+                std::move(message)
+            );
+        }
+
+        template <std::integral Value>
+        [[nodiscard]]
+        auto parseInteger(
+            std::string_view value,
+            std::string_view flag,
+            int base = 10
+        ) -> Result<Value>
+        {
+            auto const supplied = value;
+            if (value.starts_with('+'))
+            {
+                value.remove_prefix(1);
+            }
+            auto parsed = Value{};
+            auto const* const begin = std::to_address(value.begin());
+            auto const* const end = std::to_address(value.end());
+            auto const result = std::from_chars(
+                begin,
+                end,
+                parsed,
+                base
+            );
+            if (result.ec != std::errc{} || result.ptr != end)
+            {
+                return invalid(
+                    std::format(
+                        "{} expects an integer, got \"{}\"",
+                        flag,
+                        supplied
+                    )
+                );
+            }
+
+            return parsed;
+        }
+
+        [[nodiscard]]
+        auto parseWindowHandle(
+            std::string_view value,
+            std::string_view flag
+        ) -> Result<intptr>
+        {
+            auto base = 10;
+            if (value.starts_with("0x") || value.starts_with("0X"))
+            {
+                value.remove_prefix(2);
+                base = 16;
+            }
+
+            UF_TRY_VALUE(parsed, parseInteger<int64>(value, flag, base));
+            auto const converted = checkedCast<intptr>(parsed);
+            if (!converted)
+            {
+                return invalid(
+                    std::format(
+                        "{} window handle is outside the machine-word range",
+                        flag
+                    )
+                );
+            }
+            return *converted;
+        }
+
+        [[nodiscard]]
+        auto parseSelectorValue(
+            SelectorArgs& selector,
+            std::string_view flag,
+            std::string const& value
+        ) -> Status
+        {
+            if (flag == "--pid")
+            {
+                UF_TRY_VALUE(parsed, parseInteger<uint32>(value, flag));
+                selector.m_process = parsed;
+                return ok();
+            }
+            if (flag == "--hwnd")
+            {
+                UF_TRY_VALUE(parsed, parseWindowHandle(value, flag));
+                selector.m_windowHandle = parsed;
+                return ok();
+            }
+            if (flag == "--class")
+            {
+                selector.m_windowClass = value;
+                return ok();
+            }
+            if (flag == "--title")
+            {
+                selector.m_title = value;
+                return ok();
+            }
+
+            return invalid(std::format("unknown selector argument \"{}\"", flag));
+        }
+
+        [[nodiscard]]
+        auto parseMode(std::string_view value) -> Result<Mode>
+        {
+            if (value == "guard")
+            {
+                return Mode::Guard;
+            }
+            if (value == "coexist")
+            {
+                return Mode::Coexist;
+            }
+            return invalid(
+                std::format(
+                    "--mode expects 'guard' or 'coexist', got \"{}\"",
+                    value
+                )
+            );
+        }
+
+        [[nodiscard]]
+        auto parseMilliseconds(
+            std::string_view value,
+            std::string_view flag
+        ) -> Result<MonotonicInstant::Duration>
+        {
+            UF_TRY_VALUE(milliseconds, parseInteger<uint64>(value, flag));
+            using Milliseconds = std::chrono::milliseconds;
+            using Duration = MonotonicInstant::Duration;
+            auto const maximum = std::chrono::duration_cast<Milliseconds>(Duration::max());
+            auto const maximumCount = checkedCast<uint64>(maximum.count());
+            if (!maximumCount || milliseconds > *maximumCount)
+            {
+                return invalid(
+                    std::format("{} millisecond count is too large", flag)
+                );
+            }
+
+            auto const count = checkedCast<Milliseconds::rep>(milliseconds);
+            if (!count)
+            {
+                return invalid(
+                    std::format("{} millisecond count is too large", flag)
+                );
+            }
+
+            return std::chrono::duration_cast<Duration>(Milliseconds{*count});
+        }
+
+        [[nodiscard]]
+        auto parsePositiveDuration(
+            std::string_view value,
+            std::string_view flag
+        ) -> Result<MonotonicInstant::Duration>
+        {
+            UF_TRY_VALUE(duration, parseMilliseconds(value, flag));
+            if (duration == MonotonicInstant::Duration::zero())
+            {
+                return invalid(
+                    std::format("{} must be a positive millisecond count", flag)
+                );
+            }
+            return duration;
+        }
+
+        [[nodiscard]]
+        auto parsePositiveSeconds(
+            std::string_view value,
+            std::string_view flag
+        ) -> Result<MonotonicInstant::Duration>
+        {
+            UF_TRY_VALUE(seconds, parseInteger<uint64>(value, flag));
+            if (seconds == 0U)
+            {
+                return invalid(
+                    std::format("{} must be a positive second count", flag)
+                );
+            }
+
+            using Seconds = std::chrono::seconds;
+            using Duration = MonotonicInstant::Duration;
+            auto const maximum = std::chrono::duration_cast<Seconds>(Duration::max());
+            auto const maximumCount = checkedCast<uint64>(maximum.count());
+            if (!maximumCount || seconds > *maximumCount)
+            {
+                return invalid(std::format("{} second count is too large", flag));
+            }
+            auto const count = checkedCast<Seconds::rep>(seconds);
+            if (!count)
+            {
+                return invalid(std::format("{} second count is too large", flag));
+            }
+            return std::chrono::duration_cast<Duration>(Seconds{*count});
+        }
+
+        [[nodiscard]]
+        auto trimmed(std::string_view value) noexcept -> std::string_view
+        {
+            auto constexpr whitespace = std::string_view{" \t\n\r\f\v"};
+            auto const first = value.find_first_not_of(whitespace);
+            if (first == std::string_view::npos)
+            {
+                return {};
+            }
+            auto const last = value.find_last_not_of(whitespace);
+            return value.substr(first, last - first + 1U);
+        }
+
+        [[nodiscard]]
+        auto parseFloat(
+            std::string_view value,
+            std::string_view flag
+        ) -> Result<float>
+        {
+            auto const normalized = trimmed(value);
+            auto parsedText = normalized;
+            if (parsedText.starts_with('+'))
+            {
+                parsedText.remove_prefix(1);
+            }
+            auto parsed = 0.0F;
+            auto const* const begin = std::to_address(parsedText.begin());
+            auto const* const end = std::to_address(parsedText.end());
+            auto const result = std::from_chars(
+                begin,
+                end,
+                parsed,
+                std::chars_format::general
+            );
+            if (result.ec != std::errc{} || result.ptr != end)
+            {
+                return invalid(
+                    std::format(
+                        "{} expects a number, got \"{}\"",
+                        flag,
+                        value
+                    )
+                );
+            }
+            if (!std::isfinite(parsed))
+            {
+                return invalid(
+                    std::format("{} value \"{}\" is not finite", flag, value)
+                );
+            }
+            return parsed;
+        }
+
+        [[nodiscard]]
+        auto parseRoi(
+            std::string_view value,
+            std::string_view flag
+        ) -> Result<Rect<FrameSpace>>
+        {
+            auto parts = std::vector<std::string_view>{};
+            parts.reserve(4);
+            auto remaining = value;
+            while (true)
+            {
+                auto const comma = remaining.find(',');
+                if (comma == std::string_view::npos)
+                {
+                    parts.emplace_back(remaining);
+                    break;
+                }
+                parts.emplace_back(remaining.substr(0, comma));
+                remaining.remove_prefix(comma + 1U);
+            }
+
+            if (parts.size() != 4U)
+            {
+                return invalid(
+                    std::format(
+                        "{} expects 'x,y,width,height', got \"{}\"",
+                        flag,
+                        value
+                    )
+                );
+            }
+
+            UF_TRY_VALUE(x, parseFloat(parts[0], flag));
+            UF_TRY_VALUE(y, parseFloat(parts[1], flag));
+            UF_TRY_VALUE(width, parseFloat(parts[2], flag));
+            UF_TRY_VALUE(height, parseFloat(parts[3], flag));
+            return Rect<FrameSpace>{x, y, width, height};
+        }
+
+        [[nodiscard]]
+        auto parseClickDelay(
+            std::string_view value,
+            std::string_view flag
+        ) -> Result<ClickDelay>
+        {
+            auto minimum = value;
+            auto maximum = value;
+            if (auto const dash = value.find('-'); dash != std::string_view::npos)
+            {
+                minimum = value.substr(0, dash);
+                maximum = value.substr(dash + 1U);
+            }
+
+            UF_TRY_VALUE(minimumMilliseconds, parseInteger<uint64>(minimum, flag));
+            UF_TRY_VALUE(maximumMilliseconds, parseInteger<uint64>(maximum, flag));
+            return ClickDelay::create(
+                minimumMilliseconds,
+                maximumMilliseconds
+            );
+        }
+
+        template <typename Value>
+        [[nodiscard]]
+        auto require(
+            std::optional<Value> value,
+            std::string_view flag
+        ) -> Result<Value>
+        {
+            if (!value)
+            {
+                return invalid(std::format("missing required argument {}", flag));
+            }
+            return *std::move(value);
+        }
+    }
+
     auto parseArguments(std::span<std::string const> raw) -> Result<Args>
     {
         auto selector = SelectorArgs{};

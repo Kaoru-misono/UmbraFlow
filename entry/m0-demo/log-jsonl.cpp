@@ -25,194 +25,194 @@
 #include <io.h>
 #endif
 
-namespace
-{
-    using JsonlSinkResult = uf::Result<std::unique_ptr<uf::m0_demo::IJsonlSink>>;
-
-    [[nodiscard]]
-    auto currentIoError() -> std::error_code
-    {
-        if (errno != 0)
-        {
-            return std::error_code{errno, std::generic_category()};
-        }
-        return std::make_error_code(std::io_errc::stream);
-    }
-
-    [[nodiscard]]
-    auto configureStdoutForBinaryJsonl() -> std::error_code
-    {
-#if defined(_WIN32)
-        errno = 0;
-        if (_setmode(_fileno(stdout), _O_BINARY) == -1)
-        {
-            return currentIoError();
-        }
-#endif
-        return {};
-    }
-
-    template <typename Value>
-    auto appendOptionalNumber(
-        std::string& output,
-        std::optional<Value> value
-    ) -> void
-    {
-        output += value ? std::to_string(*value) : "null";
-    }
-
-    auto appendOptionalBoolean(
-        std::string& output,
-        std::optional<bool> value
-    ) -> void
-    {
-        if (!value)
-        {
-            output += "null";
-            return;
-        }
-        output += *value ? "true" : "false";
-    }
-
-    [[nodiscard]]
-    auto serializeLineUnchecked(uf::m0_demo::LogLine const& line) -> std::string
-    {
-        auto output = std::string{"{\"elapsed_ns\":"};
-        output += std::to_string(line.m_elapsedNanoseconds);
-        output += ",\"loop_idx\":";
-        appendOptionalNumber(output, line.m_loopIndex);
-        output += ",\"phase\":";
-        output += uf::m0_demo::escapeJsonString(line.m_phase);
-        output += ",\"event\":";
-        output += uf::m0_demo::escapeJsonString(line.m_event);
-        output += ",\"frame_id\":";
-        appendOptionalNumber(output, line.m_frameId);
-        output += ",\"target_generation\":";
-        appendOptionalNumber(output, line.m_targetGeneration);
-        output += ",\"confidence\":";
-        appendOptionalNumber(output, line.m_confidence);
-        output += ",\"lease_ok\":";
-        appendOptionalBoolean(output, line.m_leaseOk);
-        output += ",\"outcome\":";
-        output += uf::m0_demo::escapeJsonString(line.m_outcome);
-        output += ",\"detail\":";
-        output += uf::m0_demo::escapeJsonString(line.m_detail);
-        output += '}';
-        return output;
-    }
-
-    class StdoutJsonlSink final : public uf::m0_demo::IJsonlSink
-    {
-        struct ConfiguredTag final
-        {
-        };
-
-    public:
-        explicit StdoutJsonlSink(ConfiguredTag) noexcept
-        {
-        }
-
-        [[nodiscard]]
-        static auto create() -> JsonlSinkResult
-        {
-            if (auto const error = configureStdoutForBinaryJsonl(); error)
-            {
-                return uf::fail(
-                    uf::AutomationErrorKind::InvalidResource,
-                    "cannot configure stdout log: " + error.message()
-                );
-            }
-
-            auto p_sink = std::make_unique<StdoutJsonlSink>(ConfiguredTag{});
-            return std::unique_ptr<uf::m0_demo::IJsonlSink>{std::move(p_sink)};
-        }
-
-        auto writeLine(std::string_view line) -> std::error_code override
-        {
-            errno = 0;
-            std::cout << line << '\n';
-            return std::cout ? std::error_code{} : currentIoError();
-        }
-
-        auto flush() -> std::error_code override
-        {
-            errno = 0;
-            std::cout.flush();
-            return std::cout ? std::error_code{} : currentIoError();
-        }
-    };
-
-    class FileJsonlSink final : public uf::m0_demo::IJsonlSink
-    {
-        struct OpenTag final
-        {
-        };
-
-        std::ofstream m_stream;
-
-    public:
-        explicit FileJsonlSink(OpenTag, std::ofstream stream)
-            : m_stream{std::move(stream)}
-        {
-            UF_CHECK(m_stream.is_open());
-        }
-
-        [[nodiscard]]
-        static auto create(
-            std::filesystem::path const& path
-        ) -> JsonlSinkResult
-        {
-            auto stream = std::ofstream{};
-            errno = 0;
-            stream.open(path, std::ios::binary | std::ios::trunc);
-            if (!stream.is_open())
-            {
-                return uf::fail(
-                    uf::AutomationErrorKind::InvalidResource,
-                    "cannot open log file "
-                        + path.string()
-                        + ": "
-                        + currentIoError().message()
-                );
-            }
-
-            auto p_sink = std::make_unique<FileJsonlSink>(
-                OpenTag{},
-                std::move(stream)
-            );
-            return std::unique_ptr<uf::m0_demo::IJsonlSink>{std::move(p_sink)};
-        }
-
-        auto writeLine(std::string_view line) -> std::error_code override
-        {
-            errno = 0;
-            m_stream << line << '\n';
-            return m_stream ? std::error_code{} : currentIoError();
-        }
-
-        auto flush() -> std::error_code override
-        {
-            errno = 0;
-            m_stream.flush();
-            return m_stream ? std::error_code{} : currentIoError();
-        }
-    };
-
-    [[nodiscard]]
-    auto logError(
-        std::string_view operation,
-        std::error_code error
-    ) -> std::unexpected<uf::Error>
-    {
-        return uf::fail(
-            uf::AutomationErrorKind::InvalidResource,
-            "JSONL " + std::string{operation} + " failed: " + error.message()
-        );
-    }
-}
-
 namespace uf::m0_demo
 {
+    namespace
+    {
+        using JsonlSinkResult = Result<std::unique_ptr<IJsonlSink>>;
+
+        [[nodiscard]]
+        auto currentIoError() -> std::error_code
+        {
+            if (errno != 0)
+            {
+                return std::error_code{errno, std::generic_category()};
+            }
+            return std::make_error_code(std::io_errc::stream);
+        }
+
+        [[nodiscard]]
+        auto configureStdoutForBinaryJsonl() -> std::error_code
+        {
+#if defined(_WIN32)
+            errno = 0;
+            if (_setmode(_fileno(stdout), _O_BINARY) == -1)
+            {
+                return currentIoError();
+            }
+#endif
+            return {};
+        }
+
+        template <typename Value>
+        auto appendOptionalNumber(
+            std::string& output,
+            std::optional<Value> value
+        ) -> void
+        {
+            output += value ? std::to_string(*value) : "null";
+        }
+
+        auto appendOptionalBoolean(
+            std::string& output,
+            std::optional<bool> value
+        ) -> void
+        {
+            if (!value)
+            {
+                output += "null";
+                return;
+            }
+            output += *value ? "true" : "false";
+        }
+
+        [[nodiscard]]
+        auto serializeLineUnchecked(LogLine const& line) -> std::string
+        {
+            auto output = std::string{"{\"elapsed_ns\":"};
+            output += std::to_string(line.m_elapsedNanoseconds);
+            output += ",\"loop_idx\":";
+            appendOptionalNumber(output, line.m_loopIndex);
+            output += ",\"phase\":";
+            output += escapeJsonString(line.m_phase);
+            output += ",\"event\":";
+            output += escapeJsonString(line.m_event);
+            output += ",\"frame_id\":";
+            appendOptionalNumber(output, line.m_frameId);
+            output += ",\"target_generation\":";
+            appendOptionalNumber(output, line.m_targetGeneration);
+            output += ",\"confidence\":";
+            appendOptionalNumber(output, line.m_confidence);
+            output += ",\"lease_ok\":";
+            appendOptionalBoolean(output, line.m_leaseOk);
+            output += ",\"outcome\":";
+            output += escapeJsonString(line.m_outcome);
+            output += ",\"detail\":";
+            output += escapeJsonString(line.m_detail);
+            output += '}';
+            return output;
+        }
+
+        class StdoutJsonlSink final : public IJsonlSink
+        {
+            struct ConfiguredTag final
+            {
+            };
+
+        public:
+            explicit StdoutJsonlSink(ConfiguredTag) noexcept
+            {
+            }
+
+            [[nodiscard]]
+            static auto create() -> JsonlSinkResult
+            {
+                if (auto const error = configureStdoutForBinaryJsonl(); error)
+                {
+                    return fail(
+                        AutomationErrorKind::InvalidResource,
+                        "cannot configure stdout log: " + error.message()
+                    );
+                }
+
+                auto p_sink = std::make_unique<StdoutJsonlSink>(ConfiguredTag{});
+                return std::unique_ptr<IJsonlSink>{std::move(p_sink)};
+            }
+
+            auto writeLine(std::string_view line) -> std::error_code override
+            {
+                errno = 0;
+                std::cout << line << '\n';
+                return std::cout ? std::error_code{} : currentIoError();
+            }
+
+            auto flush() -> std::error_code override
+            {
+                errno = 0;
+                std::cout.flush();
+                return std::cout ? std::error_code{} : currentIoError();
+            }
+        };
+
+        class FileJsonlSink final : public IJsonlSink
+        {
+            struct OpenTag final
+            {
+            };
+
+            std::ofstream m_stream;
+
+        public:
+            explicit FileJsonlSink(OpenTag, std::ofstream stream)
+                : m_stream{std::move(stream)}
+            {
+                UF_CHECK(m_stream.is_open());
+            }
+
+            [[nodiscard]]
+            static auto create(
+                std::filesystem::path const& path
+            ) -> JsonlSinkResult
+            {
+                auto stream = std::ofstream{};
+                errno = 0;
+                stream.open(path, std::ios::binary | std::ios::trunc);
+                if (!stream.is_open())
+                {
+                    return fail(
+                        AutomationErrorKind::InvalidResource,
+                        "cannot open log file "
+                            + path.string()
+                            + ": "
+                            + currentIoError().message()
+                    );
+                }
+
+                auto p_sink = std::make_unique<FileJsonlSink>(
+                    OpenTag{},
+                    std::move(stream)
+                );
+                return std::unique_ptr<IJsonlSink>{std::move(p_sink)};
+            }
+
+            auto writeLine(std::string_view line) -> std::error_code override
+            {
+                errno = 0;
+                m_stream << line << '\n';
+                return m_stream ? std::error_code{} : currentIoError();
+            }
+
+            auto flush() -> std::error_code override
+            {
+                errno = 0;
+                m_stream.flush();
+                return m_stream ? std::error_code{} : currentIoError();
+            }
+        };
+
+        [[nodiscard]]
+        auto logError(
+            std::string_view operation,
+            std::error_code error
+        ) -> std::unexpected<Error>
+        {
+            return fail(
+                AutomationErrorKind::InvalidResource,
+                "JSONL " + std::string{operation} + " failed: " + error.message()
+            );
+        }
+    }
+
     LogLine::LogLine(std::string phase, std::string event)
         : m_phase{std::move(phase)}
         , m_event{std::move(event)}

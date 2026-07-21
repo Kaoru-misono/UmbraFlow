@@ -10,29 +10,29 @@
 #include <string_view>
 #include <system_error>
 
-namespace
-{
-    [[nodiscard]]
-    auto pathFailure(
-        std::string_view operation,
-        std::filesystem::path const& path,
-        std::error_code error
-    ) -> std::unexpected<uf::Error>
-    {
-        return uf::fail(
-            uf::AutomationErrorKind::InvalidResource,
-            std::format(
-                "cannot {} path {}: {}",
-                operation,
-                path.string(),
-                error.message()
-            )
-        );
-    }
-}
-
 namespace uf::m0_demo
 {
+    namespace
+    {
+        [[nodiscard]]
+        auto pathFailure(
+            std::string_view operation,
+            std::filesystem::path const& path,
+            std::error_code error
+        ) -> std::unexpected<Error>
+        {
+            return fail(
+                AutomationErrorKind::InvalidResource,
+                std::format(
+                    "cannot {} path {}: {}",
+                    operation,
+                    path.string(),
+                    error.message()
+                )
+            );
+        }
+    }
+
     auto canonicalizePathForComparison(
         std::filesystem::path const& path,
         std::string_view role

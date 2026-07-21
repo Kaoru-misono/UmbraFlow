@@ -11,19 +11,22 @@
 #include <format>
 #include <limits>
 
-namespace
+namespace uf::controller_detail
 {
-    [[nodiscard]]
-    constexpr auto lParamFromBits(uf::uint32 bits) noexcept -> uf::intptr
+    namespace
     {
-        static_assert(sizeof(uf::intptr) >= sizeof(uf::uint32));
-        if constexpr (sizeof(uf::intptr) == sizeof(uf::uint32))
+        [[nodiscard]]
+        constexpr auto lParamFromBits(uint32 bits) noexcept -> intptr
         {
-            return std::bit_cast<uf::int32>(bits);
-        }
-        else
-        {
-            return static_cast<uf::intptr>(bits);
+            static_assert(sizeof(intptr) >= sizeof(uint32));
+            if constexpr (sizeof(intptr) == sizeof(uint32))
+            {
+                return std::bit_cast<int32>(bits);
+            }
+            else
+            {
+                return static_cast<intptr>(bits);
+            }
         }
     }
 }

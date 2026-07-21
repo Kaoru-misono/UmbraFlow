@@ -7,50 +7,50 @@
 #include <string>
 #include <utility>
 
-namespace
-{
-    [[nodiscard]]
-    auto automationErrorDetailValue(uf::AutomationErrorKind kind) noexcept -> int
-    {
-        auto const underlying = uf::checkedCast<int>(std::to_underlying(kind));
-        UF_CHECK(underlying.has_value());
-        auto const encoded = uf::checkedAdd(*underlying, 1);
-        UF_CHECK(encoded.has_value());
-        return *encoded;
-    }
-
-    class AutomationErrorCategory final : public std::error_category
-    {
-    public:
-        [[nodiscard]] auto name() const noexcept -> char const* override
-        {
-            return "uf.automation";
-        }
-
-        [[nodiscard]] auto message(int value) const -> std::string override
-        {
-            for (auto const& entry : uf::enumEntries<uf::AutomationErrorKind>())
-            {
-                if (automationErrorDetailValue(entry.m_value) == value)
-                {
-                    return std::string{entry.m_name};
-                }
-            }
-
-            return "UnknownAutomationErrorKind";
-        }
-    };
-
-    [[nodiscard]]
-    auto automationErrorCategory() noexcept -> std::error_category const&
-    {
-        static auto const s_category = AutomationErrorCategory{};
-        return s_category;
-    }
-}
-
 namespace uf
 {
+    namespace
+    {
+        [[nodiscard]]
+        auto automationErrorDetailValue(AutomationErrorKind kind) noexcept -> int
+        {
+            auto const underlying = checkedCast<int>(std::to_underlying(kind));
+            UF_CHECK(underlying.has_value());
+            auto const encoded = checkedAdd(*underlying, 1);
+            UF_CHECK(encoded.has_value());
+            return *encoded;
+        }
+
+        class AutomationErrorCategory final : public std::error_category
+        {
+        public:
+            [[nodiscard]] auto name() const noexcept -> char const* override
+            {
+                return "uf.automation";
+            }
+
+            [[nodiscard]] auto message(int value) const -> std::string override
+            {
+                for (auto const& entry : enumEntries<AutomationErrorKind>())
+                {
+                    if (automationErrorDetailValue(entry.m_value) == value)
+                    {
+                        return std::string{entry.m_name};
+                    }
+                }
+
+                return "UnknownAutomationErrorKind";
+            }
+        };
+
+        [[nodiscard]]
+        auto automationErrorCategory() noexcept -> std::error_category const&
+        {
+            static auto const s_category = AutomationErrorCategory{};
+            return s_category;
+        }
+    }
+
     AutomationError::AutomationError(AutomationErrorKind kind, std::string message)
         : m_kind{kind}
         , m_message{std::move(message)}

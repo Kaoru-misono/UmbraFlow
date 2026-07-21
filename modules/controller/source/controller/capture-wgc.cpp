@@ -10,75 +10,78 @@
 #include <string_view>
 #include <utility>
 
-namespace
+namespace uf::controller_detail
 {
-    [[nodiscard]]
-    auto captureDimensions(
-        uf::controller_detail::CaptureSize size,
-        std::string_view context
-    ) -> uf::Result<std::pair<uf::uint32, uf::uint32>>
+    namespace
     {
-        auto const width = uf::checkedCast<uf::uint32>(size.m_width);
-        auto const height = uf::checkedCast<uf::uint32>(size.m_height);
-        if (!width || !height)
+        [[nodiscard]]
+        auto captureDimensions(
+            controller_detail::CaptureSize size,
+            std::string_view context
+        ) -> Result<std::pair<uint32, uint32>>
         {
-            return uf::fail(
-                uf::AutomationErrorKind::CaptureUnavailable,
-                std::format(
-                    "{} has invalid signed dimensions {}x{}",
-                    context,
-                    size.m_width,
-                    size.m_height
-                )
-            );
+            auto const width = checkedCast<uint32>(size.m_width);
+            auto const height = checkedCast<uint32>(size.m_height);
+            if (!width || !height)
+            {
+                return fail(
+                    AutomationErrorKind::CaptureUnavailable,
+                    std::format(
+                        "{} has invalid signed dimensions {}x{}",
+                        context,
+                        size.m_width,
+                        size.m_height
+                    )
+                );
+            }
+
+            if (*width == 0 || *height == 0)
+            {
+                return fail(
+                    AutomationErrorKind::CaptureUnavailable,
+                    std::format(
+                        "{} must be positive, got {}x{}",
+                        context,
+                        *width,
+                        *height
+                    )
+                );
+            }
+
+            return std::pair{*width, *height};
         }
 
-        if (*width == 0 || *height == 0)
+        [[nodiscard]]
+        auto exactClientDimension(
+            float value,
+            std::string_view context
+        ) -> Result<uint32>
         {
-            return uf::fail(
-                uf::AutomationErrorKind::CaptureUnavailable,
-                std::format(
-                    "{} must be positive, got {}x{}",
-                    context,
-                    *width,
-                    *height
-                )
-            );
+            constexpr auto maximumExact = static_cast<float>(uint64{1} << 24U);
+            if (
+                !std::isfinite(value)
+                || value < 0.0F
+                || std::trunc(value) != value
+                || value > maximumExact
+            )
+            {
+                return fail(
+                    AutomationErrorKind::CaptureUnavailable,
+                    std::format("{} {} is not a whole pixel count in range", context, value)
+                );
+            }
+
+            auto const converted = checkedIntegralCast<uint32>(value);
+            if (!converted)
+            {
+                return fail(
+                    AutomationErrorKind::CaptureUnavailable,
+                    std::format("{} {} is not a whole pixel count in range", context, value)
+                );
+            }
+
+            return *converted;
         }
-
-        return std::pair{*width, *height};
-    }
-
-    [[nodiscard]]
-    auto exactClientDimension(
-        float value,
-        std::string_view context
-    ) -> uf::Result<uf::uint32>
-    {
-        constexpr auto maximumExact = static_cast<float>(uf::uint64{1} << 24U);
-        if (
-            !std::isfinite(value)
-            || value < 0.0F
-            || std::trunc(value) != value
-            || value > maximumExact
-        )
-        {
-            return uf::fail(
-                uf::AutomationErrorKind::CaptureUnavailable,
-                std::format("{} {} is not a whole pixel count in range", context, value)
-            );
-        }
-
-        auto const converted = uf::checkedIntegralCast<uf::uint32>(value);
-        if (!converted)
-        {
-            return uf::fail(
-                uf::AutomationErrorKind::CaptureUnavailable,
-                std::format("{} {} is not a whole pixel count in range", context, value)
-            );
-        }
-
-        return *converted;
     }
 }
 

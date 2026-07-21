@@ -30,557 +30,560 @@
 #include <variant>
 #include <vector>
 
-namespace
+namespace uf::m0_demo
 {
-    [[nodiscard]]
-    auto instantAt(
-        uf::MonotonicInstant::Duration duration
-    ) -> uf::MonotonicInstant
+    namespace
     {
-        return uf::MonotonicInstant::fromTimePoint(
-            uf::MonotonicInstant::TimePoint{duration}
-        );
+        [[nodiscard]]
+        auto instantAt(
+            MonotonicInstant::Duration duration
+        ) -> MonotonicInstant
+        {
+            return MonotonicInstant::fromTimePoint(
+                MonotonicInstant::TimePoint{duration}
+            );
+        }
+
+        [[nodiscard]]
+        auto deliveryTarget(
+            TargetGeneration generation = TargetGeneration{}
+        ) -> DeliveryTarget
+        {
+            auto target = DeliveryTarget::create(
+                WindowHandle{0x1234},
+                SessionId{1},
+                generation,
+                800,
+                450
+            );
+            REQUIRE(target.has_value());
+            return *std::move(target);
+        }
+
+        [[nodiscard]]
+        auto observationLease(
+            MonotonicInstant capturedAt,
+            TargetGeneration generation = TargetGeneration{}
+        ) -> ObservationLease
+        {
+            auto const transform = CoordinateTransform::create(
+                Point<DesktopSpace>{0.0F, 0.0F},
+                1.0F,
+                1.0F,
+                1,
+                1
+            );
+            REQUIRE(transform.has_value());
+            auto const pixels = std::make_shared<FrameBuffer const>(
+                std::vector<std::byte>(4)
+            );
+            auto const frame = Frame::create(
+                FrameId{1},
+                SessionId{1},
+                generation,
+                capturedAt,
+                1,
+                1,
+                4,
+                PixelFormat::Bgra8,
+                pixels,
+                *transform
+            );
+            REQUIRE(frame.has_value());
+            auto const lease = ObservationLease::forFrame(
+                *frame,
+                g_defaultMaxActionFrameAge
+            );
+            REQUIRE(lease.has_value());
+            return *lease;
+        }
+
+        [[nodiscard]]
+        auto parsedClick(std::string_view line) -> InputAgentClickCommand
+        {
+            auto command = parseInputAgentCommand(line);
+            REQUIRE(command.has_value());
+            auto const* click = std::get_if<InputAgentClickCommand>(
+                &*command
+            );
+            REQUIRE(click != nullptr);
+            return *click;
+        }
+
+        [[nodiscard]]
+        auto createTemporaryDirectory(std::string_view role) -> std::filesystem::path
+        {
+            auto const token = std::chrono::steady_clock::now()
+                .time_since_epoch()
+                .count();
+            auto const path = std::filesystem::temp_directory_path()
+                / std::format("umbraflow-{}-{}", role, token);
+            auto error = std::error_code{};
+            auto const created = std::filesystem::create_directory(path, error);
+            REQUIRE(created);
+            REQUIRE_FALSE(error);
+            return path;
+        }
+
+        auto removeAllBestEffort(std::filesystem::path const& path) noexcept -> void
+        {
+            try
+            {
+                auto error = std::error_code{};
+                static_cast<void>(std::filesystem::remove_all(path, error));
+            }
+            catch (...)
+            {
+            }
+        }
+
+        auto writeQueue(
+            std::filesystem::path const& path,
+            std::string_view content,
+            std::ios::openmode mode
+        ) -> void
+        {
+            auto stream = std::ofstream{path, std::ios::binary | mode};
+            REQUIRE(stream.is_open());
+            stream.write(
+                content.data(),
+                static_cast<std::streamsize>(content.size())
+            );
+            stream.flush();
+            REQUIRE(stream.good());
+        }
     }
 
-    [[nodiscard]]
-    auto deliveryTarget(
-        uf::TargetGeneration generation = uf::TargetGeneration{}
-    ) -> uf::DeliveryTarget
+    TEST_CASE("m0 input-agent parses every bounded command operation")
     {
-        auto target = uf::DeliveryTarget::create(
-            uf::WindowHandle{0x1234},
-            uf::SessionId{1},
-            generation,
-            800,
-            450
+        auto const capture = parseInputAgentCommand(
+            R"({"op":"capture","out":"shots\/one.png"})"
         );
-        REQUIRE(target.has_value());
-        return *std::move(target);
+        REQUIRE(capture.has_value());
+        auto const* captureCommand = std::get_if<InputAgentCaptureCommand>(
+            &*capture
+        );
+        REQUIRE(captureCommand != nullptr);
+        CHECK(captureCommand->m_output == std::filesystem::path{"shots/one.png"});
+
+        auto const click = parsedClick(
+            R"({"op":"click","x":12.5,"y":4e1,"out_before":"before.png",)"
+            R"("out_after":"after.png","settle_ms":250})"
+        );
+        CHECK(click.m_x == 12.5F);
+        CHECK(click.m_y == 40.0F);
+        CHECK(click.m_outputBefore == std::filesystem::path{"before.png"});
+        CHECK(click.m_outputAfter == std::filesystem::path{"after.png"});
+        CHECK(
+            click.m_settle
+            == std::chrono::duration_cast<MonotonicInstant::Duration>(
+                std::chrono::milliseconds{250}
+            )
+        );
+
+        auto const defaultSettle = parsedClick(
+            R"({"op":"click","x":1,"y":2,"out_before":"before.png","out_after":"after.png"})"
+        );
+        CHECK(defaultSettle.m_settle == g_defaultInputAgentSettle);
+
+        auto const quit = parseInputAgentCommand(
+            "  { \"op\" : \"quit\" }  "
+        );
+        REQUIRE(quit.has_value());
+        CHECK(std::holds_alternative<InputAgentQuitCommand>(*quit));
     }
 
-    [[nodiscard]]
-    auto observationLease(
-        uf::MonotonicInstant capturedAt,
-        uf::TargetGeneration generation = uf::TargetGeneration{}
-    ) -> uf::ObservationLease
+    TEST_CASE("m0 input-agent rejects malformed and unrecognized commands")
     {
-        auto const transform = uf::CoordinateTransform::create(
-            uf::Point<uf::DesktopSpace>{0.0F, 0.0F},
-            1.0F,
-            1.0F,
-            1,
-            1
-        );
-        REQUIRE(transform.has_value());
-        auto const pixels = std::make_shared<uf::FrameBuffer const>(
-            std::vector<std::byte>(4)
-        );
-        auto const frame = uf::Frame::create(
-            uf::FrameId{1},
-            uf::SessionId{1},
-            generation,
-            capturedAt,
-            1,
-            1,
-            4,
-            uf::PixelFormat::Bgra8,
-            pixels,
-            *transform
-        );
-        REQUIRE(frame.has_value());
-        auto const lease = uf::ObservationLease::forFrame(
-            *frame,
-            uf::g_defaultMaxActionFrameAge
-        );
-        REQUIRE(lease.has_value());
-        return *lease;
+        auto const cases = std::array<std::string_view, 11>{
+            "",
+            "{}",
+            R"({"op":"run","out":"anything"})",
+            R"({"op":"capture"})",
+            R"({"op":"capture","out":""})",
+            R"({"op":"capture","out":"bad\u0000path.png"})",
+            R"({"op":"capture","out":"a.png","extra":1})",
+            R"({"op":"quit","x":1})",
+            R"({"op":"click","x":1,"y":2,"out_before":"a.png"})",
+            R"({"op":"click","x":1,"x":2,"y":2,"out_before":"a.png","out_after":"b.png"})",
+            R"({"op":"click","x":1,"y":2,"out_before":"a.png","out_after":"b.png","settle_ms":1.5})",
+        };
+
+        for (auto const line : cases)
+        {
+            auto const result = parseInputAgentCommand(line);
+            REQUIRE_FALSE(result.has_value());
+            test_m0_demo::requireErrorKind(
+                result.error(),
+                AutomationErrorKind::InvalidResource
+            );
+        }
     }
 
-    [[nodiscard]]
-    auto parsedClick(std::string_view line) -> uf::m0_demo::InputAgentClickCommand
+    TEST_CASE("m0 input-agent rejects settle times above the bounded wait")
     {
-        auto command = uf::m0_demo::parseInputAgentCommand(line);
-        REQUIRE(command.has_value());
-        auto const* click = std::get_if<uf::m0_demo::InputAgentClickCommand>(
-            &*command
+        auto const boundary = parsedClick(
+            R"({"op":"click","x":1,"y":2,"out_before":"a.png","out_after":"b.png","settle_ms":5000})"
         );
-        REQUIRE(click != nullptr);
-        return *click;
+        CHECK(boundary.m_settle == g_maximumInputAgentSettle);
+
+        auto const result = parseInputAgentCommand(
+            R"({"op":"click","x":1,"y":2,"out_before":"a.png","out_after":"b.png","settle_ms":5001})"
+        );
+        REQUIRE_FALSE(result.has_value());
+        test_m0_demo::requireErrorKind(
+            result.error(),
+            AutomationErrorKind::InvalidResource
+        );
+        CHECK(result.error().message().contains("must not exceed 5000"));
     }
 
-    [[nodiscard]]
-    auto createTemporaryDirectory(std::string_view role) -> std::filesystem::path
+    TEST_CASE("m0 input-agent rejects malformed UTF-8 command strings")
+    {
+        auto command = std::string{R"({"op":"capture","out":"bad-)"};
+        command += static_cast<char>(0xC3U);
+        command += static_cast<char>(0x28U);
+        command += R"(.png"})";
+
+        auto const result = parseInputAgentCommand(command);
+        REQUIRE_FALSE(result.has_value());
+        test_m0_demo::requireErrorKind(
+            result.error(),
+            AutomationErrorKind::InvalidResource
+        );
+        CHECK(result.error().message().contains("valid UTF-8"));
+    }
+
+    TEST_CASE("m0 input-agent confines output paths to its canonical directory")
     {
         auto const token = std::chrono::steady_clock::now()
             .time_since_epoch()
             .count();
-        auto const path = std::filesystem::temp_directory_path()
-            / std::format("umbraflow-{}-{}", role, token);
+        auto const outputDirectory = std::filesystem::temp_directory_path()
+            / std::format("umbraflow-input-agent-output-{}", token);
         auto error = std::error_code{};
-        auto const created = std::filesystem::create_directory(path, error);
+        auto const created = std::filesystem::create_directory(
+            outputDirectory,
+            error
+        );
         REQUIRE(created);
         REQUIRE_FALSE(error);
-        return path;
-    }
-
-    auto removeAllBestEffort(std::filesystem::path const& path) noexcept -> void
-    {
-        try
-        {
-            auto error = std::error_code{};
-            static_cast<void>(std::filesystem::remove_all(path, error));
-        }
-        catch (...)
-        {
-        }
-    }
-
-    auto writeQueue(
-        std::filesystem::path const& path,
-        std::string_view content,
-        std::ios::openmode mode
-    ) -> void
-    {
-        auto stream = std::ofstream{path, std::ios::binary | mode};
-        REQUIRE(stream.is_open());
-        stream.write(
-            content.data(),
-            static_cast<std::streamsize>(content.size())
+        auto const cleanupPath = std::make_shared<std::filesystem::path const>(
+            outputDirectory
         );
-        stream.flush();
-        REQUIRE(stream.good());
-    }
-}
-
-TEST_CASE("m0 input-agent parses every bounded command operation")
-{
-    auto const capture = uf::m0_demo::parseInputAgentCommand(
-        R"({"op":"capture","out":"shots\/one.png"})"
-    );
-    REQUIRE(capture.has_value());
-    auto const* captureCommand = std::get_if<uf::m0_demo::InputAgentCaptureCommand>(
-        &*capture
-    );
-    REQUIRE(captureCommand != nullptr);
-    CHECK(captureCommand->m_output == std::filesystem::path{"shots/one.png"});
-
-    auto const click = parsedClick(
-        R"({"op":"click","x":12.5,"y":4e1,"out_before":"before.png",)"
-        R"("out_after":"after.png","settle_ms":250})"
-    );
-    CHECK(click.m_x == 12.5F);
-    CHECK(click.m_y == 40.0F);
-    CHECK(click.m_outputBefore == std::filesystem::path{"before.png"});
-    CHECK(click.m_outputAfter == std::filesystem::path{"after.png"});
-    CHECK(
-        click.m_settle
-        == std::chrono::duration_cast<uf::MonotonicInstant::Duration>(
-            std::chrono::milliseconds{250}
-        )
-    );
-
-    auto const defaultSettle = parsedClick(
-        R"({"op":"click","x":1,"y":2,"out_before":"before.png","out_after":"after.png"})"
-    );
-    CHECK(defaultSettle.m_settle == uf::m0_demo::g_defaultInputAgentSettle);
-
-    auto const quit = uf::m0_demo::parseInputAgentCommand(
-        "  { \"op\" : \"quit\" }  "
-    );
-    REQUIRE(quit.has_value());
-    CHECK(std::holds_alternative<uf::m0_demo::InputAgentQuitCommand>(*quit));
-}
-
-TEST_CASE("m0 input-agent rejects malformed and unrecognized commands")
-{
-    auto const cases = std::array<std::string_view, 11>{
-        "",
-        "{}",
-        R"({"op":"run","out":"anything"})",
-        R"({"op":"capture"})",
-        R"({"op":"capture","out":""})",
-        R"({"op":"capture","out":"bad\u0000path.png"})",
-        R"({"op":"capture","out":"a.png","extra":1})",
-        R"({"op":"quit","x":1})",
-        R"({"op":"click","x":1,"y":2,"out_before":"a.png"})",
-        R"({"op":"click","x":1,"x":2,"y":2,"out_before":"a.png","out_after":"b.png"})",
-        R"({"op":"click","x":1,"y":2,"out_before":"a.png","out_after":"b.png","settle_ms":1.5})",
-    };
-
-    for (auto const line : cases)
-    {
-        auto const result = uf::m0_demo::parseInputAgentCommand(line);
-        REQUIRE_FALSE(result.has_value());
-        test_m0_demo::requireErrorKind(
-            result.error(),
-            uf::AutomationErrorKind::InvalidResource
+        auto const cleanup = scopeExit(
+            [cleanupPath]() noexcept
+            {
+                auto cleanupError = std::error_code{};
+                static_cast<void>(
+                    std::filesystem::remove(*cleanupPath, cleanupError)
+                );
+            }
         );
-    }
-}
 
-TEST_CASE("m0 input-agent rejects settle times above the bounded wait")
-{
-    auto const boundary = parsedClick(
-        R"({"op":"click","x":1,"y":2,"out_before":"a.png","out_after":"b.png","settle_ms":5000})"
-    );
-    CHECK(boundary.m_settle == uf::m0_demo::g_maximumInputAgentSettle);
-
-    auto const result = uf::m0_demo::parseInputAgentCommand(
-        R"({"op":"click","x":1,"y":2,"out_before":"a.png","out_after":"b.png","settle_ms":5001})"
-    );
-    REQUIRE_FALSE(result.has_value());
-    test_m0_demo::requireErrorKind(
-        result.error(),
-        uf::AutomationErrorKind::InvalidResource
-    );
-    CHECK(result.error().message().contains("must not exceed 5000"));
-}
-
-TEST_CASE("m0 input-agent rejects malformed UTF-8 command strings")
-{
-    auto command = std::string{R"({"op":"capture","out":"bad-)"};
-    command += static_cast<char>(0xC3U);
-    command += static_cast<char>(0x28U);
-    command += R"(.png"})";
-
-    auto const result = uf::m0_demo::parseInputAgentCommand(command);
-    REQUIRE_FALSE(result.has_value());
-    test_m0_demo::requireErrorKind(
-        result.error(),
-        uf::AutomationErrorKind::InvalidResource
-    );
-    CHECK(result.error().message().contains("valid UTF-8"));
-}
-
-TEST_CASE("m0 input-agent confines output paths to its canonical directory")
-{
-    auto const token = std::chrono::steady_clock::now()
-        .time_since_epoch()
-        .count();
-    auto const outputDirectory = std::filesystem::temp_directory_path()
-        / std::format("umbraflow-input-agent-output-{}", token);
-    auto error = std::error_code{};
-    auto const created = std::filesystem::create_directory(
-        outputDirectory,
-        error
-    );
-    REQUIRE(created);
-    REQUIRE_FALSE(error);
-    auto const cleanupPath = std::make_shared<std::filesystem::path const>(
-        outputDirectory
-    );
-    auto const cleanup = uf::scopeExit(
-        [cleanupPath]() noexcept
-        {
-            auto cleanupError = std::error_code{};
-            static_cast<void>(
-                std::filesystem::remove(*cleanupPath, cleanupError)
-            );
-        }
-    );
-
-    auto const canonicalDirectory = uf::m0_demo::canonicalizeOutputDirectory(
-        outputDirectory
-    );
-    REQUIRE(canonicalDirectory.has_value());
-    auto const inside = uf::m0_demo::resolveConfinedOutputPath(
-        *canonicalDirectory,
-        "inside.png",
-        "test output"
-    );
-    REQUIRE(inside.has_value());
-    CHECK(inside->parent_path() == *canonicalDirectory);
-
-    for (auto const& escaped : std::array{
-        std::filesystem::path{"../escape.png"},
-        outputDirectory.parent_path() / "absolute-escape.png",
-    })
-    {
-        auto const result = uf::m0_demo::resolveConfinedOutputPath(
+        auto const canonicalDirectory = canonicalizeOutputDirectory(
+            outputDirectory
+        );
+        REQUIRE(canonicalDirectory.has_value());
+        auto const inside = resolveConfinedOutputPath(
             *canonicalDirectory,
-            escaped,
+            "inside.png",
             "test output"
         );
-        REQUIRE_FALSE(result.has_value());
+        REQUIRE(inside.has_value());
+        CHECK(inside->parent_path() == *canonicalDirectory);
+
+        for (auto const& escaped : std::array{
+            std::filesystem::path{"../escape.png"},
+            outputDirectory.parent_path() / "absolute-escape.png",
+        })
+        {
+            auto const result = resolveConfinedOutputPath(
+                *canonicalDirectory,
+                escaped,
+                "test output"
+            );
+            REQUIRE_FALSE(result.has_value());
+            test_m0_demo::requireErrorKind(
+                result.error(),
+                AutomationErrorKind::InvalidResource
+            );
+        }
+    }
+
+    TEST_CASE("m0 input-agent queue reader preserves incremental line framing")
+    {
+        auto const directory = createTemporaryDirectory("input-agent-queue-lines");
+        auto const cleanup = scopeExit(
+            [cleanupPath = directory]() noexcept
+            {
+                removeAllBestEffort(cleanupPath);
+            }
+        );
+        auto const queue = directory / "queue.jsonl";
+        writeQueue(queue, "", std::ios::trunc);
+
+        auto reader = InputAgentQueueReader::create(queue);
+        REQUIRE(reader.has_value());
+
+        writeQueue(queue, "partial", std::ios::app);
+        auto first = reader->readAvailable();
+        REQUIRE(first.has_value());
+        CHECK(first->empty());
+
+        writeQueue(queue, "-one\r\nsecond\nthird", std::ios::app);
+        auto second = reader->readAvailable();
+        REQUIRE(second.has_value());
+        REQUIRE(second->size() == 2U);
+        CHECK((*second)[0] == "partial-one");
+        CHECK((*second)[1] == "second");
+
+        writeQueue(queue, "-tail\nfour\n", std::ios::app);
+        auto third = reader->readAvailable();
+        REQUIRE(third.has_value());
+        REQUIRE(third->size() == 2U);
+        CHECK((*third)[0] == "third-tail");
+        CHECK((*third)[1] == "four");
+    }
+
+    TEST_CASE("m0 input-agent queue reader rejects truncation")
+    {
+        auto const directory = createTemporaryDirectory("input-agent-queue-truncate");
+        auto const cleanup = scopeExit(
+            [cleanupPath = directory]() noexcept
+            {
+                removeAllBestEffort(cleanupPath);
+            }
+        );
+        auto const queue = directory / "queue.jsonl";
+        writeQueue(queue, "first\n", std::ios::trunc);
+
+        auto reader = InputAgentQueueReader::create(queue);
+        REQUIRE(reader.has_value());
+        auto const first = reader->readAvailable();
+        REQUIRE(first.has_value());
+        REQUIRE(first->size() == 1U);
+
+        writeQueue(queue, "x", std::ios::trunc);
+        auto const truncated = reader->readAvailable();
+        REQUIRE_FALSE(truncated.has_value());
         test_m0_demo::requireErrorKind(
-            result.error(),
-            uf::AutomationErrorKind::InvalidResource
+            truncated.error(),
+            AutomationErrorKind::InvalidResource
         );
-    }
-}
-
-TEST_CASE("m0 input-agent queue reader preserves incremental line framing")
-{
-    auto const directory = createTemporaryDirectory("input-agent-queue-lines");
-    auto const cleanup = uf::scopeExit(
-        [cleanupPath = directory]() noexcept
-        {
-            removeAllBestEffort(cleanupPath);
-        }
-    );
-    auto const queue = directory / "queue.jsonl";
-    writeQueue(queue, "", std::ios::trunc);
-
-    auto reader = uf::m0_demo::InputAgentQueueReader::create(queue);
-    REQUIRE(reader.has_value());
-
-    writeQueue(queue, "partial", std::ios::app);
-    auto first = reader->readAvailable();
-    REQUIRE(first.has_value());
-    CHECK(first->empty());
-
-    writeQueue(queue, "-one\r\nsecond\nthird", std::ios::app);
-    auto second = reader->readAvailable();
-    REQUIRE(second.has_value());
-    REQUIRE(second->size() == 2U);
-    CHECK((*second)[0] == "partial-one");
-    CHECK((*second)[1] == "second");
-
-    writeQueue(queue, "-tail\nfour\n", std::ios::app);
-    auto third = reader->readAvailable();
-    REQUIRE(third.has_value());
-    REQUIRE(third->size() == 2U);
-    CHECK((*third)[0] == "third-tail");
-    CHECK((*third)[1] == "four");
-}
-
-TEST_CASE("m0 input-agent queue reader rejects truncation")
-{
-    auto const directory = createTemporaryDirectory("input-agent-queue-truncate");
-    auto const cleanup = uf::scopeExit(
-        [cleanupPath = directory]() noexcept
-        {
-            removeAllBestEffort(cleanupPath);
-        }
-    );
-    auto const queue = directory / "queue.jsonl";
-    writeQueue(queue, "first\n", std::ios::trunc);
-
-    auto reader = uf::m0_demo::InputAgentQueueReader::create(queue);
-    REQUIRE(reader.has_value());
-    auto const first = reader->readAvailable();
-    REQUIRE(first.has_value());
-    REQUIRE(first->size() == 1U);
-
-    writeQueue(queue, "x", std::ios::trunc);
-    auto const truncated = reader->readAvailable();
-    REQUIRE_FALSE(truncated.has_value());
-    test_m0_demo::requireErrorKind(
-        truncated.error(),
-        uf::AutomationErrorKind::InvalidResource
-    );
-    CHECK(truncated.error().message().contains("was truncated"));
-}
-
-TEST_CASE("m0 input-agent queue reader bounds unterminated commands")
-{
-    auto const directory = createTemporaryDirectory("input-agent-queue-limit");
-    auto const cleanup = uf::scopeExit(
-        [cleanupPath = directory]() noexcept
-        {
-            removeAllBestEffort(cleanupPath);
-        }
-    );
-    auto const queue = directory / "queue.jsonl";
-    writeQueue(queue, "", std::ios::trunc);
-
-    auto reader = uf::m0_demo::InputAgentQueueReader::create(queue);
-    REQUIRE(reader.has_value());
-    auto constexpr maximumPendingBytes = std::size_t{1024} * 1024U;
-    auto constexpr readsPerMebibyte = std::size_t{16};
-    auto const maximumLine = std::string(maximumPendingBytes, 'a');
-    writeQueue(queue, maximumLine, std::ios::app);
-    for (auto index = std::size_t{}; index < readsPerMebibyte; ++index)
-    {
-        auto const chunk = reader->readAvailable();
-        REQUIRE(chunk.has_value());
-        CHECK(chunk->empty());
+        CHECK(truncated.error().message().contains("was truncated"));
     }
 
-    writeQueue(queue, "\n", std::ios::app);
-    auto const boundary = reader->readAvailable();
-    REQUIRE(boundary.has_value());
-    REQUIRE(boundary->size() == 1U);
-    CHECK(boundary->front().size() == maximumPendingBytes);
-
-    auto oversizedLine = std::string(maximumPendingBytes + 1U, 'b');
-    oversizedLine += '\n';
-    writeQueue(queue, oversizedLine, std::ios::app);
-    for (auto index = std::size_t{}; index < readsPerMebibyte; ++index)
+    TEST_CASE("m0 input-agent queue reader bounds unterminated commands")
     {
-        auto const chunk = reader->readAvailable();
-        REQUIRE(chunk.has_value());
-        CHECK(chunk->empty());
-    }
-    auto const oversized = reader->readAvailable();
-    REQUIRE_FALSE(oversized.has_value());
-    test_m0_demo::requireErrorKind(
-        oversized.error(),
-        uf::AutomationErrorKind::InvalidResource
-    );
-    CHECK(oversized.error().message().contains("exceeding 1048576 bytes"));
-}
+        auto const directory = createTemporaryDirectory("input-agent-queue-limit");
+        auto const cleanup = scopeExit(
+            [cleanupPath = directory]() noexcept
+            {
+                removeAllBestEffort(cleanupPath);
+            }
+        );
+        auto const queue = directory / "queue.jsonl";
+        writeQueue(queue, "", std::ios::trunc);
 
-TEST_CASE("m0 input-agent file writer validates the opened output path")
-{
-    auto const directory = createTemporaryDirectory("input-agent-output-handle");
-    auto const cleanup = uf::scopeExit(
-        [cleanupPath = directory]() noexcept
+        auto reader = InputAgentQueueReader::create(queue);
+        REQUIRE(reader.has_value());
+        auto constexpr maximumPendingBytes = std::size_t{1024} * 1024U;
+        auto constexpr readsPerMebibyte = std::size_t{16};
+        auto const maximumLine = std::string(maximumPendingBytes, 'a');
+        writeQueue(queue, maximumLine, std::ios::app);
+        for (auto index = std::size_t{}; index < readsPerMebibyte; ++index)
         {
-            removeAllBestEffort(cleanupPath);
+            auto const chunk = reader->readAvailable();
+            REQUIRE(chunk.has_value());
+            CHECK(chunk->empty());
         }
-    );
-    auto const allowedDirectory = directory / "allowed";
-    auto const outsideDirectory = directory / "outside";
-    auto const nestedRoot = allowedDirectory / "nested";
-    auto const nestedDirectory = nestedRoot / "deeper";
-    auto error = std::error_code{};
-    REQUIRE(std::filesystem::create_directory(allowedDirectory, error));
-    REQUIRE_FALSE(error);
-    REQUIRE(std::filesystem::create_directory(outsideDirectory, error));
-    REQUIRE_FALSE(error);
-    REQUIRE(std::filesystem::create_directory(nestedRoot, error));
-    REQUIRE_FALSE(error);
-    REQUIRE(std::filesystem::create_directory(nestedDirectory, error));
-    REQUIRE_FALSE(error);
 
-    auto const canonicalAllowed = uf::m0_demo::canonicalizeOutputDirectory(
-        allowedDirectory
-    );
-    REQUIRE(canonicalAllowed.has_value());
-    auto const outsidePath = outsideDirectory / "escaped.png";
-    auto const rejected = uf::m0_demo::platform::FileWriter::createExclusive(
-        outsidePath,
-        *canonicalAllowed
-    );
-    REQUIRE_FALSE(rejected.has_value());
-    test_m0_demo::requireErrorKind(
-        rejected.error(),
-        uf::AutomationErrorKind::InvalidResource
-    );
-    CHECK_FALSE(std::filesystem::exists(outsidePath));
+        writeQueue(queue, "\n", std::ios::app);
+        auto const boundary = reader->readAvailable();
+        REQUIRE(boundary.has_value());
+        REQUIRE(boundary->size() == 1U);
+        CHECK(boundary->front().size() == maximumPendingBytes);
 
-    auto const unsafeComponent = allowedDirectory / "carrier.png:stream";
-    auto const unsafe = uf::m0_demo::platform::FileWriter::createExclusive(
-        unsafeComponent,
-        *canonicalAllowed
-    );
-    REQUIRE_FALSE(unsafe.has_value());
-    test_m0_demo::requireErrorKind(
-        unsafe.error(),
-        uf::AutomationErrorKind::InvalidResource
-    );
-    CHECK_FALSE(std::filesystem::exists(allowedDirectory / "carrier.png"));
+        auto oversizedLine = std::string(maximumPendingBytes + 1U, 'b');
+        oversizedLine += '\n';
+        writeQueue(queue, oversizedLine, std::ios::app);
+        for (auto index = std::size_t{}; index < readsPerMebibyte; ++index)
+        {
+            auto const chunk = reader->readAvailable();
+            REQUIRE(chunk.has_value());
+            CHECK(chunk->empty());
+        }
+        auto const oversized = reader->readAvailable();
+        REQUIRE_FALSE(oversized.has_value());
+        test_m0_demo::requireErrorKind(
+            oversized.error(),
+            AutomationErrorKind::InvalidResource
+        );
+        CHECK(oversized.error().message().contains("exceeding 1048576 bytes"));
+    }
 
-    auto const allowedPath = nestedDirectory / "capture.png";
-    auto const movedDirectory = outsideDirectory / "moved";
+    TEST_CASE("m0 input-agent file writer validates the opened output path")
     {
-        auto writer = uf::m0_demo::platform::FileWriter::createExclusive(
-            allowedPath,
+        auto const directory = createTemporaryDirectory("input-agent-output-handle");
+        auto const cleanup = scopeExit(
+            [cleanupPath = directory]() noexcept
+            {
+                removeAllBestEffort(cleanupPath);
+            }
+        );
+        auto const allowedDirectory = directory / "allowed";
+        auto const outsideDirectory = directory / "outside";
+        auto const nestedRoot = allowedDirectory / "nested";
+        auto const nestedDirectory = nestedRoot / "deeper";
+        auto error = std::error_code{};
+        REQUIRE(std::filesystem::create_directory(allowedDirectory, error));
+        REQUIRE_FALSE(error);
+        REQUIRE(std::filesystem::create_directory(outsideDirectory, error));
+        REQUIRE_FALSE(error);
+        REQUIRE(std::filesystem::create_directory(nestedRoot, error));
+        REQUIRE_FALSE(error);
+        REQUIRE(std::filesystem::create_directory(nestedDirectory, error));
+        REQUIRE_FALSE(error);
+
+        auto const canonicalAllowed = canonicalizeOutputDirectory(
+            allowedDirectory
+        );
+        REQUIRE(canonicalAllowed.has_value());
+        auto const outsidePath = outsideDirectory / "escaped.png";
+        auto const rejected = platform::FileWriter::createExclusive(
+            outsidePath,
             *canonicalAllowed
         );
-        REQUIRE(writer.has_value());
-        CHECK(std::filesystem::exists(allowedPath));
+        REQUIRE_FALSE(rejected.has_value());
+        test_m0_demo::requireErrorKind(
+            rejected.error(),
+            AutomationErrorKind::InvalidResource
+        );
+        CHECK_FALSE(std::filesystem::exists(outsidePath));
 
-        auto const duplicate = uf::m0_demo::platform::FileWriter::createExclusive(
-            allowedPath,
+        auto const unsafeComponent = allowedDirectory / "carrier.png:stream";
+        auto const unsafe = platform::FileWriter::createExclusive(
+            unsafeComponent,
             *canonicalAllowed
         );
-        REQUIRE_FALSE(duplicate.has_value());
-        CHECK(std::filesystem::exists(allowedPath));
+        REQUIRE_FALSE(unsafe.has_value());
+        test_m0_demo::requireErrorKind(
+            unsafe.error(),
+            AutomationErrorKind::InvalidResource
+        );
+        CHECK_FALSE(std::filesystem::exists(allowedDirectory / "carrier.png"));
+
+        auto const allowedPath = nestedDirectory / "capture.png";
+        auto const movedDirectory = outsideDirectory / "moved";
+        {
+            auto writer = platform::FileWriter::createExclusive(
+                allowedPath,
+                *canonicalAllowed
+            );
+            REQUIRE(writer.has_value());
+            CHECK(std::filesystem::exists(allowedPath));
+
+            auto const duplicate = platform::FileWriter::createExclusive(
+                allowedPath,
+                *canonicalAllowed
+            );
+            REQUIRE_FALSE(duplicate.has_value());
+            CHECK(std::filesystem::exists(allowedPath));
+
+            error.clear();
+            std::filesystem::rename(nestedRoot, movedDirectory, error);
+            CHECK(error);
+            CHECK(std::filesystem::exists(allowedPath));
+        }
 
         error.clear();
         std::filesystem::rename(nestedRoot, movedDirectory, error);
-        CHECK(error);
-        CHECK(std::filesystem::exists(allowedPath));
+        CHECK_FALSE(error);
+        CHECK(std::filesystem::exists(movedDirectory / "deeper" / "capture.png"));
     }
 
-    error.clear();
-    std::filesystem::rename(nestedRoot, movedDirectory, error);
-    CHECK_FALSE(error);
-    CHECK(std::filesystem::exists(movedDirectory / "deeper" / "capture.png"));
-}
-
-TEST_CASE("m0 input-agent clears per-command audit state across many clicks")
-{
-    auto audit = uf::AuditLog{};
-    auto maximumRecords = std::size_t{};
-    for (auto command = std::size_t{}; command < 10'000U; ++command)
+    TEST_CASE("m0 input-agent clears per-command audit state across many clicks")
     {
-        for (auto message = uf::uint32{}; message < 3U; ++message)
+        auto audit = AuditLog{};
+        auto maximumRecords = std::size_t{};
+        for (auto command = std::size_t{}; command < 10'000U; ++command)
         {
-            uf::controller_detail::AuditLogAccess::record(
-                audit,
-                uf::WindowHandle{0x1234},
-                message,
-                0U,
-                0
+            for (auto message = uint32{}; message < 3U; ++message)
+            {
+                controller_detail::AuditLogAccess::record(
+                    audit,
+                    WindowHandle{0x1234},
+                    message,
+                    0U,
+                    0
+                );
+            }
+            maximumRecords = std::max(maximumRecords, audit.size());
+            clearInputAgentCommandAudit(audit);
+        }
+
+        CHECK(maximumRecords == 3U);
+        CHECK(audit.empty());
+    }
+
+    TEST_CASE("m0 input-agent click coordinates fail closed at client bounds")
+    {
+        auto const target = deliveryTarget();
+        auto const now = instantAt(MonotonicInstant::Duration{10});
+        auto const lease = observationLease(now);
+        auto const valid = parsedClick(
+            R"({"op":"click","x":799.9,"y":449.9,"out_before":"a.png","out_after":"b.png"})"
+        );
+        CHECK(
+            validateInputAgentClick(
+                target,
+                lease,
+                Point<ClientSpace>{valid.m_x, valid.m_y},
+                now
+            )
+        );
+
+        auto const cases = std::array<std::string_view, 4>{
+            R"({"op":"click","x":-0.1,"y":1,"out_before":"a.png","out_after":"b.png"})",
+            R"({"op":"click","x":1,"y":-0.1,"out_before":"a.png","out_after":"b.png"})",
+            R"({"op":"click","x":800,"y":1,"out_before":"a.png","out_after":"b.png"})",
+            R"({"op":"click","x":1,"y":450,"out_before":"a.png","out_after":"b.png"})",
+        };
+        for (auto const line : cases)
+        {
+            auto const click = parsedClick(line);
+            auto const result = validateInputAgentClick(
+                target,
+                lease,
+                Point<ClientSpace>{click.m_x, click.m_y},
+                now
+            );
+
+            REQUIRE_FALSE(result.has_value());
+            test_m0_demo::requireErrorKind(
+                result.error(),
+                AutomationErrorKind::ActionRejected
             );
         }
-        maximumRecords = std::max(maximumRecords, audit.size());
-        uf::m0_demo::clearInputAgentCommandAudit(audit);
     }
 
-    CHECK(maximumRecords == 3U);
-    CHECK(audit.empty());
-}
-
-TEST_CASE("m0 input-agent click coordinates fail closed at client bounds")
-{
-    auto const target = deliveryTarget();
-    auto const now = instantAt(uf::MonotonicInstant::Duration{10});
-    auto const lease = observationLease(now);
-    auto const valid = parsedClick(
-        R"({"op":"click","x":799.9,"y":449.9,"out_before":"a.png","out_after":"b.png"})"
-    );
-    CHECK(
-        uf::m0_demo::validateInputAgentClick(
-            target,
-            lease,
-            uf::Point<uf::ClientSpace>{valid.m_x, valid.m_y},
-            now
-        )
-    );
-
-    auto const cases = std::array<std::string_view, 4>{
-        R"({"op":"click","x":-0.1,"y":1,"out_before":"a.png","out_after":"b.png"})",
-        R"({"op":"click","x":1,"y":-0.1,"out_before":"a.png","out_after":"b.png"})",
-        R"({"op":"click","x":800,"y":1,"out_before":"a.png","out_after":"b.png"})",
-        R"({"op":"click","x":1,"y":450,"out_before":"a.png","out_after":"b.png"})",
-    };
-    for (auto const line : cases)
+    TEST_CASE("m0 input-agent click validation rejects a stale generation")
     {
-        auto const click = parsedClick(line);
-        auto const result = uf::m0_demo::validateInputAgentClick(
-            target,
-            lease,
-            uf::Point<uf::ClientSpace>{click.m_x, click.m_y},
+        auto const next = TargetGeneration{}.next();
+        REQUIRE(next.has_value());
+        auto const now = instantAt(MonotonicInstant::Duration{10});
+        auto const result = validateInputAgentClick(
+            deliveryTarget(*next),
+            observationLease(now),
+            Point<ClientSpace>{1.0F, 1.0F},
             now
         );
 
         REQUIRE_FALSE(result.has_value());
         test_m0_demo::requireErrorKind(
             result.error(),
-            uf::AutomationErrorKind::ActionRejected
+            AutomationErrorKind::StaleObservation
         );
     }
-}
-
-TEST_CASE("m0 input-agent click validation rejects a stale generation")
-{
-    auto const next = uf::TargetGeneration{}.next();
-    REQUIRE(next.has_value());
-    auto const now = instantAt(uf::MonotonicInstant::Duration{10});
-    auto const result = uf::m0_demo::validateInputAgentClick(
-        deliveryTarget(*next),
-        observationLease(now),
-        uf::Point<uf::ClientSpace>{1.0F, 1.0F},
-        now
-    );
-
-    REQUIRE_FALSE(result.has_value());
-    test_m0_demo::requireErrorKind(
-        result.error(),
-        uf::AutomationErrorKind::StaleObservation
-    );
 }

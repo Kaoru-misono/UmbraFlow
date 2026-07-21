@@ -23,393 +23,393 @@
 #include <utility>
 #include <vector>
 
-namespace
-{
-    class NativeHandle final
-    {
-        HANDLE m_value{INVALID_HANDLE_VALUE};
-
-    public:
-        NativeHandle() noexcept = default;
-        explicit NativeHandle(HANDLE value) noexcept
-            : m_value{value}
-        {
-        }
-        NativeHandle(NativeHandle const&) = delete;
-        auto operator=(NativeHandle const&) -> NativeHandle& = delete;
-        NativeHandle(NativeHandle&& other) noexcept
-            : m_value{std::exchange(other.m_value, INVALID_HANDLE_VALUE)}
-        {
-        }
-        auto operator=(NativeHandle&& other) noexcept -> NativeHandle&
-        {
-            if (this != &other)
-            {
-                close();
-                m_value = std::exchange(other.m_value, INVALID_HANDLE_VALUE);
-            }
-            return *this;
-        }
-        ~NativeHandle() { close(); }
-
-        [[nodiscard]] auto get() const noexcept -> HANDLE { return m_value; }
-
-    private:
-        auto close() noexcept -> void
-        {
-            if (
-                m_value != INVALID_HANDLE_VALUE
-                && m_value != nullptr
-            )
-            {
-                // SAFETY: m_value is the unique live Windows handle adopted by
-                // this wrapper. CloseHandle consumes no pointer, and the
-                // wrapper makes exactly one close attempt before invalidating
-                // it.
-                static_cast<void>(CloseHandle(m_value));
-                m_value = INVALID_HANDLE_VALUE;
-            }
-        }
-    };
-
-    [[nodiscard]]
-    auto extendedPath(std::filesystem::path const& path) -> std::wstring
-    {
-        auto const& native = path.native();
-        if (
-            native.starts_with(LR"(\\?\)")
-            || native.starts_with(LR"(\\.\)")
-        )
-        {
-            return native;
-        }
-        if (native.starts_with(LR"(\\)"))
-        {
-            return LR"(\\?\UNC\)" + native.substr(2U);
-        }
-        return LR"(\\?\)" + native;
-    }
-
-    [[nodiscard]]
-    auto fileFailure(
-        std::string_view operation,
-        std::filesystem::path const& path,
-        DWORD nativeError
-    ) -> std::unexpected<uf::Error>
-    {
-        auto message = std::format("Windows error {}", nativeError);
-        if (auto const errorValue = uf::checkedCast<int>(nativeError))
-        {
-            message = std::error_code{
-                *errorValue,
-                std::system_category()
-            }.message();
-        }
-        return uf::fail(
-            uf::ErrorCode::Io,
-            uf::automationErrorDetailCode(
-                uf::AutomationErrorKind::InvalidResource
-            ),
-            std::format(
-                "input-agent failed to {} {}: {}",
-                operation,
-                path.string(),
-                message
-            ),
-            static_cast<uf::int64>(nativeError)
-        );
-    }
-
-    [[nodiscard]]
-    auto openFile(
-        std::filesystem::path const& path,
-        DWORD desiredAccess,
-        DWORD shareMode,
-        DWORD creationDisposition,
-        std::string_view operation
-    ) -> uf::Result<NativeHandle>
-    {
-        auto const nativePath = extendedPath(path);
-        // SAFETY: nativePath owns a null-terminated UTF-16 buffer for this
-        // synchronous call. Null security/template pointers are permitted,
-        // and the returned handle is transferred immediately to NativeHandle.
-        auto const handle = CreateFileW(
-            nativePath.c_str(),
-            desiredAccess,
-            shareMode,
-            nullptr,
-            creationDisposition,
-            FILE_ATTRIBUTE_NORMAL | FILE_FLAG_OPEN_REPARSE_POINT,
-            nullptr
-        );
-        if (handle == INVALID_HANDLE_VALUE)
-        {
-            return fileFailure(operation, path, GetLastError());
-        }
-        return NativeHandle{handle};
-    }
-
-    [[nodiscard]]
-    auto openDirectory(
-        std::filesystem::path const& path
-    ) -> uf::Result<NativeHandle>
-    {
-        auto const nativePath = extendedPath(path);
-        // SAFETY: nativePath owns a null-terminated UTF-16 buffer for this
-        // synchronous call. The final component is deliberately followed;
-        // confinement is checked against the resulting directory handle.
-        auto const handle = CreateFileW(
-            nativePath.c_str(),
-            FILE_READ_ATTRIBUTES | FILE_TRAVERSE,
-            // Deny delete sharing so the verified directory cannot be renamed
-            // or removed before the handle-relative create commits.
-            FILE_SHARE_READ | FILE_SHARE_WRITE,
-            nullptr,
-            OPEN_EXISTING,
-            FILE_FLAG_BACKUP_SEMANTICS,
-            nullptr
-        );
-        if (handle == INVALID_HANDLE_VALUE)
-        {
-            return fileFailure(
-                "open output parent directory",
-                path,
-                GetLastError()
-            );
-        }
-
-        auto nativeHandle = NativeHandle{handle};
-        auto information = FILE_STANDARD_INFO{};
-        // SAFETY: nativeHandle owns a live handle. information is writable for
-        // the synchronous query, and Windows retains no supplied pointer.
-        if (
-            GetFileInformationByHandleEx(
-                nativeHandle.get(),
-                FileStandardInfo,
-                &information,
-                static_cast<DWORD>(sizeof(information))
-            ) == FALSE
-        )
-        {
-            return fileFailure(
-                "inspect output parent directory",
-                path,
-                GetLastError()
-            );
-        }
-        if (information.Directory == FALSE)
-        {
-            return fileFailure(
-                "open output parent directory",
-                path,
-                ERROR_DIRECTORY
-            );
-        }
-        return nativeHandle;
-    }
-
-    [[nodiscard]]
-    auto normalizedFinalPath(std::wstring_view native) -> std::filesystem::path
-    {
-        auto constexpr uncPrefix = std::wstring_view{LR"(\\?\UNC\)"};
-        auto constexpr extendedPrefix = std::wstring_view{LR"(\\?\)"};
-        if (native.starts_with(uncPrefix))
-        {
-            auto normalized = std::wstring{LR"(\\)"};
-            normalized += native.substr(uncPrefix.size());
-            return std::filesystem::path{normalized}.lexically_normal();
-        }
-        if (native.starts_with(extendedPrefix))
-        {
-            native.remove_prefix(extendedPrefix.size());
-        }
-        return std::filesystem::path{native}.lexically_normal();
-    }
-
-    [[nodiscard]]
-    auto finalPathForHandle(
-        NativeHandle const& handle,
-        std::filesystem::path const& requestedPath
-    ) -> uf::Result<std::filesystem::path>
-    {
-        auto constexpr flags = DWORD{FILE_NAME_NORMALIZED | VOLUME_NAME_DOS};
-        // SAFETY: handle owns a live file. A null buffer with size zero asks
-        // Windows for the required UTF-16 buffer size and retains no pointer.
-        auto const required = GetFinalPathNameByHandleW(
-            handle.get(),
-            nullptr,
-            0U,
-            flags
-        );
-        if (required == 0U)
-        {
-            return fileFailure(
-                "resolve final path for",
-                requestedPath,
-                GetLastError()
-            );
-        }
-
-        auto buffer = std::wstring(required, L'\0');
-        // SAFETY: buffer owns required writable wchar_t elements for the
-        // synchronous call. Windows writes at most required elements and
-        // retains no supplied pointer.
-        auto const length = GetFinalPathNameByHandleW(
-            handle.get(),
-            buffer.data(),
-            required,
-            flags
-        );
-        if (length == 0U)
-        {
-            return fileFailure(
-                "resolve final path for",
-                requestedPath,
-                GetLastError()
-            );
-        }
-        if (length >= required)
-        {
-            return fileFailure(
-                "resolve stable final path for",
-                requestedPath,
-                ERROR_INSUFFICIENT_BUFFER
-            );
-        }
-        buffer.resize(length);
-        return normalizedFinalPath(buffer);
-    }
-
-    struct RelativeFilename final
-    {
-        std::wstring m_value;
-        USHORT m_byteLength;
-    };
-
-    [[nodiscard]]
-    auto relativeFilename(
-        std::filesystem::path const& path
-    ) -> uf::Result<RelativeFilename>
-    {
-        auto value = path.filename().native();
-        if (
-            value.empty()
-            || value == L"."
-            || value == L".."
-            || value.contains(L'\\')
-            || value.contains(L'/')
-            || value.contains(L':')
-            || value.contains(L'\0')
-        )
-        {
-            return uf::fail(
-                uf::AutomationErrorKind::InvalidResource,
-                std::format(
-                    "input-agent output {} must have one safe filename "
-                    "component",
-                    path.string()
-                )
-            );
-        }
-
-        auto constexpr maximumByteLength = static_cast<std::size_t>(
-            std::numeric_limits<USHORT>::max()
-        );
-        if (
-            value.size()
-            > maximumByteLength / sizeof(std::wstring::value_type)
-        )
-        {
-            return uf::fail(
-                uf::AutomationErrorKind::InvalidResource,
-                std::format(
-                    "input-agent output filename {} is too long",
-                    path.string()
-                )
-            );
-        }
-        auto const byteLength = uf::checkedCast<USHORT>(
-            value.size() * sizeof(std::wstring::value_type)
-        );
-        UF_CHECK(byteLength.has_value());
-
-        return RelativeFilename{
-            .m_value = std::move(value),
-            .m_byteLength = *byteLength,
-        };
-    }
-
-    [[nodiscard]]
-    auto ntFileFailure(
-        std::string_view operation,
-        std::filesystem::path const& path,
-        NTSTATUS status
-    ) -> std::unexpected<uf::Error>
-    {
-        // SAFETY: RtlNtStatusToDosError converts the value without retaining
-        // pointers or registering state.
-        auto const nativeError = RtlNtStatusToDosError(status);
-        return fileFailure(
-            operation,
-            path,
-            nativeError
-        );
-    }
-
-    [[nodiscard]]
-    auto openRelativeDirectory(
-        NativeHandle const& parentHandle,
-        std::filesystem::path const& component,
-        std::filesystem::path const& requestedPath
-    ) -> uf::Result<NativeHandle>
-    {
-        UF_TRY_VALUE(name, relativeFilename(component));
-        auto nativeName = UNICODE_STRING{
-            .Length = name.m_byteLength,
-            .MaximumLength = name.m_byteLength,
-            .Buffer = name.m_value.data(),
-        };
-        auto attributes = OBJECT_ATTRIBUTES{};
-        InitializeObjectAttributes(
-            &attributes,
-            &nativeName,
-            OBJ_CASE_INSENSITIVE,
-            parentHandle.get(),
-            nullptr
-        );
-        auto ioStatus = IO_STATUS_BLOCK{};
-        auto openedHandle = HANDLE{INVALID_HANDLE_VALUE};
-        // SAFETY: parentHandle pins the containing directory, and nativeName
-        // is one relative component backed by writable storage for this
-        // synchronous call. NtOpenFile retains no supplied pointer.
-        auto const status = NtOpenFile(
-            &openedHandle,
-            FILE_READ_ATTRIBUTES | FILE_TRAVERSE | SYNCHRONIZE,
-            &attributes,
-            &ioStatus,
-            FILE_SHARE_READ | FILE_SHARE_WRITE,
-            FILE_DIRECTORY_FILE | FILE_SYNCHRONOUS_IO_NONALERT
-        );
-        auto handle = NativeHandle{openedHandle};
-        if (!NT_SUCCESS(status))
-        {
-            return ntFileFailure(
-                "open output directory component",
-                requestedPath,
-                status
-            );
-        }
-        UF_CHECK_MSG(
-            openedHandle != INVALID_HANDLE_VALUE
-                && openedHandle != nullptr,
-            "NtOpenFile succeeded without returning a directory handle"
-        );
-        return handle;
-    }
-}
-
 namespace uf::m0_demo::platform
 {
+    namespace
+    {
+        class NativeHandle final
+        {
+            HANDLE m_value{INVALID_HANDLE_VALUE};
+
+        public:
+            NativeHandle() noexcept = default;
+            explicit NativeHandle(HANDLE value) noexcept
+                : m_value{value}
+            {
+            }
+            NativeHandle(NativeHandle const&) = delete;
+            auto operator=(NativeHandle const&) -> NativeHandle& = delete;
+            NativeHandle(NativeHandle&& other) noexcept
+                : m_value{std::exchange(other.m_value, INVALID_HANDLE_VALUE)}
+            {
+            }
+            auto operator=(NativeHandle&& other) noexcept -> NativeHandle&
+            {
+                if (this != &other)
+                {
+                    close();
+                    m_value = std::exchange(other.m_value, INVALID_HANDLE_VALUE);
+                }
+                return *this;
+            }
+            ~NativeHandle() { close(); }
+
+            [[nodiscard]] auto get() const noexcept -> HANDLE { return m_value; }
+
+        private:
+            auto close() noexcept -> void
+            {
+                if (
+                    m_value != INVALID_HANDLE_VALUE
+                    && m_value != nullptr
+                )
+                {
+                    // SAFETY: m_value is the unique live Windows handle adopted by
+                    // this wrapper. CloseHandle consumes no pointer, and the
+                    // wrapper makes exactly one close attempt before invalidating
+                    // it.
+                    static_cast<void>(CloseHandle(m_value));
+                    m_value = INVALID_HANDLE_VALUE;
+                }
+            }
+        };
+
+        [[nodiscard]]
+        auto extendedPath(std::filesystem::path const& path) -> std::wstring
+        {
+            auto const& native = path.native();
+            if (
+                native.starts_with(LR"(\\?\)")
+                || native.starts_with(LR"(\\.\)")
+            )
+            {
+                return native;
+            }
+            if (native.starts_with(LR"(\\)"))
+            {
+                return LR"(\\?\UNC\)" + native.substr(2U);
+            }
+            return LR"(\\?\)" + native;
+        }
+
+        [[nodiscard]]
+        auto fileFailure(
+            std::string_view operation,
+            std::filesystem::path const& path,
+            DWORD nativeError
+        ) -> std::unexpected<Error>
+        {
+            auto message = std::format("Windows error {}", nativeError);
+            if (auto const errorValue = checkedCast<int>(nativeError))
+            {
+                message = std::error_code{
+                    *errorValue,
+                    std::system_category()
+                }.message();
+            }
+            return fail(
+                ErrorCode::Io,
+                automationErrorDetailCode(
+                    AutomationErrorKind::InvalidResource
+                ),
+                std::format(
+                    "input-agent failed to {} {}: {}",
+                    operation,
+                    path.string(),
+                    message
+                ),
+                static_cast<int64>(nativeError)
+            );
+        }
+
+        [[nodiscard]]
+        auto openFile(
+            std::filesystem::path const& path,
+            DWORD desiredAccess,
+            DWORD shareMode,
+            DWORD creationDisposition,
+            std::string_view operation
+        ) -> Result<NativeHandle>
+        {
+            auto const nativePath = extendedPath(path);
+            // SAFETY: nativePath owns a null-terminated UTF-16 buffer for this
+            // synchronous call. Null security/template pointers are permitted,
+            // and the returned handle is transferred immediately to NativeHandle.
+            auto const handle = CreateFileW(
+                nativePath.c_str(),
+                desiredAccess,
+                shareMode,
+                nullptr,
+                creationDisposition,
+                FILE_ATTRIBUTE_NORMAL | FILE_FLAG_OPEN_REPARSE_POINT,
+                nullptr
+            );
+            if (handle == INVALID_HANDLE_VALUE)
+            {
+                return fileFailure(operation, path, GetLastError());
+            }
+            return NativeHandle{handle};
+        }
+
+        [[nodiscard]]
+        auto openDirectory(
+            std::filesystem::path const& path
+        ) -> Result<NativeHandle>
+        {
+            auto const nativePath = extendedPath(path);
+            // SAFETY: nativePath owns a null-terminated UTF-16 buffer for this
+            // synchronous call. The final component is deliberately followed;
+            // confinement is checked against the resulting directory handle.
+            auto const handle = CreateFileW(
+                nativePath.c_str(),
+                FILE_READ_ATTRIBUTES | FILE_TRAVERSE,
+                // Deny delete sharing so the verified directory cannot be renamed
+                // or removed before the handle-relative create commits.
+                FILE_SHARE_READ | FILE_SHARE_WRITE,
+                nullptr,
+                OPEN_EXISTING,
+                FILE_FLAG_BACKUP_SEMANTICS,
+                nullptr
+            );
+            if (handle == INVALID_HANDLE_VALUE)
+            {
+                return fileFailure(
+                    "open output parent directory",
+                    path,
+                    GetLastError()
+                );
+            }
+
+            auto nativeHandle = NativeHandle{handle};
+            auto information = FILE_STANDARD_INFO{};
+            // SAFETY: nativeHandle owns a live handle. information is writable for
+            // the synchronous query, and Windows retains no supplied pointer.
+            if (
+                GetFileInformationByHandleEx(
+                    nativeHandle.get(),
+                    FileStandardInfo,
+                    &information,
+                    static_cast<DWORD>(sizeof(information))
+                ) == FALSE
+            )
+            {
+                return fileFailure(
+                    "inspect output parent directory",
+                    path,
+                    GetLastError()
+                );
+            }
+            if (information.Directory == FALSE)
+            {
+                return fileFailure(
+                    "open output parent directory",
+                    path,
+                    ERROR_DIRECTORY
+                );
+            }
+            return nativeHandle;
+        }
+
+        [[nodiscard]]
+        auto normalizedFinalPath(std::wstring_view native) -> std::filesystem::path
+        {
+            auto constexpr uncPrefix = std::wstring_view{LR"(\\?\UNC\)"};
+            auto constexpr extendedPrefix = std::wstring_view{LR"(\\?\)"};
+            if (native.starts_with(uncPrefix))
+            {
+                auto normalized = std::wstring{LR"(\\)"};
+                normalized += native.substr(uncPrefix.size());
+                return std::filesystem::path{normalized}.lexically_normal();
+            }
+            if (native.starts_with(extendedPrefix))
+            {
+                native.remove_prefix(extendedPrefix.size());
+            }
+            return std::filesystem::path{native}.lexically_normal();
+        }
+
+        [[nodiscard]]
+        auto finalPathForHandle(
+            NativeHandle const& handle,
+            std::filesystem::path const& requestedPath
+        ) -> Result<std::filesystem::path>
+        {
+            auto constexpr flags = DWORD{FILE_NAME_NORMALIZED | VOLUME_NAME_DOS};
+            // SAFETY: handle owns a live file. A null buffer with size zero asks
+            // Windows for the required UTF-16 buffer size and retains no pointer.
+            auto const required = GetFinalPathNameByHandleW(
+                handle.get(),
+                nullptr,
+                0U,
+                flags
+            );
+            if (required == 0U)
+            {
+                return fileFailure(
+                    "resolve final path for",
+                    requestedPath,
+                    GetLastError()
+                );
+            }
+
+            auto buffer = std::wstring(required, L'\0');
+            // SAFETY: buffer owns required writable wchar_t elements for the
+            // synchronous call. Windows writes at most required elements and
+            // retains no supplied pointer.
+            auto const length = GetFinalPathNameByHandleW(
+                handle.get(),
+                buffer.data(),
+                required,
+                flags
+            );
+            if (length == 0U)
+            {
+                return fileFailure(
+                    "resolve final path for",
+                    requestedPath,
+                    GetLastError()
+                );
+            }
+            if (length >= required)
+            {
+                return fileFailure(
+                    "resolve stable final path for",
+                    requestedPath,
+                    ERROR_INSUFFICIENT_BUFFER
+                );
+            }
+            buffer.resize(length);
+            return normalizedFinalPath(buffer);
+        }
+
+        struct RelativeFilename final
+        {
+            std::wstring m_value;
+            USHORT m_byteLength;
+        };
+
+        [[nodiscard]]
+        auto relativeFilename(
+            std::filesystem::path const& path
+        ) -> Result<RelativeFilename>
+        {
+            auto value = path.filename().native();
+            if (
+                value.empty()
+                || value == L"."
+                || value == L".."
+                || value.contains(L'\\')
+                || value.contains(L'/')
+                || value.contains(L':')
+                || value.contains(L'\0')
+            )
+            {
+                return fail(
+                    AutomationErrorKind::InvalidResource,
+                    std::format(
+                        "input-agent output {} must have one safe filename "
+                        "component",
+                        path.string()
+                    )
+                );
+            }
+
+            auto constexpr maximumByteLength = static_cast<std::size_t>(
+                std::numeric_limits<USHORT>::max()
+            );
+            if (
+                value.size()
+                > maximumByteLength / sizeof(std::wstring::value_type)
+            )
+            {
+                return fail(
+                    AutomationErrorKind::InvalidResource,
+                    std::format(
+                        "input-agent output filename {} is too long",
+                        path.string()
+                    )
+                );
+            }
+            auto const byteLength = checkedCast<USHORT>(
+                value.size() * sizeof(std::wstring::value_type)
+            );
+            UF_CHECK(byteLength.has_value());
+
+            return RelativeFilename{
+                .m_value = std::move(value),
+                .m_byteLength = *byteLength,
+            };
+        }
+
+        [[nodiscard]]
+        auto ntFileFailure(
+            std::string_view operation,
+            std::filesystem::path const& path,
+            NTSTATUS status
+        ) -> std::unexpected<Error>
+        {
+            // SAFETY: RtlNtStatusToDosError converts the value without retaining
+            // pointers or registering state.
+            auto const nativeError = RtlNtStatusToDosError(status);
+            return fileFailure(
+                operation,
+                path,
+                nativeError
+            );
+        }
+
+        [[nodiscard]]
+        auto openRelativeDirectory(
+            NativeHandle const& parentHandle,
+            std::filesystem::path const& component,
+            std::filesystem::path const& requestedPath
+        ) -> Result<NativeHandle>
+        {
+            UF_TRY_VALUE(name, relativeFilename(component));
+            auto nativeName = UNICODE_STRING{
+                .Length = name.m_byteLength,
+                .MaximumLength = name.m_byteLength,
+                .Buffer = name.m_value.data(),
+            };
+            auto attributes = OBJECT_ATTRIBUTES{};
+            InitializeObjectAttributes(
+                &attributes,
+                &nativeName,
+                OBJ_CASE_INSENSITIVE,
+                parentHandle.get(),
+                nullptr
+            );
+            auto ioStatus = IO_STATUS_BLOCK{};
+            auto openedHandle = HANDLE{INVALID_HANDLE_VALUE};
+            // SAFETY: parentHandle pins the containing directory, and nativeName
+            // is one relative component backed by writable storage for this
+            // synchronous call. NtOpenFile retains no supplied pointer.
+            auto const status = NtOpenFile(
+                &openedHandle,
+                FILE_READ_ATTRIBUTES | FILE_TRAVERSE | SYNCHRONIZE,
+                &attributes,
+                &ioStatus,
+                FILE_SHARE_READ | FILE_SHARE_WRITE,
+                FILE_DIRECTORY_FILE | FILE_SYNCHRONOUS_IO_NONALERT
+            );
+            auto handle = NativeHandle{openedHandle};
+            if (!NT_SUCCESS(status))
+            {
+                return ntFileFailure(
+                    "open output directory component",
+                    requestedPath,
+                    status
+                );
+            }
+            UF_CHECK_MSG(
+                openedHandle != INVALID_HANDLE_VALUE
+                    && openedHandle != nullptr,
+                "NtOpenFile succeeded without returning a directory handle"
+            );
+            return handle;
+        }
+    }
+
     struct FileWriter::State final
     {
         std::filesystem::path m_path;

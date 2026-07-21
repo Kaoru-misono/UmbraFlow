@@ -49,213 +49,213 @@
 #pragma GCC diagnostic pop
 #endif
 
-namespace
-{
-    struct Stbi8ImageDeleter final
-    {
-        auto operator()(stbi_uc* p_image) const noexcept -> void
-        {
-            // SAFETY: p_image is either null or the unique allocation returned
-            // by stbi_load_from_memory. stbi_image_free releases that allocation
-            // exactly once and no observer is retained after this call.
-            stbi_image_free(p_image);
-        }
-    };
-
-    struct Stbi16ImageDeleter final
-    {
-        auto operator()(stbi_us* p_image) const noexcept -> void
-        {
-            // SAFETY: p_image is either null or the unique allocation returned
-            // by stbi_load_16_from_memory. stbi_image_free releases that
-            // allocation exactly once and no observer survives this call.
-            stbi_image_free(p_image);
-        }
-    };
-
-    [[nodiscard]]
-    auto invalidResource(std::string message) -> std::unexpected<uf::Error>
-    {
-        return uf::fail(
-            uf::AutomationErrorKind::InvalidResource,
-            std::move(message)
-        );
-    }
-
-    struct PngMetadata final
-    {
-        uf::uint32 m_width;
-        uf::uint32 m_height;
-        uf::uint8 m_bitDepth;
-    };
-
-    constexpr auto g_pngSignature = std::array{
-        std::byte{0x89},
-        std::byte{0x50},
-        std::byte{0x4E},
-        std::byte{0x47},
-        std::byte{0x0D},
-        std::byte{0x0A},
-        std::byte{0x1A},
-        std::byte{0x0A},
-    };
-    constexpr auto g_ihdrType = std::array{
-        std::byte{0x49},
-        std::byte{0x48},
-        std::byte{0x44},
-        std::byte{0x52},
-    };
-    constexpr auto g_iendType = std::array{
-        std::byte{0x49},
-        std::byte{0x45},
-        std::byte{0x4E},
-        std::byte{0x44},
-    };
-    constexpr auto g_pngChunkOverhead = std::size_t{12};
-    constexpr auto g_ihdrDataBytes = uf::uint32{13};
-
-    [[nodiscard]]
-    auto readBigEndianU32(
-        std::span<std::byte const> encoded,
-        std::size_t offset
-    ) noexcept -> uf::uint32
-    {
-        return (
-            std::to_integer<uf::uint32>(encoded[offset]) << 24U
-            | std::to_integer<uf::uint32>(encoded[offset + 1U]) << 16U
-            | std::to_integer<uf::uint32>(encoded[offset + 2U]) << 8U
-            | std::to_integer<uf::uint32>(encoded[offset + 3U])
-        );
-    }
-
-    template <std::size_t Size>
-    [[nodiscard]]
-    auto bytesEqualAt(
-        std::span<std::byte const> encoded,
-        std::size_t offset,
-        std::array<std::byte, Size> const& expected
-    ) noexcept -> bool
-    {
-        return std::ranges::equal(encoded.subspan(offset, Size), expected);
-    }
-
-    [[nodiscard]]
-    auto validatePngStructure(
-        std::span<std::byte const> encoded,
-        std::string_view resourceName
-    ) -> uf::Result<PngMetadata>
-    {
-        if (
-            encoded.size() < g_pngSignature.size()
-            || !bytesEqualAt(encoded, 0, g_pngSignature)
-        )
-        {
-            return invalidResource(
-                std::format("failed to load template {}: not a PNG", resourceName)
-            );
-        }
-
-        auto metadata = PngMetadata{};
-        auto offset = g_pngSignature.size();
-        auto firstChunk = true;
-        auto sawIend = false;
-        while (offset < encoded.size())
-        {
-            auto const remaining = encoded.size() - offset;
-            if (remaining < g_pngChunkOverhead)
-            {
-                return invalidResource(
-                    std::format(
-                        "failed to load template {}: malformed PNG (truncated chunk header)",
-                        resourceName
-                    )
-                );
-            }
-
-            auto const dataBytes = readBigEndianU32(encoded, offset);
-            auto const dataSize = uf::checkedCast<std::size_t>(dataBytes);
-            if (!dataSize || *dataSize > remaining - g_pngChunkOverhead)
-            {
-                return invalidResource(
-                    std::format(
-                        "failed to load template {}: malformed PNG (declared chunk length exceeds the input)",
-                        resourceName
-                    )
-                );
-            }
-
-            auto const isIhdr = bytesEqualAt(encoded, offset + 4U, g_ihdrType);
-            auto const isIend = bytesEqualAt(encoded, offset + 4U, g_iendType);
-            if (firstChunk)
-            {
-                if (!isIhdr)
-                {
-                    return invalidResource(
-                        std::format(
-                            "failed to load template {}: malformed PNG (IHDR is not first)",
-                            resourceName
-                        )
-                    );
-                }
-                if (dataBytes != g_ihdrDataBytes)
-                {
-                    return invalidResource(
-                        std::format(
-                            "failed to load template {}: malformed PNG (invalid IHDR length)",
-                            resourceName
-                        )
-                    );
-                }
-
-                metadata = PngMetadata{
-                    .m_width = readBigEndianU32(encoded, offset + 8U),
-                    .m_height = readBigEndianU32(encoded, offset + 12U),
-                    .m_bitDepth = std::to_integer<uf::uint8>(encoded[offset + 16U]),
-                };
-                firstChunk = false;
-            }
-            else if (isIhdr)
-            {
-                return invalidResource(
-                    std::format(
-                        "failed to load template {}: malformed PNG (duplicate IHDR)",
-                        resourceName
-                    )
-                );
-            }
-
-            offset += g_pngChunkOverhead + *dataSize;
-            if (isIend)
-            {
-                if (dataBytes != 0U || offset != encoded.size())
-                {
-                    return invalidResource(
-                        std::format(
-                            "failed to load template {}: malformed PNG (invalid IEND)",
-                            resourceName
-                        )
-                    );
-                }
-                sawIend = true;
-                break;
-            }
-        }
-
-        if (firstChunk || !sawIend)
-        {
-            return invalidResource(
-                std::format(
-                    "failed to load template {}: malformed PNG (missing IEND)",
-                    resourceName
-                )
-            );
-        }
-        return metadata;
-    }
-}
-
 namespace uf::m0_demo::ffi
 {
+    namespace
+    {
+        struct Stbi8ImageDeleter final
+        {
+            auto operator()(stbi_uc* p_image) const noexcept -> void
+            {
+                // SAFETY: p_image is either null or the unique allocation returned
+                // by stbi_load_from_memory. stbi_image_free releases that allocation
+                // exactly once and no observer is retained after this call.
+                stbi_image_free(p_image);
+            }
+        };
+
+        struct Stbi16ImageDeleter final
+        {
+            auto operator()(stbi_us* p_image) const noexcept -> void
+            {
+                // SAFETY: p_image is either null or the unique allocation returned
+                // by stbi_load_16_from_memory. stbi_image_free releases that
+                // allocation exactly once and no observer survives this call.
+                stbi_image_free(p_image);
+            }
+        };
+
+        [[nodiscard]]
+        auto invalidResource(std::string message) -> std::unexpected<Error>
+        {
+            return fail(
+                AutomationErrorKind::InvalidResource,
+                std::move(message)
+            );
+        }
+
+        struct PngMetadata final
+        {
+            uint32 m_width;
+            uint32 m_height;
+            uint8 m_bitDepth;
+        };
+
+        constexpr auto g_pngSignature = std::array{
+            std::byte{0x89},
+            std::byte{0x50},
+            std::byte{0x4E},
+            std::byte{0x47},
+            std::byte{0x0D},
+            std::byte{0x0A},
+            std::byte{0x1A},
+            std::byte{0x0A},
+        };
+        constexpr auto g_ihdrType = std::array{
+            std::byte{0x49},
+            std::byte{0x48},
+            std::byte{0x44},
+            std::byte{0x52},
+        };
+        constexpr auto g_iendType = std::array{
+            std::byte{0x49},
+            std::byte{0x45},
+            std::byte{0x4E},
+            std::byte{0x44},
+        };
+        constexpr auto g_pngChunkOverhead = std::size_t{12};
+        constexpr auto g_ihdrDataBytes = uint32{13};
+
+        [[nodiscard]]
+        auto readBigEndianU32(
+            std::span<std::byte const> encoded,
+            std::size_t offset
+        ) noexcept -> uint32
+        {
+            return (
+                std::to_integer<uint32>(encoded[offset]) << 24U
+                | std::to_integer<uint32>(encoded[offset + 1U]) << 16U
+                | std::to_integer<uint32>(encoded[offset + 2U]) << 8U
+                | std::to_integer<uint32>(encoded[offset + 3U])
+            );
+        }
+
+        template <std::size_t Size>
+        [[nodiscard]]
+        auto bytesEqualAt(
+            std::span<std::byte const> encoded,
+            std::size_t offset,
+            std::array<std::byte, Size> const& expected
+        ) noexcept -> bool
+        {
+            return std::ranges::equal(encoded.subspan(offset, Size), expected);
+        }
+
+        [[nodiscard]]
+        auto validatePngStructure(
+            std::span<std::byte const> encoded,
+            std::string_view resourceName
+        ) -> Result<PngMetadata>
+        {
+            if (
+                encoded.size() < g_pngSignature.size()
+                || !bytesEqualAt(encoded, 0, g_pngSignature)
+            )
+            {
+                return invalidResource(
+                    std::format("failed to load template {}: not a PNG", resourceName)
+                );
+            }
+
+            auto metadata = PngMetadata{};
+            auto offset = g_pngSignature.size();
+            auto firstChunk = true;
+            auto sawIend = false;
+            while (offset < encoded.size())
+            {
+                auto const remaining = encoded.size() - offset;
+                if (remaining < g_pngChunkOverhead)
+                {
+                    return invalidResource(
+                        std::format(
+                            "failed to load template {}: malformed PNG (truncated chunk header)",
+                            resourceName
+                        )
+                    );
+                }
+
+                auto const dataBytes = readBigEndianU32(encoded, offset);
+                auto const dataSize = checkedCast<std::size_t>(dataBytes);
+                if (!dataSize || *dataSize > remaining - g_pngChunkOverhead)
+                {
+                    return invalidResource(
+                        std::format(
+                            "failed to load template {}: malformed PNG (declared chunk length exceeds the input)",
+                            resourceName
+                        )
+                    );
+                }
+
+                auto const isIhdr = bytesEqualAt(encoded, offset + 4U, g_ihdrType);
+                auto const isIend = bytesEqualAt(encoded, offset + 4U, g_iendType);
+                if (firstChunk)
+                {
+                    if (!isIhdr)
+                    {
+                        return invalidResource(
+                            std::format(
+                                "failed to load template {}: malformed PNG (IHDR is not first)",
+                                resourceName
+                            )
+                        );
+                    }
+                    if (dataBytes != g_ihdrDataBytes)
+                    {
+                        return invalidResource(
+                            std::format(
+                                "failed to load template {}: malformed PNG (invalid IHDR length)",
+                                resourceName
+                            )
+                        );
+                    }
+
+                    metadata = PngMetadata{
+                        .m_width = readBigEndianU32(encoded, offset + 8U),
+                        .m_height = readBigEndianU32(encoded, offset + 12U),
+                        .m_bitDepth = std::to_integer<uint8>(encoded[offset + 16U]),
+                    };
+                    firstChunk = false;
+                }
+                else if (isIhdr)
+                {
+                    return invalidResource(
+                        std::format(
+                            "failed to load template {}: malformed PNG (duplicate IHDR)",
+                            resourceName
+                        )
+                    );
+                }
+
+                offset += g_pngChunkOverhead + *dataSize;
+                if (isIend)
+                {
+                    if (dataBytes != 0U || offset != encoded.size())
+                    {
+                        return invalidResource(
+                            std::format(
+                                "failed to load template {}: malformed PNG (invalid IEND)",
+                                resourceName
+                            )
+                        );
+                    }
+                    sawIend = true;
+                    break;
+                }
+            }
+
+            if (firstChunk || !sawIend)
+            {
+                return invalidResource(
+                    std::format(
+                        "failed to load template {}: malformed PNG (missing IEND)",
+                        resourceName
+                    )
+                );
+            }
+            return metadata;
+        }
+    }
+
     auto decodePng(
         std::span<std::byte const> encoded,
         std::string_view resourceName

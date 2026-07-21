@@ -14,128 +14,128 @@
 #include <utility>
 #include <vector>
 
-namespace
-{
-    class OwnedHandle final
-    {
-        HANDLE m_handle;
-
-    public:
-        explicit OwnedHandle(HANDLE handle) noexcept
-            : m_handle{handle}
-        {
-        }
-
-        OwnedHandle(OwnedHandle const&) = delete;
-        auto operator=(OwnedHandle const&) -> OwnedHandle& = delete;
-        OwnedHandle(OwnedHandle&& other) noexcept
-            : m_handle{std::exchange(other.m_handle, nullptr)}
-        {
-        }
-        auto operator=(OwnedHandle&&) -> OwnedHandle& = delete;
-
-        ~OwnedHandle() noexcept
-        {
-            if (m_handle != nullptr)
-            {
-                // SAFETY: m_handle is an owned Win32 process or token handle and
-                // this destructor closes it exactly once before discarding it.
-                static_cast<void>(CloseHandle(m_handle));
-            }
-        }
-
-        [[nodiscard]] auto get() const noexcept -> HANDLE { return m_handle; }
-        [[nodiscard]] auto valid() const noexcept -> bool { return m_handle != nullptr; }
-    };
-
-    [[nodiscard]]
-    auto tokenIntegrityRid(HANDLE processHandle) -> std::optional<uf::uint32>
-    {
-        auto tokenHandle = HANDLE{};
-        // SAFETY: processHandle is a live process handle or current-process
-        // pseudo-handle; tokenHandle is a live out-parameter and is wrapped in
-        // OwnedHandle immediately on success.
-        if (OpenProcessToken(processHandle, TOKEN_QUERY, &tokenHandle) == FALSE)
-        {
-            return std::nullopt;
-        }
-        auto token = OwnedHandle{tokenHandle};
-
-        auto requiredBytes = DWORD{};
-        // SAFETY: a null buffer and zero length request only the required byte
-        // count through requiredBytes; no caller buffer is dereferenced.
-        static_cast<void>(GetTokenInformation(
-            token.get(),
-            TokenIntegrityLevel,
-            nullptr,
-            0,
-            &requiredBytes
-        ));
-        if (requiredBytes < sizeof(TOKEN_MANDATORY_LABEL))
-        {
-            return std::nullopt;
-        }
-
-        auto buffer = std::vector<std::byte>{requiredBytes};
-        // SAFETY: buffer owns requiredBytes writable bytes for the entire call;
-        // GetTokenInformation writes no more than the supplied byte count and
-        // reports the actual count through requiredBytes.
-        if (GetTokenInformation(
-            token.get(),
-            TokenIntegrityLevel,
-            buffer.data(),
-            requiredBytes,
-            &requiredBytes
-        ) == FALSE)
-        {
-            return std::nullopt;
-        }
-        if (requiredBytes < sizeof(TOKEN_MANDATORY_LABEL))
-        {
-            return std::nullopt;
-        }
-
-        static_assert(std::is_trivially_copyable_v<TOKEN_MANDATORY_LABEL>);
-        auto label = TOKEN_MANDATORY_LABEL{};
-        // SAFETY: the successful call initialized the leading bytes as a
-        // TOKEN_MANDATORY_LABEL. memcpy avoids alignment and object-lifetime
-        // assumptions while copying its trivially-copyable value fields; the
-        // embedded SID continues to point into buffer, which remains alive.
-        std::memcpy(&label, buffer.data(), sizeof(label));
-        auto const sid = label.Label.Sid;
-        if (sid == nullptr)
-        {
-            return std::nullopt;
-        }
-
-        // SAFETY: sid points into the live token-information buffer. The Win32
-        // accessors validate the SID layout and return pointers into that same
-        // buffer, which are checked before each bounded dereference.
-        auto const count = GetSidSubAuthorityCount(sid);
-        if (count == nullptr || *count == 0U)
-        {
-            return std::nullopt;
-        }
-        auto const rid = GetSidSubAuthority(sid, static_cast<DWORD>(*count - 1U));
-        if (rid == nullptr)
-        {
-            return std::nullopt;
-        }
-        return *rid;
-    }
-
-    [[nodiscard]]
-    auto windowFrom(uf::WindowHandle handle) noexcept -> HWND
-    {
-        // SAFETY: WindowHandle stores the pointer-sized integer representation copied
-        // from an HWND. bit_cast restores those exact bits as the opaque token without
-        // dereferencing it.
-        return std::bit_cast<HWND>(handle.value());
-    }
-}
-
 namespace uf::m0_demo::platform
 {
+    namespace
+    {
+        class OwnedHandle final
+        {
+            HANDLE m_handle;
+
+        public:
+            explicit OwnedHandle(HANDLE handle) noexcept
+                : m_handle{handle}
+            {
+            }
+
+            OwnedHandle(OwnedHandle const&) = delete;
+            auto operator=(OwnedHandle const&) -> OwnedHandle& = delete;
+            OwnedHandle(OwnedHandle&& other) noexcept
+                : m_handle{std::exchange(other.m_handle, nullptr)}
+            {
+            }
+            auto operator=(OwnedHandle&&) -> OwnedHandle& = delete;
+
+            ~OwnedHandle() noexcept
+            {
+                if (m_handle != nullptr)
+                {
+                    // SAFETY: m_handle is an owned Win32 process or token handle and
+                    // this destructor closes it exactly once before discarding it.
+                    static_cast<void>(CloseHandle(m_handle));
+                }
+            }
+
+            [[nodiscard]] auto get() const noexcept -> HANDLE { return m_handle; }
+            [[nodiscard]] auto valid() const noexcept -> bool { return m_handle != nullptr; }
+        };
+
+        [[nodiscard]]
+        auto tokenIntegrityRid(HANDLE processHandle) -> std::optional<uint32>
+        {
+            auto tokenHandle = HANDLE{};
+            // SAFETY: processHandle is a live process handle or current-process
+            // pseudo-handle; tokenHandle is a live out-parameter and is wrapped in
+            // OwnedHandle immediately on success.
+            if (OpenProcessToken(processHandle, TOKEN_QUERY, &tokenHandle) == FALSE)
+            {
+                return std::nullopt;
+            }
+            auto token = OwnedHandle{tokenHandle};
+
+            auto requiredBytes = DWORD{};
+            // SAFETY: a null buffer and zero length request only the required byte
+            // count through requiredBytes; no caller buffer is dereferenced.
+            static_cast<void>(GetTokenInformation(
+                token.get(),
+                TokenIntegrityLevel,
+                nullptr,
+                0,
+                &requiredBytes
+            ));
+            if (requiredBytes < sizeof(TOKEN_MANDATORY_LABEL))
+            {
+                return std::nullopt;
+            }
+
+            auto buffer = std::vector<std::byte>{requiredBytes};
+            // SAFETY: buffer owns requiredBytes writable bytes for the entire call;
+            // GetTokenInformation writes no more than the supplied byte count and
+            // reports the actual count through requiredBytes.
+            if (GetTokenInformation(
+                token.get(),
+                TokenIntegrityLevel,
+                buffer.data(),
+                requiredBytes,
+                &requiredBytes
+            ) == FALSE)
+            {
+                return std::nullopt;
+            }
+            if (requiredBytes < sizeof(TOKEN_MANDATORY_LABEL))
+            {
+                return std::nullopt;
+            }
+
+            static_assert(std::is_trivially_copyable_v<TOKEN_MANDATORY_LABEL>);
+            auto label = TOKEN_MANDATORY_LABEL{};
+            // SAFETY: the successful call initialized the leading bytes as a
+            // TOKEN_MANDATORY_LABEL. memcpy avoids alignment and object-lifetime
+            // assumptions while copying its trivially-copyable value fields; the
+            // embedded SID continues to point into buffer, which remains alive.
+            std::memcpy(&label, buffer.data(), sizeof(label));
+            auto const sid = label.Label.Sid;
+            if (sid == nullptr)
+            {
+                return std::nullopt;
+            }
+
+            // SAFETY: sid points into the live token-information buffer. The Win32
+            // accessors validate the SID layout and return pointers into that same
+            // buffer, which are checked before each bounded dereference.
+            auto const count = GetSidSubAuthorityCount(sid);
+            if (count == nullptr || *count == 0U)
+            {
+                return std::nullopt;
+            }
+            auto const rid = GetSidSubAuthority(sid, static_cast<DWORD>(*count - 1U));
+            if (rid == nullptr)
+            {
+                return std::nullopt;
+            }
+            return *rid;
+        }
+
+        [[nodiscard]]
+        auto windowFrom(WindowHandle handle) noexcept -> HWND
+        {
+            // SAFETY: WindowHandle stores the pointer-sized integer representation copied
+            // from an HWND. bit_cast restores those exact bits as the opaque token without
+            // dereferencing it.
+            return std::bit_cast<HWND>(handle.value());
+        }
+    }
+
     auto observeGuard(GuardPolicy policy) -> Result<GuardBaseline>
     {
         // SAFETY: GetForegroundWindow takes no caller memory and returns an

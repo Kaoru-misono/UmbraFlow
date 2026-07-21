@@ -15,50 +15,50 @@
 #include <thread>
 #include <utility>
 
-namespace
-{
-    constexpr auto g_sleepStep = std::chrono::milliseconds{20};
-
-    [[nodiscard]]
-    auto interruptibleSleep(uf::uint64 totalMilliseconds) -> bool
-    {
-        auto const started = uf::MonotonicInstant::now();
-        while (true)
-        {
-            if (uf::m0_demo::stopRequested())
-            {
-                return false;
-            }
-
-            auto const elapsed = uf::MonotonicInstant::now().saturatingDurationSince(started);
-            auto const elapsedMilliseconds = std::chrono::duration_cast<std::chrono::milliseconds>(
-                elapsed
-            );
-            auto const elapsedCount = uf::checkedCast<uf::uint64>(
-                elapsedMilliseconds.count()
-            ).value_or(0U);
-            if (elapsedCount >= totalMilliseconds)
-            {
-                return true;
-            }
-
-            auto const remaining = totalMilliseconds - elapsedCount;
-            auto const stepCount = std::min<uf::uint64>(
-                remaining,
-                static_cast<uf::uint64>(g_sleepStep.count())
-            );
-            auto const step = uf::checkedCast<std::chrono::milliseconds::rep>(stepCount);
-            if (!step)
-            {
-                return false;
-            }
-            std::this_thread::sleep_for(std::chrono::milliseconds{*step});
-        }
-    }
-}
-
 namespace uf::m0_demo
 {
+    namespace
+    {
+        constexpr auto g_sleepStep = std::chrono::milliseconds{20};
+
+        [[nodiscard]]
+        auto interruptibleSleep(uint64 totalMilliseconds) -> bool
+        {
+            auto const started = MonotonicInstant::now();
+            while (true)
+            {
+                if (stopRequested())
+                {
+                    return false;
+                }
+
+                auto const elapsed = MonotonicInstant::now().saturatingDurationSince(started);
+                auto const elapsedMilliseconds = std::chrono::duration_cast<std::chrono::milliseconds>(
+                    elapsed
+                );
+                auto const elapsedCount = checkedCast<uint64>(
+                    elapsedMilliseconds.count()
+                ).value_or(0U);
+                if (elapsedCount >= totalMilliseconds)
+                {
+                    return true;
+                }
+
+                auto const remaining = totalMilliseconds - elapsedCount;
+                auto const stepCount = std::min<uint64>(
+                    remaining,
+                    static_cast<uint64>(g_sleepStep.count())
+                );
+                auto const step = checkedCast<std::chrono::milliseconds::rep>(stepCount);
+                if (!step)
+                {
+                    return false;
+                }
+                std::this_thread::sleep_for(std::chrono::milliseconds{*step});
+            }
+        }
+    }
+
     auto ClickDelay::create(
         uint64 minimumMilliseconds,
         uint64 maximumMilliseconds

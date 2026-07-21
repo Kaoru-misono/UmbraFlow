@@ -16,9 +16,12 @@
 #include <string>
 #include <utility>
 
-namespace
+namespace uf::controller_detail
 {
-    constexpr auto g_replacementCodePoint = uf::uint32{0xFFFDU};
+    namespace
+    {
+        constexpr auto g_replacementCodePoint = uint32{0xFFFDU};
+    }
 }
 
 namespace uf

@@ -16,206 +16,209 @@
 #include <utility>
 #include <vector>
 
-namespace
+namespace uf
 {
-    [[nodiscard]]
-    auto formatDebugString(std::string const& value) -> std::string
+    namespace
     {
-        auto output = std::string{"\""};
-        for (auto const character : value)
+        [[nodiscard]]
+        auto formatDebugString(std::string const& value) -> std::string
         {
-            switch (character)
+            auto output = std::string{"\""};
+            for (auto const character : value)
             {
-            case '\0':
-                output += "\\0";
-                break;
-            case '\t':
-                output += "\\t";
-                break;
-            case '\n':
-                output += "\\n";
-                break;
-            case '\r':
-                output += "\\r";
-                break;
-            case '"':
-                output += "\\\"";
-                break;
-            case '\\':
-                output += "\\\\";
-                break;
-            default:
-            {
-                auto const byte = static_cast<unsigned char>(character);
-                if (byte < 0x20U || byte == 0x7FU)
+                switch (character)
                 {
-                    output += std::format("\\u{{{:x}}}", byte);
-                }
-                else
+                case '\0':
+                    output += "\\0";
+                    break;
+                case '\t':
+                    output += "\\t";
+                    break;
+                case '\n':
+                    output += "\\n";
+                    break;
+                case '\r':
+                    output += "\\r";
+                    break;
+                case '"':
+                    output += "\\\"";
+                    break;
+                case '\\':
+                    output += "\\\\";
+                    break;
+                default:
                 {
-                    output += character;
+                    auto const byte = static_cast<unsigned char>(character);
+                    if (byte < 0x20U || byte == 0x7FU)
+                    {
+                        output += std::format("\\u{{{:x}}}", byte);
+                    }
+                    else
+                    {
+                        output += character;
+                    }
+                    break;
                 }
-                break;
+                }
             }
-            }
-        }
-        output += '"';
-        return output;
-    }
-
-    [[nodiscard]]
-    auto formatWindowHandle(uf::WindowHandle handle) -> std::string
-    {
-        return std::format(
-            "{:#x}",
-            static_cast<uf::uintptr>(handle.value())
-        );
-    }
-
-    [[nodiscard]]
-    auto join(std::vector<std::string> const& parts) -> std::string
-    {
-        auto output = std::string{};
-        for (auto const& part : parts)
-        {
-            if (!output.empty())
-            {
-                output += ' ';
-            }
-            output += part;
-        }
-        return output;
-    }
-
-    [[nodiscard]]
-    auto describeSelector(uf::TargetSelector const& selector) -> std::string
-    {
-        auto parts = std::vector<std::string>{};
-        if (auto const process = selector.process())
-        {
-            parts.emplace_back(std::format("pid={}", process->value()));
-        }
-        if (auto const handle = selector.windowHandle())
-        {
-            parts.emplace_back("hwnd=" + formatWindowHandle(*handle));
-        }
-        if (selector.windowClass())
-        {
-            parts.emplace_back("class=" + formatDebugString(*selector.windowClass()));
-        }
-        if (selector.title())
-        {
-            parts.emplace_back("title=" + formatDebugString(*selector.title()));
+            output += '"';
+            return output;
         }
 
-        return parts.empty() ? "(none)" : join(parts);
-    }
-
-    [[nodiscard]]
-    auto matchingCandidateIndices(
-        std::span<uf::TargetCandidate const> candidates,
-        uf::TargetSelector const& selector
-    ) -> std::vector<std::size_t>
-    {
-        auto indices = std::vector<std::size_t>{};
-        for (auto index = std::size_t{0}; index < candidates.size(); ++index)
+        [[nodiscard]]
+        auto formatWindowHandle(WindowHandle handle) -> std::string
         {
-            if (selector.matches(candidates[index]))
-            {
-                indices.emplace_back(index);
-            }
-        }
-        return indices;
-    }
-
-    [[nodiscard]]
-    auto describeCandidates(
-        std::span<uf::TargetCandidate const> candidates,
-        std::vector<std::size_t> const& indices
-    ) -> std::string
-    {
-        auto parts = std::vector<std::string>{};
-        parts.reserve(indices.size());
-        for (auto const index : indices)
-        {
-            auto const& candidate = candidates[index];
-            parts.emplace_back(
-                std::format(
-                    "[pid={} hwnd={} class={} title={}]",
-                    candidate.process().value(),
-                    formatWindowHandle(candidate.handle()),
-                    formatDebugString(candidate.windowClass()),
-                    formatDebugString(candidate.title())
-                )
+            return std::format(
+                "{:#x}",
+                static_cast<uintptr>(handle.value())
             );
         }
-        return join(parts);
-    }
 
-    [[nodiscard]]
-    auto resolveCandidate(
-        std::span<uf::TargetCandidate const> candidates,
-        uf::TargetSelector const& selector
-    ) -> uf::Result<uf::TargetCandidate>
-    {
-        auto const process = selector.process();
-        auto const requestedHandle = selector.windowHandle();
-        if (process && requestedHandle)
+        [[nodiscard]]
+        auto join(std::vector<std::string> const& parts) -> std::string
         {
-            auto const named = std::ranges::find_if(
-                candidates,
-                [requestedHandle](uf::TargetCandidate const& candidate)
-                {
-                    return candidate.handle() == *requestedHandle;
-                }
-            );
-            if (named != candidates.end() && named->process() != *process)
+            auto output = std::string{};
+            for (auto const& part : parts)
             {
-                return uf::fail(
-                    uf::AutomationErrorKind::TargetUnavailable,
+                if (!output.empty())
+                {
+                    output += ' ';
+                }
+                output += part;
+            }
+            return output;
+        }
+
+        [[nodiscard]]
+        auto describeSelector(TargetSelector const& selector) -> std::string
+        {
+            auto parts = std::vector<std::string>{};
+            if (auto const process = selector.process())
+            {
+                parts.emplace_back(std::format("pid={}", process->value()));
+            }
+            if (auto const handle = selector.windowHandle())
+            {
+                parts.emplace_back("hwnd=" + formatWindowHandle(*handle));
+            }
+            if (selector.windowClass())
+            {
+                parts.emplace_back("class=" + formatDebugString(*selector.windowClass()));
+            }
+            if (selector.title())
+            {
+                parts.emplace_back("title=" + formatDebugString(*selector.title()));
+            }
+
+            return parts.empty() ? "(none)" : join(parts);
+        }
+
+        [[nodiscard]]
+        auto matchingCandidateIndices(
+            std::span<TargetCandidate const> candidates,
+            TargetSelector const& selector
+        ) -> std::vector<std::size_t>
+        {
+            auto indices = std::vector<std::size_t>{};
+            for (auto index = std::size_t{0}; index < candidates.size(); ++index)
+            {
+                if (selector.matches(candidates[index]))
+                {
+                    indices.emplace_back(index);
+                }
+            }
+            return indices;
+        }
+
+        [[nodiscard]]
+        auto describeCandidates(
+            std::span<TargetCandidate const> candidates,
+            std::vector<std::size_t> const& indices
+        ) -> std::string
+        {
+            auto parts = std::vector<std::string>{};
+            parts.reserve(indices.size());
+            for (auto const index : indices)
+            {
+                auto const& candidate = candidates[index];
+                parts.emplace_back(
                     std::format(
-                        "requested hwnd {} belongs to pid {} not requested pid {}",
-                        formatWindowHandle(*requestedHandle),
-                        named->process().value(),
-                        process->value()
+                        "[pid={} hwnd={} class={} title={}]",
+                        candidate.process().value(),
+                        formatWindowHandle(candidate.handle()),
+                        formatDebugString(candidate.windowClass()),
+                        formatDebugString(candidate.title())
                     )
                 );
             }
+            return join(parts);
         }
 
-        auto const indices = matchingCandidateIndices(candidates, selector);
-        if (indices.empty())
+        [[nodiscard]]
+        auto resolveCandidate(
+            std::span<TargetCandidate const> candidates,
+            TargetSelector const& selector
+        ) -> Result<TargetCandidate>
         {
-            return uf::fail(
-                uf::AutomationErrorKind::TargetUnavailable,
-                "no window matched selector " + describeSelector(selector)
-            );
+            auto const process = selector.process();
+            auto const requestedHandle = selector.windowHandle();
+            if (process && requestedHandle)
+            {
+                auto const named = std::ranges::find_if(
+                    candidates,
+                    [requestedHandle](TargetCandidate const& candidate)
+                    {
+                        return candidate.handle() == *requestedHandle;
+                    }
+                );
+                if (named != candidates.end() && named->process() != *process)
+                {
+                    return fail(
+                        AutomationErrorKind::TargetUnavailable,
+                        std::format(
+                            "requested hwnd {} belongs to pid {} not requested pid {}",
+                            formatWindowHandle(*requestedHandle),
+                            named->process().value(),
+                            process->value()
+                        )
+                    );
+                }
+            }
+
+            auto const indices = matchingCandidateIndices(candidates, selector);
+            if (indices.empty())
+            {
+                return fail(
+                    AutomationErrorKind::TargetUnavailable,
+                    "no window matched selector " + describeSelector(selector)
+                );
+            }
+            if (indices.size() != 1U)
+            {
+                return fail(
+                    AutomationErrorKind::TargetUnavailable,
+                    std::format(
+                        "{} windows matched selector {}; disambiguate with --pid or --hwnd: {}",
+                        indices.size(),
+                        describeSelector(selector),
+                        describeCandidates(candidates, indices)
+                    )
+                );
+            }
+
+            return candidates[indices.front()];
         }
-        if (indices.size() != 1U)
+
+        [[nodiscard]]
+        auto identityFromCandidate(TargetCandidate const& candidate) -> TargetIdentity
         {
-            return uf::fail(
-                uf::AutomationErrorKind::TargetUnavailable,
-                std::format(
-                    "{} windows matched selector {}; disambiguate with --pid or --hwnd: {}",
-                    indices.size(),
-                    describeSelector(selector),
-                    describeCandidates(candidates, indices)
-                )
-            );
+            return TargetIdentity{
+                candidate.handle(),
+                candidate.process(),
+                candidate.processStartTime(),
+                candidate.clientSize()
+            };
         }
-
-        return candidates[indices.front()];
-    }
-
-    [[nodiscard]]
-    auto identityFromCandidate(uf::TargetCandidate const& candidate) -> uf::TargetIdentity
-    {
-        return uf::TargetIdentity{
-            candidate.handle(),
-            candidate.process(),
-            candidate.processStartTime(),
-            candidate.clientSize()
-        };
     }
 }
 

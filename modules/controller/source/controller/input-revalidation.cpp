@@ -9,17 +9,20 @@
 #include <format>
 #include <limits>
 
-namespace
+namespace uf::controller_detail
 {
-    [[nodiscard]]
-    auto describeDeliveryIdentity(uf::DeliveryTarget const& target) -> std::string
+    namespace
     {
-        return std::format(
-            "DeliveryIdentity {{ hwnd: {}, session_id: SessionId({}), generation: TargetGeneration({}) }}",
-            static_cast<uf::uintptr>(target.windowHandle().value()),
-            target.sessionId().value(),
-            target.generation().value()
-        );
+        [[nodiscard]]
+        auto describeDeliveryIdentity(DeliveryTarget const& target) -> std::string
+        {
+            return std::format(
+                "DeliveryIdentity {{ hwnd: {}, session_id: SessionId({}), generation: TargetGeneration({}) }}",
+                static_cast<uintptr>(target.windowHandle().value()),
+                target.sessionId().value(),
+                target.generation().value()
+            );
+        }
     }
 }
 

@@ -16,218 +16,221 @@
 #include <utility>
 #include <vector>
 
-namespace
+namespace uf
 {
-    [[nodiscard]]
-    auto keyDebug(uf::KeyInput key) -> std::string
+    namespace
     {
-        return std::format(
-            "KeyInput {{ vk: {}, extended: {} }}",
-            key.virtualKey(),
-            key.isExtended()
-        );
-    }
-
-    [[nodiscard]]
-    auto decodeUtf8ToUtf16(std::string_view text) -> uf::Result<std::vector<uf::uint16>>
-    {
-        auto codeUnits = std::vector<uf::uint16>{};
-        codeUnits.reserve(text.size());
-
-        auto codePoint = uf::uint32{};
-        auto minimumCodePoint = uf::uint32{};
-        auto continuationBytes = uf::uint8{};
-        for (auto const character : text)
+        [[nodiscard]]
+        auto keyDebug(KeyInput key) -> std::string
         {
-            auto const byte = static_cast<uf::uint32>(
-                static_cast<unsigned char>(character)
+            return std::format(
+                "KeyInput {{ vk: {}, extended: {} }}",
+                key.virtualKey(),
+                key.isExtended()
             );
-            if (continuationBytes == 0U)
+        }
+
+        [[nodiscard]]
+        auto decodeUtf8ToUtf16(std::string_view text) -> Result<std::vector<uint16>>
+        {
+            auto codeUnits = std::vector<uint16>{};
+            codeUnits.reserve(text.size());
+
+            auto codePoint = uint32{};
+            auto minimumCodePoint = uint32{};
+            auto continuationBytes = uint8{};
+            for (auto const character : text)
             {
-                if (byte <= 0x7FU)
+                auto const byte = static_cast<uint32>(
+                    static_cast<unsigned char>(character)
+                );
+                if (continuationBytes == 0U)
                 {
-                    codeUnits.emplace_back(static_cast<uf::uint16>(byte));
+                    if (byte <= 0x7FU)
+                    {
+                        codeUnits.emplace_back(static_cast<uint16>(byte));
+                        continue;
+                    }
+                    if (byte >= 0xC2U && byte <= 0xDFU)
+                    {
+                        codePoint = byte & 0x1FU;
+                        minimumCodePoint = 0x80U;
+                        continuationBytes = 1U;
+                        continue;
+                    }
+                    if (byte >= 0xE0U && byte <= 0xEFU)
+                    {
+                        codePoint = byte & 0x0FU;
+                        minimumCodePoint = 0x800U;
+                        continuationBytes = 2U;
+                        continue;
+                    }
+                    if (byte >= 0xF0U && byte <= 0xF4U)
+                    {
+                        codePoint = byte & 0x07U;
+                        minimumCodePoint = 0x10000U;
+                        continuationBytes = 3U;
+                        continue;
+                    }
+
+                    return fail(
+                        AutomationErrorKind::ActionRejected,
+                        "input text must contain valid UTF-8"
+                    );
+                }
+
+                if ((byte & 0xC0U) != 0x80U)
+                {
+                    return fail(
+                        AutomationErrorKind::ActionRejected,
+                        "input text must contain valid UTF-8"
+                    );
+                }
+
+                codePoint = (codePoint << 6U) | (byte & 0x3FU);
+                --continuationBytes;
+                if (continuationBytes != 0U)
+                {
                     continue;
                 }
-                if (byte >= 0xC2U && byte <= 0xDFU)
+                if (
+                    codePoint < minimumCodePoint
+                    || codePoint > 0x10FFFFU
+                    || (codePoint >= 0xD800U && codePoint <= 0xDFFFU)
+                )
                 {
-                    codePoint = byte & 0x1FU;
-                    minimumCodePoint = 0x80U;
-                    continuationBytes = 1U;
-                    continue;
+                    return fail(
+                        AutomationErrorKind::ActionRejected,
+                        "input text must contain valid UTF-8"
+                    );
                 }
-                if (byte >= 0xE0U && byte <= 0xEFU)
+
+                if (codePoint <= 0xFFFFU)
                 {
-                    codePoint = byte & 0x0FU;
-                    minimumCodePoint = 0x800U;
-                    continuationBytes = 2U;
-                    continue;
-                }
-                if (byte >= 0xF0U && byte <= 0xF4U)
-                {
-                    codePoint = byte & 0x07U;
-                    minimumCodePoint = 0x10000U;
-                    continuationBytes = 3U;
+                    codeUnits.emplace_back(static_cast<uint16>(codePoint));
                     continue;
                 }
 
-                return uf::fail(
-                    uf::AutomationErrorKind::ActionRejected,
-                    "input text must contain valid UTF-8"
+                auto const offset = codePoint - 0x10000U;
+                codeUnits.emplace_back(
+                    static_cast<uint16>(0xD800U + (offset >> 10U))
+                );
+                codeUnits.emplace_back(
+                    static_cast<uint16>(0xDC00U + (offset & 0x03FFU))
                 );
             }
 
-            if ((byte & 0xC0U) != 0x80U)
-            {
-                return uf::fail(
-                    uf::AutomationErrorKind::ActionRejected,
-                    "input text must contain valid UTF-8"
-                );
-            }
-
-            codePoint = (codePoint << 6U) | (byte & 0x3FU);
-            --continuationBytes;
             if (continuationBytes != 0U)
             {
-                continue;
-            }
-            if (
-                codePoint < minimumCodePoint
-                || codePoint > 0x10FFFFU
-                || (codePoint >= 0xD800U && codePoint <= 0xDFFFU)
-            )
-            {
-                return uf::fail(
-                    uf::AutomationErrorKind::ActionRejected,
+                return fail(
+                    AutomationErrorKind::ActionRejected,
                     "input text must contain valid UTF-8"
                 );
             }
+            return codeUnits;
+        }
 
-            if (codePoint <= 0xFFFFU)
+        [[nodiscard]]
+        auto pointerPixel(
+            DeliveryTarget const& target,
+            ObservationLease lease,
+            Point<ClientSpace> point
+        ) -> Result<ClientPixel>
+        {
+            return controller_detail::checkPointerPreconditions(
+                lease,
+                target.sessionId(),
+                target.generation(),
+                MonotonicInstant::now(),
+                point,
+                target.clientWidth(),
+                target.clientHeight()
+            );
+        }
+
+        [[nodiscard]]
+        auto deliverPointerDown(
+            DeliveryTarget const& target,
+            ClientPixel pixel,
+            HeldInputs& held,
+            AuditLog& audit
+        ) -> Status
+        {
+            UF_TRY(controller_detail::HeldInputsAccess::ensureTarget(held, target));
+            if (held.holdsPointer(PointerButton::Left))
             {
-                codeUnits.emplace_back(static_cast<uf::uint16>(codePoint));
-                continue;
+                return fail(
+                    AutomationErrorKind::ActionRejected,
+                    "left pointer button is already held"
+                );
             }
-
-            auto const offset = codePoint - 0x10000U;
-            codeUnits.emplace_back(
-                static_cast<uf::uint16>(0xD800U + (offset >> 10U))
+            UF_TRY(controller_detail::ensureWindowAlive(target.windowHandle()));
+            UF_TRY(
+                controller_detail::deliver(
+                    target.windowHandle(),
+                    controller_detail::pointerSpec(
+                        controller_detail::PointerMessage::Move,
+                        pixel
+                    ),
+                    audit
+                )
             );
-            codeUnits.emplace_back(
-                static_cast<uf::uint16>(0xDC00U + (offset & 0x03FFU))
+            UF_TRY(
+                controller_detail::deliver(
+                    target.windowHandle(),
+                    controller_detail::pointerSpec(
+                        controller_detail::PointerMessage::LeftDown,
+                        pixel
+                    ),
+                    audit
+                )
             );
-        }
-
-        if (continuationBytes != 0U)
-        {
-            return uf::fail(
-                uf::AutomationErrorKind::ActionRejected,
-                "input text must contain valid UTF-8"
-            );
-        }
-        return codeUnits;
-    }
-
-    [[nodiscard]]
-    auto pointerPixel(
-        uf::DeliveryTarget const& target,
-        uf::ObservationLease lease,
-        uf::Point<uf::ClientSpace> point
-    ) -> uf::Result<uf::ClientPixel>
-    {
-        return uf::controller_detail::checkPointerPreconditions(
-            lease,
-            target.sessionId(),
-            target.generation(),
-            uf::MonotonicInstant::now(),
-            point,
-            target.clientWidth(),
-            target.clientHeight()
-        );
-    }
-
-    [[nodiscard]]
-    auto deliverPointerDown(
-        uf::DeliveryTarget const& target,
-        uf::ClientPixel pixel,
-        uf::HeldInputs& held,
-        uf::AuditLog& audit
-    ) -> uf::Status
-    {
-        UF_TRY(uf::controller_detail::HeldInputsAccess::ensureTarget(held, target));
-        if (held.holdsPointer(uf::PointerButton::Left))
-        {
-            return uf::fail(
-                uf::AutomationErrorKind::ActionRejected,
-                "left pointer button is already held"
-            );
-        }
-        UF_TRY(uf::controller_detail::ensureWindowAlive(target.windowHandle()));
-        UF_TRY(
-            uf::controller_detail::deliver(
-                target.windowHandle(),
-                uf::controller_detail::pointerSpec(
-                    uf::controller_detail::PointerMessage::Move,
-                    pixel
-                ),
-                audit
-            )
-        );
-        UF_TRY(
-            uf::controller_detail::deliver(
-                target.windowHandle(),
-                uf::controller_detail::pointerSpec(
-                    uf::controller_detail::PointerMessage::LeftDown,
-                    pixel
-                ),
-                audit
-            )
-        );
-        return uf::controller_detail::HeldInputsAccess::onPointerDown(
-            held,
-            target,
-            uf::PointerButton::Left,
-            pixel
-        );
-    }
-
-    [[nodiscard]]
-    auto deliverPointerUp(
-        uf::DeliveryTarget const& target,
-        uf::ClientPixel pixel,
-        uf::HeldInputs& held,
-        uf::AuditLog& audit
-    ) -> uf::Status
-    {
-        UF_TRY(uf::controller_detail::HeldInputsAccess::ensureTarget(held, target));
-        if (!held.holdsPointer(uf::PointerButton::Left))
-        {
-            return uf::fail(
-                uf::AutomationErrorKind::ActionRejected,
-                "left pointer button is not held"
-            );
-        }
-        UF_TRY(uf::controller_detail::ensureWindowAlive(target.windowHandle()));
-        UF_TRY(
-            uf::controller_detail::deliver(
-                target.windowHandle(),
-                uf::controller_detail::pointerSpec(
-                    uf::controller_detail::PointerMessage::LeftUp,
-                    pixel
-                ),
-                audit
-            )
-        );
-        UF_TRY_VALUE(
-            released,
-            uf::controller_detail::HeldInputsAccess::onPointerUp(
+            return controller_detail::HeldInputsAccess::onPointerDown(
                 held,
                 target,
-                uf::PointerButton::Left
-            )
-        );
-        UF_CHECK(released);
-        return uf::ok();
+                PointerButton::Left,
+                pixel
+            );
+        }
+
+        [[nodiscard]]
+        auto deliverPointerUp(
+            DeliveryTarget const& target,
+            ClientPixel pixel,
+            HeldInputs& held,
+            AuditLog& audit
+        ) -> Status
+        {
+            UF_TRY(controller_detail::HeldInputsAccess::ensureTarget(held, target));
+            if (!held.holdsPointer(PointerButton::Left))
+            {
+                return fail(
+                    AutomationErrorKind::ActionRejected,
+                    "left pointer button is not held"
+                );
+            }
+            UF_TRY(controller_detail::ensureWindowAlive(target.windowHandle()));
+            UF_TRY(
+                controller_detail::deliver(
+                    target.windowHandle(),
+                    controller_detail::pointerSpec(
+                        controller_detail::PointerMessage::LeftUp,
+                        pixel
+                    ),
+                    audit
+                )
+            );
+            UF_TRY_VALUE(
+                released,
+                controller_detail::HeldInputsAccess::onPointerUp(
+                    held,
+                    target,
+                    PointerButton::Left
+                )
+            );
+            UF_CHECK(released);
+            return ok();
+        }
     }
 }
 

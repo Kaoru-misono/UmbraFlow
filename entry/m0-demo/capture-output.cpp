@@ -16,72 +16,72 @@
 #include <utility>
 #include <vector>
 
-namespace
-{
-    [[nodiscard]]
-    auto frameRgba(uf::Frame const& frame) -> uf::Result<std::vector<std::byte>>
-    {
-        if (frame.pixelFormat() != uf::PixelFormat::Bgra8)
-        {
-            return uf::fail(
-                uf::AutomationErrorKind::InternalInvariant,
-                std::format(
-                    "capture frame {} is not BGRA8",
-                    frame.id().value()
-                )
-            );
-        }
-
-        auto const width = uf::checkedCast<std::size_t>(frame.width());
-        auto const height = uf::checkedCast<std::size_t>(frame.height());
-        auto rowBytes = std::optional<std::size_t>{};
-        if (width)
-        {
-            rowBytes = uf::checkedMultiply(
-                *width,
-                uf::bytesPerPixel(uf::PixelFormat::Bgra8)
-            );
-        }
-        auto expectedBytes = std::optional<std::size_t>{};
-        if (rowBytes && height)
-        {
-            expectedBytes = uf::checkedMultiply(*rowBytes, *height);
-        }
-        auto const pixels = frame.pixels();
-        if (
-            !rowBytes
-            || !expectedBytes
-            || frame.stride() != *rowBytes
-            || pixels->size() != *expectedBytes
-        )
-        {
-            return uf::fail(
-                uf::AutomationErrorKind::InternalInvariant,
-                std::format(
-                    "capture frame {} is not tightly packed BGRA8",
-                    frame.id().value()
-                )
-            );
-        }
-
-        auto const bgra = pixels->bytes();
-        auto rgba = std::vector<std::byte>{
-            bgra.begin(),
-            bgra.end()
-        };
-        for (auto index = std::size_t{0}; index < rgba.size(); index += 4U)
-        {
-            std::swap(
-                uf::checkedAt(rgba, index),
-                uf::checkedAt(rgba, index + 2U)
-            );
-        }
-        return rgba;
-    }
-}
-
 namespace uf::m0_demo
 {
+    namespace
+    {
+        [[nodiscard]]
+        auto frameRgba(Frame const& frame) -> Result<std::vector<std::byte>>
+        {
+            if (frame.pixelFormat() != PixelFormat::Bgra8)
+            {
+                return fail(
+                    AutomationErrorKind::InternalInvariant,
+                    std::format(
+                        "capture frame {} is not BGRA8",
+                        frame.id().value()
+                    )
+                );
+            }
+
+            auto const width = checkedCast<std::size_t>(frame.width());
+            auto const height = checkedCast<std::size_t>(frame.height());
+            auto rowBytes = std::optional<std::size_t>{};
+            if (width)
+            {
+                rowBytes = checkedMultiply(
+                    *width,
+                    bytesPerPixel(PixelFormat::Bgra8)
+                );
+            }
+            auto expectedBytes = std::optional<std::size_t>{};
+            if (rowBytes && height)
+            {
+                expectedBytes = checkedMultiply(*rowBytes, *height);
+            }
+            auto const pixels = frame.pixels();
+            if (
+                !rowBytes
+                || !expectedBytes
+                || frame.stride() != *rowBytes
+                || pixels->size() != *expectedBytes
+            )
+            {
+                return fail(
+                    AutomationErrorKind::InternalInvariant,
+                    std::format(
+                        "capture frame {} is not tightly packed BGRA8",
+                        frame.id().value()
+                    )
+                );
+            }
+
+            auto const bgra = pixels->bytes();
+            auto rgba = std::vector<std::byte>{
+                bgra.begin(),
+                bgra.end()
+            };
+            for (auto index = std::size_t{0}; index < rgba.size(); index += 4U)
+            {
+                std::swap(
+                    checkedAt(rgba, index),
+                    checkedAt(rgba, index + 2U)
+                );
+            }
+            return rgba;
+        }
+    }
+
     auto indexedOutputPath(
         std::filesystem::path const& output,
         uint32 index,

@@ -11,50 +11,53 @@
 #include <optional>
 #include <utility>
 
-namespace
+namespace uf::m0_demo
 {
-    [[nodiscard]]
-    auto captureArgs(
-        std::filesystem::path output,
-        uf::uint32 frames,
-        std::filesystem::path log
-    ) -> uf::m0_demo::CaptureArgs
+    namespace
     {
-        return uf::m0_demo::CaptureArgs{
-            .m_selector = {},
-            .m_output = std::move(output),
-            .m_frames = frames,
-            .m_interval = uf::m0_demo::g_defaultCaptureInterval,
-            .m_log = std::move(log),
-        };
+        [[nodiscard]]
+        auto captureArgs(
+            std::filesystem::path output,
+            uint32 frames,
+            std::filesystem::path log
+        ) -> CaptureArgs
+        {
+            return CaptureArgs{
+                .m_selector = {},
+                .m_output = std::move(output),
+                .m_frames = frames,
+                .m_interval = g_defaultCaptureInterval,
+                .m_log = std::move(log),
+            };
+        }
     }
-}
 
-TEST_CASE("m0 capture rejects a log path that aliases any output PNG")
-{
-    for (auto const& args : {
-        captureArgs("capture.png", 1U, "./capture.png"),
-        captureArgs("capture.png", 3U, "./capture-2.png"),
-    })
+    TEST_CASE("m0 capture rejects a log path that aliases any output PNG")
     {
-        auto const result = uf::m0_demo::validateCaptureOutputPaths(args);
+        for (auto const& args : {
+            captureArgs("capture.png", 1U, "./capture.png"),
+            captureArgs("capture.png", 3U, "./capture-2.png"),
+        })
+        {
+            auto const result = validateCaptureOutputPaths(args);
 
-        REQUIRE_FALSE(result.has_value());
-        test_m0_demo::requireErrorKind(
-            result.error(),
-            uf::AutomationErrorKind::InvalidResource
+            REQUIRE_FALSE(result.has_value());
+            test_m0_demo::requireErrorKind(
+                result.error(),
+                AutomationErrorKind::InvalidResource
+            );
+            CHECK(result.error().message().contains("aliases output PNG"));
+        }
+    }
+
+    TEST_CASE("m0 capture accepts distinct log and output PNG paths")
+    {
+        auto const args = captureArgs(
+            "capture.png",
+            3U,
+            "capture.jsonl"
         );
-        CHECK(result.error().message().contains("aliases output PNG"));
+
+        CHECK(validateCaptureOutputPaths(args));
     }
-}
-
-TEST_CASE("m0 capture accepts distinct log and output PNG paths")
-{
-    auto const args = captureArgs(
-        "capture.png",
-        3U,
-        "capture.jsonl"
-    );
-
-    CHECK(uf::m0_demo::validateCaptureOutputPaths(args));
 }

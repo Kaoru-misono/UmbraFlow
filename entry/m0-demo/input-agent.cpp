@@ -45,47 +45,47 @@
 #include <variant>
 #include <vector>
 
-namespace
-{
-    constexpr auto g_inputAgentPollInterval = std::chrono::milliseconds{100};
-    constexpr auto g_queueReadBytesPerPoll = std::size_t{64} * 1024U;
-    constexpr auto g_maximumPendingQueueBytes = std::size_t{1024} * 1024U;
-
-    [[nodiscard]]
-    auto currentIoError() -> std::error_code
-    {
-        if (errno != 0)
-        {
-            return std::error_code{errno, std::generic_category()};
-        }
-        return std::make_error_code(std::io_errc::stream);
-    }
-
-    [[nodiscard]]
-    auto agentIoFailure(
-        std::string_view operation,
-        std::filesystem::path const& path,
-        std::error_code error
-    ) -> std::unexpected<uf::Error>
-    {
-        return uf::fail(
-            uf::ErrorCode::Io,
-            uf::automationErrorDetailCode(
-                uf::AutomationErrorKind::InvalidResource
-            ),
-            std::format(
-                "input-agent failed to {} {}: {}",
-                operation,
-                path.string(),
-                error.message()
-            ),
-            static_cast<uf::int64>(error.value())
-        );
-    }
-}
-
 namespace uf::m0_demo
 {
+    namespace
+    {
+        constexpr auto g_inputAgentPollInterval = std::chrono::milliseconds{100};
+        constexpr auto g_queueReadBytesPerPoll = std::size_t{64} * 1024U;
+        constexpr auto g_maximumPendingQueueBytes = std::size_t{1024} * 1024U;
+
+        [[nodiscard]]
+        auto currentIoError() -> std::error_code
+        {
+            if (errno != 0)
+            {
+                return std::error_code{errno, std::generic_category()};
+            }
+            return std::make_error_code(std::io_errc::stream);
+        }
+
+        [[nodiscard]]
+        auto agentIoFailure(
+            std::string_view operation,
+            std::filesystem::path const& path,
+            std::error_code error
+        ) -> std::unexpected<Error>
+        {
+            return fail(
+                ErrorCode::Io,
+                automationErrorDetailCode(
+                    AutomationErrorKind::InvalidResource
+                ),
+                std::format(
+                    "input-agent failed to {} {}: {}",
+                    operation,
+                    path.string(),
+                    error.message()
+                ),
+                static_cast<int64>(error.value())
+            );
+        }
+    }
+
     InputAgentQueueReader::InputAgentQueueReader(
         std::filesystem::path path
     ) noexcept
@@ -233,522 +233,519 @@ namespace uf::m0_demo
         m_pending += chunk;
         return extractLines();
     }
-}
 
-namespace
-{
-    class ResultWriter final
+    namespace
     {
-        uf::m0_demo::platform::FileWriter m_writer;
-
-        explicit ResultWriter(
-            uf::m0_demo::platform::FileWriter writer
-        ) noexcept
-            : m_writer{std::move(writer)}
+        class ResultWriter final
         {
-        }
+            platform::FileWriter m_writer;
 
-    public:
-        ResultWriter(ResultWriter const&) = delete;
-        auto operator=(ResultWriter const&) -> ResultWriter& = delete;
-        ResultWriter(ResultWriter&&) noexcept = default;
-        auto operator=(ResultWriter&&) noexcept -> ResultWriter& = default;
-        ~ResultWriter() = default;
+            explicit ResultWriter(
+                platform::FileWriter writer
+            ) noexcept
+                : m_writer{std::move(writer)}
+            {
+            }
+
+        public:
+            ResultWriter(ResultWriter const&) = delete;
+            auto operator=(ResultWriter const&) -> ResultWriter& = delete;
+            ResultWriter(ResultWriter&&) noexcept = default;
+            auto operator=(ResultWriter&&) noexcept -> ResultWriter& = default;
+            ~ResultWriter() = default;
+
+            [[nodiscard]]
+            static auto create(
+                std::filesystem::path const& path
+            ) -> Result<ResultWriter>
+            {
+                UF_TRY_VALUE(
+                    writer,
+                    platform::FileWriter::openAppend(path)
+                );
+                return ResultWriter{std::move(writer)};
+            }
+
+            [[nodiscard]] auto write(std::string_view line) -> Status
+            {
+                auto record = std::string{line};
+                record += '\n';
+                UF_TRY(
+                    m_writer.write(
+                        std::as_bytes(
+                            std::span<char const>{
+                                record.data(),
+                                record.size()
+                            }
+                        )
+                    )
+                );
+                return flush();
+            }
+
+            [[nodiscard]] auto flush() -> Status
+            {
+                return m_writer.flushDurably();
+            }
+        };
+
+        struct OutputFile final
+        {
+            std::filesystem::path m_path;
+            platform::FileWriter m_writer;
+        };
 
         [[nodiscard]]
-        static auto create(
-            std::filesystem::path const& path
-        ) -> uf::Result<ResultWriter>
+        auto openOutputFile(
+            std::filesystem::path path,
+            std::filesystem::path const& canonicalOutputDirectory
+        ) -> Result<OutputFile>
         {
             UF_TRY_VALUE(
                 writer,
-                uf::m0_demo::platform::FileWriter::openAppend(path)
+                platform::FileWriter::createExclusive(
+                    path,
+                    canonicalOutputDirectory
+                )
             );
-            return ResultWriter{std::move(writer)};
+            return OutputFile{
+                .m_path = std::move(path),
+                .m_writer = std::move(writer),
+            };
         }
 
-        [[nodiscard]] auto write(std::string_view line) -> uf::Status
+        [[nodiscard]]
+        auto captureToOutput(
+            WgcCaptureSession& session,
+            OutputFile& output
+        ) -> Result<Frame>
         {
-            auto record = std::string{line};
-            record += '\n';
+            UF_TRY_VALUE(frame, session.capture());
+            UF_TRY_VALUE(
+                encoded,
+                encodeFramePng(frame, output.m_path)
+            );
             UF_TRY(
-                m_writer.write(
-                    std::as_bytes(
-                        std::span<char const>{
-                            record.data(),
-                            record.size()
-                        }
-                    )
+                output.m_writer.write(
+                    std::span<std::byte const>{encoded}
                 )
             );
-            return flush();
+            UF_TRY(output.m_writer.flushDurably());
+            return frame;
         }
 
-        [[nodiscard]] auto flush() -> uf::Status
+        template <typename Value>
+        auto appendOptionalNumber(
+            std::string& output,
+            std::optional<Value> value
+        ) -> void
         {
-            return m_writer.flushDurably();
+            output += value ? std::to_string(*value) : "null";
         }
-    };
 
-    struct OutputFile final
-    {
-        std::filesystem::path m_path;
-        uf::m0_demo::platform::FileWriter m_writer;
-    };
-
-    [[nodiscard]]
-    auto openOutputFile(
-        std::filesystem::path path,
-        std::filesystem::path const& canonicalOutputDirectory
-    ) -> uf::Result<OutputFile>
-    {
-        UF_TRY_VALUE(
-            writer,
-            uf::m0_demo::platform::FileWriter::createExclusive(
-                path,
-                canonicalOutputDirectory
-            )
-        );
-        return OutputFile{
-            .m_path = std::move(path),
-            .m_writer = std::move(writer),
-        };
-    }
-
-    [[nodiscard]]
-    auto captureToOutput(
-        uf::WgcCaptureSession& session,
-        OutputFile& output
-    ) -> uf::Result<uf::Frame>
-    {
-        UF_TRY_VALUE(frame, session.capture());
-        UF_TRY_VALUE(
-            encoded,
-            uf::m0_demo::encodeFramePng(frame, output.m_path)
-        );
-        UF_TRY(
-            output.m_writer.write(
-                std::span<std::byte const>{encoded}
-            )
-        );
-        UF_TRY(output.m_writer.flushDurably());
-        return frame;
-    }
-
-    template <typename Value>
-    auto appendOptionalNumber(
-        std::string& output,
-        std::optional<Value> value
-    ) -> void
-    {
-        output += value ? std::to_string(*value) : "null";
-    }
-
-    [[nodiscard]]
-    auto serializeInvalidCommand(uf::Error const& error) -> std::string
-    {
-        return std::format(
-            "{{\"op\":null,\"ok\":false,\"error\":{}}}",
-            uf::m0_demo::escapeJsonString(
-                uf::m0_demo::formatAutomationError(error)
-            )
-        );
-    }
-
-    [[nodiscard]]
-    auto serializeCaptureError(uf::Error const& error) -> std::string
-    {
-        return std::format(
-            "{{\"op\":\"capture\",\"ok\":false,\"frame_id\":null,"
-            "\"frame_size\":null,\"client_size\":null,\"delta\":null,"
-            "\"error\":{}}}",
-            uf::m0_demo::escapeJsonString(
-                uf::m0_demo::formatAutomationError(error)
-            )
-        );
-    }
-
-    [[nodiscard]]
-    auto serializeCaptureSuccess(
-        uf::Frame const& frame,
-        uf::ClientSize client
-    ) -> std::string
-    {
-        auto const deltaWidth = (
-            static_cast<uf::int64>(frame.width())
-            - static_cast<uf::int64>(client.width())
-        );
-        auto const deltaHeight = (
-            static_cast<uf::int64>(frame.height())
-            - static_cast<uf::int64>(client.height())
-        );
-        return std::format(
-            "{{\"op\":\"capture\",\"ok\":true,\"frame_id\":{},"
-            "\"frame_size\":{{\"width\":{},\"height\":{}}},"
-            "\"client_size\":{{\"width\":{},\"height\":{}}},"
-            "\"delta\":{{\"width\":{},\"height\":{}}},\"error\":null}}",
-            frame.id().value(),
-            frame.width(),
-            frame.height(),
-            client.width(),
-            client.height(),
-            deltaWidth,
-            deltaHeight
-        );
-    }
-
-    struct ClickResult final
-    {
-        std::optional<uf::uint64> m_beforeFrame;
-        std::optional<uf::uint64> m_afterFrame;
-        bool m_delivered{};
-        std::optional<uf::Error> m_error;
-    };
-
-    [[nodiscard]] auto serializeClickResult(ClickResult const& result) -> std::string
-    {
-        auto output = std::string{"{\"op\":\"click\",\"ok\":"};
-        output += result.m_error ? "false" : "true";
-        output += ",\"before_frame_id\":";
-        appendOptionalNumber(output, result.m_beforeFrame);
-        output += ",\"after_frame_id\":";
-        appendOptionalNumber(output, result.m_afterFrame);
-        output += ",\"delivered\":";
-        output += result.m_delivered ? "true" : "false";
-        output += ",\"error\":";
-        if (result.m_error)
+        [[nodiscard]]
+        auto serializeInvalidCommand(Error const& error) -> std::string
         {
-            output += uf::m0_demo::escapeJsonString(
-                uf::m0_demo::formatAutomationError(*result.m_error)
+            return std::format(
+                "{{\"op\":null,\"ok\":false,\"error\":{}}}",
+                escapeJsonString(
+                    formatAutomationError(error)
+                )
             );
         }
-        else
+
+        [[nodiscard]]
+        auto serializeCaptureError(Error const& error) -> std::string
         {
-            output += "null";
+            return std::format(
+                "{{\"op\":\"capture\",\"ok\":false,\"frame_id\":null,"
+                "\"frame_size\":null,\"client_size\":null,\"delta\":null,"
+                "\"error\":{}}}",
+                escapeJsonString(
+                    formatAutomationError(error)
+                )
+            );
         }
-        output += '}';
-        return output;
-    }
 
-    struct CommandExecution final
-    {
-        std::string m_resultLine;
-        bool m_stopAgent{};
-    };
+        [[nodiscard]]
+        auto serializeCaptureSuccess(
+            Frame const& frame,
+            ClientSize client
+        ) -> std::string
+        {
+            auto const deltaWidth = (
+                static_cast<int64>(frame.width())
+                - static_cast<int64>(client.width())
+            );
+            auto const deltaHeight = (
+                static_cast<int64>(frame.height())
+                - static_cast<int64>(client.height())
+            );
+            return std::format(
+                "{{\"op\":\"capture\",\"ok\":true,\"frame_id\":{},"
+                "\"frame_size\":{{\"width\":{},\"height\":{}}},"
+                "\"client_size\":{{\"width\":{},\"height\":{}}},"
+                "\"delta\":{{\"width\":{},\"height\":{}}},\"error\":null}}",
+                frame.id().value(),
+                frame.width(),
+                frame.height(),
+                client.width(),
+                client.height(),
+                deltaWidth,
+                deltaHeight
+            );
+        }
 
-    [[nodiscard]]
-    auto finishClick(
-        ClickResult const& result,
-        bool stopAgent = false
-    ) -> CommandExecution
-    {
-        return CommandExecution{
-            .m_resultLine = serializeClickResult(result),
-            .m_stopAgent = stopAgent,
+        struct ClickResult final
+        {
+            std::optional<uint64> m_beforeFrame;
+            std::optional<uint64> m_afterFrame;
+            bool m_delivered{};
+            std::optional<Error> m_error;
         };
-    }
 
-    [[nodiscard]] auto serializeQuit() -> std::string
-    {
-        return "{\"op\":\"quit\",\"ok\":true,\"error\":null}";
-    }
+        [[nodiscard]] auto serializeClickResult(ClickResult const& result) -> std::string
+        {
+            auto output = std::string{"{\"op\":\"click\",\"ok\":"};
+            output += result.m_error ? "false" : "true";
+            output += ",\"before_frame_id\":";
+            appendOptionalNumber(output, result.m_beforeFrame);
+            output += ",\"after_frame_id\":";
+            appendOptionalNumber(output, result.m_afterFrame);
+            output += ",\"delivered\":";
+            output += result.m_delivered ? "true" : "false";
+            output += ",\"error\":";
+            if (result.m_error)
+            {
+                output += escapeJsonString(
+                    formatAutomationError(*result.m_error)
+                );
+            }
+            else
+            {
+                output += "null";
+            }
+            output += '}';
+            return output;
+        }
 
-    [[nodiscard]]
-    auto validateOutputPath(
-        std::filesystem::path const& output,
-        std::filesystem::path const& canonicalOutputDirectory,
-        std::filesystem::path const& canonicalQueue,
-        std::filesystem::path const& canonicalResults,
-        std::string_view role
-    ) -> uf::Result<std::filesystem::path>
-    {
-        UF_TRY_VALUE(
-            canonicalOutput,
-            uf::m0_demo::resolveConfinedOutputPath(
+        struct CommandExecution final
+        {
+            std::string m_resultLine;
+            bool m_stopAgent{};
+        };
+
+        [[nodiscard]]
+        auto finishClick(
+            ClickResult const& result,
+            bool stopAgent = false
+        ) -> CommandExecution
+        {
+            return CommandExecution{
+                .m_resultLine = serializeClickResult(result),
+                .m_stopAgent = stopAgent,
+            };
+        }
+
+        [[nodiscard]] auto serializeQuit() -> std::string
+        {
+            return "{\"op\":\"quit\",\"ok\":true,\"error\":null}";
+        }
+
+        [[nodiscard]]
+        auto validateOutputPath(
+            std::filesystem::path const& output,
+            std::filesystem::path const& canonicalOutputDirectory,
+            std::filesystem::path const& canonicalQueue,
+            std::filesystem::path const& canonicalResults,
+            std::string_view role
+        ) -> Result<std::filesystem::path>
+        {
+            UF_TRY_VALUE(
+                canonicalOutput,
+                resolveConfinedOutputPath(
+                    canonicalOutputDirectory,
+                    output,
+                    role
+                )
+            );
+            UF_TRY_VALUE(
+                aliasesQueue,
+                canonicalPathsAlias(
+                    canonicalOutput,
+                    canonicalQueue
+                )
+            );
+            UF_TRY_VALUE(
+                aliasesResults,
+                canonicalPathsAlias(
+                    canonicalOutput,
+                    canonicalResults
+                )
+            );
+            if (aliasesQueue || aliasesResults)
+            {
+                return fail(
+                    AutomationErrorKind::InvalidResource,
+                    std::format(
+                        "{} path {} aliases an input-agent IPC file",
+                        role,
+                        output.string()
+                    )
+                );
+            }
+            return canonicalOutput;
+        }
+
+        [[nodiscard]]
+        auto executeCapture(
+            InputAgentCaptureCommand const& command,
+            WgcCaptureSession& session,
+            ClientSize client,
+            std::filesystem::path const& canonicalOutputDirectory,
+            std::filesystem::path const& canonicalQueue,
+            std::filesystem::path const& canonicalResults
+        ) -> std::string
+        {
+            auto const validated = validateOutputPath(
+                command.m_output,
                 canonicalOutputDirectory,
-                output,
-                role
-            )
-        );
-        UF_TRY_VALUE(
-            aliasesQueue,
-            uf::m0_demo::canonicalPathsAlias(
-                canonicalOutput,
-                canonicalQueue
-            )
-        );
-        UF_TRY_VALUE(
-            aliasesResults,
-            uf::m0_demo::canonicalPathsAlias(
-                canonicalOutput,
-                canonicalResults
-            )
-        );
-        if (aliasesQueue || aliasesResults)
-        {
-            return uf::fail(
-                uf::AutomationErrorKind::InvalidResource,
-                std::format(
-                    "{} path {} aliases an input-agent IPC file",
-                    role,
-                    output.string()
-                )
+                canonicalQueue,
+                canonicalResults,
+                "capture output"
             );
-        }
-        return canonicalOutput;
-    }
-
-    [[nodiscard]]
-    auto executeCapture(
-        uf::m0_demo::InputAgentCaptureCommand const& command,
-        uf::WgcCaptureSession& session,
-        uf::ClientSize client,
-        std::filesystem::path const& canonicalOutputDirectory,
-        std::filesystem::path const& canonicalQueue,
-        std::filesystem::path const& canonicalResults
-    ) -> std::string
-    {
-        auto const validated = validateOutputPath(
-            command.m_output,
-            canonicalOutputDirectory,
-            canonicalQueue,
-            canonicalResults,
-            "capture output"
-        );
-        if (!validated)
-        {
-            return serializeCaptureError(validated.error());
-        }
-
-        auto output = openOutputFile(
-            *validated,
-            canonicalOutputDirectory
-        );
-        if (!output)
-        {
-            return serializeCaptureError(output.error());
-        }
-
-        auto captured = captureToOutput(session, *output);
-        if (!captured)
-        {
-            return serializeCaptureError(captured.error());
-        }
-        return serializeCaptureSuccess(*captured, client);
-    }
-
-    auto addReleaseFailures(
-        uf::Error& error,
-        std::vector<uf::ReleaseOutcome> const& releases
-    ) -> void
-    {
-        for (auto const& release : releases)
-        {
-            if (!release.m_result)
+            if (!validated)
             {
-                error.addContext(
-                    "input-agent click compensation failed: "
-                    + uf::m0_demo::formatAutomationError(
-                        release.m_result.error()
-                    )
-                );
+                return serializeCaptureError(validated.error());
+            }
+
+            auto output = openOutputFile(
+                *validated,
+                canonicalOutputDirectory
+            );
+            if (!output)
+            {
+                return serializeCaptureError(output.error());
+            }
+
+            auto captured = captureToOutput(session, *output);
+            if (!captured)
+            {
+                return serializeCaptureError(captured.error());
+            }
+            return serializeCaptureSuccess(*captured, client);
+        }
+
+        auto addReleaseFailures(
+            Error& error,
+            std::vector<ReleaseOutcome> const& releases
+        ) -> void
+        {
+            for (auto const& release : releases)
+            {
+                if (!release.m_result)
+                {
+                    error.addContext(
+                        "input-agent click compensation failed: "
+                        + formatAutomationError(
+                            release.m_result.error()
+                        )
+                    );
+                }
             }
         }
-    }
 
-    [[nodiscard]]
-    auto executeClick(
-        uf::m0_demo::InputAgentClickCommand const& command,
-        uf::ResolvedTarget& resolved,
-        uf::WgcCaptureSession& session,
-        uf::DeliveryTarget const& delivery,
-        uf::HeldInputs& held,
-        uf::AuditLog& audit,
-        std::filesystem::path const& canonicalOutputDirectory,
-        std::filesystem::path const& canonicalQueue,
-        std::filesystem::path const& canonicalResults
-    ) -> CommandExecution
-    {
-        auto result = ClickResult{};
-        auto canonicalBefore = validateOutputPath(
-            command.m_outputBefore,
-            canonicalOutputDirectory,
-            canonicalQueue,
-            canonicalResults,
-            "click out_before"
-        );
-        if (!canonicalBefore)
+        [[nodiscard]]
+        auto executeClick(
+            InputAgentClickCommand const& command,
+            ResolvedTarget& resolved,
+            WgcCaptureSession& session,
+            DeliveryTarget const& delivery,
+            HeldInputs& held,
+            AuditLog& audit,
+            std::filesystem::path const& canonicalOutputDirectory,
+            std::filesystem::path const& canonicalQueue,
+            std::filesystem::path const& canonicalResults
+        ) -> CommandExecution
         {
-            result.m_error = std::move(canonicalBefore).error();
-            return finishClick(result);
-        }
-        auto canonicalAfter = validateOutputPath(
-            command.m_outputAfter,
-            canonicalOutputDirectory,
-            canonicalQueue,
-            canonicalResults,
-            "click out_after"
-        );
-        if (!canonicalAfter)
-        {
-            result.m_error = std::move(canonicalAfter).error();
-            return finishClick(result);
-        }
-        auto pathsAlias = uf::m0_demo::canonicalPathsAlias(
-            *canonicalBefore,
-            *canonicalAfter
-        );
-        if (!pathsAlias)
-        {
-            result.m_error = std::move(pathsAlias).error();
-            return finishClick(result);
-        }
-        if (*pathsAlias)
-        {
-            auto failure = uf::fail(
-                uf::AutomationErrorKind::InvalidResource,
-                "input-agent click out_before and out_after paths alias"
+            auto result = ClickResult{};
+            auto canonicalBefore = validateOutputPath(
+                command.m_outputBefore,
+                canonicalOutputDirectory,
+                canonicalQueue,
+                canonicalResults,
+                "click out_before"
             );
-            result.m_error = std::move(failure).error();
-            return finishClick(result);
-        }
-
-        if (command.m_settle > uf::m0_demo::g_maximumInputAgentSettle)
-        {
-            auto failure = uf::fail(
-                uf::AutomationErrorKind::InvalidResource,
-                "input-agent click settle_ms exceeds the 5000 ms limit"
-            );
-            result.m_error = std::move(failure).error();
-            return finishClick(result);
-        }
-
-        auto beforeOutput = openOutputFile(
-            *canonicalBefore,
-            canonicalOutputDirectory
-        );
-        if (!beforeOutput)
-        {
-            result.m_error = std::move(beforeOutput).error();
-            return finishClick(result);
-        }
-        auto afterOutput = openOutputFile(
-            *canonicalAfter,
-            canonicalOutputDirectory
-        );
-        if (!afterOutput)
-        {
-            result.m_error = std::move(afterOutput).error();
-            return finishClick(result);
-        }
-
-        auto before = captureToOutput(session, *beforeOutput);
-        if (!before)
-        {
-            result.m_error = std::move(before).error();
-            return finishClick(result);
-        }
-        result.m_beforeFrame = before->id().value();
-
-        auto lease = uf::ObservationLease::forFrame(
-            *before,
-            uf::g_defaultMaxActionFrameAge
-        );
-        if (!lease)
-        {
-            result.m_error = std::move(lease).error();
-            return finishClick(result);
-        }
-        auto const point = uf::Point<uf::ClientSpace>{
-            command.m_x,
-            command.m_y
-        };
-        auto coordinate = uf::m0_demo::validateInputAgentClick(
-            delivery,
-            *lease,
-            point,
-            uf::MonotonicInstant::now()
-        );
-        if (!coordinate)
-        {
-            result.m_error = std::move(coordinate).error();
-            return finishClick(result);
-        }
-
-        auto revalidated = resolved.revalidate();
-        if (!revalidated)
-        {
-            result.m_error = std::move(revalidated).error();
-            return finishClick(result, true);
-        }
-        auto unchanged = uf::m0_demo::requireUnchangedTarget(*revalidated);
-        if (!unchanged)
-        {
-            result.m_error = std::move(unchanged).error();
-            return finishClick(result, true);
-        }
-        auto instance = session.validateTargetInstance();
-        if (!instance)
-        {
-            result.m_error = std::move(instance).error();
-            return finishClick(result, true);
-        }
-
-        auto clicked = uf::click(
-            delivery,
-            *lease,
-            point,
-            held,
-            audit
-        );
-        if (!clicked)
-        {
-            auto error = std::move(clicked).error();
-            auto cleanupTarget = delivery;
-            auto instanceAfterFailure = session.validateTargetInstance();
-            auto const stopAgent = !instanceAfterFailure;
-            if (!instanceAfterFailure)
+            if (!canonicalBefore)
             {
-                error.addContext(
-                    "input-agent click compensation blocked because the capture target instance changed: "
-                    + uf::m0_demo::formatAutomationError(
-                        instanceAfterFailure.error()
-                    )
-                );
-                auto rejectedTarget = uf::DeliveryTarget::create(
-                    delivery.windowHandle(),
-                    uf::SessionId{~delivery.sessionId().value()},
-                    delivery.generation(),
-                    delivery.clientWidth(),
-                    delivery.clientHeight()
-                );
-                UF_CHECK(rejectedTarget.has_value());
-                cleanupTarget = *rejectedTarget;
+                result.m_error = std::move(canonicalBefore).error();
+                return finishClick(result);
             }
-            auto const releases = uf::releaseHeld(cleanupTarget, held, audit);
-            addReleaseFailures(error, releases);
-            result.m_error = std::move(error);
-            return finishClick(result, stopAgent);
-        }
-        result.m_delivered = true;
+            auto canonicalAfter = validateOutputPath(
+                command.m_outputAfter,
+                canonicalOutputDirectory,
+                canonicalQueue,
+                canonicalResults,
+                "click out_after"
+            );
+            if (!canonicalAfter)
+            {
+                result.m_error = std::move(canonicalAfter).error();
+                return finishClick(result);
+            }
+            auto pathsAlias = canonicalPathsAlias(
+                *canonicalBefore,
+                *canonicalAfter
+            );
+            if (!pathsAlias)
+            {
+                result.m_error = std::move(pathsAlias).error();
+                return finishClick(result);
+            }
+            if (*pathsAlias)
+            {
+                auto failure = fail(
+                    AutomationErrorKind::InvalidResource,
+                    "input-agent click out_before and out_after paths alias"
+                );
+                result.m_error = std::move(failure).error();
+                return finishClick(result);
+            }
 
-        if (command.m_settle > uf::MonotonicInstant::Duration::zero())
-        {
-            std::this_thread::sleep_for(command.m_settle);
-        }
-        auto after = captureToOutput(session, *afterOutput);
-        if (!after)
-        {
-            result.m_error = std::move(after).error();
+            if (command.m_settle > g_maximumInputAgentSettle)
+            {
+                auto failure = fail(
+                    AutomationErrorKind::InvalidResource,
+                    "input-agent click settle_ms exceeds the 5000 ms limit"
+                );
+                result.m_error = std::move(failure).error();
+                return finishClick(result);
+            }
+
+            auto beforeOutput = openOutputFile(
+                *canonicalBefore,
+                canonicalOutputDirectory
+            );
+            if (!beforeOutput)
+            {
+                result.m_error = std::move(beforeOutput).error();
+                return finishClick(result);
+            }
+            auto afterOutput = openOutputFile(
+                *canonicalAfter,
+                canonicalOutputDirectory
+            );
+            if (!afterOutput)
+            {
+                result.m_error = std::move(afterOutput).error();
+                return finishClick(result);
+            }
+
+            auto before = captureToOutput(session, *beforeOutput);
+            if (!before)
+            {
+                result.m_error = std::move(before).error();
+                return finishClick(result);
+            }
+            result.m_beforeFrame = before->id().value();
+
+            auto lease = ObservationLease::forFrame(
+                *before,
+                g_defaultMaxActionFrameAge
+            );
+            if (!lease)
+            {
+                result.m_error = std::move(lease).error();
+                return finishClick(result);
+            }
+            auto const point = Point<ClientSpace>{
+                command.m_x,
+                command.m_y
+            };
+            auto coordinate = validateInputAgentClick(
+                delivery,
+                *lease,
+                point,
+                MonotonicInstant::now()
+            );
+            if (!coordinate)
+            {
+                result.m_error = std::move(coordinate).error();
+                return finishClick(result);
+            }
+
+            auto revalidated = resolved.revalidate();
+            if (!revalidated)
+            {
+                result.m_error = std::move(revalidated).error();
+                return finishClick(result, true);
+            }
+            auto unchanged = requireUnchangedTarget(*revalidated);
+            if (!unchanged)
+            {
+                result.m_error = std::move(unchanged).error();
+                return finishClick(result, true);
+            }
+            auto instance = session.validateTargetInstance();
+            if (!instance)
+            {
+                result.m_error = std::move(instance).error();
+                return finishClick(result, true);
+            }
+
+            auto clicked = click(
+                delivery,
+                *lease,
+                point,
+                held,
+                audit
+            );
+            if (!clicked)
+            {
+                auto error = std::move(clicked).error();
+                auto cleanupTarget = delivery;
+                auto instanceAfterFailure = session.validateTargetInstance();
+                auto const stopAgent = !instanceAfterFailure;
+                if (!instanceAfterFailure)
+                {
+                    error.addContext(
+                        "input-agent click compensation blocked because the capture target instance changed: "
+                        + formatAutomationError(
+                            instanceAfterFailure.error()
+                        )
+                    );
+                    auto rejectedTarget = DeliveryTarget::create(
+                        delivery.windowHandle(),
+                        SessionId{~delivery.sessionId().value()},
+                        delivery.generation(),
+                        delivery.clientWidth(),
+                        delivery.clientHeight()
+                    );
+                    UF_CHECK(rejectedTarget.has_value());
+                    cleanupTarget = *rejectedTarget;
+                }
+                auto const releases = releaseHeld(cleanupTarget, held, audit);
+                addReleaseFailures(error, releases);
+                result.m_error = std::move(error);
+                return finishClick(result, stopAgent);
+            }
+            result.m_delivered = true;
+
+            if (command.m_settle > MonotonicInstant::Duration::zero())
+            {
+                std::this_thread::sleep_for(command.m_settle);
+            }
+            auto after = captureToOutput(session, *afterOutput);
+            if (!after)
+            {
+                result.m_error = std::move(after).error();
+                return finishClick(result);
+            }
+            result.m_afterFrame = after->id().value();
             return finishClick(result);
         }
-        result.m_afterFrame = after->id().value();
-        return finishClick(result);
     }
-}
 
-namespace uf::m0_demo
-{
     auto clearInputAgentCommandAudit(AuditLog& audit) noexcept -> void
     {
         audit = AuditLog{};

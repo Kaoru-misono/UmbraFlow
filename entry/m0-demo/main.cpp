@@ -29,246 +29,249 @@
 #include <utility>
 #include <vector>
 
-namespace
+namespace uf::m0_demo
 {
-    [[nodiscard]]
-    auto dpiDeclarationName(uf::DpiDeclaration declaration) noexcept -> std::string_view
+    namespace
     {
-        switch (declaration)
+        [[nodiscard]]
+        auto dpiDeclarationName(DpiDeclaration declaration) noexcept -> std::string_view
         {
-        case uf::DpiDeclaration::Declared: return "Declared";
-        case uf::DpiDeclaration::AlreadyDeclared: return "AlreadyDeclared";
+            switch (declaration)
+            {
+            case DpiDeclaration::Declared: return "Declared";
+            case DpiDeclaration::AlreadyDeclared: return "AlreadyDeclared";
+            }
+            return "Unknown";
         }
-        return "Unknown";
-    }
 
-    [[nodiscard]]
-    auto logIntegrity(
-        uf::m0_demo::JsonlLog& log,
-        std::string_view role,
-        std::optional<uf::m0_demo::IntegrityLevel> integrity
-    ) -> uf::Status
-    {
-        if (integrity)
+        [[nodiscard]]
+        auto logIntegrity(
+            JsonlLog& log,
+            std::string_view role,
+            std::optional<IntegrityLevel> integrity
+        ) -> Status
         {
+            if (integrity)
+            {
+                return log.write(
+                    LogLine{"setup", "integrity"}
+                        .outcome("ok")
+                        .detail(
+                            std::format(
+                                "{} rid={:#x} level={}",
+                                role,
+                                integrity->rid(),
+                                integrity->label()
+                            )
+                        )
+                );
+            }
             return log.write(
-                uf::m0_demo::LogLine{"setup", "integrity"}
-                    .outcome("ok")
+                LogLine{"setup", "integrity"}
+                    .outcome("unknown")
                     .detail(
                         std::format(
-                            "{} rid={:#x} level={}",
-                            role,
-                            integrity->rid(),
-                            integrity->label()
+                            "{} integrity unreadable (access denied?)",
+                            role
                         )
                     )
             );
         }
-        return log.write(
-            uf::m0_demo::LogLine{"setup", "integrity"}
-                .outcome("unknown")
-                .detail(
-                    std::format(
-                        "{} integrity unreadable (access denied?)",
-                        role
-                    )
+
+        [[nodiscard]]
+        auto runWithLog(
+            Args const& args,
+            JsonlLog& log
+        ) -> Result<RunSummary>
+        {
+            UF_TRY_VALUE(dpiDeclaration, ensurePerMonitorAwareV2());
+            UF_TRY(
+                log.write(
+                    LogLine{"setup", "dpi_declared"}
+                        .outcome("ok")
+                        .detail(std::string{dpiDeclarationName(dpiDeclaration)})
                 )
-        );
-    }
+            );
 
-    [[nodiscard]]
-    auto runWithLog(
-        uf::m0_demo::Args const& args,
-        uf::m0_demo::JsonlLog& log
-    ) -> uf::Result<uf::m0_demo::RunSummary>
-    {
-        UF_TRY_VALUE(dpiDeclaration, uf::ensurePerMonitorAwareV2());
-        UF_TRY(
-            log.write(
-                uf::m0_demo::LogLine{"setup", "dpi_declared"}
-                    .outcome("ok")
-                    .detail(std::string{dpiDeclarationName(dpiDeclaration)})
-            )
-        );
+            UF_TRY_VALUE(
+                consoleControl,
+                installConsoleControlHandler()
+            );
+            UF_TRY(
+                logIntegrity(
+                    log,
+                    "automation",
+                    currentProcessIntegrity()
+                )
+            );
 
-        UF_TRY_VALUE(
-            consoleControl,
-            uf::m0_demo::installConsoleControlHandler()
-        );
-        UF_TRY(
-            logIntegrity(
-                log,
-                "automation",
-                uf::m0_demo::currentProcessIntegrity()
-            )
-        );
+            UF_TRY_VALUE(candidates, enumerateCandidates());
+            auto const selector = buildSelector(args.m_selector);
+            UF_TRY_VALUE(resolved, resolveTarget(candidates, selector));
+            auto const windowHandle = resolved.windowHandle();
+            auto const generation = resolved.currentGeneration();
+            auto const client = resolved.clientSize();
+            auto const process = resolved.identity().process();
+            auto const sessionId = SessionId{1};
+            UF_TRY_VALUE(
+                options,
+                WgcCaptureOptions::create(args.m_stallTimeout, false)
+            );
+            UF_TRY_VALUE(
+                session,
+                createCaptureSession(
+                    resolved,
+                    sessionId,
+                    options
+                )
+            );
+            UF_TRY(
+                log.write(
+                    LogLine{"discovery", "resolved"}
+                        .outcome("ok")
+                        .detail(
+                            std::format(
+                                "pid={} client={}x{}",
+                                process.value(),
+                                client.width(),
+                                client.height()
+                            )
+                        )
+                )
+            );
 
-        UF_TRY_VALUE(candidates, uf::enumerateCandidates());
-        auto const selector = uf::m0_demo::buildSelector(args.m_selector);
-        UF_TRY_VALUE(resolved, uf::resolveTarget(candidates, selector));
-        auto const windowHandle = resolved.windowHandle();
-        auto const generation = resolved.currentGeneration();
-        auto const client = resolved.clientSize();
-        auto const process = resolved.identity().process();
-        auto const sessionId = uf::SessionId{1};
-        UF_TRY_VALUE(
-            options,
-            uf::WgcCaptureOptions::create(args.m_stallTimeout, false)
-        );
-        UF_TRY_VALUE(
-            session,
-            uf::m0_demo::createCaptureSession(
+            UF_TRY(
+                logIntegrity(
+                    log,
+                    "target",
+                    processIntegrity(process)
+                )
+            );
+
+            UF_TRY_VALUE(
+                homeTemplate,
+                loadTemplate(
+                    args.m_homeTemplate,
+                    "home",
+                    args.m_homeRoi
+                )
+            );
+            UF_TRY_VALUE(
+                resultTemplate,
+                loadTemplate(
+                    args.m_resultTemplate,
+                    "result",
+                    args.m_resultRoi
+                )
+            );
+            UF_TRY_VALUE(
+                resetTemplate,
+                loadTemplate(
+                    args.m_resetTemplate,
+                    "reset",
+                    args.m_resetRoi
+                )
+            );
+            auto const templates = Templates{
+                .m_home = std::move(homeTemplate),
+                .m_result = std::move(resultTemplate),
+                .m_reset = std::move(resetTemplate),
+            };
+            auto const config = LoopConfig{
+                .m_loops = args.m_loops,
+                .m_threshold = args.m_threshold,
+                .m_maxActionFrameAge = args.m_maxActionFrameAge,
+                .m_transitionTimeout = g_defaultTransitionTimeout,
+                .m_guardPolicy = GuardPolicy::forMode(args.m_mode),
+                .m_clickDelay = args.m_clickDelay,
+                .m_seed = args.m_seed,
+            };
+
+            UF_TRY_VALUE(
+                delivery,
+                DeliveryTarget::create(
+                    windowHandle,
+                    sessionId,
+                    generation,
+                    client.width(),
+                    client.height()
+                )
+            );
+            auto const hygiene = session.hygiene();
+            UF_TRY(
+                log.write(
+                    LogLine{"setup", "session_created"}
+                        .outcome("ok")
+                        .detail(
+                            std::format(
+                                "os_build={} cursor_capture_disabled={} border_required={}",
+                                hygiene.m_osBuild,
+                                hygiene.m_cursorCaptureDisabled,
+                                hygiene.m_borderRequired
+                            )
+                        )
+                )
+            );
+
+            auto outcome = runPipeline(
                 resolved,
-                sessionId,
-                options
-            )
-        );
-        UF_TRY(
-            log.write(
-                uf::m0_demo::LogLine{"discovery", "resolved"}
-                    .outcome("ok")
-                    .detail(
-                        std::format(
-                            "pid={} client={}x{}",
-                            process.value(),
-                            client.width(),
-                            client.height()
-                        )
-                    )
-            )
-        );
-
-        UF_TRY(
-            logIntegrity(
-                log,
-                "target",
-                uf::m0_demo::processIntegrity(process)
-            )
-        );
-
-        UF_TRY_VALUE(
-            homeTemplate,
-            uf::m0_demo::loadTemplate(
-                args.m_homeTemplate,
-                "home",
-                args.m_homeRoi
-            )
-        );
-        UF_TRY_VALUE(
-            resultTemplate,
-            uf::m0_demo::loadTemplate(
-                args.m_resultTemplate,
-                "result",
-                args.m_resultRoi
-            )
-        );
-        UF_TRY_VALUE(
-            resetTemplate,
-            uf::m0_demo::loadTemplate(
-                args.m_resetTemplate,
-                "reset",
-                args.m_resetRoi
-            )
-        );
-        auto const templates = uf::m0_demo::Templates{
-            .m_home = std::move(homeTemplate),
-            .m_result = std::move(resultTemplate),
-            .m_reset = std::move(resetTemplate),
-        };
-        auto const config = uf::m0_demo::LoopConfig{
-            .m_loops = args.m_loops,
-            .m_threshold = args.m_threshold,
-            .m_maxActionFrameAge = args.m_maxActionFrameAge,
-            .m_transitionTimeout = uf::m0_demo::g_defaultTransitionTimeout,
-            .m_guardPolicy = uf::m0_demo::GuardPolicy::forMode(args.m_mode),
-            .m_clickDelay = args.m_clickDelay,
-            .m_seed = args.m_seed,
-        };
-
-        UF_TRY_VALUE(
-            delivery,
-            uf::DeliveryTarget::create(
-                windowHandle,
-                sessionId,
-                generation,
-                client.width(),
-                client.height()
-            )
-        );
-        auto const hygiene = session.hygiene();
-        UF_TRY(
-            log.write(
-                uf::m0_demo::LogLine{"setup", "session_created"}
-                    .outcome("ok")
-                    .detail(
-                        std::format(
-                            "os_build={} cursor_capture_disabled={} border_required={}",
-                            hygiene.m_osBuild,
-                            hygiene.m_cursorCaptureDisabled,
-                            hygiene.m_borderRequired
-                        )
-                    )
-            )
-        );
-
-        auto outcome = uf::m0_demo::runPipeline(
-            resolved,
-            std::move(session),
-            delivery,
-            templates,
-            config,
-            log
-        );
-        auto consoleClose = consoleControl.close();
-        if (!outcome)
-        {
-            return std::unexpected{std::move(outcome).error()};
+                std::move(session),
+                delivery,
+                templates,
+                config,
+                log
+            );
+            auto consoleClose = consoleControl.close();
+            if (!outcome)
+            {
+                return std::unexpected{std::move(outcome).error()};
+            }
+            UF_TRY(std::move(consoleClose));
+            return outcome;
         }
-        UF_TRY(std::move(consoleClose));
-        return outcome;
-    }
 
-    [[nodiscard]]
-    auto run(
-        std::span<std::string const> raw
-    ) -> uf::Result<uf::m0_demo::RunSummary>
-    {
-        UF_TRY_VALUE(args, uf::m0_demo::parseArguments(raw));
-        UF_TRY_VALUE(log, uf::m0_demo::JsonlLog::create(args.m_log));
-
-        auto outcome = runWithLog(args, log);
-        auto terminalWrite = uf::ok();
-        if (!outcome)
+        [[nodiscard]]
+        auto run(
+            std::span<std::string const> raw
+        ) -> Result<RunSummary>
         {
-            terminalWrite = log.write(
-                uf::m0_demo::LogLine{"run", "fatal"}
-                    .outcome("error")
-                    .detail(uf::m0_demo::formatAutomationError(outcome.error()))
+            UF_TRY_VALUE(args, parseArguments(raw));
+            UF_TRY_VALUE(log, JsonlLog::create(args.m_log));
+
+            auto outcome = runWithLog(args, log);
+            auto terminalWrite = ok();
+            if (!outcome)
+            {
+                terminalWrite = log.write(
+                    LogLine{"run", "fatal"}
+                        .outcome("error")
+                        .detail(formatAutomationError(outcome.error()))
+                );
+            }
+            auto flush = log.flush();
+            if (!outcome)
+            {
+                return std::unexpected{std::move(outcome).error()};
+            }
+
+            UF_TRY(terminalWrite);
+            UF_TRY(flush);
+            return *std::move(outcome);
+        }
+
+        auto writeUnhandledException(std::exception const& error) noexcept -> void
+        {
+            static_cast<void>(std::fputs("m0-demo exception: ", stderr));
+            static_cast<void>(std::fputs(error.what(), stderr));
+            static_cast<void>(std::fputc('\n', stderr));
+        }
+
+        auto writeUnknownException() noexcept -> void
+        {
+            static_cast<void>(
+                std::fputs("m0-demo exception: unknown failure\n", stderr)
             );
         }
-        auto flush = log.flush();
-        if (!outcome)
-        {
-            return std::unexpected{std::move(outcome).error()};
-        }
-
-        UF_TRY(terminalWrite);
-        UF_TRY(flush);
-        return *std::move(outcome);
-    }
-
-    auto writeUnhandledException(std::exception const& error) noexcept -> void
-    {
-        static_cast<void>(std::fputs("m0-demo exception: ", stderr));
-        static_cast<void>(std::fputs(error.what(), stderr));
-        static_cast<void>(std::fputc('\n', stderr));
-    }
-
-    auto writeUnknownException() noexcept -> void
-    {
-        static_cast<void>(
-            std::fputs("m0-demo exception: unknown failure\n", stderr)
-        );
     }
 }
 
@@ -322,7 +325,7 @@ auto main(int argumentCount, char const* const* p_arguments) -> int
             return EXIT_SUCCESS;
         }
 
-        auto const outcome = run(raw);
+        auto const outcome = uf::m0_demo::run(raw);
         if (!outcome)
         {
             std::cerr
@@ -344,12 +347,12 @@ auto main(int argumentCount, char const* const* p_arguments) -> int
     }
     catch (std::exception const& error)
     {
-        writeUnhandledException(error);
+        uf::m0_demo::writeUnhandledException(error);
         return EXIT_FAILURE;
     }
     catch (...)
     {
-        writeUnknownException();
+        uf::m0_demo::writeUnknownException();
         return EXIT_FAILURE;
     }
 }

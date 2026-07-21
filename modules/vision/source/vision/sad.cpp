@@ -15,39 +15,39 @@
 #include <span>
 #include <vector>
 
-namespace
-{
-    [[nodiscard]]
-    auto checkedSubspan(
-        std::span<std::byte const> data UF_LIFETIME_BOUND,
-        std::size_t offset,
-        std::size_t count
-    ) noexcept -> std::optional<std::span<std::byte const>>
-    {
-        auto const end = uf::checkedAdd(offset, count);
-        if (!end || *end > data.size())
-        {
-            return std::nullopt;
-        }
-
-        auto const lastIndex = uf::checkedSubtract(*end, std::size_t{1});
-        if (
-            count != 0
-            && (
-                !lastIndex
-                || uf::tryAt(data, *lastIndex) == nullptr
-            )
-        )
-        {
-            return std::nullopt;
-        }
-
-        return data.subspan(offset, count);
-    }
-}
-
 namespace uf
 {
+    namespace
+    {
+        [[nodiscard]]
+        auto checkedSubspan(
+            std::span<std::byte const> data UF_LIFETIME_BOUND,
+            std::size_t offset,
+            std::size_t count
+        ) noexcept -> std::optional<std::span<std::byte const>>
+        {
+            auto const end = checkedAdd(offset, count);
+            if (!end || *end > data.size())
+            {
+                return std::nullopt;
+            }
+
+            auto const lastIndex = checkedSubtract(*end, std::size_t{1});
+            if (
+                count != 0
+                && (
+                    !lastIndex
+                    || tryAt(data, *lastIndex) == nullptr
+                )
+            )
+            {
+                return std::nullopt;
+            }
+
+            return data.subspan(offset, count);
+        }
+    }
+
     auto GrayImage::create(
         std::span<std::byte const> data,
         uint32 width,

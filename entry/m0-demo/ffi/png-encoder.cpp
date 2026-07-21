@@ -60,127 +60,127 @@
 
 #undef STBIW_ASSERT
 
-namespace
-{
-    constexpr auto g_rgbaChannels = std::size_t{4};
-    // stb stores (row bytes + one filter byte) * height in signed working
-    // integers. The shared decoder quotas keep that total far below INT_MAX.
-    constexpr auto g_maximumFilteredPngBytes = (
-        uf::m0_demo::ffi::g_maximumPngPixels * g_rgbaChannels
-        + uf::m0_demo::ffi::g_maximumPngDimension
-    );
-
-    static_assert(
-        g_maximumFilteredPngBytes
-        < static_cast<std::size_t>(std::numeric_limits<int>::max()) / 4U
-    );
-
-    struct EncodedPng final
-    {
-        std::vector<std::byte> m_bytes;
-        bool m_callbackFailed{};
-    };
-
-    auto appendEncodedPng(
-        void* p_context,
-        void* p_data,
-        int size
-    ) noexcept -> void
-    {
-        if (p_context == nullptr)
-        {
-            return;
-        }
-
-        // SAFETY: encodeRgbaPng passes a live EncodedPng as the synchronous stb
-        // callback context. stb retains neither the context nor the data after
-        // this call, and no exception is allowed to cross the C callback boundary.
-        auto& encoded = *static_cast<EncodedPng*>(p_context);
-        if (encoded.m_callbackFailed)
-        {
-            return;
-        }
-        if (p_data == nullptr || size <= 0)
-        {
-            encoded.m_callbackFailed = true;
-            return;
-        }
-
-        auto const byteCount = uf::checkedCast<std::size_t>(size);
-        auto finalSize = std::optional<std::size_t>{};
-        if (byteCount)
-        {
-            finalSize = uf::checkedAdd(encoded.m_bytes.size(), *byteCount);
-        }
-        if (!byteCount || !finalSize)
-        {
-            encoded.m_callbackFailed = true;
-            return;
-        }
-
-        try
-        {
-            auto const offset = encoded.m_bytes.size();
-            encoded.m_bytes.resize(*finalSize);
-            auto destination = std::span<std::byte>{encoded.m_bytes}.subspan(
-                offset,
-                *byteCount
-            );
-            // SAFETY: stb promises size readable bytes in p_data for this
-            // synchronous callback. destination owns exactly byteCount writable
-            // bytes, the ranges do not overlap, and neither pointer escapes.
-            std::memcpy(destination.data(), p_data, *byteCount);
-        }
-        catch (...)
-        {
-            encoded.m_callbackFailed = true;
-        }
-    }
-
-    [[nodiscard]]
-    auto invalidPng(std::string message) -> std::unexpected<uf::Error>
-    {
-        return uf::fail(
-            uf::AutomationErrorKind::InvalidResource,
-            std::move(message)
-        );
-    }
-
-    [[nodiscard]]
-    auto currentIoError() -> std::error_code
-    {
-        if (errno != 0)
-        {
-            return std::error_code{errno, std::generic_category()};
-        }
-        return std::make_error_code(std::io_errc::stream);
-    }
-
-    [[nodiscard]]
-    auto pngIoFailure(
-        std::string_view operation,
-        std::filesystem::path const& path,
-        std::error_code error
-    ) -> std::unexpected<uf::Error>
-    {
-        return uf::fail(
-            uf::ErrorCode::Io,
-            uf::automationErrorDetailCode(
-                uf::AutomationErrorKind::InvalidResource
-            ),
-            std::format(
-                "failed to {} PNG {}: {}",
-                operation,
-                path.string(),
-                error.message()
-            ),
-            static_cast<uf::int64>(error.value())
-        );
-    }
-}
-
 namespace uf::m0_demo::ffi
 {
+    namespace
+    {
+        constexpr auto g_rgbaChannels = std::size_t{4};
+        // stb stores (row bytes + one filter byte) * height in signed working
+        // integers. The shared decoder quotas keep that total far below INT_MAX.
+        constexpr auto g_maximumFilteredPngBytes = (
+            g_maximumPngPixels * g_rgbaChannels
+            + g_maximumPngDimension
+        );
+
+        static_assert(
+            g_maximumFilteredPngBytes
+            < static_cast<std::size_t>(std::numeric_limits<int>::max()) / 4U
+        );
+
+        struct EncodedPng final
+        {
+            std::vector<std::byte> m_bytes;
+            bool m_callbackFailed{};
+        };
+
+        auto appendEncodedPng(
+            void* p_context,
+            void* p_data,
+            int size
+        ) noexcept -> void
+        {
+            if (p_context == nullptr)
+            {
+                return;
+            }
+
+            // SAFETY: encodeRgbaPng passes a live EncodedPng as the synchronous stb
+            // callback context. stb retains neither the context nor the data after
+            // this call, and no exception is allowed to cross the C callback boundary.
+            auto& encoded = *static_cast<EncodedPng*>(p_context);
+            if (encoded.m_callbackFailed)
+            {
+                return;
+            }
+            if (p_data == nullptr || size <= 0)
+            {
+                encoded.m_callbackFailed = true;
+                return;
+            }
+
+            auto const byteCount = checkedCast<std::size_t>(size);
+            auto finalSize = std::optional<std::size_t>{};
+            if (byteCount)
+            {
+                finalSize = checkedAdd(encoded.m_bytes.size(), *byteCount);
+            }
+            if (!byteCount || !finalSize)
+            {
+                encoded.m_callbackFailed = true;
+                return;
+            }
+
+            try
+            {
+                auto const offset = encoded.m_bytes.size();
+                encoded.m_bytes.resize(*finalSize);
+                auto destination = std::span<std::byte>{encoded.m_bytes}.subspan(
+                    offset,
+                    *byteCount
+                );
+                // SAFETY: stb promises size readable bytes in p_data for this
+                // synchronous callback. destination owns exactly byteCount writable
+                // bytes, the ranges do not overlap, and neither pointer escapes.
+                std::memcpy(destination.data(), p_data, *byteCount);
+            }
+            catch (...)
+            {
+                encoded.m_callbackFailed = true;
+            }
+        }
+
+        [[nodiscard]]
+        auto invalidPng(std::string message) -> std::unexpected<Error>
+        {
+            return fail(
+                AutomationErrorKind::InvalidResource,
+                std::move(message)
+            );
+        }
+
+        [[nodiscard]]
+        auto currentIoError() -> std::error_code
+        {
+            if (errno != 0)
+            {
+                return std::error_code{errno, std::generic_category()};
+            }
+            return std::make_error_code(std::io_errc::stream);
+        }
+
+        [[nodiscard]]
+        auto pngIoFailure(
+            std::string_view operation,
+            std::filesystem::path const& path,
+            std::error_code error
+        ) -> std::unexpected<Error>
+        {
+            return fail(
+                ErrorCode::Io,
+                automationErrorDetailCode(
+                    AutomationErrorKind::InvalidResource
+                ),
+                std::format(
+                    "failed to {} PNG {}: {}",
+                    operation,
+                    path.string(),
+                    error.message()
+                ),
+                static_cast<int64>(error.value())
+            );
+        }
+    }
+
     auto encodeRgbaPng(
         std::filesystem::path const& path,
         uint32 width,
@@ -318,10 +318,10 @@ namespace uf::m0_demo::ffi
             || encoded.m_bytes.empty()
         )
         {
-            return uf::fail(
-                uf::ErrorCode::External,
-                uf::automationErrorDetailCode(
-                    uf::AutomationErrorKind::InvalidResource
+            return fail(
+                ErrorCode::External,
+                automationErrorDetailCode(
+                    AutomationErrorKind::InvalidResource
                 ),
                 std::format(
                     "failed to encode PNG {} with stb_image_write",

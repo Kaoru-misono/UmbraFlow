@@ -11,15 +11,18 @@
 #include <bit>
 #include <format>
 
-namespace
+namespace uf::controller_platform
 {
-    [[nodiscard]]
-    auto toNativeHandle(uf::WindowHandle handle) noexcept -> HWND
+    namespace
     {
-        // SAFETY: WindowHandle stores the pointer-sized integer representation copied
-        // from an HWND. bit_cast restores those exact bits as the opaque token without
-        // dereferencing it.
-        return std::bit_cast<HWND>(handle.value());
+        [[nodiscard]]
+        auto toNativeHandle(WindowHandle handle) noexcept -> HWND
+        {
+            // SAFETY: WindowHandle stores the pointer-sized integer representation copied
+            // from an HWND. bit_cast restores those exact bits as the opaque token without
+            // dereferencing it.
+            return std::bit_cast<HWND>(handle.value());
+        }
     }
 }
 
