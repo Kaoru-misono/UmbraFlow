@@ -98,7 +98,7 @@ TEST_CASE("all automation error kinds survive the generic result channel")
         REQUIRE_FALSE(result.has_value());
         auto const kind = uf::automationErrorKind(result.error());
         REQUIRE(kind.has_value());
-        CHECK(kind.value() == testCase.m_kind);
+        CHECK(kind == testCase.m_kind);
         CHECK(result.error().code() == testCase.m_genericCode);
         CHECK(result.error().detailCode().message() == testCase.m_name);
     }

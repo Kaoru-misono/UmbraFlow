@@ -77,7 +77,7 @@ namespace
         REQUIRE_FALSE(result.has_value());
         auto const kind = uf::automationErrorKind(result.error());
         REQUIRE(kind.has_value());
-        CHECK(kind.value() == uf::AutomationErrorKind::StaleObservation);
+        CHECK(kind == uf::AutomationErrorKind::StaleObservation);
     }
 }
 
@@ -248,7 +248,7 @@ TEST_CASE("observation lease deadline overflow uses the exact boundary")
     REQUIRE_FALSE(overflowLease.has_value());
     auto const kind = uf::automationErrorKind(overflowLease.error());
     REQUIRE(kind.has_value());
-    CHECK(kind.value() == uf::AutomationErrorKind::InternalInvariant);
+    CHECK(kind == uf::AutomationErrorKind::InternalInvariant);
 }
 
 TEST_CASE("negative observation ages fail closed")
@@ -267,5 +267,5 @@ TEST_CASE("negative observation ages fail closed")
     REQUIRE_FALSE(lease.has_value());
     auto const kind = uf::automationErrorKind(lease.error());
     REQUIRE(kind.has_value());
-    CHECK(kind.value() == uf::AutomationErrorKind::InternalInvariant);
+    CHECK(kind == uf::AutomationErrorKind::InternalInvariant);
 }

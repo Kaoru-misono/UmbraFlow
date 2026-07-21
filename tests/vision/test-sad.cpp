@@ -169,7 +169,7 @@ namespace
     {
         auto const kind = uf::automationErrorKind(error);
         REQUIRE(kind.has_value());
-        CHECK(kind.value() == expected);
+        CHECK(kind == expected);
     }
 
     [[nodiscard]]
@@ -291,8 +291,7 @@ TEST_CASE("exact template hit scores zero")
         pixelRect(0, 0, haystackWidth, haystackHeight)
     );
     REQUIRE(result.has_value());
-    REQUIRE(result->has_value());
-    CHECK(**result == uf::SadMatch{matchX, matchY, 0});
+    CHECK(*result == std::optional{uf::SadMatch{matchX, matchY, 0}});
 }
 
 TEST_CASE("template matching agrees with an exhaustive scan")
@@ -465,8 +464,7 @@ TEST_CASE("ties resolve to earliest row major placement")
     );
 
     REQUIRE(result.has_value());
-    REQUIRE(result->has_value());
-    CHECK(**result == uf::SadMatch{3, 0, 0});
+    CHECK(*result == std::optional{uf::SadMatch{3, 0, 0}});
 }
 
 TEST_CASE("padded strides are not misread")
@@ -514,8 +512,7 @@ TEST_CASE("padded strides are not misread")
     auto const fullRoi = pixelRect(0, 0, haystackWidth, haystackHeight);
     auto const result = uf::matchTemplateSad(haystack, templateImage, fullRoi);
     REQUIRE(result.has_value());
-    REQUIRE(result->has_value());
-    CHECK(**result == uf::SadMatch{matchX, matchY, 0});
+    CHECK(*result == std::optional{uf::SadMatch{matchX, matchY, 0}});
 }
 
 TEST_CASE("template fit uses the exact roi boundary")
@@ -556,8 +553,7 @@ TEST_CASE("template fit uses the exact roi boundary")
         pixelRect(1, 1, 2, 2)
     );
     REQUIRE(exactFit.has_value());
-    REQUIRE(exactFit->has_value());
-    CHECK(**exactFit == uf::SadMatch{1, 1, 0});
+    CHECK(*exactFit == std::optional{uf::SadMatch{1, 1, 0}});
 
     auto const rois = std::array{
         pixelRect(2, 1, 1, 2),

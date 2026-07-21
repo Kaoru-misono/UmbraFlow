@@ -53,7 +53,7 @@ TEST_CASE("target generation overflow is an internal invariant error")
     REQUIRE_FALSE(result.has_value());
     auto const kind = uf::automationErrorKind(result.error());
     REQUIRE(kind.has_value());
-    CHECK(kind.value() == uf::AutomationErrorKind::InternalInvariant);
+    CHECK(kind == uf::AutomationErrorKind::InternalInvariant);
 }
 
 TEST_CASE("labels preserve their text and strong identity")
@@ -83,7 +83,7 @@ TEST_CASE("labels accept valid UTF-8 and reject invalid bytes")
     REQUIRE_FALSE(invalid.has_value());
     auto const kind = uf::automationErrorKind(invalid.error());
     REQUIRE(kind.has_value());
-    CHECK(kind.value() == uf::AutomationErrorKind::InternalInvariant);
+    CHECK(kind == uf::AutomationErrorKind::InternalInvariant);
 
     auto const validText = std::string{"caf\xC3\xA9"};
     auto const valid = uf::Label::create(validText);

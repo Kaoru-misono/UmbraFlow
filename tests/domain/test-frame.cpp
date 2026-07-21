@@ -62,7 +62,7 @@ namespace
     {
         auto const kind = uf::automationErrorKind(error);
         REQUIRE(kind.has_value());
-        CHECK(kind.value() == uf::AutomationErrorKind::InternalInvariant);
+        CHECK(kind == uf::AutomationErrorKind::InternalInvariant);
     }
 }
 

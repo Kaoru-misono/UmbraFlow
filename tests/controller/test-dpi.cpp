@@ -15,8 +15,12 @@ namespace
     auto automationKind(uf::Error const& error) -> uf::AutomationErrorKind
     {
         auto const kind = uf::automationErrorKind(error);
-        REQUIRE(kind.has_value());
-        return kind.value();
+        if (!kind.has_value())
+        {
+            FAIL("The error did not contain an automation error kind");
+            return uf::AutomationErrorKind::InternalInvariant;
+        }
+        return *kind;
     }
 }
 
