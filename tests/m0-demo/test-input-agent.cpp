@@ -481,7 +481,10 @@ namespace uf::m0_demo
                 allowedPath,
                 *canonicalAllowed
             );
-            REQUIRE(writer.has_value());
+            if (!writer.has_value())
+            {
+                FAIL(writer.error().message());
+            }
             CHECK(std::filesystem::exists(allowedPath));
 
             auto const duplicate = platform::FileWriter::createExclusive(
