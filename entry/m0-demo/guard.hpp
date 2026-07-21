@@ -4,10 +4,10 @@
 
 #include <controller/discovery.hpp>
 #include <core/error/result.hpp>
+#include <core/types/integer.hpp>
 #include <domain/space.hpp>
 
 #include <compare>
-#include <cstdint>
 #include <optional>
 #include <string_view>
 #include <utility>
@@ -16,9 +16,9 @@ namespace uf::m0_demo
 {
     class IntegrityLevel final
     {
-        std::uint32_t m_rid;
+        uint32 m_rid;
 
-        constexpr explicit IntegrityLevel(std::uint32_t rid) noexcept
+        constexpr explicit IntegrityLevel(uint32 rid) noexcept
             : m_rid{rid}
         {
         }
@@ -27,19 +27,19 @@ namespace uf::m0_demo
         auto operator<=>(IntegrityLevel const&) const = default;
 
         [[nodiscard]]
-        static constexpr auto fromRid(std::uint32_t rid) noexcept -> IntegrityLevel
+        static constexpr auto fromRid(uint32 rid) noexcept -> IntegrityLevel
         {
             return IntegrityLevel{rid};
         }
 
-        [[nodiscard]] constexpr auto rid() const noexcept -> std::uint32_t { return m_rid; }
+        [[nodiscard]] constexpr auto rid() const noexcept -> uint32 { return m_rid; }
         [[nodiscard]] auto label() const noexcept -> std::string_view;
     };
 
     struct GuardBaseline final
     {
-        std::intptr_t m_foreground;
-        std::pair<std::int32_t, std::int32_t> m_cursor;
+        intptr m_foreground;
+        std::pair<int32, int32> m_cursor;
 
         auto operator==(GuardBaseline const&) const -> bool = default;
     };
@@ -72,7 +72,7 @@ namespace uf::m0_demo
     [[nodiscard]]
     auto checkGuard(
         GuardPolicy policy,
-        std::intptr_t targetWindow,
+        intptr targetWindow,
         GuardBaseline baseline,
         GuardBaseline observed
     ) noexcept -> GuardCheck;

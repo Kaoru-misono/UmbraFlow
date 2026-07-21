@@ -3,27 +3,27 @@
 #include "controller/capture.hpp"
 
 #include <core/error/result.hpp>
+#include <core/types/integer.hpp>
 #include <domain/ids.hpp>
 
-#include <cstdint>
 #include <utility>
 
 namespace uf::controller_detail
 {
     struct CaptureSize final
     {
-        std::int32_t m_width;
-        std::int32_t m_height;
+        int32 m_width;
+        int32 m_height;
 
         auto operator==(CaptureSize const&) const -> bool = default;
     };
 
     class FrameIdCounter final
     {
-        std::uint64_t m_next;
+        uint64 m_next;
 
     public:
-        constexpr explicit FrameIdCounter(std::uint64_t next = 0) noexcept
+        constexpr explicit FrameIdCounter(uint64 next = 0) noexcept
             : m_next{next}
         {
         }
@@ -35,13 +35,13 @@ namespace uf::controller_detail
     // crop offsets cannot be reused before the owning capture session is rebuilt.
     class CaptureGeometryState final
     {
-        std::uint32_t m_expectedWidth;
-        std::uint32_t m_expectedHeight;
+        uint32 m_expectedWidth;
+        uint32 m_expectedHeight;
         bool m_invalidated;
 
         constexpr CaptureGeometryState(
-            std::uint32_t expectedWidth,
-            std::uint32_t expectedHeight
+            uint32 expectedWidth,
+            uint32 expectedHeight
         ) noexcept
             : m_expectedWidth{expectedWidth}
             , m_expectedHeight{expectedHeight}
@@ -57,7 +57,7 @@ namespace uf::controller_detail
 
         [[nodiscard]]
         constexpr auto expectedSize() const noexcept
-            -> std::pair<std::uint32_t, std::uint32_t>
+            -> std::pair<uint32, uint32>
         {
             return {m_expectedWidth, m_expectedHeight};
         }
@@ -65,18 +65,18 @@ namespace uf::controller_detail
         [[nodiscard]]
         auto observeContentSize(
             CaptureSize contentSize
-        ) -> Result<std::pair<std::uint32_t, std::uint32_t>>;
+        ) -> Result<std::pair<uint32, uint32>>;
 
         [[nodiscard]]
         auto observeSurfaceSize(
-            std::pair<std::uint32_t, std::uint32_t> confirmedContentSize,
-            std::uint32_t surfaceWidth,
-            std::uint32_t surfaceHeight
+            std::pair<uint32, uint32> confirmedContentSize,
+            uint32 surfaceWidth,
+            uint32 surfaceHeight
         ) -> Status;
     };
 
     [[nodiscard]]
     auto clientIntegerExtent(
         ClientGeometry const& client
-    ) -> Result<std::pair<std::uint32_t, std::uint32_t>>;
+    ) -> Result<std::pair<uint32, uint32>>;
 }

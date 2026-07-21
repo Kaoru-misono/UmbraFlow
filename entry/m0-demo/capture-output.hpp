@@ -2,10 +2,10 @@
 
 #include <controller/capture.hpp>
 #include <core/error/result.hpp>
+#include <core/types/integer.hpp>
 #include <domain/frame.hpp>
 
 #include <cstddef>
-#include <cstdint>
 #include <filesystem>
 #include <vector>
 
@@ -14,8 +14,8 @@ namespace uf::m0_demo
     [[nodiscard]]
     auto indexedOutputPath(
         std::filesystem::path const& output,
-        std::uint32_t index,
-        std::uint32_t frameCount
+        uint32 index,
+        uint32 frameCount
     ) -> std::filesystem::path;
 
     [[nodiscard]]

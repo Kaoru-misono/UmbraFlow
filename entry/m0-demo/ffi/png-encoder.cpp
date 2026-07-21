@@ -5,11 +5,11 @@
 #include <core/error/contracts.hpp>
 #include <core/numeric/checked-arithmetic.hpp>
 #include <core/numeric/checked-cast.hpp>
+#include <core/types/integer.hpp>
 #include <domain/error.hpp>
 
 #include <cerrno>
 #include <cstddef>
-#include <cstdint>
 #include <cstring>
 #include <filesystem>
 #include <format>
@@ -24,7 +24,12 @@
 #include <vector>
 
 #define STBI_WRITE_NO_STDIO
+#if !defined(__clang_analyzer__)
+// Clang cannot associate a call-site suppression with stb's internal ArrayBound
+// false positive. Keep only the third-party implementation opaque to analysis;
+// the production compiler still compiles the original implementation below.
 #define STB_IMAGE_WRITE_IMPLEMENTATION
+#endif
 // stb's stretchy buffer otherwise continues after a failed realloc in release
 // builds. A release-active check terminates before that buffer can be written.
 #define STBIW_ASSERT(condition) \
@@ -169,7 +174,7 @@ namespace
                 path.string(),
                 error.message()
             ),
-            static_cast<std::int64_t>(error.value())
+            static_cast<uf::int64>(error.value())
         );
     }
 }
@@ -178,8 +183,8 @@ namespace uf::m0_demo::ffi
 {
     auto encodeRgbaPng(
         std::filesystem::path const& path,
-        std::uint32_t width,
-        std::uint32_t height,
+        uint32 width,
+        uint32 height,
         std::span<std::byte const> pixels
     ) -> Result<std::vector<std::byte>>
     {
@@ -295,7 +300,9 @@ namespace uf::m0_demo::ffi
         // SAFETY: geometry validation proves pixels contains exactly height
         // tightly packed RGBA rows of encodedStride bytes. stb reads the span
         // synchronously, invokes the non-throwing callback with the live encoded
-        // context, and retains neither pointer after this call returns.
+        // context, and retains neither pointer after this call returns. The
+        // dimension quota also proves stb's signed row-buffer arithmetic remains
+        // positive and bounded.
         auto const encodedOk = stbi_write_png_to_func(
             appendEncodedPng,
             &encoded,
@@ -328,8 +335,8 @@ namespace uf::m0_demo::ffi
 
     auto writeRgbaPng(
         std::filesystem::path const& path,
-        std::uint32_t width,
-        std::uint32_t height,
+        uint32 width,
+        uint32 height,
         std::span<std::byte const> pixels
     ) -> Status
     {
@@ -360,9 +367,10 @@ namespace uf::m0_demo::ffi
         }
 
         errno = 0;
-        // SAFETY: encoded owns streamSize initialized bytes. char and std::byte
-        // have byte alignment, ofstream::write reads exactly the supplied range,
-        // and it retains no pointer after returning.
+        // char and std::byte share byte alignment.
+        // SAFETY: encoded owns the streamSize live bytes that ofstream::write
+        // reads synchronously without retaining the converted pointer.
+        // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast)
         auto const* source = reinterpret_cast<char const*>(encoded.data());
         stream.write(source, *streamSize);
         if (!stream)

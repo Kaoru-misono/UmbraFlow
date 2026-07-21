@@ -3,12 +3,12 @@
 #include "json-string.hpp"
 
 #include <core/error/contracts.hpp>
+#include <core/types/integer.hpp>
 #include <domain/error.hpp>
 #include <domain/time.hpp>
 
 #include <cerrno>
 #include <cstdio>
-#include <cstdint>
 #include <exception>
 #include <filesystem>
 #include <fstream>
@@ -27,6 +27,8 @@
 
 namespace
 {
+    using JsonlSinkResult = uf::Result<std::unique_ptr<uf::m0_demo::IJsonlSink>>;
+
     [[nodiscard]]
     auto currentIoError() -> std::error_code
     {
@@ -101,13 +103,28 @@ namespace
 
     class StdoutJsonlSink final : public uf::m0_demo::IJsonlSink
     {
-        std::error_code m_initializationError{configureStdoutForBinaryJsonl()};
+        struct ConfiguredTag final
+        {
+        };
 
     public:
-        [[nodiscard]]
-        auto initializationError() const noexcept -> std::error_code
+        explicit StdoutJsonlSink(ConfiguredTag) noexcept
         {
-            return m_initializationError;
+        }
+
+        [[nodiscard]]
+        static auto create() -> JsonlSinkResult
+        {
+            if (auto const error = configureStdoutForBinaryJsonl(); error)
+            {
+                return uf::fail(
+                    uf::AutomationErrorKind::InvalidResource,
+                    "cannot configure stdout log: " + error.message()
+                );
+            }
+
+            auto p_sink = std::make_unique<StdoutJsonlSink>(ConfiguredTag{});
+            return std::unique_ptr<uf::m0_demo::IJsonlSink>{std::move(p_sink)};
         }
 
         auto writeLine(std::string_view line) -> std::error_code override
@@ -127,21 +144,44 @@ namespace
 
     class FileJsonlSink final : public uf::m0_demo::IJsonlSink
     {
+        struct OpenTag final
+        {
+        };
+
         std::ofstream m_stream;
-        std::error_code m_openError{};
 
     public:
-        explicit FileJsonlSink(std::filesystem::path const& path)
+        explicit FileJsonlSink(OpenTag, std::ofstream stream)
+            : m_stream{std::move(stream)}
         {
-            errno = 0;
-            m_stream.open(path, std::ios::binary | std::ios::trunc);
-            if (!m_stream.is_open())
-            {
-                m_openError = currentIoError();
-            }
+            UF_CHECK(m_stream.is_open());
         }
 
-        [[nodiscard]] auto openError() const noexcept -> std::error_code { return m_openError; }
+        [[nodiscard]]
+        static auto create(
+            std::filesystem::path const& path
+        ) -> JsonlSinkResult
+        {
+            auto stream = std::ofstream{};
+            errno = 0;
+            stream.open(path, std::ios::binary | std::ios::trunc);
+            if (!stream.is_open())
+            {
+                return uf::fail(
+                    uf::AutomationErrorKind::InvalidResource,
+                    "cannot open log file "
+                        + path.string()
+                        + ": "
+                        + currentIoError().message()
+                );
+            }
+
+            auto p_sink = std::make_unique<FileJsonlSink>(
+                OpenTag{},
+                std::move(stream)
+            );
+            return std::unique_ptr<uf::m0_demo::IJsonlSink>{std::move(p_sink)};
+        }
 
         auto writeLine(std::string_view line) -> std::error_code override
         {
@@ -179,7 +219,7 @@ namespace uf::m0_demo
     {
     }
 
-    auto LogLine::loopIndex(std::uint32_t loopIndex) && -> LogLine
+    auto LogLine::loopIndex(uint32 loopIndex) && -> LogLine
     {
         m_loopIndex = loopIndex;
         return std::move(*this);
@@ -192,7 +232,7 @@ namespace uf::m0_demo
         return std::move(*this);
     }
 
-    auto LogLine::confidence(std::uint64_t confidenceValue) && -> LogLine
+    auto LogLine::confidence(uint64 confidenceValue) && -> LogLine
     {
         m_confidence = confidenceValue;
         return std::move(*this);
@@ -256,26 +296,12 @@ namespace uf::m0_demo
     {
         if (!path)
         {
-            auto sink = std::make_unique<StdoutJsonlSink>();
-            if (auto const error = sink->initializationError(); error)
-            {
-                return fail(
-                    AutomationErrorKind::InvalidResource,
-                    "cannot configure stdout log: " + error.message()
-                );
-            }
-            return JsonlLog{std::move(sink)};
+            UF_TRY_VALUE(p_sink, StdoutJsonlSink::create());
+            return JsonlLog{std::move(p_sink)};
         }
 
-        auto sink = std::make_unique<FileJsonlSink>(*path);
-        if (auto const error = sink->openError(); error)
-        {
-            return fail(
-                AutomationErrorKind::InvalidResource,
-                "cannot open log file " + path->string() + ": " + error.message()
-            );
-        }
-        return JsonlLog{std::move(sink)};
+        UF_TRY_VALUE(p_sink, FileJsonlSink::create(*path));
+        return JsonlLog{std::move(p_sink)};
     }
 
     auto JsonlLog::write(LogLine line) -> Status

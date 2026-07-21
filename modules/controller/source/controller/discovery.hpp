@@ -2,11 +2,11 @@
 
 #include <core/error/result.hpp>
 #include <core/safety/annotations.hpp>
+#include <core/types/integer.hpp>
 #include <core/types/strong-id.hpp>
 #include <core/types/strong-value.hpp>
 
 #include <compare>
-#include <cstdint>
 #include <filesystem>
 #include <optional>
 #include <string>
@@ -22,21 +22,21 @@ namespace uf
         struct DpiTag;
     }
 
-    using WindowHandle = StrongValue<controller_detail::WindowHandleTag, std::intptr_t>;
-    using ProcessId = StrongId<controller_detail::ProcessIdTag, std::uint32_t>;
+    using WindowHandle = StrongValue<controller_detail::WindowHandleTag, intptr>;
+    using ProcessId = StrongId<controller_detail::ProcessIdTag, uint32>;
     using ProcessStartTime = StrongValue<
         controller_detail::ProcessStartTimeTag,
-        std::uint64_t
+        uint64
     >;
-    using Dpi = StrongValue<controller_detail::DpiTag, std::uint32_t>;
+    using Dpi = StrongValue<controller_detail::DpiTag, uint32>;
 
     class ClientSize final
     {
-        std::uint32_t m_width;
-        std::uint32_t m_height;
+        uint32 m_width;
+        uint32 m_height;
 
     public:
-        constexpr ClientSize(std::uint32_t width, std::uint32_t height) noexcept
+        constexpr ClientSize(uint32 width, uint32 height) noexcept
             : m_width{width}
             , m_height{height}
         {
@@ -44,8 +44,8 @@ namespace uf
 
         auto operator<=>(ClientSize const&) const = default;
 
-        [[nodiscard]] constexpr auto width() const noexcept -> std::uint32_t { return m_width; }
-        [[nodiscard]] constexpr auto height() const noexcept -> std::uint32_t { return m_height; }
+        [[nodiscard]] constexpr auto width() const noexcept -> uint32 { return m_width; }
+        [[nodiscard]] constexpr auto height() const noexcept -> uint32 { return m_height; }
     };
 
     class TargetCandidate final

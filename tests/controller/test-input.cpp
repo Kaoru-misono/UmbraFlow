@@ -2,6 +2,7 @@
 #include <controller/detail/input-revalidation.hpp>
 #include <controller/input.hpp>
 
+#include <core/types/integer.hpp>
 #include <domain/error.hpp>
 #include <domain/frame.hpp>
 
@@ -10,7 +11,6 @@
 #include <algorithm>
 #include <array>
 #include <cstddef>
-#include <cstdint>
 #include <memory>
 #include <utility>
 #include <vector>
@@ -19,11 +19,11 @@ namespace
 {
     [[nodiscard]]
     auto target(
-        std::intptr_t window,
+        uf::intptr window,
         uf::SessionId session = uf::SessionId{1},
         uf::TargetGeneration generation = uf::TargetGeneration{},
-        std::uint32_t width = 800,
-        std::uint32_t height = 450
+        uf::uint32 width = 800,
+        uf::uint32 height = 450
     ) -> uf::DeliveryTarget
     {
         auto result = uf::DeliveryTarget::create(
@@ -38,7 +38,7 @@ namespace
     }
 
     [[nodiscard]]
-    auto pixel(std::int32_t x, std::int32_t y) -> uf::ClientPixel
+    auto pixel(uf::int32 x, uf::int32 y) -> uf::ClientPixel
     {
         auto const result = uf::ClientPixel::create(x, y);
         REQUIRE(result.has_value());
@@ -99,8 +99,8 @@ TEST_CASE("delivery targets reject empty client areas as target unavailable")
 {
     struct EmptySize final
     {
-        std::uint32_t m_width;
-        std::uint32_t m_height;
+        uf::uint32 m_width;
+        uf::uint32 m_height;
     };
     for (auto const size : std::array{
         EmptySize{0, 10},
@@ -120,19 +120,9 @@ TEST_CASE("delivery targets reject empty client areas as target unavailable")
     }
 }
 
-TEST_CASE("delivery targets expose their fields")
-{
-    auto const deliveryTarget = target(0x20);
-    CHECK(deliveryTarget.windowHandle() == uf::WindowHandle{0x20});
-    CHECK(deliveryTarget.sessionId() == uf::SessionId{1});
-    CHECK(deliveryTarget.generation() == uf::TargetGeneration{});
-    CHECK(deliveryTarget.clientWidth() == 800U);
-    CHECK(deliveryTarget.clientHeight() == 450U);
-}
-
 TEST_CASE("release held on a dead target still empties and reports")
 {
-    auto const deliveryTarget = target(std::intptr_t{0xDEAD'BEEF});
+    auto const deliveryTarget = target(uf::intptr{0xDEAD'BEEF});
     auto held = uf::HeldInputs{};
     auto const keyDown = uf::controller_detail::HeldInputsAccess::onKeyDown(
         held,

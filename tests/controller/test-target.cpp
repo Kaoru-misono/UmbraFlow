@@ -1,12 +1,12 @@
 #include <controller/detail/target-logic.hpp>
 #include <controller/target.hpp>
 
+#include <core/types/integer.hpp>
 #include <domain/error.hpp>
 
 #include <doctest/doctest.h>
 
 #include <array>
-#include <cstdint>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -16,7 +16,7 @@
 namespace
 {
     [[nodiscard]]
-    auto startTime(std::optional<std::uint64_t> value) -> std::optional<uf::ProcessStartTime>
+    auto startTime(std::optional<uf::uint64> value) -> std::optional<uf::ProcessStartTime>
     {
         if (!value)
         {
@@ -27,9 +27,9 @@ namespace
 
     [[nodiscard]]
     auto candidate(
-        std::intptr_t handle,
-        std::uint32_t process,
-        std::optional<std::uint64_t> start,
+        uf::intptr handle,
+        uf::uint32 process,
+        std::optional<uf::uint64> start,
         std::string_view windowClass,
         std::string_view title,
         uf::ClientSize clientSize
@@ -51,9 +51,9 @@ namespace
 
     [[nodiscard]]
     auto identity(
-        std::intptr_t handle,
-        std::uint32_t process,
-        std::optional<std::uint64_t> start,
+        uf::intptr handle,
+        uf::uint32 process,
+        std::optional<uf::uint64> start,
         uf::ClientSize clientSize
     ) -> uf::TargetIdentity
     {
@@ -231,7 +231,7 @@ TEST_CASE("selector and candidate diagnostics use Rust debug-string escaping")
 
 TEST_CASE("diagnostic window handles use unsigned pointer-width hexadecimal")
 {
-    auto constexpr negativeHandle = std::intptr_t{-1};
+    auto constexpr negativeHandle = uf::intptr{-1};
     auto const ambiguousCandidates = std::vector{
         candidate(negativeHandle, 100, 1, "A", "one", uf::ClientSize{800, 600}),
         candidate(0x20, 200, 2, "B", "two", uf::ClientSize{640, 480}),
@@ -261,7 +261,7 @@ TEST_CASE("diagnostic window handles use unsigned pointer-width hexadecimal")
     REQUIRE_FALSE(conflicting.has_value());
 
     auto expectedHandle = std::string{"0x"};
-    expectedHandle.append(sizeof(std::uintptr_t) * 2U, 'f');
+    expectedHandle.append(sizeof(uf::uintptr) * 2U, 'f');
     auto const messages = std::array{
         std::string{ambiguous.error().message()},
         std::string{missing.error().message()},

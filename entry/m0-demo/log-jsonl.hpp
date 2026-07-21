@@ -2,9 +2,9 @@
 
 #include <core/error/result.hpp>
 #include <core/time/monotonic-time.hpp>
+#include <core/types/integer.hpp>
 #include <domain/frame.hpp>
 
-#include <cstdint>
 #include <filesystem>
 #include <memory>
 #include <optional>
@@ -16,22 +16,22 @@ namespace uf::m0_demo
 {
     struct LogLine final
     {
-        std::uint64_t m_elapsedNanoseconds{};
-        std::optional<std::uint32_t> m_loopIndex{};
+        uint64 m_elapsedNanoseconds{};
+        std::optional<uint32> m_loopIndex{};
         std::string m_phase;
         std::string m_event;
-        std::optional<std::uint64_t> m_frameId{};
-        std::optional<std::uint64_t> m_targetGeneration{};
-        std::optional<std::uint64_t> m_confidence{};
+        std::optional<uint64> m_frameId{};
+        std::optional<uint64> m_targetGeneration{};
+        std::optional<uint64> m_confidence{};
         std::optional<bool> m_leaseOk{};
         std::string m_outcome{"info"};
         std::string m_detail{};
 
         LogLine(std::string phase, std::string event);
 
-        [[nodiscard]] auto loopIndex(std::uint32_t loopIndex) && -> LogLine;
+        [[nodiscard]] auto loopIndex(uint32 loopIndex) && -> LogLine;
         [[nodiscard]] auto frame(Frame const& frame) && -> LogLine;
-        [[nodiscard]] auto confidence(std::uint64_t confidence) && -> LogLine;
+        [[nodiscard]] auto confidence(uint64 confidence) && -> LogLine;
         [[nodiscard]] auto leaseOk(bool leaseOk) && -> LogLine;
         [[nodiscard]] auto outcome(std::string outcome) && -> LogLine;
         [[nodiscard]] auto detail(std::string detail) && -> LogLine;

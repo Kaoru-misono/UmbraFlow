@@ -1,5 +1,6 @@
 #include "input.hpp"
 
+#include <core/types/integer.hpp>
 #include <domain/error.hpp>
 
 #include <format>
@@ -14,7 +15,7 @@ namespace uf
     auto HeldInputs::identity(DeliveryTarget const& target) noexcept -> DeliveryIdentity
     {
         return DeliveryIdentity{
-            .m_window = static_cast<std::uintptr_t>(target.windowHandle().value()),
+            .m_window = static_cast<uintptr>(target.windowHandle().value()),
             .m_sessionId = target.sessionId(),
             .m_generation = target.generation(),
         };

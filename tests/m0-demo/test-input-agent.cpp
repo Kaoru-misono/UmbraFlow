@@ -3,9 +3,11 @@
 #include <input-agent-protocol.hpp>
 #include <input-agent.hpp>
 #include <path-validation.hpp>
+#include <platform/windows-file-writer.hpp>
 
 #include <controller/detail/input-guard.hpp>
 #include <controller/input.hpp>
+#include <core/types/integer.hpp>
 #include <core/utility/scope-exit.hpp>
 #include <domain/error.hpp>
 #include <domain/frame.hpp>
@@ -16,9 +18,10 @@
 #include <array>
 #include <chrono>
 #include <cstddef>
-#include <cstdint>
 #include <filesystem>
+#include <fstream>
 #include <format>
+#include <ios>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -103,6 +106,49 @@ namespace
         );
         REQUIRE(click != nullptr);
         return *click;
+    }
+
+    [[nodiscard]]
+    auto createTemporaryDirectory(std::string_view role) -> std::filesystem::path
+    {
+        auto const token = std::chrono::steady_clock::now()
+            .time_since_epoch()
+            .count();
+        auto const path = std::filesystem::temp_directory_path()
+            / std::format("umbraflow-{}-{}", role, token);
+        auto error = std::error_code{};
+        auto const created = std::filesystem::create_directory(path, error);
+        REQUIRE(created);
+        REQUIRE_FALSE(error);
+        return path;
+    }
+
+    auto removeAllBestEffort(std::filesystem::path const& path) noexcept -> void
+    {
+        try
+        {
+            auto error = std::error_code{};
+            static_cast<void>(std::filesystem::remove_all(path, error));
+        }
+        catch (...)
+        {
+        }
+    }
+
+    auto writeQueue(
+        std::filesystem::path const& path,
+        std::string_view content,
+        std::ios::openmode mode
+    ) -> void
+    {
+        auto stream = std::ofstream{path, std::ios::binary | mode};
+        REQUIRE(stream.is_open());
+        stream.write(
+            content.data(),
+            static_cast<std::streamsize>(content.size())
+        );
+        stream.flush();
+        REQUIRE(stream.good());
     }
 }
 
@@ -263,13 +309,205 @@ TEST_CASE("m0 input-agent confines output paths to its canonical directory")
     }
 }
 
+TEST_CASE("m0 input-agent queue reader preserves incremental line framing")
+{
+    auto const directory = createTemporaryDirectory("input-agent-queue-lines");
+    auto const cleanup = uf::scopeExit(
+        [cleanupPath = directory]() noexcept
+        {
+            removeAllBestEffort(cleanupPath);
+        }
+    );
+    auto const queue = directory / "queue.jsonl";
+    writeQueue(queue, "", std::ios::trunc);
+
+    auto reader = uf::m0_demo::InputAgentQueueReader::create(queue);
+    REQUIRE(reader.has_value());
+
+    writeQueue(queue, "partial", std::ios::app);
+    auto first = reader->readAvailable();
+    REQUIRE(first.has_value());
+    CHECK(first->empty());
+
+    writeQueue(queue, "-one\r\nsecond\nthird", std::ios::app);
+    auto second = reader->readAvailable();
+    REQUIRE(second.has_value());
+    REQUIRE(second->size() == 2U);
+    CHECK((*second)[0] == "partial-one");
+    CHECK((*second)[1] == "second");
+
+    writeQueue(queue, "-tail\nfour\n", std::ios::app);
+    auto third = reader->readAvailable();
+    REQUIRE(third.has_value());
+    REQUIRE(third->size() == 2U);
+    CHECK((*third)[0] == "third-tail");
+    CHECK((*third)[1] == "four");
+}
+
+TEST_CASE("m0 input-agent queue reader rejects truncation")
+{
+    auto const directory = createTemporaryDirectory("input-agent-queue-truncate");
+    auto const cleanup = uf::scopeExit(
+        [cleanupPath = directory]() noexcept
+        {
+            removeAllBestEffort(cleanupPath);
+        }
+    );
+    auto const queue = directory / "queue.jsonl";
+    writeQueue(queue, "first\n", std::ios::trunc);
+
+    auto reader = uf::m0_demo::InputAgentQueueReader::create(queue);
+    REQUIRE(reader.has_value());
+    auto const first = reader->readAvailable();
+    REQUIRE(first.has_value());
+    REQUIRE(first->size() == 1U);
+
+    writeQueue(queue, "x", std::ios::trunc);
+    auto const truncated = reader->readAvailable();
+    REQUIRE_FALSE(truncated.has_value());
+    test_m0_demo::requireErrorKind(
+        truncated.error(),
+        uf::AutomationErrorKind::InvalidResource
+    );
+    CHECK(truncated.error().message().contains("was truncated"));
+}
+
+TEST_CASE("m0 input-agent queue reader bounds unterminated commands")
+{
+    auto const directory = createTemporaryDirectory("input-agent-queue-limit");
+    auto const cleanup = uf::scopeExit(
+        [cleanupPath = directory]() noexcept
+        {
+            removeAllBestEffort(cleanupPath);
+        }
+    );
+    auto const queue = directory / "queue.jsonl";
+    writeQueue(queue, "", std::ios::trunc);
+
+    auto reader = uf::m0_demo::InputAgentQueueReader::create(queue);
+    REQUIRE(reader.has_value());
+    auto constexpr maximumPendingBytes = std::size_t{1024} * 1024U;
+    auto constexpr readsPerMebibyte = std::size_t{16};
+    auto const maximumLine = std::string(maximumPendingBytes, 'a');
+    writeQueue(queue, maximumLine, std::ios::app);
+    for (auto index = std::size_t{}; index < readsPerMebibyte; ++index)
+    {
+        auto const chunk = reader->readAvailable();
+        REQUIRE(chunk.has_value());
+        CHECK(chunk->empty());
+    }
+
+    writeQueue(queue, "\n", std::ios::app);
+    auto const boundary = reader->readAvailable();
+    REQUIRE(boundary.has_value());
+    REQUIRE(boundary->size() == 1U);
+    CHECK(boundary->front().size() == maximumPendingBytes);
+
+    auto oversizedLine = std::string(maximumPendingBytes + 1U, 'b');
+    oversizedLine += '\n';
+    writeQueue(queue, oversizedLine, std::ios::app);
+    for (auto index = std::size_t{}; index < readsPerMebibyte; ++index)
+    {
+        auto const chunk = reader->readAvailable();
+        REQUIRE(chunk.has_value());
+        CHECK(chunk->empty());
+    }
+    auto const oversized = reader->readAvailable();
+    REQUIRE_FALSE(oversized.has_value());
+    test_m0_demo::requireErrorKind(
+        oversized.error(),
+        uf::AutomationErrorKind::InvalidResource
+    );
+    CHECK(oversized.error().message().contains("exceeding 1048576 bytes"));
+}
+
+TEST_CASE("m0 input-agent file writer validates the opened output path")
+{
+    auto const directory = createTemporaryDirectory("input-agent-output-handle");
+    auto const cleanup = uf::scopeExit(
+        [cleanupPath = directory]() noexcept
+        {
+            removeAllBestEffort(cleanupPath);
+        }
+    );
+    auto const allowedDirectory = directory / "allowed";
+    auto const outsideDirectory = directory / "outside";
+    auto const nestedRoot = allowedDirectory / "nested";
+    auto const nestedDirectory = nestedRoot / "deeper";
+    auto error = std::error_code{};
+    REQUIRE(std::filesystem::create_directory(allowedDirectory, error));
+    REQUIRE_FALSE(error);
+    REQUIRE(std::filesystem::create_directory(outsideDirectory, error));
+    REQUIRE_FALSE(error);
+    REQUIRE(std::filesystem::create_directory(nestedRoot, error));
+    REQUIRE_FALSE(error);
+    REQUIRE(std::filesystem::create_directory(nestedDirectory, error));
+    REQUIRE_FALSE(error);
+
+    auto const canonicalAllowed = uf::m0_demo::canonicalizeOutputDirectory(
+        allowedDirectory
+    );
+    REQUIRE(canonicalAllowed.has_value());
+    auto const outsidePath = outsideDirectory / "escaped.png";
+    auto const rejected = uf::m0_demo::platform::FileWriter::createExclusive(
+        outsidePath,
+        *canonicalAllowed
+    );
+    REQUIRE_FALSE(rejected.has_value());
+    test_m0_demo::requireErrorKind(
+        rejected.error(),
+        uf::AutomationErrorKind::InvalidResource
+    );
+    CHECK_FALSE(std::filesystem::exists(outsidePath));
+
+    auto const unsafeComponent = allowedDirectory / "carrier.png:stream";
+    auto const unsafe = uf::m0_demo::platform::FileWriter::createExclusive(
+        unsafeComponent,
+        *canonicalAllowed
+    );
+    REQUIRE_FALSE(unsafe.has_value());
+    test_m0_demo::requireErrorKind(
+        unsafe.error(),
+        uf::AutomationErrorKind::InvalidResource
+    );
+    CHECK_FALSE(std::filesystem::exists(allowedDirectory / "carrier.png"));
+
+    auto const allowedPath = nestedDirectory / "capture.png";
+    auto const movedDirectory = outsideDirectory / "moved";
+    {
+        auto writer = uf::m0_demo::platform::FileWriter::createExclusive(
+            allowedPath,
+            *canonicalAllowed
+        );
+        REQUIRE(writer.has_value());
+        CHECK(std::filesystem::exists(allowedPath));
+
+        auto const duplicate = uf::m0_demo::platform::FileWriter::createExclusive(
+            allowedPath,
+            *canonicalAllowed
+        );
+        REQUIRE_FALSE(duplicate.has_value());
+        CHECK(std::filesystem::exists(allowedPath));
+
+        error.clear();
+        std::filesystem::rename(nestedRoot, movedDirectory, error);
+        CHECK(error);
+        CHECK(std::filesystem::exists(allowedPath));
+    }
+
+    error.clear();
+    std::filesystem::rename(nestedRoot, movedDirectory, error);
+    CHECK_FALSE(error);
+    CHECK(std::filesystem::exists(movedDirectory / "deeper" / "capture.png"));
+}
+
 TEST_CASE("m0 input-agent clears per-command audit state across many clicks")
 {
     auto audit = uf::AuditLog{};
     auto maximumRecords = std::size_t{};
     for (auto command = std::size_t{}; command < 10'000U; ++command)
     {
-        for (auto message = std::uint32_t{}; message < 3U; ++message)
+        for (auto message = uf::uint32{}; message < 3U; ++message)
         {
             uf::controller_detail::AuditLogAccess::record(
                 audit,

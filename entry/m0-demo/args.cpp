@@ -1,6 +1,7 @@
 #include "args.hpp"
 
 #include <core/numeric/checked-cast.hpp>
+#include <core/types/integer.hpp>
 #include <domain/error.hpp>
 
 #include <array>
@@ -9,7 +10,6 @@
 #include <cmath>
 #include <concepts>
 #include <cstddef>
-#include <cstdint>
 #include <format>
 #include <limits>
 #include <memory>
@@ -23,7 +23,7 @@
 
 namespace
 {
-    constexpr auto maximumAveragePixelSad = std::uint64_t{255};
+    constexpr auto g_maximumAveragePixelSad = uf::uint64{255};
 
     [[nodiscard]]
     auto isValueFlag(std::string_view flag) noexcept -> bool
@@ -140,7 +140,7 @@ namespace
     auto parseWindowHandle(
         std::string_view value,
         std::string_view flag
-    ) -> uf::Result<std::intptr_t>
+    ) -> uf::Result<uf::intptr>
     {
         auto base = 10;
         if (value.starts_with("0x") || value.starts_with("0X"))
@@ -149,8 +149,8 @@ namespace
             base = 16;
         }
 
-        UF_TRY_VALUE(parsed, parseInteger<std::int64_t>(value, flag, base));
-        auto const converted = uf::checkedCast<std::intptr_t>(parsed);
+        UF_TRY_VALUE(parsed, parseInteger<uf::int64>(value, flag, base));
+        auto const converted = uf::checkedCast<uf::intptr>(parsed);
         if (!converted)
         {
             return invalid(
@@ -172,7 +172,7 @@ namespace
     {
         if (flag == "--pid")
         {
-            UF_TRY_VALUE(parsed, parseInteger<std::uint32_t>(value, flag));
+            UF_TRY_VALUE(parsed, parseInteger<uf::uint32>(value, flag));
             selector.m_process = parsed;
             return uf::ok();
         }
@@ -221,11 +221,11 @@ namespace
         std::string_view flag
     ) -> uf::Result<uf::MonotonicInstant::Duration>
     {
-        UF_TRY_VALUE(milliseconds, parseInteger<std::uint64_t>(value, flag));
+        UF_TRY_VALUE(milliseconds, parseInteger<uf::uint64>(value, flag));
         using Milliseconds = std::chrono::milliseconds;
         using Duration = uf::MonotonicInstant::Duration;
         auto const maximum = std::chrono::duration_cast<Milliseconds>(Duration::max());
-        auto const maximumCount = uf::checkedCast<std::uint64_t>(maximum.count());
+        auto const maximumCount = uf::checkedCast<uf::uint64>(maximum.count());
         if (!maximumCount || milliseconds > *maximumCount)
         {
             return invalid(
@@ -266,7 +266,7 @@ namespace
         std::string_view flag
     ) -> uf::Result<uf::MonotonicInstant::Duration>
     {
-        UF_TRY_VALUE(seconds, parseInteger<std::uint64_t>(value, flag));
+        UF_TRY_VALUE(seconds, parseInteger<uf::uint64>(value, flag));
         if (seconds == 0U)
         {
             return invalid(
@@ -277,7 +277,7 @@ namespace
         using Seconds = std::chrono::seconds;
         using Duration = uf::MonotonicInstant::Duration;
         auto const maximum = std::chrono::duration_cast<Seconds>(Duration::max());
-        auto const maximumCount = uf::checkedCast<std::uint64_t>(maximum.count());
+        auto const maximumCount = uf::checkedCast<uf::uint64>(maximum.count());
         if (!maximumCount || seconds > *maximumCount)
         {
             return invalid(std::format("{} second count is too large", flag));
@@ -396,8 +396,8 @@ namespace
             maximum = value.substr(dash + 1U);
         }
 
-        UF_TRY_VALUE(minimumMilliseconds, parseInteger<std::uint64_t>(minimum, flag));
-        UF_TRY_VALUE(maximumMilliseconds, parseInteger<std::uint64_t>(maximum, flag));
+        UF_TRY_VALUE(minimumMilliseconds, parseInteger<uf::uint64>(minimum, flag));
+        UF_TRY_VALUE(maximumMilliseconds, parseInteger<uf::uint64>(maximum, flag));
         return uf::m0_demo::ClickDelay::create(
             minimumMilliseconds,
             maximumMilliseconds
@@ -430,9 +430,9 @@ namespace uf::m0_demo
         auto resultRoi = std::optional<Rect<FrameSpace>>{};
         auto resetTemplate = std::optional<std::filesystem::path>{};
         auto resetRoi = std::optional<Rect<FrameSpace>>{};
-        auto threshold = std::optional<std::uint64_t>{};
+        auto threshold = std::optional<uint64>{};
         auto mode = Mode::Guard;
-        auto loops = std::uint32_t{1};
+        auto loops = uint32{1};
         auto maxActionFrameAge = std::chrono::duration_cast<MonotonicInstant::Duration>(
             std::chrono::milliseconds{750}
         );
@@ -490,7 +490,7 @@ namespace uf::m0_demo
             }
             else if (flag == "--threshold")
             {
-                UF_TRY_VALUE(parsed, parseInteger<std::uint64_t>(value, flag));
+                UF_TRY_VALUE(parsed, parseInteger<uint64>(value, flag));
                 threshold = parsed;
             }
             else if (flag == "--mode")
@@ -500,7 +500,7 @@ namespace uf::m0_demo
             }
             else if (flag == "--loops")
             {
-                UF_TRY_VALUE(parsed, parseInteger<std::uint32_t>(value, flag));
+                UF_TRY_VALUE(parsed, parseInteger<uint32>(value, flag));
                 loops = parsed;
             }
             else if (flag == "--max-action-frame-age")
@@ -520,7 +520,7 @@ namespace uf::m0_demo
             }
             else if (flag == "--seed")
             {
-                UF_TRY_VALUE(parsed, parseInteger<std::uint64_t>(value, flag));
+                UF_TRY_VALUE(parsed, parseInteger<uint64>(value, flag));
                 seed = parsed;
             }
             else if (flag == "--log")
@@ -535,30 +535,30 @@ namespace uf::m0_demo
             return invalid("--loops must be at least 1, got 0");
         }
 
-        UF_TRY_VALUE(requiredThreshold, require(std::move(threshold), "--threshold"));
-        if (requiredThreshold > maximumAveragePixelSad)
+        UF_TRY_VALUE(requiredThreshold, require(threshold, "--threshold"));
+        if (requiredThreshold > g_maximumAveragePixelSad)
         {
             return invalid(
                 std::format(
                     "--threshold must be in 0..={}, got {}",
-                    maximumAveragePixelSad,
+                    g_maximumAveragePixelSad,
                     requiredThreshold
                 )
             );
         }
 
         UF_TRY_VALUE(requiredHomeTemplate, require(std::move(homeTemplate), "--home-template"));
-        UF_TRY_VALUE(requiredHomeRoi, require(std::move(homeRoi), "--home-roi"));
+        UF_TRY_VALUE(requiredHomeRoi, require(homeRoi, "--home-roi"));
         UF_TRY_VALUE(
             requiredResultTemplate,
             require(std::move(resultTemplate), "--result-template")
         );
-        UF_TRY_VALUE(requiredResultRoi, require(std::move(resultRoi), "--result-roi"));
+        UF_TRY_VALUE(requiredResultRoi, require(resultRoi, "--result-roi"));
         UF_TRY_VALUE(
             requiredResetTemplate,
             require(std::move(resetTemplate), "--reset-template")
         );
-        UF_TRY_VALUE(requiredResetRoi, require(std::move(resetRoi), "--reset-roi"));
+        UF_TRY_VALUE(requiredResetRoi, require(resetRoi, "--reset-roi"));
 
         return Args{
             .m_selector = std::move(selector),
@@ -613,7 +613,7 @@ namespace uf::m0_demo
             }
             else if (flag == "--frames")
             {
-                UF_TRY_VALUE(parsed, parseInteger<std::uint32_t>(value, flag));
+                UF_TRY_VALUE(parsed, parseInteger<uint32>(value, flag));
                 frames = parsed;
             }
             else if (flag == "--interval-ms")
@@ -652,7 +652,7 @@ namespace uf::m0_demo
         std::span<std::string const> raw
     ) -> Result<InputAgentArgs>
     {
-        auto windowHandle = std::optional<std::intptr_t>{};
+        auto windowHandle = std::optional<intptr>{};
         auto queue = std::optional<std::filesystem::path>{};
         auto results = std::optional<std::filesystem::path>{};
         auto outputDirectory = std::optional<std::filesystem::path>{};

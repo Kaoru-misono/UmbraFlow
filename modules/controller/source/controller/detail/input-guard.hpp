@@ -2,7 +2,7 @@
 
 #include "controller/input.hpp"
 
-#include <cstdint>
+#include <core/types/integer.hpp>
 
 namespace uf::controller_detail
 {
@@ -11,9 +11,9 @@ namespace uf::controller_detail
         static auto record(
             AuditLog& audit,
             WindowHandle windowHandle,
-            std::uint32_t message,
-            std::uintptr_t wParam,
-            std::intptr_t lParam
+            uint32 message,
+            uintptr wParam,
+            intptr lParam
         ) -> void
         {
             audit.record(windowHandle, message, wParam, lParam);

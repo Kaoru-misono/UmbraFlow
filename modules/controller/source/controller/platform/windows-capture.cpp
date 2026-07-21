@@ -8,6 +8,7 @@
 #include <core/error/contracts.hpp>
 #include <core/numeric/checked-arithmetic.hpp>
 #include <core/numeric/checked-cast.hpp>
+#include <core/types/integer.hpp>
 #include <core/utility/scope-exit.hpp>
 #include <domain/error.hpp>
 
@@ -29,10 +30,11 @@
 #include <winrt/base.h>
 #pragma warning(pop)
 
+#include <atomic>
+#include <bit>
 #include <concepts>
 #include <condition_variable>
 #include <cstddef>
-#include <cstdint>
 #include <format>
 #include <functional>
 #include <memory>
@@ -53,15 +55,26 @@ namespace
 {
     using CaptureFrame = winrt::Windows::Graphics::Capture::Direct3D11CaptureFrame;
     using CaptureFramePool = winrt::Windows::Graphics::Capture::Direct3D11CaptureFramePool;
+    using CaptureFramePoolStatics =
+        winrt::Windows::Graphics::Capture::IDirect3D11CaptureFramePoolStatics2;
     using CaptureItem = winrt::Windows::Graphics::Capture::GraphicsCaptureItem;
     using CaptureSession = winrt::Windows::Graphics::Capture::GraphicsCaptureSession;
+    using CaptureSessionStatics =
+        winrt::Windows::Graphics::Capture::IGraphicsCaptureSessionStatics;
     using Direct3DDevice =
         winrt::Windows::Graphics::DirectX::Direct3D11::IDirect3DDevice;
     using DxgiInterfaceAccess =
         ::Windows::Graphics::DirectX::Direct3D11::IDirect3DDxgiInterfaceAccess;
     using PixelFormat = winrt::Windows::Graphics::DirectX::DirectXPixelFormat;
-    constexpr auto framePoolBufferCount = std::int32_t{2};
-    constexpr auto capturePixelFormat = PixelFormat::B8G8R8A8UIntNormalized;
+    constexpr auto g_framePoolBufferCount = uf::int32{2};
+    constexpr auto g_capturePixelFormat = PixelFormat::B8G8R8A8UIntNormalized;
+
+    [[nodiscard]]
+    auto windowMarkerSequence() noexcept -> std::atomic_uint64_t&
+    {
+        static auto s_sequence = std::atomic_uint64_t{1U};
+        return s_sequence;
+    }
 
     [[nodiscard]]
     auto captureUnavailable(std::string message) -> std::unexpected<uf::Error>
@@ -82,7 +95,7 @@ namespace
             std::format(
                 "{}: HRESULT {:#010x}",
                 context,
-                static_cast<std::uint32_t>(result)
+                static_cast<uf::uint32>(result)
             )
         );
     }
@@ -122,8 +135,9 @@ namespace
     auto toNativeHandle(uf::WindowHandle handle) noexcept -> HWND
     {
         // SAFETY: WindowHandle stores the pointer-sized integer representation copied
-        // from an HWND. The boundary restores that opaque token without dereferencing it.
-        return reinterpret_cast<HWND>(handle.value());
+        // from an HWND. bit_cast restores those exact bits as the opaque token without
+        // dereferencing it.
+        return std::bit_cast<HWND>(handle.value());
     }
 
     struct D3d11Objects final
@@ -248,6 +262,12 @@ namespace
                 }
             )
         );
+        if (!runtimeDevice)
+        {
+            return captureUnavailable(
+                "IInspectable returned no IDirect3DDevice"
+            );
+        }
 
         return D3dDevice{
             std::move(native.m_device),
@@ -259,8 +279,8 @@ namespace
     class StagingTexture final
     {
         winrt::com_ptr<ID3D11Texture2D> m_texture;
-        std::uint32_t m_width{};
-        std::uint32_t m_height{};
+        uf::uint32 m_width{};
+        uf::uint32 m_height{};
         DXGI_FORMAT m_format{DXGI_FORMAT_UNKNOWN};
 
     public:
@@ -319,8 +339,8 @@ namespace
 
     struct SurfaceReadback final
     {
-        std::uint32_t m_sourceWidth;
-        std::uint32_t m_sourceHeight;
+        uf::uint32 m_sourceWidth;
+        uf::uint32 m_sourceHeight;
         std::vector<std::byte> m_pixels;
     };
 
@@ -476,7 +496,7 @@ namespace
     }
 
     [[nodiscard]]
-    auto currentOsBuild() -> uf::Result<std::uint32_t>
+    auto currentOsBuild() -> uf::Result<uf::uint32>
     {
         auto information = RTL_OSVERSIONINFOW{};
         auto const informationSize = uf::checkedCast<ULONG>(sizeof(information));
@@ -496,20 +516,11 @@ namespace
             );
         }
 
-        return static_cast<std::uint32_t>(information.dwBuildNumber);
+        return static_cast<uf::uint32>(information.dwBuildNumber);
     }
 
-    // WGC CreateForWindow captures DWM-composed non-client chrome. Resolve the client's
-    // frame-relative origin from ClientToScreen(0, 0) minus the visible DWM extended-frame
-    // top-left. GetWindowRect is deliberately not used because its invisible resize border
-    // would introduce a monitor/DPI-dependent crop and click offset.
     [[nodiscard]]
-    auto resolveClientCrop(
-        HWND windowHandle,
-        std::uint32_t frameWidth,
-        std::uint32_t frameHeight,
-        uf::ClientGeometry const& client
-    ) -> uf::Result<uf::controller_detail::ClientCropRect>
+    auto clientOriginOnDesktop(HWND windowHandle) -> uf::Result<POINT>
     {
         auto clientOrigin = POINT{.x = 0, .y = 0};
         // SAFETY: ClientToScreen translates the live in/out clientOrigin point for the
@@ -520,6 +531,22 @@ namespace
                 "ClientToScreen failed to translate the client origin"
             );
         }
+        return clientOrigin;
+    }
+
+    // WGC CreateForWindow captures DWM-composed non-client chrome. Resolve the client's
+    // frame-relative origin from ClientToScreen(0, 0) minus the visible DWM extended-frame
+    // top-left. GetWindowRect is deliberately not used because its invisible resize border
+    // would introduce a monitor/DPI-dependent crop and click offset.
+    [[nodiscard]]
+    auto resolveClientCrop(
+        HWND windowHandle,
+        uf::uint32 frameWidth,
+        uf::uint32 frameHeight,
+        uf::ClientGeometry const& client
+    ) -> uf::Result<uf::controller_detail::ClientCropRect>
+    {
+        UF_TRY_VALUE(clientOrigin, clientOriginOnDesktop(windowHandle));
 
         auto bounds = RECT{};
         auto const boundsSize = uf::checkedCast<DWORD>(sizeof(bounds));
@@ -544,24 +571,24 @@ namespace
         }
 
         auto const offsetX = uf::checkedSubtract(
-            static_cast<std::int32_t>(clientOrigin.x),
-            static_cast<std::int32_t>(bounds.left)
+            static_cast<uf::int32>(clientOrigin.x),
+            static_cast<uf::int32>(bounds.left)
         );
         if (!offsetX)
         {
             return captureUnavailable("client x offset computation overflowed");
         }
         auto const offsetY = uf::checkedSubtract(
-            static_cast<std::int32_t>(clientOrigin.y),
-            static_cast<std::int32_t>(bounds.top)
+            static_cast<uf::int32>(clientOrigin.y),
+            static_cast<uf::int32>(bounds.top)
         );
         if (!offsetY)
         {
             return captureUnavailable("client y offset computation overflowed");
         }
         auto const extendedWidth = uf::checkedSubtract(
-            static_cast<std::int32_t>(bounds.right),
-            static_cast<std::int32_t>(bounds.left)
+            static_cast<uf::int32>(bounds.right),
+            static_cast<uf::int32>(bounds.left)
         );
         if (!extendedWidth)
         {
@@ -570,8 +597,8 @@ namespace
             );
         }
         auto const extendedHeight = uf::checkedSubtract(
-            static_cast<std::int32_t>(bounds.bottom),
-            static_cast<std::int32_t>(bounds.top)
+            static_cast<uf::int32>(bounds.bottom),
+            static_cast<uf::int32>(bounds.top)
         );
         if (!extendedHeight)
         {
@@ -606,6 +633,181 @@ namespace
         std::mutex m_mutex;
         std::condition_variable m_arrived;
         std::optional<CapturedArrival> m_latest;
+        bool m_acceptingFrames{true};
+        std::atomic_bool m_itemClosed{false};
+        std::atomic<HRESULT> m_callbackFailure{S_OK};
+    };
+
+    auto recordFrameCallbackFailure(
+        std::shared_ptr<FrameSlot> const& p_slot,
+        HRESULT failure
+    ) noexcept -> void
+    {
+        try
+        {
+            auto lock = std::lock_guard{p_slot->m_mutex};
+            p_slot->m_callbackFailure.store(
+                failure,
+                std::memory_order_release
+            );
+        }
+        catch (...)
+        {
+            p_slot->m_callbackFailure.store(
+                failure,
+                std::memory_order_release
+            );
+        }
+        p_slot->m_arrived.notify_all();
+    }
+
+    class WindowInstanceMarker final
+    {
+        HWND m_window{};
+        std::wstring m_name;
+        winrt::handle m_token;
+
+        WindowInstanceMarker(
+            HWND window,
+            std::wstring name,
+            winrt::handle token
+        ) noexcept
+            : m_window{window}
+            , m_name{std::move(name)}
+            , m_token{std::move(token)}
+        {
+        }
+
+        auto disarm() noexcept -> void
+        {
+            m_window = nullptr;
+        }
+
+        auto bestEffortClose() noexcept -> void
+        {
+            try
+            {
+                static_cast<void>(close());
+            }
+            catch (...)
+            {
+            }
+        }
+
+    public:
+        WindowInstanceMarker(WindowInstanceMarker const&) = delete;
+        auto operator=(WindowInstanceMarker const&) -> WindowInstanceMarker& = delete;
+
+        WindowInstanceMarker(WindowInstanceMarker&& other) noexcept
+            : m_window{std::exchange(other.m_window, nullptr)}
+            , m_name{std::move(other.m_name)}
+            , m_token{std::move(other.m_token)}
+        {
+        }
+
+        auto operator=(WindowInstanceMarker&&) -> WindowInstanceMarker& = delete;
+
+        ~WindowInstanceMarker() { bestEffortClose(); }
+
+        [[nodiscard]]
+        static auto create(HWND window) -> uf::Result<WindowInstanceMarker>
+        {
+            auto token = winrt::handle{CreateEventW(nullptr, FALSE, FALSE, nullptr)};
+            if (!token)
+            {
+                return captureUnavailable(
+                    std::format(
+                        "failed to allocate capture window identity token (Win32 error {})",
+                        GetLastError()
+                    )
+                );
+            }
+
+            auto const sequence = windowMarkerSequence().fetch_add(
+                1U,
+                std::memory_order_relaxed
+            );
+            if (sequence == 0U)
+            {
+                return captureUnavailable(
+                    "capture window identity sequence was exhausted"
+                );
+            }
+            auto name = std::format(
+                L"UmbraFlow.WgcCapture.{}.{}",
+                GetCurrentProcessId(),
+                sequence
+            );
+            if (SetPropW(window, name.c_str(), token.get()) == FALSE)
+            {
+                return captureUnavailable(
+                    std::format(
+                        "failed to bind capture session to the target window instance (Win32 error {})",
+                        GetLastError()
+                    )
+                );
+            }
+
+            return WindowInstanceMarker{
+                window,
+                std::move(name),
+                std::move(token)
+            };
+        }
+
+        [[nodiscard]] auto matches() const noexcept -> bool
+        {
+            return m_window != nullptr
+                && m_token
+                && GetPropW(m_window, m_name.c_str()) == m_token.get();
+        }
+
+        [[nodiscard]] auto window() const noexcept -> HWND { return m_window; }
+
+        [[nodiscard]]
+        auto close() -> uf::Status
+        {
+            if (m_window == nullptr)
+            {
+                return uf::ok();
+            }
+            if (
+                !m_token
+                || m_name.empty()
+                || GetPropW(m_window, m_name.c_str()) != m_token.get()
+            )
+            {
+                disarm();
+                return uf::ok();
+            }
+
+            SetLastError(ERROR_SUCCESS);
+            auto const removed = RemovePropW(m_window, m_name.c_str());
+            if (removed == nullptr)
+            {
+                auto const error = GetLastError();
+                if (GetPropW(m_window, m_name.c_str()) != m_token.get())
+                {
+                    disarm();
+                    return uf::ok();
+                }
+                return captureUnavailable(
+                    std::format(
+                        "failed to release capture window identity marker (Win32 error {})",
+                        error
+                    )
+                );
+            }
+
+            disarm();
+            if (removed != m_token.get())
+            {
+                return captureUnavailable(
+                    "capture window identity marker changed while it was being released"
+                );
+            }
+            return uf::ok();
+        }
     };
 
     template <typename Closable>
@@ -620,20 +822,26 @@ namespace
         }
     }
 
-    auto clearLatestFrame(std::shared_ptr<FrameSlot> const& p_slot) noexcept -> void
+    [[nodiscard]]
+    auto clearLatestFrame(std::shared_ptr<FrameSlot> const& p_slot) -> uf::Status
     {
-        try
+        auto lock = std::lock_guard{p_slot->m_mutex};
+        if (!p_slot->m_latest)
         {
-            auto lock = std::lock_guard{p_slot->m_mutex};
-            if (p_slot->m_latest)
-            {
-                closeIgnoringErrors(p_slot->m_latest->m_frame);
-                p_slot->m_latest.reset();
-            }
+            return uf::ok();
         }
-        catch (...)
-        {
-        }
+
+        UF_TRY(
+            winrtCall(
+                "Direct3D11CaptureFrame::Close",
+                [&p_slot]
+                {
+                    p_slot->m_latest->m_frame.Close();
+                }
+            )
+        );
+        p_slot->m_latest.reset();
+        return uf::ok();
     }
 }
 
@@ -653,30 +861,43 @@ namespace uf
         // Retained so the capture item outlives the session that references it.
         CaptureItem m_item;
         winrt::event_token m_frameArrivedToken;
+        winrt::event_token m_itemClosedToken;
         std::shared_ptr<FrameSlot> m_frameSlot;
         controller_detail::StallTracker m_stall;
         SessionId m_sessionId;
         controller_detail::FrameIdCounter m_frameIds;
         TargetGeneration m_targetGeneration;
+        WindowInstanceMarker m_windowMarker;
         ClientGeometry m_client;
         controller_detail::ClientCropRect m_crop;
         WgcCaptureOptions m_options;
         controller_detail::CaptureGeometryState m_geometry;
         StagingTexture m_staging;
         CaptureHygiene m_hygiene;
+        bool m_sessionOpen;
+        bool m_frameArrivedRegistered;
+        bool m_itemClosedRegistered;
+        bool m_framePoolOpen;
         bool m_closed;
 
     public:
+        Impl(Impl const&) = delete;
+        auto operator=(Impl const&) -> Impl& = delete;
+        Impl(Impl&&) = delete;
+        auto operator=(Impl&&) -> Impl& = delete;
+
         Impl(
             D3dDevice d3d,
             CaptureFramePool framePool,
             CaptureSession session,
             CaptureItem item,
             winrt::event_token frameArrivedToken,
+            winrt::event_token itemClosedToken,
             std::shared_ptr<FrameSlot> p_frameSlot,
             MonotonicInstant startedAt,
             SessionId sessionId,
             TargetGeneration targetGeneration,
+            WindowInstanceMarker windowMarker,
             ClientGeometry client,
             controller_detail::ClientCropRect crop,
             WgcCaptureOptions options,
@@ -690,17 +911,23 @@ namespace uf
             , m_session{std::move(session)}
             , m_item{std::move(item)}
             , m_frameArrivedToken{frameArrivedToken}
+            , m_itemClosedToken{itemClosedToken}
             , m_frameSlot{std::move(p_frameSlot)}
             , m_stall{options.captureStallTimeout(), startedAt}
             , m_sessionId{sessionId}
             , m_frameIds{}
             , m_targetGeneration{targetGeneration}
+            , m_windowMarker{std::move(windowMarker)}
             , m_client{client}
             , m_crop{crop}
             , m_options{options}
             , m_geometry{geometry}
             , m_staging{}
             , m_hygiene{hygiene}
+            , m_sessionOpen{true}
+            , m_frameArrivedRegistered{true}
+            , m_itemClosedRegistered{true}
+            , m_framePoolOpen{true}
             , m_closed{false}
         {
         }
@@ -718,10 +945,36 @@ namespace uf
                     timeout,
                     [this]
                     {
-                        return m_frameSlot->m_latest.has_value();
+                        return m_frameSlot->m_latest.has_value()
+                            || m_frameSlot->m_itemClosed.load(
+                                std::memory_order_acquire
+                            )
+                            || FAILED(
+                                m_frameSlot->m_callbackFailure.load(
+                                    std::memory_order_acquire
+                                )
+                            );
                     }
                 )
             );
+
+            if (m_frameSlot->m_itemClosed.load(std::memory_order_acquire))
+            {
+                return captureUnavailable(
+                    "capture item was closed; rebuild the session from a freshly resolved target"
+                );
+            }
+
+            auto const callbackFailure = m_frameSlot->m_callbackFailure.load(
+                std::memory_order_acquire
+            );
+            if (FAILED(callbackFailure))
+            {
+                return captureHresult(
+                    "Direct3D11CaptureFramePool::FrameArrived callback",
+                    callbackFailure
+                );
+            }
 
             if (m_frameSlot->m_latest)
             {
@@ -741,18 +994,128 @@ namespace uf
             );
         }
 
-        auto teardownUnlocked() noexcept -> void
+        [[nodiscard]]
+        auto teardownUnlocked() -> Status
         {
-            if (m_closed)
+            m_closed = true;
             {
-                return;
+                auto frameLock = std::lock_guard{m_frameSlot->m_mutex};
+                m_frameSlot->m_acceptingFrames = false;
+            }
+            auto result = ok();
+            auto retainFirstError = [&result](Status next) -> void
+            {
+                if (result && !next)
+                {
+                    result = std::unexpected{std::move(next).error()};
+                }
+            };
+
+            if (m_sessionOpen)
+            {
+                auto closed = winrtCall(
+                    "GraphicsCaptureSession::Close",
+                    [this]
+                    {
+                        m_session.Close();
+                    }
+                );
+                if (closed)
+                {
+                    m_sessionOpen = false;
+                }
+                retainFirstError(std::move(closed));
+            }
+            if (m_frameArrivedRegistered)
+            {
+                auto revoked = winrtCall(
+                    "revoke Direct3D11CaptureFramePool::FrameArrived",
+                    [this]
+                    {
+                        m_framePool.FrameArrived(m_frameArrivedToken);
+                    }
+                );
+                if (revoked)
+                {
+                    m_frameArrivedRegistered = false;
+                }
+                retainFirstError(std::move(revoked));
+            }
+            if (m_itemClosedRegistered)
+            {
+                auto revoked = winrtCall(
+                    "revoke GraphicsCaptureItem::Closed",
+                    [this]
+                    {
+                        m_item.Closed(m_itemClosedToken);
+                    }
+                );
+                if (revoked)
+                {
+                    m_itemClosedRegistered = false;
+                }
+                retainFirstError(std::move(revoked));
+            }
+            if (m_framePoolOpen)
+            {
+                auto closed = winrtCall(
+                    "Direct3D11CaptureFramePool::Close",
+                    [this]
+                    {
+                        m_framePool.Close();
+                    }
+                );
+                if (closed)
+                {
+                    m_framePoolOpen = false;
+                }
+                retainFirstError(std::move(closed));
+            }
+            retainFirstError(clearLatestFrame(m_frameSlot));
+            retainFirstError(m_windowMarker.close());
+            return result;
+        }
+
+        [[nodiscard]]
+        auto validateTargetInstanceUnlocked() -> Status
+        {
+            if (m_frameSlot->m_itemClosed.load(std::memory_order_acquire))
+            {
+                return captureUnavailable(
+                    "capture item was closed; rebuild the session from a freshly resolved target"
+                );
             }
 
-            m_closed = true;
-            m_framePool.FrameArrived(m_frameArrivedToken);
-            closeIgnoringErrors(m_session);
-            closeIgnoringErrors(m_framePool);
-            clearLatestFrame(m_frameSlot);
+            if (!m_windowMarker.matches())
+            {
+                return captureUnavailable(
+                    "capture target window identity changed; rebuild the capture session"
+                );
+            }
+            return ok();
+        }
+
+        [[nodiscard]]
+        auto currentClientOrigin() -> Result<POINT>
+        {
+            UF_TRY(validateTargetInstanceUnlocked());
+
+            auto const nativeWindow = m_windowMarker.window();
+            UF_TRY_VALUE(origin, clientOriginOnDesktop(nativeWindow));
+            if (m_frameSlot->m_itemClosed.load(std::memory_order_acquire))
+            {
+                return captureUnavailable(
+                    "capture item closed while refreshing client position; rebuild the capture session"
+                );
+            }
+
+            if (!m_windowMarker.matches())
+            {
+                return captureUnavailable(
+                    "capture target window identity changed while refreshing client position"
+                );
+            }
+            return origin;
         }
 
     public:
@@ -765,13 +1128,41 @@ namespace uf
             WgcCaptureOptions options
         ) -> Result<std::unique_ptr<Impl>>
         {
+            auto const nativeWindow = toNativeHandle(windowHandle);
+            UF_TRY_VALUE(
+                windowMarker,
+                WindowInstanceMarker::create(nativeWindow)
+            );
+
+            UF_TRY_VALUE(
+                captureSessionStatics,
+                winrtCall(
+                    "GraphicsCaptureSession activation factory",
+                    []
+                    {
+                        return winrt::get_activation_factory<
+                            CaptureSession,
+                            CaptureSessionStatics
+                        >();
+                    }
+                )
+            );
+            if (!captureSessionStatics)
+            {
+                return captureUnavailable(
+                    "GraphicsCaptureSession returned no activation factory"
+                );
+            }
             UF_TRY_VALUE(
                 supported,
                 winrtCall(
                     "GraphicsCaptureSession::IsSupported",
-                    []
+                    [&captureSessionStatics]
                     {
-                        return CaptureSession::IsSupported();
+                        // get_activation_factory returned this checked non-null
+                        // projection; Clang cannot model its generated ABI storage.
+                        // NOLINTNEXTLINE(clang-analyzer-core.CallAndMessage)
+                        return captureSessionStatics.IsSupported();
                     }
                 )
             );
@@ -826,7 +1217,7 @@ namespace uf
             // interop call consumes only the target HWND token and initializes item's
             // projected ABI slot with an owned GraphicsCaptureItem reference.
             auto const itemResult = interop->CreateForWindow(
-                toNativeHandle(windowHandle),
+                nativeWindow,
                 winrt::guid_of<CaptureItem>(),
                 winrt::put_abi(item)
             );
@@ -837,6 +1228,71 @@ namespace uf
             if (!item)
             {
                 return captureUnavailable("CreateForWindow returned no capture item");
+            }
+
+            auto frameSlot = std::make_shared<FrameSlot>();
+            auto slotForClosedCallback = frameSlot;
+            auto const itemClosedHandler = winrt::Windows::Foundation::TypedEventHandler<
+                CaptureItem,
+                winrt::Windows::Foundation::IInspectable
+            >{
+                [p_slot = std::move(slotForClosedCallback)](
+                    CaptureItem const&,
+                    winrt::Windows::Foundation::IInspectable const&
+                ) noexcept
+                {
+                    try
+                    {
+                        // Update the wait predicate while holding the same mutex used
+                        // by waitForFrame, so notification cannot be lost between its
+                        // predicate check and transition to the waiting state.
+                        auto lock = std::lock_guard{p_slot->m_mutex};
+                        p_slot->m_itemClosed.store(
+                            true,
+                            std::memory_order_release
+                        );
+                    }
+                    catch (...)
+                    {
+                        p_slot->m_itemClosed.store(
+                            true,
+                            std::memory_order_release
+                        );
+                    }
+                    p_slot->m_arrived.notify_all();
+                }
+            };
+            UF_TRY_VALUE(
+                itemClosedToken,
+                winrtCall(
+                    "GraphicsCaptureItem::Closed",
+                    [&item, &itemClosedHandler]
+                    {
+                        return item.Closed(itemClosedHandler);
+                    }
+                )
+            );
+            auto itemClosedCleanup = scopeExit(
+                [&item, itemClosedToken]() noexcept
+                {
+                    try
+                    {
+                        item.Closed(itemClosedToken);
+                    }
+                    catch (...)
+                    {
+                    }
+                }
+            );
+
+            if (
+                !windowMarker.matches()
+                || frameSlot->m_itemClosed.load(std::memory_order_acquire)
+            )
+            {
+                return captureUnavailable(
+                    "capture target changed while its capture item was being created"
+                );
             }
 
             UF_TRY_VALUE(
@@ -862,28 +1318,62 @@ namespace uf
             UF_TRY_VALUE(
                 crop,
                 resolveClientCrop(
-                    toNativeHandle(windowHandle),
+                    nativeWindow,
                     frameWidth,
                     frameHeight,
                     client
                 )
             );
+            if (!windowMarker.matches())
+            {
+                return captureUnavailable(
+                    "capture target changed while resolving its client geometry"
+                );
+            }
 
+            UF_TRY_VALUE(
+                framePoolStatics,
+                winrtCall(
+                    "Direct3D11CaptureFramePool activation factory",
+                    []
+                    {
+                        return winrt::get_activation_factory<
+                            CaptureFramePool,
+                            CaptureFramePoolStatics
+                        >();
+                    }
+                )
+            );
+            if (!framePoolStatics)
+            {
+                return captureUnavailable(
+                    "Direct3D11CaptureFramePool returned no activation factory"
+                );
+            }
             UF_TRY_VALUE(
                 framePool,
                 winrtCall(
                     "Direct3D11CaptureFramePool::CreateFreeThreaded",
-                    [&d3d, &poolSize]
+                    [&d3d, &framePoolStatics, &poolSize]
                     {
-                        return CaptureFramePool::CreateFreeThreaded(
+                        // Both the statics projection and runtime device were checked
+                        // non-null; Clang cannot model the generated ABI storage.
+                        // NOLINTNEXTLINE(clang-analyzer-core.CallAndMessage)
+                        return framePoolStatics.CreateFreeThreaded(
                             d3d.m_runtimeDevice,
-                            capturePixelFormat,
-                            framePoolBufferCount,
+                            g_capturePixelFormat,
+                            g_framePoolBufferCount,
                             poolSize
                         );
                     }
                 )
             );
+            if (!framePool)
+            {
+                return captureUnavailable(
+                    "CreateFreeThreaded returned no frame pool"
+                );
+            }
             UF_TRY_VALUE(
                 session,
                 winrtCall(
@@ -894,6 +1384,12 @@ namespace uf
                     }
                 )
             );
+            if (!session)
+            {
+                return captureUnavailable(
+                    "CreateCaptureSession returned no capture session"
+                );
+            }
             UF_TRY(
                 winrtCall(
                     "GraphicsCaptureSession::IsCursorCaptureEnabled(false)",
@@ -905,43 +1401,47 @@ namespace uf
             );
 
             auto borderRequired = true;
-            auto const borderResult = winrtCall(
-                "GraphicsCaptureSession::IsBorderRequired",
-                [&session]
-                {
-                    return session.IsBorderRequired();
-                }
-            );
-            if (borderResult)
+            if (hasBorderlessSupport)
             {
-                borderRequired = *borderResult;
+                UF_TRY_VALUE(
+                    queriedBorderRequired,
+                    winrtCall(
+                        "GraphicsCaptureSession::IsBorderRequired",
+                        [&session]
+                        {
+                            return session.IsBorderRequired();
+                        }
+                    )
+                );
+                borderRequired = queriedBorderRequired;
             }
 
-            auto frameSlot = std::make_shared<FrameSlot>();
             auto slotForCallback = frameSlot;
-            auto poolForCallback = framePool;
             auto const handler = winrt::Windows::Foundation::TypedEventHandler<
                 CaptureFramePool,
                 winrt::Windows::Foundation::IInspectable
             >{
-                [
-                    p_slot = std::move(slotForCallback),
-                    pool = std::move(poolForCallback)
-                ](
-                    CaptureFramePool const&,
+                [p_slot = std::move(slotForCallback)](
+                    CaptureFramePool const& sender,
                     winrt::Windows::Foundation::IInspectable const&
                 ) noexcept
                 {
                     try
                     {
-                        auto frame = pool.TryGetNextFrame();
+                        auto frame = sender.TryGetNextFrame();
                         if (!frame)
                         {
                             return;
                         }
 
                         {
-                            auto lock = std::lock_guard{p_slot->m_mutex};
+                            auto lock = std::unique_lock{p_slot->m_mutex};
+                            if (!p_slot->m_acceptingFrames)
+                            {
+                                lock.unlock();
+                                closeIgnoringErrors(frame);
+                                return;
+                            }
                             auto const arrivedAt = MonotonicInstant::now();
                             p_slot->m_latest = CapturedArrival{
                                 std::move(frame),
@@ -950,8 +1450,16 @@ namespace uf
                         }
                         p_slot->m_arrived.notify_one();
                     }
+                    catch (winrt::hresult_error const& error)
+                    {
+                        recordFrameCallbackFailure(
+                            p_slot,
+                            static_cast<HRESULT>(error.code())
+                        );
+                    }
                     catch (...)
                     {
+                        recordFrameCallbackFailure(p_slot, E_UNEXPECTED);
                     }
                 }
             };
@@ -974,17 +1482,41 @@ namespace uf
                     frameArrivedToken
                 ]() noexcept
                 {
-                    framePool.FrameArrived(frameArrivedToken);
+                    try
+                    {
+                        framePool.FrameArrived(frameArrivedToken);
+                    }
+                    catch (...)
+                    {
+                    }
                     closeIgnoringErrors(session);
                     closeIgnoringErrors(framePool);
-                    clearLatestFrame(frameSlot);
+                    try
+                    {
+                        static_cast<void>(clearLatestFrame(frameSlot));
+                    }
+                    catch (...)
+                    {
+                    }
                 }
             );
+            if (
+                !windowMarker.matches()
+                || frameSlot->m_itemClosed.load(std::memory_order_acquire)
+            )
+            {
+                return captureUnavailable(
+                    "capture target changed before capture could start"
+                );
+            }
             UF_TRY(
                 winrtCall(
                     "StartCapture",
                     [&session]
                     {
+                        // CreateCaptureSession established a live projected session;
+                        // Clang's analyzer loses that invariant in generated dispatch.
+                        // NOLINTNEXTLINE(clang-analyzer-core.CallAndMessage)
                         session.StartCapture();
                     }
                 )
@@ -997,10 +1529,12 @@ namespace uf
                 std::move(session),
                 std::move(item),
                 frameArrivedToken,
+                itemClosedToken,
                 std::move(frameSlot),
                 startedAt,
                 sessionId,
                 targetGeneration,
+                std::move(windowMarker),
                 client,
                 crop,
                 options,
@@ -1013,10 +1547,20 @@ namespace uf
                 }
             );
             setupCleanup.release();
+            itemClosedCleanup.release();
             return p_impl;
         }
 
-        ~Impl() { close(); }
+        ~Impl()
+        {
+            try
+            {
+                static_cast<void>(close());
+            }
+            catch (...)
+            {
+            }
+        }
 
         [[nodiscard]] auto capture() -> Result<Frame>
         {
@@ -1069,12 +1613,20 @@ namespace uf
                 frame,
                 m_crop
             );
-            closeIgnoringErrors(frame);
-            frameClose.release();
             if (!readback)
             {
                 return std::unexpected{std::move(readback).error()};
             }
+            UF_TRY(
+                winrtCall(
+                    "Direct3D11CaptureFrame::Close",
+                    [&frame]
+                    {
+                        frame.Close();
+                    }
+                )
+            );
+            frameClose.release();
             auto surface = *std::move(readback);
 
             UF_TRY(
@@ -1107,7 +1659,25 @@ namespace uf
                 );
             }
 
-            UF_TRY_VALUE(transform, m_client.transformFor(width, height));
+            UF_TRY_VALUE(
+                clientOrigin,
+                currentClientOrigin()
+            );
+            UF_TRY_VALUE(
+                currentClient,
+                ClientGeometry::create(
+                    Point<DesktopSpace>{
+                        static_cast<float>(clientOrigin.x),
+                        static_cast<float>(clientOrigin.y)
+                    },
+                    m_client.width(),
+                    m_client.height()
+                )
+            );
+            UF_TRY_VALUE(
+                transform,
+                currentClient.transformFor(width, height)
+            );
             UF_TRY_VALUE(id, m_frameIds.nextId());
             auto pixels = std::make_shared<FrameBuffer const>(
                 std::move(surface.m_pixels)
@@ -1126,16 +1696,24 @@ namespace uf
             );
         }
 
-        auto close() noexcept -> void
+        [[nodiscard]]
+        auto validateTargetInstance() -> Status
         {
-            try
+            auto operationLock = std::lock_guard{m_operationMutex};
+            if (m_closed)
             {
-                auto operationLock = std::lock_guard{m_operationMutex};
-                teardownUnlocked();
+                return captureUnavailable(
+                    "target instance validation called on a closed capture session"
+                );
             }
-            catch (...)
-            {
-            }
+            return validateTargetInstanceUnlocked();
+        }
+
+        [[nodiscard]]
+        auto close() -> Status
+        {
+            auto operationLock = std::lock_guard{m_operationMutex};
+            return teardownUnlocked();
         }
 
         [[nodiscard]] auto hygiene() const noexcept -> CaptureHygiene { return m_hygiene; }
@@ -1153,9 +1731,6 @@ namespace uf
     }
 
     WgcCaptureSession::WgcCaptureSession(WgcCaptureSession&&) noexcept = default;
-    auto WgcCaptureSession::operator=(
-        WgcCaptureSession&&
-    ) noexcept -> WgcCaptureSession& = default;
     WgcCaptureSession::~WgcCaptureSession() = default;
 
     auto WgcCaptureSession::create(
@@ -1188,12 +1763,24 @@ namespace uf
         return m_impl->capture();
     }
 
-    auto WgcCaptureSession::close() noexcept -> void
+    auto WgcCaptureSession::validateTargetInstance() -> Status
     {
-        if (m_impl)
+        if (!m_impl)
         {
-            m_impl->close();
+            return captureUnavailable(
+                "target instance validation called on a moved-from session"
+            );
         }
+        return m_impl->validateTargetInstance();
+    }
+
+    auto WgcCaptureSession::close() -> Status
+    {
+        if (!m_impl)
+        {
+            return ok();
+        }
+        return m_impl->close();
     }
 
     auto WgcCaptureSession::hygiene() const noexcept -> CaptureHygiene

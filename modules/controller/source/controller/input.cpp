@@ -5,10 +5,10 @@
 #include "detail/input-revalidation.hpp"
 
 #include <core/error/contracts.hpp>
+#include <core/types/integer.hpp>
 #include <core/utility/variant-match.hpp>
 #include <domain/error.hpp>
 
-#include <cstdint>
 #include <format>
 #include <string>
 #include <string_view>
@@ -29,24 +29,24 @@ namespace
     }
 
     [[nodiscard]]
-    auto decodeUtf8ToUtf16(std::string_view text) -> uf::Result<std::vector<std::uint16_t>>
+    auto decodeUtf8ToUtf16(std::string_view text) -> uf::Result<std::vector<uf::uint16>>
     {
-        auto codeUnits = std::vector<std::uint16_t>{};
+        auto codeUnits = std::vector<uf::uint16>{};
         codeUnits.reserve(text.size());
 
-        auto codePoint = std::uint32_t{};
-        auto minimumCodePoint = std::uint32_t{};
-        auto continuationBytes = std::uint8_t{};
+        auto codePoint = uf::uint32{};
+        auto minimumCodePoint = uf::uint32{};
+        auto continuationBytes = uf::uint8{};
         for (auto const character : text)
         {
-            auto const byte = static_cast<std::uint32_t>(
+            auto const byte = static_cast<uf::uint32>(
                 static_cast<unsigned char>(character)
             );
             if (continuationBytes == 0U)
             {
                 if (byte <= 0x7FU)
                 {
-                    codeUnits.emplace_back(static_cast<std::uint16_t>(byte));
+                    codeUnits.emplace_back(static_cast<uf::uint16>(byte));
                     continue;
                 }
                 if (byte >= 0xC2U && byte <= 0xDFU)
@@ -105,16 +105,16 @@ namespace
 
             if (codePoint <= 0xFFFFU)
             {
-                codeUnits.emplace_back(static_cast<std::uint16_t>(codePoint));
+                codeUnits.emplace_back(static_cast<uf::uint16>(codePoint));
                 continue;
             }
 
             auto const offset = codePoint - 0x10000U;
             codeUnits.emplace_back(
-                static_cast<std::uint16_t>(0xD800U + (offset >> 10U))
+                static_cast<uf::uint16>(0xD800U + (offset >> 10U))
             );
             codeUnits.emplace_back(
-                static_cast<std::uint16_t>(0xDC00U + (offset & 0x03FFU))
+                static_cast<uf::uint16>(0xDC00U + (offset & 0x03FFU))
             );
         }
 
@@ -226,13 +226,7 @@ namespace
                 uf::PointerButton::Left
             )
         );
-        if (!released)
-        {
-            return uf::fail(
-                uf::AutomationErrorKind::InternalInvariant,
-                "left pointer hold disappeared after successful button-up"
-            );
-        }
+        UF_CHECK(released);
         return uf::ok();
     }
 }
@@ -243,8 +237,8 @@ namespace uf
         WindowHandle windowHandle,
         SessionId sessionId,
         TargetGeneration generation,
-        std::uint32_t clientWidth,
-        std::uint32_t clientHeight
+        uint32 clientWidth,
+        uint32 clientHeight
     ) -> Result<DeliveryTarget>
     {
         if (clientWidth == 0U || clientHeight == 0U)
@@ -409,13 +403,7 @@ namespace uf
             released,
             controller_detail::HeldInputsAccess::onKeyUp(held, target, key)
         );
-        if (!released)
-        {
-            return fail(
-                AutomationErrorKind::InternalInvariant,
-                "key hold disappeared after successful key-up"
-            );
-        }
+        UF_CHECK(released);
         return ok();
     }
 
@@ -499,13 +487,7 @@ namespace uf
             released,
             controller_detail::HeldInputsAccess::onKeyUp(held, target, key)
         );
-        if (!released)
-        {
-            return fail(
-                AutomationErrorKind::InternalInvariant,
-                "key hold disappeared after successful key-up"
-            );
-        }
+        UF_CHECK(released);
         return ok();
     }
 
@@ -565,7 +547,7 @@ namespace uf
                 AutomationErrorKind::ActionRejected,
                 std::format(
                     "WM_UNICHAR requires a Unicode scalar value, got {:#x}",
-                    static_cast<std::uint32_t>(codePoint)
+                    static_cast<uint32>(codePoint)
                 )
             );
         }
@@ -621,7 +603,7 @@ namespace uf
 
 namespace uf::controller_detail
 {
-    auto utf16CodeUnits(std::string_view text) -> Result<std::vector<std::uint16_t>>
+    auto utf16CodeUnits(std::string_view text) -> Result<std::vector<uint16>>
     {
         return decodeUtf8ToUtf16(text);
     }

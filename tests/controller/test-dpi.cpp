@@ -1,12 +1,12 @@
 #include <controller/detail/dpi-classification.hpp>
 #include <controller/dpi.hpp>
 
+#include <core/types/integer.hpp>
 #include <domain/error.hpp>
 
 #include <doctest/doctest.h>
 
 #include <array>
-#include <cstdint>
 #include <optional>
 
 namespace
@@ -35,7 +35,7 @@ TEST_CASE("successful DPI declaration reports declared")
 TEST_CASE("access denied is tolerated only when V2 is already active")
 {
     auto const result = uf::controller_detail::classifyDpiResult(
-        uf::controller_detail::accessDeniedError,
+        uf::controller_detail::g_accessDeniedError,
         true
     );
 
@@ -49,16 +49,16 @@ TEST_CASE("DPI HRESULT extraction keeps only the low Win32 bits")
     {
         CHECK(
             uf::controller_detail::win32Code(hresult)
-            == uf::controller_detail::accessDeniedError
+            == uf::controller_detail::g_accessDeniedError
         );
     }
 }
 
 TEST_CASE("success and access denied reject the wrong actual DPI context")
 {
-    auto const outcomes = std::array<std::optional<std::uint32_t>, 2>{
+    auto const outcomes = std::array<std::optional<uf::uint32>, 2>{
         std::nullopt,
-        uf::controller_detail::accessDeniedError,
+        uf::controller_detail::g_accessDeniedError,
     };
     for (auto const outcome : outcomes)
     {

@@ -5,7 +5,6 @@
 
 #include <algorithm>
 #include <array>
-#include <cstdint>
 #include <string_view>
 
 TEST_CASE("runtime forbidden list matches the Rust guard names")

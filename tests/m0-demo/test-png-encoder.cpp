@@ -3,6 +3,7 @@
 #include <ffi/png-decoder.hpp>
 #include <ffi/png-encoder.hpp>
 
+#include <core/types/integer.hpp>
 #include <core/utility/scope-exit.hpp>
 
 #include <doctest/doctest.h>
@@ -10,7 +11,6 @@
 #include <array>
 #include <chrono>
 #include <cstddef>
-#include <cstdint>
 #include <filesystem>
 #include <format>
 #include <memory>
@@ -92,8 +92,8 @@ TEST_CASE("m0 PNG encoder rejects dimensions outside the decoder quotas")
 {
     struct OversizedImage final
     {
-        std::uint32_t m_width;
-        std::uint32_t m_height;
+        uf::uint32 m_width;
+        uf::uint32 m_height;
     };
     for (auto const image : std::array{
         OversizedImage{4'194'304U, 1U},

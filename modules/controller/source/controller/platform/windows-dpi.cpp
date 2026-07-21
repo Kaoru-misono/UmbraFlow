@@ -2,9 +2,10 @@
 
 #include "controller/detail/dpi-classification.hpp"
 
+#include <core/types/integer.hpp>
+
 #include <Windows.h>
 
-#include <cstdint>
 #include <optional>
 
 namespace uf::controller_platform
@@ -20,7 +21,7 @@ namespace uf::controller_platform
             DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2
         );
 
-        auto error = std::optional<std::uint32_t>{};
+        auto error = std::optional<uint32>{};
         if (declared == FALSE)
         {
             // SAFETY: GetLastError reads calling-thread state immediately after the failed

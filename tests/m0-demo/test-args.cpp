@@ -3,6 +3,7 @@
 #include <args.hpp>
 #include <pacing.hpp>
 
+#include <core/types/integer.hpp>
 #include <domain/error.hpp>
 #include <domain/space.hpp>
 
@@ -10,7 +11,6 @@
 
 #include <algorithm>
 #include <chrono>
-#include <cstdint>
 #include <filesystem>
 #include <initializer_list>
 #include <limits>
@@ -79,7 +79,7 @@ TEST_CASE("m0 arguments parse a complete set with defaults")
 {
     auto const result = uf::m0_demo::parseArguments(fullArguments());
     REQUIRE(result.has_value());
-    CHECK(result->m_selector.m_process == std::optional<std::uint32_t>{1234});
+    CHECK(result->m_selector.m_process == std::optional<uf::uint32>{1234});
     CHECK(result->m_homeTemplate == std::filesystem::path{"home.png"});
     auto const expectedHomeRoi = uf::Rect<uf::FrameSpace>{0.0F, 0.0F, 100.0F, 40.0F};
     auto const expectedResultRoi = uf::Rect<uf::FrameSpace>{10.0F, 20.0F, 50.0F, 50.0F};
@@ -128,7 +128,7 @@ TEST_CASE("m0 arguments override defaults and parse a hexadecimal window handle"
 
     auto const result = uf::m0_demo::parseArguments(raw);
     REQUIRE(result.has_value());
-    CHECK(result->m_selector.m_windowHandle == std::optional<std::intptr_t>{0x1A2B});
+    CHECK(result->m_selector.m_windowHandle == std::optional<uf::intptr>{0x1A2B});
     CHECK(result->m_mode == uf::m0_demo::Mode::Coexist);
     CHECK(result->m_loops == 100U);
     CHECK(
@@ -217,8 +217,11 @@ TEST_CASE("m0 arguments parse fixed and ranged click delays with a seed")
     auto rangedRaw = fullArguments();
     append(rangedRaw, {"--click-delay-ms", "600-1800", "--seed", "12345"});
     auto const ranged = uf::m0_demo::parseArguments(rangedRaw);
-    REQUIRE(ranged.has_value());
-    REQUIRE(ranged->m_clickDelay.has_value());
+    if (!ranged || !ranged->m_clickDelay)
+    {
+        FAIL("the ranged click delay did not parse");
+        return;
+    }
     CHECK(ranged->m_clickDelay->minimumMilliseconds() == 600U);
     CHECK(ranged->m_clickDelay->maximumMilliseconds() == 1800U);
     CHECK(ranged->m_seed == 12345U);
@@ -226,8 +229,11 @@ TEST_CASE("m0 arguments parse fixed and ranged click delays with a seed")
     auto fixedRaw = fullArguments();
     append(fixedRaw, {"--click-delay-ms", "1000"});
     auto const fixed = uf::m0_demo::parseArguments(fixedRaw);
-    REQUIRE(fixed.has_value());
-    REQUIRE(fixed->m_clickDelay.has_value());
+    if (!fixed || !fixed->m_clickDelay)
+    {
+        FAIL("the fixed click delay did not parse");
+        return;
+    }
     CHECK(fixed->m_clickDelay->minimumMilliseconds() == 1000U);
     CHECK(fixed->m_clickDelay->maximumMilliseconds() == 1000U);
 }
@@ -346,8 +352,8 @@ TEST_CASE("m0 capture arguments reuse selectors and keep the last duplicate")
     auto const result = uf::m0_demo::parseCaptureArguments(raw);
 
     REQUIRE(result.has_value());
-    CHECK(result->m_selector.m_process == std::optional<std::uint32_t>{20});
-    CHECK(result->m_selector.m_windowHandle == std::optional<std::intptr_t>{0x1A2B});
+    CHECK(result->m_selector.m_process == std::optional<uf::uint32>{20});
+    CHECK(result->m_selector.m_windowHandle == std::optional<uf::intptr>{0x1A2B});
     CHECK(result->m_selector.m_title == std::optional<std::string>{"new"});
     CHECK(result->m_output == std::filesystem::path{"new.png"});
     CHECK(result->m_frames == 3U);
@@ -404,7 +410,7 @@ TEST_CASE("m0 capture arguments fail closed at selector and numeric bounds")
         )
     );
     REQUIRE(boundary.has_value());
-    CHECK(boundary->m_frames == std::numeric_limits<std::uint32_t>::max());
+    CHECK(boundary->m_frames == std::numeric_limits<uf::uint32>::max());
     CHECK(boundary->m_interval == uf::MonotonicInstant::Duration::zero());
 }
 
@@ -426,7 +432,7 @@ TEST_CASE("m0 input-agent arguments require file IPC paths and apply defaults")
     );
 
     REQUIRE(result.has_value());
-    CHECK(result->m_windowHandle == std::intptr_t{0x1A2B});
+    CHECK(result->m_windowHandle == uf::intptr{0x1A2B});
     CHECK(result->m_queue == std::filesystem::path{"commands.jsonl"});
     CHECK(result->m_results == std::filesystem::path{"results.jsonl"});
     CHECK(result->m_outputDirectory == std::filesystem::path{"agent-output"});

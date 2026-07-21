@@ -1,6 +1,7 @@
 #include <controller/detail/input-revalidation.hpp>
 #include <controller/input.hpp>
 
+#include <core/types/integer.hpp>
 #include <domain/detection.hpp>
 #include <domain/error.hpp>
 #include <domain/frame.hpp>
@@ -11,7 +12,6 @@
 #include <chrono>
 #include <cmath>
 #include <cstddef>
-#include <cstdint>
 #include <limits>
 #include <memory>
 #include <string_view>
@@ -19,7 +19,7 @@
 
 namespace
 {
-    constexpr auto sessionValue = std::uint64_t{1};
+    constexpr auto g_sessionValue = uf::uint64{1};
 
     [[nodiscard]]
     auto automationKind(uf::Error const& error) -> uf::AutomationErrorKind
@@ -52,7 +52,7 @@ namespace
         );
         auto const frame = uf::Frame::create(
             uf::FrameId{1},
-            uf::SessionId{sessionValue},
+            uf::SessionId{g_sessionValue},
             generation,
             capturedAt,
             4,
@@ -108,7 +108,7 @@ TEST_CASE("valid pointer action returns a floored pixel")
     auto const lease = leaseAt(generation, now);
     auto const result = uf::controller_detail::checkPointerPreconditions(
         lease,
-        uf::SessionId{sessionValue},
+        uf::SessionId{g_sessionValue},
         generation,
         now,
         uf::Point<uf::ClientSpace>{12.9F, 7.1F},
@@ -129,7 +129,7 @@ TEST_CASE("session mismatch is a stale observation")
     auto const lease = leaseAt(generation, now);
     auto const result = uf::controller_detail::checkPointerPreconditions(
         lease,
-        uf::SessionId{sessionValue + 1U},
+        uf::SessionId{g_sessionValue + 1U},
         generation,
         now,
         uf::Point<uf::ClientSpace>{1.0F, 1.0F},
@@ -165,7 +165,7 @@ TEST_CASE("expired leases and generation changes are stale observations")
         INFO(testCase.m_label);
         auto const result = uf::controller_detail::checkPointerPreconditions(
             lease,
-            uf::SessionId{sessionValue},
+            uf::SessionId{g_sessionValue},
             testCase.m_generation,
             testCase.m_now,
             uf::Point<uf::ClientSpace>{1.0F, 1.0F},
@@ -205,7 +205,7 @@ TEST_CASE("out-of-bounds and non-finite points are action rejected")
         INFO(testCase.m_label);
         auto const result = uf::controller_detail::checkPointerPreconditions(
             lease,
-            uf::SessionId{sessionValue},
+            uf::SessionId{g_sessionValue},
             generation,
             now,
             testCase.m_point,
@@ -224,7 +224,7 @@ TEST_CASE("pointer coordinates must fit signed sixteen bits")
     auto const lease = leaseAt(generation, now);
     auto const accepted = uf::controller_detail::checkPointerPreconditions(
         lease,
-        uf::SessionId{sessionValue},
+        uf::SessionId{g_sessionValue},
         generation,
         now,
         uf::Point<uf::ClientSpace>{32'767.9F, 1.0F},
@@ -238,7 +238,7 @@ TEST_CASE("pointer coordinates must fit signed sixteen bits")
 
     auto const rejected = uf::controller_detail::checkPointerPreconditions(
         lease,
-        uf::SessionId{sessionValue},
+        uf::SessionId{g_sessionValue},
         generation,
         now,
         uf::Point<uf::ClientSpace>{32'768.0F, 1.0F},
@@ -263,7 +263,7 @@ TEST_CASE("keyboard generation mismatch is a stale observation")
 
 TEST_CASE("bogus handles are not alive and are rejected")
 {
-    auto const bogus = uf::WindowHandle{std::intptr_t{0xDEAD'BEEF}};
+    auto const bogus = uf::WindowHandle{uf::intptr{0xDEAD'BEEF}};
     CHECK_FALSE(uf::controller_detail::windowIsAlive(bogus));
     auto const result = uf::controller_detail::ensureWindowAlive(bogus);
     REQUIRE_FALSE(result.has_value());
@@ -281,7 +281,7 @@ TEST_CASE("pointer preconditions preserve lease generation bounds order")
 
     auto const sessionFailure = uf::controller_detail::checkPointerPreconditions(
         lease,
-        uf::SessionId{sessionValue + 1U},
+        uf::SessionId{g_sessionValue + 1U},
         bumped,
         expired,
         outside,
@@ -293,7 +293,7 @@ TEST_CASE("pointer preconditions preserve lease generation bounds order")
 
     auto const expiryFailure = uf::controller_detail::checkPointerPreconditions(
         lease,
-        uf::SessionId{sessionValue},
+        uf::SessionId{g_sessionValue},
         bumped,
         expired,
         outside,
@@ -305,7 +305,7 @@ TEST_CASE("pointer preconditions preserve lease generation bounds order")
 
     auto const generationFailure = uf::controller_detail::checkPointerPreconditions(
         lease,
-        uf::SessionId{sessionValue},
+        uf::SessionId{g_sessionValue},
         bumped,
         captured,
         outside,
@@ -317,7 +317,7 @@ TEST_CASE("pointer preconditions preserve lease generation bounds order")
 
     auto const boundsFailure = uf::controller_detail::checkPointerPreconditions(
         lease,
-        uf::SessionId{sessionValue},
+        uf::SessionId{g_sessionValue},
         generation,
         captured,
         outside,

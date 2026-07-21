@@ -1,6 +1,7 @@
 #include "windows-console-control.hpp"
 
-#include <domain/error.hpp>
+#include <core/error/error.hpp>
+#include <core/types/integer.hpp>
 
 #include <Windows.h>
 
@@ -38,14 +39,35 @@ namespace uf::m0_demo::platform
 
         // SAFETY: handleConsoleControl has the required WINAPI callback ABI and
         // accesses only a module-owned process-lifetime lock-free atomic.
-        if (!SetConsoleCtrlHandler(handleConsoleControl, TRUE))
+        if (SetConsoleCtrlHandler(handleConsoleControl, TRUE) == FALSE)
         {
+            auto const error = GetLastError();
             return fail(
-                AutomationErrorKind::InternalInvariant,
+                ErrorCode::External,
                 std::format(
                     "failed to install Ctrl-C handler: Win32 error {}",
-                    GetLastError()
-                )
+                    error
+                ),
+                static_cast<int64>(error)
+            );
+        }
+        return ok();
+    }
+
+    auto uninstallConsoleControlHandler() -> Status
+    {
+        // SAFETY: this removes the exact callback registered by
+        // installConsoleControlHandler and does not transfer its address.
+        if (SetConsoleCtrlHandler(handleConsoleControl, FALSE) == FALSE)
+        {
+            auto const error = GetLastError();
+            return fail(
+                ErrorCode::External,
+                std::format(
+                    "failed to uninstall Ctrl-C handler: Win32 error {}",
+                    error
+                ),
+                static_cast<int64>(error)
             );
         }
         return ok();

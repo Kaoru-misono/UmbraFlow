@@ -5,10 +5,10 @@
 #include <core/numeric/checked-arithmetic.hpp>
 #include <core/numeric/checked-cast.hpp>
 #include <core/safety/checked-access.hpp>
+#include <core/types/integer.hpp>
 #include <domain/error.hpp>
 
 #include <cstddef>
-#include <cstdint>
 #include <filesystem>
 #include <format>
 #include <optional>
@@ -84,8 +84,8 @@ namespace uf::m0_demo
 {
     auto indexedOutputPath(
         std::filesystem::path const& output,
-        std::uint32_t index,
-        std::uint32_t frameCount
+        uint32 index,
+        uint32 frameCount
     ) -> std::filesystem::path
     {
         if (frameCount == 1U)

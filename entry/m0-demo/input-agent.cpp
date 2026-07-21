@@ -16,8 +16,10 @@
 #include <controller/dpi.hpp>
 #include <controller/input.hpp>
 #include <controller/target.hpp>
+#include <core/error/contracts.hpp>
 #include <core/numeric/checked-cast.hpp>
 #include <core/time/monotonic-time.hpp>
+#include <core/types/integer.hpp>
 #include <domain/detection.hpp>
 #include <domain/error.hpp>
 #include <domain/frame.hpp>
@@ -28,7 +30,6 @@
 #include <cerrno>
 #include <chrono>
 #include <cstddef>
-#include <cstdint>
 #include <filesystem>
 #include <format>
 #include <fstream>
@@ -78,145 +79,164 @@ namespace
                 path.string(),
                 error.message()
             ),
-            static_cast<std::int64_t>(error.value())
+            static_cast<uf::int64>(error.value())
         );
     }
+}
 
-    class QueueReader final
+namespace uf::m0_demo
+{
+    InputAgentQueueReader::InputAgentQueueReader(
+        std::filesystem::path path
+    ) noexcept
+        : m_path{std::move(path)}
     {
-        std::filesystem::path m_path;
-        std::uintmax_t m_offset{};
-        std::string m_pending{};
+    }
 
-        explicit QueueReader(std::filesystem::path path) noexcept
-            : m_path{std::move(path)}
+    auto InputAgentQueueReader::extractLines()
+        -> Result<std::vector<std::string>>
+    {
+        auto lines = std::vector<std::string>{};
+        auto consumed = std::size_t{};
+        while (true)
         {
-        }
-
-        [[nodiscard]]
-        auto extractLines() -> uf::Result<std::vector<std::string>>
-        {
-            auto lines = std::vector<std::string>{};
-            auto consumed = std::size_t{};
-            while (true)
+            auto const newline = m_pending.find('\n', consumed);
+            if (newline == std::string::npos)
             {
-                auto const newline = m_pending.find('\n', consumed);
-                if (newline == std::string::npos)
-                {
-                    break;
-                }
-
-                auto line = m_pending.substr(consumed, newline - consumed);
-                if (!line.empty() && line.back() == '\r')
-                {
-                    line.pop_back();
-                }
-                lines.emplace_back(std::move(line));
-                consumed = newline + 1U;
+                break;
             }
-            if (consumed != 0U)
+
+            auto commandBytes = newline - consumed;
+            if (
+                commandBytes != 0U
+                && m_pending[newline - 1U] == '\r'
+            )
             {
-                m_pending.erase(0, consumed);
+                --commandBytes;
             }
-            if (m_pending.size() > g_maximumPendingQueueBytes)
+            if (commandBytes > g_maximumPendingQueueBytes)
             {
-                return uf::fail(
-                    uf::AutomationErrorKind::InvalidResource,
+                return fail(
+                    AutomationErrorKind::InvalidResource,
                     std::format(
-                        "input-agent queue {} has an unterminated command exceeding {} bytes",
+                        "input-agent queue {} has a command exceeding {} bytes",
                         m_path.string(),
                         g_maximumPendingQueueBytes
                     )
                 );
             }
-            return lines;
+
+            auto line = m_pending.substr(consumed, newline - consumed);
+            if (!line.empty() && line.back() == '\r')
+            {
+                line.pop_back();
+            }
+            lines.emplace_back(std::move(line));
+            consumed = newline + 1U;
         }
-
-    public:
-        [[nodiscard]]
-        static auto create(
-            std::filesystem::path path
-        ) -> uf::Result<QueueReader>
+        if (consumed != 0U)
         {
-            errno = 0;
-            auto stream = std::ifstream{path, std::ios::binary};
-            if (!stream.is_open())
-            {
-                return agentIoFailure("open queue file", path, currentIoError());
-            }
-            return QueueReader{std::move(path)};
+            m_pending.erase(0, consumed);
         }
-
-        [[nodiscard]]
-        auto readAvailable() -> uf::Result<std::vector<std::string>>
+        if (m_pending.size() > g_maximumPendingQueueBytes)
         {
-            auto fileError = std::error_code{};
-            auto const size = std::filesystem::file_size(m_path, fileError);
-            if (fileError)
-            {
-                return agentIoFailure("inspect queue file", m_path, fileError);
-            }
-            if (size < m_offset)
-            {
-                return uf::fail(
-                    uf::AutomationErrorKind::InvalidResource,
-                    std::format(
-                        "input-agent queue {} was truncated; it must be append-only",
-                        m_path.string()
-                    )
-                );
-            }
-            if (size == m_offset)
-            {
-                return extractLines();
-            }
-
-            auto const available = size - m_offset;
-            auto const readBytes = static_cast<std::uintmax_t>(
-                std::min<std::uintmax_t>(
-                    available,
-                    g_queueReadBytesPerPoll
+            return fail(
+                AutomationErrorKind::InvalidResource,
+                std::format(
+                    "input-agent queue {} has an unterminated command exceeding {} bytes",
+                    m_path.string(),
+                    g_maximumPendingQueueBytes
                 )
             );
-            auto const streamOffset = uf::checkedCast<std::streamoff>(m_offset);
-            auto const streamSize = uf::checkedCast<std::streamsize>(readBytes);
-            auto const stringSize = uf::checkedCast<std::size_t>(readBytes);
-            if (!streamOffset || !streamSize || !stringSize)
-            {
-                return uf::fail(
-                    uf::AutomationErrorKind::InvalidResource,
-                    std::format(
-                        "input-agent queue {} is too large to address",
-                        m_path.string()
-                    )
-                );
-            }
+        }
+        return lines;
+    }
 
-            errno = 0;
-            auto stream = std::ifstream{m_path, std::ios::binary};
-            if (!stream.is_open())
-            {
-                return agentIoFailure("open queue file", m_path, currentIoError());
-            }
-            stream.seekg(*streamOffset);
-            if (!stream)
-            {
-                return agentIoFailure("seek queue file", m_path, currentIoError());
-            }
+    auto InputAgentQueueReader::create(
+        std::filesystem::path path
+    ) -> Result<InputAgentQueueReader>
+    {
+        errno = 0;
+        auto stream = std::ifstream{path, std::ios::binary};
+        if (!stream.is_open())
+        {
+            return agentIoFailure("open queue file", path, currentIoError());
+        }
+        return InputAgentQueueReader{std::move(path)};
+    }
 
-            auto chunk = std::string(*stringSize, '\0');
-            errno = 0;
-            stream.read(chunk.data(), *streamSize);
-            if (stream.gcount() != *streamSize)
-            {
-                return agentIoFailure("read queue file", m_path, currentIoError());
-            }
-            m_offset += readBytes;
-            m_pending += chunk;
+    auto InputAgentQueueReader::readAvailable()
+        -> Result<std::vector<std::string>>
+    {
+        auto fileError = std::error_code{};
+        auto const size = std::filesystem::file_size(m_path, fileError);
+        if (fileError)
+        {
+            return agentIoFailure("inspect queue file", m_path, fileError);
+        }
+        if (size < m_offset)
+        {
+            return fail(
+                AutomationErrorKind::InvalidResource,
+                std::format(
+                    "input-agent queue {} was truncated; it must be append-only",
+                    m_path.string()
+                )
+            );
+        }
+        if (size == m_offset)
+        {
             return extractLines();
         }
-    };
 
+        auto const available = size - m_offset;
+        auto const readBytes = static_cast<uintmax>(
+            std::min<uintmax>(
+                available,
+                g_queueReadBytesPerPoll
+            )
+        );
+        auto const streamOffset = checkedCast<std::streamoff>(m_offset);
+        auto const streamSize = checkedCast<std::streamsize>(readBytes);
+        auto const stringSize = checkedCast<std::size_t>(readBytes);
+        if (!streamOffset || !streamSize || !stringSize)
+        {
+            return fail(
+                AutomationErrorKind::InvalidResource,
+                std::format(
+                    "input-agent queue {} is too large to address",
+                    m_path.string()
+                )
+            );
+        }
+
+        errno = 0;
+        auto stream = std::ifstream{m_path, std::ios::binary};
+        if (!stream.is_open())
+        {
+            return agentIoFailure("open queue file", m_path, currentIoError());
+        }
+        stream.seekg(*streamOffset);
+        if (!stream)
+        {
+            return agentIoFailure("seek queue file", m_path, currentIoError());
+        }
+
+        auto chunk = std::string(*stringSize, '\0');
+        errno = 0;
+        stream.read(chunk.data(), *streamSize);
+        if (stream.gcount() != *streamSize)
+        {
+            return agentIoFailure("read queue file", m_path, currentIoError());
+        }
+        m_offset += readBytes;
+        m_pending += chunk;
+        return extractLines();
+    }
+}
+
+namespace
+{
     class ResultWriter final
     {
         uf::m0_demo::platform::FileWriter m_writer;
@@ -237,7 +257,7 @@ namespace
 
         [[nodiscard]]
         static auto create(
-            std::filesystem::path path
+            std::filesystem::path const& path
         ) -> uf::Result<ResultWriter>
         {
             UF_TRY_VALUE(
@@ -278,12 +298,16 @@ namespace
 
     [[nodiscard]]
     auto openOutputFile(
-        std::filesystem::path path
+        std::filesystem::path path,
+        std::filesystem::path const& canonicalOutputDirectory
     ) -> uf::Result<OutputFile>
     {
         UF_TRY_VALUE(
             writer,
-            uf::m0_demo::platform::FileWriter::createExclusive(path)
+            uf::m0_demo::platform::FileWriter::createExclusive(
+                path,
+                canonicalOutputDirectory
+            )
         );
         return OutputFile{
             .m_path = std::move(path),
@@ -351,12 +375,12 @@ namespace
     ) -> std::string
     {
         auto const deltaWidth = (
-            static_cast<std::int64_t>(frame.width())
-            - static_cast<std::int64_t>(client.width())
+            static_cast<uf::int64>(frame.width())
+            - static_cast<uf::int64>(client.width())
         );
         auto const deltaHeight = (
-            static_cast<std::int64_t>(frame.height())
-            - static_cast<std::int64_t>(client.height())
+            static_cast<uf::int64>(frame.height())
+            - static_cast<uf::int64>(client.height())
         );
         return std::format(
             "{{\"op\":\"capture\",\"ok\":true,\"frame_id\":{},"
@@ -375,8 +399,8 @@ namespace
 
     struct ClickResult final
     {
-        std::optional<std::uint64_t> m_beforeFrame;
-        std::optional<std::uint64_t> m_afterFrame;
+        std::optional<uf::uint64> m_beforeFrame;
+        std::optional<uf::uint64> m_afterFrame;
         bool m_delivered{};
         std::optional<uf::Error> m_error;
     };
@@ -404,6 +428,24 @@ namespace
         }
         output += '}';
         return output;
+    }
+
+    struct CommandExecution final
+    {
+        std::string m_resultLine;
+        bool m_stopAgent{};
+    };
+
+    [[nodiscard]]
+    auto finishClick(
+        ClickResult const& result,
+        bool stopAgent = false
+    ) -> CommandExecution
+    {
+        return CommandExecution{
+            .m_resultLine = serializeClickResult(result),
+            .m_stopAgent = stopAgent,
+        };
     }
 
     [[nodiscard]] auto serializeQuit() -> std::string
@@ -478,7 +520,10 @@ namespace
             return serializeCaptureError(validated.error());
         }
 
-        auto output = openOutputFile(*validated);
+        auto output = openOutputFile(
+            *validated,
+            canonicalOutputDirectory
+        );
         if (!output)
         {
             return serializeCaptureError(output.error());
@@ -522,7 +567,7 @@ namespace
         std::filesystem::path const& canonicalOutputDirectory,
         std::filesystem::path const& canonicalQueue,
         std::filesystem::path const& canonicalResults
-    ) -> std::string
+    ) -> CommandExecution
     {
         auto result = ClickResult{};
         auto canonicalBefore = validateOutputPath(
@@ -535,7 +580,7 @@ namespace
         if (!canonicalBefore)
         {
             result.m_error = std::move(canonicalBefore).error();
-            return serializeClickResult(result);
+            return finishClick(result);
         }
         auto canonicalAfter = validateOutputPath(
             command.m_outputAfter,
@@ -547,7 +592,7 @@ namespace
         if (!canonicalAfter)
         {
             result.m_error = std::move(canonicalAfter).error();
-            return serializeClickResult(result);
+            return finishClick(result);
         }
         auto pathsAlias = uf::m0_demo::canonicalPathsAlias(
             *canonicalBefore,
@@ -556,7 +601,7 @@ namespace
         if (!pathsAlias)
         {
             result.m_error = std::move(pathsAlias).error();
-            return serializeClickResult(result);
+            return finishClick(result);
         }
         if (*pathsAlias)
         {
@@ -565,7 +610,7 @@ namespace
                 "input-agent click out_before and out_after paths alias"
             );
             result.m_error = std::move(failure).error();
-            return serializeClickResult(result);
+            return finishClick(result);
         }
 
         if (command.m_settle > uf::m0_demo::g_maximumInputAgentSettle)
@@ -575,27 +620,33 @@ namespace
                 "input-agent click settle_ms exceeds the 5000 ms limit"
             );
             result.m_error = std::move(failure).error();
-            return serializeClickResult(result);
+            return finishClick(result);
         }
 
-        auto beforeOutput = openOutputFile(*canonicalBefore);
+        auto beforeOutput = openOutputFile(
+            *canonicalBefore,
+            canonicalOutputDirectory
+        );
         if (!beforeOutput)
         {
             result.m_error = std::move(beforeOutput).error();
-            return serializeClickResult(result);
+            return finishClick(result);
         }
-        auto afterOutput = openOutputFile(*canonicalAfter);
+        auto afterOutput = openOutputFile(
+            *canonicalAfter,
+            canonicalOutputDirectory
+        );
         if (!afterOutput)
         {
             result.m_error = std::move(afterOutput).error();
-            return serializeClickResult(result);
+            return finishClick(result);
         }
 
         auto before = captureToOutput(session, *beforeOutput);
         if (!before)
         {
             result.m_error = std::move(before).error();
-            return serializeClickResult(result);
+            return finishClick(result);
         }
         result.m_beforeFrame = before->id().value();
 
@@ -606,7 +657,7 @@ namespace
         if (!lease)
         {
             result.m_error = std::move(lease).error();
-            return serializeClickResult(result);
+            return finishClick(result);
         }
         auto const point = uf::Point<uf::ClientSpace>{
             command.m_x,
@@ -621,20 +672,26 @@ namespace
         if (!coordinate)
         {
             result.m_error = std::move(coordinate).error();
-            return serializeClickResult(result);
+            return finishClick(result);
         }
 
         auto revalidated = resolved.revalidate();
         if (!revalidated)
         {
             result.m_error = std::move(revalidated).error();
-            return serializeClickResult(result);
+            return finishClick(result, true);
         }
         auto unchanged = uf::m0_demo::requireUnchangedTarget(*revalidated);
         if (!unchanged)
         {
             result.m_error = std::move(unchanged).error();
-            return serializeClickResult(result);
+            return finishClick(result, true);
+        }
+        auto instance = session.validateTargetInstance();
+        if (!instance)
+        {
+            result.m_error = std::move(instance).error();
+            return finishClick(result, true);
         }
 
         auto clicked = uf::click(
@@ -647,10 +704,31 @@ namespace
         if (!clicked)
         {
             auto error = std::move(clicked).error();
-            auto const releases = uf::releaseHeld(delivery, held, audit);
+            auto cleanupTarget = delivery;
+            auto instanceAfterFailure = session.validateTargetInstance();
+            auto const stopAgent = !instanceAfterFailure;
+            if (!instanceAfterFailure)
+            {
+                error.addContext(
+                    "input-agent click compensation blocked because the capture target instance changed: "
+                    + uf::m0_demo::formatAutomationError(
+                        instanceAfterFailure.error()
+                    )
+                );
+                auto rejectedTarget = uf::DeliveryTarget::create(
+                    delivery.windowHandle(),
+                    uf::SessionId{~delivery.sessionId().value()},
+                    delivery.generation(),
+                    delivery.clientWidth(),
+                    delivery.clientHeight()
+                );
+                UF_CHECK(rejectedTarget.has_value());
+                cleanupTarget = *rejectedTarget;
+            }
+            auto const releases = uf::releaseHeld(cleanupTarget, held, audit);
             addReleaseFailures(error, releases);
             result.m_error = std::move(error);
-            return serializeClickResult(result);
+            return finishClick(result, stopAgent);
         }
         result.m_delivered = true;
 
@@ -662,10 +740,10 @@ namespace
         if (!after)
         {
             result.m_error = std::move(after).error();
-            return serializeClickResult(result);
+            return finishClick(result);
         }
         result.m_afterFrame = after->id().value();
-        return serializeClickResult(result);
+        return finishClick(result);
     }
 }
 
@@ -747,7 +825,10 @@ namespace uf::m0_demo
             );
         }
 
-        UF_TRY_VALUE(reader, QueueReader::create(canonicalQueue));
+        UF_TRY_VALUE(
+            reader,
+            InputAgentQueueReader::create(canonicalQueue)
+        );
         UF_TRY_VALUE(writer, ResultWriter::create(canonicalResults));
         UF_TRY(ensurePerMonitorAwareV2());
 
@@ -801,12 +882,13 @@ namespace uf::m0_demo
                 {
                     clearInputAgentCommandAudit(audit);
                     UF_TRY(writer.write(serializeQuit()));
-                    session.close();
+                    UF_TRY(session.close());
                     UF_TRY(writer.flush());
                     return ok();
                 }
 
                 auto resultLine = std::string{};
+                auto stopAgent = false;
                 if (auto const* capture = std::get_if<InputAgentCaptureCommand>(&*command))
                 {
                     resultLine = executeCapture(
@@ -822,7 +904,7 @@ namespace uf::m0_demo
                     &*command
                 ))
                 {
-                    resultLine = executeClick(
+                    auto execution = executeClick(
                         *clickCommand,
                         resolved,
                         session,
@@ -833,16 +915,23 @@ namespace uf::m0_demo
                         canonicalQueue,
                         canonicalResults
                     );
+                    resultLine = std::move(execution.m_resultLine);
+                    stopAgent = execution.m_stopAgent;
                 }
                 else
                 {
-                    return fail(
-                        AutomationErrorKind::InternalInvariant,
+                    UF_UNREACHABLE_MSG(
                         "input-agent parsed an unsupported command variant"
                     );
                 }
                 clearInputAgentCommandAudit(audit);
                 UF_TRY(writer.write(resultLine));
+                if (stopAgent)
+                {
+                    UF_TRY(session.close());
+                    UF_TRY(writer.flush());
+                    return ok();
+                }
                 lastActivity = MonotonicInstant::now();
             }
 
@@ -852,7 +941,7 @@ namespace uf::m0_demo
                 >= args.m_idleTimeout
             )
             {
-                session.close();
+                UF_TRY(session.close());
                 UF_TRY(writer.flush());
                 return ok();
             }

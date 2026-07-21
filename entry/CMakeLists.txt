@@ -73,6 +73,7 @@ if(TARGET ${PROJECT_NAME}_controller)
             ${PROJECT_NAME}_vision
         PRIVATE
             advapi32
+            ntdll
             user32
     )
     target_compile_features(${M0_DEMO_LIBRARY} PUBLIC cxx_std_23)

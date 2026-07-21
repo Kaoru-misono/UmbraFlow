@@ -1,9 +1,9 @@
 #pragma once
 
 #include <core/error/result.hpp>
+#include <core/types/integer.hpp>
 
 #include <cstddef>
-#include <cstdint>
 #include <span>
 #include <utility>
 #include <vector>
@@ -15,20 +15,20 @@ namespace uf::controller_detail
     // include an invisible resize border that WGC excludes.
     class ClientCropRect final
     {
-        std::uint32_t m_offsetX;
-        std::uint32_t m_offsetY;
-        std::uint32_t m_width;
-        std::uint32_t m_height;
-        std::uint32_t m_right;
-        std::uint32_t m_bottom;
+        uint32 m_offsetX;
+        uint32 m_offsetY;
+        uint32 m_width;
+        uint32 m_height;
+        uint32 m_right;
+        uint32 m_bottom;
 
         constexpr ClientCropRect(
-            std::uint32_t offsetX,
-            std::uint32_t offsetY,
-            std::uint32_t width,
-            std::uint32_t height,
-            std::uint32_t right,
-            std::uint32_t bottom
+            uint32 offsetX,
+            uint32 offsetY,
+            uint32 width,
+            uint32 height,
+            uint32 right,
+            uint32 bottom
         ) noexcept
             : m_offsetX{offsetX}
             , m_offsetY{offsetY}
@@ -44,33 +44,33 @@ namespace uf::controller_detail
 
         [[nodiscard]]
         static auto create(
-            std::pair<std::uint32_t, std::uint32_t> frame,
-            std::pair<std::int32_t, std::int32_t> extended,
-            std::pair<std::int32_t, std::int32_t> offset,
-            std::pair<std::uint32_t, std::uint32_t> client
+            std::pair<uint32, uint32> frame,
+            std::pair<int32, int32> extended,
+            std::pair<int32, int32> offset,
+            std::pair<uint32, uint32> client
         ) -> Result<ClientCropRect>;
 
         [[nodiscard]]
-        constexpr auto offsetX() const noexcept -> std::uint32_t
+        constexpr auto offsetX() const noexcept -> uint32
         {
             return m_offsetX;
         }
 
         [[nodiscard]]
-        constexpr auto offsetY() const noexcept -> std::uint32_t
+        constexpr auto offsetY() const noexcept -> uint32
         {
             return m_offsetY;
         }
 
-        [[nodiscard]] constexpr auto width() const noexcept -> std::uint32_t { return m_width; }
-        [[nodiscard]] constexpr auto height() const noexcept -> std::uint32_t { return m_height; }
-        [[nodiscard]] constexpr auto right() const noexcept -> std::uint32_t { return m_right; }
-        [[nodiscard]] constexpr auto bottom() const noexcept -> std::uint32_t { return m_bottom; }
+        [[nodiscard]] constexpr auto width() const noexcept -> uint32 { return m_width; }
+        [[nodiscard]] constexpr auto height() const noexcept -> uint32 { return m_height; }
+        [[nodiscard]] constexpr auto right() const noexcept -> uint32 { return m_right; }
+        [[nodiscard]] constexpr auto bottom() const noexcept -> uint32 { return m_bottom; }
 
         [[nodiscard]]
         auto ensureWithinSource(
-            std::uint32_t sourceWidth,
-            std::uint32_t sourceHeight
+            uint32 sourceWidth,
+            uint32 sourceHeight
         ) const -> Status;
     };
 
@@ -79,7 +79,7 @@ namespace uf::controller_detail
     auto readbackBgra8(
         std::span<std::byte const> source,
         std::size_t rowPitch,
-        std::uint32_t width,
-        std::uint32_t height
+        uint32 width,
+        uint32 height
     ) -> Result<std::vector<std::byte>>;
 }

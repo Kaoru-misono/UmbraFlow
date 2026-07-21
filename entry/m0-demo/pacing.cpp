@@ -5,11 +5,11 @@
 
 #include <core/numeric/checked-cast.hpp>
 #include <core/time/monotonic-time.hpp>
+#include <core/types/integer.hpp>
 #include <domain/error.hpp>
 
 #include <algorithm>
 #include <chrono>
-#include <cstdint>
 #include <format>
 #include <string>
 #include <thread>
@@ -17,10 +17,10 @@
 
 namespace
 {
-    constexpr auto sleepStep = std::chrono::milliseconds{20};
+    constexpr auto g_sleepStep = std::chrono::milliseconds{20};
 
     [[nodiscard]]
-    auto interruptibleSleep(std::uint64_t totalMilliseconds) -> bool
+    auto interruptibleSleep(uf::uint64 totalMilliseconds) -> bool
     {
         auto const started = uf::MonotonicInstant::now();
         while (true)
@@ -34,7 +34,7 @@ namespace
             auto const elapsedMilliseconds = std::chrono::duration_cast<std::chrono::milliseconds>(
                 elapsed
             );
-            auto const elapsedCount = uf::checkedCast<std::uint64_t>(
+            auto const elapsedCount = uf::checkedCast<uf::uint64>(
                 elapsedMilliseconds.count()
             ).value_or(0U);
             if (elapsedCount >= totalMilliseconds)
@@ -43,9 +43,9 @@ namespace
             }
 
             auto const remaining = totalMilliseconds - elapsedCount;
-            auto const stepCount = std::min<std::uint64_t>(
+            auto const stepCount = std::min<uf::uint64>(
                 remaining,
-                static_cast<std::uint64_t>(sleepStep.count())
+                static_cast<uf::uint64>(g_sleepStep.count())
             );
             auto const step = uf::checkedCast<std::chrono::milliseconds::rep>(stepCount);
             if (!step)
@@ -60,8 +60,8 @@ namespace
 namespace uf::m0_demo
 {
     auto ClickDelay::create(
-        std::uint64_t minimumMilliseconds,
-        std::uint64_t maximumMilliseconds
+        uint64 minimumMilliseconds,
+        uint64 maximumMilliseconds
     ) -> Result<ClickDelay>
     {
         if (minimumMilliseconds == 0U || maximumMilliseconds == 0U)
@@ -90,18 +90,18 @@ namespace uf::m0_demo
         return ClickDelay{minimumMilliseconds, maximumMilliseconds};
     }
 
-    auto SplitMix64::next() noexcept -> std::uint64_t
+    auto SplitMix64::next() noexcept -> uint64
     {
-        m_state += std::uint64_t{0x9E37'79B9'7F4A'7C15};
+        m_state += uint64{0x9E37'79B9'7F4A'7C15};
         auto value = m_state;
-        value = (value ^ (value >> 30U)) * std::uint64_t{0xBF58'476D'1CE4'E5B9};
-        value = (value ^ (value >> 27U)) * std::uint64_t{0x94D0'49BB'1331'11EB};
+        value = (value ^ (value >> 30U)) * uint64{0xBF58'476D'1CE4'E5B9};
+        value = (value ^ (value >> 27U)) * uint64{0x94D0'49BB'1331'11EB};
         return value ^ (value >> 31U);
     }
 
     ClickPacer::ClickPacer(
         std::optional<ClickDelay> delay,
-        std::uint64_t seed
+        uint64 seed
     ) noexcept
         : m_delay{delay}
         , m_random{seed}
@@ -110,7 +110,7 @@ namespace uf::m0_demo
 
     auto ClickPacer::pauseBeforeClick(
         std::string_view label,
-        std::uint32_t loopIndex,
+        uint32 loopIndex,
         JsonlLog& log
     ) -> Result<PaceOutcome>
     {

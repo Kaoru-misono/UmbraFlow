@@ -10,11 +10,11 @@
 #include <controller/dpi.hpp>
 #include <controller/target.hpp>
 #include <core/time/monotonic-time.hpp>
+#include <core/types/integer.hpp>
 #include <domain/error.hpp>
 #include <domain/ids.hpp>
 
 #include <chrono>
-#include <cstdint>
 #include <filesystem>
 #include <format>
 #include <iostream>
@@ -39,7 +39,7 @@ namespace
 
     [[nodiscard]]
     auto captureFps(
-        std::uint32_t frameCount,
+        uf::uint32 frameCount,
         uf::MonotonicInstant::Duration elapsed
     ) noexcept -> double
     {
@@ -113,7 +113,7 @@ namespace
 
         auto const captureStarted = uf::MonotonicInstant::now();
         auto captureFinished = captureStarted;
-        for (auto index = std::uint32_t{0}; index < args.m_frames; ++index)
+        for (auto index = uf::uint32{0}; index < args.m_frames; ++index)
         {
             UF_TRY_VALUE_CONTEXT(
                 frame,
@@ -132,12 +132,12 @@ namespace
             );
 
             auto const deltaWidth = (
-                static_cast<std::int64_t>(frame.width())
-                - static_cast<std::int64_t>(client.width())
+                static_cast<uf::int64>(frame.width())
+                - static_cast<uf::int64>(client.width())
             );
             auto const deltaHeight = (
-                static_cast<std::int64_t>(frame.height())
-                - static_cast<std::int64_t>(client.height())
+                static_cast<uf::int64>(frame.height())
+                - static_cast<uf::int64>(client.height())
             );
             auto const elapsed = captureFinished.saturatingDurationSince(
                 captureStarted
@@ -174,7 +174,7 @@ namespace
                 std::this_thread::sleep_for(args.m_interval);
             }
         }
-        session.close();
+        UF_TRY(session.close());
 
         auto const elapsed = captureFinished.saturatingDurationSince(
             captureStarted
@@ -209,7 +209,7 @@ namespace uf::m0_demo
             canonicalLog,
             canonicalizePathForComparison(*args.m_log, "capture log")
         );
-        for (auto index = std::uint32_t{0}; index < args.m_frames; ++index)
+        for (auto index = uint32{0}; index < args.m_frames; ++index)
         {
             auto const output = indexedOutputPath(
                 args.m_output,

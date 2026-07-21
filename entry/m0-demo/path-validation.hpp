@@ -22,7 +22,7 @@ namespace uf::m0_demo
     auto isPathWithinDirectory(
         std::filesystem::path const& canonicalPath,
         std::filesystem::path const& canonicalDirectory
-    ) noexcept -> bool;
+    ) -> bool;
 
     [[nodiscard]]
     auto resolveConfinedOutputPath(

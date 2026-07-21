@@ -2,11 +2,13 @@
 
 #include "controller/discovery.hpp"
 
+#include <core/types/integer.hpp>
+
 #include <optional>
 
 namespace uf::controller_detail
 {
-    enum class ProcessInstanceMatch
+    enum class ProcessInstanceMatch : uint8
     {
         Same,
         Different,

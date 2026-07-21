@@ -2,39 +2,39 @@
 
 #include "platform/windows-controller.hpp"
 
+#include <core/types/integer.hpp>
 #include <domain/error.hpp>
 
 #include <algorithm>
 #include <array>
 #include <bit>
-#include <cstdint>
 #include <format>
 #include <limits>
 
 namespace
 {
     [[nodiscard]]
-    constexpr auto lParamFromBits(std::uint32_t bits) noexcept -> std::intptr_t
+    constexpr auto lParamFromBits(uf::uint32 bits) noexcept -> uf::intptr
     {
-        static_assert(sizeof(std::intptr_t) >= sizeof(std::uint32_t));
-        if constexpr (sizeof(std::intptr_t) == sizeof(std::uint32_t))
+        static_assert(sizeof(uf::intptr) >= sizeof(uf::uint32));
+        if constexpr (sizeof(uf::intptr) == sizeof(uf::uint32))
         {
-            return std::bit_cast<std::int32_t>(bits);
+            return std::bit_cast<uf::int32>(bits);
         }
         else
         {
-            return static_cast<std::intptr_t>(bits);
+            return static_cast<uf::intptr>(bits);
         }
     }
 }
 
 namespace uf
 {
-    auto ClientPixel::create(std::int32_t x, std::int32_t y) -> Result<ClientPixel>
+    auto ClientPixel::create(int32 x, int32 y) -> Result<ClientPixel>
     {
         if (
-            x < std::numeric_limits<std::int16_t>::min()
-            || x > std::numeric_limits<std::int16_t>::max()
+            x < std::numeric_limits<int16>::min()
+            || x > std::numeric_limits<int16>::max()
         )
         {
             return fail(
@@ -42,13 +42,13 @@ namespace uf
                 std::format(
                     "client x coordinate {} is outside the encodable range 0..={}",
                     x,
-                    std::numeric_limits<std::int16_t>::max()
+                    std::numeric_limits<int16>::max()
                 )
             );
         }
         if (
-            y < std::numeric_limits<std::int16_t>::min()
-            || y > std::numeric_limits<std::int16_t>::max()
+            y < std::numeric_limits<int16>::min()
+            || y > std::numeric_limits<int16>::max()
         )
         {
             return fail(
@@ -56,13 +56,13 @@ namespace uf
                 std::format(
                     "client y coordinate {} is outside the encodable range 0..={}",
                     y,
-                    std::numeric_limits<std::int16_t>::max()
+                    std::numeric_limits<int16>::max()
                 )
             );
         }
 
-        auto const narrowedX = static_cast<std::int16_t>(x);
-        auto const narrowedY = static_cast<std::int16_t>(y);
+        auto const narrowedX = static_cast<int16>(x);
+        auto const narrowedY = static_cast<int16>(y);
         if (narrowedX < 0 || narrowedY < 0)
         {
             return fail(
@@ -78,7 +78,7 @@ namespace uf
         return ClientPixel{narrowedX, narrowedY};
     }
 
-    KeyInput::KeyInput(std::uint16_t virtualKey) noexcept
+    KeyInput::KeyInput(uint16 virtualKey) noexcept
         : m_virtualKey{virtualKey}
         , m_extended{controller_detail::isExtendedKey(virtualKey)}
     {
@@ -88,67 +88,67 @@ namespace uf
 namespace uf::controller_detail
 {
     auto keyboardLParamBits(
-        std::uint8_t scanCode,
+        uint8 scanCode,
         bool extended,
         KeyTransition transition
-    ) noexcept -> std::uint32_t
+    ) noexcept -> uint32
     {
-        auto bits = std::uint32_t{1U};
-        bits |= static_cast<std::uint32_t>(scanCode) << 16U;
+        auto bits = uint32{1U};
+        bits |= static_cast<uint32>(scanCode) << 16U;
         if (extended)
         {
-            bits |= std::uint32_t{1U} << 24U;
+            bits |= uint32{1U} << 24U;
         }
         if (transition == KeyTransition::Up)
         {
-            bits |= std::uint32_t{1U} << 30U;
-            bits |= std::uint32_t{1U} << 31U;
+            bits |= uint32{1U} << 30U;
+            bits |= uint32{1U} << 31U;
         }
         return bits;
     }
 
-    auto pointerLParamBits(ClientPixel pixel) noexcept -> std::uint32_t
+    auto pointerLParamBits(ClientPixel pixel) noexcept -> uint32
     {
-        auto const low = static_cast<std::uint32_t>(
-            static_cast<std::uint16_t>(pixel.x())
+        auto const low = static_cast<uint32>(
+            static_cast<uint16>(pixel.x())
         );
-        auto const high = static_cast<std::uint32_t>(
-            static_cast<std::uint16_t>(pixel.y())
+        auto const high = static_cast<uint32>(
+            static_cast<uint16>(pixel.y())
         );
         return (high << 16U) | low;
     }
 
-    auto isExtendedKey(std::uint16_t virtualKey) noexcept -> bool
+    auto isExtendedKey(uint16 virtualKey) noexcept -> bool
     {
         constexpr auto extended = std::array{
-            std::uint16_t{0x00A3U},
-            std::uint16_t{0x00A5U},
-            std::uint16_t{0x002DU},
-            std::uint16_t{0x002EU},
-            std::uint16_t{0x0024U},
-            std::uint16_t{0x0023U},
-            std::uint16_t{0x0021U},
-            std::uint16_t{0x0022U},
-            std::uint16_t{0x0025U},
-            std::uint16_t{0x0026U},
-            std::uint16_t{0x0027U},
-            std::uint16_t{0x0028U},
-            std::uint16_t{0x0090U},
-            std::uint16_t{0x0003U},
-            std::uint16_t{0x002CU},
-            std::uint16_t{0x006FU},
+            uint16{0x00A3U},
+            uint16{0x00A5U},
+            uint16{0x002DU},
+            uint16{0x002EU},
+            uint16{0x0024U},
+            uint16{0x0023U},
+            uint16{0x0021U},
+            uint16{0x0022U},
+            uint16{0x0025U},
+            uint16{0x0026U},
+            uint16{0x0027U},
+            uint16{0x0028U},
+            uint16{0x0090U},
+            uint16{0x0003U},
+            uint16{0x002CU},
+            uint16{0x006FU},
         };
         return std::ranges::find(extended, virtualKey) != extended.end();
     }
 
     auto keySpec(
         KeyInput key,
-        std::uint8_t scanCode,
+        uint8 scanCode,
         KeyTransition transition
     ) noexcept -> PostSpec
     {
         return PostSpec{
-            .m_message = transition == KeyTransition::Down ? wmKeyDown : wmKeyUp,
+            .m_message = transition == KeyTransition::Down ? g_wmKeyDown : g_wmKeyUp,
             .m_wParam = key.virtualKey(),
             .m_lParam = lParamFromBits(
                 keyboardLParamBits(scanCode, key.isExtended(), transition)
@@ -158,23 +158,23 @@ namespace uf::controller_detail
 
     auto pointerSpec(PointerMessage message, ClientPixel pixel) noexcept -> PostSpec
     {
-        auto messageId = std::uint32_t{};
-        auto wParam = std::uintptr_t{};
+        auto messageId = uint32{};
+        auto wParam = uintptr{};
         switch (message)
         {
         case PointerMessage::Move:
-            messageId = wmMouseMove;
+            messageId = g_wmMouseMove;
             break;
         case PointerMessage::MoveWithLeftButton:
-            messageId = wmMouseMove;
-            wParam = leftButtonMask;
+            messageId = g_wmMouseMove;
+            wParam = g_leftButtonMask;
             break;
         case PointerMessage::LeftDown:
-            messageId = wmLeftButtonDown;
-            wParam = leftButtonMask;
+            messageId = g_wmLeftButtonDown;
+            wParam = g_leftButtonMask;
             break;
         case PointerMessage::LeftUp:
-            messageId = wmLeftButtonUp;
+            messageId = g_wmLeftButtonUp;
             break;
         }
 
@@ -185,25 +185,25 @@ namespace uf::controller_detail
         };
     }
 
-    auto charSpec(std::uint16_t codeUnit) noexcept -> PostSpec
+    auto charSpec(uint16 codeUnit) noexcept -> PostSpec
     {
         return PostSpec{
-            .m_message = wmChar,
+            .m_message = g_wmChar,
             .m_wParam = codeUnit,
-            .m_lParam = 0,
+            .m_lParam = 1,
         };
     }
 
     auto unicharSpec(char32_t codePoint) noexcept -> PostSpec
     {
         return PostSpec{
-            .m_message = wmUnichar,
-            .m_wParam = static_cast<std::uintptr_t>(codePoint),
-            .m_lParam = 0,
+            .m_message = g_wmUnichar,
+            .m_wParam = static_cast<uintptr>(codePoint),
+            .m_lParam = 1,
         };
     }
 
-    auto scanCodeFor(std::uint16_t virtualKey) noexcept -> std::uint8_t
+    auto scanCodeFor(uint16 virtualKey) noexcept -> uint8
     {
         return controller_platform::scanCodeFor(virtualKey);
     }

@@ -2,12 +2,12 @@
 
 #include <core/numeric/checked-arithmetic.hpp>
 #include <core/numeric/checked-cast.hpp>
+#include <core/types/integer.hpp>
 #include <domain/error.hpp>
 
 #include <algorithm>
 #include <array>
 #include <cstddef>
-#include <cstdint>
 #include <cstring>
 #include <filesystem>
 #include <format>
@@ -84,12 +84,12 @@ namespace
 
     struct PngMetadata final
     {
-        std::uint32_t m_width;
-        std::uint32_t m_height;
-        std::uint8_t m_bitDepth;
+        uf::uint32 m_width;
+        uf::uint32 m_height;
+        uf::uint8 m_bitDepth;
     };
 
-    constexpr auto pngSignature = std::array{
+    constexpr auto g_pngSignature = std::array{
         std::byte{0x89},
         std::byte{0x50},
         std::byte{0x4E},
@@ -99,32 +99,32 @@ namespace
         std::byte{0x1A},
         std::byte{0x0A},
     };
-    constexpr auto ihdrType = std::array{
+    constexpr auto g_ihdrType = std::array{
         std::byte{0x49},
         std::byte{0x48},
         std::byte{0x44},
         std::byte{0x52},
     };
-    constexpr auto iendType = std::array{
+    constexpr auto g_iendType = std::array{
         std::byte{0x49},
         std::byte{0x45},
         std::byte{0x4E},
         std::byte{0x44},
     };
-    constexpr auto pngChunkOverhead = std::size_t{12};
-    constexpr auto ihdrDataBytes = std::uint32_t{13};
+    constexpr auto g_pngChunkOverhead = std::size_t{12};
+    constexpr auto g_ihdrDataBytes = uf::uint32{13};
 
     [[nodiscard]]
     auto readBigEndianU32(
         std::span<std::byte const> encoded,
         std::size_t offset
-    ) noexcept -> std::uint32_t
+    ) noexcept -> uf::uint32
     {
         return (
-            std::to_integer<std::uint32_t>(encoded[offset]) << 24U
-            | std::to_integer<std::uint32_t>(encoded[offset + 1U]) << 16U
-            | std::to_integer<std::uint32_t>(encoded[offset + 2U]) << 8U
-            | std::to_integer<std::uint32_t>(encoded[offset + 3U])
+            std::to_integer<uf::uint32>(encoded[offset]) << 24U
+            | std::to_integer<uf::uint32>(encoded[offset + 1U]) << 16U
+            | std::to_integer<uf::uint32>(encoded[offset + 2U]) << 8U
+            | std::to_integer<uf::uint32>(encoded[offset + 3U])
         );
     }
 
@@ -146,8 +146,8 @@ namespace
     ) -> uf::Result<PngMetadata>
     {
         if (
-            encoded.size() < pngSignature.size()
-            || !bytesEqualAt(encoded, 0, pngSignature)
+            encoded.size() < g_pngSignature.size()
+            || !bytesEqualAt(encoded, 0, g_pngSignature)
         )
         {
             return invalidResource(
@@ -156,13 +156,13 @@ namespace
         }
 
         auto metadata = PngMetadata{};
-        auto offset = pngSignature.size();
+        auto offset = g_pngSignature.size();
         auto firstChunk = true;
         auto sawIend = false;
         while (offset < encoded.size())
         {
             auto const remaining = encoded.size() - offset;
-            if (remaining < pngChunkOverhead)
+            if (remaining < g_pngChunkOverhead)
             {
                 return invalidResource(
                     std::format(
@@ -174,7 +174,7 @@ namespace
 
             auto const dataBytes = readBigEndianU32(encoded, offset);
             auto const dataSize = uf::checkedCast<std::size_t>(dataBytes);
-            if (!dataSize || *dataSize > remaining - pngChunkOverhead)
+            if (!dataSize || *dataSize > remaining - g_pngChunkOverhead)
             {
                 return invalidResource(
                     std::format(
@@ -184,8 +184,8 @@ namespace
                 );
             }
 
-            auto const isIhdr = bytesEqualAt(encoded, offset + 4U, ihdrType);
-            auto const isIend = bytesEqualAt(encoded, offset + 4U, iendType);
+            auto const isIhdr = bytesEqualAt(encoded, offset + 4U, g_ihdrType);
+            auto const isIend = bytesEqualAt(encoded, offset + 4U, g_iendType);
             if (firstChunk)
             {
                 if (!isIhdr)
@@ -197,7 +197,7 @@ namespace
                         )
                     );
                 }
-                if (dataBytes != ihdrDataBytes)
+                if (dataBytes != g_ihdrDataBytes)
                 {
                     return invalidResource(
                         std::format(
@@ -210,7 +210,7 @@ namespace
                 metadata = PngMetadata{
                     .m_width = readBigEndianU32(encoded, offset + 8U),
                     .m_height = readBigEndianU32(encoded, offset + 12U),
-                    .m_bitDepth = std::to_integer<std::uint8_t>(encoded[offset + 16U]),
+                    .m_bitDepth = std::to_integer<uf::uint8>(encoded[offset + 16U]),
                 };
                 firstChunk = false;
             }
@@ -224,7 +224,7 @@ namespace
                 );
             }
 
-            offset += pngChunkOverhead + *dataSize;
+            offset += g_pngChunkOverhead + *dataSize;
             if (isIend)
             {
                 if (dataBytes != 0U || offset != encoded.size())
@@ -356,9 +356,10 @@ namespace uf::m0_demo::ffi
         auto decodedWidth = int{};
         auto decodedHeight = int{};
         auto decodedChannels = int{};
-        // SAFETY: validatePngStructure established that every chunk is bounded
-        // by the live encoded span before stb can inspect it. std::byte and
-        // stbi_uc are byte-sized, and stb reads only the supplied range.
+        // validatePngStructure bounded every chunk before stb can inspect it.
+        // SAFETY: encoded owns the live byte range that byte-sized stbi_uc reads
+        // synchronously without retaining the converted pointer.
+        // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast)
         auto const* encodedBytes = reinterpret_cast<stbi_uc const*>(encoded.data());
         auto pixels = std::vector<std::byte>(*decodedBytes);
         if (metadata.m_bitDepth == 16U)
@@ -394,12 +395,23 @@ namespace uf::m0_demo::ffi
                 );
             }
 
-            for (auto index = std::size_t{0}; index < *decodedBytes; ++index)
-            {
-                auto const sample = static_cast<std::uint32_t>(decoded.get()[index]);
-                auto const rounded = (sample * 255U + 32'767U) / 65'535U;
-                pixels[index] = static_cast<std::byte>(rounded);
-            }
+            // SAFETY: the successful RGBA16 decode returned exactly one stbi_us
+            // sample per byte in the validated RGBA8 destination size. decoded
+            // owns that allocation for the lifetime of this call-scoped view.
+            auto const decodedSamples = std::span<stbi_us const>{
+                decoded.get(),
+                *decodedBytes
+            };
+            std::ranges::transform(
+                decodedSamples,
+                pixels.begin(),
+                [](stbi_us sample) -> std::byte
+                {
+                    auto const widened = static_cast<uint32>(sample);
+                    auto const rounded = (widened * 255U + 32'767U) / 65'535U;
+                    return static_cast<std::byte>(rounded);
+                }
+            );
         }
         else
         {
@@ -492,9 +504,10 @@ namespace uf::m0_demo::ffi
         auto encoded = std::vector<std::byte>(*size);
         if (!encoded.empty())
         {
-            // SAFETY: encoded owns streamSize writable bytes, char and std::byte
-            // have byte alignment, and ifstream::read writes at most the exact
-            // count supplied without retaining the pointer.
+            // char and std::byte share byte alignment.
+            // SAFETY: encoded owns the streamSize live bytes that ifstream::read
+            // writes synchronously without retaining the converted pointer.
+            // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast)
             auto* const destination = reinterpret_cast<char*>(encoded.data());
             stream.read(destination, *streamSize);
             if (!stream || stream.gcount() != *streamSize)

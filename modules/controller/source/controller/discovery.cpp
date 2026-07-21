@@ -3,9 +3,14 @@
 #include "detail/discovery-logic.hpp"
 #include "platform/windows-controller.hpp"
 
+#include <core/error/contracts.hpp>
+#include <core/numeric/checked-cast.hpp>
+#include <core/text/unsafe/unicode-code-unit.hpp>
+#include <core/text/utf8.hpp>
+#include <core/types/integer.hpp>
+
 #include <algorithm>
 #include <cstddef>
-#include <cstdint>
 #include <filesystem>
 #include <span>
 #include <string>
@@ -13,36 +18,7 @@
 
 namespace
 {
-    constexpr auto replacementCodePoint = std::uint32_t{0xFFFDU};
-
-    auto appendUtf8(std::string& output, std::uint32_t codePoint) -> void
-    {
-        if (codePoint <= 0x7FU)
-        {
-            output.push_back(static_cast<char>(codePoint));
-            return;
-        }
-
-        if (codePoint <= 0x7FFU)
-        {
-            output.push_back(static_cast<char>(0xC0U | (codePoint >> 6U)));
-            output.push_back(static_cast<char>(0x80U | (codePoint & 0x3FU)));
-            return;
-        }
-
-        if (codePoint <= 0xFFFFU)
-        {
-            output.push_back(static_cast<char>(0xE0U | (codePoint >> 12U)));
-            output.push_back(static_cast<char>(0x80U | ((codePoint >> 6U) & 0x3FU)));
-            output.push_back(static_cast<char>(0x80U | (codePoint & 0x3FU)));
-            return;
-        }
-
-        output.push_back(static_cast<char>(0xF0U | (codePoint >> 18U)));
-        output.push_back(static_cast<char>(0x80U | ((codePoint >> 12U) & 0x3FU)));
-        output.push_back(static_cast<char>(0x80U | ((codePoint >> 6U) & 0x3FU)));
-        output.push_back(static_cast<char>(0x80U | (codePoint & 0x3FU)));
-    }
+    constexpr auto g_replacementCodePoint = uf::uint32{0xFFFDU};
 }
 
 namespace uf
@@ -104,7 +80,7 @@ namespace uf::controller_detail
 {
     auto utf16BufferToString(
         std::span<char16_t const> buffer,
-        std::int32_t length
+        int32 length
     ) -> std::string
     {
         if (length <= 0)
@@ -112,20 +88,26 @@ namespace uf::controller_detail
             return {};
         }
 
-        auto const end = std::min(static_cast<std::size_t>(length), buffer.size());
+        auto const convertedLength = checkedCast<std::size_t>(length);
+        UF_CHECK(convertedLength.has_value());
+        auto const end = std::min(*convertedLength, buffer.size());
         auto output = std::string{};
         output.reserve(end);
 
         for (auto index = std::size_t{0}; index < end; ++index)
         {
-            auto const lead = static_cast<std::uint32_t>(buffer[index]);
+            auto const lead = uint32{
+                text_unsafe::utf16CodeUnitValue(buffer[index])
+            };
             auto codePoint = lead;
 
             if (lead >= 0xD800U && lead <= 0xDBFFU)
             {
                 if (index + 1U < end)
                 {
-                    auto const trail = static_cast<std::uint32_t>(buffer[index + 1U]);
+                    auto const trail = uint32{
+                        text_unsafe::utf16CodeUnitValue(buffer[index + 1U])
+                    };
                     if (trail >= 0xDC00U && trail <= 0xDFFFU)
                     {
                         codePoint = (
@@ -137,20 +119,20 @@ namespace uf::controller_detail
                     }
                     else
                     {
-                        codePoint = replacementCodePoint;
+                        codePoint = g_replacementCodePoint;
                     }
                 }
                 else
                 {
-                    codePoint = replacementCodePoint;
+                    codePoint = g_replacementCodePoint;
                 }
             }
             else if (lead >= 0xDC00U && lead <= 0xDFFFU)
             {
-                codePoint = replacementCodePoint;
+                codePoint = g_replacementCodePoint;
             }
 
-            appendUtf8(output, codePoint);
+            appendUtf8Scalar(output, codePoint);
         }
 
         return output;
@@ -158,7 +140,7 @@ namespace uf::controller_detail
 
     auto utf16BufferToPath(
         std::span<char16_t const> buffer,
-        std::int32_t length
+        int32 length
     ) -> std::filesystem::path
     {
         auto const utf8 = utf16BufferToString(buffer, length);

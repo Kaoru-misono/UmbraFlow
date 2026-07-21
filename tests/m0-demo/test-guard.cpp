@@ -1,10 +1,11 @@
 #include <args.hpp>
 #include <guard.hpp>
 
+#include <core/types/integer.hpp>
+
 #include <doctest/doctest.h>
 
 #include <array>
-#include <cstdint>
 #include <string_view>
 #include <utility>
 
@@ -12,7 +13,7 @@ TEST_CASE("m0 integrity labels follow Windows RID bands")
 {
     struct IntegrityCase final
     {
-        std::uint32_t m_rid;
+        uf::uint32 m_rid;
         std::string_view m_label;
     };
 
@@ -34,7 +35,7 @@ TEST_CASE("m0 integrity labels follow Windows RID bands")
 TEST_CASE("m0 guard mode compares foreground and cursor")
 {
     auto const policy = uf::m0_demo::GuardPolicy::forMode(uf::m0_demo::Mode::Guard);
-    auto const targetWindow = std::intptr_t{0x99};
+    auto const targetWindow = uf::intptr{0x99};
     auto const baseline = uf::m0_demo::GuardBaseline{0x10, {5, 6}};
     CHECK(uf::m0_demo::checkGuard(policy, targetWindow, baseline, baseline).passed());
 
@@ -61,8 +62,8 @@ TEST_CASE("m0 guard mode compares foreground and cursor")
 TEST_CASE("m0 guard mode requires a non-target foreground baseline")
 {
     auto const policy = uf::m0_demo::GuardPolicy::forMode(uf::m0_demo::Mode::Guard);
-    auto const targetWindow = std::intptr_t{0x99};
-    for (auto const foreground : std::array{std::intptr_t{0}, targetWindow})
+    auto const targetWindow = uf::intptr{0x99};
+    for (auto const foreground : std::array{uf::intptr{0}, targetWindow})
     {
         auto const baseline = uf::m0_demo::GuardBaseline{foreground, {5, 6}};
         auto const check = uf::m0_demo::checkGuard(

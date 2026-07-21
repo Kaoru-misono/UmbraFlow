@@ -9,7 +9,33 @@
 
 namespace uf::m0_demo
 {
-    [[nodiscard]] auto installConsoleControlHandler() -> Status;
+    namespace detail
+    {
+        class ConsoleControlRegistrationAccess;
+    }
+
+    class ConsoleControlRegistration final
+    {
+        friend class detail::ConsoleControlRegistrationAccess;
+
+        bool m_registered;
+
+        explicit ConsoleControlRegistration(bool registered) noexcept;
+
+    public:
+        ConsoleControlRegistration(ConsoleControlRegistration const&) = delete;
+        auto operator=(ConsoleControlRegistration const&)
+            -> ConsoleControlRegistration& = delete;
+        ConsoleControlRegistration(ConsoleControlRegistration&& other) noexcept;
+        auto operator=(ConsoleControlRegistration&&)
+            -> ConsoleControlRegistration& = delete;
+        ~ConsoleControlRegistration();
+
+        [[nodiscard]] auto close() -> Status;
+    };
+
+    [[nodiscard]]
+    auto installConsoleControlHandler() -> Result<ConsoleControlRegistration>;
     [[nodiscard]] auto stopRequested() noexcept -> bool;
 
     template <

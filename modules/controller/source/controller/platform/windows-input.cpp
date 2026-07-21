@@ -3,11 +3,12 @@
 #include "controller/detail/input-guard.hpp"
 #include "controller/detail/input-message.hpp"
 
+#include <core/types/integer.hpp>
 #include <domain/error.hpp>
 
 #include <Windows.h>
 
-#include <cstdint>
+#include <bit>
 #include <format>
 
 namespace
@@ -16,19 +17,20 @@ namespace
     auto toNativeHandle(uf::WindowHandle handle) noexcept -> HWND
     {
         // SAFETY: WindowHandle stores the pointer-sized integer representation copied
-        // from an HWND. The boundary restores that opaque token without dereferencing it.
-        return reinterpret_cast<HWND>(handle.value());
+        // from an HWND. bit_cast restores those exact bits as the opaque token without
+        // dereferencing it.
+        return std::bit_cast<HWND>(handle.value());
     }
 }
 
 namespace uf::controller_platform
 {
-    auto scanCodeFor(std::uint16_t virtualKey) noexcept -> std::uint8_t
+    auto scanCodeFor(uint16 virtualKey) noexcept -> uint8
     {
         // SAFETY: MapVirtualKeyW performs a keyboard-layout lookup for the numeric
         // virtual key and retains no caller-owned pointer or state.
         auto const scanCode = MapVirtualKeyW(virtualKey, MAPVK_VK_TO_VSC);
-        return static_cast<std::uint8_t>(scanCode & 0xFFU);
+        return static_cast<uint8>(scanCode & 0xFFU);
     }
 
     auto postInputMessage(
@@ -48,7 +50,7 @@ namespace uf::controller_platform
                 std::format(
                     "refusing to post input message {:#06x} to non-window target {:#x}",
                     spec.m_message,
-                    static_cast<std::uintptr_t>(windowHandle.value())
+                    static_cast<uintptr>(windowHandle.value())
                 )
             );
         }
@@ -82,7 +84,7 @@ namespace uf::controller_platform
             std::format(
                 "PostMessageW failed for message {:#06x} to window {:#x}: win32 error {}",
                 spec.m_message,
-                static_cast<std::uintptr_t>(windowHandle.value()),
+                static_cast<uintptr>(windowHandle.value()),
                 error
             )
         );

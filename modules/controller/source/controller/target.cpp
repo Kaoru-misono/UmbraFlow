@@ -4,11 +4,11 @@
 #include "platform/windows-controller.hpp"
 
 #include <core/error/contracts.hpp>
+#include <core/types/integer.hpp>
 #include <domain/error.hpp>
 
 #include <algorithm>
 #include <cstddef>
-#include <cstdint>
 #include <format>
 #include <optional>
 #include <span>
@@ -68,7 +68,7 @@ namespace
     {
         return std::format(
             "{:#x}",
-            static_cast<std::uintptr_t>(handle.value())
+            static_cast<uf::uintptr>(handle.value())
         );
     }
 
@@ -425,28 +425,57 @@ namespace uf
         return ok();
     }
 
-    auto ResolvedTarget::readLiveIdentity() const -> std::optional<TargetIdentity>
+    auto ResolvedTarget::readLiveIdentity() const -> Result<std::optional<TargetIdentity>>
     {
         auto const handle = m_identity.handle();
         if (!controller_platform::windowIsAlive(handle))
         {
-            return std::nullopt;
+            return std::optional<TargetIdentity>{};
         }
 
-        auto const process = controller_platform::windowProcess(handle);
-        auto const startTime = controller_platform::processStartTime(process);
-        auto const clientSize = controller_platform::windowClientSize(handle);
+        auto process = controller_platform::windowProcess(handle);
+        if (!process)
+        {
+            if (!controller_platform::windowIsAlive(handle))
+            {
+                return std::optional<TargetIdentity>{};
+            }
+            return std::unexpected{std::move(process).error()};
+        }
+
+        auto startTime = controller_platform::processStartTime(*process);
+        if (!startTime)
+        {
+            if (!controller_platform::windowIsAlive(handle))
+            {
+                return std::optional<TargetIdentity>{};
+            }
+            return std::unexpected{std::move(startTime).error()};
+        }
+
+        auto clientSize = controller_platform::windowClientSize(handle);
         if (!clientSize)
         {
-            return std::nullopt;
+            if (!controller_platform::windowIsAlive(handle))
+            {
+                return std::optional<TargetIdentity>{};
+            }
+            return std::unexpected{std::move(clientSize).error()};
         }
 
-        return TargetIdentity{handle, process, startTime, *clientSize};
+        return std::optional<TargetIdentity>{
+            std::in_place,
+            handle,
+            *process,
+            *startTime,
+            *clientSize
+        };
     }
 
     auto ResolvedTarget::revalidate() -> Result<RevalidateOutcome>
     {
-        return applyRevalidation(readLiveIdentity());
+        UF_TRY_VALUE(observed, readLiveIdentity());
+        return applyRevalidation(observed);
     }
 
     auto resolveTarget(

@@ -5,12 +5,12 @@
 #include <core/error/result.hpp>
 #include <core/safety/annotations.hpp>
 #include <core/time/monotonic-time.hpp>
+#include <core/types/integer.hpp>
 #include <domain/detection.hpp>
 
 #include <array>
 #include <compare>
 #include <cstddef>
-#include <cstdint>
 #include <functional>
 #include <map>
 #include <optional>
@@ -40,10 +40,10 @@ namespace uf
 
     class ClientPixel final
     {
-        std::int16_t m_x;
-        std::int16_t m_y;
+        int16 m_x;
+        int16 m_y;
 
-        constexpr ClientPixel(std::int16_t x, std::int16_t y) noexcept
+        constexpr ClientPixel(int16 x, int16 y) noexcept
             : m_x{x}
             , m_y{y}
         {
@@ -53,25 +53,25 @@ namespace uf
         auto operator<=>(ClientPixel const&) const = default;
 
         [[nodiscard]]
-        static auto create(std::int32_t x, std::int32_t y) -> Result<ClientPixel>;
+        static auto create(int32 x, int32 y) -> Result<ClientPixel>;
 
-        [[nodiscard]] constexpr auto x() const noexcept -> std::int32_t { return m_x; }
-        [[nodiscard]] constexpr auto y() const noexcept -> std::int32_t { return m_y; }
+        [[nodiscard]] constexpr auto x() const noexcept -> int32 { return m_x; }
+        [[nodiscard]] constexpr auto y() const noexcept -> int32 { return m_y; }
     };
 
     class KeyInput final
     {
-        std::uint16_t m_virtualKey;
+        uint16 m_virtualKey;
         bool m_extended;
 
-        constexpr KeyInput(std::uint16_t virtualKey, bool extended) noexcept
+        constexpr KeyInput(uint16 virtualKey, bool extended) noexcept
             : m_virtualKey{virtualKey}
             , m_extended{extended}
         {
         }
 
     public:
-        explicit KeyInput(std::uint16_t virtualKey) noexcept;
+        explicit KeyInput(uint16 virtualKey) noexcept;
 
         auto operator<=>(KeyInput const&) const = default;
 
@@ -81,11 +81,11 @@ namespace uf
         }
 
         [[nodiscard]]
-        constexpr auto virtualKey() const noexcept -> std::uint16_t { return m_virtualKey; }
+        constexpr auto virtualKey() const noexcept -> uint16 { return m_virtualKey; }
         [[nodiscard]] constexpr auto isExtended() const noexcept -> bool { return m_extended; }
     };
 
-    enum class PointerButton : std::uint8_t
+    enum class PointerButton : uint8
     {
         Left,
     };
@@ -137,8 +137,8 @@ namespace uf
             WindowHandle windowHandle,
             SessionId sessionId,
             TargetGeneration generation,
-            std::uint32_t clientWidth,
-            std::uint32_t clientHeight
+            uint32 clientWidth,
+            uint32 clientHeight
         ) -> Result<DeliveryTarget>;
 
         [[nodiscard]]
@@ -147,12 +147,12 @@ namespace uf
         [[nodiscard]]
         constexpr auto generation() const noexcept -> TargetGeneration { return m_generation; }
         [[nodiscard]]
-        constexpr auto clientWidth() const noexcept -> std::uint32_t
+        constexpr auto clientWidth() const noexcept -> uint32
         {
             return m_clientSize.width();
         }
         [[nodiscard]]
-        constexpr auto clientHeight() const noexcept -> std::uint32_t
+        constexpr auto clientHeight() const noexcept -> uint32
         {
             return m_clientSize.height();
         }
@@ -166,10 +166,10 @@ namespace uf
 
     struct AuditRecord final
     {
-        std::uintptr_t m_target;
-        std::uint32_t m_message;
-        std::uintptr_t m_wParam;
-        std::intptr_t m_lParam;
+        uintptr m_target;
+        uint32 m_message;
+        uintptr m_wParam;
+        intptr m_lParam;
         MonotonicInstant m_at;
     };
 
@@ -179,9 +179,9 @@ namespace uf
 
         auto record(
             WindowHandle windowHandle,
-            std::uint32_t message,
-            std::uintptr_t wParam,
-            std::intptr_t lParam
+            uint32 message,
+            uintptr wParam,
+            intptr lParam
         ) -> void;
 
         friend struct controller_detail::AuditLogAccess;
@@ -199,7 +199,7 @@ namespace uf
     {
         struct DeliveryIdentity final
         {
-            std::uintptr_t m_window;
+            uintptr m_window;
             SessionId m_sessionId;
             TargetGeneration m_generation;
 

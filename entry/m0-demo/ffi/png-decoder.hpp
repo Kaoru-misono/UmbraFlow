@@ -3,9 +3,9 @@
 #include "png-limits.hpp"
 
 #include <core/error/result.hpp>
+#include <core/types/integer.hpp>
 
 #include <cstddef>
-#include <cstdint>
 #include <filesystem>
 #include <span>
 #include <string_view>
@@ -19,8 +19,8 @@ namespace uf::m0_demo::ffi
 
     struct RgbaImage final
     {
-        std::uint32_t m_width;
-        std::uint32_t m_height;
+        uint32 m_width;
+        uint32 m_height;
         std::vector<std::byte> m_pixels;
     };
 

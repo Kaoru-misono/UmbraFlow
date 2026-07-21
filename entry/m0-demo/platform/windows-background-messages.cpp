@@ -1,16 +1,17 @@
 #include "windows-background-messages.hpp"
 
+#include <core/types/integer.hpp>
+
 #include <Windows.h>
 
 #include <array>
-#include <cstdint>
 #include <ranges>
 
 namespace uf::m0_demo::platform
 {
-    auto isAllowedBackgroundMessage(std::uint32_t message) noexcept -> bool
+    auto isAllowedBackgroundMessage(uint32 message) noexcept -> bool
     {
-        auto constexpr allowed = std::array<std::uint32_t, 7>{
+        auto constexpr allowed = std::array<uint32, 7>{
             WM_MOUSEMOVE,
             WM_LBUTTONDOWN,
             WM_LBUTTONUP,

@@ -3,9 +3,9 @@
 #include "detail/dpi-classification.hpp"
 #include "platform/windows-controller.hpp"
 
+#include <core/types/integer.hpp>
 #include <domain/error.hpp>
 
-#include <cstdint>
 #include <format>
 #include <optional>
 
@@ -24,7 +24,7 @@ namespace uf
 namespace uf::controller_detail
 {
     auto classifyDpiResult(
-        std::optional<std::uint32_t> win32Error,
+        std::optional<uint32> win32Error,
         bool isPerMonitorAwareV2
     ) -> Result<DpiDeclaration>
     {
@@ -33,14 +33,14 @@ namespace uf::controller_detail
             return DpiDeclaration::Declared;
         }
         if (
-            win32Error == accessDeniedError
+            win32Error == g_accessDeniedError
             && isPerMonitorAwareV2
         )
         {
             return DpiDeclaration::AlreadyDeclared;
         }
         if (
-            (!win32Error || win32Error == accessDeniedError)
+            (!win32Error || win32Error == g_accessDeniedError)
             && !isPerMonitorAwareV2
         )
         {

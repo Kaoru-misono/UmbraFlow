@@ -2,9 +2,11 @@
 
 #include <core/error/result.hpp>
 
+#include <core/types/integer.hpp>
+
 namespace uf
 {
-    enum class DpiDeclaration
+    enum class DpiDeclaration : uint8
     {
         Declared,
         AlreadyDeclared,

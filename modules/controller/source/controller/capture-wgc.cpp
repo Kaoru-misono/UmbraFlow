@@ -2,11 +2,12 @@
 
 #include <core/numeric/checked-arithmetic.hpp>
 #include <core/numeric/checked-cast.hpp>
+#include <core/types/integer.hpp>
 #include <domain/error.hpp>
 
 #include <cmath>
-#include <cstdint>
 #include <format>
+#include <string_view>
 #include <utility>
 
 namespace
@@ -14,18 +15,18 @@ namespace
     [[nodiscard]]
     auto captureDimensions(
         uf::controller_detail::CaptureSize size,
-        char const* p_context
-    ) -> uf::Result<std::pair<std::uint32_t, std::uint32_t>>
+        std::string_view context
+    ) -> uf::Result<std::pair<uf::uint32, uf::uint32>>
     {
-        auto const width = uf::checkedCast<std::uint32_t>(size.m_width);
-        auto const height = uf::checkedCast<std::uint32_t>(size.m_height);
+        auto const width = uf::checkedCast<uf::uint32>(size.m_width);
+        auto const height = uf::checkedCast<uf::uint32>(size.m_height);
         if (!width || !height)
         {
             return uf::fail(
                 uf::AutomationErrorKind::CaptureUnavailable,
                 std::format(
                     "{} has invalid signed dimensions {}x{}",
-                    p_context,
+                    context,
                     size.m_width,
                     size.m_height
                 )
@@ -38,7 +39,7 @@ namespace
                 uf::AutomationErrorKind::CaptureUnavailable,
                 std::format(
                     "{} must be positive, got {}x{}",
-                    p_context,
+                    context,
                     *width,
                     *height
                 )
@@ -49,9 +50,12 @@ namespace
     }
 
     [[nodiscard]]
-    auto exactClientDimension(float value, char const* p_context) -> uf::Result<std::uint32_t>
+    auto exactClientDimension(
+        float value,
+        std::string_view context
+    ) -> uf::Result<uf::uint32>
     {
-        constexpr auto maximumExact = static_cast<float>(std::uint64_t{1} << 24U);
+        constexpr auto maximumExact = static_cast<float>(uf::uint64{1} << 24U);
         if (
             !std::isfinite(value)
             || value < 0.0F
@@ -61,16 +65,16 @@ namespace
         {
             return uf::fail(
                 uf::AutomationErrorKind::CaptureUnavailable,
-                std::format("{} {} is not a whole pixel count in range", p_context, value)
+                std::format("{} {} is not a whole pixel count in range", context, value)
             );
         }
 
-        auto const converted = uf::checkedIntegralCast<std::uint32_t>(value);
+        auto const converted = uf::checkedIntegralCast<uf::uint32>(value);
         if (!converted)
         {
             return uf::fail(
                 uf::AutomationErrorKind::CaptureUnavailable,
-                std::format("{} {} is not a whole pixel count in range", p_context, value)
+                std::format("{} {} is not a whole pixel count in range", context, value)
             );
         }
 
@@ -82,7 +86,7 @@ namespace uf::controller_detail
 {
     auto FrameIdCounter::nextId() -> Result<FrameId>
     {
-        auto const next = checkedAdd(m_next, std::uint64_t{1});
+        auto const next = checkedAdd(m_next, uint64{1});
         if (!next)
         {
             return fail(
@@ -122,7 +126,7 @@ namespace uf::controller_detail
 
     auto CaptureGeometryState::observeContentSize(
         CaptureSize contentSize
-    ) -> Result<std::pair<std::uint32_t, std::uint32_t>>
+    ) -> Result<std::pair<uint32, uint32>>
     {
         UF_TRY(ensureActive());
 
@@ -153,9 +157,9 @@ namespace uf::controller_detail
     }
 
     auto CaptureGeometryState::observeSurfaceSize(
-        std::pair<std::uint32_t, std::uint32_t> confirmedContentSize,
-        std::uint32_t surfaceWidth,
-        std::uint32_t surfaceHeight
+        std::pair<uint32, uint32> confirmedContentSize,
+        uint32 surfaceWidth,
+        uint32 surfaceHeight
     ) -> Status
     {
         UF_TRY(ensureActive());
@@ -180,7 +184,7 @@ namespace uf::controller_detail
 
     auto clientIntegerExtent(
         ClientGeometry const& client
-    ) -> Result<std::pair<std::uint32_t, std::uint32_t>>
+    ) -> Result<std::pair<uint32, uint32>>
     {
         UF_TRY_VALUE(width, exactClientDimension(client.width(), "client width"));
         UF_TRY_VALUE(height, exactClientDimension(client.height(), "client height"));

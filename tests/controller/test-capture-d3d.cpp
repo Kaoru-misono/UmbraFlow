@@ -1,5 +1,6 @@
 #include <controller/detail/capture-d3d.hpp>
 
+#include <core/types/integer.hpp>
 #include <domain/error.hpp>
 
 #include <doctest/doctest.h>
@@ -7,7 +8,6 @@
 #include <algorithm>
 #include <array>
 #include <cstddef>
-#include <cstdint>
 #include <initializer_list>
 #include <vector>
 
@@ -40,8 +40,8 @@ namespace
 
 TEST_CASE("padded row pitch packs into a tight BGRA8 stride")
 {
-    constexpr auto width = std::uint32_t{2};
-    constexpr auto height = std::uint32_t{2};
+    constexpr auto width = uf::uint32{2};
+    constexpr auto height = uf::uint32{2};
     constexpr auto rowPitch = std::size_t{12};
     auto source = std::vector<std::byte>(rowPitch * height);
     auto const firstRow = bytes({1, 2, 3, 4, 5, 6, 7, 8});
@@ -134,8 +134,8 @@ TEST_CASE("client crop checks extended bounds on each axis independently")
 {
     struct Case final
     {
-        std::int32_t m_extendedWidth;
-        std::int32_t m_extendedHeight;
+        uf::int32 m_extendedWidth;
+        uf::int32 m_extendedHeight;
         bool m_accepted;
     };
 
@@ -178,8 +178,8 @@ TEST_CASE("nonzero client crop accepts the far edge and rejects the first outsid
 {
     struct Case final
     {
-        std::uint32_t m_clientWidth;
-        std::uint32_t m_clientHeight;
+        uf::uint32 m_clientWidth;
+        uf::uint32 m_clientHeight;
         bool m_accepted;
     };
 
@@ -220,14 +220,14 @@ TEST_CASE("client crop rejects out-of-range geometry")
 {
     struct Case final
     {
-        std::uint32_t m_frameWidth;
-        std::uint32_t m_frameHeight;
-        std::int32_t m_extendedWidth;
-        std::int32_t m_extendedHeight;
-        std::int32_t m_offsetX;
-        std::int32_t m_offsetY;
-        std::uint32_t m_clientWidth;
-        std::uint32_t m_clientHeight;
+        uf::uint32 m_frameWidth;
+        uf::uint32 m_frameHeight;
+        uf::int32 m_extendedWidth;
+        uf::int32 m_extendedHeight;
+        uf::int32 m_offsetX;
+        uf::int32 m_offsetY;
+        uf::uint32 m_clientWidth;
+        uf::uint32 m_clientHeight;
     };
 
     for (
@@ -277,8 +277,8 @@ TEST_CASE("client crop checks the source texture far edge on each axis")
 
     struct Case final
     {
-        std::uint32_t m_sourceWidth;
-        std::uint32_t m_sourceHeight;
+        uf::uint32 m_sourceWidth;
+        uf::uint32 m_sourceHeight;
         bool m_accepted;
     };
 
@@ -317,8 +317,8 @@ TEST_CASE("BGRA8 readback rejects inconsistent geometry")
     {
         std::size_t m_sourceLength;
         std::size_t m_rowPitch;
-        std::uint32_t m_width;
-        std::uint32_t m_height;
+        uf::uint32 m_width;
+        uf::uint32 m_height;
     };
 
     for (

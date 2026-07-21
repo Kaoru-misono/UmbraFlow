@@ -2,12 +2,12 @@
 
 #include <pacing.hpp>
 
+#include <core/types/integer.hpp>
 #include <domain/error.hpp>
 
 #include <doctest/doctest.h>
 
 #include <array>
-#include <cstdint>
 #include <limits>
 #include <utility>
 #include <vector>
@@ -15,10 +15,10 @@
 TEST_CASE("m0 click delay rejects zero and inverted bounds")
 {
     auto const malformed = std::array{
-        std::pair{std::uint64_t{0}, std::uint64_t{0}},
-        std::pair{std::uint64_t{0}, std::uint64_t{100}},
-        std::pair{std::uint64_t{100}, std::uint64_t{0}},
-        std::pair{std::uint64_t{200}, std::uint64_t{100}},
+        std::pair{uf::uint64{0}, uf::uint64{0}},
+        std::pair{uf::uint64{0}, uf::uint64{100}},
+        std::pair{uf::uint64{100}, uf::uint64{0}},
+        std::pair{uf::uint64{200}, uf::uint64{100}},
     };
     for (auto const [minimum, maximum] : malformed)
     {
@@ -57,8 +57,8 @@ TEST_CASE("m0 click delay picks within its inclusive range")
     CHECK(delay->pickMilliseconds(1200) == 1800U);
     CHECK(delay->pickMilliseconds(1201) == 600U);
     CHECK(
-        delay->pickMilliseconds(std::numeric_limits<std::uint64_t>::max())
-        == 600U + (std::numeric_limits<std::uint64_t>::max() % 1201U)
+        delay->pickMilliseconds(std::numeric_limits<uf::uint64>::max())
+        == 600U + (std::numeric_limits<uf::uint64>::max() % 1201U)
     );
 }
 
@@ -67,10 +67,10 @@ TEST_CASE("m0 fixed click delay always returns the same milliseconds")
     auto const delay = uf::m0_demo::ClickDelay::create(1000, 1000);
     REQUIRE(delay.has_value());
     auto const values = std::array{
-        std::uint64_t{0},
-        std::uint64_t{1},
-        std::uint64_t{12'345},
-        std::numeric_limits<std::uint64_t>::max(),
+        uf::uint64{0},
+        uf::uint64{1},
+        uf::uint64{12'345},
+        std::numeric_limits<uf::uint64>::max(),
     };
     for (auto const raw : values)
     {
@@ -80,10 +80,10 @@ TEST_CASE("m0 fixed click delay always returns the same milliseconds")
 
 TEST_CASE("m0 SplitMix64 is deterministic for a seed")
 {
-    auto const draw = [](std::uint64_t seed)
+    auto const draw = [](uf::uint64 seed)
     {
         auto random = uf::m0_demo::SplitMix64{seed};
-        auto values = std::vector<std::uint64_t>{};
+        auto values = std::vector<uf::uint64>{};
         values.reserve(8);
         for (auto index = 0; index < 8; ++index)
         {

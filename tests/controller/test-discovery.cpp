@@ -1,28 +1,63 @@
 #include <controller/detail/discovery-logic.hpp>
 #include <controller/discovery.hpp>
+#include <controller/platform/windows-controller.hpp>
+
+#include <core/types/integer.hpp>
+#include <domain/error.hpp>
 
 #include <doctest/doctest.h>
 
 #include <array>
-#include <cstdint>
 #include <filesystem>
+
+namespace
+{
+    [[nodiscard]]
+    auto automationKind(uf::Error const& error) -> uf::AutomationErrorKind
+    {
+        auto const kind = uf::automationErrorKind(error);
+        if (!kind.has_value())
+        {
+            FAIL("The error did not contain an automation error kind");
+            return uf::AutomationErrorKind::InternalInvariant;
+        }
+        return *kind;
+    }
+}
 
 TEST_CASE("window handles preserve their pointer-sized value")
 {
-    auto const handle = uf::WindowHandle{std::intptr_t{0x1234}};
+    auto const handle = uf::WindowHandle{uf::intptr{0x1234}};
 
-    CHECK(handle.value() == std::intptr_t{0x1234});
+    CHECK(handle.value() == uf::intptr{0x1234});
 }
 
-TEST_CASE("client size reports axes and allows zero")
+TEST_CASE("invalid live window queries preserve Win32 failures")
 {
-    auto const empty = uf::ClientSize{0, 0};
-    CHECK(empty.width() == 0);
-    CHECK(empty.height() == 0);
+    auto const process = uf::controller_platform::windowProcess(uf::WindowHandle{0});
+    REQUIRE_FALSE(process.has_value());
+    CHECK(automationKind(process.error()) == uf::AutomationErrorKind::TargetUnavailable);
+    CHECK(process.error().nativeCode() != 0);
 
-    auto const sized = uf::ClientSize{1600, 900};
-    CHECK(sized.width() == 1600);
-    CHECK(sized.height() == 900);
+    auto const clientSize = uf::controller_platform::windowClientSize(
+        uf::WindowHandle{0}
+    );
+    REQUIRE_FALSE(clientSize.has_value());
+    CHECK(
+        automationKind(clientSize.error())
+        == uf::AutomationErrorKind::TargetUnavailable
+    );
+    CHECK(clientSize.error().nativeCode() != 0);
+}
+
+TEST_CASE("an exited or invalid process is best-effort metadata absence")
+{
+    auto const startTime = uf::controller_platform::processStartTime(
+        uf::ProcessId{0}
+    );
+
+    REQUIRE(startTime.has_value());
+    CHECK_FALSE(startTime->has_value());
 }
 
 TEST_CASE("file time packs high and low halves")

@@ -3,6 +3,7 @@
 #include "controller/input.hpp"
 
 #include <core/error/result.hpp>
+#include <core/types/integer.hpp>
 
 namespace uf::controller_detail
 {
@@ -13,8 +14,8 @@ namespace uf::controller_detail
         TargetGeneration currentGeneration,
         MonotonicInstant now,
         Point<ClientSpace> point,
-        std::uint32_t clientWidth,
-        std::uint32_t clientHeight
+        uint32 clientWidth,
+        uint32 clientHeight
     ) -> Result<ClientPixel>;
 
     [[nodiscard]]

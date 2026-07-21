@@ -2,10 +2,10 @@
 
 #include "platform/windows-controller.hpp"
 
+#include <core/types/integer.hpp>
 #include <domain/error.hpp>
 
 #include <cmath>
-#include <cstdint>
 #include <format>
 #include <limits>
 
@@ -16,7 +16,7 @@ namespace
     {
         return std::format(
             "DeliveryIdentity {{ hwnd: {}, session_id: SessionId({}), generation: TargetGeneration({}) }}",
-            static_cast<std::uintptr_t>(target.windowHandle().value()),
+            static_cast<uf::uintptr>(target.windowHandle().value()),
             target.sessionId().value(),
             target.generation().value()
         );
@@ -31,8 +31,8 @@ namespace uf::controller_detail
         TargetGeneration currentGeneration,
         MonotonicInstant now,
         Point<ClientSpace> point,
-        std::uint32_t clientWidth,
-        std::uint32_t clientHeight
+        uint32 clientWidth,
+        uint32 clientHeight
     ) -> Result<ClientPixel>
     {
         if (lease.sessionId() != currentSession)
@@ -91,7 +91,7 @@ namespace uf::controller_detail
         }
 
         auto constexpr coordinateLimit = (
-            static_cast<double>(std::numeric_limits<std::int16_t>::max()) + 1.0
+            static_cast<double>(std::numeric_limits<int16>::max()) + 1.0
         );
         if (x >= coordinateLimit || y >= coordinateLimit)
         {
@@ -105,8 +105,8 @@ namespace uf::controller_detail
             );
         }
 
-        auto const pixelX = static_cast<std::int32_t>(std::floor(point.x()));
-        auto const pixelY = static_cast<std::int32_t>(std::floor(point.y()));
+        auto const pixelX = static_cast<int32>(std::floor(point.x()));
+        auto const pixelY = static_cast<int32>(std::floor(point.y()));
         return ClientPixel::create(pixelX, pixelY);
     }
 
@@ -144,7 +144,7 @@ namespace uf::controller_detail
             AutomationErrorKind::ActionRejected,
             std::format(
                 "window handle {:#x} is no longer a valid window",
-                static_cast<std::uintptr_t>(windowHandle.value())
+                static_cast<uintptr>(windowHandle.value())
             )
         );
     }

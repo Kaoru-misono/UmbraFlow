@@ -2,12 +2,12 @@
 
 #include <core/numeric/checked-arithmetic.hpp>
 #include <core/numeric/checked-cast.hpp>
+#include <core/types/integer.hpp>
 #include <domain/error.hpp>
 #include <domain/frame.hpp>
 
 #include <algorithm>
 #include <cstddef>
-#include <cstdint>
 #include <format>
 #include <span>
 #include <utility>
@@ -16,10 +16,10 @@
 namespace uf::controller_detail
 {
     auto ClientCropRect::create(
-        std::pair<std::uint32_t, std::uint32_t> frame,
-        std::pair<std::int32_t, std::int32_t> extended,
-        std::pair<std::int32_t, std::int32_t> offset,
-        std::pair<std::uint32_t, std::uint32_t> client
+        std::pair<uint32, uint32> frame,
+        std::pair<int32, int32> extended,
+        std::pair<int32, int32> offset,
+        std::pair<uint32, uint32> client
     ) -> Result<ClientCropRect>
     {
         auto const [frameWidth, frameHeight] = frame;
@@ -28,9 +28,9 @@ namespace uf::controller_detail
         auto const [clientWidth, clientHeight] = client;
 
         if (
-            static_cast<std::int64_t>(extendedWidth) != static_cast<std::int64_t>(frameWidth)
-            || static_cast<std::int64_t>(extendedHeight)
-                != static_cast<std::int64_t>(frameHeight)
+            static_cast<int64>(extendedWidth) != static_cast<int64>(frameWidth)
+            || static_cast<int64>(extendedHeight)
+                != static_cast<int64>(frameHeight)
         )
         {
             return fail(
@@ -45,7 +45,7 @@ namespace uf::controller_detail
             );
         }
 
-        auto const offsetX = checkedCast<std::uint32_t>(offsetXSigned);
+        auto const offsetX = checkedCast<uint32>(offsetXSigned);
         if (!offsetX)
         {
             return fail(
@@ -57,7 +57,7 @@ namespace uf::controller_detail
             );
         }
 
-        auto const offsetY = checkedCast<std::uint32_t>(offsetYSigned);
+        auto const offsetY = checkedCast<uint32>(offsetYSigned);
         if (!offsetY)
         {
             return fail(
@@ -134,8 +134,8 @@ namespace uf::controller_detail
     }
 
     auto ClientCropRect::ensureWithinSource(
-        std::uint32_t sourceWidth,
-        std::uint32_t sourceHeight
+        uint32 sourceWidth,
+        uint32 sourceHeight
     ) const -> Status
     {
         if (m_right > sourceWidth || m_bottom > sourceHeight)
@@ -158,8 +158,8 @@ namespace uf::controller_detail
     auto readbackBgra8(
         std::span<std::byte const> source,
         std::size_t rowPitch,
-        std::uint32_t width,
-        std::uint32_t height
+        uint32 width,
+        uint32 height
     ) -> Result<std::vector<std::byte>>
     {
         if (width == 0 || height == 0)

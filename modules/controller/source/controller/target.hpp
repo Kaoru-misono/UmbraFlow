@@ -4,6 +4,7 @@
 
 #include <core/error/result.hpp>
 #include <core/safety/annotations.hpp>
+#include <core/types/integer.hpp>
 #include <domain/ids.hpp>
 
 #include <optional>
@@ -80,7 +81,7 @@ namespace uf
         constexpr auto clientSize() const noexcept -> ClientSize { return m_clientSize; }
     };
 
-    enum class RevalidateOutcome
+    enum class RevalidateOutcome : uint8
     {
         Unchanged,
         GenerationBumped,
@@ -93,7 +94,7 @@ namespace uf
 
     class ResolvedTarget final
     {
-        enum class Continuity
+        enum class Continuity : uint8
         {
             Confirmed,
             Lost,
@@ -112,7 +113,8 @@ namespace uf
         explicit ResolvedTarget(TargetIdentity identity) noexcept;
 
         [[nodiscard]] auto invalidate(Continuity continuity) -> Status;
-        [[nodiscard]] auto readLiveIdentity() const -> std::optional<TargetIdentity>;
+        [[nodiscard]]
+        auto readLiveIdentity() const -> Result<std::optional<TargetIdentity>>;
 
     public:
         [[nodiscard]] auto windowHandle() const noexcept -> WindowHandle;

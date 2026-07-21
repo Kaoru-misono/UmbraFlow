@@ -5,9 +5,11 @@
 #include "platform/windows-background-messages.hpp"
 #include "shutdown.hpp"
 
+#include <core/error/contracts.hpp>
 #include <core/numeric/checked-arithmetic.hpp>
 #include <core/numeric/checked-cast.hpp>
 #include <core/safety/checked-access.hpp>
+#include <core/types/integer.hpp>
 #include <domain/detection.hpp>
 #include <domain/error.hpp>
 #include <domain/frame.hpp>
@@ -16,7 +18,6 @@
 #include <algorithm>
 #include <chrono>
 #include <cstddef>
-#include <cstdint>
 #include <format>
 #include <limits>
 #include <optional>
@@ -33,7 +34,10 @@ namespace uf::m0_demo
 {
     namespace
     {
-        constexpr auto bgraBytesPerPixel = std::size_t{4};
+        constexpr auto g_bgraBytesPerPixel = std::size_t{4};
+        constexpr auto g_maximumSadPixelComparisons = (
+            uint64{64} * 1024U * 1024U
+        );
 
         class Machine final
         {
@@ -49,7 +53,7 @@ namespace uf::m0_demo
                 WgcCaptureSession session,
                 DeliveryTarget target
             )
-                : m_resolved{std::move(resolved)}
+                : m_resolved{resolved}
                 , m_session{std::move(session)}
                 , m_target{target}
             {
@@ -57,8 +61,10 @@ namespace uf::m0_demo
 
             [[nodiscard]] auto ensureTargetUnchanged() -> Status
             {
+                UF_TRY(m_session.validateTargetInstance());
                 UF_TRY_VALUE(outcome, m_resolved.revalidate());
-                return requireUnchangedTarget(outcome);
+                UF_TRY(requireUnchangedTarget(outcome));
+                return m_session.validateTargetInstance();
             }
 
             [[nodiscard]]
@@ -66,19 +72,38 @@ namespace uf::m0_demo
             {
                 auto hasFreshIdentity = false;
                 auto revalidationError = std::optional<Error>{};
-                auto const revalidated = m_resolved.revalidate();
-                if (revalidated)
+                auto instance = m_session.validateTargetInstance();
+                if (!instance)
                 {
-                    hasFreshIdentity = true;
-                    auto unchanged = requireUnchangedTarget(*revalidated);
-                    if (!unchanged)
-                    {
-                        revalidationError = std::move(unchanged).error();
-                    }
+                    revalidationError = std::move(instance).error();
                 }
                 else
                 {
-                    revalidationError = revalidated.error();
+                    auto const revalidated = m_resolved.revalidate();
+                    if (revalidated)
+                    {
+                        auto unchanged = requireUnchangedTarget(*revalidated);
+                        if (!unchanged)
+                        {
+                            revalidationError = std::move(unchanged).error();
+                        }
+                        else
+                        {
+                            auto confirmed = m_session.validateTargetInstance();
+                            if (confirmed)
+                            {
+                                hasFreshIdentity = true;
+                            }
+                            else
+                            {
+                                revalidationError = std::move(confirmed).error();
+                            }
+                        }
+                    }
+                    else
+                    {
+                        revalidationError = revalidated.error();
+                    }
                 }
 
                 auto windowHandle = m_target.windowHandle();
@@ -105,7 +130,7 @@ namespace uf::m0_demo
                     )
                 );
                 return std::pair{
-                    std::move(cleanup),
+                    cleanup,
                     std::move(revalidationError)
                 };
             }
@@ -126,8 +151,10 @@ namespace uf::m0_demo
         [[nodiscard]]
         auto recognizeRaw(
             Frame const& frame,
-            Template const& imageTemplate
-        ) -> Result<std::optional<SadMatch>>
+            Template const& imageTemplate,
+            MonotonicInstant started,
+            MonotonicInstant::Duration timeout
+        ) -> Result<SadSearchOutcome>
         {
             auto const transform = frame.transform();
             UF_TRY_VALUE(roi, transform.frameRectToPixelRect(imageTemplate.m_roi));
@@ -142,7 +169,10 @@ namespace uf::m0_demo
                     "ROI width is not addressable"
                 );
             }
-            auto const roiRowBytes = checkedMultiply(*roiWidth, bgraBytesPerPixel);
+            auto const roiRowBytes = checkedMultiply(
+                *roiWidth,
+                g_bgraBytesPerPixel
+            );
             if (!roiRowBytes)
             {
                 return fail(
@@ -188,10 +218,43 @@ namespace uf::m0_demo
                 )
             );
             UF_TRY_VALUE(search, PixelRect::create(0, 0, roi.width(), roi.height()));
-            UF_TRY_VALUE(found, matchTemplateSad(haystack, templateImage, search));
+            auto const poll = SadSearchPoll{
+                [started, timeout]() noexcept -> SadSearchControl
+                {
+                    if (stopRequested())
+                    {
+                        return SadSearchControl::Cancelled;
+                    }
+                    if (
+                        MonotonicInstant::now().saturatingDurationSince(started)
+                        >= timeout
+                    )
+                    {
+                        return SadSearchControl::TimedOut;
+                    }
+                    return SadSearchControl::Continue;
+                }
+            };
+            UF_TRY_VALUE(
+                outcome,
+                matchTemplateSad(
+                    haystack,
+                    templateImage,
+                    search,
+                    g_maximumSadPixelComparisons,
+                    poll
+                )
+            );
+            if (std::holds_alternative<SadSearchStopReason>(outcome))
+            {
+                return SadSearchOutcome{
+                    std::get<SadSearchStopReason>(outcome)
+                };
+            }
+            auto found = std::get<std::optional<SadMatch>>(outcome);
             if (!found)
             {
-                return std::optional<SadMatch>{};
+                return SadSearchOutcome{std::optional<SadMatch>{}};
             }
 
             auto const x = checkedAdd(found->x(), roi.x());
@@ -203,7 +266,9 @@ namespace uf::m0_demo
                     "recognized match coordinate overflowed"
                 );
             }
-            return std::optional<SadMatch>{SadMatch{*x, *y, found->score()}};
+            return SadSearchOutcome{
+                std::optional<SadMatch>{SadMatch{*x, *y, found->score()}}
+            };
         }
 
         [[nodiscard]]
@@ -220,7 +285,7 @@ namespace uf::m0_demo
             JsonlLog& log,
             std::string_view phase,
             std::string_view label,
-            std::uint32_t loopIndex
+            uint32 loopIndex
         ) -> Status
         {
             return log.write(
@@ -237,11 +302,54 @@ namespace uf::m0_demo
         }
 
         [[nodiscard]]
+        auto searchStopStatus(
+            SadSearchOutcome const& outcome,
+            JsonlLog& log,
+            std::string_view phase,
+            std::string_view label,
+            uint32 loopIndex
+        ) -> Result<std::optional<StepStatus>>
+        {
+            auto const* reason = std::get_if<SadSearchStopReason>(&outcome);
+            if (reason == nullptr)
+            {
+                return std::optional<StepStatus>{};
+            }
+
+            switch (*reason)
+            {
+            case SadSearchStopReason::Cancelled:
+                return std::optional{StepStatus::Stopped};
+            case SadSearchStopReason::TimedOut:
+                UF_TRY(logTimeout(log, phase, label, loopIndex));
+                return std::optional{StepStatus::TimedOut};
+            case SadSearchStopReason::ComparisonBudgetExhausted:
+                UF_TRY(
+                    log.write(
+                        LogLine{std::string{phase}, "comparison_budget_exhausted"}
+                            .loopIndex(loopIndex)
+                            .outcome("failed")
+                            .detail(
+                                std::format(
+                                    "{} exceeded the {} pixel-comparison search budget",
+                                    label,
+                                    g_maximumSadPixelComparisons
+                                )
+                            )
+                    )
+                );
+                return std::optional{StepStatus::Failed};
+            default:
+                UF_UNREACHABLE_MSG("Unknown SadSearchStopReason value");
+            }
+        }
+
+        [[nodiscard]]
         auto captureFresh(
             Machine& machine,
             std::string_view phase,
             std::string_view label,
-            std::uint32_t loopIndex,
+            uint32 loopIndex,
             JsonlLog& log
         ) -> Result<std::optional<Frame>>
         {
@@ -330,7 +438,7 @@ namespace uf::m0_demo
             Machine& machine,
             Template const& imageTemplate,
             LoopConfig const& config,
-            std::uint32_t loopIndex,
+            uint32 loopIndex,
             ClickPacer& pacer,
             JsonlLog& log
         ) -> Result<ClickStatus>
@@ -367,9 +475,25 @@ namespace uf::m0_demo
                     continue;
                 }
 
-                UF_TRY_VALUE(raw, recognizeRaw(*captured, imageTemplate));
-                auto const matched = acceptMatch(
+                UF_TRY_VALUE(
                     raw,
+                    recognizeRaw(
+                        *captured,
+                        imageTemplate,
+                        started,
+                        config.m_transitionTimeout
+                    )
+                );
+                UF_TRY_VALUE(
+                    searchStopped,
+                    searchStopStatus(raw, log, "action", label, loopIndex)
+                );
+                if (searchStopped)
+                {
+                    return ClickStatus{*searchStopped};
+                }
+                auto const matched = acceptMatch(
+                    std::get<std::optional<SadMatch>>(raw),
                     imageTemplate.m_width,
                     imageTemplate.m_height,
                     config.m_threshold
@@ -492,7 +616,7 @@ namespace uf::m0_demo
             Template const& imageTemplate,
             MonotonicInstant notBefore,
             LoopConfig const& config,
-            std::uint32_t loopIndex,
+            uint32 loopIndex,
             JsonlLog& log
         ) -> Result<StepStatus>
         {
@@ -543,9 +667,25 @@ namespace uf::m0_demo
                     continue;
                 }
 
-                UF_TRY_VALUE(raw, recognizeRaw(*captured, imageTemplate));
-                auto const matched = acceptMatch(
+                UF_TRY_VALUE(
                     raw,
+                    recognizeRaw(
+                        *captured,
+                        imageTemplate,
+                        started,
+                        config.m_transitionTimeout
+                    )
+                );
+                UF_TRY_VALUE(
+                    searchStopped,
+                    searchStopStatus(raw, log, "recognize", label, loopIndex)
+                );
+                if (searchStopped)
+                {
+                    return *searchStopped;
+                }
+                auto const matched = acceptMatch(
+                    std::get<std::optional<SadMatch>>(raw),
                     imageTemplate.m_width,
                     imageTemplate.m_height,
                     config.m_threshold
@@ -578,7 +718,7 @@ namespace uf::m0_demo
             Machine& machine,
             Templates const& templates,
             LoopConfig const& config,
-            std::uint32_t loopIndex,
+            uint32 loopIndex,
             ClickPacer& pacer,
             JsonlLog& log
         ) -> Result<StepStatus>
@@ -647,7 +787,7 @@ namespace uf::m0_demo
             Machine& machine,
             Templates const& templates,
             LoopConfig const& config,
-            std::uint32_t loopIndex,
+            uint32 loopIndex,
             ClickPacer& pacer,
             JsonlLog& log
         ) -> Result<LoopStatus>
@@ -662,8 +802,8 @@ namespace uf::m0_demo
                         .detail(
                             std::format(
                                 "target_hwnd={:#x} foreground={:#x} cursor=({}, {})",
-                                static_cast<std::uintptr_t>(targetWindow),
-                                static_cast<std::uintptr_t>(baseline.m_foreground),
+                                static_cast<uintptr>(targetWindow),
+                                static_cast<uintptr>(baseline.m_foreground),
                                 baseline.m_cursor.first,
                                 baseline.m_cursor.second
                             )
@@ -687,8 +827,8 @@ namespace uf::m0_demo
                             .detail(
                                 std::format(
                                     "target_hwnd={:#x} baseline_foreground={:#x}; guard mode requires a non-target foreground window",
-                                    static_cast<std::uintptr_t>(targetWindow),
-                                    static_cast<std::uintptr_t>(baseline.m_foreground)
+                                    static_cast<uintptr>(targetWindow),
+                                    static_cast<uintptr>(baseline.m_foreground)
                                 )
                             )
                     )
@@ -734,9 +874,9 @@ namespace uf::m0_demo
                         .detail(
                             std::format(
                                 "target_hwnd={:#x} baseline_foreground={:#x} observed_foreground={:#x} baseline_cursor=({}, {}) observed_cursor=({}, {}) baseline_background_ok={} foreground_ok={} cursor_ok={}",
-                                static_cast<std::uintptr_t>(targetWindow),
-                                static_cast<std::uintptr_t>(baseline.m_foreground),
-                                static_cast<std::uintptr_t>(observed.m_foreground),
+                                static_cast<uintptr>(targetWindow),
+                                static_cast<uintptr>(baseline.m_foreground),
+                                static_cast<uintptr>(observed.m_foreground),
                                 baseline.m_cursor.first,
                                 baseline.m_cursor.second,
                                 observed.m_cursor.first,
@@ -781,12 +921,12 @@ namespace uf::m0_demo
         {
             UF_TRY(setupValidateRois(machine, templates, config, log));
             auto pacer = ClickPacer{config.m_clickDelay, config.m_seed};
-            auto attempted = std::uint32_t{0};
-            auto succeeded = std::uint32_t{0};
-            auto guardViolations = std::uint32_t{0};
+            auto attempted = uint32{0};
+            auto succeeded = uint32{0};
+            auto guardViolations = uint32{0};
             auto stopped = false;
 
-            for (auto loopIndex = std::uint32_t{0}; loopIndex < config.m_loops; ++loopIndex)
+            for (auto loopIndex = uint32{0}; loopIndex < config.m_loops; ++loopIndex)
             {
                 if (stopRequested())
                 {
@@ -934,16 +1074,27 @@ namespace uf::m0_demo
                 },
                 [&log](Machine& current) -> Status
                 {
-                    current.m_session.close();
-                    return log.write(
-                        LogLine{"shutdown", "session_closed"}.outcome("ok")
+                    auto result = current.m_session.close();
+                    auto const succeeded = result.has_value();
+                    retainFirstError(
+                        result,
+                        log.write(
+                            LogLine{"shutdown", "session_closed"}
+                                .outcome(succeeded ? "ok" : "error")
+                                .detail(
+                                    succeeded
+                                        ? std::string{}
+                                        : formatAutomationError(result.error())
+                                )
+                        )
                     );
+                    return result;
                 },
                 [&log, &outcome](Machine& current) -> Status
                 {
                     auto const audit = summarizeAudit(
                         current.m_audit.records(),
-                        static_cast<std::uintptr_t>(current.m_target.windowHandle().value())
+                        static_cast<uintptr>(current.m_target.windowHandle().value())
                     );
                     if (outcome)
                     {
@@ -1026,7 +1177,7 @@ namespace uf::m0_demo
                 std::format("template {} width is not addressable", path.string())
             );
         }
-        auto const rowBytes = checkedMultiply(*width, bgraBytesPerPixel);
+        auto const rowBytes = checkedMultiply(*width, g_bgraBytesPerPixel);
         if (!rowBytes)
         {
             return fail(
@@ -1108,8 +1259,8 @@ namespace uf::m0_demo
 
     auto hitCenterFrame(
         SadMatch matched,
-        std::uint32_t templateWidth,
-        std::uint32_t templateHeight
+        uint32 templateWidth,
+        uint32 templateHeight
     ) noexcept -> Point<FrameSpace>
     {
         return Rect<FrameSpace>{
@@ -1122,17 +1273,17 @@ namespace uf::m0_demo
 
     auto acceptMatch(
         std::optional<SadMatch> found,
-        std::uint32_t templateWidth,
-        std::uint32_t templateHeight,
-        std::uint64_t maximumAverageSad
+        uint32 templateWidth,
+        uint32 templateHeight,
+        uint64 maximumAverageSad
     ) noexcept -> std::optional<SadMatch>
     {
         auto const area = (
-            static_cast<std::uint64_t>(templateWidth)
-            * static_cast<std::uint64_t>(templateHeight)
+            static_cast<uint64>(templateWidth)
+            * static_cast<uint64>(templateHeight)
         );
         auto const budget = checkedMultiply(maximumAverageSad, area).value_or(
-            std::numeric_limits<std::uint64_t>::max()
+            std::numeric_limits<uint64>::max()
         );
         if (!found || area == 0U || found->score() > budget)
         {
@@ -1158,8 +1309,8 @@ namespace uf::m0_demo
                 "cropped ROI is not addressable"
             );
         }
-        auto const xBytes = checkedMultiply(*x, bgraBytesPerPixel);
-        auto const rowBytes = checkedMultiply(*width, bgraBytesPerPixel);
+        auto const xBytes = checkedMultiply(*x, g_bgraBytesPerPixel);
+        auto const rowBytes = checkedMultiply(*width, g_bgraBytesPerPixel);
         auto const totalBytes = rowBytes
             ? checkedMultiply(*rowBytes, *height)
             : std::optional<std::size_t>{};
@@ -1288,7 +1439,7 @@ namespace uf::m0_demo
 
     auto summarizeAudit(
         std::span<AuditRecord const> records,
-        std::uintptr_t target
+        uintptr target
     ) noexcept -> AuditSummary
     {
         return AuditSummary{
@@ -1320,7 +1471,7 @@ namespace uf::m0_demo
     ) -> Result<RunSummary>
     {
         auto machine = Machine{
-            std::move(resolved),
+            resolved,
             std::move(session),
             delivery
         };

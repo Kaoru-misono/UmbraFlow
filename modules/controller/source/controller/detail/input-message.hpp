@@ -3,29 +3,29 @@
 #include "controller/input.hpp"
 
 #include <core/error/result.hpp>
+#include <core/types/integer.hpp>
 
-#include <cstdint>
 #include <string_view>
 #include <vector>
 
 namespace uf::controller_detail
 {
-    inline constexpr auto wmKeyDown = std::uint32_t{0x0100U};
-    inline constexpr auto wmKeyUp = std::uint32_t{0x0101U};
-    inline constexpr auto wmChar = std::uint32_t{0x0102U};
-    inline constexpr auto wmUnichar = std::uint32_t{0x0109U};
-    inline constexpr auto wmMouseMove = std::uint32_t{0x0200U};
-    inline constexpr auto wmLeftButtonDown = std::uint32_t{0x0201U};
-    inline constexpr auto wmLeftButtonUp = std::uint32_t{0x0202U};
-    inline constexpr auto leftButtonMask = std::uintptr_t{0x0001U};
+    inline constexpr auto g_wmKeyDown = uint32{0x0100U};
+    inline constexpr auto g_wmKeyUp = uint32{0x0101U};
+    inline constexpr auto g_wmChar = uint32{0x0102U};
+    inline constexpr auto g_wmUnichar = uint32{0x0109U};
+    inline constexpr auto g_wmMouseMove = uint32{0x0200U};
+    inline constexpr auto g_wmLeftButtonDown = uint32{0x0201U};
+    inline constexpr auto g_wmLeftButtonUp = uint32{0x0202U};
+    inline constexpr auto g_leftButtonMask = uintptr{0x0001U};
 
-    enum class KeyTransition : std::uint8_t
+    enum class KeyTransition : uint8
     {
         Down,
         Up,
     };
 
-    enum class PointerMessage : std::uint8_t
+    enum class PointerMessage : uint8
     {
         Move,
         MoveWithLeftButton,
@@ -35,38 +35,38 @@ namespace uf::controller_detail
 
     struct PostSpec final
     {
-        std::uint32_t m_message;
-        std::uintptr_t m_wParam;
-        std::intptr_t m_lParam;
+        uint32 m_message;
+        uintptr m_wParam;
+        intptr m_lParam;
 
         auto operator==(PostSpec const&) const -> bool = default;
     };
 
     [[nodiscard]]
     auto keyboardLParamBits(
-        std::uint8_t scanCode,
+        uint8 scanCode,
         bool extended,
         KeyTransition transition
-    ) noexcept -> std::uint32_t;
+    ) noexcept -> uint32;
 
-    [[nodiscard]] auto pointerLParamBits(ClientPixel pixel) noexcept -> std::uint32_t;
-    [[nodiscard]] auto isExtendedKey(std::uint16_t virtualKey) noexcept -> bool;
+    [[nodiscard]] auto pointerLParamBits(ClientPixel pixel) noexcept -> uint32;
+    [[nodiscard]] auto isExtendedKey(uint16 virtualKey) noexcept -> bool;
 
     [[nodiscard]]
     auto keySpec(
         KeyInput key,
-        std::uint8_t scanCode,
+        uint8 scanCode,
         KeyTransition transition
     ) noexcept -> PostSpec;
 
     [[nodiscard]]
     auto pointerSpec(PointerMessage message, ClientPixel pixel) noexcept -> PostSpec;
 
-    [[nodiscard]] auto charSpec(std::uint16_t codeUnit) noexcept -> PostSpec;
+    [[nodiscard]] auto charSpec(uint16 codeUnit) noexcept -> PostSpec;
     [[nodiscard]] auto unicharSpec(char32_t codePoint) noexcept -> PostSpec;
     [[nodiscard]]
-    auto utf16CodeUnits(std::string_view text) -> Result<std::vector<std::uint16_t>>;
-    [[nodiscard]] auto scanCodeFor(std::uint16_t virtualKey) noexcept -> std::uint8_t;
+    auto utf16CodeUnits(std::string_view text) -> Result<std::vector<uint16>>;
+    [[nodiscard]] auto scanCodeFor(uint16 virtualKey) noexcept -> uint8;
 
     [[nodiscard]]
     auto deliver(

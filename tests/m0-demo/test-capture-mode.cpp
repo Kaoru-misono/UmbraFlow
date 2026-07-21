@@ -3,9 +3,10 @@
 #include <args.hpp>
 #include <capture-mode.hpp>
 
+#include <core/types/integer.hpp>
+
 #include <doctest/doctest.h>
 
-#include <cstdint>
 #include <filesystem>
 #include <optional>
 #include <utility>
@@ -15,7 +16,7 @@ namespace
     [[nodiscard]]
     auto captureArgs(
         std::filesystem::path output,
-        std::uint32_t frames,
+        uf::uint32 frames,
         std::filesystem::path log
     ) -> uf::m0_demo::CaptureArgs
     {

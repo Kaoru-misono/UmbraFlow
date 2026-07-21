@@ -4,10 +4,10 @@
 
 #include <core/error/result.hpp>
 #include <core/time/monotonic-time.hpp>
+#include <core/types/integer.hpp>
 #include <domain/space.hpp>
 
 #include <chrono>
-#include <cstdint>
 #include <filesystem>
 #include <optional>
 #include <span>
@@ -16,7 +16,7 @@
 
 namespace uf::m0_demo
 {
-    inline constexpr auto g_defaultCaptureFrames = std::uint32_t{1};
+    inline constexpr auto g_defaultCaptureFrames = uint32{1};
     inline constexpr auto g_defaultCaptureInterval = MonotonicInstant::Duration::zero();
     inline constexpr auto g_defaultInputAgentIdleTimeout = (
         std::chrono::duration_cast<MonotonicInstant::Duration>(
@@ -24,7 +24,7 @@ namespace uf::m0_demo
         )
     );
 
-    enum class Mode
+    enum class Mode : uint8
     {
         Guard,
         Coexist,
@@ -32,8 +32,8 @@ namespace uf::m0_demo
 
     struct SelectorArgs final
     {
-        std::optional<std::uint32_t> m_process{};
-        std::optional<std::intptr_t> m_windowHandle{};
+        std::optional<uint32> m_process{};
+        std::optional<intptr> m_windowHandle{};
         std::optional<std::string> m_windowClass{};
         std::optional<std::string> m_title{};
 
@@ -49,13 +49,13 @@ namespace uf::m0_demo
         Rect<FrameSpace> m_resultRoi;
         std::filesystem::path m_resetTemplate;
         Rect<FrameSpace> m_resetRoi;
-        std::uint64_t m_threshold;
+        uint64 m_threshold;
         Mode m_mode;
-        std::uint32_t m_loops;
+        uint32 m_loops;
         MonotonicInstant::Duration m_maxActionFrameAge;
         MonotonicInstant::Duration m_stallTimeout;
         std::optional<ClickDelay> m_clickDelay;
-        std::uint64_t m_seed;
+        uint64 m_seed;
         std::optional<std::filesystem::path> m_log;
 
         auto operator==(Args const&) const -> bool = default;
@@ -65,7 +65,7 @@ namespace uf::m0_demo
     {
         SelectorArgs m_selector;
         std::filesystem::path m_output;
-        std::uint32_t m_frames;
+        uint32 m_frames;
         MonotonicInstant::Duration m_interval;
         std::optional<std::filesystem::path> m_log;
 
@@ -74,7 +74,7 @@ namespace uf::m0_demo
 
     struct InputAgentArgs final
     {
-        std::intptr_t m_windowHandle;
+        intptr m_windowHandle;
         std::filesystem::path m_queue;
         std::filesystem::path m_results;
         std::filesystem::path m_outputDirectory;

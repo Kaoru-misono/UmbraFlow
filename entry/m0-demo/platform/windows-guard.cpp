@@ -1,11 +1,12 @@
 #include "windows-guard.hpp"
 
+#include <core/types/integer.hpp>
 #include <domain/error.hpp>
 
 #include <Windows.h>
 
+#include <bit>
 #include <cstddef>
-#include <cstdint>
 #include <cstring>
 #include <format>
 #include <optional>
@@ -48,13 +49,13 @@ namespace
     };
 
     [[nodiscard]]
-    auto tokenIntegrityRid(HANDLE processHandle) -> std::optional<std::uint32_t>
+    auto tokenIntegrityRid(HANDLE processHandle) -> std::optional<uf::uint32>
     {
         auto tokenHandle = HANDLE{};
         // SAFETY: processHandle is a live process handle or current-process
         // pseudo-handle; tokenHandle is a live out-parameter and is wrapped in
         // OwnedHandle immediately on success.
-        if (!OpenProcessToken(processHandle, TOKEN_QUERY, &tokenHandle))
+        if (OpenProcessToken(processHandle, TOKEN_QUERY, &tokenHandle) == FALSE)
         {
             return std::nullopt;
         }
@@ -79,13 +80,13 @@ namespace
         // SAFETY: buffer owns requiredBytes writable bytes for the entire call;
         // GetTokenInformation writes no more than the supplied byte count and
         // reports the actual count through requiredBytes.
-        if (!GetTokenInformation(
+        if (GetTokenInformation(
             token.get(),
             TokenIntegrityLevel,
             buffer.data(),
             requiredBytes,
             &requiredBytes
-        ))
+        ) == FALSE)
         {
             return std::nullopt;
         }
@@ -126,10 +127,10 @@ namespace
     [[nodiscard]]
     auto windowFrom(uf::WindowHandle handle) noexcept -> HWND
     {
-        // SAFETY: WindowHandle stores the opaque HWND bit pattern supplied by
-        // controller discovery; this conversion does not dereference it and the
-        // receiving Win32 query validates whether the handle is still live.
-        return reinterpret_cast<HWND>(handle.value());
+        // SAFETY: WindowHandle stores the pointer-sized integer representation copied
+        // from an HWND. bit_cast restores those exact bits as the opaque token without
+        // dereferencing it.
+        return std::bit_cast<HWND>(handle.value());
     }
 }
 
@@ -140,18 +141,18 @@ namespace uf::m0_demo::platform
         // SAFETY: GetForegroundWindow takes no caller memory and returns an
         // opaque borrowed handle that may be null. Only its bit pattern is kept.
         auto const foregroundWindow = GetForegroundWindow();
-        // SAFETY: HWND is an opaque pointer-sized token. Converting it to the
-        // signed machine-word representation preserves the token without
-        // dereferencing or extending its lifetime.
-        auto const foreground = reinterpret_cast<std::intptr_t>(foregroundWindow);
+        // SAFETY: HWND is an opaque pointer-sized token. bit_cast preserves its exact
+        // bits in the signed machine-word representation without dereferencing or
+        // extending its lifetime.
+        auto const foreground = std::bit_cast<intptr>(foregroundWindow);
 
-        auto cursor = std::pair<std::int32_t, std::int32_t>{0, 0};
+        auto cursor = std::pair<int32, int32>{0, 0};
         if (policy.m_compareCursor)
         {
             auto point = POINT{};
             // SAFETY: point is a live writable out-parameter for the duration of
             // GetCursorPos and is read only after the call reports success.
-            if (!GetCursorPos(&point))
+            if (GetCursorPos(&point) == FALSE)
             {
                 return fail(
                     AutomationErrorKind::InternalInvariant,
@@ -170,7 +171,7 @@ namespace uf::m0_demo::platform
         auto windowRectangle = RECT{};
         // SAFETY: window is an opaque candidate handle and windowRectangle is a
         // live out-parameter. Failure is handled as target unavailability.
-        if (!GetWindowRect(window, &windowRectangle))
+        if (GetWindowRect(window, &windowRectangle) == FALSE)
         {
             return fail(
                 AutomationErrorKind::TargetUnavailable,
@@ -181,7 +182,7 @@ namespace uf::m0_demo::platform
         auto origin = POINT{};
         // SAFETY: origin is initialized to client (0, 0), remains live for the
         // in-place translation, and is consumed only when the call succeeds.
-        if (!ClientToScreen(window, &origin))
+        if (ClientToScreen(window, &origin) == FALSE)
         {
             return fail(
                 AutomationErrorKind::TargetUnavailable,

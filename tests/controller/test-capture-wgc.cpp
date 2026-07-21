@@ -1,13 +1,13 @@
 #include <controller/capture.hpp>
 #include <controller/detail/capture-wgc.hpp>
 
+#include <core/types/integer.hpp>
 #include <domain/error.hpp>
 
 #include <doctest/doctest.h>
 
 #include <array>
 #include <chrono>
-#include <cstdint>
 #include <limits>
 #include <utility>
 
@@ -59,7 +59,7 @@ TEST_CASE("frame ids increase monotonically within a session")
 TEST_CASE("frame id counter overflow is rejected")
 {
     auto counter = uf::controller_detail::FrameIdCounter{
-        std::numeric_limits<std::uint64_t>::max()
+        std::numeric_limits<uf::uint64>::max()
     };
     auto const result = counter.nextId();
 
@@ -111,7 +111,7 @@ TEST_CASE("client geometry builds a transform with the captured frame extent")
     auto const transform = client->transformFor(800, 450);
 
     REQUIRE(transform.has_value());
-    CHECK(transform->frameSize() == std::pair{std::uint32_t{800}, std::uint32_t{450}});
+    CHECK(transform->frameSize() == std::pair{uf::uint32{800}, uf::uint32{450}});
     CHECK(
         transform->desktopToFrame(uf::Point<uf::DesktopSpace>{100.0F, 50.0F})
         == uf::Point<uf::FrameSpace>{0.0F, 0.0F}
@@ -128,7 +128,7 @@ TEST_CASE("client geometry integer extent requires whole pixels")
     REQUIRE(whole.has_value());
     auto const extent = uf::controller_detail::clientIntegerExtent(*whole);
     REQUIRE(extent.has_value());
-    CHECK(*extent == std::pair{std::uint32_t{2'560}, std::uint32_t{1'440}});
+    CHECK(*extent == std::pair{uf::uint32{2'560}, uf::uint32{1'440}});
 
     for (
         auto const& dimensions : std::array{

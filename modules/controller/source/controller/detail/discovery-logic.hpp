@@ -1,6 +1,7 @@
 #pragma once
 
-#include <cstdint>
+#include <core/types/integer.hpp>
+
 #include <filesystem>
 #include <span>
 #include <string>
@@ -9,22 +10,22 @@ namespace uf::controller_detail
 {
     [[nodiscard]]
     constexpr auto fileTimeToTicks(
-        std::uint32_t high,
-        std::uint32_t low
-    ) noexcept -> std::uint64_t
+        uint32 high,
+        uint32 low
+    ) noexcept -> uint64
     {
-        return (static_cast<std::uint64_t>(high) << 32U) | low;
+        return (static_cast<uint64>(high) << 32U) | low;
     }
 
     [[nodiscard]]
     auto utf16BufferToString(
         std::span<char16_t const> buffer,
-        std::int32_t length
+        int32 length
     ) -> std::string;
 
     [[nodiscard]]
     auto utf16BufferToPath(
         std::span<char16_t const> buffer,
-        std::int32_t length
+        int32 length
     ) -> std::filesystem::path;
 }

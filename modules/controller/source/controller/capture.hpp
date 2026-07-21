@@ -4,12 +4,12 @@
 
 #include <core/error/result.hpp>
 #include <core/time/monotonic-time.hpp>
+#include <core/types/integer.hpp>
 #include <domain/frame.hpp>
 #include <domain/ids.hpp>
 #include <domain/space.hpp>
 
 #include <chrono>
-#include <cstdint>
 #include <memory>
 
 namespace uf
@@ -97,15 +97,15 @@ namespace uf
 
         [[nodiscard]]
         auto transformFor(
-            std::uint32_t frameWidth,
-            std::uint32_t frameHeight
+            uint32 frameWidth,
+            uint32 frameHeight
         ) const -> Result<CoordinateTransform>;
     };
 
     // OS-build-dependent cursor and border state recorded when a session is created.
     struct CaptureHygiene final
     {
-        std::uint32_t m_osBuild{};
+        uint32 m_osBuild{};
         bool m_cursorCaptureDisabled{};
         bool m_borderlessSupported{};
         bool m_borderRequired{};
@@ -128,7 +128,7 @@ namespace uf
         WgcCaptureSession(WgcCaptureSession const&) = delete;
         auto operator=(WgcCaptureSession const&) -> WgcCaptureSession& = delete;
         WgcCaptureSession(WgcCaptureSession&&) noexcept;
-        auto operator=(WgcCaptureSession&&) noexcept -> WgcCaptureSession&;
+        auto operator=(WgcCaptureSession&&) -> WgcCaptureSession& = delete;
         ~WgcCaptureSession();
 
         [[nodiscard]]
@@ -141,7 +141,8 @@ namespace uf
         ) -> Result<WgcCaptureSession>;
 
         [[nodiscard]] auto capture() -> Result<Frame>;
-        auto close() noexcept -> void;
+        [[nodiscard]] auto validateTargetInstance() -> Status;
+        [[nodiscard]] auto close() -> Status;
 
         [[nodiscard]] auto hygiene() const noexcept -> CaptureHygiene;
         [[nodiscard]] auto sessionId() const noexcept -> SessionId;

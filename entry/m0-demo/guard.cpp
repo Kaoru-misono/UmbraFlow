@@ -2,7 +2,8 @@
 
 #include "platform/windows-guard.hpp"
 
-#include <cstdint>
+#include <core/types/integer.hpp>
+
 #include <optional>
 #include <string_view>
 
@@ -42,7 +43,7 @@ namespace uf::m0_demo
 
     auto checkGuard(
         GuardPolicy policy,
-        std::intptr_t targetWindow,
+        intptr targetWindow,
         GuardBaseline baseline,
         GuardBaseline observed
     ) noexcept -> GuardCheck

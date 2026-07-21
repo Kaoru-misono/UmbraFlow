@@ -15,7 +15,7 @@ namespace uf::m0_demo::platform
 
         std::unique_ptr<State> m_state;
 
-        explicit FileWriter(std::unique_ptr<State> state) noexcept;
+        explicit FileWriter(std::unique_ptr<State> p_state) noexcept;
 
     public:
         FileWriter(FileWriter const&) = delete;
@@ -26,7 +26,8 @@ namespace uf::m0_demo::platform
 
         [[nodiscard]]
         static auto createExclusive(
-            std::filesystem::path const& path
+            std::filesystem::path const& path,
+            std::filesystem::path const& canonicalOutputDirectory
         ) -> Result<FileWriter>;
 
         [[nodiscard]]

@@ -1,19 +1,21 @@
 #include "input.hpp"
 
+#include <core/types/integer.hpp>
+
 #include <span>
 
 namespace uf
 {
     auto AuditLog::record(
         WindowHandle windowHandle,
-        std::uint32_t message,
-        std::uintptr_t wParam,
-        std::intptr_t lParam
+        uint32 message,
+        uintptr wParam,
+        intptr lParam
     ) -> void
     {
         m_records.emplace_back(
             AuditRecord{
-                .m_target = static_cast<std::uintptr_t>(windowHandle.value()),
+                .m_target = static_cast<uintptr>(windowHandle.value()),
                 .m_message = message,
                 .m_wParam = wParam,
                 .m_lParam = lParam,

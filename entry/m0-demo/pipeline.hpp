@@ -10,12 +10,12 @@
 #include <controller/target.hpp>
 #include <core/error/result.hpp>
 #include <core/time/monotonic-time.hpp>
+#include <core/types/integer.hpp>
 #include <domain/space.hpp>
 #include <vision/sad.hpp>
 
 #include <chrono>
 #include <cstddef>
-#include <cstdint>
 #include <filesystem>
 #include <optional>
 #include <span>
@@ -34,8 +34,8 @@ namespace uf::m0_demo
     {
         std::string m_label;
         std::vector<std::byte> m_gray;
-        std::uint32_t m_width;
-        std::uint32_t m_height;
+        uint32 m_width;
+        uint32 m_height;
         Rect<FrameSpace> m_roi;
     };
 
@@ -48,20 +48,20 @@ namespace uf::m0_demo
 
     struct LoopConfig final
     {
-        std::uint32_t m_loops;
-        std::uint64_t m_threshold;
+        uint32 m_loops;
+        uint64 m_threshold;
         MonotonicInstant::Duration m_maxActionFrameAge;
         MonotonicInstant::Duration m_transitionTimeout;
         GuardPolicy m_guardPolicy;
         std::optional<ClickDelay> m_clickDelay;
-        std::uint64_t m_seed;
+        uint64 m_seed;
     };
 
     struct RunSummary final
     {
-        std::uint32_t m_attempted;
-        std::uint32_t m_succeeded;
-        std::uint32_t m_guardViolations;
+        uint32 m_attempted;
+        uint32 m_succeeded;
+        uint32 m_guardViolations;
         bool m_stopped;
         bool m_auditClean;
 
@@ -70,7 +70,7 @@ namespace uf::m0_demo
         [[nodiscard]] auto passed() const noexcept -> bool;
     };
 
-    enum class StepStatus
+    enum class StepStatus : uint8
     {
         Done,
         TimedOut,
@@ -78,7 +78,7 @@ namespace uf::m0_demo
         Stopped,
     };
 
-    enum class LoopStatus
+    enum class LoopStatus : uint8
     {
         Success,
         Failed,
@@ -116,16 +116,16 @@ namespace uf::m0_demo
     [[nodiscard]]
     auto hitCenterFrame(
         SadMatch matched,
-        std::uint32_t templateWidth,
-        std::uint32_t templateHeight
+        uint32 templateWidth,
+        uint32 templateHeight
     ) noexcept -> Point<FrameSpace>;
 
     [[nodiscard]]
     auto acceptMatch(
         std::optional<SadMatch> found,
-        std::uint32_t templateWidth,
-        std::uint32_t templateHeight,
-        std::uint64_t maximumAverageSad
+        uint32 templateWidth,
+        uint32 templateHeight,
+        uint64 maximumAverageSad
     ) noexcept -> std::optional<SadMatch>;
 
     [[nodiscard]]
@@ -160,7 +160,7 @@ namespace uf::m0_demo
     [[nodiscard]]
     auto summarizeAudit(
         std::span<AuditRecord const> records,
-        std::uintptr_t target
+        uintptr target
     ) noexcept -> AuditSummary;
 
     [[nodiscard]]

@@ -1,14 +1,16 @@
 #include "input-agent-protocol.hpp"
 
 #include <core/numeric/checked-cast.hpp>
+#include <core/text/utf8.hpp>
+#include <core/types/integer.hpp>
 #include <domain/error.hpp>
 
 #include <charconv>
 #include <chrono>
 #include <cmath>
 #include <cstddef>
-#include <cstdint>
 #include <format>
+#include <memory>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -41,118 +43,21 @@ namespace
     }
 
     [[nodiscard]]
-    auto isValidUtf8(std::string_view value) noexcept -> bool
-    {
-        auto codePoint = std::uint32_t{0};
-        auto minimumCodePoint = std::uint32_t{0};
-        auto continuationBytes = std::uint8_t{0};
-
-        for (auto const character : value)
-        {
-            auto const byte = static_cast<std::uint32_t>(
-                static_cast<unsigned char>(character)
-            );
-            if (continuationBytes == 0U)
-            {
-                if (byte <= 0x7FU)
-                {
-                    continue;
-                }
-                if (byte >= 0xC2U && byte <= 0xDFU)
-                {
-                    codePoint = byte & 0x1FU;
-                    minimumCodePoint = 0x80U;
-                    continuationBytes = 1U;
-                    continue;
-                }
-                if (byte >= 0xE0U && byte <= 0xEFU)
-                {
-                    codePoint = byte & 0x0FU;
-                    minimumCodePoint = 0x800U;
-                    continuationBytes = 2U;
-                    continue;
-                }
-                if (byte >= 0xF0U && byte <= 0xF4U)
-                {
-                    codePoint = byte & 0x07U;
-                    minimumCodePoint = 0x10000U;
-                    continuationBytes = 3U;
-                    continue;
-                }
-                return false;
-            }
-
-            if ((byte & 0xC0U) != 0x80U)
-            {
-                return false;
-            }
-            codePoint = (codePoint << 6U) | (byte & 0x3FU);
-            --continuationBytes;
-            if (
-                continuationBytes == 0U
-                && (
-                    codePoint < minimumCodePoint
-                    || codePoint > 0x10FFFFU
-                    || (codePoint >= 0xD800U && codePoint <= 0xDFFFU)
-                )
-            )
-            {
-                return false;
-            }
-        }
-
-        return continuationBytes == 0U;
-    }
-
-    [[nodiscard]]
-    auto hexValue(char value) noexcept -> std::optional<std::uint32_t>
+    auto hexValue(char value) noexcept -> std::optional<uf::uint32>
     {
         if (value >= '0' && value <= '9')
         {
-            return static_cast<std::uint32_t>(value - '0');
+            return uf::checkedCast<uf::uint32>(value - '0');
         }
         if (value >= 'a' && value <= 'f')
         {
-            return static_cast<std::uint32_t>(value - 'a') + 10U;
+            return uf::checkedCast<uf::uint32>(value - 'a' + 10);
         }
         if (value >= 'A' && value <= 'F')
         {
-            return static_cast<std::uint32_t>(value - 'A') + 10U;
+            return uf::checkedCast<uf::uint32>(value - 'A' + 10);
         }
         return std::nullopt;
-    }
-
-    auto appendUtf8(std::string& output, std::uint32_t codePoint) -> void
-    {
-        if (codePoint <= 0x7FU)
-        {
-            output += static_cast<char>(codePoint);
-            return;
-        }
-        if (codePoint <= 0x7FFU)
-        {
-            output += static_cast<char>(0xC0U | (codePoint >> 6U));
-            output += static_cast<char>(0x80U | (codePoint & 0x3FU));
-            return;
-        }
-        if (codePoint <= 0xFFFFU)
-        {
-            output += static_cast<char>(0xE0U | (codePoint >> 12U));
-            output += static_cast<char>(
-                0x80U | ((codePoint >> 6U) & 0x3FU)
-            );
-            output += static_cast<char>(0x80U | (codePoint & 0x3FU));
-            return;
-        }
-
-        output += static_cast<char>(0xF0U | (codePoint >> 18U));
-        output += static_cast<char>(
-            0x80U | ((codePoint >> 12U) & 0x3FU)
-        );
-        output += static_cast<char>(
-            0x80U | ((codePoint >> 6U) & 0x3FU)
-        );
-        output += static_cast<char>(0x80U | (codePoint & 0x3FU));
     }
 
     struct ParsedCommandFields final
@@ -253,9 +158,9 @@ namespace
             );
         }
 
-        [[nodiscard]] auto parseHexCodeUnit() -> uf::Result<std::uint32_t>
+        [[nodiscard]] auto parseHexCodeUnit() -> uf::Result<uf::uint32>
         {
-            auto codeUnit = std::uint32_t{};
+            auto codeUnit = uf::uint32{};
             for (auto index = std::size_t{0}; index < 4U; ++index)
             {
                 UF_TRY_VALUE(character, take("a Unicode escape"));
@@ -274,7 +179,7 @@ namespace
             return codeUnit;
         }
 
-        [[nodiscard]] auto parseEscapedCodePoint() -> uf::Result<std::uint32_t>
+        [[nodiscard]] auto parseEscapedCodePoint() -> uf::Result<uf::uint32>
         {
             UF_TRY_VALUE(first, parseHexCodeUnit());
             if (first >= 0xDC00U && first <= 0xDFFFU)
@@ -315,7 +220,7 @@ namespace
                 {
                     return output;
                 }
-                if (static_cast<unsigned char>(character) < 0x20U)
+                if (character >= '\0' && character < ' ')
                 {
                     return invalidCommand(
                         "input-agent command contains an unescaped control character"
@@ -347,7 +252,10 @@ namespace
                             "input-agent command strings must not contain null characters"
                         );
                     }
-                    appendUtf8(output, codePoint);
+                    uf::appendUtf8Scalar(
+                        output,
+                        codePoint
+                    );
                     break;
                 }
                 default:
@@ -443,8 +351,8 @@ namespace
         {
             UF_TRY_VALUE(token, parseNumberToken());
             auto coordinate = 0.0F;
-            auto const* const begin = token.data();
-            auto const* const end = begin + token.size();
+            auto const* const begin = std::to_address(token.cbegin());
+            auto const* const end = std::to_address(token.cend());
             auto const parsed = std::from_chars(
                 begin,
                 end,
@@ -471,9 +379,9 @@ namespace
         auto parseSettle() -> uf::Result<uf::MonotonicInstant::Duration>
         {
             UF_TRY_VALUE(token, parseNumberToken());
-            auto milliseconds = std::uint64_t{};
-            auto const* const begin = token.data();
-            auto const* const end = begin + token.size();
+            auto milliseconds = uf::uint64{};
+            auto const* const begin = std::to_address(token.cbegin());
+            auto const* const end = std::to_address(token.cend());
             auto const parsed = std::from_chars(
                 begin,
                 end,
@@ -492,7 +400,7 @@ namespace
             auto const maximum = std::chrono::duration_cast<Milliseconds>(
                 uf::m0_demo::g_maximumInputAgentSettle
             );
-            auto const maximumCount = uf::checkedCast<std::uint64_t>(maximum.count());
+            auto const maximumCount = uf::checkedCast<uf::uint64>(maximum.count());
             auto const count = uf::checkedCast<Milliseconds::rep>(milliseconds);
             if (
                 !maximumCount

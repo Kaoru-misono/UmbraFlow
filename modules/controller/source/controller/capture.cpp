@@ -1,5 +1,6 @@
 #include "capture.hpp"
 
+#include <core/types/integer.hpp>
 #include <domain/error.hpp>
 
 #include <cmath>
@@ -54,8 +55,8 @@ namespace uf
     }
 
     auto ClientGeometry::transformFor(
-        std::uint32_t frameWidth,
-        std::uint32_t frameHeight
+        uint32 frameWidth,
+        uint32 frameHeight
     ) const -> Result<CoordinateTransform>
     {
         return CoordinateTransform::create(

@@ -12,10 +12,13 @@
 #include <controller/input.hpp>
 #include <controller/target.hpp>
 #include <core/error/result.hpp>
+#include <core/numeric/checked-cast.hpp>
 #include <domain/error.hpp>
 #include <domain/ids.hpp>
 
+#include <cstddef>
 #include <cstdlib>
+#include <cstdio>
 #include <exception>
 #include <format>
 #include <iostream>
@@ -75,7 +78,7 @@ namespace
 
     [[nodiscard]]
     auto runWithLog(
-        uf::m0_demo::Args args,
+        uf::m0_demo::Args const& args,
         uf::m0_demo::JsonlLog& log
     ) -> uf::Result<uf::m0_demo::RunSummary>
     {
@@ -88,7 +91,10 @@ namespace
             )
         );
 
-        UF_TRY(uf::m0_demo::installConsoleControlHandler());
+        UF_TRY_VALUE(
+            consoleControl,
+            uf::m0_demo::installConsoleControlHandler()
+        );
         UF_TRY(
             logIntegrity(
                 log,
@@ -104,6 +110,19 @@ namespace
         auto const generation = resolved.currentGeneration();
         auto const client = resolved.clientSize();
         auto const process = resolved.identity().process();
+        auto const sessionId = uf::SessionId{1};
+        UF_TRY_VALUE(
+            options,
+            uf::WgcCaptureOptions::create(args.m_stallTimeout, false)
+        );
+        UF_TRY_VALUE(
+            session,
+            uf::m0_demo::createCaptureSession(
+                resolved,
+                sessionId,
+                options
+            )
+        );
         UF_TRY(
             log.write(
                 uf::m0_demo::LogLine{"discovery", "resolved"}
@@ -124,16 +143,6 @@ namespace
                 log,
                 "target",
                 uf::m0_demo::processIntegrity(process)
-            )
-        );
-        UF_TRY(uf::m0_demo::ensureClientAreaUsable(client));
-        UF_TRY_VALUE(origin, uf::m0_demo::clientOriginDesktop(windowHandle));
-        UF_TRY_VALUE(
-            geometry,
-            uf::ClientGeometry::create(
-                origin,
-                static_cast<float>(client.width()),
-                static_cast<float>(client.height())
             )
         );
 
@@ -176,11 +185,6 @@ namespace
             .m_seed = args.m_seed,
         };
 
-        auto const sessionId = uf::SessionId{1};
-        UF_TRY_VALUE(
-            options,
-            uf::WgcCaptureOptions::create(args.m_stallTimeout, false)
-        );
         UF_TRY_VALUE(
             delivery,
             uf::DeliveryTarget::create(
@@ -189,16 +193,6 @@ namespace
                 generation,
                 client.width(),
                 client.height()
-            )
-        );
-        UF_TRY_VALUE(
-            session,
-            uf::WgcCaptureSession::create(
-                windowHandle,
-                sessionId,
-                generation,
-                geometry,
-                options
             )
         );
         auto const hygiene = session.hygiene();
@@ -217,14 +211,21 @@ namespace
             )
         );
 
-        return uf::m0_demo::runPipeline(
-            std::move(resolved),
+        auto outcome = uf::m0_demo::runPipeline(
+            resolved,
             std::move(session),
             delivery,
             templates,
             config,
             log
         );
+        auto consoleClose = consoleControl.close();
+        if (!outcome)
+        {
+            return std::unexpected{std::move(outcome).error()};
+        }
+        UF_TRY(std::move(consoleClose));
+        return outcome;
     }
 
     [[nodiscard]]
@@ -235,14 +236,16 @@ namespace
         UF_TRY_VALUE(args, uf::m0_demo::parseArguments(raw));
         UF_TRY_VALUE(log, uf::m0_demo::JsonlLog::create(args.m_log));
 
-        auto outcome = runWithLog(std::move(args), log);
-        auto terminalWrite = outcome
-            ? uf::ok()
-            : log.write(
+        auto outcome = runWithLog(args, log);
+        auto terminalWrite = uf::ok();
+        if (!outcome)
+        {
+            terminalWrite = log.write(
                 uf::m0_demo::LogLine{"run", "fatal"}
                     .outcome("error")
                     .detail(uf::m0_demo::formatAutomationError(outcome.error()))
             );
+        }
         auto flush = log.flush();
         if (!outcome)
         {
@@ -253,16 +256,42 @@ namespace
         UF_TRY(flush);
         return *std::move(outcome);
     }
+
+    auto writeUnhandledException(std::exception const& error) noexcept -> void
+    {
+        static_cast<void>(std::fputs("m0-demo exception: ", stderr));
+        static_cast<void>(std::fputs(error.what(), stderr));
+        static_cast<void>(std::fputc('\n', stderr));
+    }
+
+    auto writeUnknownException() noexcept -> void
+    {
+        static_cast<void>(
+            std::fputs("m0-demo exception: unknown failure\n", stderr)
+        );
+    }
 }
 
 auto main(int argumentCount, char const* const* p_arguments) -> int
 {
     try
     {
-        auto raw = std::vector<std::string>{};
-        for (auto index = 1; index < argumentCount; ++index)
+        auto const convertedArgumentCount = uf::checkedCast<std::size_t>(
+            argumentCount
+        );
+        if (!convertedArgumentCount || *convertedArgumentCount == 0U)
         {
-            raw.emplace_back(p_arguments[index]);
+            std::cerr << "m0-demo error: invalid process argument vector\n";
+            return EXIT_FAILURE;
+        }
+        auto const arguments = std::span<char const* const>{
+            p_arguments,
+            *convertedArgumentCount
+        };
+        auto raw = std::vector<std::string>{};
+        for (auto const* argument : arguments.subspan(1U))
+        {
+            raw.emplace_back(argument);
         }
         if (!raw.empty() && raw.front() == "capture")
         {
@@ -315,12 +344,12 @@ auto main(int argumentCount, char const* const* p_arguments) -> int
     }
     catch (std::exception const& error)
     {
-        std::cerr << "m0-demo exception: " << error.what() << '\n';
+        writeUnhandledException(error);
         return EXIT_FAILURE;
     }
     catch (...)
     {
-        std::cerr << "m0-demo exception: unknown failure\n";
+        writeUnknownException();
         return EXIT_FAILURE;
     }
 }

@@ -1,19 +1,19 @@
 #include <controller/detail/input-held.hpp>
 #include <controller/input.hpp>
 
+#include <core/types/integer.hpp>
 #include <domain/error.hpp>
 
 #include <doctest/doctest.h>
 
 #include <algorithm>
-#include <cstdint>
 #include <utility>
 #include <vector>
 
 namespace
 {
     [[nodiscard]]
-    auto target(std::intptr_t window) -> uf::DeliveryTarget
+    auto target(uf::intptr window) -> uf::DeliveryTarget
     {
         auto result = uf::DeliveryTarget::create(
             uf::WindowHandle{window},
@@ -27,7 +27,7 @@ namespace
     }
 
     [[nodiscard]]
-    auto pixel(std::int32_t x, std::int32_t y) -> uf::ClientPixel
+    auto pixel(uf::int32 x, uf::int32 y) -> uf::ClientPixel
     {
         auto const result = uf::ClientPixel::create(x, y);
         REQUIRE(result.has_value());

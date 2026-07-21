@@ -7,6 +7,7 @@
 #include <controller/input.hpp>
 #include <controller/target.hpp>
 #include <core/time/monotonic-time.hpp>
+#include <core/types/integer.hpp>
 #include <domain/error.hpp>
 #include <domain/space.hpp>
 #include <vision/sad.hpp>
@@ -18,7 +19,6 @@
 #include <array>
 #include <chrono>
 #include <cstddef>
-#include <cstdint>
 #include <limits>
 #include <optional>
 #include <span>
@@ -30,7 +30,7 @@
 namespace
 {
     [[nodiscard]]
-    constexpr auto asByte(std::uint8_t value) noexcept -> std::byte
+    constexpr auto asByte(uf::uint8 value) noexcept -> std::byte
     {
         return static_cast<std::byte>(value);
     }
@@ -63,7 +63,7 @@ TEST_CASE("m0 match center offsets by half the template extent")
 
 TEST_CASE("m0 match acceptance normalizes score by template area")
 {
-    auto const matched = [](std::uint64_t score)
+    auto const matched = [](uf::uint64 score)
     {
         return std::optional<uf::SadMatch>{uf::SadMatch{1, 2, score}};
     };
@@ -113,9 +113,17 @@ TEST_CASE("m0 transition frames cannot predate click completion")
         std::chrono::milliseconds{1}
     );
     auto const barrier = before.checkedAdd(tick);
-    REQUIRE(barrier.has_value());
+    if (!barrier)
+    {
+        FAIL("the first monotonic instant addition overflowed");
+        return;
+    }
     auto const after = barrier->checkedAdd(tick);
-    REQUIRE(after.has_value());
+    if (!after)
+    {
+        FAIL("the second monotonic instant addition overflowed");
+        return;
+    }
 
     CHECK_FALSE(uf::m0_demo::frameIsCausal(before, *barrier));
     CHECK(uf::m0_demo::frameIsCausal(*barrier, *barrier));
@@ -195,8 +203,8 @@ TEST_CASE("m0 BGRA crop honors stride and packs tightly")
         for (auto x = std::size_t{0}; x < 3U; ++x)
         {
             auto const offset = y * stride + x * 4U;
-            source.at(offset) = asByte(static_cast<std::uint8_t>(x));
-            source.at(offset + 1U) = asByte(static_cast<std::uint8_t>(y));
+            source.at(offset) = asByte(static_cast<uf::uint8>(x));
+            source.at(offset + 1U) = asByte(static_cast<uf::uint8>(y));
             source.at(offset + 2U) = asByte(0);
             source.at(offset + 3U) = asByte(255);
         }
@@ -244,7 +252,7 @@ TEST_CASE("m0 template larger than its pixel ROI is a configuration error")
     auto const transform = transform800By450();
     auto const imageTemplate = uf::m0_demo::Template{
         .m_label = "home",
-        .m_gray = std::vector<std::byte>(101U * 40U),
+        .m_gray = std::vector<std::byte>(std::size_t{101} * 40U),
         .m_width = 101,
         .m_height = 40,
         .m_roi = uf::Rect<uf::FrameSpace>{0.0F, 0.0F, 100.0F, 40.0F},
@@ -283,9 +291,9 @@ TEST_CASE("m0 empty client area is target unavailable")
 TEST_CASE("m0 run summary passes only when complete and clean")
 {
     auto const summary = [](
-        std::uint32_t attempted,
-        std::uint32_t succeeded,
-        std::uint32_t guardViolations,
+        uf::uint32 attempted,
+        uf::uint32 succeeded,
+        uf::uint32 guardViolations,
         bool stopped,
         bool auditClean
     )
@@ -309,7 +317,7 @@ TEST_CASE("m0 run summary passes only when complete and clean")
 
 TEST_CASE("m0 audit summary flags off-target or disallowed messages")
 {
-    auto const record = [](std::uintptr_t target, std::uint32_t message)
+    auto const record = [](uf::uintptr target, uf::uint32 message)
     {
         return uf::AuditRecord{
             .m_target = target,
@@ -319,7 +327,7 @@ TEST_CASE("m0 audit summary flags off-target or disallowed messages")
             .m_at = uf::MonotonicInstant::now(),
         };
     };
-    auto constexpr target = std::uintptr_t{0x1234};
+    auto constexpr target = uf::uintptr{0x1234};
     auto const clean = std::array{
         record(target, WM_MOUSEMOVE),
         record(target, WM_LBUTTONDOWN),
@@ -346,7 +354,7 @@ TEST_CASE("m0 bogus process selector resolves to target unavailable")
 {
     auto const selector = uf::m0_demo::buildSelector(
         uf::m0_demo::SelectorArgs{
-            .m_process = std::numeric_limits<std::uint32_t>::max(),
+            .m_process = std::numeric_limits<uf::uint32>::max(),
         }
     );
     auto const candidates = std::vector<uf::TargetCandidate>{};
@@ -368,14 +376,10 @@ TEST_CASE("m0 selector construction copies every optional filter")
             .m_title = "title",
         }
     );
-    REQUIRE(selector.process().has_value());
-    REQUIRE(selector.windowHandle().has_value());
-    REQUIRE(selector.windowClass().has_value());
-    REQUIRE(selector.title().has_value());
-    CHECK(selector.process()->value() == 42U);
-    CHECK(selector.windowHandle()->value() == 0x1234);
-    CHECK(*selector.windowClass() == "class");
-    CHECK(*selector.title() == "title");
+    CHECK(selector.process() == std::optional{uf::ProcessId{42}});
+    CHECK(selector.windowHandle() == std::optional{uf::WindowHandle{0x1234}});
+    CHECK(selector.windowClass() == std::optional<std::string>{"class"});
+    CHECK(selector.title() == std::optional<std::string>{"title"});
 }
 
 TEST_CASE("m0 PNG decoder fails closed for malformed and oversized resources")

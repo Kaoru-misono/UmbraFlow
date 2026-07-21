@@ -53,7 +53,7 @@ namespace uf::m0_demo
             return pathFailure("resolve", path, error);
         }
 
-        auto const canonical = std::filesystem::weakly_canonical(absolute, error);
+        auto canonical = std::filesystem::weakly_canonical(absolute, error);
         if (error)
         {
             return pathFailure("canonicalize", path, error);
@@ -99,7 +99,7 @@ namespace uf::m0_demo
     auto isPathWithinDirectory(
         std::filesystem::path const& canonicalPath,
         std::filesystem::path const& canonicalDirectory
-    ) noexcept -> bool
+    ) -> bool
     {
         auto pathComponent = canonicalPath.begin();
         for (auto const& directoryComponent : canonicalDirectory)
@@ -233,7 +233,7 @@ namespace uf::m0_demo
             );
         }
 
-        auto const resolved = canonicalParent / filename;
+        auto resolved = canonicalParent / filename;
         auto const status = std::filesystem::symlink_status(resolved, error);
         if (error == std::errc::no_such_file_or_directory)
         {

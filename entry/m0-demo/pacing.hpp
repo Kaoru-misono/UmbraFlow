@@ -1,8 +1,8 @@
 #pragma once
 
 #include <core/error/result.hpp>
+#include <core/types/integer.hpp>
 
-#include <cstdint>
 #include <optional>
 #include <string_view>
 
@@ -10,16 +10,16 @@ namespace uf::m0_demo
 {
     class JsonlLog;
 
-    inline constexpr auto g_defaultPacingSeed = std::uint64_t{0x5EED'C10C'2B1D'1A7E};
+    inline constexpr auto g_defaultPacingSeed = uint64{0x5EED'C10C'2B1D'1A7E};
 
     class ClickDelay final
     {
-        std::uint64_t m_minimumMilliseconds;
-        std::uint64_t m_maximumMilliseconds;
+        uint64 m_minimumMilliseconds;
+        uint64 m_maximumMilliseconds;
 
         constexpr ClickDelay(
-            std::uint64_t minimumMilliseconds,
-            std::uint64_t maximumMilliseconds
+            uint64 minimumMilliseconds,
+            uint64 maximumMilliseconds
         ) noexcept
             : m_minimumMilliseconds{minimumMilliseconds}
             , m_maximumMilliseconds{maximumMilliseconds}
@@ -31,24 +31,24 @@ namespace uf::m0_demo
 
         [[nodiscard]]
         static auto create(
-            std::uint64_t minimumMilliseconds,
-            std::uint64_t maximumMilliseconds
+            uint64 minimumMilliseconds,
+            uint64 maximumMilliseconds
         ) -> Result<ClickDelay>;
 
         [[nodiscard]]
-        constexpr auto minimumMilliseconds() const noexcept -> std::uint64_t
+        constexpr auto minimumMilliseconds() const noexcept -> uint64
         {
             return m_minimumMilliseconds;
         }
 
         [[nodiscard]]
-        constexpr auto maximumMilliseconds() const noexcept -> std::uint64_t
+        constexpr auto maximumMilliseconds() const noexcept -> uint64
         {
             return m_maximumMilliseconds;
         }
 
         [[nodiscard]]
-        constexpr auto pickMilliseconds(std::uint64_t raw) const noexcept -> std::uint64_t
+        constexpr auto pickMilliseconds(uint64 raw) const noexcept -> uint64
         {
             auto const width = m_maximumMilliseconds - m_minimumMilliseconds + 1U;
             return m_minimumMilliseconds + raw % width;
@@ -57,18 +57,18 @@ namespace uf::m0_demo
 
     class SplitMix64 final
     {
-        std::uint64_t m_state;
+        uint64 m_state;
 
     public:
-        constexpr explicit SplitMix64(std::uint64_t seed) noexcept
+        constexpr explicit SplitMix64(uint64 seed) noexcept
             : m_state{seed}
         {
         }
 
-        [[nodiscard]] auto next() noexcept -> std::uint64_t;
+        [[nodiscard]] auto next() noexcept -> uint64;
     };
 
-    enum class PaceOutcome
+    enum class PaceOutcome : uint8
     {
         Elapsed,
         Stopped,
@@ -80,12 +80,12 @@ namespace uf::m0_demo
         SplitMix64 m_random;
 
     public:
-        ClickPacer(std::optional<ClickDelay> delay, std::uint64_t seed) noexcept;
+        ClickPacer(std::optional<ClickDelay> delay, uint64 seed) noexcept;
 
         [[nodiscard]]
         auto pauseBeforeClick(
             std::string_view label,
-            std::uint32_t loopIndex,
+            uint32 loopIndex,
             JsonlLog& log
         ) -> Result<PaceOutcome>;
     };
