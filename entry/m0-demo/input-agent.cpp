@@ -315,12 +315,11 @@ namespace uf::m0_demo
         }
 
         [[nodiscard]]
-        auto captureToOutput(
-            WgcCaptureSession& session,
+        auto writeFramePng(
+            Frame const& frame,
             OutputFile& output
-        ) -> Result<Frame>
+        ) -> Status
         {
-            UF_TRY_VALUE(frame, session.capture());
             UF_TRY_VALUE(
                 encoded,
                 encodeFramePng(frame, output.m_path)
@@ -331,6 +330,17 @@ namespace uf::m0_demo
                 )
             );
             UF_TRY(output.m_writer.flushDurably());
+            return ok();
+        }
+
+        [[nodiscard]]
+        auto captureToOutput(
+            WgcCaptureSession& session,
+            OutputFile& output
+        ) -> Result<Frame>
+        {
+            UF_TRY_VALUE(frame, session.capture());
+            UF_TRY(writeFramePng(frame, output));
             return frame;
         }
 
@@ -641,7 +651,13 @@ namespace uf::m0_demo
                 return finishClick(result);
             }
 
-            auto before = captureToOutput(session, *beforeOutput);
+            // Capture the before-frame only. Its PNG is encoded and written AFTER
+            // the click is delivered (below), so the slow encode + durable flush do
+            // not sit inside the observe->act window and inflate this observation's
+            // age against max_action_frame_age (a false StaleObservation on
+            // slow-delivering screens). The before-Frame is immutable, so the file
+            // still shows the pre-click observation.
+            auto before = session.capture();
             if (!before)
             {
                 result.m_error = std::move(before).error();
@@ -730,6 +746,17 @@ namespace uf::m0_demo
                 return finishClick(result, stopAgent);
             }
             result.m_delivered = true;
+
+            // Off the observe->act path now: encode + durably write the before-frame
+            // PNG. The output handle was reserved (CREATE_NEW) before capture, so the
+            // path-confinement guarantee is unaffected; only the encode/write/flush
+            // moved past delivery.
+            auto beforeWrite = writeFramePng(*before, *beforeOutput);
+            if (!beforeWrite)
+            {
+                result.m_error = std::move(beforeWrite).error();
+                return finishClick(result);
+            }
 
             if (command.m_settle > MonotonicInstant::Duration::zero())
             {

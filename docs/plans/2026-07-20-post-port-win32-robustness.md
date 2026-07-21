@@ -124,22 +124,46 @@ delta=0). Two behaviors surfaced that belong to the product phase:
   before-observation aged past `max_action_frame_age` were rejected with
   `StaleObservation: lease expired` and `delivered:false` — the
   "never act on a stale observation" guarantee working on real hardware.
-- **WGC stalls on static / subtly-animated screens, turning that guarantee
-  into a FALSE rejection.** WGC delivers a new GPU frame only on visual
-  change. On the 潛力 potential-tree page (which *looks* animated but did
-  not trigger WGC's dirty-region capture) no fresh GPU frame arrived for
-  >750ms, so the frame each click op captured carried a WGC
-  `SystemRelativeTime` older than `max_action_frame_age`, and every click
-  there fail-closed even though the screen had not actually changed. A
-  standalone `capture` op still "succeeds" (its own frame-id counter
-  advances 23→24), but the underlying GPU frame timestamp is old and the
-  lease judges age by that timestamp — so capture works while click is
-  refused. Auto-farming visits many such screens, so this blocks unattended
-  runs, not just this test. Product-phase options (tie to D1/D2
-  `max_action_frame_age` calibration in
-  [`2026-07-21-lua-task-model-grill-decisions.md`](2026-07-21-lua-task-model-grill-decisions.md)):
-  request a genuinely NEW frame and wait for it before acting; distinguish
-  "no new frame because static" from "capture stalled/occluded" (a static
-  screen is safe to act on, a stalled capture is not); or grant known-static
-  pages a longer staleness budget. Any fix MUST preserve the fail-closed
-  guarantee for genuine staleness.
+- **ROOT-CAUSED 2026-07-21 (corrects the initial hypothesis).** The first
+  note guessed the frame carried an old WGC `SystemRelativeTime`; the code
+  says otherwise. `Frame::capturedAt` is stamped `MonotonicInstant::now()`
+  in the FrameArrived callback (windows-capture.cpp:1448) — the HOST arrival
+  time, not the GPU produce time. `ObservationLease::forFrame` sets
+  `expiresAt = capturedAt + 750ms` (`g_defaultMaxActionFrameAge`); the click
+  is refused when `now > expiresAt` at delivery (detection.cpp:80,
+  input-revalidation.cpp:52). The real cause is that the m0-demo
+  input-agent's click op does expensive work BETWEEN capturing the
+  before-frame and delivering: `captureToOutput` (input-agent.cpp:644, 318)
+  runs `session.capture()` → **full 1600×900 BGRA→PNG encode (stb) → disk
+  write → `FlushFileBuffers` durable sync**, and only THEN (line 652) is the
+  lease created and (669/696) the click delivered. That
+  encode+write+durable-flush latency is charged against the 750ms budget.
+  Two amplifiers: (a) `g_defaultCaptureStallTimeout` = 1s (capture.hpp:17) is
+  LARGER than max_action_frame_age = 750ms, so a frame the stall detector
+  accepts can already be too old to act on; (b) on slow-delivering
+  (static / subtly-animated) screens the consumed frame's arrival time is
+  already several hundred ms old before the encode starts. On fast-changing
+  screens the before-frame is dead-fresh, so the same encode+write fits under
+  750ms — which is why the avatar/tab switches all passed and only the
+  settled potential-tree restore failed.
+- **Fix — dominant, low-risk (m0-demo harness): take the PNG off the
+  observe→act path.** Reorder the click op to: capture before-frame (hold the
+  immutable `Frame`) → create lease → preconditions → DELIVER → settle →
+  capture after-frame → THEN encode+write BOTH PNGs. The before-`Frame` is an
+  immutable `shared_ptr`, so the file still shows the pre-click state; only
+  the encode/write/flush moves off the hot path. This matches what the real
+  Luau engine will do (observe→act is tight; trace/PNG is written off the hot
+  path) and should remove the false StaleObservation. NOT yet implemented: it
+  reorders the security-reviewed input-agent critical section, so it wants a
+  deliberate review (the `CREATE_NEW` output handles are already opened before
+  capture at lines 625/634, so only the encode/write/flush move — the
+  path-confinement guarantee is unaffected).
+- **Residual — real product-phase item (D1/D2 calibration in
+  [`2026-07-21-lua-task-model-grill-decisions.md`](2026-07-21-lua-task-model-grill-decisions.md)).**
+  Even off the hot path, a genuinely static screen delivers no new WGC frame,
+  so a fresh `capture()` blocks up to `captureStallTimeout` then returns
+  `CaptureStalled`, and any last-frame age can exceed max_action_frame_age.
+  Coordinate the two thresholds and distinguish "confirmed-unchanged static
+  (safe to act on the last frame)" from "stalled/occluded (unsafe)". Any fix
+  MUST preserve fail-closed for genuine staleness (occlusion, window change,
+  generation bump).
