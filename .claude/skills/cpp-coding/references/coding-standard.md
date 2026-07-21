@@ -61,20 +61,20 @@ auto createRecord(
 auto result = createRecord(
     projectId,
     RecordOptions{
-      .m_name = name,
-      .m_enabled = true,
+        .m_name = name,
+        .m_enabled = true,
     }
 );
 
 if (
     request.isValid()
     && (
-      request.isLocal()
-      || allowRemote
+        request.isLocal()
+        || allowRemote
     )
 )
 {
-  process(request);
+    process(request);
 }
 ```
 
