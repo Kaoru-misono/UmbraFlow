@@ -18,7 +18,8 @@ The core capability kernel currently provides:
 - `core/concurrency/synchronized.hpp` and `core/control/control-flow.hpp`.
 - `core/numeric/checked-arithmetic.hpp` and `checked-cast.hpp`.
 - `core/safety/annotations.hpp` and `checked-access.hpp`.
-- `core/types/enum-reflection.hpp`, `flags.hpp`, `non-zero.hpp`,
+- `core/text/utf8.hpp`.
+- `core/types/integer.hpp`, `enum-reflection.hpp`, `flags.hpp`, `non-zero.hpp`,
   `strong-value.hpp`, and `strong-id.hpp`.
 - `core/time/monotonic-time.hpp`.
 - `core/utility/scope-exit.hpp` and `variant-match.hpp`.

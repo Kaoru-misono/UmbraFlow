@@ -61,8 +61,9 @@ acyclic and put platform-specific types behind their owning module.
 - `concurrency/`: lock-coupled mutable state without exposed storage.
 - `numeric/`: checked integer arithmetic and checked conversions.
 - `safety/`: portable analysis annotations and checked contiguous access.
-- `types/`: strongly typed values, identifiers, non-zero values, flags,
-  compile-time enum names, and non-wrapping generations.
+- `text/`: UTF-8 validation and Unicode scalar encoding.
+- `types/`: project integer vocabulary, strongly typed values, identifiers,
+  non-zero values, flags, compile-time enum names, and non-wrapping generations.
 - `time/`: monotonic process-local instants that are not serialization types.
 - `utility/`: narrowly scoped variant matching and deterministic cleanup.
 

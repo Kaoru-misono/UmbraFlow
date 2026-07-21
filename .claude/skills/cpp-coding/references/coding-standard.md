@@ -20,6 +20,25 @@
   `UF_` (the deliberate short form of UmbraFlow; the long
   `UMBRA_FLOW_` form is not used).
 
+## Enums
+
+- Use only scoped enums: `enum class` or `enum struct`.
+- Declare an explicit project integer underlying type for every enum, such as
+  `uint8`, `uint16`, `uint32`, or `uint64` from
+  `<core/types/integer.hpp>`.
+- Choose the smallest type that represents the full domain. Use a signed
+  fixed-width type only when the enum requires negative values.
+- Do not use unscoped enums or rely on the implementation-defined default
+  underlying type.
+
+```cpp
+enum class ConnectionState : uint8
+{
+    Disconnected,
+    Connected,
+};
+```
+
 ## Formatting
 
 - Use trailing return types for functions.
@@ -119,7 +138,11 @@ Do not interleave stored state and methods.
 ## Standard library usage
 
 - Use `std::byte` for untyped frame, file, compressed, and readback storage.
-- Use `std::uint8_t` only when the byte has numeric meaning, such as a color channel.
+- Use `uint8` only when the byte has numeric meaning, such as a color channel.
+- Use the integer aliases from `<core/types/integer.hpp>` instead of spelling
+  fixed-width, pointer-width, or maximum-width integer types through `std`.
+- Include `<core/types/integer.hpp>` directly in each file that uses those
+  aliases; do not rely on a transitive include or a compiler forced include.
 - Prefer `std::span` for non-owning contiguous buffers.
 - Prefer ranges algorithms, `contains`, `std::erase_if`, structured bindings, and `std::to_underlying` when they improve clarity.
 - Use `emplace_back` for every `std::vector` append operation.

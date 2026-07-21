@@ -34,6 +34,12 @@ Read `references/coding-standard.md` completely before changing C++ code. Then c
 12. Follow the April2 line-wrapping and source-normalization rules in
    `references/coding-standard.md` exactly. Do not introduce a local wrapping
    style.
+13. Declare every enum as `enum class` or `enum struct` with an explicit
+    project integer underlying type from `<core/types/integer.hpp>`.
+14. Use the project aliases for every fixed-width, pointer-width, or
+    maximum-width integer instead of spelling the corresponding `std::*_t`
+    names. Include `<core/types/integer.hpp>` directly in every file that uses
+    them; do not depend on transitive or compiler-injected inclusion.
 
 ## Checklist
 

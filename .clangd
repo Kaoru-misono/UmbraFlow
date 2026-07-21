@@ -1,0 +1,5 @@
+CompileFlags:
+  # CMake emits "-std:c++latest" for MSVC. clangd can lose that flag when it
+  # infers a compile command for a header, so normalize the language mode here.
+  Remove: [-std=*, -std:*, /std:*]
+  Add: [/std:c++latest]

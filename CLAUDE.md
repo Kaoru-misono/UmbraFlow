@@ -19,6 +19,13 @@ authoritative:
   whitespace, and exactly one final newline.
 - Use `std::byte` for untyped binary storage and `emplace_back` for every
   `std::vector` append operation.
+- Include `<core/types/integer.hpp>` directly wherever fixed-width,
+  pointer-width, or maximum-width integers are used, and spell them with the
+  project aliases such as `uint8`, `uint32`, `int64`, and `uintptr` rather than
+  their `std::*_t` names.
+- Declare every enum as `enum class` or `enum struct` with an explicit
+  project integer underlying type such as `uint8`, `uint32`, or `uint64` from
+  `<core/types/integer.hpp>`.
 - Recoverable failures use `Result<T>`/`Status`; debug invariants use
   `UF_ASSERT`; release-active invariants use `UF_CHECK`;
   impossible paths use `UF_UNREACHABLE`.

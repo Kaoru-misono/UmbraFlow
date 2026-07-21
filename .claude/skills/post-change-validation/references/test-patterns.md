@@ -4,17 +4,17 @@ Tests use doctest and live under `tests/<module>/`.
 
 ```cpp
 #include <core/numeric/checked-arithmetic.hpp>
+#include <core/types/integer.hpp>
 
 #include <doctest/doctest.h>
 
-#include <cstdint>
 #include <limits>
 
 TEST_CASE("checked multiplication rejects overflow")
 {
-    auto constexpr maximum = std::numeric_limits<std::uint64_t>::max();
+    auto constexpr maximum = std::numeric_limits<uf::uint64>::max();
     CHECK_FALSE(
-        umbra_flow::checkedMultiply(maximum, std::uint64_t{2}).has_value()
+        uf::checkedMultiply(maximum, uf::uint64{2}).has_value()
     );
 }
 ```
