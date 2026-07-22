@@ -12,6 +12,9 @@ Before creating shared facilities, inspect `modules/core/source/core/` and
 nearby code. Do not create parallel error, time, cancellation, or logging
 abstractions.
 
+When deciding whether a new generic facility belongs in `core`, use the
+`evaluate-core-capability` skill before implementation.
+
 The core capability kernel currently provides:
 
 - `core/error/error.hpp`, `result.hpp`, and `contracts.hpp`.

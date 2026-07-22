@@ -72,7 +72,8 @@ caller. Header-only facilities remain header-only; each implementation file has
 a matching header.
 
 The admission criteria and product-level candidates are documented in
-[`rules/capability-kernel.md`](rules/capability-kernel.md).
+the [`evaluate-core-capability`](../.claude/skills/evaluate-core-capability/SKILL.md)
+skill.
 
 ## Unsafe boundaries
 

@@ -3,22 +3,28 @@ name: write-a-skill
 description: Create new agent skills with proper structure, progressive disclosure, and bundled resources. Use when user wants to create, write, or build a new skill.
 ---
 
-# Writing Skills
+# Writing Claude Skills
+
+Store every repository skill under `.claude/skills/<skill-name>/`. Do not place
+canonical skill instructions in another repository directory.
 
 ## Process
 
-1. **Gather requirements** - ask user about:
+1. **Gather requirements** - determine:
    - What task/domain does the skill cover?
    - What specific use cases should it handle?
    - Does it need executable scripts or just instructions?
    - Any reference materials to include?
 
-2. **Draft the skill** - create:
+2. **Inspect existing skills** - reuse or extend a skill when the requested job
+   already has the same trigger and workflow.
+
+3. **Draft the skill** - create:
    - SKILL.md with concise instructions
    - Additional reference files if content exceeds 500 lines
    - Utility scripts if deterministic operations needed
 
-3. **Review with user** - present draft and ask:
+4. **Review with user** - present draft and ask:
    - Does this cover your use cases?
    - Anything missing or unclear?
    - Should any section be more/less detailed?
@@ -26,12 +32,11 @@ description: Create new agent skills with proper structure, progressive disclosu
 ## Skill Structure
 
 ```
-skill-name/
-├── SKILL.md           # Main instructions (required)
-├── REFERENCE.md       # Detailed docs (if needed)
-├── EXAMPLES.md        # Usage examples (if needed)
-└── scripts/           # Utility scripts (if needed)
-    └── helper.js
+.claude/skills/skill-name/
+├── SKILL.md
+├── references/
+├── scripts/
+└── assets/
 ```
 
 ## SKILL.md Template
@@ -52,9 +57,9 @@ description: Brief description of capability. Use when [specific triggers].
 
 [Step-by-step processes with checklists for complex tasks]
 
-## Advanced features
+## References
 
-[Link to separate files: See [REFERENCE.md](REFERENCE.md)]
+[Describe exactly when to read each file under `references/`.]
 ```
 
 ## Description Requirements
@@ -110,6 +115,7 @@ Split into separate files when:
 After drafting, verify:
 
 - [ ] Description includes triggers ("Use when...")
+- [ ] Canonical files live under `.claude/skills/<skill-name>/`
 - [ ] SKILL.md under 100 lines
 - [ ] No time-sensitive info
 - [ ] Consistent terminology

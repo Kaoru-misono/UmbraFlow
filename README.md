@@ -55,4 +55,4 @@ Python 3 interpreter automatically.
 AddressSanitizer and static-analysis presets are available as `x64-asan` and
 `x64-analysis`. Linux additionally provides `linux-ubsan` and `linux-tsan`.
 The complete safety contract is documented in
-[`docs/rules/safety-profile.md`](docs/rules/safety-profile.md).
+[`cpp-coding/references/safety-profile.md`](.claude/skills/cpp-coding/references/safety-profile.md).

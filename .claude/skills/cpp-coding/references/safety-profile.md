@@ -11,7 +11,8 @@ arithmetic, deterministic scope cleanup, lock-coupled state, and process-local
 monotonic time.
 New facilities must compose with the standard library and remove real boilerplate
 or misuse rather than imitate another language. The full selection matrix lives
-in [`capability-kernel.md`](capability-kernel.md).
+in the `evaluate-core-capability` skill's
+[`capability-kernel.md`](../../evaluate-core-capability/references/capability-kernel.md).
 
 ## Safety layers
 

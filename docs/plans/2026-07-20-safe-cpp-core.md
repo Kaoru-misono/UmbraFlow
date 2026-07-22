@@ -31,4 +31,6 @@ add policy or unsafe implementation surface and must be introduced by a product
 only after a demonstrated requirement.
 
 The research matrix and promotion criteria are recorded in
-[`../rules/capability-kernel.md`](../rules/capability-kernel.md).
+the
+[`evaluate-core-capability`](../../.claude/skills/evaluate-core-capability/SKILL.md)
+skill.

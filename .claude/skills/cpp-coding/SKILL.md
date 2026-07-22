@@ -1,11 +1,15 @@
 ---
 name: cpp-coding
-description: Use whenever writing, editing, reviewing, or refactoring project C++ code.
+description: Apply the project's C++23 coding, ownership, safety, error-handling, and formatting rules. Use whenever writing, editing, reviewing, or refactoring project C++ headers or sources under modules/, entry/, or tests/. Do not use for CMake, Python, or Markdown-only changes.
 ---
 
 # C++23 Coding
 
-Read `references/coding-standard.md` completely before changing C++ code. Then consult `core-reuse.md`, `error-handling.md`, and `logging-and-asserts.md` when the change touches those concerns.
+Read `references/coding-standard.md` completely before changing C++ code. Read
+`references/safety-profile.md` when a change touches APIs, ownership, lifetimes,
+concurrency, numeric safety, serialization, or an `unsafe/`, `platform/`, or
+`ffi/` boundary. Consult `core-reuse.md`, `error-handling.md`, and
+`logging-and-asserts.md` when the change touches those concerns.
 
 ## Mandatory rules
 
