@@ -1,6 +1,6 @@
 ---
 name: code-review
-description: Multi-dimensional review of a local diff — fan out one agent per dimension (rules, bugs, git history, in-code constraints, test coverage, over-engineering), score each finding 0-100, drop <80, synthesize one report. Use when the user says "review my changes", "code review", "看看这段代码", "审查代码", or "check this diff" — committed or working tree, any scope. C++ changes also get the cpp-coding rules via cpp-coding-side-review.
+description: Multi-dimensional review of a local diff — fan out one agent per dimension (rules, bugs, git history, in-code constraints, test coverage, over-engineering), score each finding 0-100, drop findings scored below 80, and synthesize one report. Use when the user says "review my changes", "code review", "看看这段代码", "审查代码", or "check this diff" — committed or working tree, any scope. C++ changes also load the cpp-coding rules directly.
 ---
 
 # Code review
@@ -35,8 +35,8 @@ in scope for every dimension **except** the cpp-coding rule dimension.
    `{title, file:line, dimension, why}`.
    - **A — Rule & CLAUDE.md compliance.** Does the change follow `CLAUDE.md`
      (ownership, pitfalls, workflow) and, for C++, `cpp-coding`? Cite the
-     rule. For C++ this **is** the `cpp-coding-side-review` pass — dispatch that
-     skill's sub-agent, don't duplicate.
+     rule. For C++, load `cpp-coding` and apply the mandatory ownership and
+     lifetime lens below as part of this dimension.
    - **B — Bug hunt (shallow).** Diff only. Large, real bugs: wrong key/type,
      off-by-one, inverted condition, wrong include/exclude, null-vs-missing. Skip
      nitpicks and anything a compiler/linter catches.
@@ -140,6 +140,6 @@ single over-engineering line (dimension F): `net: -<N> lines possible.` (or
 - Do not build or run tests as part of the review itself — that is
   `post-change-validation`'s job, run separately. The review only *identifies*
   that coverage is missing.
-- For a C++ change, dimension A and the `cpp-coding-side-review` skill are the
-  same pass — invoke that skill once, don't run it twice.
+- For a C++ change, dimension A is the `cpp-coding` conformance pass. Do not
+  dispatch a second duplicate rule review.
 - Keep the final report brief. No emojis. Every claim cites `file:line`.
