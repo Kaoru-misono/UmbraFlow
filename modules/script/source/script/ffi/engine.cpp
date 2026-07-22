@@ -61,9 +61,9 @@ namespace uf::script
     namespace
     {
         [[nodiscard]]
-        auto topError(lua_State* thread) -> std::string
+        auto topError(lua_State* p_thread) -> std::string
         {
-            char const* text = lua_tostring(thread, -1);
+            char const* text = lua_tostring(p_thread, -1);
             return text != nullptr
                 ? std::string{text}
                 : std::string{"(non-string error value)"};
@@ -91,6 +91,12 @@ namespace uf::script
             );
         }
         luaL_openlibs(state);
+        // TODO(cpp-debt): step-2 minimal Engine — NOT sandboxed and NOT cancellable
+        // yet. Scripts run with the full stdlib on a shared global table (globals leak
+        // across runNumber calls) and an infinite loop hangs the caller. Step 3 installs
+        // luaL_sandbox + interrupt/lua_break cancellation + the dangerous-globals nil-list
+        // (getfenv/setfenv/newproxy/coroutine/debug), per
+        // docs/plans/2026-07-21-luau-integration-plan.md.
         return Engine{std::make_unique<Impl>(state)};
     }
 
@@ -108,7 +114,10 @@ namespace uf::script
         std::size_t bytecodeSize = 0;
         // SAFETY: luau_compile allocates the bytecode buffer with malloc; the caller
         // owns it. The scope guard frees it on every exit path (safe after load,
-        // which copies the bytecode into the VM).
+        // which copies the bytecode into the VM). A SYNTAX error does NOT return null —
+        // it is encoded as error bytecode and surfaces at luau_load below; null is
+        // returned ONLY on allocation failure, hence InternalInvariant (as with
+        // luaL_newstate returning null in create()).
         char* bytecode = luau_compile(
             source.data(),
             source.size(),
@@ -118,8 +127,8 @@ namespace uf::script
         if (bytecode == nullptr)
         {
             return fail(
-                AutomationErrorKind::InvalidResource,
-                "luau_compile returned null"
+                AutomationErrorKind::InternalInvariant,
+                "luau_compile allocation failed (returned null)"
             );
         }
         auto bytecodeGuard = scopeExit(
@@ -130,7 +139,19 @@ namespace uf::script
             }
         );
 
+        // lua_newthread pushes the coroutine onto the main state's stack. A scope guard
+        // restores the stack top on EVERY exit — including a throw from the std::string
+        // allocations below — so the thread is always popped and can never accumulate
+        // across repeated runNumber calls.
+        int const stackBase = lua_gettop(state);
         lua_State* thread = lua_newthread(state);
+        auto threadGuard = scopeExit(
+            [state, stackBase]() noexcept
+            {
+                lua_settop(state, stackBase);
+            }
+        );
+
         auto const name = std::string{chunkName};
         int const loadStatus = luau_load(
             thread,
@@ -141,23 +162,30 @@ namespace uf::script
         );
         if (loadStatus != LUA_OK)
         {
-            auto message = "luau_load failed: " + topError(thread);
-            lua_pop(state, 1);
-            return fail(AutomationErrorKind::InvalidResource, std::move(message));
+            return fail(
+                AutomationErrorKind::InvalidResource,
+                "luau_load failed: " + topError(thread)
+            );
         }
 
         int const runStatus = lua_resume(thread, nullptr, 0);
+        if (runStatus == LUA_YIELD)
+        {
+            return fail(
+                AutomationErrorKind::InvalidResource,
+                "script yielded; the step-2 Engine does not resume yields"
+            );
+        }
         if (runStatus != LUA_OK)
         {
-            auto message = "script error: " + topError(thread);
-            lua_pop(state, 1);
-            return fail(AutomationErrorKind::InvalidResource, std::move(message));
+            return fail(
+                AutomationErrorKind::InvalidResource,
+                "script error: " + topError(thread)
+            );
         }
 
-        double const value = lua_gettop(thread) >= 1
+        return lua_gettop(thread) >= 1
             ? lua_tonumber(thread, -1)
             : 0.0;
-        lua_pop(state, 1);
-        return value;
     }
 }

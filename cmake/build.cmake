@@ -50,6 +50,7 @@ function(cpp_define_module MODULE_ROOT_DIR DIR_NAME)
         add_subdirectory(
             "${MODULE_PATH}/external"
             "${CMAKE_BINARY_DIR}/modules/${DIR_NAME}/external"
+            EXCLUDE_FROM_ALL
         )
     endif()
 
