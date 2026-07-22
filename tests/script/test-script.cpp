@@ -30,7 +30,7 @@ namespace uf::script
 
             auto const kind = automationErrorKind(result.error());
             REQUIRE(kind.has_value());
-            CHECK(*kind == AutomationErrorKind::InvalidResource);
+            CHECK(kind == AutomationErrorKind::InvalidResource);
         }
 
         TEST_CASE("Engine reports a runtime error as a recoverable failure")
@@ -43,7 +43,7 @@ namespace uf::script
 
             auto const kind = automationErrorKind(result.error());
             REQUIRE(kind.has_value());
-            CHECK(*kind == AutomationErrorKind::InvalidResource);
+            CHECK(kind == AutomationErrorKind::InvalidResource);
         }
 
         TEST_CASE("Engine returns zero when there is no numeric result")

@@ -134,7 +134,9 @@ namespace uf::script
         auto bytecodeGuard = scopeExit(
             [bytecode]() noexcept
             {
-                // SAFETY: pairs the malloc inside luau_compile.
+                // SAFETY: pairs the malloc inside luau_compile; freeing a
+                // caller-owned C buffer at the FFI boundary is intentional here.
+                // NOLINTNEXTLINE(cppcoreguidelines-no-malloc,cppcoreguidelines-owning-memory)
                 std::free(bytecode);
             }
         );
