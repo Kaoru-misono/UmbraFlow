@@ -26,20 +26,22 @@ Treat the workflow red lines in `CLAUDE.md` as mandatory.
    push, fetch the remote, verify the branch has not diverged unexpectedly,
    inspect the repository CI configuration, and run the corresponding local
    gates. Never push while a required local gate is failing.
-8. Push without force to a non-protected branch, verify the remote ref matches
-   the intended local commit, and create or update the pull request for that
-   branch. Deliver every pushed fix through a pull request; never push a fix
-   directly to the default or protected branch.
-9. After every push, inspect the pull request's remote CI status and wait for
-   all required checks to finish. If a check fails, read its logs and diagnose
-   the failure. When the user has explicitly authorized CI repair commits, fix
-   it within that scope, rerun the local gates, commit and push the repair to
-   the same pull request, and inspect CI again until it passes. Otherwise,
-   report the diagnosis and request authorization before changing or committing
-   code.
+8. Push without force directly to the branch requested by the user and verify
+   that its remote ref matches the intended local commit. An ordinary push does
+   not require a pull request, including a push to the default branch. Create a
+   pull request only when the user asks for one, the remote rejects a direct
+   push, or step 9 requires a CI repair pull request.
+9. After every push, inspect the remote CI status and wait for all required
+   checks to finish. If a check fails, read its logs and diagnose the failure.
+   Never push a CI repair commit directly to the failed branch. When the user
+   has explicitly authorized CI repair commits, create a non-protected repair
+   branch from the failed commit, fix it within that scope, rerun the local
+   gates, commit and push the repair, open or update a pull request targeting
+   the failed branch, and inspect CI again until it passes. Otherwise, report
+   the diagnosis and request authorization before changing or committing code.
 10. Do not report a push complete while required CI is pending or failing. If
-    CI status or pull-request creation cannot be accessed, report that as a
-    blocker. Never merge the pull request without explicit authorization.
+    CI status or a required repair pull request cannot be accessed, report that
+    as a blocker. Never merge a pull request without explicit authorization.
 
 When the user asks to recombine unpublished commits, preserve semantic commit
 boundaries and review the final staged diff and commit list before reporting
