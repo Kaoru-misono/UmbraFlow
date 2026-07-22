@@ -368,3 +368,129 @@ runtime overlay (that overlay, with `WS_EX_NOACTIVATE`/`WDA_EXCLUDEFROMCAPTURE`,
 - Letterbox / viewport-relative coords (P1 seam): https://gamedev.net/tutorials/_/technical/apis-and-tools/stretching-your-game-to-fit-the-screen-without-letterboxing-sdl2-r3547/
 - Windows DPI logical/physical pitfall: https://learn.microsoft.com/en-us/windows/win32/winauto/uiauto-screenscaling
 - "Store locator, not element" (opaque-handle discipline): https://www.browserstack.com/guide/stale-element-reference-exception-selenium , https://playwright.dev/docs/actionability
+
+---
+
+## 9. Developer review findings — 2026-07-22
+
+**Disposition: revision required before S0 is locked or A1/B1 implementation begins.** The overall
+direction remains viable, but the following findings are load-bearing. Confidence follows the project
+review rubric; all listed findings survived the `>= 80` inclusion threshold.
+
+### DR-1 — Bind resolved-page evidence into action authorization (confidence: 100)
+
+The §4 example places a `PageOutcome` directly in a Luau `if`. A table/userdata representing
+`Unknown` or `Ambiguous` is still truthy, and a per-page boolean query cannot detect that another page
+also matched. More fundamentally, the current `ObservationLease` proves frame/session/generation
+freshness but does not prove that the frame resolved to exactly one page.
+
+**Required resolution:** page recognition must produce an explicit same-frame `ResolvedPage`
+capability/evidence value. An action that depends on page context must consume that value together with
+the live `Detection`/lease, or the action boundary must revalidate the global page outcome. Unknown and
+Ambiguous must be unrepresentable as successful action authorization, not merely discouraged in script
+examples.
+
+### DR-2 — Preserve matcher stop reasons as control failures (confidence: 100)
+
+The bounded matcher can return `Cancelled`, `TimedOut`, or `ComparisonBudgetExhausted`, but §3 models
+only anchor hit/miss followed by `Resolved`/`Unknown`/`Ambiguous`. Folding an interrupted forbidden-anchor
+search into `hit=false` can incorrectly resolve a page; using the unbounded overload in Preview would
+lose cancellation and violate the runtime-identical claim.
+
+**Required resolution:** define one bounded `RecognitionPolicy` shared by runtime and Preview. Page
+evaluation should return `Result<PageOutcome>` (or an equivalent explicit control variant), stop the
+whole evaluation when any anchor search does not complete, and record the stop reason and budget in
+trace evidence.
+
+### DR-3 — Separate template crop from search ROI (confidence: 100)
+
+The current schema uses one `roi`, while §6 crops the template from that same rectangle. The generated
+template therefore normally has the same dimensions as the search ROI, leaving exactly one SAD candidate
+and making the recognizer unable to tolerate or locate movement inside a larger area.
+
+**Required resolution:** persist separate `template_rect` and `search_roi` values, or specify one
+deterministic expansion rule that derives the search ROI from the crop and is visible/editable in the
+workbench. Load-time validation must require the template to fit inside the search ROI.
+
+### DR-4 — Make the persisted schema round-trip the authoring document (confidence: 95)
+
+The prose promises stable IDs, three annotation types, page membership, `default_click`, source metadata,
+rename-safe regression references, and a `{sources[], recognizers[], pages[]}` document. The shown
+`annotations.toml` has no stable IDs or source entries and does not persist all of those properties.
+Closing and reopening the workbench would lose authoring semantics.
+
+**Required resolution:** either add the missing authoring fields and source records to
+`annotations.toml`, or define a separate GUI authoring document that deterministically compiles to a
+smaller runtime manifest. State explicitly whether every reference uses stable ID or name and how rename
+updates are performed.
+
+### DR-5 — Do not expose recognizer modes without one deterministic implementation (confidence: 90)
+
+The v1 examples expose `grayscale=false`, RGB/HSV color matching, floating `min_ratio`, and composite
+recognizers, while the existing shared vision path only defines BGRA-to-Gray plus Gray SAD. Color
+conversion, hue range, inclusive bounds, ratio rounding, budget/cancellation behavior, and typed evidence
+are unspecified. The template threshold formula also parses a decimal TOML value as binary floating point
+before `floor`, so the integer decision boundary is not yet defined by pure integer semantics.
+
+**Required resolution:** either narrow P0 v1 to bounded grayscale-template recognition, or define and
+implement each additional mode as a shared integer/fixed-point kernel used verbatim by runtime and Preview.
+Thresholds must compile from an exact decimal/fixed-point representation (or be authored directly in an
+integer unit), and evidence must be a tagged union per recognizer kind rather than SAD-only fields.
+
+### DR-6 — Make P0 compatibility a single, continuously revalidated invariant (confidence: 95)
+
+Per-recognizer `base_resolution` overrides cannot all satisfy the P0 identity gate when one page combines
+recognizers with different bases. DPI equality is checked only at task start, while the current target
+identity/generation chain does not preserve DPI; moving a window across displays may leave an old lease
+apparently valid. The existing `CoordinateTransform` also does not encode the proposed P1 uniform
+letterbox viewport/offset, so P1 is not merely filling non-identity values into the current type.
+
+**Required resolution:** P0 must have one project/document-level `base_resolution` and an exact DPI
+compatibility fingerprint. Size/DPI compatibility must be revalidated at capture/action boundaries or
+participate in target generation. Any mismatch fails before recognition or input. P1 needs an explicit
+base-to-live viewport transform instead of claiming the current transform already contains it.
+
+### DR-7 — Restore a provable load-time script resource closure (confidence: 100)
+
+D3 requires literal resource references to be completely validated before execution. §4 guarantees only
+manifest enumeration, then describes script validation as best-effort lint plus a runtime nil backstop.
+That permits misspellings or dynamic/aliased handle selection to escape the intended load-time closure.
+
+**Required resolution:** define a deliberately restricted and decidable P0 AST rule: resource references
+must be direct literal member accesses rooted at the canonical namespace; aliases, computed indexing, and
+dynamic traversal are rejected at load. Every accepted reference is resolved against the manifest before
+the VM can run. Runtime nil remains defense in depth, not the primary validator.
+
+### DR-8 — Reconcile authority and S0 status (confidence: 100)
+
+The current Roadmap explicitly re-anchors the project away from the old `DESIGN.md`, but this draft lists
+old DESIGN sections as authorities. It also says the four S0 questions are resolved while §8 leaves
+schema, outcome/error semantics, base-resolution granularity, and handle namespace decisions open. The
+text says those questions block A1/A2 even though the Roadmap requires S0 to block both A1 and B1.
+
+**Required resolution:** treat old DESIGN material as historical input only and restate every retained
+constraint as a decision in the current authority chain. Resolve all load-bearing OQs in the body, mark
+this document S0-locked only afterward, and synchronize `docs/INDEX.md`, `docs/plans/README.md`, Roadmap,
+and TODO status.
+
+### Minimum verification gates added by review
+
+1. **Zero-input fail-closed:** Unknown, Ambiguous, stopped recognition, stale frame, and cross-generation
+   Detection sequences must produce the specified structured result/trace and exactly zero Controller
+   input deliveries.
+2. **Recognition boundaries:** cover `sadScore == maxSad`, both adjacent values, threshold endpoints,
+   all stop reasons, and field-for-field equality between Preview and runtime evidence/Detection output.
+3. **Authoring round-trip:** import or WGC capture → zoom/pan → create/move/resize annotation → undo/redo →
+   save → reload must preserve exact source pixels, base-space rectangles, crop bytes/hash, page links,
+   and generated manifest.
+4. **Real-machine compatibility:** validate the full WGC-to-workbench-to-runtime path, including DPI and
+   size mismatch, window resize/recreation, and moving the target between displays; every invalidation must
+   occur before any input.
+
+### P0 scope reductions recommended by review
+
+To keep the first closed slice small, defer per-recognizer resolutions, schema minor best-effort loading,
+composite recognizers, diagnostic priority, threshold overrides, static `--strict` ambiguity heuristics,
+and duplicate `bot.templates`/`bot.recognizers` aliases until a demonstrated use requires them. Preserve
+undo/redo behavior without committing the design to one command-class architecture. This removes roughly
+38 lines of speculative specification and a larger corresponding implementation/test surface.
