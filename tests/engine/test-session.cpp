@@ -32,6 +32,7 @@
 #include <optional>
 #include <span>
 #include <stop_token>
+#include <thread>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -307,11 +308,20 @@ namespace uf::engine
         {
             std::vector<Frame> m_frames;
             std::size_t        m_index{0};
+            bool               m_targetValid{true};
 
         public:
             explicit FakeFrameSource(std::vector<Frame> frames) noexcept
                 : m_frames{std::move(frames)}
             {
+            }
+
+            // Flips the bound-target revalidation to fail, modeling the HWND-reuse
+            // window the delivery-edge guard closes: the instance is valid during
+            // observe and invalid by the time act revalidates it.
+            void invalidateTargetInstance() noexcept
+            {
+                m_targetValid = false;
             }
 
             [[nodiscard]] auto capture() -> Result<Frame> override
@@ -331,6 +341,13 @@ namespace uf::engine
 
             [[nodiscard]] auto validateTargetInstance() -> Status override
             {
+                if (!m_targetValid)
+                {
+                    return fail(
+                        AutomationErrorKind::TargetUnavailable,
+                        "bound target instance is no longer valid"
+                    );
+                }
                 return ok();
             }
         };
@@ -426,6 +443,7 @@ namespace uf::engine
         struct SessionUnderTest final
         {
             Result<EngineSession> m_session;
+            FakeFrameSource*      m_source{};
             CountingActionSink*   m_clicks{};
             CollectingTraceSink*  m_traces{};
         };
@@ -452,6 +470,7 @@ namespace uf::engine
             auto frameSource = std::make_unique<FakeFrameSource>(std::move(frames));
             auto actionSink  = std::make_unique<CountingActionSink>();
             auto traceSink   = std::make_unique<CollectingTraceSink>();
+            auto* const p_source = frameSource.get();
             auto* const p_clicks = actionSink.get();
             auto* const p_traces = traceSink.get();
             auto session = EngineSession::create(
@@ -463,6 +482,7 @@ namespace uf::engine
             );
             return SessionUnderTest{
                 .m_session = std::move(session),
+                .m_source  = p_source,
                 .m_clicks  = p_clicks,
                 .m_traces  = p_traces,
             };
@@ -852,7 +872,112 @@ namespace uf::engine
         CHECK(traceContains(under.m_traces->events(), TraceEventKind::RecognitionStopped));
     }
 
-    TEST_CASE("engine session surfaces a pre-cancelled recognition as a cancellation")
+    TEST_CASE("engine session surfaces a cancelled recognition as a cancellation")
+    {
+        auto parts             = singlePageRuntime();
+        auto const fingerprint = parts.m_fingerprint;
+        auto frames            = std::vector<Frame>{};
+        frames.emplace_back(
+            grayFrame(fingerprint, resolvingPixels(), FrameId{17}, MonotonicInstant::now())
+        );
+
+        auto cancellation     = std::stop_source{};
+        auto config           = baseConfig(fingerprint);
+        config.m_cancellation = cancellation.get_token();
+        auto under            = makeSession(std::move(parts), std::move(frames), std::move(config));
+        REQUIRE(under.m_session.has_value());
+        auto& session = *under.m_session;
+
+        // observe() now gates on cancellation, so the stop is requested only after
+        // the observation exists. The recognition policy then surfaces it as
+        // Cancelled through resolvePage rather than the observe or delivery guards.
+        auto observation = session.observe();
+        REQUIRE(observation.has_value());
+        auto const didRequest = cancellation.request_stop();
+        REQUIRE(didRequest);
+
+        auto const outcome = observation->resolvePage();
+        REQUIRE_FALSE(outcome.has_value());
+        anno::test::requireErrorKind(outcome.error(), AutomationErrorKind::Cancelled);
+        CHECK(under.m_clicks->clickCount() == 0);
+        CHECK(traceContains(under.m_traces->events(), TraceEventKind::RecognitionStopped));
+    }
+
+    TEST_CASE("engine session revalidates the target instance at the delivery edge")
+    {
+        auto parts             = singlePageRuntime();
+        auto const fingerprint = parts.m_fingerprint;
+        auto const actionT     = parts.m_actionTarget;
+        auto frames            = std::vector<Frame>{};
+        frames.emplace_back(
+            grayFrame(fingerprint, resolvingPixels(), FrameId{17}, MonotonicInstant::now())
+        );
+
+        auto under = makeSession(std::move(parts), std::move(frames), baseConfig(fingerprint));
+        REQUIRE(under.m_session.has_value());
+        auto& session = *under.m_session;
+
+        auto observation = session.observe();
+        REQUIRE(observation.has_value());
+        auto outcome = observation->resolvePage();
+        REQUIRE(outcome.has_value());
+        REQUIRE(std::holds_alternative<anno::ResolvedPage>(*outcome));
+        auto const& resolved = std::get<anno::ResolvedPage>(*outcome);
+        auto found           = observation->findAction(actionT);
+        REQUIRE(found.has_value());
+        REQUIRE(found->has_value());
+
+        // The bound target instance passed validation during observe but is
+        // switched to fail before delivery, modeling an HWND reused between the
+        // two. The delivery-edge revalidation rejects the click before the sink.
+        under.m_source->invalidateTargetInstance();
+
+        auto const receipt = session.act(std::move(*observation), resolved, **found);
+        REQUIRE_FALSE(receipt.has_value());
+        anno::test::requireErrorKind(receipt.error(), AutomationErrorKind::TargetUnavailable);
+        CHECK(under.m_clicks->clickCount() == 0);
+        CHECK(traceContains(under.m_traces->events(), TraceEventKind::ActionRejected));
+    }
+
+    TEST_CASE("engine session cancels an act requested after the observation")
+    {
+        auto parts             = singlePageRuntime();
+        auto const fingerprint = parts.m_fingerprint;
+        auto const actionT     = parts.m_actionTarget;
+        auto frames            = std::vector<Frame>{};
+        frames.emplace_back(
+            grayFrame(fingerprint, resolvingPixels(), FrameId{17}, MonotonicInstant::now())
+        );
+
+        auto cancellation     = std::stop_source{};
+        auto config           = baseConfig(fingerprint);
+        config.m_cancellation = cancellation.get_token();
+        auto under            = makeSession(std::move(parts), std::move(frames), std::move(config));
+        REQUIRE(under.m_session.has_value());
+        auto& session = *under.m_session;
+
+        auto observation = session.observe();
+        REQUIRE(observation.has_value());
+        auto outcome = observation->resolvePage();
+        REQUIRE(outcome.has_value());
+        REQUIRE(std::holds_alternative<anno::ResolvedPage>(*outcome));
+        auto const& resolved = std::get<anno::ResolvedPage>(*outcome);
+        auto found           = observation->findAction(actionT);
+        REQUIRE(found.has_value());
+        REQUIRE(found->has_value());
+
+        // A stop requested between the observation and delivery aborts the click
+        // before authorization or any sink call.
+        auto const didRequest = cancellation.request_stop();
+        REQUIRE(didRequest);
+
+        auto const receipt = session.act(std::move(*observation), resolved, **found);
+        REQUIRE_FALSE(receipt.has_value());
+        anno::test::requireErrorKind(receipt.error(), AutomationErrorKind::Cancelled);
+        CHECK(under.m_clicks->clickCount() == 0);
+    }
+
+    TEST_CASE("engine session cancels an observe requested before capture")
     {
         auto parts             = singlePageRuntime();
         auto const fingerprint = parts.m_fingerprint;
@@ -870,13 +995,59 @@ namespace uf::engine
         REQUIRE(under.m_session.has_value());
         auto& session = *under.m_session;
 
-        auto observation = session.observe();
-        REQUIRE(observation.has_value());
-        auto const outcome = observation->resolvePage();
-        REQUIRE_FALSE(outcome.has_value());
-        anno::test::requireErrorKind(outcome.error(), AutomationErrorKind::Cancelled);
+        auto const observation = session.observe();
+        REQUIRE_FALSE(observation.has_value());
+        anno::test::requireErrorKind(observation.error(), AutomationErrorKind::Cancelled);
         CHECK(under.m_clicks->clickCount() == 0);
-        CHECK(traceContains(under.m_traces->events(), TraceEventKind::RecognitionStopped));
+    }
+
+    TEST_CASE("engine session waitForPage returns promptly when cancelled mid-sleep")
+    {
+        auto parts             = singlePageRuntime();
+        auto const fingerprint = parts.m_fingerprint;
+        auto const pageA       = parts.m_page;
+        auto frames            = std::vector<Frame>{};
+        // Grey-0 pixels never resolve pageA, so the wait loop keeps polling until
+        // the timeout, the deadline, or a cancellation ends it.
+        frames.emplace_back(
+            grayFrame(fingerprint, unknownPixels(), FrameId{17}, MonotonicInstant::now())
+        );
+
+        auto cancellation     = std::stop_source{};
+        auto config           = baseConfig(fingerprint);
+        config.m_cancellation = cancellation.get_token();
+        auto under            = makeSession(std::move(parts), std::move(frames), std::move(config));
+        REQUIRE(under.m_session.has_value());
+        auto& session = *under.m_session;
+
+        // Request stop ~50ms into a 10s poll sleep from another thread. The
+        // sliced sleep observes it within one 100ms slice, so waitForPage returns
+        // Cancelled far sooner than the poll interval. Copying the stop_source
+        // shares its stop-state, so the worker needs no reference capture.
+        auto const start = MonotonicInstant::now();
+        auto stopper     = std::jthread{
+            [source = cancellation]() mutable noexcept
+            {
+                std::this_thread::sleep_for(std::chrono::milliseconds{50});
+                static_cast<void>(source.request_stop());
+            }
+        };
+
+        auto const result = session.waitForPage(
+            pageA,
+            std::chrono::duration_cast<MonotonicInstant::Duration>(std::chrono::seconds{60}),
+            std::chrono::duration_cast<MonotonicInstant::Duration>(std::chrono::seconds{10})
+        );
+        auto const elapsed = MonotonicInstant::now().saturatingDurationSince(start);
+
+        REQUIRE_FALSE(result.has_value());
+        anno::test::requireErrorKind(result.error(), AutomationErrorKind::Cancelled);
+        CHECK(
+            elapsed < std::chrono::duration_cast<MonotonicInstant::Duration>(
+                std::chrono::seconds{2}
+            )
+        );
+        CHECK(under.m_clicks->clickCount() == 0);
     }
 
     TEST_CASE("engine session waitForPage times out when the page never resolves")

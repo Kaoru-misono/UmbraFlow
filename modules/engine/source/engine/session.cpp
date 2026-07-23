@@ -16,8 +16,11 @@
 #include <domain/ids.hpp>
 #include <domain/space.hpp>
 
+#include <algorithm>
+#include <chrono>
 #include <format>
 #include <optional>
+#include <stop_token>
 #include <string>
 #include <thread>
 #include <utility>
@@ -41,6 +44,42 @@ namespace uf::engine
                 .m_sessionId        = identity.sessionId(),
                 .m_targetGeneration = identity.targetGeneration(),
             };
+        }
+
+        // The longest a single poll sleep blocks before it re-checks cancellation
+        // and the deadline. It bounds cancellation latency when the poll interval
+        // is large, without changing the effective poll cadence.
+        constexpr auto g_maxPollSleepSlice = std::chrono::milliseconds{100};
+
+        // Sleeps for up to `interval`, in slices no longer than g_maxPollSleepSlice,
+        // and stops early once cancellation is requested or the deadline has
+        // passed. Sleeping is its only effect: the caller re-checks both conditions
+        // and decides the outcome, so this only bounds latency.
+        void pollSleep(
+            MonotonicInstant::Duration interval,
+            MonotonicInstant deadline,
+            std::stop_token const& cancellation
+        )
+        {
+            using Duration   = MonotonicInstant::Duration;
+            auto const slice = std::chrono::duration_cast<Duration>(
+                g_maxPollSleepSlice
+            );
+            auto remaining = interval;
+            while (remaining > Duration::zero())
+            {
+                if (
+                    cancellation.stop_requested()
+                    || MonotonicInstant::now() >= deadline
+                )
+                {
+                    return;
+                }
+
+                auto const step = std::min(remaining, slice);
+                std::this_thread::sleep_for(step);
+                remaining -= step;
+            }
         }
     }
 
@@ -205,6 +244,16 @@ namespace uf::engine
 
     auto EngineSession::observe() -> Result<Observation>
     {
+        // An external stop requested before observation aborts the capture before
+        // any frame is taken, so a cancelled run stops promptly at the loop head.
+        if (m_config.m_cancellation.stop_requested())
+        {
+            return fail(
+                AutomationErrorKind::Cancelled,
+                "cancelled before observation"
+            );
+        }
+
         UF_TRY(m_frameSource->validateTargetInstance());
         UF_TRY_VALUE(frame, m_frameSource->capture());
 
@@ -377,6 +426,18 @@ namespace uf::engine
         ActionFound const& action
     ) -> Result<ActReceipt>
     {
+        // An external stop requested before delivery takes precedence over every
+        // other outcome: fail closed before authorization and any sink call so a
+        // cancelled run never posts input. This reads only session state, not the
+        // observation, so it may run ahead of the foreign-observation guard below.
+        if (m_config.m_cancellation.stop_requested())
+        {
+            return fail(
+                AutomationErrorKind::Cancelled,
+                "cancelled before delivery"
+            );
+        }
+
         // D0: an observation carries a back-reference to the session that vended
         // it. Acting on a handle from another session is a programming error, not
         // a recoverable runtime condition, so reject it as a broken invariant
@@ -426,6 +487,21 @@ namespace uf::engine
 
         UF_TRY_VALUE(framePoint, pixelPointToFramePoint(action.clickPixel()));
         auto const clientPoint = observation.m_frame.transform().frameToClient(framePoint);
+
+        // Revalidate the bound target instance at the delivery edge, immediately
+        // before the sink call, to close the HWND-reuse window between observation
+        // and delivery. This runs for every adapter, so a target replaced after
+        // authorization is rejected here with zero sink calls.
+        auto revalidation = m_frameSource->validateTargetInstance();
+        if (!revalidation)
+        {
+            auto event           = identityEvent(TraceEventKind::ActionRejected, identity);
+            event.m_errorKind    = automationErrorKind(revalidation.error());
+            event.m_recognizerId = action.actionDetection().recognizerId();
+            event.m_message      = std::string{revalidation.error().message()};
+            UF_TRY(emit(event));
+            return std::unexpected{std::move(revalidation).error()};
+        }
 
         // Forward the lease so the delivery layer re-runs the D0 injection-layer
         // fence (frameId, targetGeneration, and age) at post time as layer 2.
@@ -496,7 +572,7 @@ namespace uf::engine
                 );
             }
 
-            std::this_thread::sleep_for(pollInterval);
+            pollSleep(pollInterval, *deadline, m_config.m_cancellation);
         }
     }
 
