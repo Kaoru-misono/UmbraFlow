@@ -1,3 +1,6 @@
 [submodule "external/luau"]
 	path = modules/script/external/luau
 	url = https://github.com/luau-lang/luau.git
+[submodule "entry/workbench/external/imgui"]
+	path = entry/workbench/external/imgui
+	url = https://github.com/ocornut/imgui.git
