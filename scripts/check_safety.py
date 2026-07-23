@@ -71,7 +71,7 @@ RULES = (
 
 MUST_USE_FUNCTION = re.compile(
     r"(?P<nodiscard>\[\[nodiscard(?:\([^\]]*\))?\]\]\s*)?"
-    r"(?P<specifiers>(?:(?:inline|static|constexpr|friend)\s+)*)"
+    r"(?P<specifiers>(?:(?:inline|static|constexpr|friend|virtual)\s+)*)"
     r"auto\s+(?P<name>[A-Za-z_~][A-Za-z0-9_:~]*)\s*"
     r"(?P<parameters>\([^;{}]*\))\s*"
     r"(?:const\s*)?"

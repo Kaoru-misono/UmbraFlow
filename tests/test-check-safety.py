@@ -56,6 +56,23 @@ auto loadValue(int key) -> Result<std::optional<int>>;
 
         self.assertEqual(actual, [1])
 
+    def test_annotated_pure_virtual_must_use_function_is_not_reported(self) -> None:
+        # A correctly attributed virtual method must not be flagged. Without
+        # "virtual" in the specifiers alternation the [[nodiscard]] cannot attach
+        # to the "auto" that follows "virtual", producing a false positive here.
+        content = "[[nodiscard]] virtual auto f() -> Result<int> = 0;\n"
+
+        actual = check_safety.missing_must_use_nodiscard_lines(content)
+
+        self.assertEqual(actual, [])
+
+    def test_unannotated_pure_virtual_must_use_function_is_reported(self) -> None:
+        content = "virtual auto f() -> Status = 0;\n"
+
+        actual = check_safety.missing_must_use_nodiscard_lines(content)
+
+        self.assertEqual(actual, [1])
+
     def test_nodiscard_overload_does_not_cover_friend_redeclaration(self) -> None:
         content = """[[nodiscard]]
 auto loadValue(int key) -> Result<int>;
