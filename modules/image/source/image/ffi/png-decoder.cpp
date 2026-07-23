@@ -88,7 +88,7 @@ namespace uf::image
         {
             uint32 m_width;
             uint32 m_height;
-            uint8 m_bitDepth;
+            uint8  m_bitDepth;
         };
 
         constexpr auto g_pngSignature = std::array{
@@ -157,10 +157,10 @@ namespace uf::image
                 );
             }
 
-            auto metadata = PngMetadata{};
-            auto offset = g_pngSignature.size();
+            auto metadata   = PngMetadata{};
+            auto offset     = g_pngSignature.size();
             auto firstChunk = true;
-            auto sawIend = false;
+            auto sawIend    = false;
             while (offset < encoded.size())
             {
                 auto const remaining = encoded.size() - offset;
@@ -210,7 +210,7 @@ namespace uf::image
                     }
 
                     metadata = PngMetadata{
-                        .m_width = readBigEndianU32(encoded, offset + 8U),
+                        .m_width  = readBigEndianU32(encoded, offset + 8U),
                         .m_height = readBigEndianU32(encoded, offset + 12U),
                         .m_bitDepth = std::to_integer<uint8>(encoded[offset + 16U]),
                     };
@@ -353,8 +353,8 @@ namespace uf::image
             );
         }
 
-        auto decodedWidth = int{};
-        auto decodedHeight = int{};
+        auto decodedWidth    = int{};
+        auto decodedHeight   = int{};
         auto decodedChannels = int{};
         // validatePngStructure bounded every chunk before stb can inspect it.
         // SAFETY: encoded owns the live byte range that byte-sized stbi_uc reads
@@ -471,7 +471,7 @@ namespace uf::image
 #endif
         }
         return RgbaImage{
-            .m_width = metadata.m_width,
+            .m_width  = metadata.m_width,
             .m_height = metadata.m_height,
             .m_pixels = std::move(pixels),
         };

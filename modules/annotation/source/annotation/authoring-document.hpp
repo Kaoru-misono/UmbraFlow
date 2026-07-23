@@ -156,10 +156,10 @@ namespace uf::annotation
 
     class AuthoringDocument final
     {
-        RecognitionCatalog                       m_catalog;
-        std::vector<AuthoringSource>             m_sources{};
-        std::vector<AuthoringRecognizerSource>   m_recognizerSources{};
-        std::vector<RegressionCase>              m_regressions{};
+        RecognitionCatalog                     m_catalog;
+        std::vector<AuthoringSource>           m_sources{};
+        std::vector<AuthoringRecognizerSource> m_recognizerSources{};
+        std::vector<RegressionCase>            m_regressions{};
 
         // LLVM 23's performance-unnecessary-value-param check can recurse
         // through StrongValue construction when these owned sinks are passed

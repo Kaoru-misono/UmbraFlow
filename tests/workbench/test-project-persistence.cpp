@@ -198,8 +198,8 @@ namespace uf::workbench
             auto const secondAnchorId = annotation::test::recognizerId(g_secondAnchorId);
             auto const pageId         = annotation::test::pageId(g_pageId);
 
-            auto firstPng         = encodedSource(0);
-            auto secondPng        = encodedSource(0x40);
+            auto firstPng  = encodedSource(0);
+            auto secondPng = encodedSource(0x40);
             auto const firstHash  = annotation::sha256(firstPng);
             auto const secondHash = annotation::sha256(secondPng);
             REQUIRE(firstHash.has_value());

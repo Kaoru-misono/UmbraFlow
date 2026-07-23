@@ -360,13 +360,13 @@ namespace uf::annotation
             );
         }
 
-        auto pageEvaluations = std::vector<PageEvaluation>{};
+        auto pageEvaluations  = std::vector<PageEvaluation>{};
         auto candidatePageIds = std::vector<PageId>{};
         pageEvaluations.reserve(catalog.pages().size());
         candidatePageIds.reserve(catalog.pages().size());
         for (auto const& page : catalog.pages())
         {
-            auto required = std::vector<AnchorEvidence>{};
+            auto required  = std::vector<AnchorEvidence>{};
             auto forbidden = std::vector<AnchorEvidence>{};
             required.reserve(page.required().size());
             forbidden.reserve(page.forbidden().size());

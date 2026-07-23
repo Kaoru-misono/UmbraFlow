@@ -50,16 +50,16 @@ namespace uf
 
     class TargetCandidate final
     {
-        WindowHandle m_handle;
-        ProcessId m_process;
-        std::optional<ProcessStartTime> m_processStartTime;
+        WindowHandle                         m_handle;
+        ProcessId                            m_process;
+        std::optional<ProcessStartTime>      m_processStartTime;
         std::optional<std::filesystem::path> m_executablePath;
-        std::string m_windowClass;
-        std::string m_title;
-        ClientSize m_clientSize;
-        Dpi m_dpi;
-        bool m_isVisible;
-        bool m_isIconic;
+        std::string                          m_windowClass;
+        std::string                          m_title;
+        ClientSize                           m_clientSize;
+        Dpi                                  m_dpi;
+        bool                                 m_isVisible;
+        bool                                 m_isIconic;
 
     public:
         TargetCandidate(

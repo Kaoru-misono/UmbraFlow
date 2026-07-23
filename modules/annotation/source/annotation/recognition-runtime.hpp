@@ -43,8 +43,8 @@ namespace uf::annotation
     {
         // A control stop is a failed attempt, never a completed PageOutcome.
         std::variant<PageOutcome, PageRecognitionStop> m_result;
-        std::vector<AnchorEvidence>                    m_completedAnchorEvidence{};
-        uint64                                         m_completedPixelComparisons{};
+        std::vector<AnchorEvidence> m_completedAnchorEvidence{};
+        uint64                      m_completedPixelComparisons{};
     };
 
     class RecognitionRuntime final

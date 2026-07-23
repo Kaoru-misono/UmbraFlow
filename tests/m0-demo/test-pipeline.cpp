@@ -168,11 +168,11 @@ namespace uf::m0_demo
     {
         auto const transform = transform800By450();
         auto const imageTemplate = Template{
-            .m_label = "home",
-            .m_gray = std::vector<std::byte>(std::size_t{101} * 40U),
-            .m_width = 101,
+            .m_label  = "home",
+            .m_gray   = std::vector<std::byte>(std::size_t{101} * 40U),
+            .m_width  = 101,
             .m_height = 40,
-            .m_roi = Rect<FrameSpace>{0.0F, 0.0F, 100.0F, 40.0F},
+            .m_roi    = Rect<FrameSpace>{0.0F, 0.0F, 100.0F, 40.0F},
         };
 
         auto const result = ensureTemplateFitsRoi(transform, imageTemplate);
@@ -237,11 +237,11 @@ namespace uf::m0_demo
         auto const record = [](uintptr target, uint32 message)
         {
             return AuditRecord{
-                .m_target = target,
+                .m_target  = target,
                 .m_message = message,
-                .m_wParam = 0,
-                .m_lParam = 0,
-                .m_at = MonotonicInstant::now(),
+                .m_wParam  = 0,
+                .m_lParam  = 0,
+                .m_at      = MonotonicInstant::now(),
             };
         };
         auto constexpr target = uintptr{0x1234};
@@ -287,10 +287,10 @@ namespace uf::m0_demo
     {
         auto const selector = buildSelector(
             SelectorArgs{
-                .m_process = 42,
+                .m_process      = 42,
                 .m_windowHandle = 0x1234,
-                .m_windowClass = "class",
-                .m_title = "title",
+                .m_windowClass  = "class",
+                .m_title        = "title",
             }
         );
         CHECK(selector.process() == std::optional{ProcessId{42}});

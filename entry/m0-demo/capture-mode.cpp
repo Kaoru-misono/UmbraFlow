@@ -247,7 +247,7 @@ namespace uf::m0_demo
         UF_TRY(validateCaptureOutputPaths(args));
         UF_TRY_VALUE(log, JsonlLog::create(args.m_log));
 
-        auto outcome = runCaptureWithLog(args, log);
+        auto outcome       = runCaptureWithLog(args, log);
         auto terminalWrite = ok();
         if (!outcome)
         {

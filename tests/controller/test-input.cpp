@@ -222,8 +222,8 @@ namespace uf
     TEST_CASE("long press rejects a negative hold before delivery")
     {
         auto const deliveryTarget = target(0);
-        auto held = HeldInputs{};
-        auto audit = AuditLog{};
+        auto held          = HeldInputs{};
+        auto audit         = AuditLog{};
         auto refreshCalled = false;
 
         auto const result = longPress(
@@ -251,7 +251,7 @@ namespace uf
     TEST_CASE("long press rejects an empty refresh callback before delivery")
     {
         auto const deliveryTarget = target(0);
-        auto held = HeldInputs{};
+        auto held  = HeldInputs{};
         auto audit = AuditLog{};
 
         auto const result = longPress(

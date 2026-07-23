@@ -91,14 +91,14 @@ namespace uf::controller_platform
 
         struct ProcessDetails final
         {
-            std::optional<ProcessStartTime> m_startTime;
+            std::optional<ProcessStartTime>      m_startTime;
             std::optional<std::filesystem::path> m_executablePath;
         };
 
         struct EnumerationState final
         {
             std::vector<WindowHandle> m_handles;
-            bool m_storageFailed{};
+            bool                      m_storageFailed{};
         };
 
         [[nodiscard]]
@@ -245,9 +245,9 @@ namespace uf::controller_platform
         ) -> Result<std::optional<ProcessStartTime>>
         {
             auto creation = FILETIME{};
-            auto exit = FILETIME{};
-            auto kernel = FILETIME{};
-            auto user = FILETIME{};
+            auto exit     = FILETIME{};
+            auto kernel   = FILETIME{};
+            auto user     = FILETIME{};
             // SAFETY: process is a live query handle and all four FILETIME pointers name
             // writable locals for the complete call.
             auto const queried = GetProcessTimes(
@@ -356,7 +356,7 @@ namespace uf::controller_platform
             UF_TRY_VALUE(startTime, readStartTime(ownedHandle->get()));
             UF_TRY_VALUE(executablePath, readExecutablePath(ownedHandle->get()));
             return ProcessDetails{
-                .m_startTime = startTime,
+                .m_startTime      = startTime,
                 .m_executablePath = std::move(executablePath),
             };
         }

@@ -20,21 +20,21 @@ namespace uf::annotation
     struct RuntimeRecognizerSpec final
     {
         RecognizerDefinition m_definition;
-        ContentHash m_templateHash;
-        ContentHash m_sourceHash;
+        ContentHash          m_templateHash;
+        ContentHash          m_sourceHash;
     };
 
     struct RuntimeRecognizerAsset final
     {
         RecognizerId m_id;
-        ContentHash m_templateHash;
-        ContentHash m_sourceHash;
-        std::string m_templatePath;
+        ContentHash  m_templateHash;
+        ContentHash  m_sourceHash;
+        std::string  m_templatePath;
     };
 
     class RuntimeManifest final
     {
-        RecognitionCatalog m_catalog;
+        RecognitionCatalog                  m_catalog;
         std::vector<RuntimeRecognizerAsset> m_assets;
 
         RuntimeManifest(

@@ -36,8 +36,8 @@ namespace uf
             auto codeUnits = std::vector<uint16>{};
             codeUnits.reserve(text.size());
 
-            auto codePoint = uint32{};
-            auto minimumCodePoint = uint32{};
+            auto codePoint         = uint32{};
+            auto minimumCodePoint  = uint32{};
             auto continuationBytes = uint8{};
             for (auto const character : text)
             {
@@ -53,22 +53,22 @@ namespace uf
                     }
                     if (byte >= 0xC2U && byte <= 0xDFU)
                     {
-                        codePoint = byte & 0x1FU;
-                        minimumCodePoint = 0x80U;
+                        codePoint         = byte & 0x1FU;
+                        minimumCodePoint  = 0x80U;
                         continuationBytes = 1U;
                         continue;
                     }
                     if (byte >= 0xE0U && byte <= 0xEFU)
                     {
-                        codePoint = byte & 0x0FU;
-                        minimumCodePoint = 0x800U;
+                        codePoint         = byte & 0x0FU;
+                        minimumCodePoint  = 0x800U;
                         continuationBytes = 2U;
                         continue;
                     }
                     if (byte >= 0xF0U && byte <= 0xF4U)
                     {
-                        codePoint = byte & 0x07U;
-                        minimumCodePoint = 0x10000U;
+                        codePoint         = byte & 0x07U;
+                        minimumCodePoint  = 0x10000U;
                         continuationBytes = 3U;
                         continue;
                     }

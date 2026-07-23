@@ -19,9 +19,9 @@ namespace uf::annotation
 {
     class FrameIdentity final
     {
-        SessionId m_sessionId;
+        SessionId        m_sessionId;
         TargetGeneration m_targetGeneration;
-        FrameId m_frameId;
+        FrameId          m_frameId;
 
     public:
         constexpr FrameIdentity(
@@ -48,12 +48,12 @@ namespace uf::annotation
     {
         friend class AnchorEvaluation;
 
-        RecognizerId m_recognizerId;
-        bool m_hit;
-        std::optional<uint64> m_sadScore;
-        uint64 m_maximumSad;
+        RecognizerId             m_recognizerId;
+        bool                     m_hit;
+        std::optional<uint64>    m_sadScore;
+        uint64                   m_maximumSad;
         std::optional<PixelRect> m_matchedRect;
-        std::optional<float> m_displayConfidence;
+        std::optional<float>     m_displayConfidence;
 
         AnchorEvidence(
             RecognizerId recognizerId,
@@ -82,7 +82,7 @@ namespace uf::annotation
 
     private:
         RecognizerId m_recognizerId;
-        Evaluation m_evaluation;
+        Evaluation   m_evaluation;
 
         AnchorEvaluation(
             RecognizerId recognizerId,
@@ -104,10 +104,10 @@ namespace uf::annotation
 
     class PageEvaluation final
     {
-        PageId m_pageId;
+        PageId                      m_pageId;
         std::vector<AnchorEvidence> m_required;
         std::vector<AnchorEvidence> m_forbidden;
-        bool m_candidate;
+        bool                        m_candidate;
 
     public:
         PageEvaluation(
@@ -130,10 +130,10 @@ namespace uf::annotation
 
     class PageResolutionEvidence final
     {
-        ProjectId m_projectId;
-        FrameIdentity m_frameIdentity;
+        ProjectId                   m_projectId;
+        FrameIdentity               m_frameIdentity;
         std::vector<PageEvaluation> m_pages;
-        std::vector<PageId> m_candidatePageIds;
+        std::vector<PageId>         m_candidatePageIds;
 
     public:
         PageResolutionEvidence(
@@ -161,7 +161,7 @@ namespace uf::annotation
     {
         friend class PageResolver;
 
-        PageId m_pageId;
+        PageId                 m_pageId;
         PageResolutionEvidence m_evidence;
 
         ResolvedPage(PageId pageId, PageResolutionEvidence evidence) noexcept;

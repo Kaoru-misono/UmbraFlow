@@ -33,7 +33,7 @@ namespace uf
     class AutomationError final
     {
         AutomationErrorKind m_kind;
-        std::string m_message;
+        std::string         m_message;
 
     public:
         AutomationError(AutomationErrorKind kind, std::string message);

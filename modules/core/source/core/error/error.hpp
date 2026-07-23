@@ -31,11 +31,11 @@ namespace uf
 
     class Error final
     {
-        ErrorCode m_code;
-        std::error_code m_detailCode;
-        std::string m_message;
-        int64 m_nativeCode;
-        std::source_location m_location;
+        ErrorCode                m_code;
+        std::error_code          m_detailCode;
+        std::string              m_message;
+        int64                    m_nativeCode;
+        std::source_location     m_location;
         std::vector<std::string> m_context{};
 
     public:

@@ -154,10 +154,10 @@ namespace uf
         static constexpr auto s_frameBoundsEpsilon = 1e-3F;
         static constexpr auto s_maxExactFrameDimension = uint32{1} << 24;
 
-        float m_clientOriginX;
-        float m_clientOriginY;
-        float m_clientWidth;
-        float m_clientHeight;
+        float  m_clientOriginX;
+        float  m_clientOriginY;
+        float  m_clientWidth;
+        float  m_clientHeight;
         uint32 m_frameWidth;
         uint32 m_frameHeight;
 

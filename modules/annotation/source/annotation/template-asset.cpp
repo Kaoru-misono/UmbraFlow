@@ -54,11 +54,11 @@ namespace uf::annotation
         relativePath += hash.hex();
         relativePath += ".png";
         return TemplateAsset{
-            .m_hash = hash,
+            .m_hash         = hash,
             .m_relativePath = std::move(relativePath),
-            .m_pngBytes = std::move(encoded),
-            .m_width = templateRect.width(),
-            .m_height = templateRect.height(),
+            .m_pngBytes     = std::move(encoded),
+            .m_width        = templateRect.width(),
+            .m_height       = templateRect.height(),
         };
     }
 }

@@ -107,9 +107,9 @@ namespace uf::script
     {
         lua_State* state = m_impl->m_state;
 
-        auto options = lua_CompileOptions{};
+        auto options              = lua_CompileOptions{};
         options.optimizationLevel = 1;
-        options.debugLevel = 1;
+        options.debugLevel        = 1;
 
         std::size_t bytecodeSize = 0;
         // SAFETY: luau_compile allocates the bytecode buffer with malloc; the caller

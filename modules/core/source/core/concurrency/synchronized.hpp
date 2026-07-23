@@ -20,7 +20,7 @@ namespace uf
     template <typename Value, typename Mutex = std::mutex>
     class Synchronized final
     {
-        Value m_value{};
+        Value         m_value{};
         mutable Mutex m_mutex;
 
     public:

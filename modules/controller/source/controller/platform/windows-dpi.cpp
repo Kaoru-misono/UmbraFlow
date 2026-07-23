@@ -40,7 +40,7 @@ namespace uf::controller_platform
         ) != FALSE;
 
         return DpiSetObservation{
-            .m_win32Error = error,
+            .m_win32Error          = error,
             .m_isPerMonitorAwareV2 = isPerMonitorAwareV2,
         };
     }

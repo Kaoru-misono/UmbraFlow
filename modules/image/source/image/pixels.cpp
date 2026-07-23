@@ -148,7 +148,7 @@ namespace uf::image
             );
         }
 
-        auto output = std::vector<std::byte>(*totalBytes);
+        auto output     = std::vector<std::byte>(*totalBytes);
         auto outputSpan = std::span<std::byte>{output};
         for (auto row = std::size_t{0}; row < *height; ++row)
         {

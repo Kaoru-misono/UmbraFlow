@@ -165,7 +165,7 @@ namespace uf::m0_demo
             ) -> JsonlSinkResult
             {
                 auto stream = std::ofstream{};
-                errno = 0;
+                errno       = 0;
                 stream.open(path, std::ios::binary | std::ios::trunc);
                 if (!stream.is_open())
                 {
@@ -227,7 +227,7 @@ namespace uf::m0_demo
 
     auto LogLine::frame(Frame const& frameValue) && -> LogLine
     {
-        m_frameId = frameValue.id().value();
+        m_frameId          = frameValue.id().value();
         m_targetGeneration = frameValue.targetGeneration().value();
         return std::move(*this);
     }

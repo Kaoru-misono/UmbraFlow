@@ -42,11 +42,11 @@ namespace uf::m0_demo
         class Machine final
         {
         public:
-            ResolvedTarget m_resolved;
+            ResolvedTarget    m_resolved;
             WgcCaptureSession m_session;
-            DeliveryTarget m_target;
-            HeldInputs m_held{};
-            AuditLog m_audit{};
+            DeliveryTarget    m_target;
+            HeldInputs        m_held{};
+            AuditLog          m_audit{};
 
             Machine(
                 ResolvedTarget resolved,
@@ -70,9 +70,9 @@ namespace uf::m0_demo
             [[nodiscard]]
             auto cleanupTarget() -> Result<std::pair<DeliveryTarget, std::optional<Error>>>
             {
-                auto hasFreshIdentity = false;
+                auto hasFreshIdentity  = false;
                 auto revalidationError = std::optional<Error>{};
-                auto instance = m_session.validateTargetInstance();
+                auto instance          = m_session.validateTargetInstance();
                 if (!instance)
                 {
                     revalidationError = std::move(instance).error();
@@ -107,12 +107,12 @@ namespace uf::m0_demo
                 }
 
                 auto windowHandle = m_target.windowHandle();
-                auto sessionId = m_target.sessionId();
-                auto generation = m_target.generation();
+                auto sessionId    = m_target.sessionId();
+                auto generation   = m_target.generation();
                 if (hasFreshIdentity)
                 {
                     windowHandle = m_resolved.windowHandle();
-                    generation = m_resolved.currentGeneration();
+                    generation   = m_resolved.currentGeneration();
                 }
                 else
                 {
@@ -930,11 +930,11 @@ namespace uf::m0_demo
         ) -> Result<RunSummary>
         {
             UF_TRY(setupValidateRois(machine, templates, config, log));
-            auto pacer = ClickPacer{config.m_clickDelay, config.m_seed};
-            auto attempted = uint32{0};
-            auto succeeded = uint32{0};
+            auto pacer           = ClickPacer{config.m_clickDelay, config.m_seed};
+            auto attempted       = uint32{0};
+            auto succeeded       = uint32{0};
             auto guardViolations = uint32{0};
-            auto stopped = false;
+            auto stopped         = false;
 
             for (auto loopIndex = uint32{0}; loopIndex < config.m_loops; ++loopIndex)
             {
@@ -978,11 +978,11 @@ namespace uf::m0_demo
             }
 
             return RunSummary{
-                .m_attempted = attempted,
-                .m_succeeded = succeeded,
+                .m_attempted       = attempted,
+                .m_succeeded       = succeeded,
                 .m_guardViolations = guardViolations,
-                .m_stopped = stopped,
-                .m_auditClean = false,
+                .m_stopped         = stopped,
+                .m_auditClean      = false,
             };
         }
 
@@ -1214,11 +1214,11 @@ namespace uf::m0_demo
             );
         }
         return Template{
-            .m_label = std::move(label),
-            .m_gray = *std::move(gray),
-            .m_width = decoded.m_width,
+            .m_label  = std::move(label),
+            .m_gray   = *std::move(gray),
+            .m_width  = decoded.m_width,
             .m_height = decoded.m_height,
-            .m_roi = roi,
+            .m_roi    = roi,
         };
     }
 

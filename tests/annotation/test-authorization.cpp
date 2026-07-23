@@ -48,8 +48,8 @@ namespace uf::annotation
             ProjectFingerprint m_fingerprint{test::fingerprint()};
             RecognitionCatalog m_catalog;
             RecognizerId m_actionId{test::recognizerId(g_actionId)};
-            Frame m_frame;
-            ResolvedPage m_resolvedPage;
+            Frame            m_frame;
+            ResolvedPage     m_resolvedPage;
             ObservationLease m_lease;
         };
 
@@ -118,12 +118,12 @@ namespace uf::annotation
             );
             REQUIRE(lease.has_value());
             return AuthorizationFixture{
-                .m_fingerprint = projectFingerprint,
-                .m_catalog = std::move(catalog),
-                .m_actionId = actionId,
-                .m_frame = std::move(frame),
+                .m_fingerprint  = projectFingerprint,
+                .m_catalog      = std::move(catalog),
+                .m_actionId     = actionId,
+                .m_frame        = std::move(frame),
                 .m_resolvedPage = std::get<ResolvedPage>(std::move(*outcome)),
-                .m_lease = *lease,
+                .m_lease        = *lease,
             };
         }
 
@@ -151,11 +151,11 @@ namespace uf::annotation
         ) -> ActionDeliveryState
         {
             return ActionDeliveryState{
-                .m_liveFingerprint = liveFingerprint,
-                .m_sessionId = fixture.m_frame.sessionId(),
+                .m_liveFingerprint  = liveFingerprint,
+                .m_sessionId        = fixture.m_frame.sessionId(),
                 .m_targetGeneration = fixture.m_frame.targetGeneration(),
-                .m_frameId = fixture.m_frame.id(),
-                .m_now = test::instantAt(MonotonicInstant::Duration{105}),
+                .m_frameId          = fixture.m_frame.id(),
+                .m_now              = test::instantAt(MonotonicInstant::Duration{105}),
             };
         }
     }
@@ -351,11 +351,11 @@ namespace uf::annotation
             *actionDetection,
             *lease,
             ActionDeliveryState{
-                .m_liveFingerprint = projectFingerprint,
-                .m_sessionId = frame.sessionId(),
+                .m_liveFingerprint  = projectFingerprint,
+                .m_sessionId        = frame.sessionId(),
                 .m_targetGeneration = frame.targetGeneration(),
-                .m_frameId = frame.id(),
-                .m_now = test::instantAt(MonotonicInstant::Duration{105}),
+                .m_frameId          = frame.id(),
+                .m_now              = test::instantAt(MonotonicInstant::Duration{105}),
             }
         );
         REQUIRE_FALSE(unauthorized.has_value());

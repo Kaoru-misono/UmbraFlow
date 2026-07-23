@@ -87,8 +87,8 @@ namespace uf::annotation
                 ),
                 .m_anchorA = anchorA,
                 .m_anchorB = anchorB,
-                .m_pageA = pageA,
-                .m_pageB = pageB,
+                .m_pageA   = pageA,
+                .m_pageB   = pageB,
             };
         }
 

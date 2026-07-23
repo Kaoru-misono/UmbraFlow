@@ -37,7 +37,7 @@ namespace uf::controller_detail
     {
         uint32 m_expectedWidth;
         uint32 m_expectedHeight;
-        bool m_invalidated;
+        bool   m_invalidated;
 
         constexpr CaptureGeometryState(
             uint32 expectedWidth,

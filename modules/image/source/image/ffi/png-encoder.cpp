@@ -78,7 +78,7 @@ namespace uf::image
         struct EncodedPng final
         {
             std::vector<std::byte> m_bytes;
-            bool m_callbackFailed{};
+            bool                   m_callbackFailed{};
         };
 
         auto appendEncodedPng(

@@ -24,10 +24,10 @@ namespace uf::m0_demo
         {
             return CaptureArgs{
                 .m_selector = {},
-                .m_output = std::move(output),
-                .m_frames = frames,
+                .m_output   = std::move(output),
+                .m_frames   = frames,
                 .m_interval = g_defaultCaptureInterval,
-                .m_log = std::move(log),
+                .m_log      = std::move(log),
             };
         }
     }

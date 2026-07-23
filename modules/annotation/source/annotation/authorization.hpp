@@ -16,9 +16,9 @@ namespace uf::annotation
     // construction when those sinks are passed by value.
     class ActionDetection final
     {
-        ProjectId m_projectId;
+        ProjectId    m_projectId;
         RecognizerId m_recognizerId;
-        Detection m_detection;
+        Detection    m_detection;
 
         ActionDetection(
             ProjectId&& projectId,
@@ -46,10 +46,10 @@ namespace uf::annotation
     struct ActionDeliveryState final
     {
         ProjectFingerprint m_liveFingerprint;
-        SessionId m_sessionId;
-        TargetGeneration m_targetGeneration;
-        FrameId m_frameId;
-        MonotonicInstant m_now;
+        SessionId          m_sessionId;
+        TargetGeneration   m_targetGeneration;
+        FrameId            m_frameId;
+        MonotonicInstant   m_now;
     };
 
     [[nodiscard]]

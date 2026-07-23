@@ -144,21 +144,21 @@ namespace uf
 
         struct D3d11Objects final
         {
-            winrt::com_ptr<ID3D11Device> m_device;
+            winrt::com_ptr<ID3D11Device>        m_device;
             winrt::com_ptr<ID3D11DeviceContext> m_context;
         };
 
         struct D3dDevice final
         {
-            winrt::com_ptr<ID3D11Device> m_device;
+            winrt::com_ptr<ID3D11Device>        m_device;
             winrt::com_ptr<ID3D11DeviceContext> m_context;
-            Direct3DDevice m_runtimeDevice;
+            Direct3DDevice                      m_runtimeDevice;
         };
 
         [[nodiscard]]
         auto createD3d11(D3D_DRIVER_TYPE driverType) -> Result<D3d11Objects>
         {
-            auto device = winrt::com_ptr<ID3D11Device>{};
+            auto device  = winrt::com_ptr<ID3D11Device>{};
             auto context = winrt::com_ptr<ID3D11DeviceContext>{};
             // SAFETY: The out-parameters receive owned device/context interfaces. A null
             // adapter selects the default adapter, and no feature-level array is supplied.
@@ -281,8 +281,8 @@ namespace uf
         class StagingTexture final
         {
             winrt::com_ptr<ID3D11Texture2D> m_texture;
-            uint32 m_width{};
-            uint32 m_height{};
+            uint32                          m_width{};
+            uint32                          m_height{};
             DXGI_FORMAT m_format{DXGI_FORMAT_UNKNOWN};
 
         public:
@@ -326,9 +326,9 @@ namespace uf
                     }
 
                     m_texture = std::move(staging);
-                    m_width = sourceDescription.Width;
-                    m_height = sourceDescription.Height;
-                    m_format = sourceDescription.Format;
+                    m_width   = sourceDescription.Width;
+                    m_height  = sourceDescription.Height;
+                    m_format  = sourceDescription.Format;
                 }
 
                 if (!m_texture)
@@ -341,8 +341,8 @@ namespace uf
 
         struct SurfaceReadback final
         {
-            uint32 m_sourceWidth;
-            uint32 m_sourceHeight;
+            uint32                 m_sourceWidth;
+            uint32                 m_sourceHeight;
             std::vector<std::byte> m_pixels;
         };
 
@@ -400,8 +400,8 @@ namespace uf
             auto const sourceHeight = sourceDescription.Height;
             UF_TRY(crop.ensureWithinSource(sourceWidth, sourceHeight));
 
-            auto stagingDescription = sourceDescription;
-            stagingDescription.Width = crop.width();
+            auto stagingDescription   = sourceDescription;
+            stagingDescription.Width  = crop.width();
             stagingDescription.Height = crop.height();
             UF_TRY_VALUE(
                 staging,
@@ -623,7 +623,7 @@ namespace uf
 
         struct CapturedArrival final
         {
-            CaptureFrame m_frame;
+            CaptureFrame     m_frame;
             MonotonicInstant m_arrivedAt;
         };
 
@@ -632,11 +632,11 @@ namespace uf
             // The FrameArrived callback and capture consumer share this state. Every
             // m_latest access is serialized by m_mutex; m_arrived only publishes changes
             // made while that mutex is held.
-            std::mutex m_mutex;
-            std::condition_variable m_arrived;
+            std::mutex                     m_mutex;
+            std::condition_variable        m_arrived;
             std::optional<CapturedArrival> m_latest;
-            bool m_acceptingFrames{true};
-            std::atomic_bool m_itemClosed{false};
+            bool                           m_acceptingFrames{true};
+            std::atomic_bool               m_itemClosed{false};
             std::atomic<HRESULT> m_callbackFailure{S_OK};
         };
 
@@ -665,8 +665,8 @@ namespace uf
 
         class WindowInstanceMarker final
         {
-            HWND m_window{};
-            std::wstring m_name;
+            HWND          m_window{};
+            std::wstring  m_name;
             winrt::handle m_token;
 
             WindowInstanceMarker(
@@ -854,34 +854,34 @@ namespace uf
     {
         // Serializes the consumer-side session, geometry, stall, and D3D state. The
         // callback never takes this mutex and communicates only through m_frameSlot.
-        std::mutex m_operationMutex;
-        winrt::com_ptr<ID3D11Device> m_device;
+        std::mutex                          m_operationMutex;
+        winrt::com_ptr<ID3D11Device>        m_device;
         winrt::com_ptr<ID3D11DeviceContext> m_context;
         // Retained so the projected device outlives the frame pool created from it.
-        Direct3DDevice m_runtimeDevice;
+        Direct3DDevice   m_runtimeDevice;
         CaptureFramePool m_framePool;
-        CaptureSession m_session;
+        CaptureSession   m_session;
         // Retained so the capture item outlives the session that references it.
-        CaptureItem m_item;
-        winrt::event_token m_frameArrivedToken;
-        winrt::event_token m_itemClosedToken;
-        std::shared_ptr<FrameSlot> m_frameSlot;
-        controller_detail::StallTracker m_stall;
-        SessionId m_sessionId;
-        controller_detail::FrameIdCounter m_frameIds;
-        TargetGeneration m_targetGeneration;
-        WindowInstanceMarker m_windowMarker;
-        ClientGeometry m_client;
-        controller_detail::ClientCropRect m_crop;
-        WgcCaptureOptions m_options;
+        CaptureItem                             m_item;
+        winrt::event_token                      m_frameArrivedToken;
+        winrt::event_token                      m_itemClosedToken;
+        std::shared_ptr<FrameSlot>              m_frameSlot;
+        controller_detail::StallTracker         m_stall;
+        SessionId                               m_sessionId;
+        controller_detail::FrameIdCounter       m_frameIds;
+        TargetGeneration                        m_targetGeneration;
+        WindowInstanceMarker                    m_windowMarker;
+        ClientGeometry                          m_client;
+        controller_detail::ClientCropRect       m_crop;
+        WgcCaptureOptions                       m_options;
         controller_detail::CaptureGeometryState m_geometry;
-        StagingTexture m_staging;
-        CaptureHygiene m_hygiene;
-        bool m_sessionOpen;
-        bool m_frameArrivedRegistered;
-        bool m_itemClosedRegistered;
-        bool m_framePoolOpen;
-        bool m_closed;
+        StagingTexture                          m_staging;
+        CaptureHygiene                          m_hygiene;
+        bool                                    m_sessionOpen;
+        bool                                    m_frameArrivedRegistered;
+        bool                                    m_itemClosedRegistered;
+        bool                                    m_framePoolOpen;
+        bool                                    m_closed;
 
     public:
         Impl(Impl const&) = delete;
@@ -1233,7 +1233,7 @@ namespace uf
                 return captureUnavailable("CreateForWindow returned no capture item");
             }
 
-            auto frameSlot = std::make_shared<FrameSlot>();
+            auto frameSlot             = std::make_shared<FrameSlot>();
             auto slotForClosedCallback = frameSlot;
             auto const itemClosedHandler = winrt::Windows::Foundation::TypedEventHandler<
                 CaptureItem,
@@ -1543,10 +1543,10 @@ namespace uf
                 options,
                 geometry,
                 CaptureHygiene{
-                    .m_osBuild = osBuild,
+                    .m_osBuild               = osBuild,
                     .m_cursorCaptureDisabled = true,
-                    .m_borderlessSupported = hasBorderlessSupport,
-                    .m_borderRequired = borderRequired,
+                    .m_borderlessSupported   = hasBorderlessSupport,
+                    .m_borderRequired        = borderRequired,
                 }
             );
             setupCleanup.release();

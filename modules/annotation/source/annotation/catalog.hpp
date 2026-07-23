@@ -173,26 +173,26 @@ namespace uf::annotation
 
     struct RecognizerSpec final
     {
-        RecognizerId m_id;
-        ResourceName m_name;
-        AnnotationType m_annotationType;
-        PixelRect m_templateRect;
-        PixelRect m_searchRoi;
-        SimilarityThreshold m_threshold;
+        RecognizerId                  m_id;
+        ResourceName                  m_name;
+        AnnotationType                m_annotationType;
+        PixelRect                     m_templateRect;
+        PixelRect                     m_searchRoi;
+        SimilarityThreshold           m_threshold;
         std::optional<TemplateOffset> m_defaultClick;
-        std::vector<PageId> m_allowedPageIds;
+        std::vector<PageId>           m_allowedPageIds;
     };
 
     class RecognizerDefinition final
     {
-        RecognizerId m_id;
-        ResourceName m_name;
-        AnnotationType m_annotationType;
-        PixelRect m_templateRect;
-        PixelRect m_searchRoi;
-        SimilarityThreshold m_threshold;
+        RecognizerId                  m_id;
+        ResourceName                  m_name;
+        AnnotationType                m_annotationType;
+        PixelRect                     m_templateRect;
+        PixelRect                     m_searchRoi;
+        SimilarityThreshold           m_threshold;
         std::optional<TemplateOffset> m_defaultClick;
-        std::vector<PageId> m_allowedPageIds;
+        std::vector<PageId>           m_allowedPageIds;
 
         explicit RecognizerDefinition(RecognizerSpec spec) noexcept;
 
@@ -217,16 +217,16 @@ namespace uf::annotation
 
     struct PageSpec final
     {
-        PageId m_id;
-        ResourceName m_name;
+        PageId                    m_id;
+        ResourceName              m_name;
         std::vector<RecognizerId> m_required;
         std::vector<RecognizerId> m_forbidden;
     };
 
     class PageSignature final
     {
-        PageId m_id;
-        ResourceName m_name;
+        PageId                    m_id;
+        ResourceName              m_name;
         std::vector<RecognizerId> m_required;
         std::vector<RecognizerId> m_forbidden;
 
@@ -248,11 +248,11 @@ namespace uf::annotation
 
     class RecognitionCatalog final
     {
-        ProjectId m_projectId;
-        ProjectFingerprint m_fingerprint;
+        ProjectId                         m_projectId;
+        ProjectFingerprint                m_fingerprint;
         std::vector<RecognizerDefinition> m_recognizers;
-        std::vector<PageSignature> m_pages;
-        std::vector<RecognizerId> m_pageAnchorOrder;
+        std::vector<PageSignature>        m_pages;
+        std::vector<RecognizerId>         m_pageAnchorOrder;
 
         RecognitionCatalog(
             ProjectId projectId,

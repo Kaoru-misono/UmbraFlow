@@ -240,7 +240,7 @@ namespace uf::controller_detail
             );
         }
 
-        auto packed = std::vector<std::byte>(*packedLength);
+        auto packed     = std::vector<std::byte>(*packedLength);
         auto packedView = std::span<std::byte>{packed};
         for (auto row = std::size_t{0}; row < *heightSize; ++row)
         {

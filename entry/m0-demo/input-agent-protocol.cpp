@@ -64,12 +64,12 @@ namespace uf::m0_demo
 
         struct ParsedCommandFields final
         {
-            std::optional<std::string> m_operation;
-            std::optional<std::string> m_output;
-            std::optional<float> m_x;
-            std::optional<float> m_y;
-            std::optional<std::string> m_outputBefore;
-            std::optional<std::string> m_outputAfter;
+            std::optional<std::string>                m_operation;
+            std::optional<std::string>                m_output;
+            std::optional<float>                      m_x;
+            std::optional<float>                      m_y;
+            std::optional<std::string>                m_outputBefore;
+            std::optional<std::string>                m_outputAfter;
             std::optional<MonotonicInstant::Duration> m_settle;
         };
 
@@ -629,10 +629,10 @@ namespace uf::m0_demo
                     requirePath(std::move(fields.m_outputAfter), "out_after")
                 );
                 return InputAgentClickCommand{
-                    .m_x = *fields.m_x,
-                    .m_y = *fields.m_y,
+                    .m_x            = *fields.m_x,
+                    .m_y            = *fields.m_y,
                     .m_outputBefore = std::move(outputBefore),
-                    .m_outputAfter = std::move(outputAfter),
+                    .m_outputAfter  = std::move(outputAfter),
                     .m_settle = fields.m_settle.value_or(
                         g_defaultInputAgentSettle
                     ),

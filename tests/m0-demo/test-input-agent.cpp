@@ -508,7 +508,7 @@ namespace uf::m0_demo
 
     TEST_CASE("m0 input-agent clears per-command audit state across many clicks")
     {
-        auto audit = AuditLog{};
+        auto audit          = AuditLog{};
         auto maximumRecords = std::size_t{};
         for (auto command = std::size_t{}; command < 10'000U; ++command)
         {

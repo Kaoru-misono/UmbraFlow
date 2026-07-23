@@ -23,7 +23,7 @@ namespace uf::controller_platform
     struct DpiSetObservation final
     {
         std::optional<uint32> m_win32Error;
-        bool m_isPerMonitorAwareV2;
+        bool                  m_isPerMonitorAwareV2;
     };
 
     [[nodiscard]] auto enumerateCandidates() -> Result<std::vector<TargetCandidate>>;

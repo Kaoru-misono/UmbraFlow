@@ -423,16 +423,16 @@ namespace uf::m0_demo
 
     auto parseArguments(std::span<std::string const> raw) -> Result<Args>
     {
-        auto selector = SelectorArgs{};
-        auto homeTemplate = std::optional<std::filesystem::path>{};
-        auto homeRoi = std::optional<Rect<FrameSpace>>{};
+        auto selector       = SelectorArgs{};
+        auto homeTemplate   = std::optional<std::filesystem::path>{};
+        auto homeRoi        = std::optional<Rect<FrameSpace>>{};
         auto resultTemplate = std::optional<std::filesystem::path>{};
-        auto resultRoi = std::optional<Rect<FrameSpace>>{};
-        auto resetTemplate = std::optional<std::filesystem::path>{};
-        auto resetRoi = std::optional<Rect<FrameSpace>>{};
-        auto threshold = std::optional<uint64>{};
-        auto mode = Mode::Guard;
-        auto loops = uint32{1};
+        auto resultRoi      = std::optional<Rect<FrameSpace>>{};
+        auto resetTemplate  = std::optional<std::filesystem::path>{};
+        auto resetRoi       = std::optional<Rect<FrameSpace>>{};
+        auto threshold      = std::optional<uint64>{};
+        auto mode           = Mode::Guard;
+        auto loops          = uint32{1};
         auto maxActionFrameAge = std::chrono::duration_cast<MonotonicInstant::Duration>(
             std::chrono::milliseconds{750}
         );
@@ -440,8 +440,8 @@ namespace uf::m0_demo
             std::chrono::milliseconds{1000}
         );
         auto clickDelay = std::optional<ClickDelay>{};
-        auto seed = g_defaultPacingSeed;
-        auto log = std::optional<std::filesystem::path>{};
+        auto seed       = g_defaultPacingSeed;
+        auto log        = std::optional<std::filesystem::path>{};
 
         auto index = std::size_t{0};
         while (index < raw.size())
@@ -561,21 +561,21 @@ namespace uf::m0_demo
         UF_TRY_VALUE(requiredResetRoi, require(resetRoi, "--reset-roi"));
 
         return Args{
-            .m_selector = std::move(selector),
-            .m_homeTemplate = std::move(requiredHomeTemplate),
-            .m_homeRoi = requiredHomeRoi,
-            .m_resultTemplate = std::move(requiredResultTemplate),
-            .m_resultRoi = requiredResultRoi,
-            .m_resetTemplate = std::move(requiredResetTemplate),
-            .m_resetRoi = requiredResetRoi,
-            .m_threshold = requiredThreshold,
-            .m_mode = mode,
-            .m_loops = loops,
+            .m_selector          = std::move(selector),
+            .m_homeTemplate      = std::move(requiredHomeTemplate),
+            .m_homeRoi           = requiredHomeRoi,
+            .m_resultTemplate    = std::move(requiredResultTemplate),
+            .m_resultRoi         = requiredResultRoi,
+            .m_resetTemplate     = std::move(requiredResetTemplate),
+            .m_resetRoi          = requiredResetRoi,
+            .m_threshold         = requiredThreshold,
+            .m_mode              = mode,
+            .m_loops             = loops,
             .m_maxActionFrameAge = maxActionFrameAge,
-            .m_stallTimeout = stallTimeout,
-            .m_clickDelay = clickDelay,
-            .m_seed = seed,
-            .m_log = std::move(log),
+            .m_stallTimeout      = stallTimeout,
+            .m_clickDelay        = clickDelay,
+            .m_seed              = seed,
+            .m_log               = std::move(log),
         };
     }
 
@@ -584,10 +584,10 @@ namespace uf::m0_demo
     ) -> Result<CaptureArgs>
     {
         auto selector = SelectorArgs{};
-        auto output = std::optional<std::filesystem::path>{};
-        auto frames = g_defaultCaptureFrames;
+        auto output   = std::optional<std::filesystem::path>{};
+        auto frames   = g_defaultCaptureFrames;
         auto interval = g_defaultCaptureInterval;
-        auto log = std::optional<std::filesystem::path>{};
+        auto log      = std::optional<std::filesystem::path>{};
 
         auto index = std::size_t{0};
         while (index < raw.size())
@@ -641,10 +641,10 @@ namespace uf::m0_demo
 
         return CaptureArgs{
             .m_selector = std::move(selector),
-            .m_output = std::move(requiredOutput),
-            .m_frames = frames,
+            .m_output   = std::move(requiredOutput),
+            .m_frames   = frames,
             .m_interval = interval,
-            .m_log = std::move(log),
+            .m_log      = std::move(log),
         };
     }
 
@@ -652,11 +652,11 @@ namespace uf::m0_demo
         std::span<std::string const> raw
     ) -> Result<InputAgentArgs>
     {
-        auto windowHandle = std::optional<intptr>{};
-        auto queue = std::optional<std::filesystem::path>{};
-        auto results = std::optional<std::filesystem::path>{};
+        auto windowHandle    = std::optional<intptr>{};
+        auto queue           = std::optional<std::filesystem::path>{};
+        auto results         = std::optional<std::filesystem::path>{};
         auto outputDirectory = std::optional<std::filesystem::path>{};
-        auto idleTimeout = g_defaultInputAgentIdleTimeout;
+        auto idleTimeout     = g_defaultInputAgentIdleTimeout;
 
         auto index = std::size_t{0};
         while (index < raw.size())
@@ -720,11 +720,11 @@ namespace uf::m0_demo
         }
 
         return InputAgentArgs{
-            .m_windowHandle = requiredWindowHandle,
-            .m_queue = std::move(requiredQueue),
-            .m_results = std::move(requiredResults),
+            .m_windowHandle    = requiredWindowHandle,
+            .m_queue           = std::move(requiredQueue),
+            .m_results         = std::move(requiredResults),
             .m_outputDirectory = std::move(requiredOutputDirectory),
-            .m_idleTimeout = idleTimeout,
+            .m_idleTimeout     = idleTimeout,
         };
     }
 

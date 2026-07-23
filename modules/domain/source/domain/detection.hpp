@@ -17,12 +17,12 @@ namespace uf
 
     class Detection final
     {
-        SessionId m_sessionId;
+        SessionId        m_sessionId;
         TargetGeneration m_targetGeneration;
-        FrameId m_frameId;
-        Label m_label;
+        FrameId          m_frameId;
+        Label            m_label;
         Rect<FrameSpace> m_rect;
-        float m_confidence;
+        float            m_confidence;
 
     public:
         Detection(
@@ -46,9 +46,9 @@ namespace uf
 
     class ObservationLease final
     {
-        SessionId m_sessionId;
+        SessionId        m_sessionId;
         TargetGeneration m_targetGeneration;
-        FrameId m_frameId;
+        FrameId          m_frameId;
         MonotonicInstant m_expiresAt;
 
         constexpr ObservationLease(

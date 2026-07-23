@@ -173,18 +173,18 @@ namespace uf::m0_demo
                 )
             );
             auto const templates = Templates{
-                .m_home = std::move(homeTemplate),
+                .m_home   = std::move(homeTemplate),
                 .m_result = std::move(resultTemplate),
-                .m_reset = std::move(resetTemplate),
+                .m_reset  = std::move(resetTemplate),
             };
             auto const config = LoopConfig{
-                .m_loops = args.m_loops,
-                .m_threshold = args.m_threshold,
+                .m_loops             = args.m_loops,
+                .m_threshold         = args.m_threshold,
                 .m_maxActionFrameAge = args.m_maxActionFrameAge,
                 .m_transitionTimeout = g_defaultTransitionTimeout,
-                .m_guardPolicy = GuardPolicy::forMode(args.m_mode),
-                .m_clickDelay = args.m_clickDelay,
-                .m_seed = args.m_seed,
+                .m_guardPolicy       = GuardPolicy::forMode(args.m_mode),
+                .m_clickDelay        = args.m_clickDelay,
+                .m_seed              = args.m_seed,
             };
 
             UF_TRY_VALUE(
@@ -238,7 +238,7 @@ namespace uf::m0_demo
             UF_TRY_VALUE(args, parseArguments(raw));
             UF_TRY_VALUE(log, JsonlLog::create(args.m_log));
 
-            auto outcome = runWithLog(args, log);
+            auto outcome       = runWithLog(args, log);
             auto terminalWrite = ok();
             if (!outcome)
             {

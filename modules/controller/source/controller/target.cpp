@@ -226,28 +226,28 @@ namespace uf
 {
     auto TargetSelector::withProcess(ProcessId process) const -> TargetSelector
     {
-        auto selector = *this;
+        auto selector      = *this;
         selector.m_process = process;
         return selector;
     }
 
     auto TargetSelector::withWindowHandle(WindowHandle windowHandle) const -> TargetSelector
     {
-        auto selector = *this;
+        auto selector           = *this;
         selector.m_windowHandle = windowHandle;
         return selector;
     }
 
     auto TargetSelector::withWindowClass(std::string windowClass) const -> TargetSelector
     {
-        auto selector = *this;
+        auto selector          = *this;
         selector.m_windowClass = std::move(windowClass);
         return selector;
     }
 
     auto TargetSelector::withTitle(std::string title) const -> TargetSelector
     {
-        auto selector = *this;
+        auto selector    = *this;
         selector.m_title = std::move(title);
         return selector;
     }
@@ -358,7 +358,7 @@ namespace uf
             m_generation = nextGeneration;
         }
 
-        m_identity = identityFromCandidate(candidate);
+        m_identity   = identityFromCandidate(candidate);
         m_continuity = Continuity::Confirmed;
         return ok();
     }
@@ -396,7 +396,7 @@ namespace uf
         {
             UF_TRY_VALUE(nextGeneration, m_generation.next());
             m_generation = nextGeneration;
-            m_identity = *observed;
+            m_identity   = *observed;
             return RevalidateOutcome::GenerationBumped;
         }
         case controller_detail::ProcessInstanceMatch::Same:
@@ -410,7 +410,7 @@ namespace uf
 
             UF_TRY_VALUE(nextGeneration, m_generation.next());
             m_generation = nextGeneration;
-            m_identity = *observed;
+            m_identity   = *observed;
             return RevalidateOutcome::GenerationBumped;
         }
 

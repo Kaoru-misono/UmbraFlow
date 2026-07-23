@@ -9,7 +9,7 @@ namespace uf::controller_detail
     class StallTracker final
     {
         MonotonicInstant::Duration m_timeout;
-        MonotonicInstant m_lastArrival;
+        MonotonicInstant           m_lastArrival;
 
     public:
         constexpr StallTracker(

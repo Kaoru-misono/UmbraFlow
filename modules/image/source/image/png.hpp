@@ -17,8 +17,8 @@ namespace uf::image
 
     struct RgbaImage final
     {
-        uint32 m_width;
-        uint32 m_height;
+        uint32                 m_width;
+        uint32                 m_height;
         std::vector<std::byte> m_pixels;
     };
 

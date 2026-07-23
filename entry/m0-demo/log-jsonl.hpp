@@ -16,16 +16,16 @@ namespace uf::m0_demo
 {
     struct LogLine final
     {
-        uint64 m_elapsedNanoseconds{};
+        uint64                m_elapsedNanoseconds{};
         std::optional<uint32> m_loopIndex{};
-        std::string m_phase;
-        std::string m_event;
+        std::string           m_phase;
+        std::string           m_event;
         std::optional<uint64> m_frameId{};
         std::optional<uint64> m_targetGeneration{};
         std::optional<uint64> m_confidence{};
-        std::optional<bool> m_leaseOk{};
-        std::string m_outcome{"info"};
-        std::string m_detail{};
+        std::optional<bool>   m_leaseOk{};
+        std::string           m_outcome{"info"};
+        std::string           m_detail{};
 
         LogLine(std::string phase, std::string event);
 
@@ -55,7 +55,7 @@ namespace uf::m0_demo
 
     class JsonlLog final
     {
-        MonotonicInstant m_origin;
+        MonotonicInstant            m_origin;
         std::unique_ptr<IJsonlSink> m_sink;
 
     public:

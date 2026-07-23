@@ -252,7 +252,7 @@ namespace uf::annotation
             );
         }
 
-        auto state = g_initialState;
+        auto state  = g_initialState;
         auto offset = std::size_t{0};
         while (bytes.size() - offset >= g_sha256BlockBytes)
         {

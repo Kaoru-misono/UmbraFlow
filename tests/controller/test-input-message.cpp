@@ -162,7 +162,7 @@ namespace uf
                 clientPixel
             ) == controller_detail::PostSpec{
                 .m_message = controller_detail::g_wmMouseMove,
-                .m_wParam = 0,
+                .m_wParam  = 0,
                 .m_lParam = 0x00C8'0064,
             }
         );
@@ -172,7 +172,7 @@ namespace uf
                 clientPixel
             ) == controller_detail::PostSpec{
                 .m_message = controller_detail::g_wmMouseMove,
-                .m_wParam = controller_detail::g_leftButtonMask,
+                .m_wParam  = controller_detail::g_leftButtonMask,
                 .m_lParam = 0x00C8'0064,
             }
         );
@@ -182,7 +182,7 @@ namespace uf
                 clientPixel
             ) == controller_detail::PostSpec{
                 .m_message = controller_detail::g_wmLeftButtonDown,
-                .m_wParam = controller_detail::g_leftButtonMask,
+                .m_wParam  = controller_detail::g_leftButtonMask,
                 .m_lParam = 0x00C8'0064,
             }
         );
@@ -192,7 +192,7 @@ namespace uf
                 clientPixel
             ) == controller_detail::PostSpec{
                 .m_message = controller_detail::g_wmLeftButtonUp,
-                .m_wParam = 0,
+                .m_wParam  = 0,
                 .m_lParam = 0x00C8'0064,
             }
         );
@@ -203,8 +203,8 @@ namespace uf
         CHECK(
             controller_detail::charSpec(0x0041U) == controller_detail::PostSpec{
                 .m_message = controller_detail::g_wmChar,
-                .m_wParam = 0x41U,
-                .m_lParam = 1,
+                .m_wParam  = 0x41U,
+                .m_lParam  = 1,
             }
         );
         CHECK(

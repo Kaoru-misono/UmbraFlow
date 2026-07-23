@@ -358,8 +358,8 @@ namespace uf::annotation
 
     TEST_CASE("annotation authoring compilation preserves source relationships")
     {
-        auto fixture          = compilerFixture();
-        auto secondPng        = encodedSource(3, 2, 0x40);
+        auto fixture   = compilerFixture();
+        auto secondPng = encodedSource(3, 2, 0x40);
         auto const secondHash = sha256(secondPng);
         REQUIRE(secondHash.has_value());
 

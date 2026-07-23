@@ -285,7 +285,7 @@ namespace uf::m0_demo::platform
         struct RelativeFilename final
         {
             std::wstring m_value;
-            USHORT m_byteLength;
+            USHORT       m_byteLength;
         };
 
         [[nodiscard]]
@@ -336,7 +336,7 @@ namespace uf::m0_demo::platform
             UF_CHECK(byteLength.has_value());
 
             return RelativeFilename{
-                .m_value = std::move(value),
+                .m_value      = std::move(value),
                 .m_byteLength = *byteLength,
             };
         }
@@ -412,9 +412,9 @@ namespace uf::m0_demo::platform
 
     struct FileWriter::State final
     {
-        std::filesystem::path m_path;
+        std::filesystem::path     m_path;
         std::vector<NativeHandle> m_directoryHandles{};
-        NativeHandle m_handle;
+        NativeHandle              m_handle;
     };
 
     FileWriter::FileWriter(std::unique_ptr<State> p_state) noexcept
@@ -459,7 +459,7 @@ namespace uf::m0_demo::platform
         }
 
         auto relativeDirectories = std::vector<std::filesystem::path>{};
-        auto requestedComponent = canonicalRequestedParent.begin();
+        auto requestedComponent  = canonicalRequestedParent.begin();
         for (
             auto rootComponent = canonicalOutputDirectory.begin();
             rootComponent != canonicalOutputDirectory.end();
@@ -548,9 +548,9 @@ namespace uf::m0_demo::platform
         // NtCreateFile succeeds, committing its handle cannot throw or fail.
         auto p_state = std::make_unique<State>(
             State{
-                .m_path = path,
+                .m_path             = path,
                 .m_directoryHandles = std::move(directoryHandles),
-                .m_handle = NativeHandle{},
+                .m_handle           = NativeHandle{},
             }
         );
 
@@ -639,7 +639,7 @@ namespace uf::m0_demo::platform
         return FileWriter{
             std::make_unique<State>(
                 State{
-                    .m_path = path,
+                    .m_path   = path,
                     .m_handle = std::move(handle),
                 }
             )

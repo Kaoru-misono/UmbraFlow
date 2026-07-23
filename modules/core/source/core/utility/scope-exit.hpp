@@ -17,7 +17,7 @@ namespace uf
     class ScopeExit final
     {
         Function m_function;
-        bool m_active{true};
+        bool     m_active{true};
 
     public:
         explicit ScopeExit(Function&& function) noexcept

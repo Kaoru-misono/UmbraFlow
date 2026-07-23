@@ -15,8 +15,8 @@ namespace uf
     auto HeldInputs::identity(DeliveryTarget const& target) noexcept -> DeliveryIdentity
     {
         return DeliveryIdentity{
-            .m_window = static_cast<uintptr>(target.windowHandle().value()),
-            .m_sessionId = target.sessionId(),
+            .m_window     = static_cast<uintptr>(target.windowHandle().value()),
+            .m_sessionId  = target.sessionId(),
             .m_generation = target.generation(),
         };
     }

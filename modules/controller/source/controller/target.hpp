@@ -16,10 +16,10 @@ namespace uf
 {
     class TargetSelector final
     {
-        std::optional<ProcessId> m_process;
+        std::optional<ProcessId>    m_process;
         std::optional<WindowHandle> m_windowHandle;
-        std::optional<std::string> m_windowClass;
-        std::optional<std::string> m_title;
+        std::optional<std::string>  m_windowClass;
+        std::optional<std::string>  m_title;
 
     public:
         auto operator==(TargetSelector const&) const -> bool = default;
@@ -49,10 +49,10 @@ namespace uf
 
     class TargetIdentity final
     {
-        WindowHandle m_handle;
-        ProcessId m_process;
+        WindowHandle                    m_handle;
+        ProcessId                       m_process;
         std::optional<ProcessStartTime> m_processStartTime;
-        ClientSize m_clientSize;
+        ClientSize                      m_clientSize;
 
     public:
         constexpr TargetIdentity(
@@ -106,9 +106,9 @@ namespace uf
             TargetSelector const& selector
         ) -> Result<ResolvedTarget>;
 
-        TargetIdentity m_identity;
+        TargetIdentity   m_identity;
         TargetGeneration m_generation;
-        Continuity m_continuity;
+        Continuity       m_continuity;
 
         explicit ResolvedTarget(TargetIdentity identity) noexcept;
 

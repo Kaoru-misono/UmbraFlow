@@ -62,7 +62,7 @@ namespace uf
     class KeyInput final
     {
         uint16 m_virtualKey;
-        bool m_extended;
+        bool   m_extended;
 
         constexpr KeyInput(uint16 virtualKey, bool extended) noexcept
             : m_virtualKey{virtualKey}
@@ -93,7 +93,7 @@ namespace uf
     class HeldPointerInput final
     {
         PointerButton m_button;
-        ClientPixel m_pixel;
+        ClientPixel   m_pixel;
 
     public:
         constexpr HeldPointerInput(PointerButton button, ClientPixel pixel) noexcept
@@ -113,10 +113,10 @@ namespace uf
 
     class DeliveryTarget final
     {
-        WindowHandle m_windowHandle;
-        SessionId m_sessionId;
+        WindowHandle     m_windowHandle;
+        SessionId        m_sessionId;
         TargetGeneration m_generation;
-        ClientSize m_clientSize;
+        ClientSize       m_clientSize;
 
         constexpr DeliveryTarget(
             WindowHandle windowHandle,
@@ -161,15 +161,15 @@ namespace uf
     struct ReleaseOutcome final
     {
         HeldInput m_input;
-        Status m_result;
+        Status    m_result;
     };
 
     struct AuditRecord final
     {
-        uintptr m_target;
-        uint32 m_message;
-        uintptr m_wParam;
-        intptr m_lParam;
+        uintptr          m_target;
+        uint32           m_message;
+        uintptr          m_wParam;
+        intptr           m_lParam;
         MonotonicInstant m_at;
     };
 
@@ -199,8 +199,8 @@ namespace uf
     {
         struct DeliveryIdentity final
         {
-            uintptr m_window;
-            SessionId m_sessionId;
+            uintptr          m_window;
+            SessionId        m_sessionId;
             TargetGeneration m_generation;
 
             auto operator==(DeliveryIdentity const&) const -> bool = default;

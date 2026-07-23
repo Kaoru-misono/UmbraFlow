@@ -23,7 +23,7 @@ namespace uf
     class WgcCaptureOptions final
     {
         MonotonicInstant::Duration m_captureStallTimeout;
-        bool m_requireBorderless;
+        bool                       m_requireBorderless;
 
         constexpr WgcCaptureOptions(
             MonotonicInstant::Duration captureStallTimeout,
@@ -64,8 +64,8 @@ namespace uf
     class ClientGeometry final
     {
         Point<DesktopSpace> m_origin;
-        float m_width;
-        float m_height;
+        float               m_width;
+        float               m_height;
 
         constexpr ClientGeometry(
             Point<DesktopSpace> origin,
@@ -106,9 +106,9 @@ namespace uf
     struct CaptureHygiene final
     {
         uint32 m_osBuild{};
-        bool m_cursorCaptureDisabled{};
-        bool m_borderlessSupported{};
-        bool m_borderRequired{};
+        bool   m_cursorCaptureDisabled{};
+        bool   m_borderlessSupported{};
+        bool   m_borderRequired{};
 
         auto operator==(CaptureHygiene const&) const -> bool = default;
     };

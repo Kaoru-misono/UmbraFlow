@@ -96,7 +96,7 @@ namespace uf::m0_demo
     auto InputAgentQueueReader::extractLines()
         -> Result<std::vector<std::string>>
     {
-        auto lines = std::vector<std::string>{};
+        auto lines    = std::vector<std::string>{};
         auto consumed = std::size_t{};
         while (true)
         {
@@ -156,7 +156,7 @@ namespace uf::m0_demo
         std::filesystem::path path
     ) -> Result<InputAgentQueueReader>
     {
-        errno = 0;
+        errno       = 0;
         auto stream = std::ifstream{path, std::ios::binary};
         if (!stream.is_open())
         {
@@ -210,7 +210,7 @@ namespace uf::m0_demo
             );
         }
 
-        errno = 0;
+        errno       = 0;
         auto stream = std::ifstream{m_path, std::ios::binary};
         if (!stream.is_open())
         {
@@ -223,7 +223,7 @@ namespace uf::m0_demo
         }
 
         auto chunk = std::string(*stringSize, '\0');
-        errno = 0;
+        errno      = 0;
         stream.read(chunk.data(), *streamSize);
         if (stream.gcount() != *streamSize)
         {
@@ -292,7 +292,7 @@ namespace uf::m0_demo
         struct OutputFile final
         {
             std::filesystem::path m_path;
-            platform::FileWriter m_writer;
+            platform::FileWriter  m_writer;
         };
 
         [[nodiscard]]
@@ -309,7 +309,7 @@ namespace uf::m0_demo
                 )
             );
             return OutputFile{
-                .m_path = std::move(path),
+                .m_path   = std::move(path),
                 .m_writer = std::move(writer),
             };
         }
@@ -410,8 +410,8 @@ namespace uf::m0_demo
         {
             std::optional<uint64> m_beforeFrame;
             std::optional<uint64> m_afterFrame;
-            bool m_delivered{};
-            std::optional<Error> m_error;
+            bool                  m_delivered{};
+            std::optional<Error>  m_error;
         };
 
         [[nodiscard]] auto serializeClickResult(ClickResult const& result) -> std::string
@@ -442,7 +442,7 @@ namespace uf::m0_demo
         struct CommandExecution final
         {
             std::string m_resultLine;
-            bool m_stopAgent{};
+            bool        m_stopAgent{};
         };
 
         [[nodiscard]]
@@ -453,7 +453,7 @@ namespace uf::m0_demo
         {
             return CommandExecution{
                 .m_resultLine = serializeClickResult(result),
-                .m_stopAgent = stopAgent,
+                .m_stopAgent  = stopAgent,
             };
         }
 
@@ -718,8 +718,8 @@ namespace uf::m0_demo
             );
             if (!clicked)
             {
-                auto error = std::move(clicked).error();
-                auto cleanupTarget = delivery;
+                auto error                = std::move(clicked).error();
+                auto cleanupTarget        = delivery;
                 auto instanceAfterFailure = session.validateTargetInstance();
                 auto const stopAgent = !instanceAfterFailure;
                 if (!instanceAfterFailure)
@@ -885,8 +885,8 @@ namespace uf::m0_demo
             )
         );
 
-        auto held = HeldInputs{};
-        auto audit = AuditLog{};
+        auto held         = HeldInputs{};
+        auto audit        = AuditLog{};
         auto lastActivity = MonotonicInstant::now();
         while (true)
         {
@@ -912,7 +912,7 @@ namespace uf::m0_demo
                 }
 
                 auto resultLine = std::string{};
-                auto stopAgent = false;
+                auto stopAgent  = false;
                 if (auto const* capture = std::get_if<InputAgentCaptureCommand>(&*command))
                 {
                     resultLine = executeCapture(
@@ -940,7 +940,7 @@ namespace uf::m0_demo
                         canonicalResults
                     );
                     resultLine = std::move(execution.m_resultLine);
-                    stopAgent = execution.m_stopAgent;
+                    stopAgent  = execution.m_stopAgent;
                 }
                 else
                 {

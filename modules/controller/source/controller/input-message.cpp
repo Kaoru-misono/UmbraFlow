@@ -162,7 +162,7 @@ namespace uf::controller_detail
     auto pointerSpec(PointerMessage message, ClientPixel pixel) noexcept -> PostSpec
     {
         auto messageId = uint32{};
-        auto wParam = uintptr{};
+        auto wParam    = uintptr{};
         switch (message)
         {
         case PointerMessage::Move:
@@ -170,11 +170,11 @@ namespace uf::controller_detail
             break;
         case PointerMessage::MoveWithLeftButton:
             messageId = g_wmMouseMove;
-            wParam = g_leftButtonMask;
+            wParam    = g_leftButtonMask;
             break;
         case PointerMessage::LeftDown:
             messageId = g_wmLeftButtonDown;
-            wParam = g_leftButtonMask;
+            wParam    = g_leftButtonMask;
             break;
         case PointerMessage::LeftUp:
             messageId = g_wmLeftButtonUp;
@@ -183,8 +183,8 @@ namespace uf::controller_detail
 
         return PostSpec{
             .m_message = messageId,
-            .m_wParam = wParam,
-            .m_lParam = lParamFromBits(pointerLParamBits(pixel)),
+            .m_wParam  = wParam,
+            .m_lParam  = lParamFromBits(pointerLParamBits(pixel)),
         };
     }
 
@@ -192,8 +192,8 @@ namespace uf::controller_detail
     {
         return PostSpec{
             .m_message = g_wmChar,
-            .m_wParam = codeUnit,
-            .m_lParam = 1,
+            .m_wParam  = codeUnit,
+            .m_lParam  = 1,
         };
     }
 
@@ -201,8 +201,8 @@ namespace uf::controller_detail
     {
         return PostSpec{
             .m_message = g_wmUnichar,
-            .m_wParam = static_cast<uintptr>(codePoint),
-            .m_lParam = 1,
+            .m_wParam  = static_cast<uintptr>(codePoint),
+            .m_lParam  = 1,
         };
     }
 

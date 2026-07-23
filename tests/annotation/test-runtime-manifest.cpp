@@ -62,7 +62,7 @@ namespace uf::annotation
                             *click
                         ),
                         .m_templateHash = contentHash(g_actionHash),
-                        .m_sourceHash = contentHash(g_sourceHash),
+                        .m_sourceHash   = contentHash(g_sourceHash),
                     },
                     RuntimeRecognizerSpec{
                         .m_definition = test::recognizer(
@@ -74,7 +74,7 @@ namespace uf::annotation
                             test::pixelRect(0, 0, 3, 3)
                         ),
                         .m_templateHash = contentHash(g_anchorHash),
-                        .m_sourceHash = contentHash(g_sourceHash),
+                        .m_sourceHash   = contentHash(g_sourceHash),
                     },
                 },
                 {test::page(pageId, "home", {anchorId})}
