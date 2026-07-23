@@ -10,6 +10,7 @@
 #include <charconv>
 #include <cstddef>
 #include <format>
+#include <memory>
 #include <optional>
 #include <ranges>
 #include <string>
@@ -205,8 +206,8 @@ namespace uf::annotation::detail
         }
 
         auto value              = uint64{0};
-        auto const* const first = encoded.data();
-        auto const* const last  = first + encoded.size();
+        auto const* const first = std::to_address(encoded.begin());
+        auto const* const last  = std::to_address(encoded.end());
         auto const [end, error] = std::from_chars(first, last, value, 10);
         if (error == std::errc::result_out_of_range)
         {

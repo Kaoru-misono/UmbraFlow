@@ -4,6 +4,7 @@
 
 #include <core/error/contracts.hpp>
 #include <core/safety/checked-access.hpp>
+#include <core/types/integer.hpp>
 
 #include <domain/error.hpp>
 

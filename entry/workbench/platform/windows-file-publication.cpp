@@ -3,6 +3,7 @@
 #include <core/error/contracts.hpp>
 #include <core/numeric/checked-cast.hpp>
 #include <core/types/integer.hpp>
+#include <core/utility/scope-exit.hpp>
 
 #include <domain/error.hpp>
 
@@ -65,36 +66,19 @@ namespace uf::workbench::platform
             }
         };
 
-        class TemporaryFileCleanup final
+        [[nodiscard]]
+        auto temporaryFileCleanup(std::wstring path)
         {
-            std::wstring m_path{};
-            bool         m_active{true};
-
-        public:
-            explicit TemporaryFileCleanup(std::wstring path)
-                : m_path{std::move(path)}
-            {
-            }
-
-            TemporaryFileCleanup(TemporaryFileCleanup const&) = delete;
-            auto operator=(TemporaryFileCleanup const&)
-                -> TemporaryFileCleanup& = delete;
-            TemporaryFileCleanup(TemporaryFileCleanup&&) = delete;
-            auto operator=(TemporaryFileCleanup&&)
-                -> TemporaryFileCleanup& = delete;
-
-            ~TemporaryFileCleanup() noexcept
-            {
-                if (m_active)
+            return scopeExit(
+                [owned = std::move(path)]() noexcept
                 {
-                    // SAFETY: m_path owns a null-terminated UTF-16 path. This
-                    // best-effort cleanup is synchronous and retains no pointer.
-                    static_cast<void>(DeleteFileW(m_path.c_str()));
+                    // SAFETY: owned holds a null-terminated UTF-16 path for the
+                    // whole guard lifetime. This best-effort cleanup is
+                    // synchronous and retains no pointer.
+                    static_cast<void>(DeleteFileW(owned.c_str()));
                 }
-            }
-
-            auto release() noexcept -> void { m_active = false; }
-        };
+            );
+        }
 
         [[nodiscard]]
         auto invalidProject(std::string message) -> std::unexpected<Error>
@@ -282,7 +266,11 @@ namespace uf::workbench::platform
                     0,
                     nullptr,
                     CREATE_NEW,
-                    FILE_ATTRIBUTE_TEMPORARY | FILE_FLAG_WRITE_THROUGH,
+                    (
+                        FILE_ATTRIBUTE_NORMAL
+                        | FILE_FLAG_WRITE_THROUGH
+                        | FILE_FLAG_OPEN_REPARSE_POINT
+                    ),
                     nullptr
                 );
                 if (rawHandle == INVALID_HANDLE_VALUE)
@@ -302,7 +290,7 @@ namespace uf::workbench::platform
                     );
                 }
 
-                auto cleanup   = TemporaryFileCleanup{nativeTemporary};
+                auto cleanup   = temporaryFileCleanup(nativeTemporary);
                 auto handle    = NativeHandle{rawHandle};
                 auto remaining = bytes;
                 while (!remaining.empty())
@@ -400,7 +388,7 @@ namespace uf::workbench::platform
         UF_TRY_VALUE(temporary, writeTemporaryFile(destination, bytes));
         auto const nativeTemporary   = extendedPath(temporary);
         auto const nativeDestination = extendedPath(destination);
-        auto cleanup                 = TemporaryFileCleanup{nativeTemporary};
+        auto cleanup                 = temporaryFileCleanup(nativeTemporary);
 
         // SAFETY: both strings own null-terminated UTF-16 paths. MoveFileExW
         // consumes them synchronously and retains no pointer.
@@ -442,7 +430,7 @@ namespace uf::workbench::platform
         UF_TRY_VALUE(temporary, writeTemporaryFile(destination, bytes));
         auto const nativeTemporary   = extendedPath(temporary);
         auto const nativeDestination = extendedPath(destination);
-        auto cleanup                 = TemporaryFileCleanup{nativeTemporary};
+        auto cleanup                 = temporaryFileCleanup(nativeTemporary);
 
         // SAFETY: temporary is a flushed sibling of destination. MoveFileExW
         // performs the same-volume name switch synchronously and retains no pointer.

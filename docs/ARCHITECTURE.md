@@ -10,10 +10,16 @@ entry/workbench (Windows) -> annotation
 domain                -> core
 vision                -> core, domain
 image                 -> core, domain
-annotation            -> core, domain, vision
+annotation            -> core, domain, vision, image
+script                -> core, domain
 controller (Windows)  -> core, domain
 tests                 -> modules under test
 ```
+
+Edges list every module dependency that `scripts/check_modules.py` validates,
+including private ones such as `annotation -> image`. Vendored third-party
+targets declared privately by a manifest, such as `image_stb` and the Luau
+libraries, are omitted.
 
 The module graph must remain acyclic. `core` is the platform-free leaf and may
 not declare link dependencies. `scripts/check_modules.py` enforces both rules.

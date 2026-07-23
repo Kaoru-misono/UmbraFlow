@@ -2,6 +2,7 @@
 
 #include <core/numeric/checked-arithmetic.hpp>
 #include <core/text/utf8.hpp>
+#include <core/types/integer.hpp>
 
 #include <domain/error.hpp>
 

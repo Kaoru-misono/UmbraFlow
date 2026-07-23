@@ -2,6 +2,8 @@
 
 #include <annotation/template-asset.hpp>
 
+#include <core/types/integer.hpp>
+
 #include <image/png.hpp>
 
 #include <doctest/doctest.h>

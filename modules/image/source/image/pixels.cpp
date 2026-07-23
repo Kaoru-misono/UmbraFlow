@@ -3,6 +3,7 @@
 #include <core/numeric/checked-arithmetic.hpp>
 #include <core/numeric/checked-cast.hpp>
 #include <core/safety/checked-access.hpp>
+#include <core/types/integer.hpp>
 #include <domain/error.hpp>
 
 #include <algorithm>

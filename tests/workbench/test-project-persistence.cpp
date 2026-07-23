@@ -277,9 +277,7 @@ namespace uf::workbench
         }
 
         [[nodiscard]]
-        auto readBytes(
-            std::filesystem::path const& path
-        ) -> std::vector<std::byte>
+        auto readText(std::filesystem::path const& path) -> std::string
         {
             auto error           = std::error_code{};
             auto const fileBytes = std::filesystem::file_size(path, error);
@@ -291,34 +289,23 @@ namespace uf::workbench
 
             auto stream = std::ifstream{path, std::ios::binary};
             REQUIRE(stream.is_open());
-            auto bytes = std::vector<std::byte>(*size);
-            if (!bytes.empty())
+            auto text = std::string(*size, '\0');
+            if (!text.empty())
             {
-                // char and std::byte share byte alignment.
-                // SAFETY: bytes owns streamSize writable bytes. ifstream::read
-                // writes synchronously and retains no pointer.
-                // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast)
-                auto* const destination = reinterpret_cast<char*>(bytes.data());
-                stream.read(destination, *streamSize);
+                stream.read(text.data(), *streamSize);
                 REQUIRE(stream.good());
             }
-            return bytes;
+            return text;
         }
 
         [[nodiscard]]
-        auto readText(std::filesystem::path const& path) -> std::string
+        auto readBytes(
+            std::filesystem::path const& path
+        ) -> std::vector<std::byte>
         {
-            auto const bytes = readBytes(path);
-            if (bytes.empty())
-            {
-                return {};
-            }
-            // char and std::byte share byte alignment.
-            // SAFETY: bytes owns its live byte range for this copying string
-            // constructor; the converted pointer does not escape the call.
-            // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast)
-            auto const* text = reinterpret_cast<char const*>(bytes.data());
-            return std::string{text, bytes.size()};
+            auto const text = readText(path);
+            auto const view = std::as_bytes(std::span{text});
+            return std::vector<std::byte>{view.begin(), view.end()};
         }
 
         [[nodiscard]]

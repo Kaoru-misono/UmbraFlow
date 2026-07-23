@@ -298,8 +298,7 @@ namespace uf::annotation
             case AnnotationType::InfoRegion:
                 return "info_region";
             }
-            UF_CHECK_MSG(false, "unknown annotation type");
-            return {};
+            UF_UNREACHABLE_MSG("unknown annotation type");
         }
 
         auto appendRectField(

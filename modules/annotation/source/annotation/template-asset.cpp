@@ -1,5 +1,7 @@
 #include "template-asset.hpp"
 
+#include <core/types/integer.hpp>
+
 #include <image/pixels.hpp>
 #include <image/png.hpp>
 

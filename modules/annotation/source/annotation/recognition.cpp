@@ -2,6 +2,7 @@
 
 #include <core/error/contracts.hpp>
 #include <core/numeric/checked-arithmetic.hpp>
+#include <core/types/integer.hpp>
 
 #include <domain/error.hpp>
 
