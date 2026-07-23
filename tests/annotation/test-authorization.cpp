@@ -45,9 +45,9 @@ namespace uf::annotation
 
         struct AuthorizationFixture final
         {
-            ProjectFingerprint m_fingerprint;
+            ProjectFingerprint m_fingerprint{test::fingerprint()};
             RecognitionCatalog m_catalog;
-            RecognizerId m_actionId;
+            RecognizerId m_actionId{test::recognizerId(g_actionId)};
             Frame m_frame;
             ResolvedPage m_resolvedPage;
             ObservationLease m_lease;

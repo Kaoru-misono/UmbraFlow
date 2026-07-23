@@ -198,7 +198,7 @@ namespace uf::annotation
         template <typename Id>
         [[nodiscard]]
         auto parseIds(
-            std::vector<std::string> encoded
+            std::vector<std::string> const& encoded
         ) -> Result<std::vector<Id>>
         {
             auto ids = std::vector<Id>{};
@@ -422,7 +422,7 @@ namespace uf::annotation
                     encoded,
                     reader.takeStringArrayField("page_ids")
                 );
-                UF_TRY_VALUE(parsed, parseIds<PageId>(std::move(encoded)));
+                UF_TRY_VALUE(parsed, parseIds<PageId>(encoded));
                 pageIds = std::move(parsed);
             }
 
@@ -463,7 +463,7 @@ namespace uf::annotation
             );
             UF_TRY_VALUE(
                 required,
-                parseIds<RecognizerId>(std::move(requiredText))
+                parseIds<RecognizerId>(requiredText)
             );
             UF_TRY_VALUE(
                 forbiddenText,
@@ -471,7 +471,7 @@ namespace uf::annotation
             );
             UF_TRY_VALUE(
                 forbidden,
-                parseIds<RecognizerId>(std::move(forbiddenText))
+                parseIds<RecognizerId>(forbiddenText)
             );
             return PageSignature::create(
                 PageSpec{
@@ -552,7 +552,7 @@ namespace uf::annotation
                     .m_id             = id,
                     .m_sourceId       = sourceId,
                     .m_classification = classification,
-                    .m_expectation    = std::move(expectation),
+                    .m_expectation    = expectation,
                 }
             };
         }
@@ -661,9 +661,9 @@ namespace uf::annotation
         }
     }
 
-    AuthoringSource::AuthoringSource(AuthoringSourceSpec spec) noexcept
-        : m_id{std::move(spec.m_id)}
-        , m_contentHash{std::move(spec.m_contentHash)}
+    AuthoringSource::AuthoringSource(AuthoringSourceSpec&& spec)
+        : m_id{spec.m_id}
+        , m_contentHash{spec.m_contentHash}
         , m_relativePath{sourcePath(m_contentHash)}
         , m_fingerprint{spec.m_fingerprint}
         , m_provenance{std::move(spec.m_provenance)}
@@ -704,11 +704,16 @@ namespace uf::annotation
         return m_provenance;
     }
 
-    RegressionCase::RegressionCase(RegressionSpec spec) noexcept
-        : m_id{std::move(spec.m_id)}
-        , m_sourceId{std::move(spec.m_sourceId)}
+    RegressionCase::RegressionCase(RegressionSpec const& spec)
+        : RegressionCase{RegressionSpec{spec}}
+    {
+    }
+
+    RegressionCase::RegressionCase(RegressionSpec&& spec) noexcept
+        : m_id{spec.m_id}
+        , m_sourceId{spec.m_sourceId}
         , m_classification{spec.m_classification}
-        , m_expectation{std::move(spec.m_expectation)}
+        , m_expectation{spec.m_expectation}
     {
     }
 
@@ -724,10 +729,10 @@ namespace uf::annotation
     }
 
     AuthoringDocument::AuthoringDocument(
-        RecognitionCatalog catalog,
-        std::vector<AuthoringSource> sources,
-        std::vector<AuthoringRecognizerSource> recognizerSources,
-        std::vector<RegressionCase> regressions
+        RecognitionCatalog&& catalog,
+        std::vector<AuthoringSource>&& sources,
+        std::vector<AuthoringRecognizerSource>&& recognizerSources,
+        std::vector<RegressionCase>&& regressions
     ) noexcept
         : m_catalog{std::move(catalog)}
         , m_sources{std::move(sources)}
@@ -1211,7 +1216,7 @@ namespace uf::annotation
                     return invalidAuthoring("authoring regression quota exceeded");
                 }
                 UF_TRY_VALUE(regression, parseRegression(reader));
-                regressions.emplace_back(std::move(regression));
+                regressions.emplace_back(regression);
             }
             else
             {

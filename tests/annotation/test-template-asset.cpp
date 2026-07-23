@@ -77,7 +77,9 @@ namespace uf::annotation
 
     TEST_CASE("annotation template generation rejects crops outside source geometry")
     {
-        auto const source = std::vector<std::byte>(3U * 2U * 4U);
+        auto const source = std::vector<std::byte>(
+            std::size_t{3} * 2U * 4U
+        );
         auto const rejected = generateTemplateAsset(
             source,
             3,

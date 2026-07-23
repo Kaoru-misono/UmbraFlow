@@ -42,10 +42,10 @@ namespace uf::annotation
         struct ResolutionFixture final
         {
             RecognitionCatalog m_catalog;
-            RecognizerId m_anchorA;
-            RecognizerId m_anchorB;
-            PageId m_pageA;
-            PageId m_pageB;
+            RecognizerId m_anchorA{test::recognizerId(g_anchorAId)};
+            RecognizerId m_anchorB{test::recognizerId(g_anchorBId)};
+            PageId m_pageA{test::pageId(g_pageAId)};
+            PageId m_pageB{test::pageId(g_pageBId)};
         };
 
         auto resolutionFixture() -> ResolutionFixture

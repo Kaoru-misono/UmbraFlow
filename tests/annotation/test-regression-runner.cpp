@@ -324,7 +324,7 @@ namespace uf::annotation
         struct InterruptionCase final
         {
             RecognitionPolicy   m_policy{};
-            SadSearchStopReason m_reason;
+            SadSearchStopReason m_reason{};
         };
         auto const cases = std::array{
             InterruptionCase{
