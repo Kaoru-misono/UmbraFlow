@@ -1,8 +1,15 @@
 name: CI
 
 on:
+  # Only the default branch builds on push. A topic branch is covered by its
+  # pull request, and running both doubles the bill for one set of commits.
   push:
+    branches: [master]
   pull_request:
+  # macOS bills at ten times the Linux rate, so it runs weekly rather than on
+  # every push. A daily run would cost more than the whole matrix does today.
+  schedule:
+    - cron: "0 3 * * 1"
   workflow_dispatch:
 
 permissions:
@@ -49,11 +56,6 @@ jobs:
             configure: cmake --preset linux-release
             build: cmake --build --preset linux-release
             test: ctest --test-dir build/linux-release -L CI --output-on-failure
-          - name: macOS Clang
-            os: macos-latest
-            configure: cmake --preset macos-debug
-            build: cmake --build --preset macos-debug
-            test: ctest --test-dir build/macos-debug -L CI --output-on-failure
           - name: Windows MSVC
             os: windows-latest
             configure: cmake -S . -B build/windows -A x64
@@ -77,6 +79,26 @@ jobs:
         run: ${{ matrix.build }}
       - name: Test
         run: ${{ matrix.test }}
+
+  macos:
+    name: macOS Clang
+    # Every event except a push to the default branch. Pull requests still gate
+    # merges on macOS, and the weekly schedule catches drift on master.
+    if: github.event_name != 'push'
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          submodules: recursive
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+      - name: Configure
+        run: cmake --preset macos-debug
+      - name: Build
+        run: cmake --build --preset macos-debug
+      - name: Test
+        run: ctest --test-dir build/macos-debug -L CI --output-on-failure
 
   clang-analysis:
     name: Clang lifetime, bounds, thread safety, and tidy
