@@ -94,6 +94,16 @@ cpp_add_test(
         ${PROJECT_NAME}_image
 )
 
+cpp_add_test(
+    NAME test-cli
+    SOURCES
+        cli/test-args.cpp
+        cli/test-file-trace-sink.cpp
+        cli/test-name-resolution.cpp
+    LIBS
+        ${PROJECT_NAME}_cli_support
+)
+
 if(TARGET ${PROJECT_NAME}_script)
     cpp_add_test(
         NAME test-script

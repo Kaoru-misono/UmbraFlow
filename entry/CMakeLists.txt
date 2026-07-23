@@ -1,3 +1,53 @@
+set(CLI_LIBRARY ${PROJECT_NAME}_cli_support)
+
+# Platform-free product logic: argument parsing, name resolution, the file trace
+# sink, and the error/exit-code boundary. Linked into the executable and tests.
+add_library(${CLI_LIBRARY} STATIC
+    cli/args.cpp
+    cli/args.hpp
+    cli/file-trace-sink.cpp
+    cli/file-trace-sink.hpp
+    cli/name-resolution.cpp
+    cli/name-resolution.hpp
+    cli/run.cpp
+    cli/run.hpp
+)
+cpp_apply_safety_profile(${CLI_LIBRARY})
+target_include_directories(${CLI_LIBRARY}
+    PUBLIC
+        ${CMAKE_CURRENT_SOURCE_DIR}/cli
+)
+target_link_libraries(${CLI_LIBRARY}
+    PUBLIC
+        ${PROJECT_NAME}_engine
+)
+target_compile_features(${CLI_LIBRARY} PUBLIC cxx_std_23)
+
+if(WIN32 AND TARGET ${PROJECT_NAME}_controller)
+    target_sources(${CLI_LIBRARY}
+        PRIVATE
+            cli/run-windows.cpp
+            cli/platform/controller-action-sink.cpp
+            cli/platform/controller-action-sink.hpp
+            cli/platform/wgc-frame-source.hpp
+            cli/platform/windows-console-cancellation.cpp
+            cli/platform/windows-console-cancellation.hpp
+            cli/platform/windows-target-geometry.cpp
+            cli/platform/windows-target-geometry.hpp
+    )
+    target_link_libraries(${CLI_LIBRARY}
+        PUBLIC
+            ${PROJECT_NAME}_controller
+        PRIVATE
+            user32
+    )
+else()
+    target_sources(${CLI_LIBRARY}
+        PRIVATE
+            cli/run-unsupported.cpp
+    )
+endif()
+
 add_executable(${PROJECT_NAME}
     cli/main.cpp
     ${CPP_UTF8_RC}
@@ -6,7 +56,7 @@ cpp_apply_safety_profile(${PROJECT_NAME})
 cpp_apply_utf8_manifest(${PROJECT_NAME})
 
 set_target_properties(${PROJECT_NAME} PROPERTIES OUTPUT_NAME "umbra-flow")
-target_link_libraries(${PROJECT_NAME} PRIVATE ${PROJECT_NAME}_core)
+target_link_libraries(${PROJECT_NAME} PRIVATE ${CLI_LIBRARY} ${PROJECT_NAME}_core)
 target_compile_features(${PROJECT_NAME} PRIVATE cxx_std_23)
 
 if(TARGET ${PROJECT_NAME}_controller)
