@@ -129,7 +129,17 @@ namespace uf::image
                 // SAFETY: stb promises size readable bytes in p_data for this
                 // synchronous callback. destination owns exactly byteCount writable
                 // bytes, the ranges do not overlap, and neither pointer escapes.
+                // Reading through the callback's foreign pointer is this
+                // boundary's purpose, so the bounds diagnostic is suppressed for
+                // the copy alone.
+#if defined(__clang__)
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wunsafe-buffer-usage"
+#endif
                 std::memcpy(destination.data(), p_data, *byteCount);
+#if defined(__clang__)
+#pragma clang diagnostic pop
+#endif
             }
             catch (...)
             {

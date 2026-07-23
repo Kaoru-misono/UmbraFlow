@@ -398,10 +398,20 @@ namespace uf::image
             // SAFETY: the successful RGBA16 decode returned exactly one stbi_us
             // sample per byte in the validated RGBA8 destination size. decoded
             // owns that allocation for the lifetime of this call-scoped view.
+            // Adopting a foreign pointer and length is the purpose of this FFI
+            // boundary, so the bounds diagnostic is suppressed for that step
+            // alone and the result is a bounded view for everything after it.
+#if defined(__clang__)
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wunsafe-buffer-usage"
+#endif
             auto const decodedSamples = std::span<stbi_us const>{
                 decoded.get(),
                 *decodedBytes
             };
+#if defined(__clang__)
+#pragma clang diagnostic pop
+#endif
             std::ranges::transform(
                 decodedSamples,
                 pixels.begin(),
@@ -448,8 +458,17 @@ namespace uf::image
 
             // SAFETY: decoded points to decodedBytes RGBA bytes because
             // STBI_rgb_alpha was requested. pixels owns exactly that many
-            // writable bytes; the ranges are live and do not overlap.
+            // writable bytes; the ranges are live and do not overlap. Reading
+            // through a foreign pointer is this boundary's purpose, so the
+            // bounds diagnostic is suppressed for the copy alone.
+#if defined(__clang__)
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wunsafe-buffer-usage"
+#endif
             std::memcpy(pixels.data(), decoded.get(), *decodedBytes);
+#if defined(__clang__)
+#pragma clang diagnostic pop
+#endif
         }
         return RgbaImage{
             .m_width = metadata.m_width,

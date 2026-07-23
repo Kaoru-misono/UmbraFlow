@@ -52,7 +52,7 @@ namespace uf::annotation
         CHECK(parsed->toString() == canonical);
         CHECK(parsed->hex() == canonical.substr(std::string_view{"sha256:"}.size()));
 
-        for (auto const invalid : std::array{
+        for (auto const& invalid : std::array{
             std::string{"sha256:abcd"},
             std::string{
                 "sha256:E3B0C44298FC1C149AFBF4C8996FB924"
