@@ -133,12 +133,20 @@ if(WIN32 AND TARGET ${PROJECT_NAME}_annotation)
     set(WORKBENCH_LIBRARY ${PROJECT_NAME}_workbench_support)
 
     add_library(${WORKBENCH_LIBRARY} STATIC
+        workbench/app/canvas-math.cpp
+        workbench/app/canvas-math.hpp
+        workbench/app/workbench-app.cpp
+        workbench/app/workbench-app.hpp
         workbench/authoring-edit.cpp
         workbench/authoring-edit.hpp
         workbench/platform/windows-file-publication.cpp
         workbench/platform/windows-file-publication.hpp
+        workbench/preview.cpp
+        workbench/preview.hpp
         workbench/project-persistence.cpp
         workbench/project-persistence.hpp
+        workbench/source-ingestion.cpp
+        workbench/source-ingestion.hpp
     )
     cpp_apply_safety_profile(${WORKBENCH_LIBRARY})
     target_include_directories(${WORKBENCH_LIBRARY}
@@ -148,6 +156,93 @@ if(WIN32 AND TARGET ${PROJECT_NAME}_annotation)
     target_link_libraries(${WORKBENCH_LIBRARY}
         PUBLIC
             ${PROJECT_NAME}_annotation
+        PRIVATE
+            ${PROJECT_NAME}_image
     )
     target_compile_features(${WORKBENCH_LIBRARY} PUBLIC cxx_std_23)
+
+    # One-shot Windows Graphics Capture ingestion reuses the controller capture
+    # session, so it is only compiled where the controller module is present.
+    if(TARGET ${PROJECT_NAME}_controller)
+        target_sources(${WORKBENCH_LIBRARY}
+            PRIVATE
+                workbench/platform/windows-capture-source.cpp
+                workbench/platform/windows-capture-source.hpp
+        )
+        target_link_libraries(${WORKBENCH_LIBRARY}
+            PRIVATE
+                ${PROJECT_NAME}_controller
+        )
+    endif()
+
+    # The GUI executable needs the engine (for backend logic) and the controller
+    # (for WGC capture ingestion). Dear ImGui and the Direct3D 11 shell live only
+    # behind this gate, so the platform-free workbench_support stays free of them.
+    if(TARGET ${PROJECT_NAME}_controller AND TARGET ${PROJECT_NAME}_engine)
+        set(IMGUI_LIBRARY imgui)
+
+        # Dear ImGui ships no build system, so the core translation units and the
+        # Win32 + Direct3D 11 backends are compiled here as a private static
+        # library. Its headers are exported SYSTEM so the project's strict
+        # warnings-as-errors profile never fires on third-party code, mirroring how
+        # modules/script/external isolates Luau.
+        add_library(${IMGUI_LIBRARY} STATIC
+            workbench/external/imgui/imgui.cpp
+            workbench/external/imgui/imgui_draw.cpp
+            workbench/external/imgui/imgui_tables.cpp
+            workbench/external/imgui/imgui_widgets.cpp
+            workbench/external/imgui/backends/imgui_impl_win32.cpp
+            workbench/external/imgui/backends/imgui_impl_dx11.cpp
+        )
+        target_include_directories(${IMGUI_LIBRARY} SYSTEM PUBLIC
+            workbench/external/imgui
+            workbench/external/imgui/backends
+        )
+        if(MSVC)
+            target_compile_options(${IMGUI_LIBRARY} PRIVATE /W0)
+        endif()
+        target_link_libraries(${IMGUI_LIBRARY}
+            PUBLIC
+                d3d11
+                dxgi
+                dwmapi
+                imm32
+                user32
+                gdi32
+        )
+        target_compile_features(${IMGUI_LIBRARY} PRIVATE cxx_std_17)
+
+        set(WORKBENCH_EXECUTABLE ${PROJECT_NAME}_workbench)
+
+        add_executable(${WORKBENCH_EXECUTABLE}
+            workbench/app/main.cpp
+            workbench/app/panels.cpp
+            workbench/app/panels.hpp
+            workbench/platform/windows-file-dialog.cpp
+            workbench/platform/windows-file-dialog.hpp
+            workbench/platform/windows-gui-shell.cpp
+            workbench/platform/windows-gui-shell.hpp
+            workbench/platform/windows-texture-cache.cpp
+            workbench/platform/windows-texture-cache.hpp
+            ${CPP_UTF8_RC}
+        )
+        cpp_apply_safety_profile(${WORKBENCH_EXECUTABLE})
+        cpp_apply_utf8_manifest(${WORKBENCH_EXECUTABLE})
+        set_target_properties(${WORKBENCH_EXECUTABLE} PROPERTIES
+            OUTPUT_NAME "umbra-workbench"
+        )
+        target_link_libraries(${WORKBENCH_EXECUTABLE}
+            PRIVATE
+                ${WORKBENCH_LIBRARY}
+                ${PROJECT_NAME}_engine
+                ${PROJECT_NAME}_controller
+                ${PROJECT_NAME}_image
+                ${IMGUI_LIBRARY}
+                comdlg32
+                d3d11
+                dxgi
+                user32
+        )
+        target_compile_features(${WORKBENCH_EXECUTABLE} PRIVATE cxx_std_23)
+    endif()
 endif()

@@ -157,7 +157,11 @@ if(TARGET ${PROJECT_NAME}_workbench_support)
         NAME test-workbench
         SOURCES
             workbench/test-authoring-edit.cpp
+            workbench/test-canvas-math.cpp
+            workbench/test-preview.cpp
             workbench/test-project-persistence.cpp
+            workbench/test-source-ingestion.cpp
+            workbench/test-workbench-app.cpp
         LIBS
             ${PROJECT_NAME}_workbench_support
             ${PROJECT_NAME}_image

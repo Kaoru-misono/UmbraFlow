@@ -313,6 +313,28 @@ namespace uf::workbench
             return std::vector<std::byte>{view.begin(), view.end()};
         }
 
+        auto overwriteFile(
+            std::filesystem::path const& path,
+            std::span<std::byte const> bytes
+        ) -> void
+        {
+            auto contents = std::string(bytes.size(), '\0');
+            for (auto index = std::size_t{0}; index < bytes.size(); ++index)
+            {
+                contents[index] = std::to_integer<char>(bytes[index]);
+            }
+            auto stream = std::ofstream{
+                path,
+                std::ios::binary | std::ios::trunc
+            };
+            REQUIRE(stream.is_open());
+            stream.write(
+                contents.data(),
+                static_cast<std::streamsize>(contents.size())
+            );
+            REQUIRE(stream.good());
+        }
+
         [[nodiscard]]
         auto containsTemporaryFile(
             std::filesystem::path const& root
@@ -590,5 +612,93 @@ namespace uf::workbench
             == originalRuntime
         );
         CHECK_FALSE(containsTemporaryFile(project.path()));
+    }
+
+    TEST_CASE("workbench loads a saved project and round-trips its document and sources")
+    {
+        auto const project = TemporaryProject{"load"};
+        auto const fixture = projectFixture(0);
+        auto const assets  = std::span{&fixture.m_sourceAsset, std::size_t{1}};
+        REQUIRE(
+            saveAndGenerateAuthoringProject(
+                project.path(),
+                fixture.m_document,
+                assets
+            ).has_value()
+        );
+
+        auto const loaded     = loadAuthoringProject(project.path());
+        auto const loadedInfo = loaded
+            ? std::string{"loaded"}
+            : toString(loaded.error());
+        INFO(loadedInfo);
+        REQUIRE(loaded.has_value());
+
+        CHECK(
+            annotation::serializeAuthoringDocument(loaded->m_document)
+            == annotation::serializeAuthoringDocument(fixture.m_document)
+        );
+        REQUIRE(loaded->m_sources.size() == 1U);
+        CHECK(loaded->m_sources.front().m_id == fixture.m_sourceAsset.m_id);
+        CHECK(
+            loaded->m_sources.front().m_pngBytes
+            == fixture.m_sourceAsset.m_pngBytes
+        );
+    }
+
+    TEST_CASE("workbench rejects a source whose bytes no longer match the document hash")
+    {
+        auto const project = TemporaryProject{"load-hash"};
+        auto const fixture = projectFixture(0);
+        auto const assets  = std::span{&fixture.m_sourceAsset, std::size_t{1}};
+        REQUIRE(
+            saveAndGenerateAuthoringProject(
+                project.path(),
+                fixture.m_document,
+                assets
+            ).has_value()
+        );
+
+        auto const sourcePath = project.path()
+            / fixture.m_document.sources().front().relativePath();
+        auto tampered = fixture.m_sourceAsset.m_pngBytes;
+        REQUIRE_FALSE(tampered.empty());
+        tampered.back() ^= std::byte{1};
+        overwriteFile(sourcePath, tampered);
+
+        auto const loaded = loadAuthoringProject(project.path());
+        REQUIRE_FALSE(loaded.has_value());
+        annotation::test::requireErrorKind(
+            loaded.error(),
+            AutomationErrorKind::InvalidResource
+        );
+    }
+
+    TEST_CASE("workbench rejects a project whose referenced source is missing")
+    {
+        auto const project = TemporaryProject{"load-missing"};
+        auto const fixture = projectFixture(0);
+        auto const assets  = std::span{&fixture.m_sourceAsset, std::size_t{1}};
+        REQUIRE(
+            saveAndGenerateAuthoringProject(
+                project.path(),
+                fixture.m_document,
+                assets
+            ).has_value()
+        );
+
+        auto const sourcePath = project.path()
+            / fixture.m_document.sources().front().relativePath();
+        auto error         = std::error_code{};
+        auto const removed = std::filesystem::remove(sourcePath, error);
+        REQUIRE(removed);
+        REQUIRE_FALSE(error);
+
+        auto const loaded = loadAuthoringProject(project.path());
+        REQUIRE_FALSE(loaded.has_value());
+        annotation::test::requireErrorKind(
+            loaded.error(),
+            AutomationErrorKind::InvalidResource
+        );
     }
 }
