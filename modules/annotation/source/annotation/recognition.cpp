@@ -86,7 +86,7 @@ namespace uf::annotation
         std::optional<PixelRect> matchedRect,
         std::optional<float> displayConfidence
     ) noexcept
-        : m_recognizerId{std::move(recognizerId)}
+        : m_recognizerId{recognizerId}
         , m_hit{hit}
         , m_sadScore{sadScore}
         , m_maximumSad{maximumSad}
@@ -112,8 +112,8 @@ namespace uf::annotation
         RecognizerId recognizerId,
         Evaluation evaluation
     ) noexcept
-        : m_recognizerId{std::move(recognizerId)}
-        , m_evaluation{std::move(evaluation)}
+        : m_recognizerId{recognizerId}
+        , m_evaluation{evaluation}
     {
     }
 
@@ -240,7 +240,7 @@ namespace uf::annotation
         std::vector<AnchorEvidence> forbidden,
         bool candidate
     ) noexcept
-        : m_pageId{std::move(pageId)}
+        : m_pageId{pageId}
         , m_required{std::move(required)}
         , m_forbidden{std::move(forbidden)}
         , m_candidate{candidate}
@@ -289,7 +289,7 @@ namespace uf::annotation
     }
 
     ResolvedPage::ResolvedPage(PageId pageId, PageResolutionEvidence evidence) noexcept
-        : m_pageId{std::move(pageId)}
+        : m_pageId{pageId}
         , m_evidence{std::move(evidence)}
     {
     }

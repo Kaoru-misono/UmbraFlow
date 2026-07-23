@@ -79,6 +79,8 @@ namespace uf::workbench
 
             TemporaryProject(TemporaryProject const&) = delete;
             auto operator=(TemporaryProject const&) -> TemporaryProject& = delete;
+            TemporaryProject(TemporaryProject&&) = delete;
+            auto operator=(TemporaryProject&&) -> TemporaryProject& = delete;
 
             ~TemporaryProject() noexcept
             {

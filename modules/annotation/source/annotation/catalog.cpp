@@ -1,6 +1,7 @@
 #include "catalog.hpp"
 
 #include <core/numeric/checked-arithmetic.hpp>
+#include <core/safety/checked-access.hpp>
 #include <core/text/utf8.hpp>
 #include <core/types/integer.hpp>
 
@@ -160,13 +161,14 @@ namespace uf::annotation
             }
 
             auto const byteIndex = nibbleIndex / 2;
+            auto& byte = checkedAt(bytes, byteIndex);
             if (nibbleIndex % 2 == 0)
             {
-                bytes[byteIndex] = static_cast<uint8>(*nibble << 4);
+                byte = static_cast<uint8>(*nibble << 4);
             }
             else
             {
-                bytes[byteIndex] = static_cast<uint8>(bytes[byteIndex] | *nibble);
+                byte = static_cast<uint8>(byte | *nibble);
             }
             ++nibbleIndex;
         }
@@ -187,7 +189,7 @@ namespace uf::annotation
                 result.push_back('-');
             }
 
-            auto const value = m_bytes[index];
+            auto const value = checkedAt(m_bytes, index);
             result.push_back(s_hexDigits[value >> 4]);
             result.push_back(s_hexDigits[value & uint8{0x0F}]);
         }
@@ -347,7 +349,7 @@ namespace uf::annotation
     }
 
     RecognizerDefinition::RecognizerDefinition(RecognizerSpec spec) noexcept
-        : m_id{std::move(spec.m_id)}
+        : m_id{spec.m_id}
         , m_name{std::move(spec.m_name)}
         , m_annotationType{spec.m_annotationType}
         , m_templateRect{spec.m_templateRect}
@@ -478,7 +480,7 @@ namespace uf::annotation
     }
 
     PageSignature::PageSignature(PageSpec spec) noexcept
-        : m_id{std::move(spec.m_id)}
+        : m_id{spec.m_id}
         , m_name{std::move(spec.m_name)}
         , m_required{std::move(spec.m_required)}
         , m_forbidden{std::move(spec.m_forbidden)}

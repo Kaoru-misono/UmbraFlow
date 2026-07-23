@@ -57,6 +57,9 @@ namespace uf::annotation
         SourceProvenance   m_provenance;
     };
 
+    // Keep the transfer constructors in this file reference-based. LLVM 23's
+    // performance-unnecessary-value-param check can recurse through StrongValue
+    // construction when these sinks are passed by value.
     class AuthoringSource final
     {
         SourceId           m_id;
@@ -65,7 +68,7 @@ namespace uf::annotation
         ProjectFingerprint m_fingerprint;
         SourceProvenance   m_provenance;
 
-        explicit AuthoringSource(AuthoringSourceSpec spec) noexcept;
+        explicit AuthoringSource(AuthoringSourceSpec&& spec);
 
     public:
         [[nodiscard]]
@@ -142,7 +145,8 @@ namespace uf::annotation
         RegressionExpectation    m_expectation;
 
     public:
-        explicit RegressionCase(RegressionSpec spec) noexcept;
+        explicit RegressionCase(RegressionSpec const& spec);
+        explicit RegressionCase(RegressionSpec&& spec) noexcept;
 
         [[nodiscard]] auto id() const -> RegressionId;
         [[nodiscard]] auto sourceId() const -> SourceId;
@@ -162,10 +166,10 @@ namespace uf::annotation
         std::vector<RegressionCase>              m_regressions{};
 
         AuthoringDocument(
-            RecognitionCatalog catalog,
-            std::vector<AuthoringSource> sources,
-            std::vector<AuthoringRecognizerSource> recognizerSources,
-            std::vector<RegressionCase> regressions
+            RecognitionCatalog&& catalog,
+            std::vector<AuthoringSource>&& sources,
+            std::vector<AuthoringRecognizerSource>&& recognizerSources,
+            std::vector<RegressionCase>&& regressions
         ) noexcept;
 
     public:

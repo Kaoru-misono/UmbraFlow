@@ -11,6 +11,9 @@
 
 namespace uf::annotation
 {
+    // Keep ownership-bearing constructor sinks reference-based. LLVM 23's
+    // performance-unnecessary-value-param check can recurse through StrongValue
+    // construction when those sinks are passed by value.
     class ActionDetection final
     {
         ProjectId m_projectId;
@@ -18,9 +21,9 @@ namespace uf::annotation
         Detection m_detection;
 
         ActionDetection(
-            ProjectId projectId,
+            ProjectId&& projectId,
             RecognizerId recognizerId,
-            Detection detection
+            Detection&& detection
         ) noexcept;
 
     public:

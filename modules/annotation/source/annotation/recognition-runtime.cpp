@@ -321,7 +321,7 @@ namespace uf::annotation
             );
             UF_CHECK(p_evidence != nullptr);
             completedEvidence.emplace_back(*p_evidence);
-            evaluations.emplace_back(std::move(evaluation));
+            evaluations.emplace_back(evaluation);
         }
 
         UF_TRY_VALUE(

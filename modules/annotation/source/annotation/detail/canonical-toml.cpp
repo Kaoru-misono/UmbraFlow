@@ -69,7 +69,7 @@ namespace uf::annotation::detail
                 )
             );
         }
-        auto const line = m_text.substr(m_offset, end - m_offset);
+        auto line = m_text.substr(m_offset, end - m_offset);
         if (line.contains('\r'))
         {
             return invalid(

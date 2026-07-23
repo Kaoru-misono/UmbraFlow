@@ -21,12 +21,12 @@ namespace uf::annotation
     }
 
     ActionDetection::ActionDetection(
-        ProjectId projectId,
+        ProjectId&& projectId,
         RecognizerId recognizerId,
-        Detection detection
+        Detection&& detection
     ) noexcept
         : m_projectId{std::move(projectId)}
-        , m_recognizerId{std::move(recognizerId)}
+        , m_recognizerId{recognizerId}
         , m_detection{std::move(detection)}
     {
     }
@@ -58,7 +58,7 @@ namespace uf::annotation
         }
 
         return ActionDetection{
-            catalog.projectId(),
+            ProjectId{catalog.projectId()},
             recognizerId,
             std::move(detection)
         };

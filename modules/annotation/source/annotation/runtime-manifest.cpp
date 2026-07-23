@@ -75,7 +75,7 @@ namespace uf::annotation
 
         [[nodiscard]]
         auto parseRecognizerIds(
-            std::vector<std::string> encoded
+            std::vector<std::string> const& encoded
         ) -> Result<std::vector<RecognizerId>>
         {
             auto ids = std::vector<RecognizerId>{};
@@ -90,7 +90,7 @@ namespace uf::annotation
 
         [[nodiscard]]
         auto parsePageIds(
-            std::vector<std::string> encoded
+            std::vector<std::string> const& encoded
         ) -> Result<std::vector<PageId>>
         {
             auto ids = std::vector<PageId>{};
@@ -208,7 +208,7 @@ namespace uf::annotation
                     encoded,
                     reader.takeStringArrayField("allowed_page_ids")
                 );
-                UF_TRY_VALUE(parsed, parsePageIds(std::move(encoded)));
+                UF_TRY_VALUE(parsed, parsePageIds(encoded));
                 allowedPageIds = std::move(parsed);
             }
 
@@ -249,12 +249,12 @@ namespace uf::annotation
                 requiredText,
                 reader.takeStringArrayField("required")
             );
-            UF_TRY_VALUE(required, parseRecognizerIds(std::move(requiredText)));
+            UF_TRY_VALUE(required, parseRecognizerIds(requiredText));
             UF_TRY_VALUE(
                 forbiddenText,
                 reader.takeStringArrayField("forbidden")
             );
-            UF_TRY_VALUE(forbidden, parseRecognizerIds(std::move(forbiddenText)));
+            UF_TRY_VALUE(forbidden, parseRecognizerIds(forbiddenText));
             return PageSignature::create(
                 PageSpec{
                     .m_id        = id,
