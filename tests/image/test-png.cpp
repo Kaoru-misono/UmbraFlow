@@ -12,6 +12,7 @@
 #include <filesystem>
 #include <format>
 #include <memory>
+#include <string>
 #include <string_view>
 #include <system_error>
 #include <vector>
@@ -61,6 +62,90 @@ namespace uf::image
         CHECK(decoded->m_width == 2U);
         CHECK(decoded->m_height == 2U);
         CHECK(decoded->m_pixels == pixels);
+    }
+
+    TEST_CASE("image PNG encoder is deterministic for identical RGBA input")
+    {
+        auto const pixels = std::vector{
+            asByte(0xFF), asByte(0x00), asByte(0x00), asByte(0xFF),
+            asByte(0x00), asByte(0xFF), asByte(0x00), asByte(0x80),
+            asByte(0x00), asByte(0x00), asByte(0xFF), asByte(0x40),
+            asByte(0x12), asByte(0x34), asByte(0x56), asByte(0x78),
+        };
+
+        auto const first = encodeRgbaPng("determinism.png", 2, 2, pixels);
+        auto const second = encodeRgbaPng("determinism.png", 2, 2, pixels);
+        REQUIRE(first.has_value());
+        REQUIRE(second.has_value());
+        CHECK(*first == *second);
+    }
+
+    TEST_CASE("image PNG encoder pins the exact golden byte sequence")
+    {
+        auto const pixels = std::vector{
+            asByte(0xFF), asByte(0x00), asByte(0x00), asByte(0xFF),
+            asByte(0x00), asByte(0xFF), asByte(0x00), asByte(0x80),
+            asByte(0x00), asByte(0x00), asByte(0xFF), asByte(0x40),
+            asByte(0x12), asByte(0x34), asByte(0x56), asByte(0x78),
+        };
+
+        auto const result = encodeRgbaPng("golden.png", 2, 2, pixels);
+        REQUIRE(result.has_value());
+        auto const& encoded = *result;
+
+        // The eight-byte PNG signature and the full IHDR chunk are fixed by the
+        // format and by the pinned encoder configuration. Any stb change that
+        // altered the header would break template identity, so assert them
+        // exactly. The IHDR CRC (bytes 29..32) is deliberately covered by the
+        // full-sequence golden below rather than recomputed here.
+        auto const header = std::array{
+            asByte(0x89), asByte(0x50), asByte(0x4E), asByte(0x47),
+            asByte(0x0D), asByte(0x0A), asByte(0x1A), asByte(0x0A),
+            asByte(0x00), asByte(0x00), asByte(0x00), asByte(0x0D),
+            asByte(0x49), asByte(0x48), asByte(0x44), asByte(0x52),
+            asByte(0x00), asByte(0x00), asByte(0x00), asByte(0x02),
+            asByte(0x00), asByte(0x00), asByte(0x00), asByte(0x02),
+            asByte(0x08), asByte(0x06), asByte(0x00), asByte(0x00),
+            asByte(0x00),
+        };
+        REQUIRE(encoded.size() >= header.size());
+        auto const prefix = std::vector<std::byte>{
+            encoded.begin(),
+            encoded.begin() + static_cast<std::ptrdiff_t>(header.size()),
+        };
+        CHECK(
+            prefix
+            == std::vector<std::byte>{header.begin(), header.end()}
+        );
+
+        // Full-sequence pin. The compression payload cannot be derived by hand,
+        // so the golden constant is captured from a green build and frozen here.
+        // Any stb or configuration change that alters the encoded stream must be
+        // reviewed against this exact sequence.
+        auto const golden = std::vector<std::byte>{
+            asByte(0x89), asByte(0x50), asByte(0x4E), asByte(0x47),
+            asByte(0x0D), asByte(0x0A), asByte(0x1A), asByte(0x0A),
+            asByte(0x00), asByte(0x00), asByte(0x00), asByte(0x0D),
+            asByte(0x49), asByte(0x48), asByte(0x44), asByte(0x52),
+            asByte(0x00), asByte(0x00), asByte(0x00), asByte(0x02),
+            asByte(0x00), asByte(0x00), asByte(0x00), asByte(0x02),
+            asByte(0x08), asByte(0x06), asByte(0x00), asByte(0x00),
+            asByte(0x00), asByte(0x72), asByte(0xB6), asByte(0x0D),
+            asByte(0x24), asByte(0x00), asByte(0x00), asByte(0x00),
+            asByte(0x19), asByte(0x49), asByte(0x44), asByte(0x41),
+            asByte(0x54), asByte(0x78), asByte(0x5E), asByte(0x63),
+            asByte(0xF8), asByte(0xCF), asByte(0x00), asByte(0x44),
+            asByte(0xFF), asByte(0x19), asByte(0x1A), asByte(0x98),
+            asByte(0x18), asByte(0x19), asByte(0xFE), asByte(0x3B),
+            asByte(0x0A), asByte(0x99), asByte(0x86), asByte(0xFD),
+            asByte(0x00), asByte(0x00), asByte(0x39), asByte(0xCB),
+            asByte(0x06), asByte(0x56), asByte(0x80), asByte(0xD7),
+            asByte(0x77), asByte(0x7E), asByte(0x00), asByte(0x00),
+            asByte(0x00), asByte(0x00), asByte(0x49), asByte(0x45),
+            asByte(0x4E), asByte(0x44), asByte(0xAE), asByte(0x42),
+            asByte(0x60), asByte(0x82),
+        };
+        CHECK(encoded == golden);
     }
 
     TEST_CASE("image PNG encoder retains the operating-system cause for output failures")

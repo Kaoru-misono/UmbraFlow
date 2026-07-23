@@ -305,6 +305,21 @@ namespace uf::image
         }
 
         auto encoded = EncodedPng{};
+        // SAFETY: stbi_write_png_compression_level and stbi_write_force_png_filter
+        // are stb_image_write process globals that nothing else in the project
+        // sets. Pinning them freezes the encoder configuration so template
+        // content hashes stay stable across stb upgrades and any ambient global
+        // mutation. The pinned values are stb's current defaults, frozen
+        // deliberately rather than inherited. The stores run exactly once under
+        // the magic-static guard, which synchronizes-with every later caller, so
+        // stb's internal reads of these non-atomic globals during encoding never
+        // race with a write even when encoders run concurrently.
+        static bool const s_encoderPinned = [] {
+            stbi_write_png_compression_level = 8;
+            stbi_write_force_png_filter      = -1;
+            return true;
+        }();
+        static_cast<void>(s_encoderPinned);
         // SAFETY: geometry validation proves pixels contains exactly height
         // tightly packed RGBA rows of encodedStride bytes. stb reads the span
         // synchronously, invokes the non-throwing callback with the live encoded
