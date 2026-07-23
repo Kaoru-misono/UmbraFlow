@@ -65,10 +65,13 @@ namespace uf::annotation
                 static_cast<std::size_t>(height)
             );
             REQUIRE(area.has_value());
-            auto const pixelCount = checkedMultiply(*area, std::size_t{4});
+            auto const pixelCount = checkedMultiply(
+                area.value_or(std::size_t{0}),
+                std::size_t{4}
+            );
             REQUIRE(pixelCount.has_value());
             auto resized = pixels;
-            resized.resize(*pixelCount, asByte(0));
+            resized.resize(pixelCount.value_or(std::size_t{0}), asByte(0));
             for (auto index = std::size_t{0}; index < resized.size(); index += 4U)
             {
                 checkedAt(resized, index) ^= asByte(redOffset);

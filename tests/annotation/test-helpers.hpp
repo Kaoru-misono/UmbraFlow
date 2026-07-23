@@ -196,13 +196,19 @@ namespace uf::annotation::test
         auto const height = checkedCast<std::size_t>(projectFingerprint.height());
         REQUIRE(width.has_value());
         REQUIRE(height.has_value());
-        auto const stride = checkedMultiply(*width, std::size_t{4});
+        auto const stride = checkedMultiply(
+            width.value_or(std::size_t{0}),
+            std::size_t{4}
+        );
         REQUIRE(stride.has_value());
-        auto const length = checkedMultiply(*stride, *height);
+        auto const length = checkedMultiply(
+            stride.value_or(std::size_t{0}),
+            height.value_or(std::size_t{0})
+        );
         REQUIRE(length.has_value());
         auto const pixels = std::shared_ptr<FrameBuffer const>{
             std::make_shared<FrameBuffer>(
-                std::vector<std::byte>(*length)
+                std::vector<std::byte>(length.value_or(std::size_t{0}))
             )
         };
         auto result = Frame::create(

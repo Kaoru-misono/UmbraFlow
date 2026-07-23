@@ -291,10 +291,13 @@ namespace uf::workbench
 
             auto stream = std::ifstream{path, std::ios::binary};
             REQUIRE(stream.is_open());
-            auto text = std::string(*size, '\0');
+            auto text = std::string(size.value_or(std::size_t{0}), '\0');
             if (!text.empty())
             {
-                stream.read(text.data(), *streamSize);
+                stream.read(
+                    text.data(),
+                    streamSize.value_or(std::streamsize{0})
+                );
                 REQUIRE(stream.good());
             }
             return text;
