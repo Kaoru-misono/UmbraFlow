@@ -491,6 +491,17 @@ namespace uf::annotation
     auto PageSignature::create(PageSpec const& spec) -> Result<PageSignature>
     {
         auto normalizedSpec = spec;
+        if (
+            normalizedSpec.m_required.empty()
+            && normalizedSpec.m_forbidden.empty()
+        )
+        {
+            return fail(
+                AutomationErrorKind::InvalidResource,
+                "page signature must contain at least one required or forbidden recognizer"
+            );
+        }
+
         std::ranges::sort(normalizedSpec.m_required, lessId<RecognizerId>);
         std::ranges::sort(normalizedSpec.m_forbidden, lessId<RecognizerId>);
         if (

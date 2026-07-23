@@ -307,6 +307,38 @@ namespace uf::annotation
         );
     }
 
+    TEST_CASE("page signature rejects an empty evidence signature")
+    {
+        auto const rejected = PageSignature::create(
+            PageSpec{
+                .m_id        = test::pageId(g_pageId),
+                .m_name      = test::resourceName("home"),
+                .m_required  = {},
+                .m_forbidden = {},
+            }
+        );
+
+        REQUIRE_FALSE(rejected.has_value());
+        requireRejection(
+            rejected.error(),
+            "page signature must contain at least one required or forbidden recognizer"
+        );
+    }
+
+    TEST_CASE("page signature accepts forbidden-only evidence")
+    {
+        auto const signature = PageSignature::create(
+            PageSpec{
+                .m_id        = test::pageId(g_pageId),
+                .m_name      = test::resourceName("home"),
+                .m_required  = {},
+                .m_forbidden = {test::recognizerId(g_anchorId)},
+            }
+        );
+
+        REQUIRE(signature.has_value());
+    }
+
     TEST_CASE("recognition catalog rejects every cross-resource inconsistency")
     {
         auto const projectFingerprint = test::fingerprint();

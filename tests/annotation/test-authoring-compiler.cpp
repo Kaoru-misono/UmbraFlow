@@ -45,6 +45,12 @@ namespace uf::annotation
             AuthoringSourceAsset m_sourceAsset;
         };
 
+        struct CompilationWorkFixture final
+        {
+            AuthoringDocument                 m_document;
+            std::vector<AuthoringSourceAsset> m_sourceAssets{};
+        };
+
         [[nodiscard]]
         auto encodedSource(
             uint32 width    = 3,
@@ -148,6 +154,165 @@ namespace uf::annotation
                     .m_id       = sourceId,
                     .m_pngBytes = std::move(pngBytes),
                 },
+            };
+        }
+
+        [[nodiscard]]
+        auto workloadFixture(
+            std::span<PixelRect const> templateRects
+        ) -> CompilerFixture
+        {
+            REQUIRE_FALSE(templateRects.empty());
+
+            auto const fingerprint = test::fingerprint(8192, 8192, 96, 96);
+            auto const sourceId    = test::sourceId(g_sourceId);
+            auto const sourceBytes = std::vector<std::byte>{};
+            auto const sourceHash  = sha256(sourceBytes);
+            REQUIRE(sourceHash.has_value());
+            auto source = AuthoringSource::create(
+                AuthoringSourceSpec{
+                    .m_id          = sourceId,
+                    .m_contentHash = *sourceHash,
+                    .m_fingerprint = fingerprint,
+                    .m_provenance  = ImportedSourceProvenance{},
+                }
+            );
+            REQUIRE(source.has_value());
+
+            auto recognizers   = std::vector<AuthoringRecognizerSpec>{};
+            auto recognizerIds = std::vector<RecognizerId>{};
+            recognizers.reserve(templateRects.size());
+            recognizerIds.reserve(templateRects.size());
+            auto const searchRoi = test::pixelRect(0, 0, 8192, 8192);
+            for (auto index = std::size_t{0}; index < templateRects.size(); ++index)
+            {
+                auto const recognizerId = test::recognizerId(
+                    std::format(
+                        "00000000-0000-0000-0000-{:012x}",
+                        index + 0x300U
+                    )
+                );
+                recognizerIds.emplace_back(recognizerId);
+                recognizers.emplace_back(
+                    AuthoringRecognizerSpec{
+                        .m_definition = test::recognizer(
+                            fingerprint,
+                            recognizerId,
+                            std::format("work_item_{}", index),
+                            AnnotationType::PageAnchor,
+                            checkedAt(templateRects, index),
+                            searchRoi
+                        ),
+                        .m_sourceId = sourceId,
+                    }
+                );
+            }
+
+            auto document = AuthoringDocument::create(
+                test::projectId(),
+                fingerprint,
+                {*source},
+                std::move(recognizers),
+                {
+                    test::page(
+                        test::pageId(g_pageId),
+                        "workload",
+                        {recognizerIds.front()}
+                    )
+                },
+                {}
+            );
+            REQUIRE(document.has_value());
+            return CompilerFixture{
+                .m_document    = *std::move(document),
+                .m_sourceAsset = AuthoringSourceAsset{
+                    .m_id       = sourceId,
+                    .m_pngBytes = sourceBytes,
+                },
+            };
+        }
+
+        [[nodiscard]]
+        auto compilationBoundaryFixture(
+            std::span<PixelRect const> templateRects
+        ) -> CompilationWorkFixture
+        {
+            auto const fingerprint = test::fingerprint(8192, 8192, 96, 96);
+            auto const sourceBytes = std::vector<std::byte>{};
+            auto const sourceHash  = sha256(sourceBytes);
+            REQUIRE(sourceHash.has_value());
+
+            auto sources      = std::vector<AuthoringSource>{};
+            auto sourceIds    = std::vector<SourceId>{};
+            auto sourceAssets = std::vector<AuthoringSourceAsset>{};
+            sources.reserve(4);
+            sourceIds.reserve(4);
+            sourceAssets.reserve(4);
+            for (auto index = std::size_t{0}; index < 4U; ++index)
+            {
+                auto const sourceId = test::sourceId(
+                    std::format(
+                        "00000000-0000-0000-0000-{:012x}",
+                        index + 0x400U
+                    )
+                );
+                auto source = AuthoringSource::create(
+                    AuthoringSourceSpec{
+                        .m_id          = sourceId,
+                        .m_contentHash = *sourceHash,
+                        .m_fingerprint = fingerprint,
+                        .m_provenance  = ImportedSourceProvenance{},
+                    }
+                );
+                REQUIRE(source.has_value());
+                sources.emplace_back(*std::move(source));
+                sourceIds.emplace_back(sourceId);
+                sourceAssets.emplace_back(
+                    AuthoringSourceAsset{
+                        .m_id       = sourceId,
+                        .m_pngBytes = sourceBytes,
+                    }
+                );
+            }
+
+            auto recognizers = std::vector<AuthoringRecognizerSpec>{};
+            recognizers.reserve(templateRects.size());
+            auto const searchRoi = test::pixelRect(0, 0, 8192, 8192);
+            for (auto index = std::size_t{0}; index < templateRects.size(); ++index)
+            {
+                auto const recognizerId = test::recognizerId(
+                    std::format(
+                        "00000000-0000-0000-0000-{:012x}",
+                        index + 0x500U
+                    )
+                );
+                recognizers.emplace_back(
+                    AuthoringRecognizerSpec{
+                        .m_definition = test::recognizer(
+                            fingerprint,
+                            recognizerId,
+                            std::format("boundary_item_{}", index),
+                            AnnotationType::InfoRegion,
+                            checkedAt(templateRects, index),
+                            searchRoi
+                        ),
+                        .m_sourceId = sourceIds.front(),
+                    }
+                );
+            }
+
+            auto document = AuthoringDocument::create(
+                test::projectId(),
+                fingerprint,
+                std::move(sources),
+                std::move(recognizers),
+                {},
+                {}
+            );
+            REQUIRE(document.has_value());
+            return CompilationWorkFixture{
+                .m_document     = *std::move(document),
+                .m_sourceAssets = std::move(sourceAssets),
             };
         }
     }
@@ -287,6 +452,79 @@ namespace uf::annotation
         CHECK(
             compiled->m_runtimeManifest.assets().front().m_templateHash
             == compiled->m_runtimeManifest.assets().back().m_templateHash
+        );
+    }
+
+    TEST_CASE("annotation authoring compilation allows the exact pixel-work boundary")
+    {
+        auto const fixture = compilationBoundaryFixture(
+            std::span<PixelRect const>{}
+        );
+
+        auto const result = compileAuthoringDocument(
+            fixture.m_document,
+            fixture.m_sourceAssets
+        );
+        REQUIRE_FALSE(result.has_value());
+        test::requireErrorKind(
+            result.error(),
+            AutomationErrorKind::InvalidResource
+        );
+        CHECK(result.error().message().contains("empty PNG"));
+        CHECK_FALSE(result.error().message().contains("pixel work quota"));
+    }
+
+    TEST_CASE("annotation authoring compilation rejects one pixel above the work boundary")
+    {
+        auto const fixture = compilationBoundaryFixture(
+            std::array{
+                test::pixelRect(0, 0, 1, 1),
+            }
+        );
+
+        auto const rejected = compileAuthoringDocument(
+            fixture.m_document,
+            fixture.m_sourceAssets
+        );
+        REQUIRE_FALSE(rejected.has_value());
+        test::requireErrorKind(
+            rejected.error(),
+            AutomationErrorKind::InvalidResource
+        );
+        CHECK(
+            rejected.error().message()
+            == "authoring compilation exceeds the 256 Mi-pixel work quota"
+        );
+    }
+
+    TEST_CASE("annotation authoring compilation counts identical template tasks once")
+    {
+        auto const repeatedRect = test::pixelRect(0, 0, 8192, 8192);
+        auto const fixture      = workloadFixture(
+            std::array{
+                repeatedRect,
+                repeatedRect,
+                repeatedRect,
+                repeatedRect,
+                repeatedRect,
+            }
+        );
+
+        auto const result = compileAuthoringDocument(
+            fixture.m_document,
+            std::span{
+                &fixture.m_sourceAsset,
+                std::size_t{1}
+            }
+        );
+        REQUIRE_FALSE(result.has_value());
+        test::requireErrorKind(
+            result.error(),
+            AutomationErrorKind::InvalidResource
+        );
+        CHECK(result.error().message().contains("empty PNG"));
+        CHECK_FALSE(
+            result.error().message().contains("compilation work quota")
         );
     }
 

@@ -296,6 +296,10 @@ by stable UUID; that byte-stable manifest order is also evaluation order. Every
 page is evaluated before success may be returned, so an earlier candidate can
 never hide a later ambiguity. For candidate set `C`:
 
+Every page signature contains at least one required or forbidden anchor. An
+empty signature is `InvalidResource`; P0 does not interpret it as an implicit
+default or fallback page.
+
 | `|C|` | Completed `PageOutcome` |
 |---|---|
 | 1 | `ResolvedPage(pageId, frame identity, evidence)` |
@@ -337,7 +341,8 @@ Before creating a Luau VM, loading must prove:
 
 - the exact supported schemas and project fingerprint agree;
 - all UUIDs and names are unique, and names are valid direct Luau member keys;
-- every stable-ID reference closes and `required ∩ forbidden` is empty;
+- every stable-ID reference closes, every page has at least one required or
+  forbidden anchor, and `required ∩ forbidden` is empty;
 - page signatures reference only `page_anchor` entries, while every
   `action_target`/`info_region` page membership resolves;
 - every `action_target` has at least one allowed page, and any explicit click

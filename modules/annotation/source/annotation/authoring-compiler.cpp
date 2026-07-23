@@ -12,9 +12,12 @@
 #include <algorithm>
 #include <cstddef>
 #include <format>
+#include <map>
 #include <ranges>
+#include <set>
 #include <span>
 #include <string>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -24,12 +27,52 @@ namespace uf::annotation
     {
         constexpr auto g_rgbaBytesPerPixel            = std::size_t{4};
         constexpr auto g_maximumCompiledTemplateBytes = std::size_t{512} * 1024U * 1024U;
+        constexpr auto g_maximumCompilationPixelWork  = std::size_t{256} * 1024U * 1024U;
 
         struct RecognizerWork final
         {
             SourceId    m_sourceId;
             std::size_t m_recognizerIndex{};
         };
+
+        struct TemplateTaskKey final
+        {
+            SourceId  m_sourceId;
+            PixelRect m_templateRect;
+        };
+
+        struct TemplateTaskLess final
+        {
+            [[nodiscard]]
+            auto operator()(
+                TemplateTaskKey const& left,
+                TemplateTaskKey const& right
+            ) const noexcept -> bool
+            {
+                if (left.m_sourceId != right.m_sourceId)
+                {
+                    return left.m_sourceId.value() < right.m_sourceId.value();
+                }
+
+                return (
+                    std::tuple{
+                        left.m_templateRect.x(),
+                        left.m_templateRect.y(),
+                        left.m_templateRect.width(),
+                        left.m_templateRect.height()
+                    }
+                    < std::tuple{
+                        right.m_templateRect.x(),
+                        right.m_templateRect.y(),
+                        right.m_templateRect.width(),
+                        right.m_templateRect.height()
+                    }
+                );
+            }
+        };
+
+        using TemplateTaskPlan        = std::set<TemplateTaskKey, TemplateTaskLess>;
+        using GeneratedTemplateHashes = std::map<TemplateTaskKey, ContentHash, TemplateTaskLess>;
 
         [[nodiscard]]
         auto invalidCompilation(std::string message) -> std::unexpected<Error>
@@ -38,6 +81,92 @@ namespace uf::annotation
                 AutomationErrorKind::InvalidResource,
                 std::move(message)
             );
+        }
+
+        [[nodiscard]]
+        auto prepareTemplateTasks(
+            std::span<AuthoringSource const> sources,
+            std::span<RecognizerDefinition const> recognizers,
+            std::span<RecognizerWork const> recognizerWork
+        ) -> Result<TemplateTaskPlan>
+        {
+            auto templateTasks        = TemplateTaskPlan{};
+            auto compilationPixelWork = std::size_t{0};
+            for (auto const& source : sources)
+            {
+                auto const fingerprint  = source.fingerprint();
+                auto const sourcePixels = checkedMultiply(
+                    static_cast<std::size_t>(fingerprint.width()),
+                    static_cast<std::size_t>(fingerprint.height())
+                );
+                if (!sourcePixels)
+                {
+                    return invalidCompilation(
+                        "authoring compilation pixel-work calculation overflowed addressable memory"
+                    );
+                }
+
+                auto const nextPixelWork = checkedAdd(
+                    compilationPixelWork,
+                    *sourcePixels
+                );
+                if (
+                    !nextPixelWork
+                    || *nextPixelWork > g_maximumCompilationPixelWork
+                )
+                {
+                    return invalidCompilation(
+                        "authoring compilation exceeds the 256 Mi-pixel work quota"
+                    );
+                }
+                compilationPixelWork = *nextPixelWork;
+            }
+
+            for (auto const& work : recognizerWork)
+            {
+                auto const templateRect = checkedAt(
+                    recognizers,
+                    work.m_recognizerIndex
+                ).templateRect();
+                auto const insertion = templateTasks.emplace(
+                    TemplateTaskKey{
+                        .m_sourceId     = work.m_sourceId,
+                        .m_templateRect = templateRect,
+                    }
+                );
+                if (!insertion.second)
+                {
+                    continue;
+                }
+
+                auto const taskPixels = checkedMultiply(
+                    static_cast<std::size_t>(templateRect.width()),
+                    static_cast<std::size_t>(templateRect.height())
+                );
+                if (!taskPixels)
+                {
+                    return invalidCompilation(
+                        "authoring template pixel-work calculation overflowed addressable memory"
+                    );
+                }
+
+                auto const nextPixelWork = checkedAdd(
+                    compilationPixelWork,
+                    *taskPixels
+                );
+                if (
+                    !nextPixelWork
+                    || *nextPixelWork > g_maximumCompilationPixelWork
+                )
+                {
+                    return invalidCompilation(
+                        "authoring compilation exceeds the 256 Mi-pixel work quota"
+                    );
+                }
+                compilationPixelWork = *nextPixelWork;
+            }
+
+            return templateTasks;
         }
 
     }
@@ -116,13 +245,18 @@ namespace uf::annotation
                 return left.m_recognizerIndex < right.m_recognizerIndex;
             }
         );
+        UF_TRY_VALUE(
+            templateTasks,
+            prepareTemplateTasks(sources, recognizers, recognizerWork)
+        );
 
         auto runtimeRecognizers = std::vector<RuntimeRecognizerSpec>{};
         auto templateAssets     = std::vector<TemplateAsset>{};
         runtimeRecognizers.reserve(document.catalog().recognizers().size());
         templateAssets.reserve(document.catalog().recognizers().size());
         auto compiledTemplateBytes = std::size_t{0};
-        auto workIndex             = std::size_t{0};
+        auto taskIterator          = templateTasks.begin();
+        auto generatedTaskHashes   = GeneratedTemplateHashes{};
         for (auto sourceIndex = std::size_t{0}; sourceIndex < sources.size(); ++sourceIndex)
         {
             auto const& source      = checkedAt(sources, sourceIndex);
@@ -191,17 +325,11 @@ namespace uf::annotation
                 image::rgba8ToBgra8(std::move(decoded.m_pixels)),
                 std::format("converting authoring source {}", source.relativePath())
             );
-            while (workIndex < recognizerWork.size())
+            while (
+                taskIterator != templateTasks.end()
+                && taskIterator->m_sourceId == source.id()
+            )
             {
-                auto const& work = checkedAt(recognizerWork, workIndex);
-                if (work.m_sourceId != source.id())
-                {
-                    break;
-                }
-                auto const& recognizer = checkedAt(
-                    recognizers,
-                    work.m_recognizerIndex
-                );
                 UF_TRY_VALUE_CONTEXT(
                     generated,
                     generateTemplateAsset(
@@ -209,33 +337,35 @@ namespace uf::annotation
                         decoded.m_width,
                         decoded.m_height,
                         *stride,
-                        recognizer.templateRect()
+                        taskIterator->m_templateRect
                     ),
                     std::format(
-                        "generating template for recognizer {}",
-                        recognizer.name().value()
+                        "generating template [{}, {}, {}, {}] from source {}",
+                        taskIterator->m_templateRect.x(),
+                        taskIterator->m_templateRect.y(),
+                        taskIterator->m_templateRect.width(),
+                        taskIterator->m_templateRect.height(),
+                        source.relativePath()
                     )
                 );
                 if (generated.m_pngBytes.size() > image::g_maximumPngFileBytes)
                 {
                     return invalidCompilation(
                         std::format(
-                            "generated template for recognizer {} exceeds the PNG byte quota",
-                            recognizer.name().value()
+                            "generated template [{}, {}, {}, {}] from source {} exceeds the PNG byte quota",
+                            taskIterator->m_templateRect.x(),
+                            taskIterator->m_templateRect.y(),
+                            taskIterator->m_templateRect.width(),
+                            taskIterator->m_templateRect.height(),
+                            source.relativePath()
                         )
                     );
                 }
-                runtimeRecognizers.emplace_back(
-                    RuntimeRecognizerSpec{
-                        .m_definition   = recognizer,
-                        .m_templateHash = generated.m_hash,
-                        .m_sourceHash   = source.contentHash(),
-                    }
-                );
 
-                auto const existing = std::ranges::find(
+                auto const generatedHash = generated.m_hash;
+                auto const existing      = std::ranges::find(
                     templateAssets,
-                    generated.m_hash,
+                    generatedHash,
                     &TemplateAsset::m_hash
                 );
                 if (existing == templateAssets.end())
@@ -262,13 +392,51 @@ namespace uf::annotation
                         "distinct template bytes produced the same content hash"
                     );
                 }
-                ++workIndex;
+
+                auto const insertion = generatedTaskHashes.emplace(
+                    *taskIterator,
+                    generatedHash
+                );
+                UF_CHECK_MSG(
+                    insertion.second,
+                    "authoring template task was generated more than once"
+                );
+                ++taskIterator;
             }
         }
         UF_CHECK_MSG(
-            workIndex == recognizerWork.size(),
+            taskIterator == templateTasks.end(),
             "authoring recognizer source closure references an unknown source"
         );
+        for (auto const& work : recognizerWork)
+        {
+            auto const& recognizer = checkedAt(
+                recognizers,
+                work.m_recognizerIndex
+            );
+            auto const generated = generatedTaskHashes.find(
+                TemplateTaskKey{
+                    .m_sourceId     = work.m_sourceId,
+                    .m_templateRect = recognizer.templateRect(),
+                }
+            );
+            UF_CHECK_MSG(
+                generated != generatedTaskHashes.end(),
+                "authoring recognizer template task was not generated"
+            );
+            auto const* p_source = document.findSource(work.m_sourceId);
+            UF_CHECK_MSG(
+                p_source != nullptr,
+                "authoring recognizer source closure references an unknown source"
+            );
+            runtimeRecognizers.emplace_back(
+                RuntimeRecognizerSpec{
+                    .m_definition   = recognizer,
+                    .m_templateHash = generated->second,
+                    .m_sourceHash   = p_source->contentHash(),
+                }
+            );
+        }
         std::ranges::sort(
             templateAssets,
             {},
