@@ -320,6 +320,41 @@ satisfy its invariant.
   mutable scalar reference requires the same exception review as any other
   output or in-out parameter.
 
+### Description and ownership parameters
+
+- Types ending in `Spec`, `Desc`, or `Descriptor` describe the input used to
+  create another object. Non-trivial `Config` and `Options` types normally have
+  the same read-only input semantics. Their names do not imply ownership
+  transfer even when they contain owning strings, containers, or variants.
+- Pass a non-trivial description by `T const&` when a function only validates
+  it or copies its fields into stored members. Do not move from it, add an
+  rvalue-reference overload only to reuse construction logic, or make its
+  behavior depend on whether the caller supplied an lvalue or rvalue.
+- When validation requires sorting, deduplication, default insertion, or other
+  normalization, first copy the description into a clearly named local such as
+  `normalizedSpec`, then modify that local. An internal constructor may take
+  the normalized owned value by value and move its members into final storage.
+- Pass small trivially copyable descriptions by value when that is clearer and
+  no ownership or moved-from state is involved.
+- Pass an owning payload by value when the function is a copy-in/move-in
+  ownership boundary. Use a concrete `T&&` only for an internal sink that must
+  consume an expiring object and intentionally rejects lvalues.
+- Reserve forwarding references for generic template boundaries. Forward them
+  with `std::forward`; a concrete `WidgetSpec&&` is an rvalue reference, not a
+  forwarding reference.
+
+```cpp
+[[nodiscard]]
+auto Widget::create(WidgetSpec const& spec) -> Result<Widget>
+{
+    auto normalizedSpec = spec;
+    std::ranges::sort(normalizedSpec.m_ids);
+
+    UF_TRY(validate(normalizedSpec));
+    return Widget{std::move(normalizedSpec)};
+}
+```
+
 ```cpp
 struct ParseOutcome
 {

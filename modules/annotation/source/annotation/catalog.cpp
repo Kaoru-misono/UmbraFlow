@@ -362,7 +362,7 @@ namespace uf::annotation
 
     auto RecognizerDefinition::create(
         ProjectFingerprint fingerprint,
-        RecognizerSpec spec
+        RecognizerSpec const& spec
     ) -> Result<RecognizerDefinition>
     {
         auto const templateWithinProject = (
@@ -446,8 +446,9 @@ namespace uf::annotation
             );
         }
 
-        std::ranges::sort(spec.m_allowedPageIds, lessId<PageId>);
-        if (hasDuplicateIds<PageId>(spec.m_allowedPageIds))
+        auto normalizedSpec = spec;
+        std::ranges::sort(normalizedSpec.m_allowedPageIds, lessId<PageId>);
+        if (hasDuplicateIds<PageId>(normalizedSpec.m_allowedPageIds))
         {
             return fail(
                 AutomationErrorKind::InvalidResource,
@@ -455,7 +456,7 @@ namespace uf::annotation
             );
         }
 
-        return RecognizerDefinition{std::move(spec)};
+        return RecognizerDefinition{std::move(normalizedSpec)};
     }
 
     auto RecognizerDefinition::id() const -> RecognizerId { return m_id; }
@@ -487,13 +488,14 @@ namespace uf::annotation
     {
     }
 
-    auto PageSignature::create(PageSpec spec) -> Result<PageSignature>
+    auto PageSignature::create(PageSpec const& spec) -> Result<PageSignature>
     {
-        std::ranges::sort(spec.m_required, lessId<RecognizerId>);
-        std::ranges::sort(spec.m_forbidden, lessId<RecognizerId>);
+        auto normalizedSpec = spec;
+        std::ranges::sort(normalizedSpec.m_required, lessId<RecognizerId>);
+        std::ranges::sort(normalizedSpec.m_forbidden, lessId<RecognizerId>);
         if (
-            hasDuplicateIds<RecognizerId>(spec.m_required)
-            || hasDuplicateIds<RecognizerId>(spec.m_forbidden)
+            hasDuplicateIds<RecognizerId>(normalizedSpec.m_required)
+            || hasDuplicateIds<RecognizerId>(normalizedSpec.m_forbidden)
         )
         {
             return fail(
@@ -502,9 +504,9 @@ namespace uf::annotation
             );
         }
 
-        for (auto const id : spec.m_required)
+        for (auto const id : normalizedSpec.m_required)
         {
-            if (containsId<RecognizerId>(spec.m_forbidden, id))
+            if (containsId<RecognizerId>(normalizedSpec.m_forbidden, id))
             {
                 return fail(
                     AutomationErrorKind::InvalidResource,
@@ -513,7 +515,7 @@ namespace uf::annotation
             }
         }
 
-        return PageSignature{std::move(spec)};
+        return PageSignature{std::move(normalizedSpec)};
     }
 
     auto PageSignature::id() const -> PageId { return m_id; }

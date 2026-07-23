@@ -661,17 +661,17 @@ namespace uf::annotation
         }
     }
 
-    AuthoringSource::AuthoringSource(AuthoringSourceSpec&& spec)
+    AuthoringSource::AuthoringSource(AuthoringSourceSpec const& spec)
         : m_id{spec.m_id}
         , m_contentHash{spec.m_contentHash}
         , m_relativePath{sourcePath(m_contentHash)}
         , m_fingerprint{spec.m_fingerprint}
-        , m_provenance{std::move(spec.m_provenance)}
+        , m_provenance{spec.m_provenance}
     {
     }
 
     auto AuthoringSource::create(
-        AuthoringSourceSpec spec
+        AuthoringSourceSpec const& spec
     ) -> Result<AuthoringSource>
     {
         auto const* p_wgc = std::get_if<WgcSourceProvenance>(
@@ -686,7 +686,7 @@ namespace uf::annotation
                 "WGC source captured_at must be canonical RFC 3339"
             );
         }
-        return AuthoringSource{std::move(spec)};
+        return AuthoringSource{spec};
     }
 
     auto AuthoringSource::id() const -> SourceId { return m_id; }
@@ -705,11 +705,6 @@ namespace uf::annotation
     }
 
     RegressionCase::RegressionCase(RegressionSpec const& spec)
-        : RegressionCase{RegressionSpec{spec}}
-    {
-    }
-
-    RegressionCase::RegressionCase(RegressionSpec&& spec) noexcept
         : m_id{spec.m_id}
         , m_sourceId{spec.m_sourceId}
         , m_classification{spec.m_classification}

@@ -261,12 +261,12 @@ namespace uf::annotation
             );
         }
 
-        for (auto& entry : invalid)
+        for (auto const& entry : invalid)
         {
             INFO(entry.m_expected);
             auto const rejected = RecognizerDefinition::create(
                 projectFingerprint,
-                std::move(entry.m_spec)
+                entry.m_spec
             );
             REQUIRE_FALSE(rejected.has_value());
             requireRejection(rejected.error(), entry.m_expected);
