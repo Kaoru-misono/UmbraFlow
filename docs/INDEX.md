@@ -8,6 +8,8 @@
   [P0-A Visual Annotation System & Data Model](plans/2026-07-22-annotation-design.md)
 - Research archive supporting those decisions:
   [Task-model decision package](plans/2026-07-21-lua-task-model-decision-package.md)
+- Latest branch review:
+  [Annotation backend branch review](reviews/2026-07-22-annotation-backend-review.md)
 - [Current execution checklist](TODO.md)
 - [Architecture](ARCHITECTURE.md)
 - [Plans](plans/README.md)
