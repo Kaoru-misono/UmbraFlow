@@ -1,12 +1,14 @@
 #include "windows-console-control.hpp"
 
-#include <core/error/error.hpp>
-#include <core/types/integer.hpp>
+#include <core/error/result.hpp>
+
+#include <domain/error.hpp>
 
 #include <Windows.h>
 
 #include <atomic>
 #include <format>
+#include <system_error>
 
 namespace uf::m0_demo::platform
 {
@@ -43,12 +45,12 @@ namespace uf::m0_demo::platform
         {
             auto const error = GetLastError();
             return fail(
-                ErrorCode::External,
+                AutomationErrorKind::ExternalFailure,
                 std::format(
                     "failed to install Ctrl-C handler: Win32 error {}",
                     error
                 ),
-                static_cast<int64>(error)
+                systemErrorCode(error)
             );
         }
         return ok();
@@ -62,12 +64,12 @@ namespace uf::m0_demo::platform
         {
             auto const error = GetLastError();
             return fail(
-                ErrorCode::External,
+                AutomationErrorKind::ExternalFailure,
                 std::format(
                     "failed to uninstall Ctrl-C handler: Win32 error {}",
                     error
                 ),
-                static_cast<int64>(error)
+                systemErrorCode(error)
             );
         }
         return ok();

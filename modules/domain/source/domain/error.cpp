@@ -49,68 +49,62 @@ namespace uf
             static auto const s_category = AutomationErrorCategory{};
             return s_category;
         }
+
+        [[nodiscard]]
+        auto automationErrorDetailCode(AutomationErrorKind kind) noexcept
+            -> std::error_code
+        {
+            return std::error_code{
+                automationErrorDetailValue(kind),
+                automationErrorCategory()
+            };
+        }
     }
 
-    AutomationError::AutomationError(AutomationErrorKind kind, std::string message)
-        : m_kind{kind}
-        , m_message{std::move(message)}
+    auto systemErrorCode(uint32 value) noexcept -> std::error_code
     {
+        // SAFETY: since C++20 an out-of-range unsigned-to-signed conversion is
+        // defined as the unique value congruent modulo 2^N, so this wraps
+        // rather than being implementation-defined, and std::system_category()
+        // interprets the int through the same platform mapping the value came
+        // from. A checked cast would reject exactly the high-bit codes worth
+        // keeping.
+        return std::error_code{static_cast<int>(value), std::system_category()};
     }
 
-    auto AutomationError::kind() const noexcept -> AutomationErrorKind { return m_kind; }
-    auto AutomationError::message() const noexcept -> std::string_view { return m_message; }
-
-    auto AutomationError::staleObservation(std::string message) -> AutomationError
-    {
-        return AutomationError{AutomationErrorKind::StaleObservation, std::move(message)};
-    }
-
-    auto AutomationError::actionRejected(std::string message) -> AutomationError
-    {
-        return AutomationError{AutomationErrorKind::ActionRejected, std::move(message)};
-    }
-
-    auto AutomationError::internalInvariant(std::string message) -> AutomationError
-    {
-        return AutomationError{AutomationErrorKind::InternalInvariant, std::move(message)};
-    }
-
-    auto toString(AutomationError const& error) -> std::string
-    {
-        auto const name = enumName(error.kind());
-        UF_CHECK(name.has_value());
-        return std::string{*name} + ": " + std::string{error.message()};
-    }
-
-    auto genericErrorCode(AutomationErrorKind kind) noexcept -> ErrorCode
+    auto failureResponse(AutomationErrorKind kind) noexcept -> FailureResponse
     {
         switch (kind)
         {
-        case AutomationErrorKind::Cancelled: return ErrorCode::Cancelled;
-        case AutomationErrorKind::Timeout: return ErrorCode::Timeout;
-        case AutomationErrorKind::InvalidResource: return ErrorCode::InvalidArgument;
-        case AutomationErrorKind::UnsupportedCapability: return ErrorCode::Unsupported;
-        case AutomationErrorKind::TargetCompatibilityUnverified:
-            return ErrorCode::FailedPrecondition;
-        case AutomationErrorKind::TargetUnavailable: return ErrorCode::NotFound;
-        case AutomationErrorKind::CaptureUnavailable: return ErrorCode::External;
-        case AutomationErrorKind::CaptureStalled: return ErrorCode::Timeout;
-        case AutomationErrorKind::RecognitionFailed: return ErrorCode::External;
-        case AutomationErrorKind::StaleObservation: return ErrorCode::FailedPrecondition;
-        case AutomationErrorKind::ActionRejected: return ErrorCode::FailedPrecondition;
-        case AutomationErrorKind::ControllerDisconnected: return ErrorCode::External;
-        case AutomationErrorKind::InternalInvariant: return ErrorCode::Internal;
+        case AutomationErrorKind::Cancelled: return FailureResponse::Cancelled;
+        case AutomationErrorKind::CaptureStalled: return FailureResponse::Retry;
+        case AutomationErrorKind::StaleObservation: return FailureResponse::Retry;
+        case AutomationErrorKind::RecognitionFailed: return FailureResponse::StepFailed;
+        case AutomationErrorKind::ActionRejected: return FailureResponse::StepFailed;
+        case AutomationErrorKind::Timeout: return FailureResponse::Abort;
+        case AutomationErrorKind::InvalidResource: return FailureResponse::Abort;
+        case AutomationErrorKind::UnsupportedCapability: return FailureResponse::Abort;
+        case AutomationErrorKind::TargetCompatibilityUnverified: return FailureResponse::Abort;
+        case AutomationErrorKind::TargetUnavailable: return FailureResponse::Abort;
+        case AutomationErrorKind::CaptureUnavailable: return FailureResponse::Abort;
+        case AutomationErrorKind::ControllerDisconnected: return FailureResponse::Abort;
+        case AutomationErrorKind::InternalInvariant: return FailureResponse::Abort;
+        case AutomationErrorKind::IoFailure: return FailureResponse::Abort;
+        case AutomationErrorKind::ExternalFailure: return FailureResponse::Abort;
         }
 
         UF_UNREACHABLE_MSG("Unknown AutomationErrorKind value");
     }
 
-    auto automationErrorDetailCode(AutomationErrorKind kind) noexcept -> std::error_code
+    auto failureResponse(Error const& error) noexcept -> FailureResponse
     {
-        return std::error_code{
-            automationErrorDetailValue(kind),
-            automationErrorCategory()
-        };
+        auto const kind = automationErrorKind(error);
+        if (!kind)
+        {
+            return FailureResponse::Abort;
+        }
+
+        return failureResponse(*kind);
     }
 
     auto automationErrorKind(Error const& error) noexcept -> std::optional<AutomationErrorKind>
@@ -135,14 +129,14 @@ namespace uf
     auto fail(
         AutomationErrorKind kind,
         std::string message,
+        std::error_code nativeCode,
         std::source_location location
     ) -> std::unexpected<Error>
     {
         return uf::fail(
-            genericErrorCode(kind),
             automationErrorDetailCode(kind),
             std::move(message),
-            0,
+            nativeCode,
             location
         );
     }

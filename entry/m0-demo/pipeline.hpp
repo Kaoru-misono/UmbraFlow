@@ -87,6 +87,29 @@ namespace uf::m0_demo
         Stopped,
     };
 
+    // How a click-delivery failure is triaged. The fallback for an unlisted
+    // kind is deliberately FailStep and not AbortRun: a deterministic rejection
+    // retried every frame would only spin to the transition timeout and
+    // mislabel a certain rejection as a timeout, so the loop fails immediately
+    // with the true kind recorded. Only a post that could not be queued at all
+    // is fatal to the whole run.
+    //
+    // The catch-all is why this names the two kinds it special-cases instead of
+    // switching exhaustively over AutomationErrorKind. failureResponse has no
+    // meaningful default, so a new kind must not compile until someone places
+    // it; here the default is itself the decision, so a new kind landing on
+    // FailStep is the documented outcome rather than an omission. The
+    // asymmetry is intentional.
+    enum class ClickFailureDisposition : uint8
+    {
+        Retry,
+        FailStep,
+        AbortRun,
+    };
+
+    [[nodiscard]]
+    auto clickFailureDisposition(Error const& error) noexcept -> ClickFailureDisposition;
+
     struct AuditSummary final
     {
         std::size_t m_delivered{};

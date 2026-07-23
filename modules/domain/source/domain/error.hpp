@@ -1,14 +1,12 @@
 #pragma once
 
 #include <core/error/result.hpp>
-#include <core/safety/annotations.hpp>
 #include <core/types/enum-reflection.hpp>
 #include <core/types/integer.hpp>
 
 #include <optional>
 #include <source_location>
 #include <string>
-#include <string_view>
 #include <system_error>
 
 namespace uf
@@ -28,33 +26,43 @@ namespace uf
         ActionRejected,
         ControllerDisconnected,
         InternalInvariant,
+        IoFailure,
+        ExternalFailure,
     };
 
-    class AutomationError final
+    // How far a failure has to unwind. This is the axis callers branch on;
+    // AutomationErrorKind stays the record of what went wrong. failureResponse
+    // switches over every kind without a default, so a new kind does not
+    // compile until its unwind scope has been chosen.
+    enum class FailureResponse : uint8
     {
-        AutomationErrorKind m_kind;
-        std::string         m_message;
-
-    public:
-        AutomationError(AutomationErrorKind kind, std::string message);
-
-        auto operator==(AutomationError const&) const -> bool = default;
-
-        [[nodiscard]] auto kind() const noexcept -> AutomationErrorKind;
-        [[nodiscard]] auto message() const noexcept UF_LIFETIME_BOUND -> std::string_view;
-
-        [[nodiscard]] static auto staleObservation(std::string message) -> AutomationError;
-        [[nodiscard]] static auto actionRejected(std::string message) -> AutomationError;
-        [[nodiscard]] static auto internalInvariant(std::string message) -> AutomationError;
+        // The same operation may still succeed later; the caller may repeat it
+        // within its own budget.
+        Retry,
+        // This step will not succeed as specified, but the run can continue
+        // with other work.
+        StepFailed,
+        // The run cannot continue.
+        Abort,
+        // An external stop was requested. Never retried and never masked.
+        Cancelled,
     };
 
-    [[nodiscard]] auto toString(AutomationError const& error) -> std::string;
+    // Wraps an operating-system status value in std::system_category(). The
+    // conversion to int is a deliberate reinterpretation, not a narrowing: the
+    // category itself stores the value as int and hands it back to the platform
+    // unchanged, so codes with the high bit set (an HRESULT-shaped GetLastError
+    // result, for example) must survive rather than be rejected.
+    [[nodiscard]]
+    auto systemErrorCode(uint32 value) noexcept -> std::error_code;
 
     [[nodiscard]]
-    auto genericErrorCode(AutomationErrorKind kind) noexcept -> ErrorCode;
+    auto failureResponse(AutomationErrorKind kind) noexcept -> FailureResponse;
 
+    // An error carrying no automation kind cannot be classified, so it takes
+    // the conservative response instead of being treated as recoverable.
     [[nodiscard]]
-    auto automationErrorDetailCode(AutomationErrorKind kind) noexcept -> std::error_code;
+    auto failureResponse(Error const& error) noexcept -> FailureResponse;
 
     [[nodiscard]]
     auto automationErrorKind(Error const& error) noexcept -> std::optional<AutomationErrorKind>;
@@ -63,6 +71,7 @@ namespace uf
     auto fail(
         AutomationErrorKind kind,
         std::string message,
+        std::error_code nativeCode = {},
         std::source_location location = std::source_location::current()
     ) -> std::unexpected<Error>;
 }
@@ -81,5 +90,7 @@ UF_REFLECT_ENUM(
     uf::AutomationErrorKind::StaleObservation,
     uf::AutomationErrorKind::ActionRejected,
     uf::AutomationErrorKind::ControllerDisconnected,
-    uf::AutomationErrorKind::InternalInvariant
+    uf::AutomationErrorKind::InternalInvariant,
+    uf::AutomationErrorKind::IoFailure,
+    uf::AutomationErrorKind::ExternalFailure
 );

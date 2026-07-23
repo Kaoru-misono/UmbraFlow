@@ -79,12 +79,16 @@ namespace uf::image
         );
 
         REQUIRE_FALSE(result.has_value());
-        CHECK(result.error().code() == ErrorCode::Io);
         test_image::requireErrorKind(
             result.error(),
-            AutomationErrorKind::InvalidResource
+            AutomationErrorKind::IoFailure
         );
-        CHECK(result.error().nativeCode() != 0);
+        auto const nativeCode = result.error().nativeCode();
+        CHECK(nativeCode.value() != 0);
+        CHECK_FALSE(nativeCode.message().empty());
+        // The point of carrying a category is that this is distinguishable from
+        // a Win32 status with the same numeric value.
+        CHECK(nativeCode.category() != std::system_category());
         CHECK(result.error().message().find("failed to open PNG") != std::string_view::npos);
     }
 
@@ -92,8 +96,8 @@ namespace uf::image
     {
         struct OversizedImage final
         {
-            uint32 m_width;
-            uint32 m_height;
+            uint32 m_width{};
+            uint32 m_height{};
         };
         for (auto const image : std::array{
             OversizedImage{4'194'304U, 1U},

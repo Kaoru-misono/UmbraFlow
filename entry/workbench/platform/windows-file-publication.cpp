@@ -18,6 +18,7 @@
 #include <limits>
 #include <optional>
 #include <ranges>
+#include <source_location>
 #include <span>
 #include <string>
 #include <string_view>
@@ -93,27 +94,22 @@ namespace uf::workbench::platform
         auto windowsIoFailure(
             std::string_view operation,
             std::filesystem::path const& path,
-            DWORD nativeError
+            DWORD nativeError,
+            std::source_location location = std::source_location::current()
         ) -> std::unexpected<Error>
         {
-            auto message = std::format("Windows error {}", nativeError);
-            if (auto const errorValue = checkedCast<int>(nativeError))
-            {
-                message = std::error_code{
-                    *errorValue,
-                    std::system_category()
-                }.message();
-            }
+            auto const nativeCode = systemErrorCode(nativeError);
+            auto const message = nativeCode.message();
             return fail(
-                ErrorCode::Io,
-                automationErrorDetailCode(AutomationErrorKind::InvalidResource),
+                AutomationErrorKind::IoFailure,
                 std::format(
                     "workbench failed to {} {}: {}",
                     operation,
                     path.string(),
                     message
                 ),
-                static_cast<int64>(nativeError)
+                nativeCode,
+                location
             );
         }
 

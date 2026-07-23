@@ -4,7 +4,6 @@
 
 #include <core/error/contracts.hpp>
 #include <core/numeric/checked-cast.hpp>
-#include <core/types/integer.hpp>
 #include <domain/error.hpp>
 
 #include <Windows.h>
@@ -16,6 +15,7 @@
 #include <format>
 #include <limits>
 #include <memory>
+#include <source_location>
 #include <span>
 #include <string>
 #include <string_view>
@@ -96,29 +96,22 @@ namespace uf::m0_demo::platform
         auto fileFailure(
             std::string_view operation,
             std::filesystem::path const& path,
-            DWORD nativeError
+            DWORD nativeError,
+            std::source_location location = std::source_location::current()
         ) -> std::unexpected<Error>
         {
-            auto message = std::format("Windows error {}", nativeError);
-            if (auto const errorValue = checkedCast<int>(nativeError))
-            {
-                message = std::error_code{
-                    *errorValue,
-                    std::system_category()
-                }.message();
-            }
+            auto const nativeCode = systemErrorCode(nativeError);
+            auto const message = nativeCode.message();
             return fail(
-                ErrorCode::Io,
-                automationErrorDetailCode(
-                    AutomationErrorKind::InvalidResource
-                ),
+                AutomationErrorKind::IoFailure,
                 std::format(
                     "input-agent failed to {} {}: {}",
                     operation,
                     path.string(),
                     message
                 ),
-                static_cast<int64>(nativeError)
+                nativeCode,
+                location
             );
         }
 
@@ -284,8 +277,8 @@ namespace uf::m0_demo::platform
 
         struct RelativeFilename final
         {
-            std::wstring m_value;
-            USHORT       m_byteLength;
+            std::wstring m_value{};
+            USHORT       m_byteLength{};
         };
 
         [[nodiscard]]
@@ -412,9 +405,9 @@ namespace uf::m0_demo::platform
 
     struct FileWriter::State final
     {
-        std::filesystem::path     m_path;
+        std::filesystem::path     m_path{};
         std::vector<NativeHandle> m_directoryHandles{};
-        NativeHandle              m_handle;
+        NativeHandle              m_handle{};
     };
 
     FileWriter::FileWriter(std::unique_ptr<State> p_state) noexcept

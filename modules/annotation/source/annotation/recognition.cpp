@@ -10,6 +10,7 @@
 #include <optional>
 #include <ranges>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -24,27 +25,14 @@ namespace uf::annotation
             SadSearchStopReason reason
         ) -> std::unexpected<Error>
         {
-            auto const id = recognizerId.value().toString();
-            switch (reason)
-            {
-            case SadSearchStopReason::Cancelled:
-                return fail(
-                    AutomationErrorKind::Cancelled,
-                    std::format("page recognition cancelled at anchor {}", id)
-                );
-            case SadSearchStopReason::TimedOut:
-                return fail(
-                    AutomationErrorKind::Timeout,
-                    std::format("page recognition timed out at anchor {}", id)
-                );
-            case SadSearchStopReason::ComparisonBudgetExhausted:
-                return fail(
-                    AutomationErrorKind::RecognitionFailed,
-                    std::format("page recognition budget exhausted at anchor {}", id)
-                );
-            }
-
-            UF_UNREACHABLE_MSG("Unknown SadSearchStopReason value");
+            return fail(
+                searchStopKind(reason),
+                std::format(
+                    "page recognition {} at anchor {}",
+                    searchStopDescription(reason),
+                    recognizerId.value().toString()
+                )
+            );
         }
 
         [[nodiscard]]
@@ -60,6 +48,31 @@ namespace uf::annotation
             );
             return found == evidence.end() ? nullptr : &*found;
         }
+    }
+
+    auto searchStopKind(SadSearchStopReason reason) noexcept -> AutomationErrorKind
+    {
+        switch (reason)
+        {
+        case SadSearchStopReason::Cancelled: return AutomationErrorKind::Cancelled;
+        case SadSearchStopReason::TimedOut: return AutomationErrorKind::Timeout;
+        case SadSearchStopReason::ComparisonBudgetExhausted:
+            return AutomationErrorKind::RecognitionFailed;
+        }
+
+        UF_UNREACHABLE_MSG("Unknown SadSearchStopReason value");
+    }
+
+    auto searchStopDescription(SadSearchStopReason reason) noexcept -> std::string_view
+    {
+        switch (reason)
+        {
+        case SadSearchStopReason::Cancelled: return "cancelled";
+        case SadSearchStopReason::TimedOut: return "timed out";
+        case SadSearchStopReason::ComparisonBudgetExhausted: return "budget exhausted";
+        }
+
+        UF_UNREACHABLE_MSG("Unknown SadSearchStopReason value");
     }
 
     auto FrameIdentity::fromFrame(Frame const& frame) noexcept -> FrameIdentity

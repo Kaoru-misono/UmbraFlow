@@ -2,8 +2,6 @@
 
 #include "error.hpp"
 
-#include <core/types/integer.hpp>
-
 #include <expected>
 #include <source_location>
 #include <string>
@@ -19,28 +17,14 @@ namespace uf
 
     [[nodiscard]]
     inline auto fail(
-        ErrorCode code,
-        std::string message,
-        int64 nativeCode = 0,
-        std::source_location location = std::source_location::current()
-    ) -> std::unexpected<Error>
-    {
-        return std::unexpected{
-            Error{code, std::move(message), nativeCode, location}
-        };
-    }
-
-    [[nodiscard]]
-    inline auto fail(
-        ErrorCode code,
         std::error_code detailCode,
         std::string message,
-        int64 nativeCode = 0,
+        std::error_code nativeCode = {},
         std::source_location location = std::source_location::current()
     ) -> std::unexpected<Error>
     {
         return std::unexpected{
-            Error{code, detailCode, std::move(message), nativeCode, location}
+            Error{detailCode, std::move(message), nativeCode, location}
         };
     }
 
@@ -59,6 +43,11 @@ namespace uf
     }
 }
 
+// The result is held by value. Binding it to auto&& instead would only extend
+// the lifetime of a prvalue, so an expression yielding a reference into a
+// temporary would leave the macro reading freed storage; holding the value
+// makes that unrepresentable. Error is move-only, so an lvalue operand must be
+// moved in by the caller.
 #define UF_TRY(expression) \
     do \
     { \

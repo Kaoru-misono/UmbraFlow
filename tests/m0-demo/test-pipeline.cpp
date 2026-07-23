@@ -23,6 +23,7 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <system_error>
 #include <vector>
 
 namespace uf::m0_demo
@@ -42,6 +43,61 @@ namespace uf::m0_demo
             REQUIRE(result.has_value());
             return *result;
         }
+    }
+
+    TEST_CASE("m0 click delivery failures are triaged by kind, not by a shared policy")
+    {
+        struct DispositionCase final
+        {
+            AutomationErrorKind     m_kind{};
+            ClickFailureDisposition m_disposition{};
+        };
+
+        // The fallback is FailStep on purpose: retrying a deterministic
+        // rejection every frame would only spin to the transition timeout and
+        // mislabel a certain rejection as a timeout.
+        auto const cases = std::array{
+            DispositionCase{
+                AutomationErrorKind::ControllerDisconnected,
+                ClickFailureDisposition::AbortRun
+            },
+            DispositionCase{
+                AutomationErrorKind::StaleObservation,
+                ClickFailureDisposition::Retry
+            },
+            DispositionCase{
+                AutomationErrorKind::ActionRejected,
+                ClickFailureDisposition::FailStep
+            },
+            DispositionCase{
+                AutomationErrorKind::TargetUnavailable,
+                ClickFailureDisposition::FailStep
+            },
+            DispositionCase{
+                AutomationErrorKind::InternalInvariant,
+                ClickFailureDisposition::FailStep
+            },
+            DispositionCase{
+                AutomationErrorKind::CaptureStalled,
+                ClickFailureDisposition::FailStep
+            },
+        };
+        for (auto const& testCase : cases)
+        {
+            auto const failure = fail(testCase.m_kind, "delivery failed");
+            CHECK(
+                clickFailureDisposition(failure.error()) == testCase.m_disposition
+            );
+        }
+
+        auto const foreign = fail(
+            std::make_error_code(std::errc::io_error),
+            "not an automation failure"
+        );
+        CHECK(
+            clickFailureDisposition(foreign.error())
+            == ClickFailureDisposition::FailStep
+        );
     }
 
     TEST_CASE("m0 match center offsets by half the template extent")

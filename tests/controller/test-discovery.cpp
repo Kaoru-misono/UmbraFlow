@@ -9,6 +9,7 @@
 
 #include <array>
 #include <filesystem>
+#include <system_error>
 
 namespace uf
 {
@@ -39,7 +40,8 @@ namespace uf
         auto const process = controller_platform::windowProcess(WindowHandle{0});
         REQUIRE_FALSE(process.has_value());
         CHECK(automationKind(process.error()) == AutomationErrorKind::TargetUnavailable);
-        CHECK(process.error().nativeCode() != 0);
+        CHECK(process.error().nativeCode().value() != 0);
+        CHECK(process.error().nativeCode().category() == std::system_category());
 
         auto const clientSize = controller_platform::windowClientSize(
             WindowHandle{0}
@@ -49,7 +51,10 @@ namespace uf
             automationKind(clientSize.error())
             == AutomationErrorKind::TargetUnavailable
         );
-        CHECK(clientSize.error().nativeCode() != 0);
+        CHECK(clientSize.error().nativeCode().value() != 0);
+        CHECK(
+            clientSize.error().nativeCode().category() == std::system_category()
+        );
     }
 
     TEST_CASE("an exited or invalid process is best-effort metadata absence")

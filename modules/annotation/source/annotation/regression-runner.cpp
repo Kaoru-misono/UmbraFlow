@@ -50,14 +50,27 @@ namespace uf::annotation
             return std::holds_alternative<AmbiguousPages>(*p_outcome);
         }
 
+        // A stop interrupts the suite exactly when its failure would end a run;
+        // a per-page budget stop is recorded as a regression and the suite
+        // continues.
         [[nodiscard]]
         auto isSuiteInterruption(PageRecognitionAttempt const& attempt) noexcept -> bool
         {
             auto const* p_stop = std::get_if<PageRecognitionStop>(&attempt.m_result);
-            return p_stop != nullptr && (
-                p_stop->m_reason == SadSearchStopReason::Cancelled
-                || p_stop->m_reason == SadSearchStopReason::TimedOut
-            );
+            if (p_stop == nullptr)
+            {
+                return false;
+            }
+
+            switch (failureResponse(searchStopKind(p_stop->m_reason)))
+            {
+            case FailureResponse::Abort:
+            case FailureResponse::Cancelled: return true;
+            case FailureResponse::Retry:
+            case FailureResponse::StepFailed: return false;
+            }
+
+            UF_UNREACHABLE_MSG("Unknown FailureResponse value");
         }
     }
 

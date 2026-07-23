@@ -6,17 +6,30 @@
 #include <core/safety/annotations.hpp>
 #include <core/types/integer.hpp>
 
+#include <domain/error.hpp>
 #include <domain/frame.hpp>
 
 #include <vision/sad.hpp>
 
 #include <optional>
 #include <span>
+#include <string_view>
 #include <variant>
 #include <vector>
 
 namespace uf::annotation
 {
+    // The single classification of a stopped anchor search. Recognition
+    // failures and regression control flow both read it instead of deciding
+    // per stop reason at each site.
+    [[nodiscard]]
+    auto searchStopKind(SadSearchStopReason reason) noexcept -> AutomationErrorKind;
+
+    // The returned view is backed by static string literals, so it outlives
+    // every caller and needs no owner to be kept alive.
+    [[nodiscard]]
+    auto searchStopDescription(SadSearchStopReason reason) noexcept -> std::string_view;
+
     class FrameIdentity final
     {
         SessionId        m_sessionId;
@@ -130,8 +143,9 @@ namespace uf::annotation
 
     class PageResolutionEvidence final
     {
-        ProjectId                   m_projectId;
-        FrameIdentity               m_frameIdentity;
+        ProjectId     m_projectId;
+        FrameIdentity m_frameIdentity;
+
         std::vector<PageEvaluation> m_pages;
         std::vector<PageId>         m_candidatePageIds;
 

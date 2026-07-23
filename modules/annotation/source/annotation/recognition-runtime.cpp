@@ -48,27 +48,14 @@ namespace uf::annotation
             PageRecognitionStop const& stop
         ) -> std::unexpected<Error>
         {
-            auto const id = stop.m_recognizerId.value().toString();
-            switch (stop.m_reason)
-            {
-            case SadSearchStopReason::Cancelled:
-                return fail(
-                    AutomationErrorKind::Cancelled,
-                    std::format("page recognition cancelled at anchor {}", id)
-                );
-            case SadSearchStopReason::TimedOut:
-                return fail(
-                    AutomationErrorKind::Timeout,
-                    std::format("page recognition timed out at anchor {}", id)
-                );
-            case SadSearchStopReason::ComparisonBudgetExhausted:
-                return fail(
-                    AutomationErrorKind::RecognitionFailed,
-                    std::format("page recognition budget exhausted at anchor {}", id)
-                );
-            }
-
-            UF_UNREACHABLE_MSG("Unknown SadSearchStopReason value");
+            return fail(
+                searchStopKind(stop.m_reason),
+                std::format(
+                    "page recognition {} at anchor {}",
+                    searchStopDescription(stop.m_reason),
+                    stop.m_recognizerId.value().toString()
+                )
+            );
         }
     }
 

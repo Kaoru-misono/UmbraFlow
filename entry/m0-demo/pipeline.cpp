@@ -79,7 +79,7 @@ namespace uf::m0_demo
                 }
                 else
                 {
-                    auto const revalidated = m_resolved.revalidate();
+                    auto revalidated = m_resolved.revalidate();
                     if (revalidated)
                     {
                         auto unchanged = requireUnchangedTarget(*revalidated);
@@ -102,7 +102,7 @@ namespace uf::m0_demo
                     }
                     else
                     {
-                        revalidationError = revalidated.error();
+                        revalidationError = std::move(revalidated).error();
                     }
                 }
 
@@ -137,16 +137,6 @@ namespace uf::m0_demo
         };
 
         using ClickStatus = std::variant<MonotonicInstant, StepStatus>;
-
-        [[nodiscard]]
-        auto hasAutomationKind(
-            Error const& error,
-            AutomationErrorKind expected
-        ) noexcept -> bool
-        {
-            auto const kind = automationErrorKind(error);
-            return kind && *kind == expected;
-        }
 
         [[nodiscard]]
         auto recognizeRaw(
@@ -371,7 +361,15 @@ namespace uf::m0_demo
                 return std::optional<Frame>{*std::move(captured)};
             }
 
-            if (hasAutomationKind(captured.error(), AutomationErrorKind::CaptureStalled))
+            // Only CaptureStalled yields "no frame this round"; every other
+            // capture failure terminates the run. StaleObservation must stay
+            // fail-closed rather than be reported as a stall, so this triage
+            // names the one kind it accepts instead of reading a shared policy
+            // table. See docs/plans/2026-07-20-post-port-win32-robustness.md.
+            if (
+                automationErrorKind(captured.error())
+                == AutomationErrorKind::CaptureStalled
+            )
             {
                 UF_TRY(
                     log.write(
@@ -556,33 +554,9 @@ namespace uf::m0_demo
                     }
 
                     auto const errorText = formatAutomationError(delivered.error());
-                    if (
-                        hasAutomationKind(
-                            delivered.error(),
-                            AutomationErrorKind::ControllerDisconnected
-                        )
-                    )
+                    switch (clickFailureDisposition(delivered.error()))
                     {
-                        UF_TRY(
-                            log.write(
-                                LogLine{"action", "click_error"}
-                                    .loopIndex(loopIndex)
-                                    .frame(*captured)
-                                    .confidence(matched->score())
-                                    .leaseOk(false)
-                                    .outcome("error")
-                                    .detail(std::format("{}: {}", label, errorText))
-                            )
-                        );
-                        return std::unexpected{std::move(delivered).error()};
-                    }
-                    if (
-                        hasAutomationKind(
-                            delivered.error(),
-                            AutomationErrorKind::StaleObservation
-                        )
-                    )
-                    {
+                    case ClickFailureDisposition::Retry:
                         UF_TRY(
                             log.write(
                                 LogLine{"action", "click_retry"}
@@ -594,9 +568,8 @@ namespace uf::m0_demo
                                     .detail(std::format("{}: {}", label, errorText))
                             )
                         );
-                    }
-                    else
-                    {
+                        break;
+                    case ClickFailureDisposition::FailStep:
                         UF_TRY(
                             log.write(
                                 LogLine{"action", "click_error"}
@@ -609,6 +582,19 @@ namespace uf::m0_demo
                             )
                         );
                         return ClickStatus{StepStatus::Failed};
+                    case ClickFailureDisposition::AbortRun:
+                        UF_TRY(
+                            log.write(
+                                LogLine{"action", "click_error"}
+                                    .loopIndex(loopIndex)
+                                    .frame(*captured)
+                                    .confidence(matched->score())
+                                    .leaseOk(false)
+                                    .outcome("error")
+                                    .detail(std::format("{}: {}", label, errorText))
+                            )
+                        );
+                        return std::unexpected{std::move(delivered).error()};
                     }
                 }
 
@@ -1061,7 +1047,7 @@ namespace uf::m0_demo
                         {
                             retainFirstError(
                                 result,
-                                Status{std::unexpected{release.m_result.error()}}
+                                Status{std::unexpected{release.m_result.error().clone()}}
                             );
                         }
                         auto const releaseResult = succeeded
@@ -1357,6 +1343,23 @@ namespace uf::m0_demo
         return capturedAt >= notBefore;
     }
 
+    auto clickFailureDisposition(Error const& error) noexcept -> ClickFailureDisposition
+    {
+        auto const kind = automationErrorKind(error);
+        if (kind == AutomationErrorKind::ControllerDisconnected)
+        {
+            // The post could not be queued at all, so no later frame can help.
+            return ClickFailureDisposition::AbortRun;
+        }
+        if (kind == AutomationErrorKind::StaleObservation)
+        {
+            // The observation went stale between recognize and deliver; a fresh
+            // frame is the normal recovery.
+            return ClickFailureDisposition::Retry;
+        }
+        return ClickFailureDisposition::FailStep;
+    }
+
     auto combineLoopStatus(StepStatus steps, bool guardPassed) noexcept -> LoopStatus
     {
         if (steps == StepStatus::Done)
@@ -1404,15 +1407,15 @@ namespace uf::m0_demo
             std::move(session),
             delivery
         };
-        auto outcome = runLoops(machine, templates, config, log);
-        auto const shutdown = shutdownMachine(machine, log, outcome);
+        auto outcome  = runLoops(machine, templates, config, log);
+        auto shutdown = shutdownMachine(machine, log, outcome);
         if (!outcome)
         {
             return std::unexpected{std::move(outcome).error()};
         }
         if (!shutdown)
         {
-            return std::unexpected{shutdown.error()};
+            return std::unexpected{std::move(shutdown).error()};
         }
         return *std::move(outcome);
     }

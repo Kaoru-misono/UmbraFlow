@@ -4,7 +4,6 @@
 
 #include <core/error/contracts.hpp>
 #include <core/safety/checked-access.hpp>
-#include <core/types/integer.hpp>
 
 #include <domain/error.hpp>
 
@@ -13,6 +12,7 @@
 #include <filesystem>
 #include <format>
 #include <ranges>
+#include <source_location>
 #include <span>
 #include <string>
 #include <string_view>
@@ -37,19 +37,20 @@ namespace uf::workbench
         auto ioFailure(
             std::string_view operation,
             std::filesystem::path const& path,
-            std::error_code error
+            std::error_code error,
+            std::source_location location = std::source_location::current()
         ) -> std::unexpected<Error>
         {
             return fail(
-                ErrorCode::Io,
-                automationErrorDetailCode(AutomationErrorKind::InvalidResource),
+                AutomationErrorKind::IoFailure,
                 std::format(
                     "workbench failed to {} {}: {}",
                     operation,
                     path.string(),
                     error.message()
                 ),
-                static_cast<int64>(error.value())
+                error,
+                location
             );
         }
 

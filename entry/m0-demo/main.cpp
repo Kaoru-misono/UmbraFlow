@@ -254,8 +254,8 @@ namespace uf::m0_demo
                 return std::unexpected{std::move(outcome).error()};
             }
 
-            UF_TRY(terminalWrite);
-            UF_TRY(flush);
+            UF_TRY(std::move(terminalWrite));
+            UF_TRY(std::move(flush));
             return *std::move(outcome);
         }
 

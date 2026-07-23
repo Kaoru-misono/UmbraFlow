@@ -2,88 +2,88 @@
 
 #include "contracts.hpp"
 
-#include <core/types/integer.hpp>
-
 #include <sstream>
 #include <utility>
 
 namespace uf
 {
     Error::Error(
-        ErrorCode code,
-        std::string message,
-        int64 nativeCode,
-        std::source_location location
-    )
-        : Error{code, std::error_code{}, std::move(message), nativeCode, location}
-    {
-    }
-
-    Error::Error(
-        ErrorCode code,
         std::error_code detailCode,
         std::string message,
-        int64 nativeCode,
+        std::error_code nativeCode,
         std::source_location location
     )
-        : m_code{code}
-        , m_detailCode{detailCode}
-        , m_message{std::move(message)}
-        , m_nativeCode{nativeCode}
-        , m_location{location}
+        : Error{
+            Payload{
+                .m_detailCode = detailCode,
+                .m_nativeCode = nativeCode,
+                .m_message    = std::move(message),
+                .m_location   = location,
+            }
+        }
     {
     }
 
-    auto Error::code() const noexcept -> ErrorCode { return m_code; }
-    auto Error::detailCode() const noexcept -> std::error_code { return m_detailCode; }
-    auto Error::message() const noexcept -> std::string_view { return m_message; }
-    auto Error::nativeCode() const noexcept -> int64 { return m_nativeCode; }
-    auto Error::location() const noexcept -> std::source_location { return m_location; }
+    Error::Error(Payload payload)
+        : m_payload{std::make_unique<Payload>(std::move(payload))}
+    {
+    }
+
+    auto Error::payload() const noexcept -> Error::Payload const&
+    {
+        // A live error always owns its payload; only a moved-from error does
+        // not, and reading one is a caller defect rather than a failure mode.
+        UF_CHECK(m_payload != nullptr);
+        return *m_payload;
+    }
+
+    auto Error::clone() const -> Error { return Error{Payload{payload()}}; }
+
+    auto Error::detailCode() const noexcept -> std::error_code
+    {
+        return payload().m_detailCode;
+    }
+    auto Error::message() const noexcept -> std::string_view
+    {
+        return payload().m_message;
+    }
+    auto Error::nativeCode() const noexcept -> std::error_code
+    {
+        return payload().m_nativeCode;
+    }
+    auto Error::location() const noexcept -> std::source_location
+    {
+        return payload().m_location;
+    }
     auto Error::context() const noexcept -> std::span<std::string const>
     {
-        return std::span<std::string const>{m_context};
+        return std::span<std::string const>{payload().m_context};
     }
 
     auto Error::addContext(std::string context) -> Error&
     {
-        m_context.emplace_back(std::move(context));
+        UF_CHECK(m_payload != nullptr);
+        m_payload->m_context.emplace_back(std::move(context));
         return *this;
-    }
-
-    auto errorCodeName(ErrorCode code) noexcept -> std::string_view
-    {
-        switch (code)
-        {
-        case ErrorCode::Cancelled: return "Cancelled";
-        case ErrorCode::Timeout: return "Timeout";
-        case ErrorCode::InvalidArgument: return "InvalidArgument";
-        case ErrorCode::FailedPrecondition: return "FailedPrecondition";
-        case ErrorCode::NotFound: return "NotFound";
-        case ErrorCode::AlreadyExists: return "AlreadyExists";
-        case ErrorCode::PermissionDenied: return "PermissionDenied";
-        case ErrorCode::ResourceExhausted: return "ResourceExhausted";
-        case ErrorCode::Unsupported: return "Unsupported";
-        case ErrorCode::Io: return "Io";
-        case ErrorCode::External: return "External";
-        case ErrorCode::Internal: return "Internal";
-        }
-
-        UF_UNREACHABLE_MSG("Unknown ErrorCode value");
     }
 
     auto toString(Error const& error) -> std::string
     {
         auto stream = std::ostringstream{};
         auto const location = error.location();
+        auto const detailCode = error.detailCode();
 
-        stream << '[' << errorCodeName(error.code()) << "] ";
+        stream << '[' << detailCode.category().name();
+        stream << ':' << detailCode.message() << "] ";
         stream << error.message();
         stream << " at " << location.file_name() << ':' << location.line();
         stream << " in " << location.function_name();
 
-        if (error.nativeCode() != 0)
+        if (auto const nativeCode = error.nativeCode(); nativeCode)
         {
-            stream << " (native code " << error.nativeCode() << ')';
+            stream << " (" << nativeCode.category().name();
+            stream << ' ' << nativeCode.value();
+            stream << ": " << nativeCode.message() << ')';
         }
 
         for (auto const& context : error.context())

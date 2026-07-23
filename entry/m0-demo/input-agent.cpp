@@ -36,6 +36,7 @@
 #include <ios>
 #include <memory>
 #include <optional>
+#include <source_location>
 #include <span>
 #include <string>
 #include <string_view>
@@ -67,21 +68,20 @@ namespace uf::m0_demo
         auto agentIoFailure(
             std::string_view operation,
             std::filesystem::path const& path,
-            std::error_code error
+            std::error_code error,
+            std::source_location location = std::source_location::current()
         ) -> std::unexpected<Error>
         {
             return fail(
-                ErrorCode::Io,
-                automationErrorDetailCode(
-                    AutomationErrorKind::InvalidResource
-                ),
+                AutomationErrorKind::IoFailure,
                 std::format(
                     "input-agent failed to {} {}: {}",
                     operation,
                     path.string(),
                     error.message()
                 ),
-                static_cast<int64>(error.value())
+                error,
+                location
             );
         }
     }
@@ -291,7 +291,7 @@ namespace uf::m0_demo
 
         struct OutputFile final
         {
-            std::filesystem::path m_path;
+            std::filesystem::path m_path{};
             platform::FileWriter  m_writer;
         };
 
@@ -408,10 +408,10 @@ namespace uf::m0_demo
 
         struct ClickResult final
         {
-            std::optional<uint64> m_beforeFrame;
-            std::optional<uint64> m_afterFrame;
+            std::optional<uint64> m_beforeFrame{};
+            std::optional<uint64> m_afterFrame{};
             bool                  m_delivered{};
-            std::optional<Error>  m_error;
+            std::optional<Error>  m_error{};
         };
 
         [[nodiscard]] auto serializeClickResult(ClickResult const& result) -> std::string
@@ -441,7 +441,7 @@ namespace uf::m0_demo
 
         struct CommandExecution final
         {
-            std::string m_resultLine;
+            std::string m_resultLine{};
             bool        m_stopAgent{};
         };
 

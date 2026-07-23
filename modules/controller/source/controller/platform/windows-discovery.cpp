@@ -31,19 +31,20 @@ namespace uf::controller_platform
         // the C Windows SDK does not expose the name provided by the Rust binding.
         constexpr auto g_processNameWin32 = DWORD{0};
 
+        // The location defaults at the call site so the reported origin is the
+        // Win32 call that failed, not this helper.
         [[nodiscard]]
         auto win32Failure(
             std::string_view context,
-            DWORD error
+            DWORD error,
+            std::source_location location = std::source_location::current()
         ) -> std::unexpected<Error>
         {
             return fail(
-                genericErrorCode(AutomationErrorKind::TargetUnavailable),
-                automationErrorDetailCode(
-                    AutomationErrorKind::TargetUnavailable
-                ),
+                AutomationErrorKind::TargetUnavailable,
                 std::format("{} failed with win32 error {}", context, error),
-                static_cast<int64>(error)
+                systemErrorCode(error),
+                location
             );
         }
 
@@ -91,13 +92,13 @@ namespace uf::controller_platform
 
         struct ProcessDetails final
         {
-            std::optional<ProcessStartTime>      m_startTime;
-            std::optional<std::filesystem::path> m_executablePath;
+            std::optional<ProcessStartTime>      m_startTime{};
+            std::optional<std::filesystem::path> m_executablePath{};
         };
 
         struct EnumerationState final
         {
-            std::vector<WindowHandle> m_handles;
+            std::vector<WindowHandle> m_handles{};
             bool                      m_storageFailed{};
         };
 
