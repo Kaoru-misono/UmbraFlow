@@ -9,6 +9,7 @@
 #include <core/types/integer.hpp>
 
 #include <domain/frame.hpp>
+#include <domain/space.hpp>
 
 #include <vision/sad.hpp>
 
@@ -50,6 +51,15 @@ namespace uf::annotation
         uint64                      m_completedPixelComparisons{};
     };
 
+    using ActionAttemptResult = std::variant<AnchorEvidence, PageRecognitionStop>;
+
+    struct ActionTargetAttempt final
+    {
+        // A control stop is a failed attempt, never a completed evaluation.
+        ActionAttemptResult m_result;
+        uint64              m_completedPixelComparisons{};
+    };
+
     class RecognitionRuntime final
     {
         struct GrayTemplate final
@@ -82,6 +92,21 @@ namespace uf::annotation
             SadSearchPoll const& poll
         ) const -> Result<PageRecognitionAttempt>;
 
+        [[nodiscard]]
+        auto ensureCompatibleFrame(
+            Frame const& frame,
+            ProjectFingerprint liveFingerprint
+        ) const -> Status;
+
+        [[nodiscard]]
+        auto evaluateGrayActionTarget(
+            GrayImage const& grayFrame,
+            RecognizerDefinition const& recognizer,
+            GrayTemplate const& grayTemplate,
+            RecognitionPolicy const& policy,
+            SadSearchPoll const& poll
+        ) const -> Result<ActionTargetAttempt>;
+
     public:
         [[nodiscard]]
         static auto create(
@@ -100,10 +125,28 @@ namespace uf::annotation
         ) const -> Result<PageRecognitionAttempt>;
 
         [[nodiscard]]
+        auto evaluateActionTarget(
+            Frame const& frame,
+            ProjectFingerprint liveFingerprint,
+            RecognizerId recognizerId,
+            RecognitionPolicy const& policy
+        ) const -> Result<ActionTargetAttempt>;
+
+        [[nodiscard]]
         auto recognizePage(
             Frame const& frame,
             ProjectFingerprint liveFingerprint,
             RecognitionPolicy const& policy
         ) const -> Result<PageOutcome>;
     };
+
+    // Derives the single deterministic click pixel for an action target from the
+    // rectangle its template matched. A template-local click offset is added to
+    // the matched origin with checked arithmetic; without one, the click is the
+    // truncating integer center of the matched rectangle.
+    [[nodiscard]]
+    auto resolveClickPixel(
+        RecognizerDefinition const& recognizer,
+        PixelRect const& matchedRect
+    ) -> Result<PixelPoint>;
 }

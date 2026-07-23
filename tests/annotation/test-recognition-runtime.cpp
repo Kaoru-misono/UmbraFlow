@@ -22,6 +22,7 @@
 #include <memory>
 #include <optional>
 #include <stop_token>
+#include <string_view>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -32,6 +33,7 @@ namespace uf::annotation
     {
         constexpr auto g_anchorAId = "00000000-0000-0000-0000-000000000011";
         constexpr auto g_anchorBId = "00000000-0000-0000-0000-000000000012";
+        constexpr auto g_actionId  = "00000000-0000-0000-0000-000000000013";
         constexpr auto g_pageAId   = "00000000-0000-0000-0000-000000000111";
         constexpr auto g_pageBId   = "00000000-0000-0000-0000-000000000112";
 
@@ -259,6 +261,114 @@ namespace uf::annotation
             );
             REQUIRE(frame.has_value());
             return *std::move(frame);
+        }
+
+        struct ActionRuntimeInput final
+        {
+            RuntimeManifest                     m_manifest;
+            std::vector<EncodedRuntimeTemplate> m_templates{};
+            ProjectFingerprint                  m_fingerprint;
+
+            RecognizerId m_anchorA;
+            RecognizerId m_actionTarget;
+            PageId       m_pageA;
+        };
+
+        [[nodiscard]]
+        auto actionRuntimeInput() -> ActionRuntimeInput
+        {
+            auto const fingerprint = test::fingerprint(3, 1, 96, 96);
+            auto const anchorA     = test::recognizerId(g_anchorAId);
+            auto const actionT     = test::recognizerId(g_actionId);
+            auto const pageA       = test::pageId(g_pageAId);
+            auto anchorTemplate = encodedTemplate(2);
+            auto actionTemplate = encodedTemplate(5);
+            auto const sourceBytes = std::array{asByte(42)};
+            auto const sourceHash  = sha256(sourceBytes);
+            REQUIRE(sourceHash.has_value());
+
+            auto manifest = RuntimeManifest::create(
+                test::projectId("personal.action_target_runtime"),
+                fingerprint,
+                {
+                    RuntimeRecognizerSpec{
+                        .m_definition = test::recognizer(
+                            fingerprint,
+                            anchorA,
+                            "anchor_a",
+                            AnnotationType::PageAnchor,
+                            test::pixelRect(0, 0, 1, 1),
+                            test::pixelRect(0, 0, 3, 1),
+                            {},
+                            std::nullopt,
+                            test::threshold(10'000)
+                        ),
+                        .m_templateHash = anchorTemplate.m_hash,
+                        .m_sourceHash   = *sourceHash,
+                    },
+                    RuntimeRecognizerSpec{
+                        .m_definition = test::recognizer(
+                            fingerprint,
+                            actionT,
+                            "action_target",
+                            AnnotationType::ActionTarget,
+                            test::pixelRect(0, 0, 1, 1),
+                            test::pixelRect(0, 0, 3, 1),
+                            {pageA},
+                            std::nullopt,
+                            test::threshold(10'000)
+                        ),
+                        .m_templateHash = actionTemplate.m_hash,
+                        .m_sourceHash   = *sourceHash,
+                    },
+                },
+                {
+                    test::page(pageA, "page_a", {anchorA}),
+                }
+            );
+            REQUIRE(manifest.has_value());
+            auto templates = std::vector<EncodedRuntimeTemplate>{};
+            templates.emplace_back(std::move(anchorTemplate));
+            templates.emplace_back(std::move(actionTemplate));
+            return ActionRuntimeInput{
+                .m_manifest     = *std::move(manifest),
+                .m_templates    = std::move(templates),
+                .m_fingerprint  = fingerprint,
+                .m_anchorA      = anchorA,
+                .m_actionTarget = actionT,
+                .m_pageA        = pageA,
+            };
+        }
+
+        struct ActionFixture final
+        {
+            RecognitionRuntime m_runtime;
+            ProjectFingerprint m_fingerprint{test::fingerprint(3, 1, 96, 96)};
+            RecognizerId       m_anchorA{test::recognizerId(g_anchorAId)};
+            RecognizerId       m_actionTarget{test::recognizerId(g_actionId)};
+            PageId             m_pageA{test::pageId(g_pageAId)};
+        };
+
+        [[nodiscard]]
+        auto actionFixture() -> ActionFixture
+        {
+            auto input             = actionRuntimeInput();
+            auto const fingerprint = input.m_fingerprint;
+            auto const anchorA     = input.m_anchorA;
+            auto const actionT     = input.m_actionTarget;
+            auto const pageA       = input.m_pageA;
+            auto runtime = RecognitionRuntime::create(
+                std::move(input.m_manifest),
+                std::move(input.m_templates)
+            );
+            REQUIRE(runtime.has_value());
+            return ActionFixture{
+                .m_runtime      = *std::move(runtime),
+                .m_fingerprint  = fingerprint,
+                .m_anchorA      = anchorA,
+                .m_actionTarget = actionT,
+                .m_pageA        = pageA,
+            };
         }
     }
 
@@ -582,5 +692,235 @@ namespace uf::annotation
         REQUIRE(outcome.has_value());
         REQUIRE(std::holds_alternative<ResolvedPage>(*outcome));
         CHECK(std::get<ResolvedPage>(*outcome).pageId() == pageB);
+    }
+
+    TEST_CASE("recognition runtime evaluates an action target hit into match evidence")
+    {
+        auto const fixture = actionFixture();
+        auto const frame   = runtimeFrame(
+            fixture.m_fingerprint,
+            {asByte(0), asByte(5), asByte(0)},
+            PixelFormat::Gray8
+        );
+
+        auto const attempt = fixture.m_runtime.evaluateActionTarget(
+            frame,
+            fixture.m_fingerprint,
+            fixture.m_actionTarget,
+            continuingPolicy(100)
+        );
+        REQUIRE(attempt.has_value());
+        auto const* p_evidence = std::get_if<AnchorEvidence>(&attempt->m_result);
+        REQUIRE(p_evidence != nullptr);
+        CHECK(p_evidence->recognizerId() == fixture.m_actionTarget);
+        CHECK(p_evidence->hit());
+        REQUIRE(p_evidence->sadScore().has_value());
+        CHECK(p_evidence->sadScore().value() == 0);
+        CHECK(p_evidence->sadScore().value() <= p_evidence->maximumSad());
+        REQUIRE(p_evidence->matchedRect().has_value());
+        CHECK(p_evidence->matchedRect().value() == test::pixelRect(1, 0, 1, 1));
+        CHECK(attempt->m_completedPixelComparisons == 2);
+    }
+
+    TEST_CASE("recognition runtime reports an absent action target as tier a absence")
+    {
+        auto const fixture = actionFixture();
+        auto const frame   = runtimeFrame(
+            fixture.m_fingerprint,
+            {asByte(0), asByte(0), asByte(0)},
+            PixelFormat::Gray8
+        );
+
+        auto const attempt = fixture.m_runtime.evaluateActionTarget(
+            frame,
+            fixture.m_fingerprint,
+            fixture.m_actionTarget,
+            continuingPolicy(100)
+        );
+        REQUIRE(attempt.has_value());
+        auto const* p_evidence = std::get_if<AnchorEvidence>(&attempt->m_result);
+        REQUIRE(p_evidence != nullptr);
+        CHECK(p_evidence->recognizerId() == fixture.m_actionTarget);
+        CHECK_FALSE(p_evidence->hit());
+        // The reusable matcher always returns its best candidate while the
+        // recognizer search_roi fits its template, so a miss is Tier A absence
+        // carrying a best score above threshold rather than an error.
+        REQUIRE(p_evidence->sadScore().has_value());
+        CHECK(p_evidence->sadScore().value() > p_evidence->maximumSad());
+    }
+
+    TEST_CASE("recognition runtime rejects recognizers that are not catalog action targets")
+    {
+        auto const fixture = actionFixture();
+        auto const frame   = runtimeFrame(
+            fixture.m_fingerprint,
+            {asByte(0), asByte(5), asByte(0)},
+            PixelFormat::Gray8
+        );
+
+        auto const unknown = fixture.m_runtime.evaluateActionTarget(
+            frame,
+            fixture.m_fingerprint,
+            test::recognizerId(g_anchorBId),
+            continuingPolicy(100)
+        );
+        REQUIRE_FALSE(unknown.has_value());
+        test::requireErrorKind(unknown.error(), AutomationErrorKind::InvalidResource);
+        CHECK(
+            unknown.error().message().find("not present")
+            != std::string_view::npos
+        );
+
+        auto const wrongType = fixture.m_runtime.evaluateActionTarget(
+            frame,
+            fixture.m_fingerprint,
+            fixture.m_anchorA,
+            continuingPolicy(100)
+        );
+        REQUIRE_FALSE(wrongType.has_value());
+        test::requireErrorKind(wrongType.error(), AutomationErrorKind::InvalidResource);
+        CHECK(
+            wrongType.error().message().find("action_target")
+            != std::string_view::npos
+        );
+    }
+
+    TEST_CASE("recognition runtime rejects an action target on an incompatible fingerprint")
+    {
+        auto const fixture = actionFixture();
+        auto const frame   = runtimeFrame(
+            fixture.m_fingerprint,
+            {asByte(0), asByte(5), asByte(0)},
+            PixelFormat::Gray8
+        );
+
+        auto const incompatible = fixture.m_runtime.evaluateActionTarget(
+            frame,
+            test::fingerprint(3, 1, 120, 120),
+            fixture.m_actionTarget,
+            continuingPolicy(100)
+        );
+        REQUIRE_FALSE(incompatible.has_value());
+        test::requireErrorKind(
+            incompatible.error(),
+            AutomationErrorKind::TargetCompatibilityUnverified
+        );
+    }
+
+    TEST_CASE("recognition runtime preserves action target control stops")
+    {
+        auto const fixture = actionFixture();
+        auto const frame   = runtimeFrame(
+            fixture.m_fingerprint,
+            {asByte(0), asByte(5), asByte(0)},
+            PixelFormat::Gray8
+        );
+
+        auto cancellation     = std::stop_source{};
+        auto const didRequest = cancellation.request_stop();
+        REQUIRE(didRequest);
+        auto const cancelled = fixture.m_runtime.evaluateActionTarget(
+            frame,
+            fixture.m_fingerprint,
+            fixture.m_actionTarget,
+            RecognitionPolicy{
+                .m_maximumPixelComparisons = 100,
+                .m_cancellation            = cancellation.get_token(),
+            }
+        );
+        REQUIRE(cancelled.has_value());
+        auto const* p_cancelStop = std::get_if<PageRecognitionStop>(
+            &cancelled->m_result
+        );
+        REQUIRE(p_cancelStop != nullptr);
+        CHECK(p_cancelStop->m_recognizerId == fixture.m_actionTarget);
+        CHECK(p_cancelStop->m_reason == SadSearchStopReason::Cancelled);
+        CHECK(cancelled->m_completedPixelComparisons == 0);
+
+        auto const exhausted = fixture.m_runtime.evaluateActionTarget(
+            frame,
+            fixture.m_fingerprint,
+            fixture.m_actionTarget,
+            continuingPolicy(0)
+        );
+        REQUIRE(exhausted.has_value());
+        auto const* p_budgetStop = std::get_if<PageRecognitionStop>(
+            &exhausted->m_result
+        );
+        REQUIRE(p_budgetStop != nullptr);
+        CHECK(p_budgetStop->m_recognizerId == fixture.m_actionTarget);
+        CHECK(
+            p_budgetStop->m_reason
+            == SadSearchStopReason::ComparisonBudgetExhausted
+        );
+        CHECK(exhausted->m_completedPixelComparisons == 0);
+    }
+
+    TEST_CASE("resolveClickPixel derives deterministic integer click points")
+    {
+        auto const fingerprint = test::fingerprint(8, 8, 96, 96);
+        auto const actionT     = test::recognizerId(g_actionId);
+        auto const pageA       = test::pageId(g_pageAId);
+
+        auto const offset = TemplateOffset::create(2, 1, 4, 3);
+        REQUIRE(offset.has_value());
+        auto const withOffset = test::recognizer(
+            fingerprint,
+            actionT,
+            "action_target",
+            AnnotationType::ActionTarget,
+            test::pixelRect(0, 0, 4, 3),
+            test::pixelRect(0, 0, 4, 3),
+            {pageA},
+            *offset,
+            test::threshold(10'000)
+        );
+        auto const offsetClick = resolveClickPixel(
+            withOffset,
+            test::pixelRect(10, 20, 4, 3)
+        );
+        REQUIRE(offsetClick.has_value());
+        CHECK(*offsetClick == PixelPoint{12, 21});
+
+        // Odd extents pin the truncating integer center: 3 / 2 == 1, 5 / 2 == 2.
+        auto const centered = test::recognizer(
+            fingerprint,
+            actionT,
+            "action_target",
+            AnnotationType::ActionTarget,
+            test::pixelRect(0, 0, 3, 5),
+            test::pixelRect(0, 0, 3, 5),
+            {pageA},
+            std::nullopt,
+            test::threshold(10'000)
+        );
+        auto const centerClick = resolveClickPixel(
+            centered,
+            test::pixelRect(2, 4, 3, 5)
+        );
+        REQUIRE(centerClick.has_value());
+        CHECK(*centerClick == PixelPoint{3, 6});
+
+        auto const anchor = test::recognizer(
+            fingerprint,
+            test::recognizerId(g_anchorAId),
+            "anchor_a",
+            AnnotationType::PageAnchor,
+            test::pixelRect(0, 0, 3, 5),
+            test::pixelRect(0, 0, 3, 5),
+            {},
+            std::nullopt,
+            test::threshold(10'000)
+        );
+        auto const rejected = resolveClickPixel(
+            anchor,
+            test::pixelRect(2, 4, 3, 5)
+        );
+        REQUIRE_FALSE(rejected.has_value());
+        test::requireErrorKind(rejected.error(), AutomationErrorKind::InvalidResource);
+        CHECK(
+            rejected.error().message().find("action_target")
+            != std::string_view::npos
+        );
     }
 }

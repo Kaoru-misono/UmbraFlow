@@ -6,6 +6,7 @@
 #include <core/types/integer.hpp>
 
 #include <domain/error.hpp>
+#include <domain/space.hpp>
 
 #include <image/pixels.hpp>
 #include <image/png.hpp>
@@ -17,6 +18,7 @@
 #include <ranges>
 #include <span>
 #include <string>
+#include <type_traits>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -56,6 +58,86 @@ namespace uf::annotation
                     stop.m_recognizerId.value().toString()
                 )
             );
+        }
+
+        // Captured by value because the SAD matcher stores this poll and calls it
+        // during the search; a stored callback must not borrow caller state.
+        [[nodiscard]]
+        auto makeSadSearchPoll(RecognitionPolicy const& policy) -> SadSearchPoll
+        {
+            auto const cancellation = policy.m_cancellation;
+            auto const deadline     = policy.m_deadline;
+            return SadSearchPoll{
+                [cancellation, deadline]() noexcept -> SadSearchControl
+                {
+                    if (cancellation.stop_requested())
+                    {
+                        return SadSearchControl::Cancelled;
+                    }
+                    if (deadline && MonotonicInstant::now() >= *deadline)
+                    {
+                        return SadSearchControl::TimedOut;
+                    }
+                    return SadSearchControl::Continue;
+                }
+            };
+        }
+
+        // Converts the frame to a Gray8 view once and hands it to the
+        // continuation while the backing storage is still alive. The Bgra8 path's
+        // gray buffer lives on this stack frame for the whole synchronous call, so
+        // the view the continuation receives never outlives its owner.
+        template <typename Continuation>
+        [[nodiscard]]
+        auto withGrayFrame(
+            Frame const& frame,
+            Continuation const& continuation
+        ) -> std::invoke_result_t<Continuation const&, GrayImage const&>
+        {
+            auto const p_pixels = frame.pixels();
+            UF_CHECK(p_pixels != nullptr);
+            switch (frame.pixelFormat())
+            {
+            case PixelFormat::Gray8:
+            {
+                UF_TRY_VALUE(
+                    grayFrame,
+                    GrayImage::create(
+                        p_pixels->bytes(),
+                        frame.width(),
+                        frame.height(),
+                        frame.stride()
+                    )
+                );
+                return std::invoke(continuation, grayFrame);
+            }
+            case PixelFormat::Bgra8:
+            {
+                UF_TRY_VALUE(
+                    grayPixels,
+                    bgra8ToGray8(
+                        p_pixels->bytes(),
+                        frame.width(),
+                        frame.height(),
+                        frame.stride()
+                    )
+                );
+                auto const grayStride = checkedCast<std::size_t>(frame.width());
+                UF_CHECK(grayStride.has_value());
+                UF_TRY_VALUE(
+                    grayFrame,
+                    GrayImage::create(
+                        grayPixels,
+                        frame.width(),
+                        frame.height(),
+                        *grayStride
+                    )
+                );
+                return std::invoke(continuation, grayFrame);
+            }
+            }
+
+            UF_UNREACHABLE_MSG("Unknown PixelFormat value");
         }
     }
 
@@ -326,11 +408,10 @@ namespace uf::annotation
         };
     }
 
-    auto RecognitionRuntime::evaluatePage(
+    auto RecognitionRuntime::ensureCompatibleFrame(
         Frame const& frame,
-        ProjectFingerprint liveFingerprint,
-        RecognitionPolicy const& policy
-    ) const -> Result<PageRecognitionAttempt>
+        ProjectFingerprint liveFingerprint
+    ) const -> Status
     {
         auto const expected = m_manifest.catalog().fingerprint();
         if (liveFingerprint != expected)
@@ -362,66 +443,27 @@ namespace uf::annotation
             );
         }
 
-        auto const p_pixels = frame.pixels();
-        UF_CHECK(p_pixels != nullptr);
-        auto const cancellation = policy.m_cancellation;
-        auto const deadline     = policy.m_deadline;
-        auto const poll = SadSearchPoll{
-            [cancellation, deadline]() noexcept -> SadSearchControl
-            {
-                if (cancellation.stop_requested())
-                {
-                    return SadSearchControl::Cancelled;
-                }
-                if (deadline && MonotonicInstant::now() >= *deadline)
-                {
-                    return SadSearchControl::TimedOut;
-                }
-                return SadSearchControl::Continue;
-            }
-        };
-        switch (frame.pixelFormat())
-        {
-        case PixelFormat::Gray8:
-        {
-            UF_TRY_VALUE(
-                grayFrame,
-                GrayImage::create(
-                    p_pixels->bytes(),
-                    frame.width(),
-                    frame.height(),
-                    frame.stride()
-                )
-            );
-            return evaluateGrayPage(frame, grayFrame, policy, poll);
-        }
-        case PixelFormat::Bgra8:
-        {
-            UF_TRY_VALUE(
-                grayPixels,
-                bgra8ToGray8(
-                    p_pixels->bytes(),
-                    frame.width(),
-                    frame.height(),
-                    frame.stride()
-                )
-            );
-            auto const grayStride = checkedCast<std::size_t>(frame.width());
-            UF_CHECK(grayStride.has_value());
-            UF_TRY_VALUE(
-                grayFrame,
-                GrayImage::create(
-                    grayPixels,
-                    frame.width(),
-                    frame.height(),
-                    *grayStride
-                )
-            );
-            return evaluateGrayPage(frame, grayFrame, policy, poll);
-        }
-        }
+        return ok();
+    }
 
-        UF_UNREACHABLE_MSG("Unknown PixelFormat value");
+    auto RecognitionRuntime::evaluatePage(
+        Frame const& frame,
+        ProjectFingerprint liveFingerprint,
+        RecognitionPolicy const& policy
+    ) const -> Result<PageRecognitionAttempt>
+    {
+        UF_TRY(ensureCompatibleFrame(frame, liveFingerprint));
+
+        auto const poll = makeSadSearchPoll(policy);
+        return withGrayFrame(
+            frame,
+            [this, &frame, &policy, &poll](
+                GrayImage const& grayFrame
+            ) -> Result<PageRecognitionAttempt>
+            {
+                return evaluateGrayPage(frame, grayFrame, policy, poll);
+            }
+        );
     }
 
     auto RecognitionRuntime::recognizePage(
@@ -440,5 +482,149 @@ namespace uf::annotation
             return pageRecognitionFailure(*p_stop);
         }
         return std::get<PageOutcome>(std::move(attempt.m_result));
+    }
+
+    auto RecognitionRuntime::evaluateGrayActionTarget(
+        GrayImage const& grayFrame,
+        RecognizerDefinition const& recognizer,
+        GrayTemplate const& grayTemplate,
+        RecognitionPolicy const& policy,
+        SadSearchPoll const& poll
+    ) const -> Result<ActionTargetAttempt>
+    {
+        auto const templateStride = checkedCast<std::size_t>(grayTemplate.m_width);
+        UF_CHECK(templateStride.has_value());
+        UF_TRY_VALUE(
+            templateImage,
+            GrayImage::create(
+                grayTemplate.m_pixels,
+                grayTemplate.m_width,
+                grayTemplate.m_height,
+                *templateStride
+            )
+        );
+        UF_TRY_VALUE(
+            sadReport,
+            matchTemplateSad(
+                grayFrame,
+                templateImage,
+                recognizer.searchRoi(),
+                policy.m_maximumPixelComparisons,
+                poll
+            )
+        );
+
+        if (
+            auto const* p_stop = std::get_if<SadSearchStopReason>(
+                &sadReport.m_outcome
+            )
+        )
+        {
+            return ActionTargetAttempt{
+                .m_result = PageRecognitionStop{
+                    .m_recognizerId = recognizer.id(),
+                    .m_reason       = *p_stop,
+                },
+                .m_completedPixelComparisons = sadReport.m_completedPixelComparisons,
+            };
+        }
+
+        UF_TRY_VALUE(
+            evaluation,
+            AnchorEvaluation::fromSadOutcome(recognizer, sadReport.m_outcome)
+        );
+        auto const* p_evidence = std::get_if<AnchorEvidence>(
+            &evaluation.evaluation()
+        );
+        UF_CHECK(p_evidence != nullptr);
+        return ActionTargetAttempt{
+            .m_result                    = *p_evidence,
+            .m_completedPixelComparisons = sadReport.m_completedPixelComparisons,
+        };
+    }
+
+    auto RecognitionRuntime::evaluateActionTarget(
+        Frame const& frame,
+        ProjectFingerprint liveFingerprint,
+        RecognizerId recognizerId,
+        RecognitionPolicy const& policy
+    ) const -> Result<ActionTargetAttempt>
+    {
+        UF_TRY(ensureCompatibleFrame(frame, liveFingerprint));
+
+        auto const& catalog      = m_manifest.catalog();
+        auto const* p_recognizer = catalog.findRecognizer(recognizerId);
+        if (p_recognizer == nullptr)
+        {
+            return invalidRuntime(
+                std::format(
+                    "recognizer {} is not present in the runtime catalog",
+                    recognizerId.value().toString()
+                )
+            );
+        }
+        if (p_recognizer->annotationType() != AnnotationType::ActionTarget)
+        {
+            return invalidRuntime(
+                "only an action_target may be evaluated for an action"
+            );
+        }
+
+        auto const* p_asset = m_manifest.findAsset(recognizerId);
+        UF_CHECK(p_asset != nullptr);
+        auto const* p_template = findTemplate(p_asset->m_templateHash);
+        UF_CHECK(p_template != nullptr);
+
+        auto const poll = makeSadSearchPoll(policy);
+        return withGrayFrame(
+            frame,
+            [this, p_recognizer, p_template, &policy, &poll](
+                GrayImage const& grayFrame
+            ) -> Result<ActionTargetAttempt>
+            {
+                return evaluateGrayActionTarget(
+                    grayFrame,
+                    *p_recognizer,
+                    *p_template,
+                    policy,
+                    poll
+                );
+            }
+        );
+    }
+
+    auto resolveClickPixel(
+        RecognizerDefinition const& recognizer,
+        PixelRect const& matchedRect
+    ) -> Result<PixelPoint>
+    {
+        if (recognizer.annotationType() != AnnotationType::ActionTarget)
+        {
+            return invalidRuntime(
+                "only an action_target defines a click point"
+            );
+        }
+
+        if (auto const offset = recognizer.defaultClick())
+        {
+            auto const clickX = checkedAdd(matchedRect.x(), offset->x());
+            auto const clickY = checkedAdd(matchedRect.y(), offset->y());
+            if (!clickX || !clickY)
+            {
+                return fail(
+                    AutomationErrorKind::InternalInvariant,
+                    "action_target click offset overflowed the matched rectangle"
+                );
+            }
+            return PixelPoint{*clickX, *clickY};
+        }
+
+        // Integer division truncates toward zero, so the center resolves to one
+        // reproducible pixel for both even and odd rectangle extents. The origin
+        // plus half the extent cannot exceed the validated right/bottom edge, so
+        // the sum stays inside uint32 without a checked add.
+        auto const centerX = matchedRect.x() + matchedRect.width() / 2U;
+        auto const centerY = matchedRect.y() + matchedRect.height() / 2U;
+        return PixelPoint{centerX, centerY};
     }
 }

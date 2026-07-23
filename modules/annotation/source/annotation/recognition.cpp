@@ -135,11 +135,14 @@ namespace uf::annotation
         SadSearchOutcome const& outcome
     ) -> Result<AnchorEvaluation>
     {
-        if (recognizer.annotationType() != AnnotationType::PageAnchor)
+        if (
+            recognizer.annotationType() != AnnotationType::PageAnchor
+            && recognizer.annotationType() != AnnotationType::ActionTarget
+        )
         {
             return fail(
                 AutomationErrorKind::InvalidResource,
-                "page resolution may evaluate only page_anchor recognizers"
+                "SAD evidence may evaluate only page_anchor or action_target recognizers"
             );
         }
 
