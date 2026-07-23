@@ -64,6 +64,17 @@ namespace uf
         SadSearchStopReason
     >;
 
+    struct SadSearchReport final
+    {
+        SadSearchOutcome m_outcome{};
+
+        // Counts comparisons actually executed across every candidate, including
+        // the comparisons that trigger pruning or an exact-match return. A budget
+        // or poll stop excludes the comparison that was not executed. Valid for
+        // every outcome and starts at zero for each matcher call.
+        uint64 m_completedPixelComparisons{};
+    };
+
     class GrayImage;
 
     [[nodiscard]]
@@ -80,7 +91,7 @@ namespace uf
         PixelRect roi,
         uint64 maximumPixelComparisons,
         SadSearchPoll const& poll
-    ) -> Result<SadSearchOutcome>;
+    ) -> Result<SadSearchReport>;
 
     // A read-only Gray8 view. The backing storage must outlive this object and
     // every matcher call that uses it.
@@ -91,18 +102,24 @@ namespace uf
             SadSearchStopReason
         >;
 
+        struct CandidateReport final
+        {
+            CandidateOutcome m_outcome{};
+            uint64           m_completedPixelComparisons{};
+        };
+
         friend auto matchTemplateSad(
             GrayImage const& haystack,
             GrayImage const& templateImage,
             PixelRect roi,
             uint64 maximumPixelComparisons,
             SadSearchPoll const& poll
-        ) -> Result<SadSearchOutcome>;
+        ) -> Result<SadSearchReport>;
 
         std::span<std::byte const> m_data;
-        uint32 m_width;
-        uint32 m_height;
-        std::size_t m_stride;
+        uint32                     m_width;
+        uint32                     m_height;
+        std::size_t                m_stride;
 
         constexpr GrayImage(
             std::span<std::byte const> data,
@@ -131,9 +148,9 @@ namespace uf
             std::size_t candidateY,
             uint64 best,
             uint64 maximumPixelComparisons,
-            uint64& completedPixelComparisons,
+            uint64 completedPixelComparisons,
             SadSearchPoll const& poll
-        ) const -> CandidateOutcome;
+        ) const -> CandidateReport;
 
     public:
         [[nodiscard]]

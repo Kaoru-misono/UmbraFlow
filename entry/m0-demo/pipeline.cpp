@@ -245,7 +245,7 @@ namespace uf::m0_demo
                 }
             };
             UF_TRY_VALUE(
-                outcome,
+                report,
                 matchTemplateSad(
                     haystack,
                     templateImage,
@@ -254,6 +254,7 @@ namespace uf::m0_demo
                     poll
                 )
             );
+            auto const& outcome = report.m_outcome;
             if (std::holds_alternative<SadSearchStopReason>(outcome))
             {
                 return SadSearchOutcome{

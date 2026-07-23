@@ -325,9 +325,10 @@ namespace uf
         );
         REQUIRE(zeroBudget.has_value());
         CHECK(
-            std::get<SadSearchStopReason>(*zeroBudget)
+            std::get<SadSearchStopReason>(zeroBudget->m_outcome)
             == SadSearchStopReason::ComparisonBudgetExhausted
         );
+        CHECK(zeroBudget->m_completedPixelComparisons == 0);
         CHECK(pollCount == 0);
 
         auto const oneComparison = matchTemplateSad(
@@ -339,9 +340,10 @@ namespace uf
         );
         REQUIRE(oneComparison.has_value());
         CHECK(
-            std::get<SadSearchStopReason>(*oneComparison)
+            std::get<SadSearchStopReason>(oneComparison->m_outcome)
             == SadSearchStopReason::ComparisonBudgetExhausted
         );
+        CHECK(oneComparison->m_completedPixelComparisons == 1);
         CHECK(pollCount == 1);
 
         auto const exactBudget = matchTemplateSad(
@@ -353,16 +355,53 @@ namespace uf
         );
         REQUIRE(exactBudget.has_value());
         CHECK(
-            std::get<std::optional<SadMatch>>(*exactBudget)
+            std::get<std::optional<SadMatch>>(exactBudget->m_outcome)
             == std::optional{SadMatch{1, 0, 254}}
         );
+        CHECK(exactBudget->m_completedPixelComparisons == 2);
+    }
+
+    TEST_CASE("bounded exact match reports every comparison before early return")
+    {
+        auto const haystackData = std::vector<std::byte>{
+            asByte(1),
+            asByte(2),
+            asByte(3),
+        };
+        auto const templateData  = std::vector<std::byte>{asByte(2)};
+        auto const haystack      = grayImage(haystackData, 3, 1, 3);
+        auto const templateImage = grayImage(templateData, 1, 1, 1);
+        auto const roi           = pixelRect(0, 0, 3, 1);
+        auto pollCount           = uint32{0};
+        auto const poll = SadSearchPoll{
+            [&pollCount]() noexcept -> SadSearchControl
+            {
+                ++pollCount;
+                return SadSearchControl::Continue;
+            }
+        };
+
+        auto const result = matchTemplateSad(
+            haystack,
+            templateImage,
+            roi,
+            3,
+            poll
+        );
+        REQUIRE(result.has_value());
+        CHECK(
+            std::get<std::optional<SadMatch>>(result->m_outcome)
+            == std::optional{SadMatch{1, 0, 0}}
+        );
+        CHECK(result->m_completedPixelComparisons == 2);
+        CHECK(pollCount == 1);
     }
 
     TEST_CASE("template matching maps synchronous poll interruptions")
     {
         struct InterruptionCase final
         {
-            SadSearchControl m_control;
+            SadSearchControl    m_control;
             SadSearchStopReason m_expected;
         };
 
@@ -395,7 +434,11 @@ namespace uf
                 poll
             );
             REQUIRE(result.has_value());
-            CHECK(std::get<SadSearchStopReason>(*result) == testCase.m_expected);
+            CHECK(
+                std::get<SadSearchStopReason>(result->m_outcome)
+                == testCase.m_expected
+            );
+            CHECK(result->m_completedPixelComparisons == 0);
         }
     }
 
@@ -441,8 +484,12 @@ namespace uf
 
         REQUIRE(result.has_value());
         CHECK(
-            std::get<SadSearchStopReason>(*result)
+            std::get<SadSearchStopReason>(result->m_outcome)
             == SadSearchStopReason::Cancelled
+        );
+        CHECK(
+            result->m_completedPixelComparisons
+            == g_sadSearchPollIntervalComparisons
         );
         CHECK(pollCount == 2);
     }

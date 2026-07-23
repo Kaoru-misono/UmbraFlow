@@ -118,9 +118,9 @@ namespace uf
         std::size_t candidateY,
         uint64 best,
         uint64 maximumPixelComparisons,
-        uint64& completedPixelComparisons,
+        uint64 completedPixelComparisons,
         SadSearchPoll const& poll
-    ) const -> CandidateOutcome
+    ) const -> CandidateReport
     {
         auto const templateWidth = checkedCast<std::size_t>(templateImage.m_width);
         auto const templateHeight = checkedCast<std::size_t>(templateImage.m_height);
@@ -150,7 +150,10 @@ namespace uf
             {
                 if (completedPixelComparisons == maximumPixelComparisons)
                 {
-                    return SadSearchStopReason::ComparisonBudgetExhausted;
+                    return CandidateReport{
+                        SadSearchStopReason::ComparisonBudgetExhausted,
+                        completedPixelComparisons
+                    };
                 }
                 if (
                     completedPixelComparisons % g_sadSearchPollIntervalComparisons == 0
@@ -161,9 +164,15 @@ namespace uf
                     case SadSearchControl::Continue:
                         break;
                     case SadSearchControl::Cancelled:
-                        return SadSearchStopReason::Cancelled;
+                        return CandidateReport{
+                            SadSearchStopReason::Cancelled,
+                            completedPixelComparisons
+                        };
                     case SadSearchControl::TimedOut:
-                        return SadSearchStopReason::TimedOut;
+                        return CandidateReport{
+                            SadSearchStopReason::TimedOut,
+                            completedPixelComparisons
+                        };
                     default:
                         UF_UNREACHABLE_MSG("Unknown SadSearchControl value");
                     }
@@ -186,11 +195,11 @@ namespace uf
 
             if (sum >= best)
             {
-                return sum;
+                return CandidateReport{sum, completedPixelComparisons};
             }
         }
 
-        return sum;
+        return CandidateReport{sum, completedPixelComparisons};
     }
 
     auto matchTemplateSad(
@@ -206,7 +215,7 @@ namespace uf
             }
         };
         UF_TRY_VALUE(
-            outcome,
+            report,
             matchTemplateSad(
                 haystack,
                 templateImage,
@@ -215,6 +224,7 @@ namespace uf
                 continueSearch
             )
         );
+        auto const& outcome = report.m_outcome;
         UF_CHECK(std::holds_alternative<std::optional<SadMatch>>(outcome));
         return std::get<std::optional<SadMatch>>(outcome);
     }
@@ -225,7 +235,7 @@ namespace uf
         PixelRect roi,
         uint64 maximumPixelComparisons,
         SadSearchPoll const& poll
-    ) -> Result<SadSearchOutcome>
+    ) -> Result<SadSearchReport>
     {
         UF_CHECK(poll != nullptr);
         UF_TRY(roi.ensureWithinExtent(haystack.width(), haystack.height()));
@@ -235,15 +245,18 @@ namespace uf
             || templateImage.height() > roi.height()
         )
         {
-            return SadSearchOutcome{std::optional<SadMatch>{}};
+            return SadSearchReport{
+                SadSearchOutcome{std::optional<SadMatch>{}},
+                0
+            };
         }
 
         auto const lastX = checkedSubtract(roi.right(), templateImage.width());
         auto const lastY = checkedSubtract(roi.bottom(), templateImage.height());
         UF_CHECK(lastX.has_value());
         UF_CHECK(lastY.has_value());
-        auto best = std::numeric_limits<uint64>::max();
-        auto bestMatch = std::optional<SadMatch>{};
+        auto best                      = std::numeric_limits<uint64>::max();
+        auto bestMatch                 = std::optional<SadMatch>{};
         auto completedPixelComparisons = uint64{0};
 
         for (auto candidateY = roi.y(); candidateY <= *lastY; ++candidateY)
@@ -263,24 +276,38 @@ namespace uf
                     completedPixelComparisons,
                     poll
                 );
-                if (auto const* reason = std::get_if<SadSearchStopReason>(&candidate))
+                completedPixelComparisons = candidate.m_completedPixelComparisons;
+                if (
+                    auto const* reason = std::get_if<SadSearchStopReason>(
+                        &candidate.m_outcome
+                    )
+                )
                 {
-                    return SadSearchOutcome{*reason};
+                    return SadSearchReport{
+                        SadSearchOutcome{*reason},
+                        completedPixelComparisons
+                    };
                 }
-                auto const score = std::get<uint64>(candidate);
+                auto const score = std::get<uint64>(candidate.m_outcome);
                 if (score < best)
                 {
                     best = score;
                     bestMatch.emplace(candidateX, candidateY, score);
                     if (best == 0)
                     {
-                        return SadSearchOutcome{bestMatch};
+                        return SadSearchReport{
+                            SadSearchOutcome{bestMatch},
+                            completedPixelComparisons
+                        };
                     }
                 }
             }
         }
 
-        return SadSearchOutcome{bestMatch};
+        return SadSearchReport{
+            SadSearchOutcome{bestMatch},
+            completedPixelComparisons
+        };
     }
 
     auto bgra8ToGray8(
