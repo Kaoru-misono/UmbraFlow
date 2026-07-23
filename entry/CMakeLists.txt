@@ -78,3 +78,26 @@ if(TARGET ${PROJECT_NAME}_controller)
     target_link_libraries(${M0_DEMO_EXECUTABLE} PRIVATE ${M0_DEMO_LIBRARY})
     target_compile_features(${M0_DEMO_EXECUTABLE} PRIVATE cxx_std_23)
 endif()
+
+if(WIN32 AND TARGET ${PROJECT_NAME}_annotation)
+    set(WORKBENCH_LIBRARY ${PROJECT_NAME}_workbench_support)
+
+    add_library(${WORKBENCH_LIBRARY} STATIC
+        workbench/authoring-edit.cpp
+        workbench/authoring-edit.hpp
+        workbench/platform/windows-file-publication.cpp
+        workbench/platform/windows-file-publication.hpp
+        workbench/project-persistence.cpp
+        workbench/project-persistence.hpp
+    )
+    cpp_apply_safety_profile(${WORKBENCH_LIBRARY})
+    target_include_directories(${WORKBENCH_LIBRARY}
+        PUBLIC
+            ${CMAKE_CURRENT_SOURCE_DIR}/workbench
+    )
+    target_link_libraries(${WORKBENCH_LIBRARY}
+        PUBLIC
+            ${PROJECT_NAME}_annotation
+    )
+    target_compile_features(${WORKBENCH_LIBRARY} PUBLIC cxx_std_23)
+endif()

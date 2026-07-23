@@ -1,0 +1,602 @@
+#include "../annotation/test-helpers.hpp"
+
+#include <project-persistence.hpp>
+
+#include <annotation/authoring-compiler.hpp>
+#include <annotation/authoring-document.hpp>
+#include <annotation/content-hash.hpp>
+
+#include <core/numeric/checked-cast.hpp>
+#include <core/types/integer.hpp>
+
+#include <domain/error.hpp>
+
+#include <image/png.hpp>
+
+#include <doctest/doctest.h>
+
+#include <array>
+#include <atomic>
+#include <chrono>
+#include <cstddef>
+#include <filesystem>
+#include <format>
+#include <fstream>
+#include <span>
+#include <string>
+#include <string_view>
+#include <utility>
+#include <vector>
+
+namespace uf::workbench
+{
+    namespace
+    {
+        constexpr auto g_sourceId       = "00000000-0000-0000-0000-000000000201";
+        constexpr auto g_secondSourceId = "00000000-0000-0000-0000-000000000202";
+        constexpr auto g_anchorId       = "00000000-0000-0000-0000-000000000001";
+        constexpr auto g_secondAnchorId = "00000000-0000-0000-0000-000000000002";
+        constexpr auto g_pageId         = "00000000-0000-0000-0000-000000000101";
+
+        struct ProjectFixture final
+        {
+            annotation::AuthoringDocument    m_document;
+            annotation::AuthoringSourceAsset m_sourceAsset;
+        };
+
+        struct MultiSourceProjectFixture final
+        {
+            annotation::AuthoringDocument                  m_document;
+            std::array<annotation::AuthoringSourceAsset, 2> m_sourceAssets;
+        };
+
+        class TemporaryProject final
+        {
+            std::filesystem::path m_path{};
+
+        public:
+            explicit TemporaryProject(std::string_view role)
+            {
+                static auto s_sequence = std::atomic<uint64>{1U};
+                auto const token = std::chrono::steady_clock::now()
+                    .time_since_epoch()
+                    .count();
+                m_path = std::filesystem::temp_directory_path()
+                    / std::format(
+                        "umbraflow-workbench-{}-{}-{}",
+                        role,
+                        token,
+                        s_sequence.fetch_add(1U, std::memory_order_relaxed)
+                    );
+                auto error = std::error_code{};
+                auto const created = std::filesystem::create_directory(
+                    m_path,
+                    error
+                );
+                REQUIRE(created);
+                REQUIRE_FALSE(error);
+            }
+
+            TemporaryProject(TemporaryProject const&) = delete;
+            auto operator=(TemporaryProject const&) -> TemporaryProject& = delete;
+
+            ~TemporaryProject() noexcept
+            {
+                try
+                {
+                    auto error = std::error_code{};
+                    static_cast<void>(std::filesystem::remove_all(m_path, error));
+                }
+                catch (...)
+                {
+                }
+            }
+
+            [[nodiscard]]
+            auto path() const -> std::filesystem::path
+            {
+                return m_path;
+            }
+        };
+
+        [[nodiscard]]
+        constexpr auto asByte(uint8 value) noexcept -> std::byte
+        {
+            return static_cast<std::byte>(value);
+        }
+
+        [[nodiscard]]
+        auto encodedSource(uint8 redOffset) -> std::vector<std::byte>
+        {
+            auto const pixels = std::vector{
+                asByte(static_cast<uint8>(1U ^ redOffset)),
+                asByte(2),
+                asByte(3),
+                asByte(255),
+                asByte(4),
+                asByte(5),
+                asByte(6),
+                asByte(255),
+                asByte(7),
+                asByte(8),
+                asByte(9),
+                asByte(255),
+                asByte(10),
+                asByte(11),
+                asByte(12),
+                asByte(255),
+            };
+            auto encoded = image::encodeRgbaPng(
+                "workbench-source.png",
+                2,
+                2,
+                pixels
+            );
+            REQUIRE(encoded.has_value());
+            return *std::move(encoded);
+        }
+
+        [[nodiscard]]
+        auto projectFixture(uint8 redOffset) -> ProjectFixture
+        {
+            auto const fingerprint = annotation::test::fingerprint(2, 2, 96, 96);
+            auto const sourceId    = annotation::test::sourceId(g_sourceId);
+            auto const anchorId    = annotation::test::recognizerId(g_anchorId);
+            auto const pageId      = annotation::test::pageId(g_pageId);
+            auto pngBytes          = encodedSource(redOffset);
+            auto const sourceHash  = annotation::sha256(pngBytes);
+            REQUIRE(sourceHash.has_value());
+
+            auto source = annotation::AuthoringSource::create(
+                annotation::AuthoringSourceSpec{
+                    .m_id          = sourceId,
+                    .m_contentHash = *sourceHash,
+                    .m_fingerprint = fingerprint,
+                    .m_provenance  = annotation::ImportedSourceProvenance{},
+                }
+            );
+            REQUIRE(source.has_value());
+            auto document = annotation::AuthoringDocument::create(
+                annotation::test::projectId(),
+                fingerprint,
+                {*source},
+                {
+                    annotation::AuthoringRecognizerSpec{
+                        .m_definition = annotation::test::recognizer(
+                            fingerprint,
+                            anchorId,
+                            "home_marker",
+                            annotation::AnnotationType::PageAnchor,
+                            annotation::test::pixelRect(0, 0, 1, 1),
+                            annotation::test::pixelRect(0, 0, 2, 2)
+                        ),
+                        .m_sourceId = sourceId,
+                    },
+                },
+                {annotation::test::page(pageId, "home", {anchorId})},
+                {}
+            );
+            REQUIRE(document.has_value());
+            return ProjectFixture{
+                .m_document    = *std::move(document),
+                .m_sourceAsset = annotation::AuthoringSourceAsset{
+                    .m_id       = sourceId,
+                    .m_pngBytes = std::move(pngBytes),
+                },
+            };
+        }
+
+        [[nodiscard]]
+        auto multiSourceProjectFixture() -> MultiSourceProjectFixture
+        {
+            auto const fingerprint    = annotation::test::fingerprint(2, 2, 96, 96);
+            auto const firstSourceId  = annotation::test::sourceId(g_sourceId);
+            auto const secondSourceId = annotation::test::sourceId(g_secondSourceId);
+            auto const firstAnchorId  = annotation::test::recognizerId(g_anchorId);
+            auto const secondAnchorId = annotation::test::recognizerId(g_secondAnchorId);
+            auto const pageId         = annotation::test::pageId(g_pageId);
+
+            auto firstPng         = encodedSource(0);
+            auto secondPng        = encodedSource(0x40);
+            auto const firstHash  = annotation::sha256(firstPng);
+            auto const secondHash = annotation::sha256(secondPng);
+            REQUIRE(firstHash.has_value());
+            REQUIRE(secondHash.has_value());
+
+            auto firstSource  = annotation::AuthoringSource::create(
+                annotation::AuthoringSourceSpec{
+                    .m_id          = firstSourceId,
+                    .m_contentHash = *firstHash,
+                    .m_fingerprint = fingerprint,
+                    .m_provenance  = annotation::ImportedSourceProvenance{},
+                }
+            );
+            auto secondSource = annotation::AuthoringSource::create(
+                annotation::AuthoringSourceSpec{
+                    .m_id          = secondSourceId,
+                    .m_contentHash = *secondHash,
+                    .m_fingerprint = fingerprint,
+                    .m_provenance  = annotation::ImportedSourceProvenance{},
+                }
+            );
+            REQUIRE(firstSource.has_value());
+            REQUIRE(secondSource.has_value());
+
+            auto document = annotation::AuthoringDocument::create(
+                annotation::test::projectId(),
+                fingerprint,
+                {*firstSource, *secondSource},
+                {
+                    annotation::AuthoringRecognizerSpec{
+                        .m_definition = annotation::test::recognizer(
+                            fingerprint,
+                            firstAnchorId,
+                            "first_marker",
+                            annotation::AnnotationType::PageAnchor,
+                            annotation::test::pixelRect(0, 0, 1, 1),
+                            annotation::test::pixelRect(0, 0, 2, 2)
+                        ),
+                        .m_sourceId = firstSourceId,
+                    },
+                    annotation::AuthoringRecognizerSpec{
+                        .m_definition = annotation::test::recognizer(
+                            fingerprint,
+                            secondAnchorId,
+                            "second_marker",
+                            annotation::AnnotationType::PageAnchor,
+                            annotation::test::pixelRect(0, 0, 1, 1),
+                            annotation::test::pixelRect(0, 0, 2, 2)
+                        ),
+                        .m_sourceId = secondSourceId,
+                    },
+                },
+                {
+                    annotation::test::page(
+                        pageId,
+                        "home",
+                        {firstAnchorId, secondAnchorId}
+                    ),
+                },
+                {}
+            );
+            REQUIRE(document.has_value());
+
+            return MultiSourceProjectFixture{
+                .m_document     = *std::move(document),
+                .m_sourceAssets = {
+                    annotation::AuthoringSourceAsset{
+                        .m_id       = firstSourceId,
+                        .m_pngBytes = std::move(firstPng),
+                    },
+                    annotation::AuthoringSourceAsset{
+                        .m_id       = secondSourceId,
+                        .m_pngBytes = std::move(secondPng),
+                    },
+                },
+            };
+        }
+
+        [[nodiscard]]
+        auto readBytes(
+            std::filesystem::path const& path
+        ) -> std::vector<std::byte>
+        {
+            auto error           = std::error_code{};
+            auto const fileBytes = std::filesystem::file_size(path, error);
+            REQUIRE_FALSE(error);
+            auto const size       = checkedCast<std::size_t>(fileBytes);
+            auto const streamSize = checkedCast<std::streamsize>(fileBytes);
+            REQUIRE(size.has_value());
+            REQUIRE(streamSize.has_value());
+
+            auto stream = std::ifstream{path, std::ios::binary};
+            REQUIRE(stream.is_open());
+            auto bytes = std::vector<std::byte>(*size);
+            if (!bytes.empty())
+            {
+                // char and std::byte share byte alignment.
+                // SAFETY: bytes owns streamSize writable bytes. ifstream::read
+                // writes synchronously and retains no pointer.
+                // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast)
+                auto* const destination = reinterpret_cast<char*>(bytes.data());
+                stream.read(destination, *streamSize);
+                REQUIRE(stream.good());
+            }
+            return bytes;
+        }
+
+        [[nodiscard]]
+        auto readText(std::filesystem::path const& path) -> std::string
+        {
+            auto const bytes = readBytes(path);
+            if (bytes.empty())
+            {
+                return {};
+            }
+            // char and std::byte share byte alignment.
+            // SAFETY: bytes owns its live byte range for this copying string
+            // constructor; the converted pointer does not escape the call.
+            // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast)
+            auto const* text = reinterpret_cast<char const*>(bytes.data());
+            return std::string{text, bytes.size()};
+        }
+
+        [[nodiscard]]
+        auto containsTemporaryFile(
+            std::filesystem::path const& root
+        ) -> bool
+        {
+            auto error = std::error_code{};
+            auto iterator = std::filesystem::recursive_directory_iterator{
+                root,
+                error
+            };
+            REQUIRE_FALSE(error);
+            auto const end = std::filesystem::recursive_directory_iterator{};
+            while (iterator != end)
+            {
+                if (
+                    iterator->path().filename().string().contains(
+                        ".umbraflow-tmp-"
+                    )
+                )
+                {
+                    return true;
+                }
+                iterator.increment(error);
+                REQUIRE_FALSE(error);
+            }
+            return false;
+        }
+    }
+
+    TEST_CASE("workbench saves and atomically publishes a complete authoring project")
+    {
+        auto const project = TemporaryProject{"complete"};
+        auto const fixture = projectFixture(0);
+        auto const assets  = std::span{&fixture.m_sourceAsset, std::size_t{1}};
+        auto const compiled = annotation::compileAuthoringDocument(
+            fixture.m_document,
+            assets
+        );
+        REQUIRE(compiled.has_value());
+
+        auto const saved = saveAndGenerateAuthoringProject(
+            project.path(),
+            fixture.m_document,
+            assets
+        );
+        auto const savedInfo = saved
+            ? std::string{"saved"}
+            : toString(saved.error());
+        INFO(savedInfo);
+        REQUIRE(saved.has_value());
+        REQUIRE(
+            saveAndGenerateAuthoringProject(
+                project.path(),
+                fixture.m_document,
+                assets
+            ).has_value()
+        );
+
+        auto const authoringToml = readText(project.path() / "annotations.toml");
+        CHECK(
+            authoringToml
+            == annotation::serializeAuthoringDocument(fixture.m_document)
+        );
+        auto const reopened = annotation::parseAuthoringDocument(authoringToml);
+        REQUIRE(reopened.has_value());
+
+        auto const runtimeToml = readText(
+            project.path() / "generated" / "annotations.runtime.toml"
+        );
+        CHECK(runtimeToml == compiled->m_runtimeManifestToml);
+        auto const parsedRuntime = annotation::parseRuntimeManifest(runtimeToml);
+        REQUIRE(parsedRuntime.has_value());
+
+        CHECK(
+            readBytes(project.path() / fixture.m_document.sources().front().relativePath())
+            == fixture.m_sourceAsset.m_pngBytes
+        );
+        for (auto const& asset : compiled->m_templateAssets)
+        {
+            CHECK(
+                readBytes(project.path() / asset.m_relativePath)
+                == asset.m_pngBytes
+            );
+        }
+        CHECK_FALSE(containsTemporaryFile(project.path()));
+    }
+
+    TEST_CASE("workbench atomically replaces an existing published project")
+    {
+        auto const project = TemporaryProject{"replace"};
+        auto const first   = projectFixture(0);
+        auto const firstAssets = std::span{
+            &first.m_sourceAsset,
+            std::size_t{1}
+        };
+        REQUIRE(
+            saveAndGenerateAuthoringProject(
+                project.path(),
+                first.m_document,
+                firstAssets
+            ).has_value()
+        );
+        auto const firstCompiled = annotation::compileAuthoringDocument(
+            first.m_document,
+            firstAssets
+        );
+        REQUIRE(firstCompiled.has_value());
+        REQUIRE(firstCompiled->m_templateAssets.size() == 1U);
+        auto const firstSourcePath = project.path()
+            / first.m_document.sources().front().relativePath();
+        auto const firstTemplatePath = project.path()
+            / firstCompiled->m_templateAssets.front().m_relativePath;
+
+        auto const second = projectFixture(0x40);
+        auto const secondAssets = std::span{
+            &second.m_sourceAsset,
+            std::size_t{1}
+        };
+        auto const secondCompiled = annotation::compileAuthoringDocument(
+            second.m_document,
+            secondAssets
+        );
+        REQUIRE(secondCompiled.has_value());
+        REQUIRE(secondCompiled->m_templateAssets.size() == 1U);
+        REQUIRE(
+            saveAndGenerateAuthoringProject(
+                project.path(),
+                second.m_document,
+                secondAssets
+            ).has_value()
+        );
+
+        CHECK(
+            readText(project.path() / "annotations.toml")
+            == annotation::serializeAuthoringDocument(second.m_document)
+        );
+        CHECK(
+            readText(project.path() / "generated" / "annotations.runtime.toml")
+            == secondCompiled->m_runtimeManifestToml
+        );
+        CHECK(std::filesystem::is_regular_file(firstSourcePath));
+        CHECK(std::filesystem::is_regular_file(firstTemplatePath));
+        CHECK(
+            readBytes(
+                project.path()
+                / second.m_document.sources().front().relativePath()
+            ) == second.m_sourceAsset.m_pngBytes
+        );
+        CHECK(
+            readBytes(
+                project.path()
+                / secondCompiled->m_templateAssets.front().m_relativePath
+            ) == secondCompiled->m_templateAssets.front().m_pngBytes
+        );
+        CHECK_FALSE(containsTemporaryFile(project.path()));
+    }
+
+    TEST_CASE("workbench validates before creating a project root")
+    {
+        auto const project = TemporaryProject{"invalid"};
+        auto const fixture = projectFixture(0);
+        auto tampered      = fixture.m_sourceAsset;
+        REQUIRE_FALSE(tampered.m_pngBytes.empty());
+        tampered.m_pngBytes.back() ^= std::byte{1};
+
+        auto error         = std::error_code{};
+        auto const removed = std::filesystem::remove(project.path(), error);
+        REQUIRE(removed);
+        REQUIRE_FALSE(error);
+
+        auto const assets = std::span{&tampered, std::size_t{1}};
+        auto const saved  = saveAndGenerateAuthoringProject(
+            project.path(),
+            fixture.m_document,
+            assets
+        );
+        REQUIRE_FALSE(saved.has_value());
+        annotation::test::requireErrorKind(
+            saved.error(),
+            AutomationErrorKind::InvalidResource
+        );
+        CHECK_FALSE(std::filesystem::exists(project.path(), error));
+        CHECK_FALSE(error);
+    }
+
+    TEST_CASE("workbench maps reversed source assets to their own paths")
+    {
+        auto const project = TemporaryProject{"source-order"};
+        auto const fixture = multiSourceProjectFixture();
+        auto const reversedAssets = std::array{
+            fixture.m_sourceAssets[1],
+            fixture.m_sourceAssets[0],
+        };
+        auto const saved = saveAndGenerateAuthoringProject(
+            project.path(),
+            fixture.m_document,
+            reversedAssets
+        );
+        REQUIRE(saved.has_value());
+
+        auto const sources = fixture.m_document.sources();
+        REQUIRE(sources.size() == fixture.m_sourceAssets.size());
+        CHECK(
+            readBytes(project.path() / sources[0].relativePath())
+            == fixture.m_sourceAssets[0].m_pngBytes
+        );
+        CHECK(
+            readBytes(project.path() / sources[1].relativePath())
+            == fixture.m_sourceAssets[1].m_pngBytes
+        );
+        CHECK_FALSE(containsTemporaryFile(project.path()));
+    }
+
+    TEST_CASE("workbench rejects corrupted content-addressed assets")
+    {
+        auto const project = TemporaryProject{"rollback"};
+        auto const first   = projectFixture(0);
+        auto const firstAssets = std::span{
+            &first.m_sourceAsset,
+            std::size_t{1}
+        };
+        auto const firstSaved = saveAndGenerateAuthoringProject(
+            project.path(),
+            first.m_document,
+            firstAssets
+        );
+        auto const firstSavedInfo = firstSaved
+            ? std::string{"saved"}
+            : toString(firstSaved.error());
+        INFO(firstSavedInfo);
+        REQUIRE(firstSaved.has_value());
+        auto const originalAuthoring = readText(
+            project.path() / "annotations.toml"
+        );
+        auto const originalRuntime = readText(
+            project.path() / "generated" / "annotations.runtime.toml"
+        );
+
+        auto const second = projectFixture(0x40);
+        auto const secondAssets = std::span{
+            &second.m_sourceAsset,
+            std::size_t{1}
+        };
+        auto const secondCompiled = annotation::compileAuthoringDocument(
+            second.m_document,
+            secondAssets
+        );
+        REQUIRE(secondCompiled.has_value());
+        REQUIRE(secondCompiled->m_templateAssets.size() == 1U);
+        auto const blockedTemplate = project.path()
+            / secondCompiled->m_templateAssets.front().m_relativePath;
+        REQUIRE_FALSE(std::filesystem::exists(blockedTemplate));
+        auto error = std::error_code{};
+        auto const blocked = std::filesystem::copy_file(
+            project.path() / first.m_document.sources().front().relativePath(),
+            blockedTemplate,
+            error
+        );
+        REQUIRE(blocked);
+        REQUIRE_FALSE(error);
+
+        auto const failed = saveAndGenerateAuthoringProject(
+            project.path(),
+            second.m_document,
+            secondAssets
+        );
+        REQUIRE_FALSE(failed.has_value());
+        annotation::test::requireErrorKind(
+            failed.error(),
+            AutomationErrorKind::InvalidResource
+        );
+        CHECK(readText(project.path() / "annotations.toml") == originalAuthoring);
+        CHECK(
+            readText(project.path() / "generated" / "annotations.runtime.toml")
+            == originalRuntime
+        );
+        CHECK_FALSE(containsTemporaryFile(project.path()));
+    }
+}

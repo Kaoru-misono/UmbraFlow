@@ -131,6 +131,18 @@ if(TARGET ${PROJECT_NAME}_m0_demo_support)
     )
 endif()
 
+if(TARGET ${PROJECT_NAME}_workbench_support)
+    cpp_add_test(
+        NAME test-workbench
+        SOURCES
+            workbench/test-authoring-edit.cpp
+            workbench/test-project-persistence.cpp
+        LIBS
+            ${PROJECT_NAME}_workbench_support
+            ${PROJECT_NAME}_image
+    )
+endif()
+
 find_package(Python3 COMPONENTS Interpreter QUIET)
 if(Python3_Interpreter_FOUND)
     add_test(
