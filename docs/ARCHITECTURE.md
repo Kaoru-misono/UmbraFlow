@@ -5,21 +5,25 @@ of `modules/` with a `manifest.txt` becomes a CMake library target named
 `${PROJECT_NAME}_<module>`.
 
 ```text
-entry/${PROJECT_NAME} -> core
-entry/workbench (Windows) -> annotation
+entry/${PROJECT_NAME}       -> core, engine; + controller (Windows adapters)
+entry/m0-demo (Windows)     -> controller, vision, image (frozen M0 substrate demo)
+entry/workbench (Windows)   -> annotation, engine, controller, image
 domain                -> core
 vision                -> core, domain
 image                 -> core, domain
 annotation            -> core, domain, vision, image
+engine                -> core, domain, annotation
 script                -> core, domain
 controller (Windows)  -> core, domain
 tests                 -> modules under test
 ```
 
-Edges list every module dependency that `scripts/check_modules.py` validates,
-including private ones such as `annotation -> image`. Vendored third-party
-targets declared privately by a manifest, such as `image_stb` and the Luau
-libraries, are omitted.
+Edges list every declared module dependency, including private ones such as
+`annotation -> image`. Vendored third-party targets, such as `image_stb`, the
+Luau libraries, and Dear ImGui, are omitted. `scripts/check_modules.py`
+enforces the structural rules below (acyclicity, `core` as a leaf, manifest
+shape); the edge list itself is maintained by hand and reviewed, not
+machine-checked.
 
 The module graph must remain acyclic. `core` is the platform-free leaf and may
 not declare link dependencies. `scripts/check_modules.py` enforces both rules.
@@ -35,12 +39,22 @@ not declare link dependencies. `scripts/check_modules.py` enforces both rules.
 - `modules/annotation/`: platform-free annotation catalog validation, page
   resolution evidence, action-authorization contracts, canonical authoring and
   runtime documents, and deterministic template compilation.
-- `modules/controller/`: Windows-only discovery, target lifecycle, and
-  strict-background input, with capture added in a later slice.
-- `entry/`: executable targets and composition roots. Its Windows-only
-  `workbench/` support publishes validated authoring projects through a narrow
-  platform file-publication boundary; content-addressed assets precede the
-  runtime manifest commit point.
+- `modules/engine/`: platform-free automation engine — capture/input/trace
+  ports, the runtime manifest loader, a versioned JSONL trace vocabulary, and
+  the Observation-handle session API (observe once, query the same frame, and
+  any coordinate action authorizes, delivers with lease fencing, and
+  invalidates the observation).
+- `modules/controller/`: Windows-only discovery, target lifecycle, Windows
+  Graphics Capture sessions, and strict-background input.
+- `entry/`: executable targets and composition roots. `cli/` is the product
+  entry `umbra-flow`; its `run` subcommand composes engine ports over the
+  controller (WGC frame source, lease-forwarding click sink, JSONL trace).
+  `m0-demo/` is the frozen M0 substrate demo kept as the real-machine
+  acceptance reference. The Windows-only `workbench/` hosts the annotation
+  authoring GUI (`umbra-workbench`, Dear ImGui + D3D11) and publishes
+  validated authoring projects through a narrow platform file-publication
+  boundary; content-addressed assets precede the runtime manifest commit
+  point.
 - `tests/`: deterministic offline tests.
 - `cmake/`: module loading, platform selection, caching, warnings, hardening,
   sanitizers, and static-analysis policy.

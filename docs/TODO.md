@@ -27,20 +27,41 @@
 - [x] 锁定 authoring/runtime schema、`template_rect`/`search_roi`、page resolution、动作证据、
       项目级尺寸/DPI 兼容契约与 Dear ImGui + D3D11 技术栈(2026-07-23)。
 - [ ] 独立 GUI:WGC 抓帧/导入图片、样本列表、画布缩放/平移、框选编辑、undo/redo。
+      **A1 最小实现已落地(2026-07-24)**:`umbra-workbench`(Dear ImGui 1.92.8-docking +
+      D3D11)、四面板、`--smoke` 自检通过;真机人工验证待开发者。
 - [ ] 标注类型:`page_anchor`、`action_target`、`info_region`;分别编辑 `template_rect` 与
       `search_roi`,以及 page、整数定点阈值和 required/forbidden 关系。
+      **A1 属性面板已覆盖全部字段(2026-07-24)**;多 page 编辑体验留 A2。
 - [ ] 保存可完整 round-trip 的 authoring document,一键生成切分模板与 runtime manifest,无需手改配置。
   - [x] 平台无关后端:canonical authoring document 严格往返、完整引用校验、源 PNG hash/尺寸校验、
-        内容寻址模板与 runtime manifest 的纯确定性编译。
+        内容寻址模板与 runtime manifest 的纯确定性编译(PNG 编码配置已 pin,2026-07-24)。
   - [x] Workbench 文件保存、内容寻址资产发布、以 runtime manifest 为提交点的完整生成集
-        原子替换及失败回滚(2026-07-23)。
+        顺序发布(2026-07-23)。**注**:发布非跨 artifact 原子且无回滚——manifest 发布失败会留下
+        新 authoring 文档 + 旧 runtime 闭包(见 `project-persistence.hpp` 注释),P1 决定是否加固。
+  - [x] Workbench 读取路径 `loadAuthoringProject`:annotations.toml + 源 PNG hash/几何校验的
+        完整重开(2026-07-24)。
 - [ ] 使用 runtime 同一有界灰度 SAD 策略 Preview/Test,显示命中框、整数边界、
       Unknown/Ambiguous 与停止原因。
 - [ ] 建立卡厄斯梦境关键页面的正例、负例和易混淆静态截图回归集。
 
+## 1.5 B1 — 最小 runtime(modules/engine,2026-07-24 落地)
+
+- [x] `modules/engine`:平台无关端口(FrameSource/ActionSink 带租约透传/TraceSink)、
+      runtime manifest 读取路径、versioned JSONL trace、Observation 句柄 API
+      (observe→resolvePage/findAction→act,动作即失效;取消与目标失活在投递边拦截)。
+- [x] `umbra-flow run`:第一个同时链接 engine+controller 的组合根;
+      发现→指纹→会话→waitForPage→findAction→act,区分退出码,Ctrl-C 进 stop_token。
+- [x] Fake FrameSource 合成帧回放 + fail-closed 全谱(Unknown/Ambiguous/stop reasons/
+      租约过期/指纹不符/失效句柄复用 → 全部零投递)进 CI。
+- [ ] **真机冒烟(等开发者)**:手写最小 manifest,卡厄斯梦境识别+授权+后台点击;
+      等价检查点:严格后台、K2 delta=0、租约 fail-closed。
+- [ ] 真机端到端(等开发者):workbench 标注 → `umbra-flow run` 吃生成 manifest(A1+B1 闭环)。
+
 ## 2. P0-B — Luau Engine
 
 - [ ] 固定 Luau 精确版本,接入 compiler/VM 与 `IScriptRuntime` 可序列化边界。
+      **进展**:0.730 submodule + RAII `Engine::runNumber` 已落地(2026-07-22);
+      沙箱/取消/配额未做,见 `2026-07-21-p0b-luau-hardening-ledger.md`。
 - [ ] 最小 capability API 与 observe/resolve/act/wait 引擎循环;manifest 只读 recognizer/page 句柄,
       `ResolvedPage` + Detection + lease 才能授权坐标动作。
 - [ ] 每任务 VM generation、allocator 配额、interrupt 硬取消、逻辑时钟/RNG 与 generation 热加载。
