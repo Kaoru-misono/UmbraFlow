@@ -224,6 +224,13 @@ namespace uf::annotation
                 std::string{"id = \""} + g_sourceId + '"'
             )
         );
+        invalid.emplace_back(
+            replaceOnce(
+                canonical,
+                "template_rect = [1, 1, 1, 1]",
+                "template_rect = [1, 1, 0, 1]"
+            )
+        );
         invalid.emplace_back(replaceOnce(canonical, "\n", "\r\n"));
 
         for (auto const& text : invalid)

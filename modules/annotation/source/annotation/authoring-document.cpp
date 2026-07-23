@@ -257,12 +257,22 @@ namespace uf::annotation
                     )
                 );
             }
-            return PixelRect::create(
+            auto const rect = PixelRect::create(
                 checkedAt(values, 0),
                 checkedAt(values, 1),
                 checkedAt(values, 2),
                 checkedAt(values, 3)
             );
+            if (!rect)
+            {
+                return invalidAuthoring(
+                    std::format(
+                        "authoring document '{}' is not a valid rectangle",
+                        key
+                    )
+                );
+            }
+            return *rect;
         }
 
         [[nodiscard]]
