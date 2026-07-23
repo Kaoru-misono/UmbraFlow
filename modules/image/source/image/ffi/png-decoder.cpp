@@ -86,9 +86,9 @@ namespace uf::image
 
         struct PngMetadata final
         {
-            uint32 m_width;
-            uint32 m_height;
-            uint8  m_bitDepth;
+            uint32 m_width{};
+            uint32 m_height{};
+            uint8  m_bitDepth{};
         };
 
         constexpr auto g_pngSignature = std::array{

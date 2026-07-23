@@ -26,14 +26,14 @@ namespace uf::workbench
         annotation::SourceId           m_id;
         annotation::ContentHash        m_contentHash;
         annotation::ProjectFingerprint m_fingerprint;
-        annotation::SourceProvenance   m_provenance;
+        annotation::SourceProvenance   m_provenance{};
     };
 
     struct EditableRecognizer final
     {
         annotation::RecognizerId              m_id;
         std::string                           m_name{};
-        annotation::AnnotationType            m_annotationType;
+        annotation::AnnotationType            m_annotationType{};
         annotation::SourceId                  m_sourceId;
         PixelRect                             m_templateRect;
         PixelRect                             m_searchRoi;
@@ -54,7 +54,7 @@ namespace uf::workbench
     {
         annotation::RegressionId             m_id;
         annotation::SourceId                 m_sourceId;
-        annotation::RegressionClassification m_classification;
+        annotation::RegressionClassification m_classification{};
         annotation::RegressionExpectation    m_expectation;
     };
 

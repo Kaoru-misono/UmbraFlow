@@ -173,24 +173,28 @@ namespace uf::annotation
 
     struct RecognizerSpec final
     {
-        RecognizerId                  m_id;
-        ResourceName                  m_name;
-        AnnotationType                m_annotationType;
-        PixelRect                     m_templateRect;
-        PixelRect                     m_searchRoi;
-        SimilarityThreshold           m_threshold;
-        std::optional<TemplateOffset> m_defaultClick;
-        std::vector<PageId>           m_allowedPageIds;
+        RecognizerId m_id;
+        ResourceName m_name;
+
+        AnnotationType      m_annotationType{};
+        PixelRect           m_templateRect;
+        PixelRect           m_searchRoi;
+        SimilarityThreshold m_threshold;
+
+        std::optional<TemplateOffset> m_defaultClick{};
+        std::vector<PageId>           m_allowedPageIds{};
     };
 
     class RecognizerDefinition final
     {
-        RecognizerId                  m_id;
-        ResourceName                  m_name;
-        AnnotationType                m_annotationType;
-        PixelRect                     m_templateRect;
-        PixelRect                     m_searchRoi;
-        SimilarityThreshold           m_threshold;
+        RecognizerId m_id;
+        ResourceName m_name;
+
+        AnnotationType      m_annotationType;
+        PixelRect           m_templateRect;
+        PixelRect           m_searchRoi;
+        SimilarityThreshold m_threshold;
+
         std::optional<TemplateOffset> m_defaultClick;
         std::vector<PageId>           m_allowedPageIds;
 
@@ -219,8 +223,8 @@ namespace uf::annotation
     {
         PageId                    m_id;
         ResourceName              m_name;
-        std::vector<RecognizerId> m_required;
-        std::vector<RecognizerId> m_forbidden;
+        std::vector<RecognizerId> m_required{};
+        std::vector<RecognizerId> m_forbidden{};
     };
 
     class PageSignature final

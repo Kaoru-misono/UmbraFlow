@@ -32,10 +32,10 @@ namespace uf::m0_demo
 
     struct Template final
     {
-        std::string            m_label;
-        std::vector<std::byte> m_gray;
-        uint32                 m_width;
-        uint32                 m_height;
+        std::string            m_label{};
+        std::vector<std::byte> m_gray{};
+        uint32                 m_width{};
+        uint32                 m_height{};
         Rect<FrameSpace>       m_roi;
     };
 
@@ -48,22 +48,22 @@ namespace uf::m0_demo
 
     struct LoopConfig final
     {
-        uint32                     m_loops;
-        uint64                     m_threshold;
-        MonotonicInstant::Duration m_maxActionFrameAge;
-        MonotonicInstant::Duration m_transitionTimeout;
-        GuardPolicy                m_guardPolicy;
-        std::optional<ClickDelay>  m_clickDelay;
-        uint64                     m_seed;
+        uint32                     m_loops{};
+        uint64                     m_threshold{};
+        MonotonicInstant::Duration m_maxActionFrameAge{};
+        MonotonicInstant::Duration m_transitionTimeout{};
+        GuardPolicy                m_guardPolicy{};
+        std::optional<ClickDelay>  m_clickDelay{};
+        uint64                     m_seed{};
     };
 
     struct RunSummary final
     {
-        uint32 m_attempted;
-        uint32 m_succeeded;
-        uint32 m_guardViolations;
-        bool   m_stopped;
-        bool   m_auditClean;
+        uint32 m_attempted{};
+        uint32 m_succeeded{};
+        uint32 m_guardViolations{};
+        bool   m_stopped{};
+        bool   m_auditClean{};
 
         auto operator==(RunSummary const&) const -> bool = default;
 
@@ -89,9 +89,9 @@ namespace uf::m0_demo
 
     struct AuditSummary final
     {
-        std::size_t m_delivered;
-        bool        m_allToTarget;
-        bool        m_allAllowed;
+        std::size_t m_delivered{};
+        bool        m_allToTarget{};
+        bool        m_allAllowed{};
 
         auto operator==(AuditSummary const&) const -> bool = default;
 

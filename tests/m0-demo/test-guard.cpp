@@ -15,8 +15,8 @@ namespace uf::m0_demo
     {
         struct IntegrityCase final
         {
-            uint32 m_rid;
-            std::string_view m_label;
+            uint32 m_rid{};
+            std::string_view m_label{};
         };
 
         auto const cases = std::array{

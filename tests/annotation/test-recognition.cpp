@@ -127,8 +127,8 @@ namespace uf::annotation
         );
         struct BoundaryCase final
         {
-            uint64 m_score;
-            bool m_hit;
+            uint64 m_score{};
+            bool m_hit{};
         };
         auto const cases = std::array{
             BoundaryCase{101, true},
@@ -185,8 +185,8 @@ namespace uf::annotation
         REQUIRE(p_anchor != nullptr);
         struct StopCase final
         {
-            SadSearchStopReason m_reason;
-            AutomationErrorKind m_expected;
+            SadSearchStopReason m_reason{};
+            AutomationErrorKind m_expected{};
         };
         auto const cases = std::array{
             StopCase{SadSearchStopReason::Cancelled, AutomationErrorKind::Cancelled},

@@ -101,8 +101,8 @@ namespace uf
     {
         struct EmptySize final
         {
-            uint32 m_width;
-            uint32 m_height;
+            uint32 m_width{};
+            uint32 m_height{};
         };
         for (auto const size : std::array{
             EmptySize{0, 10},

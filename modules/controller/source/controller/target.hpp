@@ -16,10 +16,10 @@ namespace uf
 {
     class TargetSelector final
     {
-        std::optional<ProcessId>    m_process;
-        std::optional<WindowHandle> m_windowHandle;
-        std::optional<std::string>  m_windowClass;
-        std::optional<std::string>  m_title;
+        std::optional<ProcessId>    m_process{};
+        std::optional<WindowHandle> m_windowHandle{};
+        std::optional<std::string>  m_windowClass{};
+        std::optional<std::string>  m_title{};
 
     public:
         auto operator==(TargetSelector const&) const -> bool = default;

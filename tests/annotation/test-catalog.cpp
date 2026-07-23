@@ -46,7 +46,7 @@ namespace uf::annotation
 
         struct InvalidRecognizer final
         {
-            std::string_view m_expected;
+            std::string_view m_expected{};
             RecognizerSpec   m_spec;
         };
 

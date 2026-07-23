@@ -69,8 +69,8 @@ namespace uf
     {
         struct Case final
         {
-            std::size_t m_sourceLength;
-            std::size_t m_rowPitch;
+            std::size_t m_sourceLength{};
+            std::size_t m_rowPitch{};
         };
 
         for (
@@ -136,9 +136,9 @@ namespace uf
     {
         struct Case final
         {
-            int32 m_extendedWidth;
-            int32 m_extendedHeight;
-            bool m_accepted;
+            int32 m_extendedWidth{};
+            int32 m_extendedHeight{};
+            bool m_accepted{};
         };
 
         for (
@@ -180,9 +180,9 @@ namespace uf
     {
         struct Case final
         {
-            uint32 m_clientWidth;
-            uint32 m_clientHeight;
-            bool m_accepted;
+            uint32 m_clientWidth{};
+            uint32 m_clientHeight{};
+            bool m_accepted{};
         };
 
         for (
@@ -222,14 +222,14 @@ namespace uf
     {
         struct Case final
         {
-            uint32 m_frameWidth;
-            uint32 m_frameHeight;
-            int32 m_extendedWidth;
-            int32 m_extendedHeight;
-            int32 m_offsetX;
-            int32 m_offsetY;
-            uint32 m_clientWidth;
-            uint32 m_clientHeight;
+            uint32 m_frameWidth{};
+            uint32 m_frameHeight{};
+            int32 m_extendedWidth{};
+            int32 m_extendedHeight{};
+            int32 m_offsetX{};
+            int32 m_offsetY{};
+            uint32 m_clientWidth{};
+            uint32 m_clientHeight{};
         };
 
         for (
@@ -279,9 +279,9 @@ namespace uf
 
         struct Case final
         {
-            uint32 m_sourceWidth;
-            uint32 m_sourceHeight;
-            bool m_accepted;
+            uint32 m_sourceWidth{};
+            uint32 m_sourceHeight{};
+            bool m_accepted{};
         };
 
         for (
@@ -317,10 +317,10 @@ namespace uf
     {
         struct Case final
         {
-            std::size_t m_sourceLength;
-            std::size_t m_rowPitch;
-            uint32 m_width;
-            uint32 m_height;
+            std::size_t m_sourceLength{};
+            std::size_t m_rowPitch{};
+            uint32 m_width{};
+            uint32 m_height{};
         };
 
         for (

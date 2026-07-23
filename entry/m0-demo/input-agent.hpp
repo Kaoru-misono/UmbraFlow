@@ -17,8 +17,9 @@ namespace uf::m0_demo
     class InputAgentQueueReader final
     {
         std::filesystem::path m_path;
-        uintmax               m_offset{};
-        std::string           m_pending;
+
+        uintmax     m_offset{};
+        std::string m_pending{};
 
         explicit InputAgentQueueReader(
             std::filesystem::path path

@@ -14,9 +14,9 @@ namespace uf
         requires std::is_enum_v<Enum>
     struct EnumEntry final
     {
-        Enum m_value;
+        Enum m_value{};
         // Names must reference static storage; UF_REFLECT_ENUM supplies a string literal.
-        std::string_view m_name;
+        std::string_view m_name{};
     };
 
     template <typename Enum>

@@ -55,6 +55,9 @@ namespace uf
 {
     namespace
     {
+        using D3d11DeviceComPtr = winrt::com_ptr<ID3D11Device>;
+        using D3d11ContextComPtr = winrt::com_ptr<ID3D11DeviceContext>;
+        using D3d11TextureComPtr = winrt::com_ptr<ID3D11Texture2D>;
         using CaptureFrame = winrt::Windows::Graphics::Capture::Direct3D11CaptureFrame;
         using CaptureFramePool = winrt::Windows::Graphics::Capture::Direct3D11CaptureFramePool;
         using CaptureFramePoolStatics =
@@ -144,15 +147,15 @@ namespace uf
 
         struct D3d11Objects final
         {
-            winrt::com_ptr<ID3D11Device>        m_device;
-            winrt::com_ptr<ID3D11DeviceContext> m_context;
+            D3d11DeviceComPtr  m_device{};
+            D3d11ContextComPtr m_context{};
         };
 
         struct D3dDevice final
         {
-            winrt::com_ptr<ID3D11Device>        m_device;
-            winrt::com_ptr<ID3D11DeviceContext> m_context;
-            Direct3DDevice                      m_runtimeDevice;
+            D3d11DeviceComPtr  m_device{};
+            D3d11ContextComPtr m_context{};
+            Direct3DDevice     m_runtimeDevice{};
         };
 
         [[nodiscard]]
@@ -280,9 +283,9 @@ namespace uf
 
         class StagingTexture final
         {
-            winrt::com_ptr<ID3D11Texture2D> m_texture;
-            uint32                          m_width{};
-            uint32                          m_height{};
+            D3d11TextureComPtr m_texture{};
+            uint32             m_width{};
+            uint32             m_height{};
             DXGI_FORMAT m_format{DXGI_FORMAT_UNKNOWN};
 
         public:
@@ -341,9 +344,9 @@ namespace uf
 
         struct SurfaceReadback final
         {
-            uint32                 m_sourceWidth;
-            uint32                 m_sourceHeight;
-            std::vector<std::byte> m_pixels;
+            uint32                 m_sourceWidth{};
+            uint32                 m_sourceHeight{};
+            std::vector<std::byte> m_pixels{};
         };
 
         [[nodiscard]]
@@ -632,9 +635,9 @@ namespace uf
             // The FrameArrived callback and capture consumer share this state. Every
             // m_latest access is serialized by m_mutex; m_arrived only publishes changes
             // made while that mutex is held.
-            std::mutex                     m_mutex;
-            std::condition_variable        m_arrived;
-            std::optional<CapturedArrival> m_latest;
+            std::mutex                     m_mutex{};
+            std::condition_variable        m_arrived{};
+            std::optional<CapturedArrival> m_latest{};
             bool                           m_acceptingFrames{true};
             std::atomic_bool               m_itemClosed{false};
             std::atomic<HRESULT> m_callbackFailure{S_OK};
@@ -665,7 +668,7 @@ namespace uf
 
         class WindowInstanceMarker final
         {
-            HWND          m_window{};
+            HWND          m_window;
             std::wstring  m_name;
             winrt::handle m_token;
 
@@ -854,9 +857,9 @@ namespace uf
     {
         // Serializes the consumer-side session, geometry, stall, and D3D state. The
         // callback never takes this mutex and communicates only through m_frameSlot.
-        std::mutex                          m_operationMutex;
-        winrt::com_ptr<ID3D11Device>        m_device;
-        winrt::com_ptr<ID3D11DeviceContext> m_context;
+        std::mutex         m_operationMutex{};
+        D3d11DeviceComPtr  m_device;
+        D3d11ContextComPtr m_context;
         // Retained so the projected device outlives the frame pool created from it.
         Direct3DDevice   m_runtimeDevice;
         CaptureFramePool m_framePool;

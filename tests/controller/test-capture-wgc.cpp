@@ -73,10 +73,10 @@ namespace uf
     {
         struct Case final
         {
-            float m_originX;
-            float m_originY;
-            float m_width;
-            float m_height;
+            float m_originX{};
+            float m_originY{};
+            float m_width{};
+            float m_height{};
         };
 
         for (

@@ -125,10 +125,10 @@ namespace uf
     {
         struct InvalidCase final
         {
-            uint32 m_width;
-            uint32 m_height;
-            std::size_t m_stride;
-            std::size_t m_length;
+            uint32 m_width{};
+            uint32 m_height{};
+            std::size_t m_stride{};
+            std::size_t m_length{};
         };
 
         auto const cases = std::array{
@@ -192,8 +192,8 @@ namespace uf
     {
         struct MismatchCase final
         {
-            uint32 m_width;
-            uint32 m_height;
+            uint32 m_width{};
+            uint32 m_height{};
         };
 
         auto const cases = std::array{

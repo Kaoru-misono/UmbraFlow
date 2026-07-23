@@ -160,8 +160,8 @@ namespace uf
 
         struct FrameSizeCase final
         {
-            uint32 m_width;
-            uint32 m_height;
+            uint32 m_width{};
+            uint32 m_height{};
         };
 
         auto const validCases = std::array{
@@ -241,10 +241,10 @@ namespace uf
     {
         struct InvalidCase final
         {
-            uint32 m_x;
-            uint32 m_y;
-            uint32 m_width;
-            uint32 m_height;
+            uint32 m_x{};
+            uint32 m_y{};
+            uint32 m_width{};
+            uint32 m_height{};
         };
 
         auto constexpr maximum = std::numeric_limits<uint32>::max();

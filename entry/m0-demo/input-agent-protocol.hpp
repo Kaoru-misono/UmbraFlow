@@ -23,18 +23,18 @@ namespace uf::m0_demo
 
     struct InputAgentCaptureCommand final
     {
-        std::filesystem::path m_output;
+        std::filesystem::path m_output{};
 
         auto operator==(InputAgentCaptureCommand const&) const -> bool = default;
     };
 
     struct InputAgentClickCommand final
     {
-        float m_x;
-        float m_y;
-        std::filesystem::path m_outputBefore;
-        std::filesystem::path m_outputAfter;
-        MonotonicInstant::Duration m_settle;
+        float m_x{};
+        float m_y{};
+        std::filesystem::path m_outputBefore{};
+        std::filesystem::path m_outputAfter{};
+        MonotonicInstant::Duration m_settle{};
 
         auto operator==(InputAgentClickCommand const&) const -> bool = default;
     };

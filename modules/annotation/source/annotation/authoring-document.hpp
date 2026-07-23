@@ -54,14 +54,14 @@ namespace uf::annotation
         SourceId           m_id;
         ContentHash        m_contentHash;
         ProjectFingerprint m_fingerprint;
-        SourceProvenance   m_provenance;
+        SourceProvenance   m_provenance{};
     };
 
     class AuthoringSource final
     {
         SourceId           m_id;
         ContentHash        m_contentHash;
-        std::string        m_relativePath{};
+        std::string        m_relativePath;
         ProjectFingerprint m_fingerprint;
         SourceProvenance   m_provenance;
 
@@ -130,7 +130,7 @@ namespace uf::annotation
     {
         RegressionId             m_id;
         SourceId                 m_sourceId;
-        RegressionClassification m_classification;
+        RegressionClassification m_classification{};
         RegressionExpectation    m_expectation;
     };
 
@@ -157,9 +157,9 @@ namespace uf::annotation
     class AuthoringDocument final
     {
         RecognitionCatalog                     m_catalog;
-        std::vector<AuthoringSource>           m_sources{};
-        std::vector<AuthoringRecognizerSource> m_recognizerSources{};
-        std::vector<RegressionCase>            m_regressions{};
+        std::vector<AuthoringSource>           m_sources;
+        std::vector<AuthoringRecognizerSource> m_recognizerSources;
+        std::vector<RegressionCase>            m_regressions;
 
         // LLVM 23's performance-unnecessary-value-param check can recurse
         // through StrongValue construction when these owned sinks are passed

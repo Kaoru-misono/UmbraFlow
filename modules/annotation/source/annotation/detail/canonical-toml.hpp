@@ -13,8 +13,8 @@ namespace uf::annotation::detail
 {
     class CanonicalTomlReader final
     {
-        std::string m_documentName{};
-        std::string m_text{};
+        std::string m_documentName;
+        std::string m_text;
         std::size_t m_offset{};
         std::size_t m_line{1};
 

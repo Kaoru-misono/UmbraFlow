@@ -53,8 +53,9 @@ namespace uf::annotation
         {
             AuthoringDocument                 m_document;
             std::vector<AuthoringSourceAsset> m_assets{};
-            PageId                            m_pageA;
-            PageId                            m_pageB;
+
+            PageId m_pageA;
+            PageId m_pageB;
         };
 
         struct RegressionFixtureOptions final

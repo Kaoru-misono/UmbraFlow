@@ -248,7 +248,7 @@ namespace uf::annotation
     {
         struct ClassificationCase final
         {
-            RegressionClassification  m_classification;
+            RegressionClassification  m_classification{};
             std::string_view          m_text{};
         };
         constexpr auto cases = std::array{

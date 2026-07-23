@@ -47,7 +47,7 @@ namespace uf::annotation
     {
         ProjectFingerprint m_liveFingerprint;
         SessionId          m_sessionId;
-        TargetGeneration   m_targetGeneration;
+        TargetGeneration   m_targetGeneration{};
         FrameId            m_frameId;
         MonotonicInstant   m_now;
     };

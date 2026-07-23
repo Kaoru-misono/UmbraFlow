@@ -155,8 +155,8 @@ namespace uf
 
         struct StaleCase final
         {
-            std::string_view m_label;
-            TargetGeneration m_generation;
+            std::string_view m_label{};
+            TargetGeneration m_generation{};
             MonotonicInstant m_now;
         };
         for (auto const& testCase : std::array{
@@ -186,7 +186,7 @@ namespace uf
         auto const lease = leaseAt(generation, now);
         struct InvalidPoint final
         {
-            std::string_view m_label;
+            std::string_view m_label{};
             Point<ClientSpace> m_point;
         };
         for (auto const& testCase : std::array{

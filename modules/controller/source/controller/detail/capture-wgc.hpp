@@ -12,8 +12,8 @@ namespace uf::controller_detail
 {
     struct CaptureSize final
     {
-        int32 m_width;
-        int32 m_height;
+        int32 m_width{};
+        int32 m_height{};
 
         auto operator==(CaptureSize const&) const -> bool = default;
     };

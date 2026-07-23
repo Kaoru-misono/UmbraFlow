@@ -93,8 +93,8 @@ namespace uf
     {
         struct InvalidPixel final
         {
-            int32 m_x;
-            int32 m_y;
+            int32 m_x{};
+            int32 m_y{};
         };
 
         for (auto const testCase : std::array{

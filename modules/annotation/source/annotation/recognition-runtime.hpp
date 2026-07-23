@@ -39,10 +39,13 @@ namespace uf::annotation
         SadSearchStopReason m_reason{};
     };
 
+    using PageAttemptResult = std::variant<PageOutcome, PageRecognitionStop>;
+
     struct PageRecognitionAttempt final
     {
         // A control stop is a failed attempt, never a completed PageOutcome.
-        std::variant<PageOutcome, PageRecognitionStop> m_result;
+        PageAttemptResult m_result;
+
         std::vector<AnchorEvidence> m_completedAnchorEvidence{};
         uint64                      m_completedPixelComparisons{};
     };
@@ -51,14 +54,15 @@ namespace uf::annotation
     {
         struct GrayTemplate final
         {
-            ContentHash            m_hash;
+            ContentHash m_hash;
+
             uint32                 m_width{};
             uint32                 m_height{};
             std::vector<std::byte> m_pixels{};
         };
 
         RuntimeManifest           m_manifest;
-        std::vector<GrayTemplate> m_templates{};
+        std::vector<GrayTemplate> m_templates;
 
         RecognitionRuntime(
             RuntimeManifest manifest,

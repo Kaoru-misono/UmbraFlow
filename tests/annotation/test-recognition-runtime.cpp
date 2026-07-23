@@ -90,10 +90,11 @@ namespace uf::annotation
             RuntimeManifest                     m_manifest;
             std::vector<EncodedRuntimeTemplate> m_templates{};
             ProjectFingerprint                  m_fingerprint;
-            RecognizerId                        m_anchorA;
-            RecognizerId                        m_anchorB;
-            PageId                              m_pageA;
-            PageId                              m_pageB;
+
+            RecognizerId m_anchorA;
+            RecognizerId m_anchorB;
+            PageId       m_pageA;
+            PageId       m_pageB;
         };
 
         [[nodiscard]]

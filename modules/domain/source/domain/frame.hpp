@@ -65,14 +65,16 @@ namespace uf
 
     class Frame final
     {
-        FrameId                            m_id;
-        SessionId                          m_sessionId;
-        TargetGeneration                   m_targetGeneration;
-        MonotonicInstant                   m_capturedAt;
-        uint32                             m_width;
-        uint32                             m_height;
-        std::size_t                        m_stride;
-        PixelFormat                        m_pixelFormat;
+        FrameId          m_id;
+        SessionId        m_sessionId;
+        TargetGeneration m_targetGeneration;
+        MonotonicInstant m_capturedAt;
+
+        uint32      m_width;
+        uint32      m_height;
+        std::size_t m_stride;
+        PixelFormat m_pixelFormat;
+
         std::shared_ptr<FrameBuffer const> m_pixels;
         CoordinateTransform                m_transform;
 

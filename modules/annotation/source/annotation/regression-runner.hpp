@@ -14,7 +14,7 @@ namespace uf::annotation
     {
         RegressionId             m_id;
         SourceId                 m_sourceId;
-        RegressionClassification m_classification;
+        RegressionClassification m_classification{};
         RegressionExpectation    m_expectation;
         PageRecognitionAttempt   m_attempt;
         bool                     m_matchesExpectation{};

@@ -21,7 +21,7 @@ namespace uf
     class Synchronized final
     {
         Value         m_value{};
-        mutable Mutex m_mutex;
+        mutable Mutex m_mutex{};
 
     public:
         Synchronized()

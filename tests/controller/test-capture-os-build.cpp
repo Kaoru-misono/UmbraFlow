@@ -10,8 +10,8 @@ TEST_CASE("cursor capture gate tracks Windows 10 build 19041")
 {
     struct Case final
     {
-        uf::uint32 m_build;
-        bool m_supported;
+        uf::uint32 m_build{};
+        bool m_supported{};
     };
 
     for (
@@ -35,8 +35,8 @@ TEST_CASE("borderless gate tracks build 20348")
 {
     struct Case final
     {
-        uf::uint32 m_build;
-        bool m_supported;
+        uf::uint32 m_build{};
+        bool m_supported{};
     };
 
     for (

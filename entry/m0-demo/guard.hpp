@@ -38,16 +38,16 @@ namespace uf::m0_demo
 
     struct GuardBaseline final
     {
-        intptr m_foreground;
-        std::pair<int32, int32> m_cursor;
+        intptr m_foreground{};
+        std::pair<int32, int32> m_cursor{};
 
         auto operator==(GuardBaseline const&) const -> bool = default;
     };
 
     struct GuardPolicy final
     {
-        bool m_compareForeground;
-        bool m_compareCursor;
+        bool m_compareForeground{};
+        bool m_compareCursor{};
 
         auto operator==(GuardPolicy const&) const -> bool = default;
 
@@ -56,9 +56,9 @@ namespace uf::m0_demo
 
     struct GuardCheck final
     {
-        bool m_baselineBackgroundOk;
-        bool m_foregroundOk;
-        bool m_cursorOk;
+        bool m_baselineBackgroundOk{};
+        bool m_foregroundOk{};
+        bool m_cursorOk{};
 
         auto operator==(GuardCheck const&) const -> bool = default;
 

@@ -21,8 +21,9 @@ namespace uf::annotation
 
     struct CompiledAuthoringProject final
     {
-        RuntimeManifest            m_runtimeManifest;
-        std::string                m_runtimeManifestToml{};
+        RuntimeManifest m_runtimeManifest;
+        std::string     m_runtimeManifestToml{};
+
         std::vector<TemplateAsset> m_templateAssets{};
     };
 

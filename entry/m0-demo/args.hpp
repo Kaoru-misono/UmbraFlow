@@ -42,43 +42,48 @@ namespace uf::m0_demo
 
     struct Args final
     {
-        SelectorArgs                         m_selector;
-        std::filesystem::path                m_homeTemplate;
-        Rect<FrameSpace>                     m_homeRoi;
-        std::filesystem::path                m_resultTemplate;
-        Rect<FrameSpace>                     m_resultRoi;
-        std::filesystem::path                m_resetTemplate;
-        Rect<FrameSpace>                     m_resetRoi;
-        uint64                               m_threshold;
-        Mode                                 m_mode;
-        uint32                               m_loops;
-        MonotonicInstant::Duration           m_maxActionFrameAge;
-        MonotonicInstant::Duration           m_stallTimeout;
-        std::optional<ClickDelay>            m_clickDelay;
-        uint64                               m_seed;
-        std::optional<std::filesystem::path> m_log;
+        SelectorArgs m_selector{};
+
+        std::filesystem::path m_homeTemplate{};
+        Rect<FrameSpace>      m_homeRoi;
+        std::filesystem::path m_resultTemplate{};
+        Rect<FrameSpace>      m_resultRoi;
+        std::filesystem::path m_resetTemplate{};
+        Rect<FrameSpace>      m_resetRoi;
+
+        uint64                     m_threshold{};
+        Mode                       m_mode{};
+        uint32                     m_loops{};
+        MonotonicInstant::Duration m_maxActionFrameAge{};
+        MonotonicInstant::Duration m_stallTimeout{};
+        std::optional<ClickDelay>  m_clickDelay{};
+        uint64                     m_seed{};
+
+        std::optional<std::filesystem::path> m_log{};
 
         auto operator==(Args const&) const -> bool = default;
     };
 
     struct CaptureArgs final
     {
-        SelectorArgs                         m_selector;
-        std::filesystem::path                m_output;
-        uint32                               m_frames;
-        MonotonicInstant::Duration           m_interval;
-        std::optional<std::filesystem::path> m_log;
+        SelectorArgs m_selector{};
+
+        std::filesystem::path      m_output{};
+        uint32                     m_frames{};
+        MonotonicInstant::Duration m_interval{};
+
+        std::optional<std::filesystem::path> m_log{};
 
         auto operator==(CaptureArgs const&) const -> bool = default;
     };
 
     struct InputAgentArgs final
     {
-        intptr                     m_windowHandle;
-        std::filesystem::path      m_queue;
-        std::filesystem::path      m_results;
-        std::filesystem::path      m_outputDirectory;
-        MonotonicInstant::Duration m_idleTimeout;
+        intptr                     m_windowHandle{};
+        std::filesystem::path      m_queue{};
+        std::filesystem::path      m_results{};
+        std::filesystem::path      m_outputDirectory{};
+        MonotonicInstant::Duration m_idleTimeout{};
 
         auto operator==(InputAgentArgs const&) const -> bool = default;
     };

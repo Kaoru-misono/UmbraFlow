@@ -401,8 +401,8 @@ namespace uf
     {
         struct InterruptionCase final
         {
-            SadSearchControl    m_control;
-            SadSearchStopReason m_expected;
+            SadSearchControl    m_control{};
+            SadSearchStopReason m_expected{};
         };
 
         auto const data = std::vector<std::byte>{asByte(0)};
@@ -805,10 +805,10 @@ namespace uf
     {
         struct InvalidCase final
         {
-            std::size_t m_length;
-            uint32 m_width;
-            uint32 m_height;
-            std::size_t m_stride;
+            std::size_t m_length{};
+            uint32 m_width{};
+            uint32 m_height{};
+            std::size_t m_stride{};
         };
 
         auto const cases = std::array{
@@ -835,8 +835,8 @@ namespace uf
     {
         struct ConversionCase final
         {
-            std::array<std::byte, 4> m_bgra;
-            uint8 m_expected;
+            std::array<std::byte, 4> m_bgra{};
+            uint8 m_expected{};
         };
 
         auto const cases = std::array{
@@ -906,10 +906,10 @@ namespace uf
     {
         struct InvalidCase final
         {
-            std::size_t m_length;
-            uint32 m_width;
-            uint32 m_height;
-            std::size_t m_stride;
+            std::size_t m_length{};
+            uint32 m_width{};
+            uint32 m_height{};
+            std::size_t m_stride{};
         };
 
         auto const cases = std::array{
