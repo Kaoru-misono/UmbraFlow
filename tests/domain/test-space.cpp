@@ -414,4 +414,102 @@ namespace uf
         rectangles.emplace(*pixelRect);
         CHECK(rectangles.contains(*equalRect));
     }
+
+    TEST_CASE("pixel rect to frame rect is exact up to the float edge bound")
+    {
+        auto const atOrigin = PixelRect::create(0, 0, 1, 1);
+        REQUIRE(atOrigin.has_value());
+        auto const originFrame = pixelRectToFrameRect(*atOrigin);
+        REQUIRE(originFrame.has_value());
+        CHECK((*originFrame == Rect<FrameSpace>{0.0F, 0.0F, 1.0F, 1.0F}));
+
+        auto const offset = PixelRect::create(1, 1, 2, 3);
+        REQUIRE(offset.has_value());
+        auto const offsetFrame = pixelRectToFrameRect(*offset);
+        REQUIRE(offsetFrame.has_value());
+        CHECK((*offsetFrame == Rect<FrameSpace>{1.0F, 1.0F, 2.0F, 3.0F}));
+
+        auto const edgeAtBound = PixelRect::create(
+            g_maxExactFrameDimension - 1,
+            g_maxExactFrameDimension - 1,
+            1,
+            1
+        );
+        REQUIRE(edgeAtBound.has_value());
+        CHECK(pixelRectToFrameRect(*edgeAtBound).has_value());
+
+        auto const horizontalBeyond = PixelRect::create(
+            g_maxExactFrameDimension,
+            0,
+            1,
+            1
+        );
+        REQUIRE(horizontalBeyond.has_value());
+        auto const horizontal = pixelRectToFrameRect(*horizontalBeyond);
+        REQUIRE_FALSE(horizontal.has_value());
+        requireErrorKind(horizontal.error(), AutomationErrorKind::InvalidResource);
+
+        auto const verticalBeyond = PixelRect::create(
+            0,
+            g_maxExactFrameDimension,
+            1,
+            1
+        );
+        REQUIRE(verticalBeyond.has_value());
+        auto const vertical = pixelRectToFrameRect(*verticalBeyond);
+        REQUIRE_FALSE(vertical.has_value());
+        requireErrorKind(vertical.error(), AutomationErrorKind::InvalidResource);
+    }
+
+    TEST_CASE("pixel point to frame point is exact up to the float bound")
+    {
+        auto const atOrigin = pixelPointToFramePoint(PixelPoint{0, 0});
+        REQUIRE(atOrigin.has_value());
+        CHECK((*atOrigin == Point<FrameSpace>{0.0F, 0.0F}));
+
+        auto const offset = pixelPointToFramePoint(PixelPoint{1, 1});
+        REQUIRE(offset.has_value());
+        CHECK((*offset == Point<FrameSpace>{1.0F, 1.0F}));
+
+        auto const atBound = pixelPointToFramePoint(
+            PixelPoint{g_maxExactFrameDimension, g_maxExactFrameDimension}
+        );
+        REQUIRE(atBound.has_value());
+        auto const boundEdge = static_cast<float>(g_maxExactFrameDimension);
+        CHECK((*atBound == Point<FrameSpace>{boundEdge, boundEdge}));
+
+        auto const beyondX = pixelPointToFramePoint(
+            PixelPoint{g_maxExactFrameDimension + 1, 0}
+        );
+        REQUIRE_FALSE(beyondX.has_value());
+        requireErrorKind(beyondX.error(), AutomationErrorKind::InvalidResource);
+
+        auto const beyondY = pixelPointToFramePoint(
+            PixelPoint{0, g_maxExactFrameDimension + 1}
+        );
+        REQUIRE_FALSE(beyondY.has_value());
+        requireErrorKind(beyondY.error(), AutomationErrorKind::InvalidResource);
+    }
+
+    TEST_CASE("integer pixel rect round trips through the frame rect bridge")
+    {
+        auto const identity = CoordinateTransform::create(
+            Point<DesktopSpace>{0.0F, 0.0F},
+            800.0F,
+            450.0F,
+            800,
+            450
+        );
+        REQUIRE(identity.has_value());
+
+        auto const pixelRect = PixelRect::create(10, 20, 30, 40);
+        REQUIRE(pixelRect.has_value());
+
+        auto const frameRect = pixelRectToFrameRect(*pixelRect);
+        REQUIRE(frameRect.has_value());
+
+        auto const roundTrip = identity->frameRectToPixelRect(*frameRect);
+        REQUIRE(roundTrip.has_value());
+        CHECK((*roundTrip == *pixelRect));
+    }
 }

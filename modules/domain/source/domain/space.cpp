@@ -79,6 +79,74 @@ namespace uf
         return ok();
     }
 
+    auto pixelRectToFrameRect(
+        PixelRect const& rect
+    ) -> Result<Rect<FrameSpace>>
+    {
+        // Compute the far edges in uint64 so a near-maximum rect cannot wrap the
+        // uint32 addition and hide an out-of-range edge. Every integer in
+        // [0, 2^24] inclusive is exactly representable in a 32-bit float, so
+        // edges up to and including g_maxExactFrameDimension make every cast
+        // below lossless.
+        auto const right = uint64{rect.x()} + uint64{rect.width()};
+        auto const bottom = uint64{rect.y()} + uint64{rect.height()};
+        if (
+            right > g_maxExactFrameDimension
+            || bottom > g_maxExactFrameDimension
+        )
+        {
+            return fail(
+                AutomationErrorKind::InvalidResource,
+                std::format(
+                    "pixel rect ({}, {}, {}, {}) edges ({}, {}) exceed exact "
+                    "float bound {}",
+                    rect.x(),
+                    rect.y(),
+                    rect.width(),
+                    rect.height(),
+                    right,
+                    bottom,
+                    g_maxExactFrameDimension
+                )
+            );
+        }
+
+        return Rect<FrameSpace>{
+            static_cast<float>(rect.x()),
+            static_cast<float>(rect.y()),
+            static_cast<float>(rect.width()),
+            static_cast<float>(rect.height())
+        };
+    }
+
+    auto pixelPointToFramePoint(
+        PixelPoint point
+    ) -> Result<Point<FrameSpace>>
+    {
+        // Every integer in [0, 2^24] inclusive is exactly representable in a
+        // 32-bit float; past that bound the conversion would silently round.
+        if (
+            point.x() > g_maxExactFrameDimension
+            || point.y() > g_maxExactFrameDimension
+        )
+        {
+            return fail(
+                AutomationErrorKind::InvalidResource,
+                std::format(
+                    "pixel point ({}, {}) exceeds exact float bound {}",
+                    point.x(),
+                    point.y(),
+                    g_maxExactFrameDimension
+                )
+            );
+        }
+
+        return Point<FrameSpace>{
+            static_cast<float>(point.x()),
+            static_cast<float>(point.y())
+        };
+    }
+
     auto CoordinateTransform::create(
         Point<DesktopSpace> clientOrigin,
         float clientWidth,
