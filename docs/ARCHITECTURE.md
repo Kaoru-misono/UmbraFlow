@@ -6,8 +6,11 @@ of `modules/` with a `manifest.txt` becomes a CMake library target named
 
 ```text
 entry/${PROJECT_NAME} -> core
+entry/workbench (Windows) -> annotation
 domain                -> core
 vision                -> core, domain
+image                 -> core, domain
+annotation            -> core, domain, vision
 controller (Windows)  -> core, domain
 tests                 -> modules under test
 ```
@@ -21,9 +24,17 @@ not declare link dependencies. `scripts/check_modules.py` enforces both rules.
 - `modules/domain/`: platform-free UmbraFlow frames, coordinates, detections,
   identifiers, leases, and automation errors.
 - `modules/vision/`: platform-free grayscale conversion and SAD template matching.
+- `modules/image/`: platform-free PNG I/O, pixel-layout conversion, and
+  deterministic rectangular cropping; vendored codecs stay behind its FFI boundary.
+- `modules/annotation/`: platform-free annotation catalog validation, page
+  resolution evidence, action-authorization contracts, canonical authoring and
+  runtime documents, and deterministic template compilation.
 - `modules/controller/`: Windows-only discovery, target lifecycle, and
   strict-background input, with capture added in a later slice.
-- `entry/`: executable targets and composition roots.
+- `entry/`: executable targets and composition roots. Its Windows-only
+  `workbench/` support publishes validated authoring projects through a narrow
+  platform file-publication boundary; content-addressed assets precede the
+  runtime manifest commit point.
 - `tests/`: deterministic offline tests.
 - `cmake/`: module loading, platform selection, caching, warnings, hardening,
   sanitizers, and static-analysis policy.

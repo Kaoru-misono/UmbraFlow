@@ -66,7 +66,7 @@ Spike lives at `<scratchpad>/luau-spike/` (throwaway, not for the repo).
   PUBLIC dirs, and a manifest-driven module has no `CMakeLists.txt` to mark them
   `SYSTEM`. Use the repo's established idiom: **pragma-wrap the Luau includes** in the
   `.cpp` (`#pragma warning(push, 0)` / clang/gcc equivalents — exactly as
-  `entry/m0-demo/ffi/png-decoder.cpp:29-50`). Verified in the spike's `main.cpp`.
+  `modules/image/source/image/ffi/png-decoder.cpp`). Verified in the spike's `main.cpp`.
   Keep Luau types OUT of `uf::script` public headers (opaque/pImpl) so the wrapped
   includes live only in `.cpp` and Luau stays a PRIVATE dep.
 

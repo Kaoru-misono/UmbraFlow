@@ -147,12 +147,19 @@ grill 进行到 Q10 时,开发者澄清了真实意图,**修正了整个 grill �
 **结论(已定)**:双层门在 state 创建前;坐标变换留完整缝 + P0 恒等;**自适应提到 P1**。
 
 - **能力门**:双层门(Backend Capability + Target Compatibility,§6.2)在 **Luau VM state 创建之前** fail-closed 校验,不匹配根本不进脚本执行。灵魂约束必然结论,无争议。
-- **坐标变换缝**:内部所有"帧坐标 ↔ 目标物理坐标"转换统一走 `CoordinateTransform{scale, offset, viewport}`,**不散落裸标量 scale**;P0 只允许 identity(scale=1/offset=0),不匹配即 fail-closed 拒。零额外成本,未来自适应是"填非恒等值"而非改架构。
+- **持续兼容门**:S0 于 2026-07-23 锁定为一个项目级 `base_resolution` + 精确整数 DPI 指纹;
+  除启动门外,每次 capture/recognition 与 Controller 投递前都重新验证。尺寸、DPI、目标同一性或 transform
+  不匹配必须先推进 target generation 或返回 `TargetCompatibilityUnverified`,不得让旧租约继续投递。
+- **坐标变换缝**:P0 的 AnnotationSpace→live FrameSpace 只允许 identity。现有 `CoordinateTransform`
+  继续只负责 live Client↔Frame;P1 另建显式 `BaseToLiveTransform{uniformScale,offset,viewport}`,
+  不把两种变换混为一个对象,也不散落裸标量 scale。
 - **自适应排序**:**提到 P1**。只做最朴素均匀缩放归一化(按比例缩放模板/ROI),不做锚点复杂布局。
 
 **⚠ 连带信号(收尾归入待确认)**:选"自适应提到 P1"强烈暗示**首任务需要跨分辨率/带 DPI 才能日常用**。这会反向影响 P1 范围。需开发者确认:首任务实际运行分辨率、目标游戏 scaling_mode、DPI 是否需 P1 归一。
 
-**留待**:base 分辨率取值、DPI 归一细节。
+**已锁定设计、仍待项目输入**:粒度与校验语义见
+[`2026-07-22-annotation-design.md`](2026-07-22-annotation-design.md) §2;卡厄斯梦境实际 base 分辨率/DPI
+仍由首批真实素材决定。
 
 ---
 
@@ -160,18 +167,19 @@ grill 进行到 Q10 时,开发者澄清了真实意图,**修正了整个 grill �
 
 **结论(已定)**:P0-A 可视化标注系统生成项目资产/页面声明;Luau 只拿只读句柄;P0 只允许字面量引用。
 
-- 模板/颜色 recognizer、ROI、阈值、`page_anchor`、`action_target`、`info_region` 与 page signature
-  **强制进入项目包声明**,由 P0-A GUI 写入;加载期校验资产存在、引用闭合、ROI 边界和 page 歧义规则。
-- Luau 只得到**只读 opaque recognizer/page 句柄**;**不暴露** `template("home.png", roi)` 或任意路径读图等
-  脚本内构造能力。确切命名空间随 annotation schema 落锤,但资产与代码分离是硬约束。
+- P0 的有界灰度模板 recognizer、`template_rect`、`search_roi`、整数定点阈值、`page_anchor`、
+  `action_target`、`info_region` 与 page signature **强制进入 GUI authoring document**,再确定性生成
+  runtime manifest 与切分模板。加载期校验资产 hash、引用闭合、矩形边界和 page 结构歧义。
+- Luau 只得到 `bot.recognizers.<literal>` / `bot.pages.<literal>` **只读 opaque handle**;
+  **不暴露** `template("home.png", roi)`、别名、动态索引或任意路径读图。动作额外要求同帧
+  `ResolvedPage` + `Detection` + observation lease。
 - **参数化 ROI(Layer3)在 C++ 侧算**,Luau 不碰坐标运算;**P0 不做 Layer3**(YAGNI)。
-- **P0 只允许字面量引用**,加载期 100% 枚举校验;动态索引等真实需要出现后再放宽。
+- **P0 只允许规范根上的直接字面量引用**,由可判定的 Luau AST 子集在 VM 创建前 100% 枚举并解析;
+  runtime nil 仅为纵深防御。
 
-**留待(P0-A 开工前必须落锤)**:manifest/annotation schema、recognizer/page 句柄命名空间、ROI 坐标空间、
-required/forbidden 组合与 Unknown/Ambiguous 证据格式(均与 Roadmap P0-A、D8 CoordinateTransform 对齐)。
-—— 这些统一收进**专门的标注设计稿(另出,当前待定,2026-07-21 决定)**,不在本裁决展开;S0 共享地基
-(见 Roadmap 交付顺序)未落锤前不进入标注实现。**⚠ 一条硬约束先记下:页面优先级只用于诊断排序,
-永不压制 Ambiguous**(否则把 fail-closed 的"多命中→AmbiguousScreen→不点击"悄悄变成放行,捅穿"永不点错屏")。
+**S0 已解(2026-07-23)**:schema、坐标、句柄、页面证据、运行资产和 UI 技术栈均由
+[`2026-07-22-annotation-design.md`](2026-07-22-annotation-design.md) 锁定。P0 不提供页面优先级或其他
+消歧后门:全局候选不唯一即 `Ambiguous`,且无法产生动作所需的 `ResolvedPage`。
 
 ---
 

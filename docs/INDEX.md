@@ -4,6 +4,8 @@
   [Product form and Roadmap](plans/2026-07-21-product-form-and-roadmap.md)
 - Current task-model decisions:
   [Luau task-model grill decisions](plans/2026-07-21-lua-task-model-grill-decisions.md)
+- Locked S0 annotation contract:
+  [P0-A Visual Annotation System & Data Model](plans/2026-07-22-annotation-design.md)
 - Research archive supporting those decisions:
   [Task-model decision package](plans/2026-07-21-lua-task-model-decision-package.md)
 - [Current execution checklist](TODO.md)

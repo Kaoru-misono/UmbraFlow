@@ -9,8 +9,11 @@ location required by `CLAUDE.md` and `AGENTS.md`.
   P0–P3 scope and exit criteria.
 - [Luau task-model grill decisions](2026-07-21-lua-task-model-grill-decisions.md) — implementation-level
   decisions to revalidate when entering each phase.
+- [P0-A Visual Annotation System & Data Model](2026-07-22-annotation-design.md) — developer-approved,
+  S0-locked authority for authoring/runtime schemas, template and search geometry,
+  page resolution, action evidence, and the P0-A workbench.
 - [Task-model decision package](2026-07-21-lua-task-model-decision-package.md) — research and arguments;
-  not authoritative when it conflicts with the two documents above.
+  not authoritative when it conflicts with the authorities above.
 
 Active implementation plans (not authorities, executed when entering the phase):
 

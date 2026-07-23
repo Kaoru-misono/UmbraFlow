@@ -57,6 +57,22 @@ enum class ConnectionState : uint8
 };
 ```
 
+## Concepts and templates
+
+- Constrain every public or reusable function and class template at its
+  declaration when it accepts a narrower domain than all possible types.
+- Prefer standard concepts such as `std::integral`, `std::same_as`, and
+  `std::invocable` when they express the complete contract.
+- Define a named project concept only for a reused constraint or a meaningful
+  domain abstraction. Keep it in the narrowest owning namespace.
+- Express constraints with a constrained template parameter or a `requires`
+  clause. Do not hide an interface constraint in a function-body
+  `static_assert` or legacy SFINAE.
+- An implementation-only template in a `.cpp` file may remain unconstrained
+  when its instantiation set is closed and locally controlled.
+- Do not add decorative or vacuous concepts that fail to describe operations
+  actually required by the implementation.
+
 ## Formatting
 
 - Use trailing return types for functions.
@@ -65,6 +81,66 @@ enum class ConnectionState : uint8
 - Use east const: `std::string const&`.
 - Put `template <...>` with a space before `<`.
 - Braces are required for control statements except a one-line `return` or `continue` guard.
+
+### Data member initialization and alignment
+
+- Brace-initialize every stored data member, either with an in-class member
+  initializer, explicitly in every constructor's member-initializer list, or
+  through a complete braced aggregate initializer at each construction site.
+- Give a member an in-class brace initializer when its type has a meaningful
+  default state. State the intended value when an empty initializer would be
+  ambiguous.
+- For a required, non-default-constructible domain value, omit the in-class
+  initializer and brace-initialize it in every constructor. Do not invent an
+  invalid sentinel or use `std::optional` solely to make `{}` possible.
+- Intentional aggregate spec and transport types may retain designated
+  initialization. Supply every required member explicitly at each construction
+  site; do not add a constructor solely to defeat useful aggregate syntax.
+- In each contiguous block of two or more single-line data member declarations,
+  align the member identifiers at the same column, using spaces after the type
+  or declarator. The longest type or declarator in that block determines the
+  column. A blank line starts a new alignment block. Do not align semicolons or
+  initializer braces, and do not force a wrapped declaration into this form.
+
+```cpp
+class SourceRecord final
+{
+    SourceId    m_id;
+    ContentHash m_contentHash;
+    std::string m_relativePath{};
+    uint32      m_revision{};
+
+    explicit SourceRecord(
+        SourceId id,
+        ContentHash contentHash
+    )
+        : m_id{std::move(id)}
+        , m_contentHash{std::move(contentHash)}
+    {
+    }
+};
+```
+
+### Assignment alignment
+
+- In each contiguous block of two or more single-line assignments or
+  `=`-based initializers, align the assignment operators at the same column.
+  The longest left-hand side in that block determines the column.
+- Apply the same rule to adjacent designated-initializer entries. A blank line
+  starts a new alignment block. Do not pad a wrapped assignment merely to join
+  an alignment block; follow the line-wrapping rules instead.
+
+```cpp
+m_id          = id;
+m_contentHash = contentHash;
+
+auto source = AuthoringSourceSpec{
+    .m_id          = id,
+    .m_contentHash = contentHash,
+    .m_fingerprint = fingerprint,
+    .m_provenance  = provenance,
+};
+```
 
 ### Line wrapping
 
@@ -98,7 +174,7 @@ auto createRecord(
 auto result = createRecord(
     projectId,
     RecordOptions{
-        .m_name = name,
+        .m_name    = name,
         .m_enabled = true,
     }
 );
@@ -247,8 +323,8 @@ satisfy its invariant.
 ```cpp
 struct ParseOutcome
 {
-    Record m_record;
-    std::size_t m_consumed;
+    Record      m_record;
+    std::size_t m_consumed{};
 };
 
 [[nodiscard]]

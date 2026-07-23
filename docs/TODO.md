@@ -1,14 +1,16 @@
 # UmbraFlow C++ — 当前执行清单
 
-> 状态基线:2026-07-21。产品方向与阶段退出标准以
+> 状态基线:2026-07-23。产品方向与阶段退出标准以
 > [`2026-07-21-product-form-and-roadmap.md`](plans/2026-07-21-product-form-and-roadmap.md) 为唯一权威;
 > Luau 任务语义以
 > [`2026-07-21-lua-task-model-grill-decisions.md`](plans/2026-07-21-lua-task-model-grill-decisions.md) 为实现层存款。
+> S0 标注共享契约以
+> [`2026-07-22-annotation-design.md`](plans/2026-07-22-annotation-design.md) 为权威。
 > 本文件只记录执行顺序,不重复维护产品裁决。
 >
 > **执行按 A/B 穿插薄片**(S0 共享地基 → A1/B1/A2/B2/A3/B3,顺序不固定;详见 Roadmap 交付顺序):
-> 下面 §1/§2/§3 按 P0-A/B/C 归类**能力**,不代表严格先后。**标注整体设计(schema/ROI 坐标空间/page 语义)
-> 另出专门设计稿,当前待定**,S0 未落锤前不展开标注实现。
+> 下面 §1/§2/§3 按 P0-A/B/C 归类**能力**,不代表严格先后。**S0 已于 2026-07-23
+> 获开发者批准并锁定**,A1/B1 不再受设计阻塞。
 
 ## 0. 现有底座与真机收尾
 
@@ -22,21 +24,29 @@
 
 ## 1. P0-A — 可视化标注系统
 
-- [ ] 落锤 manifest/annotation schema、ROI 坐标语义、page signature 组合规则与 authoring UI 技术栈。
+- [x] 锁定 authoring/runtime schema、`template_rect`/`search_roi`、page resolution、动作证据、
+      项目级尺寸/DPI 兼容契约与 Dear ImGui + D3D11 技术栈(2026-07-23)。
 - [ ] 独立 GUI:WGC 抓帧/导入图片、样本列表、画布缩放/平移、框选编辑、undo/redo。
-- [ ] 标注类型:`page_anchor`、`action_target`、`info_region`;属性面板编辑 page、识别方式、阈值及
-      required/forbidden 关系。
-- [ ] 一键生成/更新模板、manifest 与 page signature,无需手改配置。
-- [ ] 使用 runtime 同一识别器 Preview/Test,显示命中框、confidence、Unknown/Ambiguous 原因。
+- [ ] 标注类型:`page_anchor`、`action_target`、`info_region`;分别编辑 `template_rect` 与
+      `search_roi`,以及 page、整数定点阈值和 required/forbidden 关系。
+- [ ] 保存可完整 round-trip 的 authoring document,一键生成切分模板与 runtime manifest,无需手改配置。
+  - [x] 平台无关后端:canonical authoring document 严格往返、完整引用校验、源 PNG hash/尺寸校验、
+        内容寻址模板与 runtime manifest 的纯确定性编译。
+  - [x] Workbench 文件保存、内容寻址资产发布、以 runtime manifest 为提交点的完整生成集
+        原子替换及失败回滚(2026-07-23)。
+- [ ] 使用 runtime 同一有界灰度 SAD 策略 Preview/Test,显示命中框、整数边界、
+      Unknown/Ambiguous 与停止原因。
 - [ ] 建立卡厄斯梦境关键页面的正例、负例和易混淆静态截图回归集。
 
 ## 2. P0-B — Luau Engine
 
 - [ ] 固定 Luau 精确版本,接入 compiler/VM 与 `IScriptRuntime` 可序列化边界。
-- [ ] 最小 capability API 与 observe/act/wait 引擎循环;manifest 只读 recognizer/page 句柄。
+- [ ] 最小 capability API 与 observe/resolve/act/wait 引擎循环;manifest 只读 recognizer/page 句柄,
+      `ResolvedPage` + Detection + lease 才能授权坐标动作。
 - [ ] 每任务 VM generation、allocator 配额、interrupt 硬取消、逻辑时钟/RNG 与 generation 热加载。
 - [ ] Fake Controller 帧序列、结构化 trace、资源快照和静态截图回归接入 CI。
-- [ ] 能力/兼容性门、恒等 `CoordinateTransform`、租约校验与动作后强制作废观察。
+- [ ] 能力/兼容性门、项目级尺寸/DPI 指纹、P0 identity Base→Live gate、持续重校验、
+      租约校验与动作后强制作废观察。
 - [ ] 通过 Roadmap 第五节的 6 条 Luau 一票否决验证。
 
 ## 3. P0-C — 卡厄斯梦境完整每日

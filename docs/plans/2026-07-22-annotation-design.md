@@ -1,496 +1,508 @@
-# P0-A Visual Annotation System & Data Model — Design Draft
+# P0-A Visual Annotation System & Data Model — S0 Locked Design
 
-> Status: **DRAFT for developer review** — 2026-07-22. Researched by a subagent,
-> then AI-verified against the ported code (the load-bearing fact — the SAD matcher
-> returns a `uint64` *distance*, not a `[0,1]` confidence — was confirmed in
-> `modules/vision/source/vision/sad.hpp:41,59`). NOT committed.
+> Status: **S0 LOCKED — developer-approved 2026-07-23**.
 >
-> Scope: **S0 shared foundation** + **P0-A annotation workbench** per
-> [`2026-07-21-product-form-and-roadmap.md`](2026-07-21-product-form-and-roadmap.md) §三
-> (delivery slices S0 / A1 / A2 / A3) and the four 留待 design points. Resolves the
-> four D3 留待 items (manifest/schema, ROI coordinate space, page-signature
-> semantics, handle namespace) and the D8 coordinate seam — all **P0 = identity-only,
-> the seam must hold non-identity later**.
+> This document is the authority for the shared S0 annotation contract and the
+> P0-A workbench. It incorporates the 2026-07-22 developer review and resolves
+> all nine former open questions. A1 and B1 may build against this contract.
 >
-> Authorities honored: D3, D8, DESIGN §5.3/§7/§8.6/§11, and the **HARD rule: page
-> priority is diagnostic ordering only and NEVER suppresses `AmbiguousScreen`**.
-> Soul constraints carried through every section: determinism, full traceability,
-> strict-background, zero game-specific branches in core, assets separate from code,
-> Luau sees only read-only opaque handles.
+> Current authority chain: this document specializes the product direction in
+> [`2026-07-21-product-form-and-roadmap.md`](2026-07-21-product-form-and-roadmap.md)
+> and the language-independent task semantics retained by
+> [`2026-07-21-lua-task-model-grill-decisions.md`](2026-07-21-lua-task-model-grill-decisions.md).
+> The old Rust-era `DESIGN.md` is historical input only. Every retained rule is
+> restated here; the old document is not normative.
 >
-> **⚑ 9 open questions in §8 need the developer's decisions before A1/A2 coding — the
-> sharpest are OQ-1 (threshold unit) and OQ-2 (Ambiguous/Unknown as a result type vs a
-> new `AutomationErrorKind`).**
+> Load-bearing constraints: determinism, complete trace evidence, strict
+> background operation, zero game-specific branches in core, assets separate
+> from code, and read-only opaque Luau handles. Unknown, Ambiguous, stopped
+> recognition, stale observations, and incompatible geometry must produce
+> exactly zero Controller input deliveries.
 
-## 0. Grounding facts from the ported code (these constrain every decision)
+## 0. Grounding facts from the ported code
 
-Verified in-tree, not assumed:
-
-| Fact | Location | Design consequence |
+| Fact | Location | Locked consequence |
 |---|---|---|
-| Coordinate spaces `Desktop→Client→Frame→Normalized` already exist; `Point<Space>`/`Rect<Space>` are `float`, `PixelRect` is validated `uint32`. | `modules/domain/source/domain/space.hpp` | The annotation "base" space is **`FrameSpace` at `base_resolution`**. `NormalizedSpace` + `frameToNormalized`/`normalizedToFrame` are already the P1 seam — do not invent a new space. |
-| `CoordinateTransform::create(clientOrigin, clientW, clientH, frameW, frameH)` encodes `{scale, offset, viewport}` implicitly. | `space.hpp` | D8's conceptual `{scale,offset,viewport}` maps 1:1 onto this class. P0 identity = client rect == frame extent == base_resolution. |
-| SAD matcher returns `SadMatch{x,y,score}` where **`score` is sum-of-absolute-differences, `uint64`, lower=better, `0`=perfect** — a *distance*, not a `[0,1]` confidence. | `modules/vision/source/vision/sad.{hpp,cpp}` (`uint64 m_score`, `sad.hpp:41,59`) | `threshold` in the manifest is `[0,1]`; it must be compiled to an **integer max-SAD bound** (§1.4). The single most important correctness detail for runtime-identical Preview. |
-| Grayscale is deterministic integer math: `(77·R + 150·G + 29·B) >> 8`. | `sad.cpp` `bgra8ToGray8` | Preview MUST call this exact function. No separate preview path. |
-| ROI is a `PixelRect` (integer FrameSpace px); the matcher iterates integer candidates. | `sad.cpp` | Store ROI as **integer pixels**, not floats — see §2. |
-| `Detection{sessionId,targetGeneration,frameId,label,Rect<FrameSpace>,confidence}` + `ObservationLease` already exist; `max_action_frame_age=750ms`. | `modules/domain/source/domain/detection.hpp` | Annotation recognizers produce exactly this `Detection`. `action_target`'s default click is an anchor only — the runtime still binds to the live `Detection` under lease. |
-| WGC capture: `WgcCaptureSession::create(...).capture() -> Frame`; `ClientGeometry::transformFor(frameW,frameH) -> CoordinateTransform`. | `modules/controller/source/controller/capture.hpp` | The workbench reuses this verbatim for "grab current frame", getting a real `CoordinateTransform` for free. |
-| `AutomationErrorKind` has **no** `AmbiguousScreen`/`UnknownScreen`. | `modules/domain/source/domain/error.hpp` | Page recognition returns a **`PageOutcome` result type**, not an error; it only becomes a fail-closed error when a script tries to *act* on it (§3, OQ-2). |
+| `Desktop→Client→Frame→Normalized` spaces already exist; `PixelRect` is validated integer storage. | `modules/domain/source/domain/space.hpp` | Annotation geometry is integer `FrameSpace` at one project `base_resolution`; no new P0 coordinate space is introduced. |
+| `CoordinateTransform` maps live Client and Frame geometry. | `space.hpp` | It remains the live Client↔Frame transform. P1 resolution adaptation requires a separate explicit Base→Live viewport transform; it is not represented by changing this existing value. |
+| SAD returns a `uint64` distance: lower is better and zero is perfect. | `modules/vision/source/vision/sad.{hpp,cpp}` | The authored threshold is fixed-point and compiles to an integer inclusive `maxSad` bound. Floating point never decides hit/miss. |
+| The bounded SAD overload reports `Cancelled`, `TimedOut`, and `ComparisonBudgetExhausted`. | `sad.hpp` | Runtime and Preview always use the bounded overload and preserve every stop reason as a control failure. |
+| Grayscale conversion is deterministic integer math. | `sad.cpp` `bgra8ToGray8` | Runtime and Preview call this exact function; the workbench has no private matcher. |
+| The matcher consumes an integer search `PixelRect`. | `sad.cpp` | `template_rect` and `search_roi` are separate integer rectangles. The former creates the template; the latter bounds live-frame search. |
+| `Detection` and `ObservationLease` carry session, target generation, and frame identity; default action age is 750 ms. | `modules/domain/source/domain/detection.hpp` | A live Detection remains necessary but is not sufficient for a page-dependent action; the action also requires same-frame `ResolvedPage` evidence. |
+| WGC capture returns the complete current client frame and a live transform. | `modules/controller/source/controller/capture.hpp` | The full WGC frame is runtime input. Cropped templates are the static runtime assets. |
 
----
+## 1. Artifact and schema model
 
-## 1. Data model / schema
+### 1.1 Artifact ownership and packaging
 
-### 1.1 File placement — recommendation: one GUI-owned, schema-versioned `annotations.toml`
+P0 uses a two-layer document model: a complete GUI authoring document and a
+deterministically generated runtime manifest.
 
-| Option | Verdict |
-|---|---|
-| **A. Embedded in `project.toml`** | **Rejected.** `project.toml` is hand-authored (capability/target/task). The GUI rewrites recognizers/pages on every edit; mixing machine-churn into the hand-authored file invites clobbering + merge pain. Violates "assets separate from code". |
-| **B. Two files** `recognizers.toml` + `pages.toml` | Acceptable but adds an inter-file closure (pages → recognizers) for no P0 benefit. |
-| **C. One machine-owned `annotations.toml`** (both `[[recognizer]]` and `[[page]]`) | **RECOMMENDED.** One closure to validate; atomic one-click rewrite; clean ownership; `project.toml` stays hand-authored and references it. |
+| Artifact | Owner and purpose | Production runtime package |
+|---|---|---|
+| `project.toml` | Hand-authored project, target, capability, and task configuration. | Included. |
+| `annotations.toml` | GUI-owned authoring source of truth: source images, stable IDs, rectangles, page membership, click anchors, and regression references. | Excluded. |
+| `assets/sources/<hash>.png` | Exact full screenshots required to reopen and edit the authoring project. | Excluded. |
+| `assets/templates/<hash>.png` | Lossless templates cropped from `template_rect`. | Included when referenced. |
+| `generated/annotations.runtime.toml` | Pure generated runtime closure containing recognizers and pages only. | Included. |
+| Regression screenshots | Selected full-frame golden inputs for Preview, CI, and Fake Controller sequences. | Development/test bundle only. |
+
+Exploratory screenshots that are not retained by the authoring document or a
+regression set are local scratch data and are never packaged.
 
 ```toml
-# project.toml (hand-authored; one added line vs DESIGN §11.2)
+# project.toml — hand-authored
 [project]
-id = "personal.chaos-dreamscape"        # 卡厄斯梦境
+id = "personal.chaos-dreamscape"
 
 [targets.windows]
-baseline_client_size = [1920, 1080]     # project-wide base_resolution anchor (§2)
-baseline_dpi_scale   = 1.0
+baseline_client_size = [1920, 1080]
+baseline_dpi = [96, 96]
 
 [annotations]
-path = "annotations.toml"               # GUI-owned; hand edits discouraged
+source = "annotations.toml"
+runtime = "generated/annotations.runtime.toml"
 ```
 
-TOML (not JSONC) for `annotations.toml`: it is machine-generated tabular data (arrays
-of tables), round-trips cleanly and diffs readably; `project.toml`/`compatibility.toml`
-are already TOML. (DESIGN §8.1 chose JSONC for *flows* because flows are hand-authored
-control structures — annotations are neither.)
+`baseline_client_size` and `baseline_dpi` form one project-wide P0
+compatibility fingerprint. No recognizer may override either value. The Runtime
+reads only `annotations.runtime`; `annotations.source` is workbench-only and may
+be absent from a runtime-only deployment.
 
-### 1.2 Schema versioning
+### 1.2 Authoring document
 
-```toml
-schema = "umbraflow-annotations/v1"     # independent of flow/engine schema (DESIGN §3.7)
-base_resolution = [1920, 1080]          # document default; per-recognizer may override (OQ-6)
-base_dpi_scale  = 1.0
-```
-
-Unknown **major** → load-time reject (`InvalidResource`); newer **minor** → best-effort
-load + a Warning trace event. The workbench writes the newest minor it knows. Templates
-are content-hash addressed (§6), so template bytes version independently.
-
-### 1.3 Recognizer entry
+P0 supports the exact schema identifier `umbraflow-authoring/v1`. Any other
+identifier is rejected; minor-version best-effort loading is deferred.
 
 ```toml
-[[recognizer]]
-name  = "home_marker"          # unique; becomes Detection.label and the Luau handle key (§4)
-kind  = "template"
-template = "assets/templates/home_marker.7f3a…c9.png"   # content-hash-addressed lossless PNG (§6)
-roi   = [1180, 40, 220, 90]    # [x, y, w, h] INTEGER px in base_resolution FrameSpace (§2)
-threshold = 0.90               # [0,1] confidence floor; compiled to an integer max-SAD bound at load (§1.4)
-grayscale = true               # true → runtime & Preview both apply bgra8ToGray8
+schema = "umbraflow-authoring/v1"
+project_id = "personal.chaos-dreamscape"
 base_resolution = [1920, 1080]
-# provenance (written by the asset pipeline §6; ignored by the matcher)
-source_screenshot = "sha256:ab12…"
-template_hash     = "sha256:7f3a…c9"
+base_dpi = [96, 96]
 
-[[recognizer]]                 # color recognizer (info_region / lightweight state)
-name  = "stamina_full_glow"
-kind  = "color"
-roi   = [90, 20, 40, 40]
-space = "hsv"                  # rgb | hsv
-low   = [40, 120, 120]
-high  = [80, 255, 255]
-min_ratio = 0.35               # min fraction of ROI pixels in range (DESIGN §7.2 ColorMatch)
+[[source]]
+id = "2f49b58e-16d0-46a5-89ff-14db2bed31b9"
+path = "assets/sources/4c91...a2.png"
+content_hash = "sha256:4c91...a2"
+client_size = [1920, 1080]
+dpi = [96, 96]
+capture_backend = "wgc"
+target_generation = 7
+captured_at = "2026-07-23T09:15:00+09:00"
 
-[[recognizer]]                 # composite (declarable in schema; P0 MAY ship template+color only — §7)
-name = "on_battle_result"
-kind = "composite"
-op   = "all"                   # all | any | not | count
-members = ["result_banner", "not(loading_spinner)"]
+[[annotation]]
+id = "bf61fe8d-31f7-4c2f-8b6e-36c2c08054dc"
+name = "home_marker"
+type = "page_anchor"
+source_id = "2f49b58e-16d0-46a5-89ff-14db2bed31b9"
+recognizer_kind = "gray_template"
+template_rect = [1240, 48, 72, 36]
+search_roi = [1180, 24, 220, 96]
+min_similarity_bp = 9000
+
+[[annotation]]
+id = "46fd32d7-095b-427f-9892-bd86ee2ab073"
+name = "daily_button"
+type = "action_target"
+source_id = "2f49b58e-16d0-46a5-89ff-14db2bed31b9"
+recognizer_kind = "gray_template"
+template_rect = [1480, 760, 160, 64]
+search_roi = [1400, 700, 300, 160]
+min_similarity_bp = 9000
+default_click = [80, 32] # integer template-local offset
+page_ids = ["c1ec5b68-3c29-448d-ac65-ad3798684e3c"]
+
+[[page]]
+id = "c1ec5b68-3c29-448d-ac65-ad3798684e3c"
+name = "home"
+required = ["bf61fe8d-31f7-4c2f-8b6e-36c2c08054dc"]
+forbidden = []
+
+[[regression]]
+id = "f27cf10d-ce50-4216-96e5-1bf579bf6251"
+source_id = "2f49b58e-16d0-46a5-89ff-14db2bed31b9"
+classification = "positive"
+expected_outcome = "resolved"
+expected_page_id = "c1ec5b68-3c29-448d-ac65-ad3798684e3c"
 ```
 
-### 1.4 Threshold → integer bound (the determinism-critical detail)
+All relationships use stable UUIDs. Names are unique human-readable labels and
+Luau keys; renaming changes the name without changing identity. The workbench
+updates every generated name reference atomically. P0 does not rewrite Luau
+source: its pre-VM AST validation reports every stale literal after a rename,
+and the author updates those literals. Automatic Luau reference rewriting is a
+P1 authoring convenience.
 
-SAD is a `uint64` distance; a float `threshold` must not enter a *decision* (soul:
-determinism). Resolution:
+The authoring schema persists every source record, annotation type, page role,
+rectangle, default click, and regression reference needed for an exact
+save/reload round trip. Imported PNGs record imported provenance rather than
+inventing WGC-only fields.
 
-- **At load**, per template: `templatePixels = tw·th`; `maxSad = ⌊(1 − threshold) · 255 · templatePixels⌋` (floor, one fixed rounding).
-- **At match** (runtime **and** Preview, same code): predicate is the **integer** compare `sadScore ≤ maxSad`. No float in the hit/miss decision.
-- **`confidence` for display/trace only**: `1.0 − sadScore / (255.0 · templatePixels)` — never a decision input.
+`annotations.toml` is GUI-owned. The workbench emits one canonical byte form
+with fixed table/field/UUID order, UTF-8 without BOM, LF endings, and one final
+newline; reopening rejects schema drift and non-canonical edits. The annotated
+TOML snippets in this design are explanatory rather than literal writer output.
+A WGC source uses `capture_backend = "wgc"` and requires
+`target_generation` plus canonical RFC 3339 `captured_at`. An imported PNG uses
+`capture_backend = "imported"` and omits those WGC-only fields.
 
-This is what makes Preview provably runtime-identical: same `bgra8ToGray8`, same
-`matchTemplateSad`, same integer predicate. The workbench must not carry its own matcher.
+### 1.3 Generated runtime manifest
 
-### 1.5 The three annotation types
+The workbench compiles the authoring document into exact schema
+`umbraflow-annotations/v1`. The Runtime reads only this manifest and cropped
+templates; it never needs the full authoring screenshots.
 
-| Type | Purpose | Compiles to | Luau surface |
-|---|---|---|---|
-| `page_anchor` | Evidence a named page is / is not on screen | `[[recognizer]]` + `required`/`forbidden` entry in `[[page]]` | via `bot.pages.<page>` only |
-| `action_target` | An interactable target the script may click | `[[recognizer]]` (+ `default_click` **anchor only**) | `bot.templates.<name>` → `frame:find` → `Detection`; click binds to the live `Detection` under lease, never to `default_click` |
-| `info_region` | Text / number / icon / status readout | `[[recognizer]]` (template or color in P0; OCR only if a daily is blocked on text) | `bot.templates.<name>` (read-only detection) |
+```toml
+schema = "umbraflow-annotations/v1"
+project_id = "personal.chaos-dreamscape"
+base_resolution = [1920, 1080]
+base_dpi = [96, 96]
 
-Each annotation rectangle carries `{ id (stable UUID), name, type, recognizer-params,
-page-membership }`; the UUID survives renames so undo/redo + regression refs stay stable.
+[[recognizer]]
+id = "46fd32d7-095b-427f-9892-bd86ee2ab073"
+name = "daily_button"
+annotation_type = "action_target"
+kind = "gray_template"
+template = "assets/templates/83d1...e4.png"
+template_hash = "sha256:83d1...e4"
+source_hash = "sha256:4c91...a2"
+template_rect = [1480, 760, 160, 64] # provenance only
+search_roi = [1400, 700, 300, 160]
+min_similarity_bp = 9000
+default_click = [80, 32]
+allowed_page_ids = ["c1ec5b68-3c29-448d-ac65-ad3798684e3c"]
 
----
+[[recognizer]]
+id = "bf61fe8d-31f7-4c2f-8b6e-36c2c08054dc"
+name = "home_marker"
+annotation_type = "page_anchor"
+kind = "gray_template"
+template = "assets/templates/7f3a...c9.png"
+template_hash = "sha256:7f3a...c9"
+source_hash = "sha256:4c91...a2"
+template_rect = [1240, 48, 72, 36] # provenance only
+search_roi = [1180, 24, 220, 96]
+min_similarity_bp = 9000
 
-## 2. Coordinate space (the D8 open item)
+[[page]]
+id = "c1ec5b68-3c29-448d-ac65-ad3798684e3c"
+name = "home"
+required = ["bf61fe8d-31f7-4c2f-8b6e-36c2c08054dc"]
+forbidden = []
+```
 
-**Recommendation: store absolute integer pixels in an explicit `base_resolution`;
-normalized `[0,1]` is the derived P1 seam, not the stored source of truth.** (This
-reverses an earlier casual "normalized+base" leaning — grounded now in the actual recognizer.)
+Generation is a pure function of the authoring document plus referenced source
+bytes. Identical inputs produce byte-identical templates and manifest output.
+The compiler writes all generated artifacts atomically only after complete
+validation succeeds.
 
-| Criterion | Normalized `[0,1]` + base_res | **Absolute px in base_res (RECOMMENDED)** |
+The P0 in-memory compiler decodes one full source at a time and caps the sum of
+unique generated template PNG bytes at 512 MiB. Authoring/runtime documents are
+limited to 16 MiB and 4096 records per table kind. Quota failure is
+`InvalidResource` and publishes no partial generation.
+
+The generated TOML has one canonical byte representation: fixed field order,
+UUID order, UTF-8 without BOM, LF line endings, and one trailing newline. The
+P0 Runtime accepts exactly compiler output and rejects comments, unknown fields,
+alternate ordering, non-canonical numeric/string spellings, and template paths
+that do not match `template_hash`. Generated files are never hand-edited.
+
+### 1.4 Deterministic threshold
+
+The workbench displays a familiar percentage but persists integer basis points:
+`min_similarity_bp ∈ [0, 10000]`; `9000` means 90.00%.
+
+For a template with `templatePixels = width × height`, load computes with
+checked integer arithmetic:
+
+```text
+maxSad = floor((10000 - minSimilarityBp) × 255 × templatePixels / 10000)
+hit    = sadScore <= maxSad
+```
+
+Overflow or an invalid range is `InvalidResource`. The inclusive equality is
+part of the contract. A display-only confidence may be computed as
+`1 - sadScore / (255 × templatePixels)`, but it never participates in a
+decision or ordering rule.
+
+### 1.5 Annotation types
+
+| Type | Purpose | Runtime form |
 |---|---|---|
-| Fidelity to the recognizer | SAD/ROI are integer px; normalized adds a round-back-to-px rule in the hot path; template size is px anyway | Manifest values are byte-identical to what `matchTemplateSad`/`PixelRect` consume — zero conversion |
-| Determinism | Extra float→int rounding per load (must be pinned) | No rounding; integers throughout |
-| Redundancy | Storing normalized **and** base_res is redundant | base_res is the sole anchor; px exact |
-| Resolution independence | "free" on its face | but still needs the viewport (letterbox); which base_res + transform already give |
+| `page_anchor` | Positive or negative evidence for one or more page signatures. | Read-only recognizer referenced by a page. |
+| `action_target` | A target that may be acted on after live detection. | Recognizer plus optional template-local integer click offset; absence means the deterministic rectangle center. The live Detection and ResolvedPage still authorize the action. |
+| `info_region` | An icon or state region read by the task. | P0 gray-template recognizer. OCR is admitted only under the trigger in §7. |
 
-Source of truth = **`AnnotationSpace ≡ FrameSpace @ base_resolution`, integer px**.
-`NormalizedSpace` + `frameToNormalized`/`normalizedToFrame` (already in `space.hpp`) stay
-as the display representation and the P1 letterbox seam — derived on demand, never stored.
+## 2. Coordinate and compatibility contract
 
-**Flow (one conceptual `baseToFrame` above the existing `Client↔Frame`):**
+The source of truth is integer **AnnotationSpace = FrameSpace at the project
+`base_resolution`**. `NormalizedSpace` is derived for display only and is never
+persisted as recognition geometry.
+
+```text
+AnnotationSpace (base px)
+    -- P0 identity / P1 BaseToLiveTransform --> live FrameSpace
+    -- existing CoordinateTransform --------> ClientSpace --> DesktopSpace
 ```
-AnnotationSpace (base px) --baseToFrame--> FrameSpace (capture px) --frameToClient--> ClientSpace --> DesktopSpace
-       stored ROI/template                    live capture           (existing CoordinateTransform)
-```
-- **P0 (identity):** `baseToFrame = identity`, enforced by a fail-closed gate at task start: runtime `frame_size == base_resolution` **and** `dpi_scale == base_dpi_scale`, else fail `TargetCompatibilityUnverified` — no silent scale, no silent match (D8).
-- **P1 seam (deferred, pre-wired):** `baseToFrame = {scale=uniformScale, offset=letterboxOrigin, viewport=scaledBaseRect}` — exactly D8's triple and exactly what `CoordinateTransform::create` encodes. The template bitmap itself must be resampled by `uniformScale` in P1 (flag the sub-pixel/peak-degradation caveat now). P0 does zero resample.
-- **DPI:** record `dpi_scale` per document; treat logical/physical mismatch as a first-class compatibility fingerprint. P0 requires equality; P1 folds `dpi_scale` into `uniformScale`.
 
-Because ROI is already integer FrameSpace px and the code has `frameRectToPixelRect` +
-`normalizedToFrame`, adding `baseToFrame` in P1 is *filling in non-identity values*, not
-a rearchitecture. Trace records the actual `scale/offset/viewport` per run → P1 stays replayable.
+P0 has no scaling or resampling. Before every recognition cycle, capture must
+confirm that live frame size, client size, and integer DPI exactly equal the
+project fingerprint. Immediately before Controller delivery, the action path
+revalidates the same fingerprint together with session, target generation,
+frame ID, and lease age.
 
----
+A size, DPI, target identity, or transform mismatch must either advance target
+generation or fail with `TargetCompatibilityUnverified`; in both cases all old
+page evidence, Detections, and leases become unusable before any input.
 
-## 3. Page-signature semantics
+P1 may introduce an explicit `BaseToLiveTransform { uniformScale, offset,
+viewport }` and deterministic template resampling. That value is separate from
+the existing live Client↔Frame `CoordinateTransform`, and its complete value is
+recorded in trace. No P1 behavior is silently present in P0.
 
-A page is a named signature, not "one small image matched".
+## 3. Recognition and page resolution
+
+### 3.1 One bounded RecognitionPolicy
+
+Runtime and Preview construct the same bounded `RecognitionPolicy`, including
+the maximum pixel-comparison budget, cancellation source, and deadline. They
+both call the bounded `matchTemplateSad` overload.
+
+Every anchor evaluation has one of two classes of outcome:
+
+- completed: best match or no match, followed by the integer threshold test;
+- stopped: `Cancelled`, `TimedOut`, or `ComparisonBudgetExhausted`.
+
+Any stopped anchor terminates the complete page evaluation. It is never folded
+into `hit=false`, including for forbidden anchors. Page resolution therefore
+returns `Result<PageOutcome>` (or an equivalent explicit control variant), and
+trace records the policy, completed comparisons, stop reason, and anchor at
+which evaluation stopped.
+
+### 3.2 Page signature
 
 ```toml
 [[page]]
-name     = "home"
-priority = 10                  # DIAGNOSTIC ORDERING ONLY (§3.4) — never suppresses Ambiguous
-required = [ { recognizer = "home_marker" },
-            { recognizer = "home_menu_bar", threshold_override = 0.85 } ]   # ALL must match
-forbidden = [ { recognizer = "battle_hud" } ]                              # NONE may match
+id = "c1ec5b68-3c29-448d-ac65-ad3798684e3c"
+name = "home"
+required = ["bf61fe8d-31f7-4c2f-8b6e-36c2c08054dc"]
+forbidden = ["8a467172-a8dc-4c02-9a73-24abbdc35df4"]
 ```
 
-**Match rule (per frame):** a page is a **candidate** iff every `required` hits
-(`sadScore ≤ maxSad`) **and** no `forbidden` hits. Evaluate all pages → candidate set `C`:
+A page is a candidate exactly when all required anchors hit and no forbidden
+anchor hits. The generator sorts recognizers, pages, and page membership arrays
+by stable UUID; that byte-stable manifest order is also evaluation order. Every
+page is evaluated before success may be returned, so an earlier candidate can
+never hide a later ambiguity. For candidate set `C`:
 
-| `|C|` | `PageOutcome` |
+| `|C|` | Completed `PageOutcome` |
 |---|---|
-| 1 | `Resolved(pageId, evidence)` |
+| 1 | `ResolvedPage(pageId, frame identity, evidence)` |
 | 0 | `Unknown(evidence)` |
-| ≥ 2 | **`Ambiguous(pageIds, evidence)`** |
+| 2 or more | `Ambiguous(pageIds, evidence)` |
 
-**Threshold overrides:** a page-membership entry MAY carry `threshold_override` (changes
-the integer `maxSad` for that page's use of that recognizer only; recomputed at load;
-`[0,1]` or reject; only on scalar/template members).
+P0 has no priority, threshold override, or heuristic tie-break. Ambiguity can
+only be removed by changing page evidence. Exact duplicate signatures are a
+load-time error; all other overlap is exercised through regression frames and
+remains fail-closed at runtime.
 
-**§3.4 Page priority = diagnostic ordering ONLY (the HARD rule).** `priority` orders the
-evidence list + diagnostic display; it **NEVER** collapses `|C| ≥ 2` into a resolved page.
-Allowing it would silently convert fail-closed "multi-hit → AmbiguousScreen → do not click"
-into a click, puncturing "never click the wrong screen".
+### 3.3 Evidence and action authorization
 
-> **Regression test:** pages `home` (pri 10) and `home_with_banner` (pri 5) both become
-> candidates on one frame. Priority reorders the evidence so `home` is first, **but the
-> outcome is `Ambiguous([home, home_with_banner])`, not `Resolved(home)`.** The only fix is
-> authoring a distinguishing `forbidden` anchor, not a priority tweak.
+Every completed anchor records its recognizer ID, hit, integer SAD score,
+integer `maxSad`, matched rectangle when present, and display confidence. Every
+PageOutcome records session ID, target generation, frame ID, candidate set, and
+per-page required/forbidden evidence.
 
-**§3.5 Unknown/Ambiguous evidence format** (structured, emitted to trace on the spot):
-```jsonc
-{ "outcome": "ambiguous", "candidates": ["home","home_with_banner"],
-  "frame_id": 4213, "target_generation": 7,
-  "pages": [ { "page":"home","priority":10,"candidate":true,
-      "required":[ {"recognizer":"home_marker","hit":true,"sad":210300,"max_sad":244800,"confidence":0.972} ],
-      "forbidden":[ {"recognizer":"battle_hud","hit":false,"sad":5120000,"max_sad":244800,"confidence":0.310} ] },
-    { "page":"home_with_banner","priority":5,"candidate":true, "required":[…], "forbidden":[…] } ] }
-```
-Every anchor reports `hit`, integer `sad`, integer `max_sad`, display `confidence` — enough
-to replay offline + drive the Preview panel colouring. `Unknown` uses the same shape with
-`candidate:false` on all pages (author sees *how far* each missed).
+`ResolvedPage` is an opaque, host-created, same-frame capability. P0 coordinate
+actions require all of the following:
 
-**§3.6 Load-time validation** (all statically decidable; before any VM): template path
-resolves + hash matches; every page recognizer name resolves (reference closure);
-`required ∩ forbidden = ∅`; ROI ⊆ base_res frame and template `(tw,th) ≤ (roi.w,roi.h)`;
-thresholds ∈ `[0,1]`, color `low ≤ high`, composite members resolve + acyclic;
-`threshold_override` only on scalar members; names unique — all → `InvalidResource`.
-**Static page ambiguity** (two pages with identical `required` and no distinguishing
-`forbidden`) → **Warning** by default, `--strict` → error (OQ-3).
+1. a `ResolvedPage` from the frame;
+2. a live `Detection` from that same frame;
+3. the frame's unexpired `ObservationLease`;
+4. a still-compatible target fingerprint at Controller delivery.
 
----
+The host checks that all identities agree, that the Detection came from an
+`action_target`, and that the recognizer authorizes the resolved page through
+its non-empty `allowed_page_ids`. The opaque binding retains recognizer identity
+alongside the domain Detection so a label collision cannot authorize an action.
+Unknown and Ambiguous cannot create a
+`ResolvedPage`, so they are unrepresentable as successful action authorization.
+After one coordinate action, FrameId advances and all evidence from the old
+frame becomes stale.
 
-## 4. Luau handle namespace
+### 3.4 Load-time validation
 
-The host injects, per run, a **recursively read-only** table populated **100% from
-`annotations.toml`** at VM creation:
+Before creating a Luau VM, loading must prove:
+
+- the exact supported schemas and project fingerprint agree;
+- all UUIDs and names are unique, and names are valid direct Luau member keys;
+- every stable-ID reference closes and `required ∩ forbidden` is empty;
+- page signatures reference only `page_anchor` entries, while every
+  `action_target`/`info_region` page membership resolves;
+- every `action_target` has at least one allowed page, and any explicit click
+  offset lies inside its template rectangle;
+- every source/template exists and its content hash matches;
+- every source used to generate an annotation decodes at the project base
+  resolution; WGC sources also match base DPI, while imported sources must carry
+  an explicit compatible fingerprint;
+- `template_rect` and `search_roi` are non-empty and within base resolution;
+- template dimensions fit inside `search_roi`;
+- every basis-point threshold and template-local click offset is in range;
+- every recognizer kind is exactly `gray_template` in P0;
+- no two pages have the exact same required and forbidden sets.
+
+Any failure is `InvalidResource`. P0 has no best-effort schema loading or static
+ambiguity heuristic beyond the provable exact-duplicate check.
+
+## 4. Luau resource and action surface
+
+The host creates recursively read-only tables from the validated runtime
+manifest. P0 exposes one canonical spelling only:
+
 ```lua
 local frame = bot:capture()
-local d = frame:find(bot.templates.home_marker)   -- opaque recognizer handle → Detection | nil (Tier A)
-if bot.pages.home:matches(frame) then … end        -- opaque page handle → PageOutcome
+local outcome = frame:resolve_page()
+local page = outcome:resolved() -- ResolvedPage | nil; Unknown/Ambiguous already traced
+
+if page ~= nil and page:is(bot.pages.home) then
+    local target = frame:find(bot.recognizers.daily_button)
+    if target ~= nil then
+        bot:click(page, target)
+    end
+end
 ```
-- `bot.templates.<name>` / `bot.recognizers.<name>` — one opaque handle per declared
-  recognizer; `bot.pages.<name>` — one per page.
-- Handles are **opaque**: no `path`/`roi`/pixel field readable; **no** `template(path,roi)`
-  constructor; **no** `frame:find("home.png")` string path. Assets are declared by the GUI,
-  period (D3). This is the "store locator, not element" discipline.
-- Layer3 parameterized ROI (roi computed from another detection) is **C++-side, P0-deferred**;
-  Lua never does coordinate arithmetic.
 
-**Literal-only + the load-time 100% enumeration check (three layers, honest about Lua's undecidability):**
-1. **Manifest closure enumeration (authoritative, 100%, load-time):** enumerate every declared
-   recognizer + page, verify assets/entries (§3.6), build the readonly handle tables to contain
-   exactly that closed set. Complete because it is over the *finite static manifest*.
-2. **Literal-reference lint (best-effort, load-time):** reject dynamic handle access in P0
-   (`bot.templates[expr]`, computed field) → handle refs are literal. Lint, not proof (imperative
-   Luau is undecidable); reject-on-doubt.
-3. **Runtime nil backstop (fail-closed):** a field miss → `nil`; consuming a `nil` handle raises a
-   structured error, never a silent no-op.
+- `bot.recognizers.<name>` contains opaque recognizer handles.
+- `bot.pages.<name>` contains opaque page handles.
+- There is no `bot.templates` alias, path constructor, string-path lookup, or
+  script-visible ROI/pixel data.
+- `bot:click` requires `ResolvedPage` and `Detection`; a default click is only a
+  host-applied template-local offset on the live Detection.
 
-This tri-layer is the C++ answer to the "resource references statically enumerable" property that
-imperative scripting otherwise loses: enumeration moves to the *manifest*; the script side degrades
-to lint + fail-closed backstop.
+P0 script validation is deliberately restricted and decidable. Every resource
+expression must be a direct literal member access rooted at the canonical
+namespace. Namespace aliases, handle aliases, computed indexing, and dynamic
+traversal are rejected. The Luau AST validator enumerates every accepted
+reference, resolves it against the manifest, and rejects the script before VM
+creation if any reference is missing. Runtime nil checks remain defense in
+depth, not the primary closure mechanism.
 
----
+## 5. Annotation workbench
 
-## 5. Annotation GUI workbench (P0-A)
+The P0-A workbench uses Dear ImGui docking on D3D11. WGC capture is reused
+verbatim, and Preview links the same grayscale conversion and bounded SAD
+matcher as Runtime.
 
-**Tech stack — Dear ImGui + D3D11, reusing WGC capture + the one-and-only vision matcher.**
+The non-deferrable author loop is:
 
-| Layer | Reuse | Why |
-|---|---|---|
-| UI | **Dear ImGui** (docking) on a **D3D11** swapchain | Immediate-mode fits a solo tool; the capture path is already D3D11 (`capture-d3d.hpp`) so a captured `Frame` texture uploads to an ImGui image cleanly. Standalone `.exe`, later hostable by the P2 tray app. |
-| Capture | **`WgcCaptureSession`** verbatim | "Grab current WGC frame" = the exact runtime capture, giving the canvas a real `CoordinateTransform`. |
-| Recognition/Preview | **`matchTemplateSad` + `bgra8ToGray8` + the §1.4 integer predicate**, unmodified | The "runtime-identical" guarantee — Preview literally links the runtime matcher; no parallel path can drift. |
-| Import | PNG decode (lossless) → BGRA → same pipeline | Imported screenshots and live frames are interchangeable inputs. |
+1. Select a target and capture its current full WGC frame, or import lossless
+   PNGs. Preserve exact source pixels and provenance; never draw annotations
+   into the source image.
+2. Browse sources and zoom/pan the canvas. Create, move, resize, copy, and delete
+   annotations with undo/redo.
+3. Edit `template_rect` and `search_roi` as visibly distinct rectangles. The UI
+   must make their containment and size relationship obvious.
+4. Edit stable name, annotation type, page membership, required/forbidden role,
+   integer-backed similarity percentage, and optional action click offset.
+5. Save the complete authoring document, then generate templates and runtime
+   manifest atomically. Authors never hand-edit generated files.
+6. Preview one source or all regression sources through the shared bounded
+   RecognitionPolicy. Display matches, SAD boundaries, expected/actual page,
+   Unknown/Ambiguous evidence, and stop reasons.
+7. Add a result to the positive, negative, or confusable regression set without
+   silently changing its expected outcome.
 
-**Minimal user loop (nothing deferrable to "UI later" — roadmap §三.93/105):**
-1. **Source** — target window → grab WGC frame, or import PNGs. Left rail = sample list;
-   selecting one swaps the canvas. Each source stores original client size, DPI, target
-   generation, capture backend, timestamp, content hash; the screenshot is never mutated.
-2. **Canvas** — zoom/pan, box-select/move/resize/copy/delete, **undo/redo**. Coordinates always
-   shown in explicit `base_resolution` FrameSpace (overlay hit-testing may use `frameToNormalized`;
-   stored values stay px).
-3. **Property panel** — edit name, type, owning page, required/forbidden role, kind, threshold,
-   grayscale; `action_target` may set `default_click` but **cannot bypass the runtime lease**.
-4. **One-click generate** — crop template(s), write/update `annotations.toml` + page signatures
-   atomically, run §3.6 validation, surface failures inline. **Author never hand-edits config.**
-5. **Preview/Test** — run the runtime recognizer on the current image or all samples; show
-   hit-boxes, `confidence`, expected-vs-actual page, Unknown/Ambiguous reasons; one click files a
-   result into the positive / negative / confusable regression set.
+Preview results are transient and never enter the authoring document or
+undo/redo history. Manifest generation is a pure function. Undo/redo behavior
+is required, but S0 does not prescribe a command-class implementation.
 
-**Document model:** an immutable value (`{sources[], recognizers[], pages[]}` keyed by stable
-UUIDs); edits are commands (`AddBox`, `ResizeBox`, `Rename`, `SetThreshold`, `SetPageRole`…) on an
-undo stack; Preview results are transient (never in the document, so undo can't resurrect stale
-confidences). "Generate manifest" is a pure function of the document → golden-testable.
+## 6. Asset generation and tests
 
-**Reuse crux:** exactly one matcher in the process. Preview calls `bgra8ToGray8` → `matchTemplateSad`
-→ `sadScore ≤ maxSad` — the same three the runtime makes; the workbench adds *rendering*, never
-*recomputation*. (Mirrors ok-script's bounding-box debug overlay shape while keeping UmbraFlow's own
-format + safety contract.)
+For each gray-template annotation:
 
----
+1. Crop only `template_rect` from the exact source BGRA buffer.
+2. Encode a lossless PNG with the pinned deterministic encoder configuration.
+3. Hash the generated PNG bytes with SHA-256 and address the template by hash.
+4. Persist `search_roi` independently in the runtime manifest.
+5. Retain source hash and crop geometry as provenance; derive grayscale at load
+   with the shared `bgra8ToGray8` implementation.
 
-## 6. Asset pipeline
+The complete source screenshot is never used as the static matcher template.
+At runtime, WGC supplies a new complete live frame; the cropped template is
+searched only inside its independent `search_roi`.
 
-1. **Crop** the annotation ROI at `base_resolution` px from the source BGRA buffer; store as
-   **lossless PNG** (DESIGN §10.3 — lossy would break integer-SAD determinism).
-2. **Content-hash** `sha256` over the PNG bytes; the template is addressed by hash (DESIGN §7.4/§11.1).
-   Filename may embed a hash prefix; the hash is the identity.
-3. **Provenance** on the recognizer: `template_hash`, `base_resolution`, `base_dpi_scale`,
-   `source_screenshot` hash — every template traceable to the exact capture + geometry (soul: traceability).
-4. **Grayscale derived, not stored:** keep the color PNG as the single source of truth; `grayscale=true`
-   applies `bgra8ToGray8` at load (deterministic, lossless decode).
+Selected full screenshots form content-addressed golden regression inputs with
+an expected PageOutcome. Fake Controller sequences reuse those frames to drive
+the complete observe/resolve/act/wait loop offline. A live run may copy selected
+full WGC frames into its trace resource snapshot; those are run evidence, not
+static project recognition assets.
 
-**Feeding validation:**
-- **Static regression set:** positive / negative / confusable = stored content-hashed screenshots + an
-  *expected* `PageOutcome` each; the runner replays through the one matcher and diffs actual vs expected;
-  the diff never overwrites expected (Golden Image discipline). Expected `Unknown`/`Ambiguous` must stay so.
-- **Fake Controller frame sequences:** the same screenshots sequenced into a scripted `capture()` stream so
-  the B-side `observe/act/wait` loop runs end-to-end offline, deterministic + replayable. Assets carry
-  `base_resolution`, so the P0 identity gate is exercised in-sequence.
+Minimum verification gates are:
 
----
+1. **Zero-input fail-closed:** Unknown, Ambiguous, every matcher stop reason,
+   stale frame, cross-generation evidence, and geometry/DPI mismatch produce
+   structured trace and exactly zero Controller deliveries.
+2. **Recognition boundaries:** cover `sadScore == maxSad`, both adjacent values,
+   threshold endpoints, all stop reasons, and field-for-field Preview/Runtime
+   evidence equality.
+3. **Authoring round trip:** capture/import → edit both rectangles → undo/redo →
+   save → reload preserves exact source pixels, stable IDs, geometry, template
+   bytes/hash, page links, and generated manifest.
+4. **Real-machine compatibility:** cover resize, recreation, minimization/stall,
+   DPI mismatch, and movement between displays; invalidation precedes input.
 
-## 7. Scope boundary — what P0-A explicitly does NOT do
+## 7. Explicit P0 scope
 
-No task-graph editor / script recording / asset marketplace / multi-user / project management /
-polished HTML reports (P1/P2). No Layer3 parameterized ROI (C++-side, deferred; Lua never does coord
-math). No resolution adaptation (`baseToFrame` identity-only; mismatch fail-closed, not scaled; uniform
-scale is P1). No OCR unless a real daily is provably blocked on text (`info_region` uses template/color
-first; neural OCR out on determinism grounds). No dynamic handle indexing in Lua (literal only). Composite
-recognizer is *declarable* but P0 MAY ship template+color and defer Composite (OQ-8). No `.umbraflowpack` /
-signing / `manifest.lock` (a project is a local dir). The workbench does not inject input and is not a
-runtime overlay (that overlay, with `WS_EX_NOACTIVATE`/`WDA_EXCLUDEFROMCAPTURE`, is P2). **Nothing in the
-§5 minimal loop may be deferred with "UI later".**
+P0 implements only bounded deterministic grayscale-template recognition. Color,
+HSV, composite recognizers, OCR, parameterized ROI, priority, per-page threshold
+override, per-recognizer resolution, schema minor best-effort loading, static
+`--strict` ambiguity heuristics, and duplicate handle aliases are deferred.
 
----
+OCR may enter P0 only if a concrete 卡厄斯梦境 daily requires semantic dynamic
+text or numbers and the behavior cannot be expressed with templates or state
+anchors. That exception requires a separate deterministic-kernel decision.
 
-## 8. Open questions the developer must decide (each affects P0-A code)
+P0 also excludes resolution adaptation, task-graph editing, script recording,
+asset marketplace, multi-user/project management, HTML reports, packaging and
+signing, runtime input from the workbench, and the P2 no-activate runtime overlay.
+The complete author loop in §5 is not deferrable as “UI later.”
 
-1. **OQ-1 — Confidence mapping sign-off.** §1.4 proposes `maxSad = ⌊(1−threshold)·255·pixels⌋` with an
-   integer decision predicate. Alternative: express the bound directly as `max_sad_per_pixel` and drop the
-   `[0,1]` abstraction (more transparent, less familiar). Authored unit = `threshold∈[0,1]` (recommended,
-   ok-script-familiar) or raw per-pixel SAD?
-2. **OQ-2 — Are `AmbiguousScreen`/`UnknownScreen` `AutomationErrorKind` variants, or a `PageOutcome` result
-   type?** Recommendation: a `PageOutcome` value from page recognition (normal control flow), promoted to a
-   **new fail-closed error kind only when a script acts** on an unresolved screen. Needs `domain/error.hpp`
-   additions either way — confirm two new kinds (`AmbiguousScreen`, `UnknownScreen`) or one
-   `ScreenNotResolved{ambiguous|unknown}`.
-3. **OQ-3 — Static page-ambiguity: warning or error?** Recommendation: Warning by default, `--strict` →
-   error; confirm the default.
-4. **OQ-4 — `info_region` default recognizer** (template vs color) and the concrete trigger to pull OCR
-   forward (which 卡厄斯梦境 daily, if any, reads a number).
-5. **OQ-5 — Where do source screenshots live, and do they ship?** Recommendation: regression-set screenshots
-   ship (golden inputs); raw exploratory captures do not.
-6. **OQ-6 — `base_resolution` granularity** — per-document only, or per-recognizer override allowed?
-   Recommendation: allow in schema, warn in UI if they differ from the document default.
-7. **OQ-7 — Handle namespace spelling** — `bot.templates` + `bot.pages` vs a single `bot.recognizers`.
-   Recommendation: expose both `bot.templates` (alias) and `bot.recognizers` (general) + `bot.pages`.
-8. **OQ-8 — Composite in P0 or fast-follow?** Schema reserves `kind = composite`; does P0-A *implement*
-   All/Any/Not/Count now or ship template+color and defer? (Deferring is cheap; implementing lets
-   `on_battle_result`-style pages be authored day one.)
-9. **OQ-9 — Undo/redo & Preview coupling** — confirm Preview results are transient and "generate manifest"
-   is a pure function of the document (enables a golden test on manifest output).
+## 8. Developer-approved decisions — 2026-07-23
 
----
+| Former question | Locked decision |
+|---|---|
+| OQ-1 threshold unit | UI percentage, persisted integer basis points, integer-inclusive SAD boundary. |
+| OQ-2 page outcome/error model | `Result<PageOutcome>`; control stops are errors, Unknown/Ambiguous are completed values, and only `ResolvedPage` authorizes action. |
+| OQ-3 static ambiguity | Exact duplicate signatures are errors; no P0 heuristic or `--strict` mode. |
+| OQ-4 info/OCR | Gray template by default; OCR only under the concrete blocking trigger in §7. |
+| OQ-5 source screenshots | Full sources stay in authoring/test storage; production runtime receives only generated manifest and cropped templates. |
+| OQ-6 base resolution | One project-wide resolution and exact integer DPI fingerprint; no recognizer override. |
+| OQ-7 handle namespace | Canonical `bot.recognizers` and `bot.pages` only, with direct literal references. |
+| OQ-8 composite | Deferred beyond P0. |
+| OQ-9 undo/Preview | Preview is transient; generation is pure; undo/redo behavior is required without prescribing one implementation architecture. |
 
-### References (reference-only; ok-script is AGPL — UX/data-model shape learned, no code copied)
-- ok-script framework & annotation/COCO/debug-overlay shape: https://github.com/ok-oldking/ok-script
+## 9. Developer review closure
+
+The 2026-07-22 review disposition was “revision required.” The developer
+approved the resolutions on 2026-07-23, and this revision closes every finding:
+
+| Finding | Resolution in this document |
+|---|---|
+| DR-1 page evidence did not authorize actions | `ResolvedPage` is mandatory action capability (§3.3, §4). |
+| DR-2 matcher stops could become misses | One bounded policy and explicit control failure (§3.1). |
+| DR-3 crop and search ROI were conflated | Separate `template_rect` and `search_roi` (§1.2–§1.3, §5–§6). |
+| DR-4 schema could not round-trip | Complete authoring document plus pure runtime compilation (§1). |
+| DR-5 speculative recognizer modes and float threshold | Gray SAD only and integer basis points (§1.4, §7). |
+| DR-6 compatibility was inconsistent and checked once | One project fingerprint, continuously revalidated (§2). |
+| DR-7 script resource closure was best-effort | Decidable AST subset and complete pre-VM resolution (§4). |
+| DR-8 authority and status conflicted | Current authority restated; all decisions closed; S0 locked (header, §8). |
+
+### References
+
+- ok-script framework and annotation/debug-overlay UX shape: https://github.com/ok-oldking/ok-script
 - COCO annotation tooling shape: https://github.com/jsbroks/coco-annotator
-- Multi-scale template matching + sub-pixel caveats (P1): https://pyimagesearch.com/2015/01/26/multi-scale-template-matching-using-python-opencv/
-- Letterbox / viewport-relative coords (P1 seam): https://gamedev.net/tutorials/_/technical/apis-and-tools/stretching-your-game-to-fit-the-screen-without-letterboxing-sdl2-r3547/
-- Windows DPI logical/physical pitfall: https://learn.microsoft.com/en-us/windows/win32/winauto/uiauto-screenscaling
-- "Store locator, not element" (opaque-handle discipline): https://www.browserstack.com/guide/stale-element-reference-exception-selenium , https://playwright.dev/docs/actionability
-
----
-
-## 9. Developer review findings — 2026-07-22
-
-**Disposition: revision required before S0 is locked or A1/B1 implementation begins.** The overall
-direction remains viable, but the following findings are load-bearing. Confidence follows the project
-review rubric; all listed findings survived the `>= 80` inclusion threshold.
-
-### DR-1 — Bind resolved-page evidence into action authorization (confidence: 100)
-
-The §4 example places a `PageOutcome` directly in a Luau `if`. A table/userdata representing
-`Unknown` or `Ambiguous` is still truthy, and a per-page boolean query cannot detect that another page
-also matched. More fundamentally, the current `ObservationLease` proves frame/session/generation
-freshness but does not prove that the frame resolved to exactly one page.
-
-**Required resolution:** page recognition must produce an explicit same-frame `ResolvedPage`
-capability/evidence value. An action that depends on page context must consume that value together with
-the live `Detection`/lease, or the action boundary must revalidate the global page outcome. Unknown and
-Ambiguous must be unrepresentable as successful action authorization, not merely discouraged in script
-examples.
-
-### DR-2 — Preserve matcher stop reasons as control failures (confidence: 100)
-
-The bounded matcher can return `Cancelled`, `TimedOut`, or `ComparisonBudgetExhausted`, but §3 models
-only anchor hit/miss followed by `Resolved`/`Unknown`/`Ambiguous`. Folding an interrupted forbidden-anchor
-search into `hit=false` can incorrectly resolve a page; using the unbounded overload in Preview would
-lose cancellation and violate the runtime-identical claim.
-
-**Required resolution:** define one bounded `RecognitionPolicy` shared by runtime and Preview. Page
-evaluation should return `Result<PageOutcome>` (or an equivalent explicit control variant), stop the
-whole evaluation when any anchor search does not complete, and record the stop reason and budget in
-trace evidence.
-
-### DR-3 — Separate template crop from search ROI (confidence: 100)
-
-The current schema uses one `roi`, while §6 crops the template from that same rectangle. The generated
-template therefore normally has the same dimensions as the search ROI, leaving exactly one SAD candidate
-and making the recognizer unable to tolerate or locate movement inside a larger area.
-
-**Required resolution:** persist separate `template_rect` and `search_roi` values, or specify one
-deterministic expansion rule that derives the search ROI from the crop and is visible/editable in the
-workbench. Load-time validation must require the template to fit inside the search ROI.
-
-### DR-4 — Make the persisted schema round-trip the authoring document (confidence: 95)
-
-The prose promises stable IDs, three annotation types, page membership, `default_click`, source metadata,
-rename-safe regression references, and a `{sources[], recognizers[], pages[]}` document. The shown
-`annotations.toml` has no stable IDs or source entries and does not persist all of those properties.
-Closing and reopening the workbench would lose authoring semantics.
-
-**Required resolution:** either add the missing authoring fields and source records to
-`annotations.toml`, or define a separate GUI authoring document that deterministically compiles to a
-smaller runtime manifest. State explicitly whether every reference uses stable ID or name and how rename
-updates are performed.
-
-### DR-5 — Do not expose recognizer modes without one deterministic implementation (confidence: 90)
-
-The v1 examples expose `grayscale=false`, RGB/HSV color matching, floating `min_ratio`, and composite
-recognizers, while the existing shared vision path only defines BGRA-to-Gray plus Gray SAD. Color
-conversion, hue range, inclusive bounds, ratio rounding, budget/cancellation behavior, and typed evidence
-are unspecified. The template threshold formula also parses a decimal TOML value as binary floating point
-before `floor`, so the integer decision boundary is not yet defined by pure integer semantics.
-
-**Required resolution:** either narrow P0 v1 to bounded grayscale-template recognition, or define and
-implement each additional mode as a shared integer/fixed-point kernel used verbatim by runtime and Preview.
-Thresholds must compile from an exact decimal/fixed-point representation (or be authored directly in an
-integer unit), and evidence must be a tagged union per recognizer kind rather than SAD-only fields.
-
-### DR-6 — Make P0 compatibility a single, continuously revalidated invariant (confidence: 95)
-
-Per-recognizer `base_resolution` overrides cannot all satisfy the P0 identity gate when one page combines
-recognizers with different bases. DPI equality is checked only at task start, while the current target
-identity/generation chain does not preserve DPI; moving a window across displays may leave an old lease
-apparently valid. The existing `CoordinateTransform` also does not encode the proposed P1 uniform
-letterbox viewport/offset, so P1 is not merely filling non-identity values into the current type.
-
-**Required resolution:** P0 must have one project/document-level `base_resolution` and an exact DPI
-compatibility fingerprint. Size/DPI compatibility must be revalidated at capture/action boundaries or
-participate in target generation. Any mismatch fails before recognition or input. P1 needs an explicit
-base-to-live viewport transform instead of claiming the current transform already contains it.
-
-### DR-7 — Restore a provable load-time script resource closure (confidence: 100)
-
-D3 requires literal resource references to be completely validated before execution. §4 guarantees only
-manifest enumeration, then describes script validation as best-effort lint plus a runtime nil backstop.
-That permits misspellings or dynamic/aliased handle selection to escape the intended load-time closure.
-
-**Required resolution:** define a deliberately restricted and decidable P0 AST rule: resource references
-must be direct literal member accesses rooted at the canonical namespace; aliases, computed indexing, and
-dynamic traversal are rejected at load. Every accepted reference is resolved against the manifest before
-the VM can run. Runtime nil remains defense in depth, not the primary validator.
-
-### DR-8 — Reconcile authority and S0 status (confidence: 100)
-
-The current Roadmap explicitly re-anchors the project away from the old `DESIGN.md`, but this draft lists
-old DESIGN sections as authorities. It also says the four S0 questions are resolved while §8 leaves
-schema, outcome/error semantics, base-resolution granularity, and handle namespace decisions open. The
-text says those questions block A1/A2 even though the Roadmap requires S0 to block both A1 and B1.
-
-**Required resolution:** treat old DESIGN material as historical input only and restate every retained
-constraint as a decision in the current authority chain. Resolve all load-bearing OQs in the body, mark
-this document S0-locked only afterward, and synchronize `docs/INDEX.md`, `docs/plans/README.md`, Roadmap,
-and TODO status.
-
-### Minimum verification gates added by review
-
-1. **Zero-input fail-closed:** Unknown, Ambiguous, stopped recognition, stale frame, and cross-generation
-   Detection sequences must produce the specified structured result/trace and exactly zero Controller
-   input deliveries.
-2. **Recognition boundaries:** cover `sadScore == maxSad`, both adjacent values, threshold endpoints,
-   all stop reasons, and field-for-field equality between Preview and runtime evidence/Detection output.
-3. **Authoring round-trip:** import or WGC capture → zoom/pan → create/move/resize annotation → undo/redo →
-   save → reload must preserve exact source pixels, base-space rectangles, crop bytes/hash, page links,
-   and generated manifest.
-4. **Real-machine compatibility:** validate the full WGC-to-workbench-to-runtime path, including DPI and
-   size mismatch, window resize/recreation, and moving the target between displays; every invalidation must
-   occur before any input.
-
-### P0 scope reductions recommended by review
-
-To keep the first closed slice small, defer per-recognizer resolutions, schema minor best-effort loading,
-composite recognizers, diagnostic priority, threshold overrides, static `--strict` ambiguity heuristics,
-and duplicate `bot.templates`/`bot.recognizers` aliases until a demonstrated use requires them. Preserve
-undo/redo behavior without committing the design to one command-class architecture. This removes roughly
-38 lines of speculative specification and a larger corresponding implementation/test surface.
+- Multi-scale template matching caveats for P1: https://pyimagesearch.com/2015/01/26/multi-scale-template-matching-using-python-opencv/
+- Letterbox/viewport background for P1: https://gamedev.net/tutorials/_/technical/apis-and-tools/stretching-your-game-to-fit-the-screen-without-letterboxing-sdl2-r3547/
+- Windows DPI logical/physical pitfalls: https://learn.microsoft.com/en-us/windows/win32/winauto/uiauto-screenscaling
+- Opaque locator discipline: https://www.browserstack.com/guide/stale-element-reference-exception-selenium and https://playwright.dev/docs/actionability

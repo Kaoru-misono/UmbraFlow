@@ -83,23 +83,27 @@ fail-closed 严格门防止误点,但从第一天保留统一坐标变换接缝;
   5. **UI/信息可视化标注系统**:提供可独立启动的 GUI,在截图上缩放/平移、框选/调整/删除区域并命名;
      P0 至少支持
      `page_anchor`(页面识别锚点)、`action_target`(可交互目标)、`info_region`(文字/数字/图标/状态区域)三类。
-     `info_region` 在 P0 可先用模板/颜色识别;只有真实每日被文字读取卡住时才提前拉入 OCR。
+     P0 统一使用有界灰度模板识别;只有真实每日必须读取动态语义文字/数字、且模板或状态锚点无法表达时,
+     才另行裁决并提前拉入 OCR。
   6. **页面识别契约**:页面不是“看到一张小图就算命中”,而是一个具名 page signature;至少能表达
-     required anchors、forbidden anchors 与阈值。多页面同时命中返回 `AmbiguousScreen`,全部不命中返回
-     `UnknownScreen`,两者都不得继续点击。
-  7. **资产生成与回归**:标注结果直接裁出模板并写入项目 manifest(名字、类型、ROI、阈值、
-     `base_resolution`、源截图 hash),无需修改 Luau AST;使用与 runtime 完全相同的识别器即时预览 confidence/
-     命中框,并把正例、负例和易混淆页面加入静态截图回归集与 Fake Controller 帧序列。
+     required anchors 与 forbidden anchors。识别完成后,多页面命中返回 `Ambiguous`,全部不命中返回
+     `Unknown`;两者都不能产生动作所需的 `ResolvedPage` 证据。取消、超时或预算耗尽是控制失败,
+     不能伪装成 anchor 未命中。
+  7. **资产生成与回归**:完整截图作为 authoring/测试源;标注分别定义模板裁剪 `template_rect` 与
+     运行时搜索 `search_roi`,生成切分模板和 runtime manifest(稳定 ID、名字、类型、整数定点阈值、
+     项目级 `base_resolution`/DPI、源截图 hash)。Preview 与 runtime 使用完全相同的有界识别策略,
+     并把正例、负例和易混淆页面加入静态截图回归集与 Fake Controller 帧序列。
 - **P0 标注系统的最小用户闭环**:
   1. 选择目标窗口并抓取当前 WGC 帧,或从磁盘导入一组截图;左侧截图/样本列表可切换当前画布。
   2. 画布支持缩放、平移、框选、移动、缩放、复制、删除及 undo/redo;坐标始终显示在明确的
      `base_resolution`/FrameSpace 中。
-  3. 属性面板可编辑名称、标注类型、所属 page、识别方式、阈值及 required/forbidden 关系;
+  3. 属性面板可编辑名称、标注类型、`template_rect`/`search_roi`、所属 page、整数定点阈值及
+     required/forbidden 关系;
      `action_target` 可记录默认点击点,但不能绕过运行时 observation lease。
-  4. 保存时一键裁出模板、写入/更新 manifest 与 page signature,校验重名、越界、空区域和失效引用;
-     作者不需要手改配置文件。
-  5. Preview/Test 使用 runtime 同一识别实现,在当前图或全部样本上显示命中框、confidence、期望/实际 page、
-     Unknown/Ambiguous 原因;结果可直接加入正例、负例或易混淆回归集。
+  4. 保存时完整 round-trip authoring document,并一键裁出模板、生成 runtime manifest 与 page signature;
+     校验重名、越界、空区域和失效引用,作者不需要手改生成文件。
+  5. Preview/Test 使用 runtime 同一有界识别策略,在当前图或全部样本上显示命中框、整数 SAD 边界、
+     期望/实际 page、Unknown/Ambiguous 与停止原因;结果可直接加入正例、负例或易混淆回归集。
 - **P0 标注系统的范围边界**:它是可日常使用的独立 authoring workbench,以后由 P2 App 打开,不是一次性
   debug 窗口。P0 不做任务图编辑器、脚本录制、素材市场、多人协作、完整项目管理或精美报告,但上述最小闭环
   任何一项都不能用“以后再补 UI”推迟。
@@ -109,21 +113,22 @@ fail-closed 严格门防止误点,但从第一天保留统一坐标变换接缝;
   周期边界 + 每个长 `wait` 内部做一次已知弹窗清扫(命中即关、继续);**重机制留 P1**(注册 API、
   first-match、max_hits、禁重入)。**D7 跨文件复用才是真能推的**:同文件 Luau 函数 + 复制粘贴让每日跑起来,
   代价是可维护性非可行性,P1 再重构。先拿到"每天真替我刷完"的价值。
-- **交付顺序(A/B 穿插薄片,非线性;S0 锁死共享契约后 A/B 顺序不固定)**:真正共享的只有
-  **识别核(vision 模块已移植)+ manifest/annotation schema**;schema 一锁,A 的 Preview 直接用共享
-  识别核、不必等 B 的引擎,B 消费 A 产出的资产。故拆成薄片穿插:
-  - **S0 共享地基(先锁)**:识别核(已移植)+ manifest/annotation schema + ROI 坐标空间。
-    ⚠ 标注整体设计(schema / ROI 坐标空间 / page 语义)**另出专门设计稿,当前待定**;S0 未落锤前
-    A1/B1 之后的薄片不展开。
-  - **A1 最小标注**:抓 WGC 帧 / 导图 → 框选一个区域 → 命名 → 存模板 + manifest 条目。第一片即消除
-    手裁 PNG;Preview 用共享识别核。
-  - **B1 最小 runtime**:读 manifest → capture → 识别 → 严格后台点击 → trace。吃 A1 资产。
-  - **A2**:page-signature(required/forbidden)+ Unknown/Ambiguous + 样本 Preview/Test。
+- **交付顺序(A/B 穿插薄片,非线性;S0 锁死共享契约后 A/B 顺序不固定)**:真正共享的是
+  **识别核(vision 模块已移植)+ authoring/runtime schema + page/action 证据 + 兼容指纹**;S0 一锁,
+  A 的 Preview 直接用共享识别核、不必等 B 的引擎,B 消费 A 产出的资产。故拆成薄片穿插:
+  - **S0 共享地基(已锁定,2026-07-23)**:识别核(已移植)+ authoring/runtime schema +
+    `template_rect`/`search_roi` + page/动作证据 + 项目级尺寸/DPI 兼容契约。权威设计见
+    [`2026-07-22-annotation-design.md`](2026-07-22-annotation-design.md);A1/B1 已解除设计阻塞。
+  - **A1 最小标注**:抓 WGC 帧 / 导图 → 为一个 page anchor 与 action target 分别框选模板/搜索区域 →
+    生成切分模板、最小单页 signature 与 runtime manifest。第一片即消除手裁 PNG;Preview 用共享有界识别核。
+  - **B1 最小 runtime**:读 manifest → capture → 有界识别 → 唯一 page resolution →
+    `ResolvedPage` + Detection 授权 → 严格后台点击 → trace。吃 A1 资产。
+  - **A2**:扩展多 anchor/多 page 的 required/forbidden、Unknown/Ambiguous 与样本 Preview/Test。
   - **B2**:observe/act/wait 循环 + Tier A/B/C 错误 + 租约/generation + 逻辑时钟/RNG + 最小 D6 清扫。
   - **A3**:人体工学——undo/redo、样本列表、批量、静态回归集。
   - **B3**:整套每日(P0-C)+ 硬取消 ≤500ms + 遮挡/最小化/CaptureStalled + 长程。
 
-  S0 之后 A/B 薄片只共享固定的 schema + 识别核,彼此不再硬阻塞,可自由穿插。
+  S0 之后 A/B 薄片只共享已锁定的 S0 契约 + 识别核,彼此不再硬阻塞,可自由穿插。
 - **退出标准**:
   1. 开发者只通过可视化标注系统,不手改配置,即可从目标窗口截图或导入图片,完成框选、属性编辑、撤销/重做、
      保存和 Preview/Test;新 recognizer/page 立即能被 Luau 只读句柄引用。
@@ -164,14 +169,15 @@ fail-closed 严格门防止误点,但从第一天保留统一坐标变换接缝;
 | 验证 | 静态截图回归 + Fake Controller + 真机长程 | 每日回归集与兼容性扩充 | HTML trace 报告 |
 | 运行 | CLI 单任务、严格后台、可靠取消 | 每天稳定使用 | 托盘、计划任务 |
 
-补完上述链路后,Roadmap 仍有四个必须在进入对应实现前落锤的设计点,但它们不再需要新增产品阶段:
+原四个实现前设计点已由 S0 权威设计于 2026-07-23 锁定:
 
-1. **标注/项目格式**:manifest 用 `project.toml` 内嵌还是独立 `recognizers/pages` 文件;annotation schema 如何版本化。
-2. **坐标语义**:P0 ROI 绑定哪个 `base_resolution`,使用 FrameSpace 像素还是 normalized 坐标,如何与
-   `CoordinateTransform`、DPI 和 letterbox 对齐。
-3. **page signature 语义**:required/forbidden 的组合规则、阈值覆盖规则、页面优先级与歧义错误证据格式。
-4. **P0 authoring UI 技术栈**:选择能复用现有 D3D11 图像资源且不绑死 P2 产品壳的最小实现;运行时浮层仍保持
-   `WS_EX_NOACTIVATE`/`WDA_EXCLUDEFROMCAPTURE` 纪律。
+1. **标注/项目格式**:完整 GUI authoring document 确定性生成独立 runtime manifest 与切分模板。
+2. **坐标语义**:一个项目级 `base_resolution`/整数 DPI 指纹;P0 使用 FrameSpace 整数像素和 identity gate;
+   P1 另建显式 Base→Live viewport transform。
+3. **page signature 语义**:required/forbidden 全局求唯一解;Unknown/Ambiguous 无动作能力;
+   无优先级、阈值覆盖或启发式消歧。
+4. **P0 authoring UI 技术栈**:Dear ImGui + D3D11,复用 WGC 与唯一有界灰度 SAD 内核;
+   运行时浮层仍保持 `WS_EX_NOACTIVATE`/`WDA_EXCLUDEFROMCAPTURE` 纪律。
 
 ## 四、待定 / 待开发者输入
 
