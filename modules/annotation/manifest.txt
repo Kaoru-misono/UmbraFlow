@@ -1,0 +1,11 @@
+[module]
+name = annotation
+type = static
+version = 0.1.0
+
+[build]
+unity_build = false
+
+[dependencies]
+public = core domain vision
+private = image

@@ -65,6 +65,24 @@ cpp_add_test(
         ${PROJECT_NAME}_vision
 )
 
+cpp_add_test(
+    NAME test-annotation
+    SOURCES
+        annotation/test-authoring-compiler.cpp
+        annotation/test-authoring-document.cpp
+        annotation/test-authorization.cpp
+        annotation/test-catalog.cpp
+        annotation/test-content-hash.cpp
+        annotation/test-recognition.cpp
+        annotation/test-recognition-runtime.cpp
+        annotation/test-regression-runner.cpp
+        annotation/test-runtime-manifest.cpp
+        annotation/test-template-asset.cpp
+    LIBS
+        ${PROJECT_NAME}_annotation
+        ${PROJECT_NAME}_image
+)
+
 if(TARGET ${PROJECT_NAME}_script)
     cpp_add_test(
         NAME test-script
