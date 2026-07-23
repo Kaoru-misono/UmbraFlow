@@ -33,20 +33,34 @@ concurrency, numeric safety, serialization, or an `unsafe/`, `platform/`, or
 8. Stored or asynchronous work must not capture references or bare `this`;
    capture owned state or lock a `std::weak_ptr` at execution time.
 9. Wrap operating-system handles, registrations, and external resources in RAII types.
-10. Keep headers minimal and use forward declarations where ownership permits.
-11. All code and comments must be English.
-12. Follow the April2 line-wrapping and source-normalization rules in
-   `references/coding-standard.md` exactly. Do not introduce a local wrapping
-   style.
-13. Declare every enum as `enum class` or `enum struct` with an explicit
+10. Give every stored data member an in-class brace initializer, so that
+    `Widget value;` leaves nothing indeterminate. Omit it only when the value
+    must come from construction, and then brace-initialize the member in every
+    constructor's member-initializer list. Never both, when every constructor
+    initializes it: the constructor wins, so the in-class initializer would be
+    dead. An initializer only some constructors override is correct and stays.
+11. Classify every alias before writing it by asking whether code outside the
+    translation unit can name it. If it can — namespace scope in a header, or a
+    public or protected member of a type reachable from one — it is vocabulary
+    and must add meaning the expansion lacks. If it cannot — private,
+    function-local, or in an anonymous namespace in a `.cpp` — it is a local
+    abbreviation and must earn its scope through repetition or alignment.
+    Neither may hide optionality, borrow scope, container shape, or an
+    ownership category.
+12. Keep headers minimal and use forward declarations where ownership permits.
+13. All code and comments must be English.
+14. Follow the April2 line-wrapping and source-normalization rules in
+    `references/coding-standard.md` exactly. Do not introduce a local wrapping
+    style.
+15. Declare every enum as `enum class` or `enum struct` with an explicit
     project integer underlying type from `<core/types/integer.hpp>`.
-14. Use the project aliases for every fixed-width, pointer-width, or
+16. Use the project aliases for every fixed-width, pointer-width, or
     maximum-width integer instead of spelling the corresponding `std::*_t`
     names. Include `<core/types/integer.hpp>` directly in every file that uses
     them; do not depend on transitive or compiler-injected inclusion.
-15. Nest every file-local anonymous namespace inside the narrowest owning `uf`
+17. Nest every file-local anonymous namespace inside the narrowest owning `uf`
     namespace. Never put an anonymous namespace directly at global scope.
-16. Do not use parameters as output channels. Return one value directly or
+18. Do not use parameters as output channels. Return one value directly or
     return multiple values in a named result type. Mutable parameters are
     allowed only when mutating caller-owned state is the function's primary
     operation, an external API/ABI contract requires it, or a measured hot-path
@@ -55,12 +69,47 @@ concurrency, numeric safety, serialization, or an `unsafe/`, `platform/`, or
 
 ## Checklist
 
-- Valid C++23 and project formatting
-- Platform types stay behind their owning module
-- Ownership transfer and borrow lifetime are explicit in every changed API
+Run the repository gates for everything they cover, and do not re-verify those
+by reading:
+
+```bash
+python scripts/fix_format.py --check
+python scripts/check_cpp_format.py
+python scripts/check_modules.py
+python scripts/check_safety.py
+```
+
+Between them they enforce byte-level normalization, the module dependency graph,
+`[[nodiscard]]` on `Result`/`Status`/`optional`, and the unsafe-boundary rules
+in full. They enforce alignment and data member initialization only in part:
+both are conservative recognizers that stay silent on declarations they cannot
+parse, so their residue is on the list below. The required `clang-analysis` CI
+job adds clang-tidy lifetime, bounds, and member-init checks that do not run on
+Windows.
+
+Nothing checks the items below. They are the ones that reach review unnoticed,
+so verify each one deliberately:
+
+- April2 delimiter-based wrapping on every wrapped statement, not only calls
+- Trailing return types, Allman braces, AAA locals, east const, and braces on
+  control statements
+- Where an alignment block boundary belongs, and any declaration form the
+  alignment recognizer skips
+- Each new alias classified by external reachability, and justified under that
+  category
+- Every member without an in-class initializer supplied explicitly at each
+  aggregate construction site, with no invented sentinel
+- Ownership transfer and borrow lifetime explicit in every changed API
+- Description parameters by `T const&`, normalized into a named local rather
+  than mutated in place, with forwarding references only at generic boundaries
 - No output parameters unless a permitted exception is explicit and justified
-- Stored views, callbacks, and shared mutable state have enforceable lifetime semantics
-- Correct failure mechanism
-- April2 delimiter-based wrapping and LF normalization
-- Tests are concise, behavior-focused, and cover important boundaries
-- Temporary implementation-only tests are removed before completion
+- Stored views, callbacks, and shared mutable state have enforceable lifetime
+  semantics
+- Correct failure mechanism, with failures logged once at a boundary
+- Scoped enums carrying an explicit project integer underlying type
+- Project integer aliases, with `<core/types/integer.hpp>` included directly
+- Anonymous namespaces nested inside the owning `uf` namespace
+- Include order, and class body order with stored state not interleaved with
+  methods
+- Platform types stay behind their owning module
+- Tests concise and behavior-focused; temporary tests removed before completion

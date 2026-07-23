@@ -1,5 +1,25 @@
 # C++ Code Style Guidelines
 
+**Nothing in this document is checked mechanically unless its section says so.**
+
+A section that opens with a command is enforced by that command: run it instead
+of verifying the section by reading. A marker states exactly what its tool
+covers, because a rule that only *looks* enforced is worse than one openly left
+to the reader.
+
+Two enforcement layers exist. The `scripts/*.py` gates run on every host. The
+required `clang-analysis` CI job builds the `linux-analysis` preset with
+clang-tidy under `WarningsAsErrors: '*'`, which adds
+`cppcoreguidelines-pro-type-member-init`, `bugprone-dangling-handle`,
+`bugprone-use-after-move`, `cppcoreguidelines-owning-memory`, and the bounds and
+cast checks in `.clang-tidy`. That job is the only thing checking parts of
+`## Ownership`, and it does not run locally on Windows.
+
+Everything else — most of this document, including all of line wrapping, type
+aliases, parameter direction, and class body order — has no automated check on
+either layer. There this text is the only enforcement and a violation reaches
+review unnoticed. Budget attention accordingly.
+
 ## Language and files
 
 - Target C++23.
@@ -19,6 +39,79 @@
 - Macros use `UPPER_CASE_WITH_UNDERSCORES` with the project macro prefix
   `UF_` (the deliberate short form of UmbraFlow; the long
   `UMBRA_FLOW_` form is not used).
+
+## Type aliases
+
+Two different declarations are called an alias. They carry different costs, and
+a rule for one does not govern the other. One question decides which: can code
+outside this translation unit name it? That is a fact about the code rather
+than a judgment, and it classifies every alias.
+
+- A vocabulary alias can be named from outside. It sits at namespace scope in a
+  header, or in the public or protected section of a type reachable from one.
+  It enters an API, so every reader must learn it.
+- A local abbreviation cannot. It is private, function-local, or declared in an
+  anonymous namespace or any other internal-linkage context in a `.cpp` file.
+  It names a spelling and disappears with its translation unit.
+
+Rules:
+
+- A vocabulary alias must add meaning the expansion does not carry: a sum type,
+  a callable protocol, a strong-identity wrapper, or a type that varies with a
+  template parameter. Length alone is a trigger for the question, never the
+  justification for the answer. A nested typedef that merely requalifies one
+  fixed type adds no meaning and does not qualify. Declare a namespace-scope
+  vocabulary alias in the header that defines the type it abbreviates,
+  immediately after that definition and in the same namespace, so the two cannot
+  drift apart; a member alias belongs in its class body per `## Class body
+  order`.
+- A local abbreviation does not have to add meaning; it has to avoid removing
+  any. It is warranted when the same long spelling appears more than once in its
+  scope, or when one long spelling sets the alignment column for a member block
+  that no semantic boundary can split. Declare it in the smallest scope that
+  uses it.
+- Brevity on its own is not a reason. An abbreviation that does not lower its
+  block's alignment column is not warranted by alignment, because shortening the
+  longest declarator can hand the column to the next one and leave the block
+  worse than it started. Compare the block before and after.
+- Neither kind may alias away `std::optional`, `std::span`, `std::string_view`,
+  a raw pointer, or a standard container. Optionality, borrow scope, and
+  container shape are contract the reader must see.
+- Neither kind may hide, weaken, or reassign an ownership category. An alias
+  that abbreviates an owning type must carry that ownership in its own name; see
+  `## Ownership` for the vocabulary it must preserve. Note that needing such a
+  name does not by itself make the alias warranted — the tests above still
+  apply.
+
+```cpp
+// Vocabulary: enters the API, and a sum type is meaning the expansion lacks.
+using PageAttemptResult = std::variant<PageOutcome, PageRecognitionStop>;
+
+class CaptureDevice final
+{
+    // Local abbreviation: private, repeated, and dies with the class.
+    using DeviceComPtr = winrt::com_ptr<ID3D11Device>;
+
+    DeviceComPtr m_device;
+    DeviceComPtr m_fallback;
+};
+```
+
+```cpp
+// Avoid: public in a header type, so it is vocabulary, but it only
+// requalifies one fixed type.
+struct Args final
+{
+    using Duration = MonotonicInstant::Duration;
+};
+
+// Avoid: hides optionality and container shape.
+using Ids = std::vector<RecognizerId>;
+using MaybeOffset = std::optional<TemplateOffset>;
+
+// Avoid: a borrow word naming an owner.
+using FrameRef = std::shared_ptr<Frame const>;
+```
 
 ## Namespaces
 
@@ -80,27 +173,33 @@ enum class ConnectionState : uint8
 - Prefer AAA locals and brace initialization.
 - Use east const: `std::string const&`.
 - Put `template <...>` with a space before `<`.
-- Braces are required for control statements except a one-line `return` or `continue` guard.
+- Braces are required for control statements except a one-line `return` or
+  `continue` guard.
 
-### Data member initialization and alignment
+### Alignment
 
-- Brace-initialize every stored data member, either with an in-class member
-  initializer, explicitly in every constructor's member-initializer list, or
-  through a complete braced aggregate initializer at each construction site.
-- Give a member an in-class brace initializer when its type has a meaningful
-  default state. State the intended value when an empty initializer would be
-  ambiguous.
-- For a required, non-default-constructible domain value, omit the in-class
-  initializer and brace-initialize it in every constructor. Do not invent an
-  invalid sentinel or use `std::optional` solely to make `{}` possible.
-- Intentional aggregate spec and transport types may retain designated
-  initialization. Supply every required member explicitly at each construction
-  site; do not add a constructor solely to defeat useful aggregate syntax.
+> Checked by `python scripts/check_cpp_format.py`, which is the CI gate, and
+> repaired by the same script with `--fix`. It is a conservative recognizer, not
+> a formatter: it skips pointer and reference declarators, bitfields, function
+> declarations, macros, preprocessor lines, templates containing commas, local
+> classes, and every wrapped statement. A skipped line is dropped from its block
+> rather than merely unchecked, so the column the tool computes can differ from
+> the column the first rule below requires. Where a block boundary belongs is a
+> judgment nothing checks; see the last rule.
+
 - In each contiguous block of two or more single-line data member declarations,
-  align the member identifiers at the same column, using spaces after the type
-  or declarator. The longest type or declarator in that block determines the
-  column. A blank line starts a new alignment block. Do not align semicolons or
-  initializer braces, and do not force a wrapped declaration into this form.
+  align the member identifiers at one column, using spaces after the type or
+  declarator. The longest type or declarator in the block sets the column.
+- In each contiguous block of two or more single-line assignments, `=`-based
+  initializers, or adjacent designated-initializer entries, align the assignment
+  operators at one column. The longest left-hand side sets the column.
+- A blank line starts a new alignment block. Do not align semicolons or
+  initializer braces, do not force a wrapped declaration into this form, and do
+  not pad a wrapped assignment merely to join a block.
+- When a single long member type sets the column for its block and no alias is
+  warranted, start a new alignment block with a blank line at an existing
+  semantic boundary. Do not split a coherent group of members merely to satisfy
+  the formatter; leaving the padding is an acceptable outcome.
 
 ```cpp
 class SourceRecord final
@@ -119,18 +218,7 @@ class SourceRecord final
     {
     }
 };
-```
 
-### Assignment alignment
-
-- In each contiguous block of two or more single-line assignments or
-  `=`-based initializers, align the assignment operators at the same column.
-  The longest left-hand side in that block determines the column.
-- Apply the same rule to adjacent designated-initializer entries. A blank line
-  starts a new alignment block. Do not pad a wrapped assignment merely to join
-  an alignment block; follow the line-wrapping rules instead.
-
-```cpp
 m_id          = id;
 m_contentHash = contentHash;
 
@@ -143,6 +231,9 @@ auto source = AuthoringSourceSpec{
 ```
 
 ### Line wrapping
+
+> No formatter reproduces this convention. It was measured against clang-format
+> and every configuration diverged, so no tool will ever catch a violation here.
 
 Follow the April2 wrapping convention exactly. It applies to every wrapped
 statement, not only function calls.
@@ -209,14 +300,12 @@ if (request.isValid()
 
 ### Source text normalization
 
-Match April2's deterministic source normalization:
+> Enforced and repaired by `python scripts/fix_format.py`. Run it rather than
+> checking these by reading.
 
-- Use LF line endings in both the repository and working tree; never CRLF.
-- Use spaces only. Tabs normalize to four spaces.
-- Do not leave trailing whitespace.
-- End every non-empty source file with exactly one newline and no trailing blank
-  lines.
-- Run `python scripts/fix_format.py --check` to enforce these byte-level rules.
+LF line endings in both the repository and working tree, spaces only with tabs
+normalized to four, no trailing whitespace, and exactly one closing newline with
+no trailing blank lines.
 
 ## Class body order
 
@@ -238,11 +327,21 @@ Do not interleave stored state and methods.
 - Include `<core/types/integer.hpp>` directly in each file that uses those
   aliases; do not rely on a transitive include or a compiler forced include.
 - Prefer `std::span` for non-owning contiguous buffers.
-- Prefer ranges algorithms, `contains`, `std::erase_if`, structured bindings, and `std::to_underlying` when they improve clarity.
+- Prefer ranges algorithms, `contains`, `std::erase_if`, structured bindings,
+  and `std::to_underlying` when they improve clarity.
 - Use `emplace_back` for every `std::vector` append operation.
-- Do not store or return views whose backing lifetime is unclear.
 
 ## Ownership
+
+> `python scripts/check_safety.py` rejects `.detach(`, `std::unreachable`, and
+> the ADR-011 Win32 input APIs *everywhere, including inside a boundary*. It
+> rejects raw `new`/`delete`, `malloc`/`free`, `reinterpret_cast`, and
+> `const_cast` outside an `unsafe/`, `platform/`, or `ffi/` directory, and
+> inside one still requires a `// SAFETY:` comment within the preceding three
+> lines. The `clang-analysis` CI job additionally covers part of the lifetime
+> rules through `bugprone-dangling-handle`, `bugprone-use-after-move`, and
+> `cppcoreguidelines-owning-memory`. Nothing checks the ownership vocabulary or
+> the construction order, which are the substance of this section.
 
 Ownership is expressed by values, members, and function signatures. Do not make
 types inherit a common base class solely to participate in an ownership model.
@@ -264,6 +363,13 @@ Use this vocabulary consistently:
   pointer never represents an array or ownership.
 - `std::span` and `std::string_view` are non-owning call-scoped views unless the
   API explicitly exposes and enforces the backing lifetime.
+- An alias that abbreviates an owning type keeps the ownership category in its
+  name and never introduces a new one. `...Ref`, `...Ptr`, and `...Handle` are
+  reserved for the borrow and observation rows above and must not name an owner.
+  Do not erase `const` from `std::shared_ptr<T const>`. If `## Type aliases`
+  warrants an alias for a shared owner, its name keeps both facts, as in
+  `SharedFrameBuffer`. This governs how such an alias is named, not whether to
+  introduce one.
 
 Follow these lifetime rules:
 
@@ -298,8 +404,41 @@ Construction follows a fixed decision order:
 5. Return `std::shared_ptr<T const>` only for demonstrated shared immutable
    lifetime.
 
-Avoid two-phase initialization. A successfully constructed object must already
-satisfy its invariant.
+### Data member initialization
+
+> Partly enforced by `python scripts/check_safety.py`, which reports a dead
+> in-class initializer, and a missing one when the member's type is on its
+> allowlist of default-constructible types *and* a construction path visibly
+> leaves it default-initialized. It is a conservative recognizer and stays
+> silent on any class it cannot parse with confidence, including class
+> templates and classes whose name appears more than once. The sentinel,
+> ambiguity, and aggregate rules below are not checked at all.
+> `cppcoreguidelines-pro-type-member-init` in the `clang-analysis` CI job
+> covers the indeterminate cases this misses.
+
+Avoid two-phase initialization: a successfully constructed object must already
+satisfy its invariant. That applies at member granularity, and it does not
+depend on how callers construct the type. `Widget value;` must leave no member
+indeterminate, because correctness belongs to the type rather than to the
+discipline of every construction site.
+
+- Every stored data member carries an in-class brace initializer unless it
+  cannot.
+- A member omits the in-class initializer only when the value must come from
+  construction: a required domain value the type refuses to default, or a type
+  with no default constructor. Every constructor then brace-initializes it in
+  its member-initializer list. Do not invent an invalid sentinel or use
+  `std::optional` solely to make `{}` possible.
+- Do not give a member both an in-class initializer and a member-initializer
+  list entry in every constructor. The constructor wins, so the in-class
+  initializer is dead and falsely advertises a valid default state.
+- State the intended value when an empty initializer would be ambiguous.
+- Aggregate spec and transport types keep designated initialization at each
+  construction site, and their members still carry in-class initializers so a
+  default-initialized aggregate is never indeterminate. Supply every member
+  that carries no in-class initializer explicitly at each construction site.
+  Do not add a constructor solely to defeat useful aggregate syntax. An empty
+  `Type{}` supplies no member and therefore satisfies nothing on its own.
 
 ## Parameter direction and return values
 
@@ -375,6 +514,12 @@ auto parseRecord(
 
 ## Includes
 
+> `python scripts/check_modules.py` parses `modules/*/manifest.txt` and rejects
+> duplicate module names, a missing `source/` directory, a `core` that declares
+> dependencies, self-dependency, and cycles. It never reads a source file, so
+> neither the include order below nor an undeclared cross-module include is
+> checked by it; only the build's include directories constrain those.
+
 1. Corresponding header.
 2. Same-module headers with quotes.
 3. Other project modules with angle brackets.
@@ -386,12 +531,19 @@ own header with quotes.
 
 ## Errors and invariants
 
-- External input, operating-system failure, I/O failure, and unsupported input return `Result<T>` or `Status`.
+> `[[nodiscard]]` on functions returning `Result<T>`, `Status`, or
+> `std::optional` is enforced in headers by `python scripts/check_safety.py`,
+> which also rejects `std::unreachable` and explicit `throw` in `core`. The
+> remaining rules are not checked.
+
+- External input, operating-system failure, I/O failure, and unsupported input
+  return `Result<T>` or `Status`.
 - `Result<T>` is `std::expected<T, Error>` and `Status` is `Result<void>`; do not
   add a parallel result container.
 - Return failures with `fail(...)` for both `Result<T>` and `Status`. Do not use
   templated failure factories or a separate status failure helper.
-- Mark every function returning `Result<T>` or `Status` as `[[nodiscard]]`.
+- Mark every function returning `Result<T>`, `Status`, or `std::optional` as
+  `[[nodiscard]]`.
 - Use `UF_TRY*` for linear propagation and `std::expected` monadic
   operations when they express composition more clearly. Value-extracting
   macros are standalone statements inside a braced block.
@@ -400,16 +552,19 @@ own header with quotes.
 - Broken internal invariants use `UF_ASSERT`.
 - Mandatory release-active invariants use `UF_CHECK`.
 - Exhausted impossible branches use `UF_UNREACHABLE`.
-- Do not log and return at every layer. Add context while propagating and log once at a boundary.
+- Do not log and return at every layer. Add context while propagating and log
+  once at a boundary.
 - A local degrade/skip path must log why it degraded.
 
 See `error-handling.md` for construction and propagation examples.
 
 ## Comments and debt
 
-- Comments explain why, external constraints, or intentional omissions; never paraphrase code.
+- Comments explain why, external constraints, or intentional omissions; never
+  paraphrase code.
 - Comments must be English.
-- Mark a deliberate shortcut as `TODO(cpp-debt): <shortcut> — ceiling: <X>, upgrade: <Y>`.
+- Mark a deliberate shortcut as `TODO(cpp-debt): <shortcut> — ceiling: <X>,
+  upgrade: <Y>`.
 
 ## Tests
 
