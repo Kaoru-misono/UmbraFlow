@@ -109,8 +109,6 @@ namespace uf::m0_demo
         Rect<FrameSpace> roi
     ) -> Result<Template>;
 
-    [[nodiscard]] auto rgbaToBgra(std::vector<std::byte> rgba) -> std::vector<std::byte>;
-
     [[nodiscard]] auto requireUnchangedTarget(RevalidateOutcome outcome) -> Status;
 
     [[nodiscard]]
@@ -127,13 +125,6 @@ namespace uf::m0_demo
         uint32 templateHeight,
         uint64 maximumAverageSad
     ) noexcept -> std::optional<SadMatch>;
-
-    [[nodiscard]]
-    auto cropBgra(
-        std::span<std::byte const> source,
-        std::size_t stride,
-        PixelRect rect
-    ) -> Result<std::vector<std::byte>>;
 
     [[nodiscard]]
     auto ensureRoiInFrame(

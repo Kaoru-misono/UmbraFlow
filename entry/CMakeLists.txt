@@ -20,13 +20,6 @@ if(TARGET ${PROJECT_NAME}_controller)
         m0-demo/capture-mode.hpp
         m0-demo/capture-output.cpp
         m0-demo/capture-output.hpp
-        m0-demo/ffi/external/stb_image.h
-        m0-demo/ffi/external/stb_image_write.h
-        m0-demo/ffi/png-decoder.cpp
-        m0-demo/ffi/png-decoder.hpp
-        m0-demo/ffi/png-encoder.cpp
-        m0-demo/ffi/png-encoder.hpp
-        m0-demo/ffi/png-limits.hpp
         m0-demo/guard.cpp
         m0-demo/guard.hpp
         m0-demo/input-agent.cpp
@@ -63,15 +56,12 @@ if(TARGET ${PROJECT_NAME}_controller)
         PUBLIC
             ${CMAKE_CURRENT_SOURCE_DIR}/m0-demo
     )
-    target_include_directories(${M0_DEMO_LIBRARY}
-        SYSTEM PRIVATE
-            ${CMAKE_CURRENT_SOURCE_DIR}/m0-demo/ffi/external
-    )
     target_link_libraries(${M0_DEMO_LIBRARY}
         PUBLIC
             ${PROJECT_NAME}_controller
             ${PROJECT_NAME}_vision
         PRIVATE
+            ${PROJECT_NAME}_image
             advapi32
             ntdll
             user32

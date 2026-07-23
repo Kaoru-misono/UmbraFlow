@@ -1,4 +1,4 @@
-#include "png-decoder.hpp"
+#include <image/png.hpp>
 
 #include <core/numeric/checked-arithmetic.hpp>
 #include <core/numeric/checked-cast.hpp>
@@ -49,7 +49,7 @@
 #pragma GCC diagnostic pop
 #endif
 
-namespace uf::m0_demo::ffi
+namespace uf::image
 {
     namespace
     {
@@ -267,14 +267,14 @@ namespace uf::m0_demo::ffi
                 std::format("failed to load template {}: empty PNG", resourceName)
             );
         }
-        if (encoded.size() > g_maximumTemplateFileBytes)
+        if (encoded.size() > g_maximumPngFileBytes)
         {
             return invalidResource(
                 std::format(
                     "template {} is oversized: {} encoded bytes exceeds {}",
                     resourceName,
                     encoded.size(),
-                    g_maximumTemplateFileBytes
+                    g_maximumPngFileBytes
                 )
             );
         }
@@ -300,8 +300,8 @@ namespace uf::m0_demo::ffi
         }
 
         if (
-            metadata.m_width > g_maximumTemplateDimension
-            || metadata.m_height > g_maximumTemplateDimension
+            metadata.m_width > g_maximumPngDimension
+            || metadata.m_height > g_maximumPngDimension
         )
         {
             return invalidResource(
@@ -310,7 +310,7 @@ namespace uf::m0_demo::ffi
                     resourceName,
                     metadata.m_width,
                     metadata.m_height,
-                    g_maximumTemplateDimension
+                    g_maximumPngDimension
                 )
             );
         }
@@ -324,7 +324,7 @@ namespace uf::m0_demo::ffi
             );
         }
         auto const pixelCount = checkedMultiply(*widthSize, *heightSize);
-        if (!pixelCount || *pixelCount > g_maximumTemplatePixels)
+        if (!pixelCount || *pixelCount > g_maximumPngPixels)
         {
             return invalidResource(
                 std::format(
@@ -472,14 +472,14 @@ namespace uf::m0_demo::ffi
                 )
             );
         }
-        if (fileBytes > g_maximumTemplateFileBytes)
+        if (fileBytes > g_maximumPngFileBytes)
         {
             return invalidResource(
                 std::format(
                     "template {} is oversized: {} encoded bytes exceeds {}",
                     path.string(),
                     fileBytes,
-                    g_maximumTemplateFileBytes
+                    g_maximumPngFileBytes
                 )
             );
         }

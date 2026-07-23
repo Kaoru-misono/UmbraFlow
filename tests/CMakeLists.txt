@@ -55,6 +55,16 @@ cpp_add_test(
         ${PROJECT_NAME}_vision
 )
 
+cpp_add_test(
+    NAME test-image
+    SOURCES
+        image/test-pixels.cpp
+        image/test-png.cpp
+    LIBS
+        ${PROJECT_NAME}_image
+        ${PROJECT_NAME}_vision
+)
+
 if(TARGET ${PROJECT_NAME}_script)
     cpp_add_test(
         NAME test-script
@@ -97,7 +107,6 @@ if(TARGET ${PROJECT_NAME}_m0_demo_support)
             m0-demo/test-log-jsonl.cpp
             m0-demo/test-pacing.cpp
             m0-demo/test-pipeline.cpp
-            m0-demo/test-png-encoder.cpp
             m0-demo/test-shutdown.cpp
         LIBS
             ${PROJECT_NAME}_m0_demo_support

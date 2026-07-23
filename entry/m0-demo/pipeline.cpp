@@ -1,6 +1,5 @@
 #include "pipeline.hpp"
 
-#include "ffi/png-decoder.hpp"
 #include "log-jsonl.hpp"
 #include "platform/windows-background-messages.hpp"
 #include "shutdown.hpp"
@@ -8,12 +7,13 @@
 #include <core/error/contracts.hpp>
 #include <core/numeric/checked-arithmetic.hpp>
 #include <core/numeric/checked-cast.hpp>
-#include <core/safety/checked-access.hpp>
 #include <core/types/integer.hpp>
 #include <domain/detection.hpp>
 #include <domain/error.hpp>
 #include <domain/frame.hpp>
 #include <domain/ids.hpp>
+#include <image/pixels.hpp>
+#include <image/png.hpp>
 
 #include <algorithm>
 #include <chrono>
@@ -159,7 +159,16 @@ namespace uf::m0_demo
             auto const transform = frame.transform();
             UF_TRY_VALUE(roi, transform.frameRectToPixelRect(imageTemplate.m_roi));
             auto const pixels = frame.pixels();
-            UF_TRY_VALUE(roiBgra, cropBgra(pixels->bytes(), frame.stride(), roi));
+            UF_TRY_VALUE(
+                roiBgra,
+                image::cropBgra8(
+                    pixels->bytes(),
+                    frame.width(),
+                    frame.height(),
+                    frame.stride(),
+                    roi
+                )
+            );
 
             auto const roiWidth = checkedCast<std::size_t>(roi.width());
             if (!roiWidth)
@@ -1159,7 +1168,7 @@ namespace uf::m0_demo
         Rect<FrameSpace> roi
     ) -> Result<Template>
     {
-        UF_TRY_VALUE(decoded, ffi::loadPng(path));
+        UF_TRY_VALUE(decoded, image::loadPng(path));
         if (decoded.m_width == 0U || decoded.m_height == 0U)
         {
             return fail(
@@ -1168,7 +1177,7 @@ namespace uf::m0_demo
             );
         }
 
-        auto bgra = rgbaToBgra(std::move(decoded.m_pixels));
+        UF_TRY_VALUE(bgra, image::rgba8ToBgra8(std::move(decoded.m_pixels)));
         auto const width = checkedCast<std::size_t>(decoded.m_width);
         if (!width)
         {
@@ -1210,18 +1219,6 @@ namespace uf::m0_demo
             .m_height = decoded.m_height,
             .m_roi = roi,
         };
-    }
-
-    auto rgbaToBgra(std::vector<std::byte> rgba) -> std::vector<std::byte>
-    {
-        for (auto index = std::size_t{0}; index + 3U < rgba.size(); index += 4U)
-        {
-            std::swap(
-                checkedAt(rgba, index),
-                checkedAt(rgba, index + 2U)
-            );
-        }
-        return rgba;
     }
 
     auto requireUnchangedTarget(RevalidateOutcome outcome) -> Status
@@ -1290,75 +1287,6 @@ namespace uf::m0_demo
             return std::nullopt;
         }
         return found;
-    }
-
-    auto cropBgra(
-        std::span<std::byte const> source,
-        std::size_t stride,
-        PixelRect rect
-    ) -> Result<std::vector<std::byte>>
-    {
-        auto const x = checkedCast<std::size_t>(rect.x());
-        auto const y = checkedCast<std::size_t>(rect.y());
-        auto const width = checkedCast<std::size_t>(rect.width());
-        auto const height = checkedCast<std::size_t>(rect.height());
-        if (!x || !y || !width || !height)
-        {
-            return fail(
-                AutomationErrorKind::InternalInvariant,
-                "cropped ROI is not addressable"
-            );
-        }
-        auto const xBytes = checkedMultiply(*x, g_bgraBytesPerPixel);
-        auto const rowBytes = checkedMultiply(*width, g_bgraBytesPerPixel);
-        auto const totalBytes = rowBytes
-            ? checkedMultiply(*rowBytes, *height)
-            : std::optional<std::size_t>{};
-        if (!xBytes || !rowBytes || !totalBytes)
-        {
-            return fail(
-                AutomationErrorKind::InternalInvariant,
-                "cropped ROI byte geometry overflowed"
-            );
-        }
-
-        auto output = std::vector<std::byte>(*totalBytes);
-        auto outputSpan = std::span<std::byte>{output};
-        for (auto row = std::size_t{0}; row < *height; ++row)
-        {
-            auto const sourceY = checkedAdd(*y, row);
-            auto const sourceRow = sourceY
-                ? checkedMultiply(*sourceY, stride)
-                : std::optional<std::size_t>{};
-            auto const sourceStart = sourceRow
-                ? checkedAdd(*sourceRow, *xBytes)
-                : std::optional<std::size_t>{};
-            auto const sourceEnd = sourceStart
-                ? checkedAdd(*sourceStart, *rowBytes)
-                : std::optional<std::size_t>{};
-            auto const destinationStart = checkedMultiply(row, *rowBytes);
-            if (
-                !sourceStart
-                || !sourceEnd
-                || !destinationStart
-                || *sourceEnd > source.size()
-            )
-            {
-                return fail(
-                    AutomationErrorKind::InternalInvariant,
-                    std::format(
-                        "cropped ROI row {} exceeds frame buffer of {} bytes",
-                        row,
-                        source.size()
-                    )
-                );
-            }
-
-            auto const sourceSlice = source.subspan(*sourceStart, *rowBytes);
-            auto destinationSlice = outputSpan.subspan(*destinationStart, *rowBytes);
-            std::ranges::copy(sourceSlice, destinationSlice.begin());
-        }
-        return output;
     }
 
     auto ensureRoiInFrame(

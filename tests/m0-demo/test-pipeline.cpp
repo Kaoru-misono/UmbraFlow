@@ -1,6 +1,5 @@
 #include "test-helpers.hpp"
 
-#include <ffi/png-decoder.hpp>
 #include <pipeline.hpp>
 
 #include <controller/discovery.hpp>
@@ -24,19 +23,12 @@
 #include <span>
 #include <string>
 #include <string_view>
-#include <utility>
 #include <vector>
 
 namespace uf::m0_demo
 {
     namespace
     {
-        [[nodiscard]]
-        constexpr auto asByte(uint8 value) noexcept -> std::byte
-        {
-            return static_cast<std::byte>(value);
-        }
-
         [[nodiscard]]
         auto transform800By450() -> CoordinateTransform
         {
@@ -146,83 +138,6 @@ namespace uf::m0_demo
             combineLoopStatus(StepStatus::Done, false)
             == LoopStatus::GuardViolation
         );
-    }
-
-    TEST_CASE("m0 RGBA to BGRA swaps red and blue")
-    {
-        auto rgba = std::vector<std::byte>{
-            asByte(10),
-            asByte(20),
-            asByte(30),
-            asByte(40),
-            asByte(50),
-            asByte(60),
-            asByte(70),
-            asByte(80),
-        };
-        auto const expected = std::vector<std::byte>{
-            asByte(30),
-            asByte(20),
-            asByte(10),
-            asByte(40),
-            asByte(70),
-            asByte(60),
-            asByte(50),
-            asByte(80),
-        };
-        CHECK(rgbaToBgra(std::move(rgba)) == expected);
-    }
-
-    TEST_CASE("m0 template grayscale uses the frame grayscale kernel")
-    {
-        auto rgba = std::vector<std::byte>{
-            asByte(200),
-            asByte(89),
-            asByte(17),
-            asByte(255),
-        };
-        auto const nativeBgra = std::array{
-            asByte(17),
-            asByte(89),
-            asByte(200),
-            asByte(255),
-        };
-        auto const viaFrame = bgra8ToGray8(nativeBgra, 1, 1, 4);
-        auto const bgra = rgbaToBgra(std::move(rgba));
-        auto const viaTemplate = bgra8ToGray8(bgra, 1, 1, 4);
-        REQUIRE(viaFrame.has_value());
-        REQUIRE(viaTemplate.has_value());
-        CHECK(*viaFrame == *viaTemplate);
-    }
-
-    TEST_CASE("m0 BGRA crop honors stride and packs tightly")
-    {
-        auto constexpr width = std::size_t{3};
-        auto constexpr stride = width * 4U + 8U;
-        auto source = std::vector<std::byte>(stride * 3U, asByte(0xEE));
-        for (auto y = std::size_t{0}; y < 3U; ++y)
-        {
-            for (auto x = std::size_t{0}; x < 3U; ++x)
-            {
-                auto const offset = y * stride + x * 4U;
-                source.at(offset) = asByte(static_cast<uint8>(x));
-                source.at(offset + 1U) = asByte(static_cast<uint8>(y));
-                source.at(offset + 2U) = asByte(0);
-                source.at(offset + 3U) = asByte(255);
-            }
-        }
-
-        auto const rect = PixelRect::create(1, 1, 2, 2);
-        REQUIRE(rect.has_value());
-        auto const cropped = cropBgra(source, stride, *rect);
-        REQUIRE(cropped.has_value());
-        auto const expected = std::vector<std::byte>{
-            asByte(1), asByte(1), asByte(0), asByte(255),
-            asByte(2), asByte(1), asByte(0), asByte(255),
-            asByte(1), asByte(2), asByte(0), asByte(255),
-            asByte(2), asByte(2), asByte(0), asByte(255),
-        };
-        CHECK(*cropped == expected);
     }
 
     TEST_CASE("m0 ROI outside the frame reports the named configuration flag")
@@ -384,126 +299,4 @@ namespace uf::m0_demo
         CHECK(selector.title() == std::optional<std::string>{"title"});
     }
 
-    TEST_CASE("m0 PNG decoder fails closed for malformed and oversized resources")
-    {
-        auto const empty = std::vector<std::byte>{};
-        auto const malformed = ffi::decodePng(empty, "empty.png");
-        REQUIRE_FALSE(malformed.has_value());
-        test_m0_demo::requireErrorKind(
-            malformed.error(),
-            AutomationErrorKind::InvalidResource
-        );
-
-        auto const oversizedHeader = std::array{
-            asByte(0x89), asByte(0x50), asByte(0x4E), asByte(0x47),
-            asByte(0x0D), asByte(0x0A), asByte(0x1A), asByte(0x0A),
-            asByte(0x00), asByte(0x00), asByte(0x00), asByte(0x0D),
-            asByte(0x49), asByte(0x48), asByte(0x44), asByte(0x52),
-            asByte(0x00), asByte(0x00), asByte(0x20), asByte(0x01),
-            asByte(0x00), asByte(0x00), asByte(0x00), asByte(0x01),
-            asByte(0x08), asByte(0x06), asByte(0x00), asByte(0x00),
-            asByte(0x00), asByte(0x00), asByte(0x00), asByte(0x00),
-            asByte(0x00),
-            asByte(0x00), asByte(0x00), asByte(0x00), asByte(0x00),
-            asByte(0x49), asByte(0x44), asByte(0x41), asByte(0x54),
-            asByte(0x00), asByte(0x00), asByte(0x00), asByte(0x00),
-            asByte(0x00), asByte(0x00), asByte(0x00), asByte(0x00),
-            asByte(0x49), asByte(0x45), asByte(0x4E), asByte(0x44),
-            asByte(0x00), asByte(0x00), asByte(0x00), asByte(0x00),
-        };
-        auto const oversized = ffi::decodePng(
-            oversizedHeader,
-            "dimension-limit.png"
-        );
-        REQUIRE_FALSE(oversized.has_value());
-        test_m0_demo::requireErrorKind(
-            oversized.error(),
-            AutomationErrorKind::InvalidResource
-        );
-        CHECK(
-            oversized.error().message().find("8193x1 exceeds 8192 pixels per axis")
-            != std::string_view::npos
-        );
-    }
-
-    TEST_CASE("m0 PNG decoder rejects non-PNG and truncated chunk lengths")
-    {
-        auto const jpeg = std::array{
-            asByte(0xFF),
-            asByte(0xD8),
-            asByte(0xFF),
-            asByte(0xE0),
-        };
-        auto const nonPng = ffi::decodePng(jpeg, "template.jpg");
-        REQUIRE_FALSE(nonPng.has_value());
-        test_m0_demo::requireErrorKind(
-            nonPng.error(),
-            AutomationErrorKind::InvalidResource
-        );
-        CHECK(nonPng.error().message().find("not a PNG") != std::string_view::npos);
-
-        auto const truncatedChunk = std::array{
-            asByte(0x89), asByte(0x50), asByte(0x4E), asByte(0x47),
-            asByte(0x0D), asByte(0x0A), asByte(0x1A), asByte(0x0A),
-            asByte(0x00), asByte(0x00), asByte(0x00), asByte(0x0D),
-            asByte(0x49), asByte(0x48), asByte(0x44), asByte(0x52),
-            asByte(0x00), asByte(0x00), asByte(0x00), asByte(0x01),
-            asByte(0x00), asByte(0x00), asByte(0x00), asByte(0x01),
-            asByte(0x08), asByte(0x06), asByte(0x00), asByte(0x00),
-            asByte(0x00), asByte(0x00), asByte(0x00), asByte(0x00),
-            asByte(0x00),
-            asByte(0x7F), asByte(0xFF), asByte(0xFF), asByte(0xFF),
-            asByte(0x74), asByte(0x45), asByte(0x58), asByte(0x74),
-            asByte(0x00), asByte(0x00), asByte(0x00), asByte(0x00),
-        };
-        auto const truncated = ffi::decodePng(
-            truncatedChunk,
-            "truncated-chunk.png"
-        );
-        REQUIRE_FALSE(truncated.has_value());
-        test_m0_demo::requireErrorKind(
-            truncated.error(),
-            AutomationErrorKind::InvalidResource
-        );
-        CHECK(
-            truncated.error().message().find("declared chunk length exceeds the input")
-            != std::string_view::npos
-        );
-    }
-
-    TEST_CASE("m0 16-bit PNG downconversion uses round-to-nearest")
-    {
-        auto const encoded = std::array{
-            asByte(0x89), asByte(0x50), asByte(0x4E), asByte(0x47),
-            asByte(0x0D), asByte(0x0A), asByte(0x1A), asByte(0x0A),
-            asByte(0x00), asByte(0x00), asByte(0x00), asByte(0x0D),
-            asByte(0x49), asByte(0x48), asByte(0x44), asByte(0x52),
-            asByte(0x00), asByte(0x00), asByte(0x00), asByte(0x01),
-            asByte(0x00), asByte(0x00), asByte(0x00), asByte(0x01),
-            asByte(0x10), asByte(0x06), asByte(0x00), asByte(0x00),
-            asByte(0x00), asByte(0x4F), asByte(0x85), asByte(0x18),
-            asByte(0xCA), asByte(0x00), asByte(0x00), asByte(0x00),
-            asByte(0x11), asByte(0x49), asByte(0x44), asByte(0x41),
-            asByte(0x54), asByte(0x78), asByte(0x9C), asByte(0x63),
-            asByte(0x60), asByte(0x68), asByte(0x6C), asByte(0x68),
-            asByte(0xF8), asByte(0xFF), asByte(0xBF), asByte(0x81),
-            asByte(0x01), asByte(0x00), asByte(0x11), asByte(0x09),
-            asByte(0x04), asByte(0x00), asByte(0x81), asByte(0xEE),
-            asByte(0x58), asByte(0x57), asByte(0x00), asByte(0x00),
-            asByte(0x00), asByte(0x00), asByte(0x49), asByte(0x45),
-            asByte(0x4E), asByte(0x44), asByte(0xAE), asByte(0x42),
-            asByte(0x60), asByte(0x82),
-        };
-        auto const decoded = ffi::decodePng(encoded, "rgba16.png");
-        REQUIRE(decoded.has_value());
-        CHECK(decoded->m_width == 1U);
-        CHECK(decoded->m_height == 1U);
-        auto const expected = std::vector{
-            asByte(1),
-            asByte(128),
-            asByte(255),
-            asByte(128),
-        };
-        CHECK(decoded->m_pixels == expected);
-    }
 }

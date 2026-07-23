@@ -1,12 +1,11 @@
 #include "capture-output.hpp"
 
-#include "ffi/png-encoder.hpp"
-
 #include <core/numeric/checked-arithmetic.hpp>
 #include <core/numeric/checked-cast.hpp>
-#include <core/safety/checked-access.hpp>
 #include <core/types/integer.hpp>
 #include <domain/error.hpp>
+#include <image/pixels.hpp>
+#include <image/png.hpp>
 
 #include <cstddef>
 #include <filesystem>
@@ -67,18 +66,11 @@ namespace uf::m0_demo
             }
 
             auto const bgra = pixels->bytes();
-            auto rgba = std::vector<std::byte>{
+            auto bgraCopy = std::vector<std::byte>{
                 bgra.begin(),
                 bgra.end()
             };
-            for (auto index = std::size_t{0}; index < rgba.size(); index += 4U)
-            {
-                std::swap(
-                    checkedAt(rgba, index),
-                    checkedAt(rgba, index + 2U)
-                );
-            }
-            return rgba;
+            return image::bgra8ToRgba8(std::move(bgraCopy));
         }
     }
 
@@ -107,7 +99,7 @@ namespace uf::m0_demo
     ) -> Status
     {
         UF_TRY_VALUE(rgba, frameRgba(frame));
-        return ffi::writeRgbaPng(
+        return image::writeRgbaPng(
             output,
             frame.width(),
             frame.height(),
@@ -121,8 +113,8 @@ namespace uf::m0_demo
     ) -> Result<std::vector<std::byte>>
     {
         UF_TRY_VALUE(rgba, frameRgba(frame));
-        return ffi::encodeRgbaPng(
-            output,
+        return image::encodeRgbaPng(
+            output.string(),
             frame.width(),
             frame.height(),
             rgba

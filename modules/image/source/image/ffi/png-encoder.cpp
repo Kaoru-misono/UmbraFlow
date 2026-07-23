@@ -1,6 +1,4 @@
-#include "png-encoder.hpp"
-
-#include "png-limits.hpp"
+#include <image/png.hpp>
 
 #include <core/error/contracts.hpp>
 #include <core/numeric/checked-arithmetic.hpp>
@@ -60,7 +58,7 @@
 
 #undef STBIW_ASSERT
 
-namespace uf::m0_demo::ffi
+namespace uf::image
 {
     namespace
     {
@@ -182,7 +180,7 @@ namespace uf::m0_demo::ffi
     }
 
     auto encodeRgbaPng(
-        std::filesystem::path const& path,
+        std::string_view resourceName,
         uint32 width,
         uint32 height,
         std::span<std::byte const> pixels
@@ -195,7 +193,7 @@ namespace uf::m0_demo::ffi
                     "cannot encode zero-sized PNG {}x{} for {}",
                     width,
                     height,
-                    path.string()
+                    resourceName
                 )
             );
         }
@@ -210,7 +208,7 @@ namespace uf::m0_demo::ffi
                     "PNG dimensions {}x{} for {} exceed {} pixels per axis",
                     width,
                     height,
-                    path.string(),
+                    resourceName,
                     g_maximumPngDimension
                 )
             );
@@ -230,7 +228,7 @@ namespace uf::m0_demo::ffi
                     "PNG dimensions {}x{} for {} exceed the pixel quota",
                     width,
                     height,
-                    path.string()
+                    resourceName
                 )
             );
         }
@@ -260,7 +258,7 @@ namespace uf::m0_demo::ffi
                     "PNG dimensions {}x{} for {} exceed the filtered-byte quota",
                     width,
                     height,
-                    path.string()
+                    resourceName
                 )
             );
         }
@@ -274,7 +272,7 @@ namespace uf::m0_demo::ffi
             return invalidPng(
                 std::format(
                     "RGBA pixels for {} do not match tightly packed {}x{} geometry",
-                    path.string(),
+                    resourceName,
                     width,
                     height
                 )
@@ -291,7 +289,7 @@ namespace uf::m0_demo::ffi
                     "PNG dimensions {}x{} for {} exceed stb_image_write limits",
                     width,
                     height,
-                    path.string()
+                    resourceName
                 )
             );
         }
@@ -325,7 +323,7 @@ namespace uf::m0_demo::ffi
                 ),
                 std::format(
                     "failed to encode PNG {} with stb_image_write",
-                    path.string()
+                    resourceName
                 )
             );
         }
@@ -342,7 +340,7 @@ namespace uf::m0_demo::ffi
     {
         UF_TRY_VALUE(
             encoded,
-            encodeRgbaPng(path, width, height, pixels)
+            encodeRgbaPng(path.string(), width, height, pixels)
         );
 
         errno = 0;

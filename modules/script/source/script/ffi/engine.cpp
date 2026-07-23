@@ -9,7 +9,7 @@
 
 // Luau's C headers are third-party and do not build clean under the project's
 // /W4 /WX profile; a module has no CMakeLists to mark them external, so wrap the
-// includes exactly as the repo's other vendored FFI does (ffi/png-decoder.cpp).
+// includes exactly as the repo's other vendored FFI does (image/ffi/png-decoder.cpp).
 #if defined(_MSC_VER)
 #pragma warning(push, 0)
 #elif defined(__clang__)
