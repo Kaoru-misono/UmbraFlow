@@ -83,6 +83,17 @@ cpp_add_test(
         ${PROJECT_NAME}_image
 )
 
+cpp_add_test(
+    NAME test-engine
+    SOURCES
+        engine/test-trace.cpp
+        engine/test-runtime-loader.cpp
+        engine/test-session.cpp
+    LIBS
+        ${PROJECT_NAME}_engine
+        ${PROJECT_NAME}_image
+)
+
 if(TARGET ${PROJECT_NAME}_script)
     cpp_add_test(
         NAME test-script
