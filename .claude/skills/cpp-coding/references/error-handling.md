@@ -29,7 +29,10 @@ auto loadProject(std::string_view path) -> Result<Project>
 {
     if (path.empty())
     {
-        return fail(ErrorCode::InvalidArgument, "project path is empty");
+        return fail(
+            std::make_error_code(std::errc::invalid_argument),
+            "project path is empty"
+        );
     }
 
     return Project{path};
@@ -40,7 +43,10 @@ auto validateProject(Project const& project) -> Status
 {
     if (!project.isValid())
     {
-        return fail(ErrorCode::FailedPrecondition, "project is invalid");
+        return fail(
+            std::make_error_code(std::errc::operation_not_permitted),
+            "project is invalid"
+        );
     }
 
     return ok();
@@ -85,10 +91,16 @@ Never turn invalid external input, I/O failure, resource unavailability, or an
 unsupported capability into an assertion. Never turn a mandatory internal
 invariant into a recoverable result.
 
-Use a stable `ErrorCode` for machine decisions, a concise message for the local
-failure, the native code only when an external API supplies one, and context for
-each useful subsystem boundary. Do not duplicate the same context at adjacent
-layers.
+Classification travels in the error's detail code. `Error` stores a
+`std::error_code`, so its category names the vocabulary the failure belongs to
+and its value names the failure within that vocabulary. A module that needs its
+own taxonomy registers a category and supplies the helpers that encode and read
+it back; `core` deliberately defines no second, coarser classification axis of
+its own. A caller deciding what to do should read a classifier over that
+taxonomy rather than match individual values, except where a call site has its
+own documented triage. Give a concise message for the local failure, a native
+`std::error_code` only when an external API supplies one, and context for each
+useful subsystem boundary. Do not duplicate the same context at adjacent layers.
 
 ## Do not overuse Result
 
