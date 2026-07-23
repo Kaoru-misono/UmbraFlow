@@ -9,6 +9,8 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
+import member_init
+
 
 SOURCE_EXTENSIONS = {".c", ".cc", ".cpp", ".cxx", ".h", ".hpp"}
 SOURCE_ROOTS = ("modules", "entry", "tests")
@@ -183,10 +185,12 @@ def main() -> int:
     root = arguments.root.resolve()
     violations: list[str] = []
     checked_files = source_files(root)
+    member_sources: list[tuple[str, str]] = []
 
     for path in checked_files:
         relative = path.relative_to(root)
         content = path.read_text(encoding="utf-8")
+        member_sources.append((relative.as_posix(), content))
         lines = content.splitlines()
         code_lines = mask_non_code(content).splitlines()
         boundary = is_unsafe_boundary(relative)
@@ -227,6 +231,8 @@ def main() -> int:
                     f"{relative.as_posix()}:{line_number}: Result, Status, and optional "
                     "functions must be [[nodiscard]]"
                 )
+
+    violations.extend(member_init.violations(member_sources))
 
     if violations:
         print("Safe C++ boundary violations:", file=sys.stderr)
