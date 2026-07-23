@@ -200,7 +200,7 @@ namespace uf::annotation
         [[nodiscard]]
         static auto create(
             ProjectFingerprint fingerprint,
-            RecognizerSpec spec
+            RecognizerSpec const& spec
         ) -> Result<RecognizerDefinition>;
 
         [[nodiscard]] auto id() const -> RecognizerId;
@@ -233,7 +233,8 @@ namespace uf::annotation
         explicit PageSignature(PageSpec spec) noexcept;
 
     public:
-        [[nodiscard]] static auto create(PageSpec spec) -> Result<PageSignature>;
+        [[nodiscard]]
+        static auto create(PageSpec const& spec) -> Result<PageSignature>;
 
         [[nodiscard]] auto id() const -> PageId;
         [[nodiscard]] auto name() const -> ResourceName;
