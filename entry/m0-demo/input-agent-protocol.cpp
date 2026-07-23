@@ -64,13 +64,14 @@ namespace uf::m0_demo
 
         struct ParsedCommandFields final
         {
-            std::optional<std::string>                m_operation;
-            std::optional<std::string>                m_output;
-            std::optional<float>                      m_x;
-            std::optional<float>                      m_y;
-            std::optional<std::string>                m_outputBefore;
-            std::optional<std::string>                m_outputAfter;
-            std::optional<MonotonicInstant::Duration> m_settle;
+            using Duration = MonotonicInstant::Duration;
+            std::optional<std::string> m_operation{};
+            std::optional<std::string> m_output{};
+            std::optional<float>       m_x{};
+            std::optional<float>       m_y{};
+            std::optional<std::string> m_outputBefore{};
+            std::optional<std::string> m_outputAfter{};
+            std::optional<Duration>    m_settle{};
         };
 
         class CommandParser final
