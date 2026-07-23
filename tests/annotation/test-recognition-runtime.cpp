@@ -49,10 +49,13 @@ namespace uf::annotation
         {
             auto const widthSize = checkedCast<std::size_t>(width);
             REQUIRE(widthSize.has_value());
-            auto const rgbaSize = checkedMultiply(*widthSize, std::size_t{4});
+            auto const rgbaSize = checkedMultiply(
+                widthSize.value_or(std::size_t{0}),
+                std::size_t{4}
+            );
             REQUIRE(rgbaSize.has_value());
             auto rgba = std::vector<std::byte>{};
-            rgba.reserve(*rgbaSize);
+            rgba.reserve(rgbaSize.value_or(std::size_t{0}));
             for (auto x = uint32{0}; x < width; ++x)
             {
                 rgba.emplace_back(asByte(gray));
@@ -233,7 +236,10 @@ namespace uf::annotation
             REQUIRE(transform.has_value());
             auto const width = checkedCast<std::size_t>(fingerprint.width());
             REQUIRE(width.has_value());
-            auto const stride = checkedMultiply(*width, bytesPerPixel(pixelFormat));
+            auto const stride = checkedMultiply(
+                width.value_or(std::size_t{0}),
+                bytesPerPixel(pixelFormat)
+            );
             REQUIRE(stride.has_value());
             auto const buffer = std::shared_ptr<FrameBuffer const>{
                 std::make_shared<FrameBuffer>(std::move(pixels))
@@ -245,7 +251,7 @@ namespace uf::annotation
                 MonotonicInstant::fromTimePoint(MonotonicInstant::TimePoint{}),
                 fingerprint.width(),
                 fingerprint.height(),
-                *stride,
+                stride.value_or(std::size_t{0}),
                 pixelFormat,
                 buffer,
                 *transform
