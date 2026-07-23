@@ -10,8 +10,8 @@ from dataclasses import dataclass
 from pathlib import Path
 
 
-SOURCE_EXTENSIONS = {".cpp", ".h", ".hpp"}
-SOURCE_ROOTS = ("modules", "entry")
+SOURCE_EXTENSIONS = {".c", ".cc", ".cpp", ".cxx", ".h", ".hpp"}
+SOURCE_ROOTS = ("modules", "entry", "tests")
 UNSAFE_DIRECTORY_NAMES = {"external", "ffi", "platform", "unsafe"}
 VENDORED_DIRECTORY_NAMES = {"external", "third_party"}
 SAFETY_COMMENT = "// SAFETY:"
@@ -163,7 +163,7 @@ def source_files(root: Path) -> list[Path]:
             for path in directory.rglob("*")
             if (
                 path.is_file()
-                and path.suffix in SOURCE_EXTENSIONS
+                and path.suffix.lower() in SOURCE_EXTENSIONS
                 and not is_vendored(path.relative_to(root))
             )
         )
@@ -220,7 +220,7 @@ def main() -> int:
                         f"{relative.as_posix()}:{line_index + 1}: core must not throw explicitly"
                     )
 
-        if path.suffix == ".hpp":
+        if path.suffix.lower() == ".hpp":
             masked_content = "\n".join(code_lines)
             for line_number in missing_must_use_nodiscard_lines(masked_content):
                 violations.append(

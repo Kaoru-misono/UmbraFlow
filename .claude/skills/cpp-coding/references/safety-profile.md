@@ -182,6 +182,7 @@ The repository checks are:
 
 ```bash
 python scripts/fix_format.py --check
+python scripts/check_cpp_format.py
 python scripts/check_modules.py
 python scripts/check_safety.py
 ```

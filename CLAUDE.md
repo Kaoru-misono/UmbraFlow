@@ -55,6 +55,7 @@ Use `python` on Windows and `python3` on Linux or macOS for Python commands.
 
 ```bash
 python scripts/fix_format.py --check
+python scripts/check_cpp_format.py
 python scripts/check_modules.py
 python scripts/check_safety.py
 cmake --build --preset <host-debug-preset>

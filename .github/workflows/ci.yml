@@ -25,6 +25,8 @@ jobs:
           python-version: "3.13"
       - name: Check source normalization
         run: python scripts/fix_format.py --check
+      - name: Check C++ formatting
+        run: python scripts/check_cpp_format.py
       - name: Check module graph
         run: python scripts/check_modules.py
       - name: Check safe C++ boundaries

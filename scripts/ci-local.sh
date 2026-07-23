@@ -30,6 +30,7 @@ fi
 cd "$REPO_ROOT"
 
 "$PYTHON" scripts/fix_format.py --check
+"$PYTHON" scripts/check_cpp_format.py
 "$PYTHON" scripts/check_modules.py
 "$PYTHON" scripts/check_safety.py
 cmake --preset "$PRESET"

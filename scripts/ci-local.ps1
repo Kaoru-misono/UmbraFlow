@@ -23,7 +23,9 @@ function Assert-NativeSuccess {
 
 try {
     python scripts/fix_format.py --check
-    Assert-NativeSuccess "Format check" $LASTEXITCODE
+    Assert-NativeSuccess "Source normalization check" $LASTEXITCODE
+    python scripts/check_cpp_format.py
+    Assert-NativeSuccess "C++ format check" $LASTEXITCODE
     python scripts/check_modules.py
     Assert-NativeSuccess "Module check" $LASTEXITCODE
     python scripts/check_safety.py

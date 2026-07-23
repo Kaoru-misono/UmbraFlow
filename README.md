@@ -43,14 +43,19 @@ Run the repository-level safety checks without compiling:
 
 ```bash
 python scripts/fix_format.py --check
+python scripts/check_cpp_format.py
 python scripts/check_modules.py
 python scripts/check_safety.py
 ```
 
 `fix_format.py --check` validates every first-party UTF-8 text file. Run it
 without `--check` to normalize line endings, trailing whitespace, C++ tabs, and
-the final newline. `bash scripts/ci-local.sh` selects the host debug preset and
-Python 3 interpreter automatically.
+the final newline. `check_cpp_format.py` checks the member and assignment
+alignment rules on first-party C++ under `modules`, `entry`, and `tests`,
+excluding vendored code; pass `--fix` to apply them. It uses only the standard
+library and deliberately leaves line wrapping to the April2 convention, which
+is a judgment rule no formatter can express. `bash scripts/ci-local.sh` selects
+the host debug preset and Python 3 interpreter automatically.
 
 AddressSanitizer and static-analysis presets are available as `x64-asan` and
 `x64-analysis`. Linux additionally provides `linux-ubsan` and `linux-tsan`.
