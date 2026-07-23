@@ -166,6 +166,30 @@ if(TARGET ${PROJECT_NAME}_workbench_support)
             ${PROJECT_NAME}_workbench_support
             ${PROJECT_NAME}_image
     )
+
+    # Local-only real-screenshot regression. The fixture directory holds real
+    # game screenshots that are never committed, so the target is registered
+    # only when a developer has created it. Rerun cmake configure after adding
+    # tests/assets/real-regression for this target to appear.
+    if(EXISTS ${CMAKE_SOURCE_DIR}/tests/assets/real-regression)
+        cpp_add_test(
+            NAME test-real-regression
+            SOURCES
+                workbench/test-real-regression.cpp
+            LIBS
+                ${PROJECT_NAME}_workbench_support
+                ${PROJECT_NAME}_image
+        )
+        target_compile_definitions(test-real-regression PRIVATE
+            UF_REAL_REGRESSION_ROOT="${CMAKE_SOURCE_DIR}/tests/assets/real-regression"
+        )
+        # A distinct label keeps this out of the CI set; it must never run on CI
+        # machines, which have only synthetic fixtures.
+        set_tests_properties(test-real-regression PROPERTIES
+            LABELS "REAL"
+            TIMEOUT 600
+        )
+    endif()
 endif()
 
 find_package(Python3 COMPONENTS Interpreter QUIET)

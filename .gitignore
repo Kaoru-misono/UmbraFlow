@@ -34,3 +34,6 @@ __pycache__/
 *.pyc
 
 .reference/
+
+# Local-only regression fixtures: real game screenshots stay local; CI verifies only synthetic fixtures.
+tests/assets/real-regression/
