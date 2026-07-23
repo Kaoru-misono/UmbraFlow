@@ -13,6 +13,7 @@
 #include <format>
 #include <optional>
 #include <ranges>
+#include <span>
 #include <string>
 #include <utility>
 
@@ -174,6 +175,19 @@ namespace uf::annotation
         }
 
         return ResourceId{bytes};
+    }
+
+    auto ResourceId::fromBytes(
+        std::span<std::byte const, 16> bytes
+    ) noexcept -> ResourceId
+    {
+        auto storage = std::array<uint8, 16>{};
+        for (auto index = std::size_t{0}; index < storage.size(); ++index)
+        {
+            checkedAt(storage, index) = std::to_integer<uint8>(bytes[index]);
+        }
+
+        return ResourceId{storage};
     }
 
     auto ResourceId::toString() const -> std::string

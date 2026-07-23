@@ -8,6 +8,8 @@
 
 #include <doctest/doctest.h>
 
+#include <array>
+#include <cstddef>
 #include <limits>
 #include <optional>
 #include <string>
@@ -100,6 +102,26 @@ namespace uf::annotation
                 AutomationErrorKind::InvalidResource
             );
         }
+    }
+
+    TEST_CASE("resource identifiers construct verbatim from bytes and round-trip")
+    {
+        auto const rawBytes = std::array<std::byte, 16>{
+            std::byte{0x01}, std::byte{0x23}, std::byte{0x45}, std::byte{0x67},
+            std::byte{0x89}, std::byte{0xab}, std::byte{0xcd}, std::byte{0xef},
+            std::byte{0x01}, std::byte{0x23}, std::byte{0x45}, std::byte{0x67},
+            std::byte{0x89}, std::byte{0xab}, std::byte{0xcd}, std::byte{0xef},
+        };
+        auto const id = ResourceId::fromBytes(rawBytes);
+        CHECK(id.toString() == "01234567-89ab-cdef-0123-456789abcdef");
+
+        auto const reparsed = ResourceId::parse(id.toString());
+        REQUIRE(reparsed.has_value());
+        CHECK(*reparsed == id);
+
+        auto const zeroBytes = std::array<std::byte, 16>{};
+        auto const nil       = ResourceId::fromBytes(zeroBytes);
+        CHECK(nil.toString() == "00000000-0000-0000-0000-000000000000");
     }
 
     TEST_CASE("similarity threshold uses checked inclusive integer SAD boundaries")

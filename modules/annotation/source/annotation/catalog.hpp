@@ -9,6 +9,7 @@
 
 #include <array>
 #include <compare>
+#include <cstddef>
 #include <optional>
 #include <span>
 #include <string>
@@ -31,6 +32,11 @@ namespace uf::annotation
 
         [[nodiscard]]
         static auto parse(std::string_view value) -> Result<ResourceId>;
+
+        // Builds an identifier from its 16 raw bytes verbatim. Callers own the
+        // byte convention; this performs no validation of version or variant.
+        [[nodiscard]]
+        static auto fromBytes(std::span<std::byte const, 16> bytes) noexcept -> ResourceId;
 
         [[nodiscard]] auto toString() const -> std::string;
     };
