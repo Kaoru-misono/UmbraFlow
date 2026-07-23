@@ -1,5 +1,7 @@
 # Safe C++ Core and Repository Gates
 
+> 状态:已完成并归档(2026-07-24)——内容已吸收进 cpp-coding 技能资料与 `CLAUDE.md` 的安全和能力评估路由。
+
 ## Goal
 
 Give C++ high-value capabilities and ergonomic structures inspired by Rust
@@ -32,5 +34,5 @@ only after a demonstrated requirement.
 
 The research matrix and promotion criteria are recorded in
 the
-[`evaluate-core-capability`](../../.claude/skills/evaluate-core-capability/SKILL.md)
+[`evaluate-core-capability`](../../../.claude/skills/evaluate-core-capability/SKILL.md)
 skill.

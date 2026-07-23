@@ -1,6 +1,6 @@
 # Plans
 
-Active and recent implementation plans live here. This is the canonical plan
+Active implementation plans and retained authorities live here. This is the canonical plan
 location required by `CLAUDE.md` and `AGENTS.md`.
 
 ## Current authorities
@@ -12,22 +12,27 @@ location required by `CLAUDE.md` and `AGENTS.md`.
 - [P0-A Visual Annotation System & Data Model](2026-07-22-annotation-design.md) — developer-approved,
   S0-locked authority for authoring/runtime schemas, template and search geometry,
   page resolution, action evidence, and the P0-A workbench.
-- [Task-model decision package](2026-07-21-lua-task-model-decision-package.md) — research and arguments;
-  not authoritative when it conflicts with the authorities above.
 
 Active implementation plans (not authorities, executed when entering the phase):
 
+- [Engine architecture](2026-07-23-engine-architecture.md) — platform-free engine boundary and
+  `umbra-flow run` composition.
 - [Luau integration plan](2026-07-21-luau-integration-plan.md) — P0-B foundation: submodule +
-  `modules/script` layout, sandbox/cancellation recipe, with the two load-bearing vetoes
-  (lua_break cancel, sandbox nil-list) **empirically verified** on MSVC/0.730 via a spike.
+  `modules/script` layout; steps 1–2 are complete and sandbox/cancellation work remains open.
 - [P0-B Luau hardening ledger](2026-07-21-p0b-luau-hardening-ledger.md) — implementation-time
   checklist from two independent reviews of the Luau decision (cancel via lua_break, deep-freeze,
   determinism gaps); apply during P0-B.
-- [UI verification runbook](2026-07-20-ui-verification-runbook.md) — real-machine before/after
-  click acceptance procedure.
+- [Post-port Win32 robustness](2026-07-20-post-port-win32-robustness.md) — landed delivery-edge
+  hardening plus open occlusion, capture cancellation, and timeout-pairing work.
 
-The 2026-07-20 Lua grill is retained as historical input. It must not be used
-as the current language or Roadmap decision.
+Retained reference:
+
+- [M0 demo port deviations](2026-07-20-m0-demo-port-deviations.md) — frozen real-machine
+  acceptance reference pending parity and retirement.
+
+Completed plans are under [`docs/archive/plans/`](../archive/plans/), and closed
+reviews are under [`docs/archive/reviews/`](../archive/reviews/). Historical
+research there must not override the current authorities above.
 
 A plan should be self-contained: it should include enough research, file paths,
 implementation steps, and verification commands for another agent to execute it

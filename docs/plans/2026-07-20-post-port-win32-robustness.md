@@ -1,6 +1,7 @@
 # Post-port product-phase considerations: Win32 discovery/DPI robustness
 
-Status: deferred to the product-redefinition phase (NOT port-stage work).
+> 状态:进行中(2026-07-24)——已落地 S-3 PID-zero/API-failure 拒绝、S-5 zero-DPI 拒绝、capture FrameSlot accepting flag 与 WindowInstanceMarker、before-PNG 移出 observe→act 路径(`b18613a`)，以及 engine `act()` 投递边缘的取消检查和目标实例复验；遮挡检测、capture-wait 取消、stall-timeout 与 lease-age 配对仍开放。
+
 Source: controller 03a safety review panel, adjudicated 2026-07-20.
 
 The safety panel found no C++ UB and no leaked handles in the controller

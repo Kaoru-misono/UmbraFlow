@@ -1,11 +1,13 @@
 # Lua 任务模型 — 待敲定设计（grill 议程）
 
+> 状态:已完成并归档(2026-07-24)——Q1–Q10 已由 2026-07-21 grill-decisions 裁决，本文仅保留被取代的议程输入。
+
 > **历史文档,已被取代。** 当前产品方向见
-> [`2026-07-21-product-form-and-roadmap.md`](2026-07-21-product-form-and-roadmap.md),实现层裁决见
-> [`2026-07-21-lua-task-model-grill-decisions.md`](2026-07-21-lua-task-model-grill-decisions.md)。
+> [`2026-07-21-product-form-and-roadmap.md`](../../plans/2026-07-21-product-form-and-roadmap.md),实现层裁决见
+> [`2026-07-21-lua-task-model-grill-decisions.md`](../../plans/2026-07-21-lua-task-model-grill-decisions.md)。
 > 本文中的 Lua 5.4 + sol2、M0–M4 与待敲定措辞仅保留 grill 输入历史,不得作为当前实现依据。
 
-> 状态：设计草案，等开发者 grill。这是产品重定义阶段的承重墙——
+> 历史状态：设计草案，等开发者 grill。这是产品重定义阶段的承重墙——
 > 让 UmbraFlow 从"能跑的原语"变成"不重编译就能写任务的框架"。
 > 技术底座已定：Lua 5.4 + sol2；trace=JSONL、诊断=借 April2 logger、
 > 统一 sink 分发（见 memory umbraflow-logging-decision）。

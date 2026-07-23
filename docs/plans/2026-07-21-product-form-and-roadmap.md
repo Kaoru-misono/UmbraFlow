@@ -3,7 +3,7 @@
 > 状态:进行中,2026-07-21 grill 敲定方向层。这份是**产品方向权威**,取代旧
 > `/e/github/UmbraFlow/DESIGN.md` 的里程碑 M0–M4。实现层裁决见
 > [`2026-07-21-lua-task-model-grill-decisions.md`](2026-07-21-lua-task-model-grill-decisions.md)(D0–D10,存款性质)。
-> 决策弹药见 [`2026-07-21-lua-task-model-decision-package.md`](2026-07-21-lua-task-model-decision-package.md)。
+> 决策弹药见 [`2026-07-21-lua-task-model-decision-package.md`](../archive/plans/2026-07-21-lua-task-model-decision-package.md)。
 
 ## 背景:为什么重锚
 

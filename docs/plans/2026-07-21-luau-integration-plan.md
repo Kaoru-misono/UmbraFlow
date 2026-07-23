@@ -1,6 +1,6 @@
 # Luau 0.730 integration plan (P0-B foundation)
 
-> Status: draft for review, 2026-07-21 (autonomous overnight work, NOT committed).
+> 状态:部分完成(2026-07-24)——基础集成已于 2026-07-22 以 `84713e4` 落地并有后续修正；§6 步骤 1–2 已完成，3–5 仍开放。
 > The two load-bearing claims and the integration mechanics were **empirically
 > verified** on this machine (MSVC 14.44, Luau 0.730) with a throwaway spike;
 > results below are measured, not assumed. This plan is schema-independent P0-B
@@ -169,11 +169,11 @@ C function once the first binding lands. This is the same failure class as the
 2. ✅ **DONE.** `modules/script` with `Engine` (RAII `lua_State` via pImpl, named
    `create()` factory) + `runNumber(source, chunk)` that compiles + loads + runs on a
    fresh coroutine; pragma-wrapped includes under `source/script/ffi/`.
-3. Port the sandbox + cancellation recipe (§4) into `sandbox.*` / `cancellation.*`.
-4. Land the veto suite as real `tests/script/` doctest cases (the spike's 10 checks +
+3. ⬜ **OPEN.** Port the sandbox + cancellation recipe (§4) into `sandbox.*` / `cancellation.*`.
+4. ⬜ **OPEN.** Land the veto suite as real `tests/script/` doctest cases (the spike's 10 checks +
    the C-boundary case from §5) wired into CI. This is the P0 "6 一票否决" gate made
    executable and regression-guarded on every Luau bump.
-5. THEN (blocked on the annotation design) the recognizer/page host handles and the
+5. ⬜ **OPEN.** THEN add the recognizer/page host handles and the
    observe/act/wait engine loop.
 
 ## Open items / for the user

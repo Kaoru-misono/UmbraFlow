@@ -1,8 +1,8 @@
 # Luau 任务模型 — grill 裁决日志
 
 > 逐题记录开发者与 AI 在 grill 中敲定的**最终结论**(区别于决策包里的"建议")。
-> 决策弹药见 [`2026-07-21-lua-task-model-decision-package.md`](2026-07-21-lua-task-model-decision-package.md)。
-> 议程原件见 [`2026-07-20-lua-task-model-grill.md`](2026-07-20-lua-task-model-grill.md)。
+> 决策弹药见 [`2026-07-21-lua-task-model-decision-package.md`](../archive/plans/2026-07-21-lua-task-model-decision-package.md)。
+> 议程原件见 [`2026-07-20-lua-task-model-grill.md`](../archive/plans/2026-07-20-lua-task-model-grill.md)。
 > 状态:进行中。开始于 2026-07-21。
 
 ---

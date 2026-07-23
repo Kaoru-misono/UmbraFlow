@@ -1,29 +1,23 @@
-# UmbraFlow 任务模型 — 调研档案（理论地基 + 底料 + 论证）
+# UmbraFlow 命令式 Lua 任务模型 — 决策包（grill 前弹药）
 
-> **⚑ 状态(2026-07-21 修订)**：本文档已从"grill 前弹药"**瘦身为调研档案**。grill 已完成,Q1–Q10 的**最终裁决**见
-> [`2026-07-21-lua-task-model-grill-decisions.md`](./2026-07-21-lua-task-model-grill-decisions.md)(D0–D10),产品方向与 roadmap 见
-> [`2026-07-21-product-form-and-roadmap.md`](./2026-07-21-product-form-and-roadmap.md)。**那两份是当前权威**。
+> **状态**：这是 **grill 前的决策弹药，不是最终定稿**。本文档由一次多 agent workflow （5×ground 调研 + 10×grill 逐题裁决 + 3×synth 综合 + 1×critique 完整性审查）的结构化产出组装而成，用于支撑开发者对 Q1–Q10 的当面 grill。所有裁决建议均**待开发者拍板**，凡标注为 open / developerInputNeeded / grillTarget 的条目都尚未定稿。
 >
-> **本档保留什么**:§1(硬约束底座 / 加载时性质净损失分析,与脚本语言无关)、§2(四路联网调研一手结论 + 来源链接)、
-> §3(Q1–Q10 完整正反论证)。这些是长期引用价值——**理论地基和论证过程**,裁决日志只记结论不记推导。
+> **grill 议程原件**：[`2026-07-20-lua-task-model-grill.md`](2026-07-20-lua-task-model-grill.md)（Q1–Q10 草案立场 + 争议点原文，以及"需要开发者补充"三条）。本决策包是对该议程每一题的弹药扩写。
 >
-> **已删除什么**(内容已被取代,完整旧版留档 [`docs/archive/…FULL.md`](../archive/2026-07-21-lua-task-model-decision-package.FULL.md)):
-> §4 框架 API 骨架、§5 能力锚定、§6 旧 roadmap 草案、§7 完整性审查、§8 待解锁清单 —— 已被上述两份权威文档吸收。
+> **四条灵魂约束（不可退让）**：确定性、可追踪、严格后台、核心零游戏分支。
 >
-> **⚠ 口径时效**:本档写于选定 **Luau** 之前,文中 `sol2`/`Lua 5.4`/`M0–M4` 均为旧口径;技术底座现为 **Luau**、
-> 里程碑现为 **P0–P3**。读 §1/§2 的**约束与调研**不受影响(与语言无关);读 §3 的**裁决建议**以 D0–D10 为准
-> (sol2 专属 API 已作废,机制结论多数保留并已按 Luau 传导)。
->
-> **四条灵魂约束(不可退让)**:确定性、可追踪、严格后台、核心零游戏分支。
-> **grill 议程原件**:[`2026-07-20-lua-task-model-grill.md`](./2026-07-20-lua-task-model-grill.md)。
+> **背景**：产品 UmbraFlow 是通用视觉游戏自动化框架，正把任务模型从"显式状态机"换成命令式 Lua 5.4 + sol2。
 
 ## 目录
 
-1. [硬约束底座:换命令式脚本丢失了什么、DESIGN 原本靠什么、怎么补偿](#1-硬约束底座)
-2. [联网调研要点(四路,含来源链接)](#2-联网调研要点)
-3. [Q1–Q10 逐题正反论证](#3-q1q10-逐题裁决)（⚠ 裁决建议以 D0–D10 为准，此处留论证过程）
-
-> 原 §4–§8(框架骨架/能力锚定/roadmap/审查/清单)已删除 → 见 roadmap 与 D0–D10 两份权威文档。
+1. [硬约束底座：换命令式 Lua 丢失了什么、DESIGN 原本靠什么、怎么补偿](#1-硬约束底座)
+2. [联网调研要点（四路）](#2-联网调研要点)
+3. [Q1–Q10 逐题裁决](#3-q1q10-逐题裁决)
+4. [框架设计骨架（synth）](#4-框架设计骨架)
+5. [产品能力锚定（synth）](#5-产品能力锚定)
+6. [Roadmap 草案（synth）](#6-roadmap-草案)
+7. [完整性审查（critique）](#7-完整性审查)
+8. [待 grill 解锁清单（按优先级）](#8-待-grill-解锁清单)
 
 ---
 
@@ -138,11 +132,6 @@ DESIGN §3.3/§8.6 的"加载时失败原则"是整份设计对"加载时可证�
 - **对 Lua 迁移的启示**：必须重谈 M1 退出契约为'已声明资源在加载期校验+可静态获知的引用被检查;完整可达性/终止性下沉为运行时预算'。ADR-001 需显式标记被取代并写新 ADR,论证 Lua 如何重新赢回'可验证/易回放'(回放靠 §ADR-006 的 Exploratory 帧复核仍在,可验证性是主要牺牲项)。
 
 #### ADR-013 在本文档缺失(§24)
-
-> **【已解 2026-07-21】** 此条基于旧 DESIGN v0.4 写就。现 `/e/github/UmbraFlow/DESIGN.md` 为
-> v0.5(963 行,commit bb267c3,AI 所写),§24 已含 ADR-013(随机弹窗用任务级 interrupt),与 grill
-> 裁决 D6 完全一致。不存在"待写的新 ADR",下文"grill 前必须澄清"已作废,详见
-> [`2026-07-21-lua-task-model-grill-decisions.md`](2026-07-21-lua-task-model-grill-decisions.md) D6。
 
 - **约束**：本 DESIGN.md v0.4 的 §24 只含 ADR-001…ADR-012(ADR-011 严格后台不降级、ADR-012 范围缩容),其后直接进入 §25,不存在 ADR-013。任务/grill 议程却引用 'ADR-001~013'。
 - **对 Lua 迁移的启示**：grill 前必须澄清:要么 ADR-013 在更新版 DESIGN 中(本文件未含),要么 grill 议程预设了一条待写的新 ADR(极可能就是'采用命令式 Lua 任务模型'本身)。不能把 ADR-013 当作本文档已有的权威条款引用。
@@ -967,3 +956,865 @@ Lua 是 startTask 之后的内部实现细节，CLI(及未来 GUI)不感知 Lua(
 1) 第一条真实日常任务的**执行频率**：分~时级则进程启动成本(建 state/sandbox/能力协商/Controller 连接)可忽略，no-daemon 无痛；若存在秒级高频轮询需求，需重新评估(但现行 §2.3 已把常驻列为不做)。2) M4 托盘 GUI 的形态定位：是『顺序发火 UI，仍一次一 run』(本裁决前提，零架构债)，还是『真正的并行调度器』——后者会与 §9.1 并发模型和确定性灵魂约束正面冲突，须重新谈判。此为 product 方向，须开发者拍板。3) 将来跨游戏顺序运行时，是否愿意为『每 run 重建 Controller 连接的开销』付代价，还是届时优先做常驻保持连接——属 M4 优化取舍，非当前决定。这三条我不替开发者假设。"
 
 ---
+
+## 4. 框架设计骨架
+
+> 直接搬运 synth（framework-design）。
+
+# 框架设计骨架:命令式 Lua 任务模型
+
+> 本章综合 Q1–Q10 裁决,给出命令式 Lua + sol2 任务模型的**承重结构**:数据流、`bot` API 面、端到端示例、宿主模块边界。
+> 四条灵魂约束(确定性 / 可追踪 / 严格后台 / 核心零游戏分支)在每一节以设计不变式形式落地,而非口号。
+> 关键事实:失效模型的原语**已在 `modules/domain` 中存在**(`Detection`、`ObservationLease::validate(...)`、`g_defaultMaxActionFrameAge=750ms`、`TargetGeneration`、`AutomationErrorKind`),
+> 严格后台守卫**已在 `modules/controller` 中存在**(`g_forbiddenBackgroundApis`、每个坐标动作强制带 `ObservationLease`),
+> 识别取消钩子**已在 `modules/vision` 中存在**(`SadSearchPoll`)。Lua 模型是对这些原语的**重新绑定**,不是重写。
+
+---
+
+## 1. 整体数据流:一个观察→动作周期
+
+### 1.1 三方角色
+
+| 角色 | 载体 | 职责 | 绝不做 |
+|------|------|------|--------|
+| **脚本** | Lua 协程(`sol::thread` 独立栈) | 表达任务决策逻辑:查哪个识别器、命中后做什么动作 | 不碰墙钟/随机/IO、不缓存坐标、不写取消代码、不手造裸坐标 |
+| **绑定层** | C++ `bot` userdata(sol2 绑定) | 把每次 observe/act 翻译成 Controller 端口调用;**自动 emit trace**;附着/校验租约;`yield` 出请求 | 不含任何游戏名判断、不含前台/全局注入 API(能力即缺席) |
+| **宿主调度** | C++ resume 循环(单线程) | 在 resume 之间检查 取消/暂停/预算;推进逻辑时钟;重装指令钩子;driving Controller 端口 | 不把 process exit 当作销毁 run 的唯一路径 |
+
+三者在**同一 OS 线程**上串行(§9.1、rr 确定性模型)。Lua thread 是 VM 协程非 OS 线程;跨 `std::thread` 访问同一 `lua_State` 被结构性排除。
+
+### 1.2 一个周期的时序
+
+```
+脚本(协程)              绑定层(bot)                 宿主调度循环                Controller 端口
+   |                        |                            |                          |
+   | frame = bot:capture()  |                            |                          |
+   |----------------------->| yield{op=capture}          |                          |
+   |                        |--------------------------->| check cancel/pause/budget|
+   |                        |                            | advance logical_tick     |
+   |                        |                            | gen := gen.next()        |------> captureFrame()
+   |                        |                            |<-------------------------|<----- Frame{gen,transform}
+   |                        |  emit FrameCaptured{seq,    |                          |
+   |                        |   elapsed_ns,gen,hash}      |                          |
+   |<-----------------------| resume(Frame userdata)     |                          |
+   |                        |                            |                          |
+   | d = frame:find(home)   |  纯函数求值(vision SAD),   |                          |
+   |----------------------->|  emit Recognition{gen,ver, |  (find 不推进帧,不 yield) |
+   |<-----------------------|   score,matched}           |                          |
+   |                        |  Detection 内挂 lease{gen} |                          |
+   |                        |                            |                          |
+   | bot:click(d)           |                            |                          |
+   |----------------------->| yield{op=click, lease=d.lease}                        |
+   |                        |--------------------------->| check cancel/pause       |
+   |                        |  emit ActionStarted(before帧)                         |------> deliver(action, lease)
+   |                        |                            |                          |  lease.validate(sess,gen,
+   |                        |                            |                          |    frameId, now)  ← fencing
+   |                        |                            |  gen := gen.next()       |<----- Status ok / StaleObservation
+   |                        |  emit ActionCompleted(after)|  作废所有存活 Detection  |
+   |<-----------------------| resume(ok)                 |                          |
+   |                        |                            |                          |
+   | -- 旧 frame/d 现已 stale;下一步必须重新 capture --                            |
+```
+
+### 1.3 设计不变式(守灵魂约束的结构手段)
+
+1. **generation 是失效主判据、fail-closed**(Q2 修正一)。`Detection` 携带 `frame_generation`;单调,每次 `capture()` 与每次输入动作后 `TargetGeneration::next()`。校验用 `ObservationLease::validate(...)`,**下沉到最靠近副作用的 Controller `deliver` 层**(Kleppmann fencing:generation 一路带到注入点原子校验),不在 Lua/宿主中间层做"最终"校验。
+2. **逻辑预算是超时兜底、不参与"帧是否换了"**(Q2 修正一;EBR 底料)。不读墙钟:`max_action_frame_age`(§8.3 默认 750ms,项目只能调短,复用现存 `clampMaxActionFrameAge`)重定义为逻辑 tick 数;暂停期间逻辑时钟冻结。墙钟 `ts` 仅作 trace 诊断字段,回放按 `seq`/`logical_tick` 驱动。
+3. **动作后强制作废 + 强制重 capture**(Q1、§26 规范循环)。`click` 成功 → generation++ → 所有存活 `Detection`/`Frame` 变 stale → 复用即 raise `StaleObservation`,而非静默点击。兜 TOCTOU Type II 只能靠"每次 act 前强制 capture"这条铁律。
+4. **脚本无法忘记埋点**(§3.2)。FrameCaptured / Recognition / ActionStarted / ActionCompleted 全由绑定层在调用/抛出的瞬间 emit,先于脚本可能的 `pcall`。脚本吞错也无法从 trace 抹除失败。
+5. **危险能力即缺席**(Q9、§6.4)。抢焦点/全局注入/`os.execute` 路径**根本不绑定进 `lua_State`**。脚本即便有 bug 或恶意也降级不了——这是相对 NKAS 的不可退让差异。
+
+---
+
+## 2. `bot` 句柄 Lua API 面草案
+
+### 2.0 沙箱全局环境(Q9)
+
+每个 task run 一个全新 `lua_State` + 全新 `sol::environment`(§9.4 无 daemon)。可达全局**只有**:
+
+| 暴露 | 内容 | 消毒 |
+|------|------|------|
+| `bot` | 唯一世界通道(下列全部方法) | — |
+| `string` | 拷贝(非引用) | 移除 `string.dump` |
+| `table` | 拷贝 | 保留 `insert/remove/concat/sort/unpack` |
+| `math` | 拷贝 | **移除 `random`/`randomseed`**;超越函数保留但平台性记入 compatibility |
+| `pcall`/`error`/`assert`/`select`/`type`/`tostring`/`ipairs`/`pairs` | 保留 | `pairs` 保留但 lint 警告"依赖顺序即 bug",平局裁决用声明顺序(§3.1) |
+| **不给** | `io` `os` `package` `require` `dofile` `loadfile` `load` `loadstring` `collectgarbage` `debug` `coroutine` `setfenv`/`getfenv` `newproxy` | 全部逃逸/非确定通道(SandBoxes 四大向量) |
+
+加载三步:`load_mode::text`(挡 bytecode)+ 首字节 `!=0x1B` 双保险 → `env.set_on(chunk)` → `env["_G"]=env`(自引用,绝不指向真实 `_G`)。
+
+**错误层级(贯穿全表,Q4):**
+- **Tier A 预期缺席** — 返回 `nil`/`false`,不抛,不算 `AutomationError`(正常控制流)。
+- **Tier B 可恢复异常** — 抛结构化 table `error({kind=..., retryable=..., module=..., message=...})`,脚本 MAY `pcall`。
+- **Tier C 宿主控制信号** — Cancelled / 全局预算耗尽 / 指令预算超限 / InternalInvariant,**不可被脚本 `pcall` 捕获**(命中后每 1 指令重装钩子再抛,越过任何 `pcall`)。
+
+### 2.1 确定性 helper
+
+| 方法 | 签名 | 语义 | 错误 | trace |
+|------|------|------|------|-------|
+| `bot:now()` | `-> integer` | 宿主单调逻辑时钟(tick 计数);暂停冻结。**替代** `os.time/os.clock` | — | — |
+| `bot:random(m?, n?)` | `-> integer` | 宿主确定性种子 RNG;**替代** `math.random`。种子入 trace 供回放 | — | 种子在 run 起点事件记录 |
+| `bot:pairs_sorted(t)` | `-> iterator` | 按 key 排序的确定性遍历。**替代**依赖表地址序的裸 `pairs` | — | — |
+| `bot:log(level, msg, fields?)` | `-> nil` | 结构化诊断,经统一 sink → April2 logger + trace | — | `ScriptLog{level,msg,fields}` |
+| `bot.input.<key>` | 只读字段 | TaskInput(来自 CLI),边界已强制转 `boolean/integer/string/duration`(§8.5) | 读未声明 key → nil | 在 run 起点快照 |
+
+### 2.2 观察类(Q1)
+
+| 方法 | 签名 | 语义 | 错误 | yield/trace |
+|------|------|------|------|-------------|
+| `bot:capture()` | `-> Frame` | 取一帧只读 userdata;generation `+1`。**唯一推进帧的调用** | Tier B `CaptureStalled`/`CaptureUnavailable`;Tier C 取消 | **yield 点**;emit `FrameCaptured{seq,elapsed_ns,gen,frame_hash}` |
+| `Frame:find(recognizer)` | `-> Detection\|nil` | 对**本帧**单次确定性求值(vision SAD),无重试。命中返回带租约的 `Detection`;未命中 `nil` | **Tier A** 未命中=nil;旧帧再用 → Tier B `StaleObservation` | 不 yield(帧固定);emit `Recognition{gen,recognizer_version,score,matched}` |
+| `Frame:match(list)` | `-> label, Detection\|nil` | 多识别器有序决策 helper。严格按**声明顺序**求值、平局按声明顺序裁决(§3.1),把确定性平局关进绑定层 | Tier A 全不命中=`nil,nil` | emit 每识别器 `Recognition` + `CaseMatched{label}` |
+| `bot:wait(recognizer, opts)` | `opts={timeout,poll} -> Detection` | 轮询循环,**每轮重 capture**(generation 递增),迭代间 yield;命中即返回 | **Tier B** 超时 → raise `Timeout` | **每轮 yield**(§9.2 取消检查点) |
+| `bot:exists(recognizer)` | `-> Detection\|nil` | 单帧一次(内部 capture 一帧)、不抛 | Tier A | yield 一次 |
+
+`recognizer` 只接受 `bot.templates.<name>`(Q3 opaque `RecognizerHandle`);传字符串/临时表 → Tier B `InvalidResource`。
+
+### 2.3 动作类(Q2 / §5.5 白名单)
+
+所有坐标动作:把 `detection.lease` 一路透传到 Controller `deliver` 层原子校验;成功后 generation++ 作废所有存活观察;emit before/act/after 三态。
+
+| 方法 | 签名 | 语义 | 错误 |
+|------|------|------|------|
+| `bot:click(detection)` | `-> nil` | 单击 detection 中心。租约失效即抛 | Tier B `StaleObservation`(retryable) / `ActionRejected` / `ControllerDisconnected` |
+| `bot:long_press(detection, ms)` | `-> nil` | 长按 | 同上 |
+| `bot:move_pointer(detection)` | `-> nil` | 移动指针到 detection | 同上 |
+| `bot:swipe(from_detection, to_detection)` | `-> nil` | 滑动。**二者必须来自同一帧 generation**,否则 raise `StaleObservation` | 同上 |
+| `bot:key_press(keyname)` | `-> nil` | KeyPress(用 `actionGeneration` 校验,无需 detection) | Tier B `ActionRejected` |
+| `bot:key_down/up(keyname)` | `-> nil` | KeyDown/KeyUp;宿主在取消/暂停/关闭时 best-effort 补 Up | 同上 |
+| `bot:input_text(str)` | `-> nil` | InputText。**trace 默认脱敏**不写原文(§10.3),绑定层强制 | Tier B `ActionRejected` |
+| `bot:sleep(ms)` | `-> nil` | Wait 动作;yield;500ms 内可被取消 | Tier C 取消 |
+| `bot:capture_artifact(name)` | `-> nil` | CaptureArtifact:**唯一允许的文件写**,只落 Engine 配置的运行目录 | Tier B `InvalidResource`(越界路径) |
+| `bot:fail(kind, msg)` | `-> !`(不返回) | 显式判 run 失败(替代状态机 StopTask 的失败态) | 抛映射到 `AutomationErrorKind` |
+
+> `SetVariable/CallTask/Return/StopTask` 退化为 **Lua 原生**:`local`、函数调用、`return`、`error`——不再是绑定动作(§5.5)。正常结束 = 任务函数 `return`。
+
+### 2.4 中断(Q6)
+
+| 方法 | 签名 | 语义 | 错误 |
+|------|------|------|------|
+| `bot:on(recognizer, handler, opts)` | `opts={max_hits,on_exhausted="fail"\|"stop"} -> InterruptHandle` | 注册任务级 interrupt。宿主在**每次 `capture()` 周期**按注册顺序 first-match 扫描;命中→执行 handler(期间挂起 interrupt 检查、禁重入)→handler 后帧已失效→重抓 drain 到不动点 | 超 `max_hits` → emit `InterruptBudgetExceeded`;`fail` 则 raise、`stop` 则注销并继续 |
+| `bot:off(handle)` | `-> nil` | 注销 | — |
+
+handler 只经 `bot` 碰世界(Q9);handler 内动作遵租约;handler 耗时计入触发动作预算。trace 事件族:`InterruptMatched`/`InterruptHandlerStarted`/`Completed`/`Failed`/`InterruptBudgetExceeded`(带 `interrupt_id`+`hit_count`)。
+
+### 2.5 子任务(Q7)
+
+| 方法 | 签名 | 语义 | 错误 |
+|------|------|------|------|
+| `bot:call_subtask(name, inputs)` | `inputs=table(标量) -> ok, outputs` | 一步式:按 name 从项目包 `scripts/<name>.lua` 内容哈希加载 → `env.set_on` 绑**同一沙箱 env** → 缓存 chunk(`package.preload` 惯用法);显式输入表→显式输出(仅 4 类标量) | 未声明名 → fail-closed `InvalidResource`;环依赖 → `InvalidResource`(v1 禁递归) |
+| `bot:load_subtask(name)` | `-> callable` | 返回可调用句柄(惰性) | 同上 |
+
+跨边界只允许 `boolean/integer/string/duration`(§8.5);`Detection`/`Frame` 句柄**禁止跨子任务传递**,检测到 → raise。同 VM 内普通 Lua 函数递归由**运行时调用深度守卫**兜底(阈值待定,见 §5)。trace 自动 emit `subtask_enter`/`subtask_exit` span,子流程 observe/act 带 parent span id(合成状态机 CallTask/Return 等价结构)。
+
+---
+
+## 3. 端到端示例任务脚本
+
+`scripts/farm_dream.lua` —— 体现租约、弹窗 interrupt、超时、子任务:
+
+```lua
+-- 项目包: scripts/farm_dream.lua
+-- 识别器(bot.templates.*)与基准分辨率在 project.toml 声明,不在此内联(Q3/Q8)
+
+-- 弹窗 interrupt:重连弹窗一出现就点掉,最多 3 次,超限判 run 失败(Q6)
+bot:on(bot.templates.reconnect_popup, function(ctx)
+    bot:log("info", "reconnect popup handled")
+    bot:click(ctx.detection)          -- handler 内动作同样走租约
+end, { max_hits = 3, on_exhausted = "fail" })
+
+local rounds = bot.input.rounds       -- TaskInput,边界已强制为 integer
+
+for i = 1, rounds do
+    -- wait 内部每轮重 capture + yield;5s 内没等到 Home 就 raise Timeout(Tier B)
+    local home = bot:wait(bot.templates.home, { timeout = 5000, poll = 300 })
+    bot:click(home)
+    -- click 成功后 generation++ ⇒ home 已 stale,复用会 raise StaleObservation
+
+    -- 子任务复用:领取奖励,显式输入输出、独立 trace 归属(Q7)
+    local ok, out = bot:call_subtask("collect_rewards", { greedy = true })
+    if not ok then
+        bot:log("warn", "collect_rewards skipped this round")
+    end
+
+    -- 显式 capture 一帧,同帧多 find(Q1 Model B)
+    local frame = bot:capture()
+    local label, det = frame:match({
+        bot.templates.result,          -- 声明顺序即平局裁决顺序(§3.1)
+        bot.templates.result_fail,
+    })
+
+    if label == "result" then
+        bot:click(det)                 -- det 的租约绑定本 frame 的 generation
+    elseif label == "result_fail" then
+        -- 可恢复:提取标量而非保留 Detection/Rect,跨 step 只传业务标识(§5.3/§8.5)
+        bot:log("warn", "round failed", { round = i })
+    else
+        bot:fail("RecognitionFailed", "neither result screen appeared")
+    end
+
+    -- 规范循环:必须重新 capture 才能继续对世界下手(§26)
+    local reset = bot:wait(bot.templates.reset, { timeout = 3000 })
+    bot:click(reset)
+end
+-- 正常结束 = return(退化的 StopTask);取消/预算超限是 Tier C,脚本无法拦
+```
+
+> 脚本里**没有一行取消/暂停/埋点/时钟代码**:取消由宿主在 `wait`/`capture`/`click` 的 yield 点注入(Q5);trace 由绑定层自动 emit;时间只有 `bot:now()`。纯 Lua 死循环由指令计数钩子 500ms 内硬中断。
+
+---
+
+## 4. 宿主执行引擎的模块边界
+
+### 4.1 更新后的模块图(保持 acyclic,`core` 仍是无 link 依赖的叶子)
+
+```text
+core                      (kernel;无 link 依赖;零 Lua、零游戏)
+domain      -> core       (Frame/Detection/ObservationLease/TargetGeneration/AutomationError
+                           + 新增 IController 端口抽象)
+vision      -> core, domain          (SAD 识别;SadSearchPoll 取消钩子)
+script      -> core, domain, vision  (新增:sol2 沙箱 + bot 绑定 + 协程调度 + 指令钩子
+                                       + interrupt 注册表 + 子任务加载器;私有 link: lua5.4 sol2)
+engine      -> core, domain, vision, script  (新增:Engine API + run 生命周期 + 能力/分辨率门
+                                               + 项目/manifest 加载 + trace sink 分发)
+controller  -> core, domain          (Windows;实现 IController 端口:WGC 截图 + 严格后台注入 + 审计)
+entry/cli   -> engine, controller    (组合根:注入具体 Controller,跑一个 run)
+```
+
+**关键决策:`IController` 端口放 `domain`**。它只引用 domain 类型(`Frame`/`Detection`/`ObservationLease`/`Point<ClientSpace>`/`AutomationError`),天然属于平台无关领域层。这样 `controller`(实现)与 `script`/`engine`(调用)都只依赖已有的 `domain`,图保持 acyclic,`script` 运行时保持平台无关且可被 Fake Controller 替换(满足"测试确定性、离线"硬约束)。
+
+### 4.2 各模块落地职责
+
+| 模块 / 路径 | 承担的裁决 | 关键内容 |
+|-----------|-----------|---------|
+| **`modules/domain/.../port/`**(新增) | Q2/Q10 端口 | `class IController`(纯虚):`captureFrame() -> Result<Frame>`、`deliver(Action, ObservationLease) -> Status`、`refreshTarget() -> Result<DeliveryTarget>`。复用现存 `ObservationLease::validate(...)` 作为 deliver 内的 fencing 校验 |
+| **`modules/script/.../sandbox/`**(新增) | Q9 | 建空 `sol::environment`、逐库拷贝消毒、`load_mode::text`、`env.set_on`;白名单是唯一策略 |
+| **`modules/script/.../bot/`**(新增) | Q1–Q7 | `bot` userdata 绑定;`RecognizerHandle` 只读表;每次 observe/act 自动 emit trace + 附/校验租约 + `yield` 出请求 |
+| **`modules/script/.../coroutine/`**(新增) | Q5 | `sol::thread::create` + resume 循环;`status`-first(#883);跨帧存活用 `main_` 引用防 GC;`lua_sethook(LUA_MASKCOUNT,N)` 每次 resume 重装;取消 `std::atomic<bool>` |
+| **`modules/script/.../interrupt/`**(新增) | Q6 | 宿主控制的**有序**注册表;每 capture 周期 first-match 扫描;禁重入;drain-to-fixpoint |
+| **`modules/script/.../subtask/`**(新增) | Q7 | `package.preload` 惯用法;名字→内容哈希寻址;依赖图检环;调用深度守卫 |
+| **`modules/engine/.../lifecycle/`**(新增) | Q10 | `loadProject/startTask/pause/resume/cancel/queryTask/subscribeEvents`(ADR-008 签名不变);**run 生命周期 == lua_State 生命周期**,与 Engine 生命周期解耦;一 run 一 `luaL_newstate`、用后 `lua_close` |
+| **`modules/engine/.../gate/`**(新增) | Q8 | 两层门,**均在建 `lua_State` 之前**:Layer A 加载期静态校验 project.toml(base_resolution/scaling_mode/capabilities/模板集合/ROI 落界);Layer B run 前 fail-closed 查 live rect/DPI/exe_sha256 比指纹 → `Result<CoordinateTransform>`。M0 只允许 `resolution_policy=strict`(恒等变换),留 `CoordinateTransform` 完整数据模型(**复用现存 `uf::CoordinateTransform`**)作自适应挂点 |
+| **`modules/engine/.../trace/`**(新增) | Q10/§10 | 从 `entry/m0-demo` 提升 `IJsonlSink`/`JsonlLog`/`LogLine` 原型;固定信封 `{ts, run_id, event, data}`;写入即 flush;可选 `prev_hash/curr_hash` 哈希链(失败/租约失效不可事后抹除) |
+| **`modules/controller`**(现存,加适配) | §6.4 严格后台 | 实现 `IController`;复用现存 `g_forbiddenBackgroundApis`、`click(...,ObservationLease,...)`、`AuditLog`。deliver 内 `lease.validate(...)` 是最后一道 fencing |
+| **Fake Controller**(`tests/` 或 `modules/engine/.../testing/`) | 确定性/离线测试 | `IController` 的确定性实现:喂 `vision/synthetic` 合成帧、把 deliver 记入内存审计缓冲而非 Win32。M0 场景与所有 offline 测试跑在它上面(呼应现存 m0-demo 的 file-queue `input-agent` 精神) |
+| **浮层 / GUI 调试窗**(未来,M4,`entry/` 外) | §9.4 | `subscribeEvents` 的**只读消费者**;core/runtime 零 UI 依赖,不感知 Lua |
+
+### 4.3 core 零游戏分支守点(§2.4)
+
+- `core` 保持纯 kernel:不引入 Lua/sol2、不引入任何游戏名。
+- `script` 绑定层不得内置任何游戏专用 helper 或弹窗名判断;`bot.templates.*`、interrupt、subtask 都是**通用机制**。
+- 所有游戏差异只存在于项目侧:`scripts/*.lua` + `project.toml`/`compatibility.toml` + `assets/templates/`(§11、§27 分工表)。
+- 守卫由现存 `scripts/check_modules.py`(强制 `core` 无 link 依赖 + 图 acyclic)+ `check_safety.py` 延伸检查。
+
+---
+
+## 5. 待 grill 敲定(引用对应 Q 的 developerInputNeeded)
+
+以下**不替开发者假设**,必须在 grill 拍板:
+
+| 编号 | 待定项 | 卡点 |
+|------|--------|------|
+| **Q1** | ① 是否把 raw `frame:find` 暴露给脚本,还是只给 `wait/exists/match` 便利封装、裸 `capture` 藏进宿主(人体工学 vs 控制面)② `max_action_frame_age` 实际值(默认 750ms,按目标帧率定)③ 一次决策典型查几个识别器——验证"同帧多查"效率前提 | 依赖**第一条真实日常任务的决策结构**;文档 132–135 行标注真机现停在角色详情页、非 §26 起点 |
+| **Q2** | ① `max_action_frame_age` 改逻辑预算后单位:"N 个 tick" 还是保留"单调 ms + generation 双轨" ② 租约失效是否允许脚本受控重试(可恢复)还是一律判 run 失败 ③ 是否强制"动作后再观察确认"闭环兜 TOCTOU Type II(每动作多一次 capture 成本) | 依赖第一条真实任务里 stale 频率 |
+| **Q4** | ① 未捕获 `StaleObservation` 是否绑定层内建小重试 N 次后再判失败,还是立即失败全交脚本 ② 向脚本暴露原生 `pcall` 还是只给受控 `bot:try(fn)`(保证不能捕获 Tier C)③ 各 kind 的 `retryable` 默认值 ④ `SOL_EXCEPTIONS_SAFE_PROPAGATION` 构建标志 | ①③依赖真机实测;④由构建负责人拍 |
+| **Q5** | ① 指令预算 `N` 与全局 `max_runtime`/最大 slice 数标定 ② pause 是否 M0 必需还是后置(M0 裸 demo 可能只需 cancel+timeout)③ "500ms 内响应取消"是否 M0 硬指标、是否含纯 Lua 死循环中断 ④ Ctrl-C 与 `Engine.cancel` 是否共用取消路径 ⑤ per-op 分层超时 M0 全需还是子集 | ①依赖第一条真实任务 |
+| **Q6** | ① 是否**新写 ADR-013『任务级 interrupts』**并作废对现有 ADR-013 的引用(v0.4 只到 ADR-012)② `max_hits` 默认值 + `on_exhausted` 默认(fail/stop)③ interrupt 仅 run 作用域还是可按 step 启停 ④ handler 能否调子任务、允许多深 ⑤ 命中弹窗能否致命中止主流程 ⑥ 第一条任务具体有哪些弹窗 | ①是**必须先厘清的 ADR 结构问题** |
+| **Q7** | ① `§8.5 v1 禁递归`对同 VM 内普通 Lua 函数递归是否强制:加**调用深度守卫**(阈值?)还是带论证放宽 ② 跨文件复用是否 M0/M1 就需要(YAGNI 可推迟)③ 子任务输出:单返回值 vs 多标量表 ④ 子任务命名是否需命名空间/版本标记 | ①是纯 Lua 天然违反、必须拍的点 |
+| **Q8** | ① 分辨率自适应优先级(M0 strict + 恒等缝,自适应作后置第一模块 vs 现在就做)② 目标游戏实际 `scaling_mode`(fit/fill/stretch/none)③ DPI 策略是否 M0 就归一 ④ 标准 base 分辨率(1920×1080?)⑤ M0 场景/第一条任务是否恒在 base 分辨率 | 全依赖**目标游戏实测事实 + M0 场景** |
+| **Q9** | ① **信任模型**:项目脚本仅可信作者还是可能第三方(决定 `string.rep/format` 是否需显式上限防内存炸弹)② 是否暴露 `bot:random`(反检测抖动需要?种子策略)③ 超越函数 M0 是否要求跨平台位级复现 ④ M0 是否需 `load_subtask` | ①是最需先定的**前提** |
+| **Q10** | ① 第一条任务执行频率(时级则进程启动成本可忽略;秒级高频需重评)② M4 托盘 GUI 定位:"顺序发火 UI 仍一次一 run"(零架构债)还是"真正并行调度器"(与 §9.1 冲突,须重谈)③ 将来跨游戏顺序运行是否为"每 run 重建 Controller 连接"付代价 | ②是 **product 方向**,须开发者拍 |
+
+### 5.1 跨 Q 的三条元决策(建议 grill 优先解决)
+
+1. **ADR-013 归属**([底料 ADR-013 缺失]):DESIGN v0.4 §24 只到 ADR-012,不存在 ADR-013。Q6 草案却把它当既有条款引用。**极可能 ADR-013 就是『采用命令式 Lua 任务模型』本身**。必须先确认:是新写这条主 ADR,还是主 ADR 另编号、interrupts 单列。**在澄清前不能把 ADR-013 当权威条款引用。**
+2. **ADR-001 被取代的论证**([里程碑冲突]):ADR-001(显式状态机,理由:直观/可验证/易回放)正是被推翻的决策。新 ADR 须论证 Lua 如何重新赢回"可验证/易回放"——回放靠 §ADR-006 Exploratory 帧复核 + 全量 trace 重演决策(rr 弱确定性模型:同输入→同决策,**非重跑游戏必同果**),可验证性是主要牺牲项。
+3. **M1 退出契约重措辞**([里程碑冲突]、§22 line723):`所有状态和资源引用可在加载时验证` 与命令式 Lua 直接冲突。建议改为:**"已声明识别/子任务资产在加载期校验存在+哈希;可静态获知的引用 fail-closed;完整可达性/终止性下沉为运行时预算(max_runtime + 指令计数硬中断)+ lint(best-effort)"**。可达性/终止性是**净损失**,须在 grill 显式承认,不假装无损。
+
+---
+
+## 5. 产品能力锚定
+
+> 直接搬运 synth（capability-anchoring）。
+
+# 产品能力锚定
+
+> 基线：DESIGN v0.4（897 行）、TODO 2026-07-20、Lua 任务模型 grill Q1–Q10 裁决。
+> 目的：把 TODO §3（框架层）/§4（能力模块）的 10 项能力逐项锚定为**框架核心能力**或**可选能力模块**，绑定四条灵魂约束，划清零游戏分支红线，给出可验证的验收标准与非目标边界。
+
+## 0. 锚定原则与两处必须先澄清的事实
+
+**锚定标准（单一判据）**：一项能力若是**四条灵魂约束的物理载体**，或处在 `capture→find→act→recapture` 任务闭环的**必经环节**上 → 锚为**核心**；若只提供日常工效、调试可视或可安全后置的增强 → 锚为**可选**。据此判定，我对 TODO 的 §3/§4 分类做了一处再分类（见总表脚注）。
+
+**四约束缩写**：**[确]** 确定性（§3.1）｜**[追]** 可观测/可追踪（§3.2、§10.2）｜**[后]** 严格后台不静默降级（§3.8、§6.4、ADR-011）｜**[零]** 核心零游戏分支（§2.4、§22 M2、§27）。
+
+**两处不能抹平的事实**（照实标注，供开发者拍板）：
+
+1. **ADR-013 是幽灵条款**。本文件 §24 只列到 ADR-012。任务语境反复引用的"ADR-001~013"里，ADR-013 在 DESIGN v0.4 中**不存在**。本章所有锚定与验收**不挂靠 ADR-013**；grill 极可能预设它就是待写的《采用命令式 Lua 任务模型》新 ADR——那是 grill 的产出，不是既有权威。
+2. **调试 GUI 技术栈自相矛盾**。TODO §4 写 `Dear ImGui + D3D11`，DESIGN §14 写"技术路线倾向 Tauri 2 + TypeScript"。二者不可能同时成立，列为该项的**开发者拍板点**，不替其假设。
+
+### 总表
+
+| # | 能力 | 锚定 | TODO 原位 | 灵魂约束角色 | 零游戏分支红线 |
+|---|------|------|-----------|--------------|----------------|
+| 1 | 执行引擎 | **核心** | §3 | [确][追][后] 全部约束的运行时载体；承重墙 | **不碰**（绑定层禁内置游戏 helper=守点） |
+| 2 | 能力/兼容性门 | **核心** | §3 | [后][确] fail-closed 守门 | **不碰**（门是通用几何+指纹校验） |
+| 3 | trace + 关键帧 + 离线回放 | **核心** | §3 | [追][确] 可追踪的物化 | **不碰**（信封通用，无游戏字段） |
+| 4 | Fake Controller | **核心** | §3 | [确][追] 脱真机可测的力量倍增器 | **不碰**（脚本化帧序列，通用） |
+| 5 | 分辨率自适应 | 可选 | §4 | [确][后] 纯几何、零约束冲突 | **不碰**（base/mode 入项目 compatibility） |
+| 6 | OCR | 可选 | §4 | [确]⚠️ 神经档天然对抗确定性 | **风险项**（守点：模板/ROI/白名单入 manifest） |
+| 7 | 标注工具 | 可选 | §4 | [追] 上游产出项目资产 | **不碰**（工具通用，产物是项目资产） |
+| 8 | HTML 运行报告 | 可选 | §4 | [追] trace 的人读渲染 | **不碰**（离线只读消费 trace） |
+| 9 | 实时调试浮层 | 可选※ | §3 | [后] 只读消费者，受后台纪律约束 | **不碰**（消费通用事件流） |
+| 10 | 调试 GUI 窗口/托盘 | 可选 | §4 | [追] 只读消费 Engine 事件 | **不碰**（不破坏 Core 无 UI 边界 §3.4） |
+
+> ※ **再分类说明**：TODO 把"实时调试浮层"放 §3 框架层。按锚定单一判据，它是 `subscribeEvents` 的**只读消费者**（与调试 GUI 同构），不在 observe/act 闭环上，不是任务能确定性完成的前提 → 我锚为**可选**。但它保留一条核心属性：一旦实现，就**强制受严格后台红线约束**（不得违反 §3.8），故守点比其它可选项更硬。此为建议再分类，最终归属请开发者确认。
+
+---
+
+## 1. 框架核心能力
+
+### 1.1 执行引擎（TODO §3｜核心·承重墙）
+
+**锚定**：唯一同时承载四条约束的运行时。把 m0-demo 的固定循环抽成"读 Lua 脚本、驱动 observe/act 周期 + 取消/暂停/超时 + 变量/子任务"的通用引擎。
+
+**四约束关系**：**[确]** 每 run 一个全新 `lua_State`（Q10），`math.random`/表地址序/GC/全局污染随 `lua_close` 归零，单调时钟起点与 generation/逻辑预算均 run 作用域重置。**[追]** capture/find/act/取消/预算超限全部由宿主在 resume 之间**单点 emit** JSONL，脚本拿不到 debug/coroutine 无法抑制或伪造。**[后]** 抢焦点/全局注入 API 从不绑进 state（能力即缺席，Q9）；失败=显式任务失败。**[零]** 调度循环/协程/预算/钩子 100% 游戏无关。
+
+**红线判定：不碰。守点**——C++ 绑定层**不得内置任何游戏专用 helper 或分支**，游戏差异只存在于项目侧 Lua + `project.toml`/`compatibility.toml`。
+
+**验收标准（做完 = 全部满足）**：
+- 能读一个 Lua 脚本驱动 `capture→find→click→作废旧 Detection→重新 capture` 的 §26 规范循环；
+- 取消/暂停/超时经协程 yield/resume + 指令计数 hook 注入：**普通等待 500ms 内响应取消**（成功标准 3/5、§9.2），**纯 Lua `while true` 死循环可被指令预算硬中断**（Q5）；
+- 变量强制为 boolean/integer/string/duration 四类型并在边界校验；子任务调用有**深度守卫**（§8.5 v1 禁递归）；
+- **一个可重置核心子流程连续 100 次成功**（§22 M1 退出条件、§26 验收）；
+- 每 run 全新 `lua_State`，跑完 `lua_close`，无跨 run 泄漏（Q10）；
+- **取消不遗留按键、线程或未 flush 的 trace**（§26 验收）。
+
+### 1.2 能力/兼容性门（TODO §3｜核心·fail-closed 守门）
+
+**锚定**：把 §6.2 双层协商放在**进程入口**，是严格后台与确定性的第一道闸。校验不过**连 `lua_State` 都不建**（Q8/Q10）。
+
+**四约束关系**：**[后]** fail-closed 是本项核心——不匹配=显式 run 失败，绝不"先 stretch 再赌能点中"（对照 Playwright dialog auto-dismiss 反面）。**[确]** run 起点读一次 live resolution/DPI（单调、单次），不参与逐帧。**[追]** 强制 emit `RunGateChecked`/`ResolutionResolved`，**拒绝也 emit**（非静默）。**[零]** 门是通用几何 + 指纹校验，无游戏名分支。
+
+**红线判定：不碰。守点**——`base_resolution`/ROI/`scaling_mode`/capabilities 全在项目侧清单，门只做通用校验。
+
+**验收标准**：
+- **Layer A（加载期）**静态校验 `project.toml` 声明（base_resolution、scaling_mode、capabilities、模板集合存在、ROI 落在 base 内）；
+- **Layer B（run 前）**查 live client rect / DPI / window_class / exe_sha256，与 `compatibility.toml` 的 verified 记录比指纹，指纹变化自动降 `unverified`（§6.2）；
+- 任一不过 → 返回结构化 `UnsupportedResolution`/`TargetCompatibilityUnverified`，**不进 Lua**；
+- **后台输入失败不自动降级到 SendInput**（§22 M0 退出、ADR-011）；
+- 门内计算并固定本次 run 的 `CoordinateTransform`，其身份并入 Q2 租约与 TargetGeneration。
+
+### 1.3 trace + 关键帧 + 离线回放（TODO §3｜核心·可追踪的物化）
+
+**锚定**：可观测性优先（§3.2）的落地形态；回放是 §6.5 Exploratory + ADR-006 的**离线帧复核**，非回归测试。
+
+**四约束关系**：**[追]** 本项即约束本身。**[确]** 事件按 `seq`/`elapsed_ns` 单调、顺序不依赖墙钟；回放按逻辑序号而非墙钟 ts 驱动（否则非确定时序发散）。**[后]** 租约失效/取消/失败作为**独立事件族、写入即 flush**，建议上 prev/curr 哈希链使其不可事后抹除。**[零]** 顶层信封 `{seq, elapsed_ns, event, data}` 通用，schema 版本入信封。
+
+**红线判定：不碰。**
+
+**验收标准**：
+- `trace.jsonl` 覆盖 §10.2 事件族（TaskStarted…、FrameCaptured、Recognition*、ActionStarted/Completed/Failed、CaptureStalled、Warning）+ Lua 合成的 step/label span 与 interrupt span（Q1/Q6 等价物）；
+- 每条带单调 `seq`/`elapsed_ns` 与适用 TaskRunId/FrameId/ActionId（§10.2）；动作事件带 **before/act/after 三态**（§8.3）与触发它的 Lua 源码行；
+- 帧保存策略：迁移帧/动作前帧/错误帧/低置信度帧，**PNG 或 lossless WebP，不得有损**（§10.3）；用过的模板按内容哈希复制到 `resources/`（§10.1）；
+- `metadata.json` 记录 §10.1 必需字段（Schema、Engine 版本/commit、Flow 哈希、模板哈希表、后端、目标 exe 路径/版本/哈希、窗口类、interaction policy、墙钟+单调起点）；
+- `umbraflow replay` 可跑离线帧复核，**帮助文本明确"不保证完整 Flow 复现、非自动化回归"边界**（§6.5）。
+
+### 1.4 Fake Controller（TODO §3｜核心·力量倍增器）
+
+**锚定**：把开发者从"唯一真机测试者"瓶颈解放出来（TODO 原话）；是 runtime/任务逻辑**脱真机可测**的基础设施（§18.2）。锚为核心是因为没有它，四约束里的 [确][追] 无法被自动化验证。
+
+**四约束关系**：**[确]** 同一脚本化帧序列 → 同一 trace（决策序列 byte-exact 可复现）。**[追]** 用它断言 trace 事件即验证埋点。**[后]** 可脚本化"后台输入失败"分支，验证不降级。**[零]** 脚本化帧/错误序列纯通用。
+
+**红线判定：不碰。**
+
+**验收标准**：
+- 能脚本化返回 Frame 序列、注入延迟、Capture/Action 错误、连接状态（§18.2）；
+- runtime 可脱真机跑完整 observe/act 闭环并对 trace 断言；
+- 覆盖 §18.1 单测清单里可脱机部分：**ObservationLease 过期、TargetGeneration 失效、CaptureStalled、暂停期间预算冻结**；
+- 确定性回归：同输入序列多次运行产出一致决策 trace。
+
+---
+
+## 2. 可选能力模块
+
+### 2.1 分辨率自适应（TODO §4｜可选·纯几何增强）
+
+**锚定可选**：M0 严格拒（live==reference 不匹配即拒）已能守约束；自适应是解 ok-script"严格拒太烦"痛点的后置增量。
+
+**四约束关系**：**[确]** 给定 `(base, live, mode)` 结果唯一，纯整数/几何映射。**[后]** 若 live 在声明 mode 下不可表达仍**失败而非拉伸**。**[零]** base/ROI/scaling_mode 全在项目侧（§27 分工：框架管坐标转换，项目管 base+ROI）。**红线判定：不碰。**
+
+**验收标准**：
+- `resolution_policy` 枚举就位，**M0 只允许 `strict`（恒等变换）**；
+- 数据模型不留裸标量 scale，而留完整 `CoordinateTransform{scale_x, scale_y, offset, viewport_rect}`，strict 下恒等；
+- 后置第一档 `uniform_scale`（均匀缩放归一化）**只改 `evaluateResolutionGate` 函数体，Lua 可达面与绑定层零改动**；
+- trace 记录实际 scale/offset/viewport_rect；**M0 及归一化档禁止子像素插值进入核心坐标路径**（见 §4 坑）。
+
+### 2.2 OCR（TODO §4｜可选·识别扩展）⚠️ 确定性风险项
+
+**锚定可选**：§7.2 明确"OCR 不在当前阶段实现，真实缺口出现再评估引入 `ort` 或轻量 OCR"。**M0 不引入。**
+
+**四约束关系**：**[确]⚠️** 神经 OCR 天然对抗确定性（浮点非结合、ONNX 不描述算子求和顺序、多线程 reduction、FMA、x87 80-bit）。**[追]** 若引入须记模型哈希/置信度/原始输出供离线复核。**红线判定：风险项**——若为某游戏 HUD 硬编码字段布局即碰红线；**守点**：模板/ROI/字符白名单入项目 manifest（Q3），核心只提供通用 `vision.ocr.*` 原语。
+
+**验收标准**：
+- 能力**拆两级**：`vision.ocr.template_digit`（确定性优先）与 `vision.ocr.neural`（后置）；
+- `template_digit`：固定字体 HUD 数字，模板/字符切分 + 白名单，**同帧同参数 byte-exact**；
+- `neural`（若引入）：强制模型哈希 + 线程配置（`intra_op=1`/`inter_op=1`/`ORT_SEQUENTIAL`/`OMP_NUM_THREADS=1`）写入 `compatibility.toml` 指纹，**任一变化降 `unverified`**；trace 记模型哈希 + 置信度 + 原始输出。
+
+### 2.3 标注工具（TODO §4｜可选·创作工效）
+
+**锚定可选**：截图→框选→出模板+元数据；capture 模式已是上游第一块砖（TODO）。它产出项目资产，不在任务闭环上。**红线判定：不碰**（工具通用，产物是项目资产）。
+
+**四约束关系**：**[追]** 产出的 name/roi/threshold/base_resolution 直接被能力门加载期校验消费（闭环）。
+
+**验收标准**：
+- 截图→框选 ROI→输出模板 PNG + 元数据，格式**与 Q3 Layer 1 的 `[[recognizers]]` 声明一致**（name、kind、roi、threshold、grayscale、base_resolution）；
+- 产物可被 1.2 能力门**加载期无缝校验**（文件存在 + sha256 + ROI 在 base 内），形成"标注→声明→校验"闭环。
+
+### 2.4 HTML 运行报告（TODO §4｜可选·trace 人读渲染）
+
+**锚定可选**：把 trace 渲染成可点开时间线，纯离线只读消费者。**红线判定：不碰。**
+
+**四约束关系**：**[追]** 是 trace 的消费侧，不产生新副作用；动作 before/act/after 三态可视（§8.3 对齐）。
+
+**验收标准**：
+- 读 `trace.jsonl` + `frames/` 渲染可点开时间线；
+- **完全离线**，不依赖引擎运行；
+- 时间轴按 `seq` 驱动，墙钟 ts 仅作诊断展示；动作三态与关键帧可点开。
+
+### 2.5 实时调试浮层（TODO §3 → 建议再分类为可选·调试增强）
+
+**锚定可选※**：只读消费 `subscribeEvents`，不在 observe/act 闭环上（再分类理由见总表脚注）。但**一旦实现即受严格后台红线硬约束**。**红线判定：不碰**（消费通用事件流）。
+
+**四约束关系**：**[后]** 必须 `WDA_EXCLUDEFROMCAPTURE`（不进截图，避免污染确定性识别）+ `WS_EX_NOACTIVATE`（不抢焦点），即 TODO 原文纪律。
+
+**验收标准**：
+- 在游戏窗口上画识别框/状态，**只读消费** Engine 事件，不回写引擎状态；
+- **守卫测试：浮层开启时前台 HWND 与系统光标位置不变**（§26）；浮层自身不进 WGC 截图流（`WDA_EXCLUDEFROMCAPTURE`）。
+
+### 2.6 调试 GUI 窗口 / 托盘（TODO §4｜可选·M4）
+
+**锚定可选**：§14 明确推迟到 M4，前置 M0-M2 完成且核心稳定。只读消费 Engine 事件。**红线判定：不碰**（不破坏 Core 无 UI 依赖 §3.4）。
+
+**四约束关系**：**[追]** `subscribeEvents` 是 best-effort，lag 后必须 `queryTask` 取权威快照（§13.1）。
+
+**⚠️ 开发者拍板点**：技术栈——TODO §4 写 `Dear ImGui + D3D11`，DESIGN §14 写"倾向 Tauri 2 + TypeScript"，**二者冲突需裁决**。托盘若仍是"顺序发火 UI、一次一 run"则零架构债；若要真正并行调度器，与 §9.1 并发模型和确定性正面冲突，须重新谈判（Q10）。
+
+**验收标准**：
+- 只读消费 Engine 事件，不破坏 §4.1 分层（Core 无 UI 依赖、CLI/GUI 只经 `umbraflow-service`）；
+- 前置条件满足（M0-M2 完成 + 核心稳定）后才启动；技术栈冲突先裁决再落地。
+
+---
+
+## 3. 非目标
+
+### 3.1 DESIGN §2.3 已明确移出路线图（"不做，除非未来场景变化"）
+- Wasm Component / Agent Process 扩展系统（无第三方开发者）；
+- Tauri Studio / 可视化任务编辑器；
+- 项目包签名（Ed25519）、SBOM、Registry 分发；
+- **Daemon 模式、Scheduler 的 Cron/事件自动触发**（定时用 Windows 计划任务调 CLI，Q10）；
+- Python SDK、跨进程 Service API 传输协议（Named Pipe/WebSocket，推到 M4）；
+- **OpenCV 依赖**（模板匹配自实现，避免原生库打包复杂度——直接影响 §4 分辨率/OCR 选型）；
+- 项目资源变体（多语言、多渠道 UI、**多宽高比**——直接约束分辨率自适应野心）；
+- 内核驱动输入、进程注入/Hook、内存读取、绕过反作弊；
+- Android/模拟器/ADB/独立 VM/远程桌面兜底；
+- 毫秒级竞技操作、自动瞄准等强实时控制。
+
+### 3.2 本次（Lua 迁移阶段）不做 / 后置
+- **神经 OCR、多尺度/子像素分辨率自适应**：M0 均不引入（§7.2；见 §4 选型）；
+- **实时浮层、调试 GUI**：M0-M2 不做，后置（§14）；
+- **待拍板（非硬非目标）**：pause 是否 M0 必需（Q5）、`max_action_frame_age` 实际值（§8.3 默认 750ms）、指令预算 N、StaleObservation 是否内建小重试（Q2/Q4）——这些需"第一条真实日常任务"形态才能定。
+
+### 3.3 灵魂级永不做（ADR-011，不随场景变化）
+- **前台输入（`SetForegroundWindow`/`SetFocus`）与全局注入（`SendInput`/`mouse_event`/`keybd_event`/`SetCursorPos`）永不新增**。后台方案不可行即判目标不兼容，直接移出支持范围（如 NIKKE），**绝不改用抢占用户鼠标键盘的兜底**（§2.2、§27、§29）。
+
+---
+
+## 4. OCR 与分辨率自适应选型倾向（依据联网调研 + 底料一手来源）
+
+### 4.1 OCR — 倾向：两级拆分，`template_digit` 优先，神经 OCR 后置且强门控
+
+**排序结论**：`vision.ocr.template_digit`（固定字体 HUD 数字，模板/字符切分 + 白名单，确定性最强、零外部大依赖）→ 第一档；真需要抗锯齿/风格化字体再引 **Tesseract**（C++ 原生、CPU 单线程 + `tessedit_char_whitelist=0123456789` + PSM 7/8）→ 第二档；ONNX/**PaddleOCR** neural → 最后档且强制模型哈希 + 线程配置入 compatibility 指纹。**整体排序低于分辨率自适应**（§7.2："真实缺口出现再评估"，M0 不引入）。
+
+**理由**：
+1. **确定性是灵魂约束，神经 OCR 天然对抗它**——浮点非结合、ONNX 标准不描述算子求和顺序、多线程 reduction、FMA、x87 80-bit 中间精度。固定字体 HUD 数字用小模板/小 CNN 往往又快又准。
+2. **Tesseract 是更轻的 C++ 原生路径**：~10MB、清晰高对比 95–99%、CPU ~0.77s；裁 ROI + 字符白名单后更快更准。但实操受线程/浮点/版本影响，**未必位级复现** → 若采用须 pin 版本 + CPU 单线程。对固定 HUD，联网证据指出其 detection 阶段对"已知固定位置数字"属**多余开销**。
+3. **PaddleOCR C++ 链路重**（Paddle2ONNX→PP-OCRv4/v5 mobile→RapidOCR 骨架，转换须 dynamic shapes 否则结果偏移），对固定 HUD 属过度工程。
+4. **门控要求**（若上 neural）：`intra_op=1`/`inter_op=1`/`ORT_SEQUENTIAL`/`OMP_NUM_THREADS=1`，模型哈希 + ORT 版本 + 线程配置写入 `compatibility.toml`，任一变化降 `unverified`；trace 记模型哈希/置信度/原始输出供 §6.5 离线复核。
+
+### 4.2 分辨率自适应 — 倾向：分档递进，M0 严格拒 + 恒等缝，`uniform_scale` 作后置第一档
+
+**排序结论**：M0 严格 `live==reference` 拒（零成本、防缩放误匹配悄悄点错、契合不静默降级）→ 后置第一档 `uniform_scale` 基准分辨率归一化（单一 `scale=live/reference`，均匀缩放最优、成本最低、纯几何确定性）→ 多尺度 scale-space 扫描 / 锚点+相对坐标 / coarse-to-fine 金字塔为更后档。
+
+**理由**：
+1. **纯几何变换、确定性、与四约束零冲突**；对应 §27 分工（框架管坐标转换，项目声明 base+ROI）。M0 只留**恒等缝**（strict 恒等 transform），兑现"低成本加自适应"而不破坏"严格拒不静默降级"。
+2. **坑决定数据模型**：下采样使子像素细节退化、相关峰塌陷到整数位置，精定位须原生分辨率 + Gaussian 峰值拟合；letterbox 黑边使屏幕百分比坐标失效，锚点须相对视口"先减 offset 再除 scale" → 故数据模型留完整 `CoordinateTransform{scale, offset, viewport}`，**不留裸标量 scale**。
+3. **多尺度成本随尺度数线性/二次增长**，对固定客户端属过度；§2.3 已把"多宽高比变体"移出路线图。
+4. **不选特征匹配**（SIFT/ORB/Flann 抗大尺度更好）——它引入不确定性 + 需要 OpenCV 依赖，而 OpenCV 已在 §2.3 明确移出。
+
+**Sources**：
+- [PaddleOCR vs Tesseract vs IronOCR (Medium, 2026)](https://medium.com/@ahmad.sohail/paddleocr-vs-tesseract-vs-ironocr-picking-an-ocr-engine-for-net-10a24dc2802e)
+- [Paddle OCR vs Tesseract (IronOCR)](https://ironsoftware.com/csharp/ocr/blog/compare-to-other-components/paddle-ocr-vs-tesseract/)
+- [PaddleOCR vs Tesseract vs EasyOCR (CodeSOTA)](https://www.codesota.com/ocr/paddleocr-vs-tesseract)
+- [Technical Analysis of Modern Non-LLM OCR Engines (IntuitionLabs)](https://intuitionlabs.ai/articles/non-llm-ocr-technologies)
+- [Multi-scale Template Matching (PyImageSearch)](https://pyimagesearch.com/2015/01/26/multi-scale-template-matching-using-python-opencv/)
+- [Performance Tuning for Template Matching (templatematchingpy)](https://templatematchingpy.readthedocs.io/en/latest/guides/performance-tuning/)
+
+---
+
+## 6. Roadmap 草案
+
+> 直接搬运 synth（roadmap）。
+
+# Roadmap 草案 — 从"移植完成"到"Lua 任务模型可跑通"
+
+> 基线:2026-07-20。Rust→C++ 移植完成(domain/vision/controller/m0-demo,8/8 CI 绿)。
+> 本章按"命令式 Lua + sol2"重定义现实重排 DESIGN §22(M0–M4),给出最短关键路径,
+> 并把"只有开发者知道的输入"造成的阻塞点单列,供 grill 优先解锁。
+
+---
+
+## 0. 两个必须先讲清的现实偏差(写在最前,因为它们改变里程碑语义)
+
+| # | 偏差 | 证据 | 对 Roadmap 的影响 |
+|---|------|------|------------------|
+| 偏差 A | **首个真实目标游戏不确定**:DESIGN §22/§26 定 M0/M1 = **鸣潮**、M2 = **卡厄斯梦境**;但 grill "需要开发者补充"与真机截图显示**真机当前停在卡厄斯梦境角色详情页** | DESIGN line 707/716/726/827;grill line 130–135 | 决定 S9(真机接入)跑哪个游戏、§26 场景映射到哪个流程。**这是 grill 头号解锁项**,不锁死则 S9 无法起步 |
+| 偏差 B | **ADR-013 在 DESIGN v0.4 缺失**(只到 ADR-012),grill 却引用 ADR-013 | DESIGN line 763–812 只列 ADR-001…012 | S0 必须新写一条 ADR"采用命令式 Lua 任务模型",显式标记 **ADR-001(显式状态机)被取代**,并重写 **M1 退出契约 line 723**"所有状态和资源引用可在加载时验证"——该条与命令式 Lua 直接冲突 |
+
+---
+
+## 1. 为什么不能照抄 §22
+
+DESIGN 旧 M1 的承重墙是 **JSONC Flow + 显式状态机 + 加载期证明**(可达性/终止性/资源引用)。
+命令式 Lua 把其中三项**净损失**掉:
+
+- **可达性**(无不可达状态)→ 不可判定,降级为 lint(best-effort);
+- **终止性**(超时+max_transitions 结构保证)→ 停机问题,降级为**运行时预算**(逻辑时钟 max_runtime + 指令计数硬中断);
+- **资源引用静态枚举** / **background_only 禁用动作静态扫描** → 前者靠 manifest 声明+运行时快速失败补偿;后者反而**补偿更强**——采用"能力即缺席",危险 API 根本不绑进 sandbox。
+
+因此**新 M1 的真正承重墙不是"写状态机执行器",而是"绑定层机制性地把这些丢失的加载期证明,重构为运行时强制"**。
+Roadmap 的最短关键路径 = 先把这层机制立起来(沙箱→协程→租约→trace),再接真机。
+
+---
+
+## 2. 关键路径总览
+
+**最短关键路径(串行,阻塞"Lua 任务模型可跑通")**:
+
+```
+S0 Grill决议+新ADR ──▶ S1 sol2构建接入 ──▶ S2 沙箱+确定性地板 ──▶ S3 协程调度器+取消/预算
+                                                                          │
+                                          ┌───────────────────────────────┘
+                                          ▼
+                              S5 绑定层核心(capture/find/click+租约) ──▶ S6 Trace+离线回放
+                                                                          │
+                                          ★ 到此:"Lua 任务模型可跑通(离线,Fake Controller 上可证明)"
+```
+
+**并行分支(不在关键路径,但决定开发是否被真机瓶颈锁死)**:
+
+```
+S1 ──▶ S4 Fake Controller ──(喂养)──▶ S5/S6/S7/S8 全部离线可测
+S9 门(纯 C++ 几何) 可与 S2–S6 并行开发
+```
+
+| 阶段 | 名称 | 对应 DESIGN 里程碑 | 在关键路径? | 被开发者输入阻塞? |
+|------|------|-------------------|:-----------:|:-----------------:|
+| **S0** | Grill 决议 + 新 ADR + M1 契约重写 | M1 前置 | ✅ | ⚠️ 部分(游戏/任务问题) |
+| **S1** | sol2 + Lua 5.4 构建接入(spike) | 基础设施(Rust 未有) | ✅ | ❌ |
+| **S2** | 沙箱 + 确定性地板(Q9) | 新 M1 承重墙 | ✅ | ⚠️ 弱(信任模型) |
+| **S3** | 协程调度器 + 取消/预算(Q5) | 新 M1 承重墙 | ✅ | ⚠️ 弱(N/SLA 标定) |
+| **S4** | **Fake Controller + Fake Frame Source** | §3 新增(Rust 未有) | ➖(倍增器) | ❌ |
+| **S5** | 绑定层核心 capture/find/click + 租约(Q1/Q2/Q3/Q4) | 新 M1 核心 | ✅ | ❌(逻辑),⚠️(常数标定) |
+| **S6** | Trace JSONL + 离线回放(Q10/§10/ADR-006) | 新 M1 | ✅ | ❌ |
+| **S7** | Interrupts + 子任务(Q6/Q7) | 新 M1 增量 | ➖ | ⚠️(是否首交付需要) |
+| **S8** | 能力/兼容性/分辨率门(Q8) | 新 M1 前置真机 | ➖ | ⚠️(自适应优先级) |
+| **S9** | 真机接入 + 第一条真实任务闭环 | **DESIGN M1 退出** | ✅(真机腿) | 🚫 **硬阻塞** |
+| **S10** | 卡厄斯通用性 / NIKKE / GUI | DESIGN M2/M3/M4 | ➖ | 🚫(游戏)/📌(默认不做) |
+
+> ★ "可跑通"里程碑定义:一段 Lua 脚本能在 **Fake Controller** 上确定性地驱动
+> `capture→find→click→作废旧帧→重新 capture` 全环,租约 fail-closed、取消/预算生效、
+> 全量 trace 可回放。**这个里程碑完全不依赖开发者输入,也不依赖真机**——这是本 Roadmap 的核心红利。
+
+---
+
+## 3. 各阶段详述
+
+### S0 — Grill 决议 + 新 ADR + M1 契约重写
+- **目标**:锁死 Q1–Q10 的 API 面与语义;写新 ADR"采用命令式 Lua 任务模型",标记 ADR-001 被取代;重写 M1 退出契约。
+- **交付物**:更新后的 DESIGN(新 ADR 段、M1 line 723 改写为"已声明资源加载期校验 + 可静态获知引用被检查;可达性/终止性下沉为运行时预算")、grill 决议纪要。
+- **退出标准**:Q1–Q10 每题有裁决;偏差 A/B 有明确结论(首目标游戏、ADR 编号)。
+- **依赖**:无(纯设计)。
+- **风险**:决议不完整会让 S2–S6 返工;缓解——先冻结**不依赖真实任务**的机制题(Q1/Q2/Q4/Q5/Q9/Q10),把依赖真实任务的**参数题**(常数标定、Q3 Layer3、Q6/Q7 是否首交付)标为"可后置"。
+- **开发者阻塞**:⚠️ 机制题草案已可拍;游戏/首任务问题需开发者(见 §5)。
+
+### S1 — sol2 + Lua 5.4 构建接入(spike)
+- **目标**:把 Lua 5.4 + sol2 拉进 CMake,一段文本 chunk 能在 `sol::environment` 里跑通,格式/模块/安全门全绿。
+- **交付物**:FetchContent(或 vendored)接入、`umbraflow_lua` 模块骨架、`SOL_EXCEPTIONS_SAFE_PROPAGATION` 构建标志、hello-chunk 冒烟测试。
+- **退出标准**:`fix_format --check` / `check_modules` / `check_safety` / build / `ctest -L CI` 全绿;新增依赖不破坏现有 8/8。
+- **依赖**:无。
+- **风险**:sol2 与 C++23/MSVC 的异常传播配置(见底料 Q4 issue #841);缓解——spike 阶段先跑通异常穿越 Lua 边界的最小用例。
+- **开发者阻塞**:❌ **立即可做**。
+
+### S2 — 沙箱 + 确定性地板(Q9)
+- **目标**:每 run 一个全新 `lua_State` + 空 env;逐库消毒白名单(string 去 `dump`、math 去 `random/randomseed`、table 保留);`_G=env` 自引用;`load_mode::text` 挡 bytecode;指令计数钩子可装;只暴露 `bot` 句柄。
+- **交付物**:sandbox 工厂、消毒后的库表拷贝、`bot:now()`(单调逻辑时钟)、`bot:random()`(确定性种子入 trace)、`bot:pairs_sorted()`;逃逸向量回归测试(默认 loader/bytecode/debug/setfenv 四向量各一条)。
+- **退出标准**:脚本拿不到 io/os/package/require/load/debug/coroutine;bytecode 被拒;裸 `pairs` 顺序依赖有 lint 警告;跨 run 零泄漏测试通过。
+- **依赖**:S1。
+- **风险**:遗漏隐藏确定性通道(float 格式化、超越函数、`__gc`);缓解——按底料"确定性隐藏通道消毒"逐项列清单做测试。
+- **开发者阻塞**:⚠️ 弱——**信任模型**(脚本是否可能来自第三方)决定是否给 `string.rep/format` 上限防内存炸弹;可先按"可信作者"实现,预留配置。
+
+### S3 — 协程调度器 + 取消/预算(Q5)
+- **目标**:`sol::thread` + resume 循环(status-first,#883);`std::atomic<bool>` 取消;双预算(指令钩子 N + 逻辑时钟 max_runtime);finalize 点 best-effort 补 Up + flush trace。
+- **交付物**:调度循环、"请求-yield"数据流骨架(world-touching 都在 resume 之间)、pause/resume 冻结逻辑预算、每次 resume 前重装指令钩子。
+- **退出标准**:纯 Lua `while true do end` 能在标定 N 内被硬中断;取消是不可被 `pcall` 吞的 raise;取消后无遗留按键/线程/未 flush trace(对齐 §26 验收末条)。
+- **依赖**:S1、S2(钩子依赖 debug 表已锁死)。
+- **风险**:`pcall` 吞取消 error;缓解——命中后改"每 1 指令一钩再抛"穿透 pcall(底料 PIL 23.2)。
+- **开发者阻塞**:⚠️ 弱——指令预算 **N**、500ms 取消 SLA、pause 是否 M0 必需,依赖首任务形态;可先用保守占位值,S9 校准。
+
+### S4 — Fake Controller + Fake Frame Source(**力量倍增器,尽量前置**)
+- **目标**:脚本化帧序列(喂 `capture()`)+ 假注入 sink(记录 lease/generation/边界校验结果,不碰真机),让整条绑定层脱真机可确定性测试。
+- **交付物**:`FakeController`(可编排"第 N 帧返回模板命中/未命中/stall")、`FakeFrameSource`、注入审计记录、与 S5 绑定层对接的注入接口抽象。
+- **退出标准**:能用一段脚本化帧序列驱动 S5 的全部语义(命中/未命中/stale/generation bump/interrupt/cancel)且结果可复现;无需真机、无需 UAC。
+- **依赖**:S1(接口约定);与 controller 模块的注入抽象对齐。
+- **风险**:Fake 与真机行为漂移;缓解——真机接入(S9)时用同一批脚本序列做"Fake vs 真机"对照。
+- **开发者阻塞**:❌ **立即可做**。
+- **为什么排这么前 → 见 §4 专章**。
+
+### S5 — 绑定层核心:capture/find/click + 租约(Q1/Q2/Q3/Q4)
+- **目标**:落地 Q1 Model B(显式 capture + 同帧多 find)、Q2 租约(generation 主判据 fail-closed + 逻辑预算兜底,校验下沉注入层)、Q3 manifest 只读句柄表 `bot.templates`、Q4 三层错误模型。
+- **交付物**:`bot:capture()→Frame`(只读 userdata,generation++,emit FrameCaptured)、`Frame:find(recognizer)→Detection|nil`、`Frame:match({...})`(声明顺序裁决)、`bot:click/swipe/...`(注入层原子校验 generation→陈旧即 raise StaleObservation→成功 bump generation 作废旧 Detection)、`bot:wait/exists`(SikuliX 三态,内部 yield)、Detection 短命 userdata、三层错误(Tier A 返回值 / Tier B 结构化抛 / Tier C 不可捕获)。
+- **退出标准**:在 Fake Controller 上:旧帧再 find / 旧 Detection 再 click 必抛 StaleObservation;`max_action_frame_age` 超龄拒投递;`bot.templates` 只读、`__newindex` raise;每次 find/click 自动 emit 事件。
+- **依赖**:S2、S3、S4;Q1↔Q2 互为前提(帧 generation 从 capture 来、租约绑 generation)。
+- **风险**:租约校验层放错位置留 TOCTOU 残窗(底料 Kleppmann/arxiv 2603.00476);缓解——generation 一路带到最靠近注入处校验,并强制"动作后重新 capture"闭环兜 Type II。
+- **开发者阻塞**:❌ 机制可全实现;⚠️ `max_action_frame_age` 默认值、各 kind `retryable` 默认、是否内建 stale 小重试,需首任务实测校准。
+
+### S6 — Trace JSONL + 离线回放(Q10/§10/ADR-006)
+- **目标**:固定信封 `{ts, run_id, event, data}` + 事件族(run 边界/observe/act/interrupt/lease-fail/cancel)、写入即 flush、可选 prev/curr 哈希链、按 logical_seq 驱动回放(墙钟仅诊断)。
+- **交付物**:JSONL writer、事件 schema(带版本号)、动作 before/act/after 三态 + 触发 Lua 源码行、实际用过模板按哈希复制到 `resources/`、离线回放器(Exploratory 帧复核)。
+- **退出标准**:一次 Fake run 产出自包含 `trace.jsonl`;回放按逻辑序号重演决策一致;取消/失败/lease-fail 事件不可事后抹除(哈希链)。
+- **依赖**:S5(事件由绑定层 emit);S3(cancel/flush 时序)。
+- **风险**:trace 量膨胀(底料 Robot Framework 教训);缓解——默认只存迁移帧/动作前帧/错误帧/低置信度帧,PNG/lossless,InputText 默认脱敏。
+- **开发者阻塞**:❌ **立即可做**。★ **到此"Lua 任务模型可跑通(离线)"达成**。
+
+### S7 — Interrupts + 子任务(Q6/Q7)
+- **目标**:`bot:on(recognizer, handler, {max_hits, on_exhausted})` 同步/周期边界/drain-to-fixpoint/显式失败;`bot:load_subtask(name)` 走 `package.preload` 受控通道(禁 require,同一沙箱 env,内容哈希寻址);in-VM 递归深度守卫(§8.5 v1 禁递归)。
+- **交付物**:有序 interrupt 注册表 + 新事件族(InterruptMatched/Handler*/BudgetExceeded)、子任务加载图(环检测 fail-closed)、跨边界只允许 4 类标量、Detection/Frame 禁跨边界。
+- **退出标准**:Fake 上弹窗被 drain 到不动点;max_hits 耗尽显式 raise;子任务能力 ⊆ 父任务声明能力;递归超深 raise RecursionLimit。
+- **依赖**:S5、S6、S2(沙箱)。
+- **风险**:handler 重入/纯 Lua 死循环;缓解——handler 期间挂起 interrupt 检查 + 指令钩子兜底。
+- **开发者阻塞**:⚠️ 是否首交付需要,取决于首任务是否有弹窗/是否跨文件复用子流程——**可按 YAGNI 后置**。
+
+### S8 — 能力/兼容性/分辨率门(Q8)
+- **目标**:双层门(Layer A 加载期静态校验 project.toml 声明;Layer B run 前 fail-closed 查 live rect/DPI/window_class/exe_sha256 比指纹),均在 `lua_State` 创建前;单一坐标转换缝 `CoordinateTransform{scale_x,scale_y,offset,viewport_rect}`,M0 恒等。
+- **交付物**:`evaluateResolutionGate() -> Result<CoordinateTransform>`(strict 策略先 DPI 归一再要求 live==base)、`resolution_policy` 枚举(M0 仅 strict)、run 起点 emit ResolutionResolved 事件、mismatch 显式 fail(UnsupportedResolution/TargetCompatibilityUnverified)。
+- **退出标准**:非 base 分辨率/未 verified 目标连 `lua_State` 都不建、显式失败;strict 下 transform 恒等;fail-closed 也 emit 事件(非静默)。
+- **依赖**:纯 C++ 几何,可与 S2–S6 并行;真机腿(S9)前必须就位。
+- **风险**:DPI 逻辑/物理坐标混用(底料 Windows DPI 经典 bug);缓解——门先按 DPI 归一到逻辑坐标。
+- **开发者阻塞**:⚠️ **门本身立即可做**;**分辨率自适应模块**(strict 之后的均匀缩放归一化档)是否现在做,是 grill 解锁项(见 §5)。
+
+### S9 — 真机接入 + 第一条真实任务闭环(= DESIGN M1 退出)
+- **目标**:把 m0-demo 的真实 WGC/PostMessage controller 接到同一绑定层背后,跑通**第一条真实日常任务**,过 100 连环 + 7~14 运行日 soak。
+- **交付物**:真机 controller 适配、鸣潮**或**卡厄斯梦境项目包(project.toml/compatibility.toml/assets)、第一条真实任务脚本、真机 vs Fake 对照报告。
+- **退出标准**(对齐 DESIGN M1 line 719–724 改写版):可重置子流程连续 100 次成功;完整日常任务 7~14 日无框架级失败;**已声明资源加载期校验通过 + 可静态获知引用被检查**;CLI 全经 Engine API。
+- **依赖**:S5–S8 全部;**真机 UAC 提权一次**(TODO §1,AI 无法自我提权);S0 偏差 A 结论。
+- **风险**:首任务表达力不足暴露 API 缺口→返工;缓解——Fake 上已跑通全环,真机主要暴露的是**参数标定**与**目标兼容性**,非机制缺口。
+- **开发者阻塞**:🚫 **硬阻塞**——首目标游戏、首任务、§26 场景映射、UAC 提权,全部只有开发者能给。
+
+### S10 — 卡厄斯通用性 / NIKKE / GUI(DESIGN M2/M3/M4)
+- **目标**:M2 用第二个游戏验证"核心零游戏分支";M3 NIKKE 默认不执行的技术探测;M4 GUI 只读消费 Engine 事件。
+- **退出标准/依赖/风险**:基本沿用 DESIGN §22,不因 Lua 迁移改变;**若 S9 已跑卡厄斯,则 M2 改用鸣潮或反之**(取决于偏差 A 结论)。
+- **开发者阻塞**:🚫 游戏选择;📌 M3/M4 本就"默认不做/推迟"。
+
+---
+
+## 4. 专章:Fake Controller 为什么必须前置到 S4
+
+**结论:Fake Controller 排在协程调度器(S3)之后、绑定层核心(S5)之前/并行,是本 Roadmap 杠杆最高的一步。**
+
+- **它把串行依赖变成并行依赖**:没有它,绑定层的每一条语义(租约失效、generation bump、stale、interrupt drain、cancel 500ms)都只能在**唯一真机**上验证——而真机需要 UAC 提权、需要开发者在场、且当前连"跑哪个游戏/哪个任务"都未定(偏差 A + §5)。有它,S5/S6/S7/S8 **全部脱真机确定性可测**。
+- **它解耦了"机制开发"与"开发者输入阻塞"**:S9 被硬阻塞的那些问题(首任务、首游戏、场景映射),**不阻塞 S4→S8**。开发者去 grill 解锁真实任务的同时,绑定层可以在 Fake 上一路建到"可跑通"。
+- **它是确定性/回放的天然试验台**:脚本化帧序列 = 底料里 rr/record-replay 的"被记录的外部输入",让"同输入→同决策"这条弱确定性可以在 CI 里被钉死,而不必重跑游戏。
+- **成本低**:纯 C++ infra,无外部依赖,不碰焦点/注入,不需要提权。
+- **唯一代价**:Fake 与真机行为可能漂移——用 S9 的"同一批脚本序列 Fake vs 真机对照"消解。
+
+> 一句话:**Fake Controller 是"把开发者从唯一真机测试者解放"的那把钥匙,越早越省。**
+
+---
+
+## 5. 被"只有开发者知道的输入"阻塞的阶段(grill 必须优先解锁)
+
+| 解锁项(grill 头等) | 阻塞的阶段 | 不解锁的后果 |
+|--------------------|-----------|-------------|
+| **偏差 A:首个真实目标游戏 = 鸣潮(DESIGN)还是卡厄斯梦境(真机现状)?§26"Home→点击→等 Result"映射到哪个游戏内流程?** | S9、S10 | 真机腿无法起步;项目包无法建;M2 对象连带待定 |
+| **第一条真实日常任务是什么**(登录/签到/领取/菜单导航/画面决策?有无弹窗?是否跨文件复用子流程?) | S9 定形;S5 常数校准;S7 是否首交付 | API 表达力是否足够无法验证;Q3 Layer3 参数化识别、Q6 interrupts、Q7 子任务是否 M0 需要全悬空 |
+| **分辨率自适应优先级**:现在做均匀缩放归一化档,还是先严格拒、后补模块? | S8 自适应模块范围 | S8 的"门"可做,但"自适应模块"是否进首交付无法定;首任务是否跑在带 DPI 缩放的非 base 分辨率决定其紧迫度 |
+| **信任模型**(Q9):脚本仅可信作者,还是可能第三方? | S2 消毒严格度 | 是否需给 string.rep/format 上限防内存炸弹待定(可先按可信作者做) |
+| **常数标定**:`max_action_frame_age`(§8.3 默认 750ms)、指令预算 N + 500ms 取消 SLA、各 kind `retryable` 默认、pause 是否 M0 必需 | S3/S5 最终值 | 机制可先跑保守占位值,真机 soak(S9)前必须给真实值 |
+| **偏差 B:ADR-013 = "采用命令式 Lua 任务模型"确认 + 编号** | S0 | 新 ADR 挂不上号;ADR-001 被取代的论证无处落 |
+
+---
+
+## 6. 立即可做 vs 必须先 grill 解锁
+
+### ✅ 立即可做(不依赖开发者输入,今天就能开工)
+
+1. **S1 sol2 + Lua 5.4 构建接入**:FetchContent 接入、hello-chunk、`SOL_EXCEPTIONS_SAFE_PROPAGATION`、CI 保持 8/8。
+2. **S2 沙箱骨架**:空 env + 逐库消毒白名单 + `load_mode::text` + 指令钩子可装 + 四逃逸向量回归测试(草案已决,按可信作者实现)。
+3. **S3 协程调度器骨架**:`sol::thread` + resume 循环 + atomic 取消 + 双预算 + 每次 resume 重装钩子(用保守占位常数)。
+4. **S4 Fake Controller + Fake Frame Source**:最高杠杆,纯 infra,喂养 S5–S8 全部离线测试。
+5. **S6 Trace JSONL writer**:固定信封 + 事件族 + flush-on-write + 哈希链(schema 约定已决)。
+6. **S8 的"门"(纯 C++)**:`evaluateResolutionGate()` + strict 恒等 `CoordinateTransform` + ResolutionResolved 事件。
+7. **文书**:重写 M1 退出契约 line 723;起草新 ADR"采用命令式 Lua 任务模型"(作为提案,待开发者拍板批准)、标记 ADR-001 被取代;把 Q1/Q2/Q4/Q5/Q9/Q10 的机制决议冻结成规格。
+8. **确定性隐藏通道清单化**:把 float 格式化/超越函数/`__gc`/pairs 顺序逐项列成测试点(底料已给)。
+
+> 这 8 项能把关键路径推进到 **S6 完成 = "Lua 任务模型可跑通(离线)"**,全程不碰真机、不需 UAC、不需开发者拍板。
+
+### 🚫 必须先 grill 解锁(开发者输入是硬前置)
+
+1. **首个真实目标游戏**(鸣潮 vs 卡厄斯梦境)+ §26 场景映射 → 解锁 S9/S10。
+2. **第一条真实日常任务形态** → 解锁 S9 定形、S7 是否首交付、Q3 Layer3 是否 M0。
+3. **分辨率自适应优先级** → 解锁 S8 自适应模块是否进首交付。
+4. **真机 UAC 提权一次**(TODO §1,AI 无法自我提权) → 解锁一切真机验证。
+5. **常数标定值**(max_action_frame_age / N / 取消 SLA / retryable / pause) → S9 soak 前必须落定。
+6. **信任模型 + ADR-013 编号确认** → 分别定 S2 消毒强度、S0 ADR 结构。
+
+---
+
+## 7. 一句话收尾
+
+**最短关键路径 = S0→S1→S2→S3→S5→S6,终点是"Lua 任务模型在 Fake Controller 上可跑通",且这条路径完全不被开发者输入阻塞。**
+开发者输入只阻塞**真机腿(S9)**;因此 grill 应把"首游戏 / 首任务 / 分辨率优先级 / UAC"作为头等解锁项,让真机接入与离线绑定层开发**并行推进**——而 **Fake Controller(S4)是让这种并行成立的那把钥匙**。
+
+---
+
+## 7. 完整性审查
+
+> critique agent 对整份裁决包的交叉审查，分四小节。
+
+### 7.1 内部矛盾（contradictions）
+
+- 【双 generation 混淆】DESIGN §5.4/§6.3 有两个计数器:FrameId(每 capture 单调,高频)与 TargetGeneration(窗口句柄/尺寸/进程变化才++,低频);ADR-004 lease 绑 {target_generation, frame_id}。Q2 修正一把 fencing 主判据命名为'frame_generation,每 capture/每输入动作+1'(实为 FrameId 语义),Q5 却'resume 时 bump target_generation',Q8 用 TargetGeneration 触发重新过门。全程用'generation'一个词混指两个计数器,注入层'原子校验 generation'没有唯一所指。fencing 到底 fence 哪个、lease 字段如何映射 ADR-004,必须先定。
+- 【max_action_frame_age 墙钟↔逻辑tick 自相矛盾】Q1 用 max_action_frame_age 明确要防'脚本在长纯-Lua 计算后拿旧帧下手';Q2 修正一把它从 §5.4 的 750ms 墙钟改成'逻辑 tick(仅 capture/tick 事件递增)'。但纯 Lua 长计算期间无 capture→逻辑 tick 不推进→age 不增长→逻辑 tick 方案恰好放行 Q1 要拦的场景。同一参数在 Q1(物理时间语义)与 Q2(逻辑时钟语义)下结论相反。
+- 【Timeout kind 在 Tier B/Tier C 碰撞】Q4 示例 bot:wait 超时抛 {kind='Timeout',retryable=false}(Tier B,可 pcall);Q5 又把全局 max_runtime/指令预算耗尽映射到 AutomationErrorKind::Timeout(Tier C,不可 pcall)。DESIGN §5.6 只有一个 Timeout。脚本 pcall 到 Timeout table 无法区分'wait 超时(可重试)'与'预算耗尽(必须死)',trace 也难分流。
+- 【回放能力过度承诺 vs ADR-006/§0】Q2、S6、骨架多处称'回放按 logical_seq 重演决策一致''全量 trace 重演决策',但 DESIGN §0 摘要第2条与 ADR-006 明确'不承诺完整任务确定性重放,只做 Exploratory 帧复核'。命令式 Lua 不保存每帧且决策依赖 bot:now/bot:random/中间态,'重演决策'越过了已确立的边界,是对'可追踪'的夸大。
+- 【StaleObservation retryable 一处已决一处未决】Q4 抛出示例已硬编码 {kind='StaleObservation', retryable=true} 且'host 提供受控小重试';Q2 developerInputNeeded 又把'租约失效是否允许受控重试还是一律判 run 失败'列为开发者拍板项。同一问题裁决包内部一处当已决、一处当未决。
+- 【Q1 raw find 暴露:未决 vs 示例当已决】Q1 developerInputNeeded 明列'是否把 raw frame:find 暴露给脚本还是只给 wait/exists/match 便利封装'为待拍板;但骨架 §3 端到端示例直接使用 frame:find/frame:match。一边列为 open,一边在权威示例里当已决用。
+- 【capture() 不再是纯观察 vs 1.2 时序图】Q1 不变式称'capture 是唯一推进帧的调用、find 无副作用、capture 不 deliver';Q6 却让宿主在'每次 bot:capture() 周期'内部扫描 interrupt 并执行 handler 的 click(bump generation、drain-to-fixpoint)。于是脚本调用的 capture() 内部可能产生脚本不可见的输入动作,与骨架 1.2 时序图'capture 只 captureFrame() 不 deliver'冲突。
+
+### 7.2 缺口（gaps）
+
+- 【Frame 8MiB 生命周期无界】Q1 每 capture generation++、bot:wait 每轮重 capture(一次 wait 可抓十余帧),Frame userdata 由 Lua GC 管、各持 Arc<FrameBuffer> 8MiB。命令式 Lua 下脚本可持有任意多 frame 变量(已 stale 但未 GC),与 §3.6'缓存有界'、§19'只保留最新帧+活跃帧引用'冲突。决策包未定 Frame 数量上限/stale frame 强制释放机制。
+- 【沙箱白名单遗漏一批基础函数】Q9 表未列 setmetatable/getmetatable/rawget/rawset/rawequal/rawlen/next/tonumber。其中 setmetatable 可注册 __gc/__index/__tostring 元方法——__gc 触发时机随 GC 不确定(非确定副作用)、__index 是逃逸向量、tostring(table) 暴露地址。每个都需显式判定,白名单表当前不完整。
+- 【Lua 5.4 integer/float 子类型边界未定】变量/跨子任务标量限 boolean/integer/string/duration,但 Lua 5.4 number 有 integer 与 float 两子类型,3/2=1.5、算术易意外产生 float;bot:now() 返回 integer。float 参与决策比较引入平台格式化/精度非确定。决策包未定 number 子类型在边界(TaskInput/子任务/变量)如何归一或拒绝。
+- 【capabilities 声明与脚本实际动作的加载期一致性是未列出的净损失】§8.6 加载期校验'background_only 项目未引用被禁止动作'依赖对动作的静态扫描;命令式 Lua 下脚本用不用 key_press/input_text 是运行时才知。Roadmap 只把可达性/终止性列为净损失,漏了'能力集合 vs 实际动作一致性'这项同样退化为运行时的净损失。Q7'不从子任务源码推断能力'加剧此缺口。
+- 【pause 后置与 Q2 resume 作废机制的依赖未协调】Q5 把'pause 是否 M0 必需'列为待定;但 Q2'resume 作废观察'、Q5'resume bump target_generation'依赖 pause/resume 存在。若 M0 砍 pause,Q2/Q5 哪些机制同步后置、generation-bump-on-resume 是否还需要,决策包未给出裁剪边界。
+- 【swipe/固定偏移动作表达力】骨架仅允许 bot:swipe(from_detection, to_detection) 且要求同帧 generation,无法表达'从 A 点滑动固定方向/距离到无识别器的目标点'。同理无坐标偏移点击。依赖第一条真实任务是否需要,但当前 API 面对这类常见手势是空的。
+- 【wait 内部 interrupt 失败的 surface 语义未定】bot:wait 每轮 capture 都触发 Q6 interrupt drain;若 handler 耗尽 max_hits 抛 InterruptBudgetExceeded,wait 会被该错误打断而非返回 Timeout。脚本 pcall(bot:wait) 捕获到的错误类型因 interrupt 变得不可预测,决策包未说明 wait 内 interrupt 失败如何 surface。
+- 【trace 事件流 vs 落盘 trace vs subscribeEvents 三者关系】Q10 保留 subscribeEvents(best-effort,lag 后 queryTask),trace 是绑定层 emit 到 JSONL sink,logging decision 提'统一 sink 分发'。实时订阅流与落盘 trace 是否同源、一次一 run 下 queryTask 返回何种权威快照、TaskStatus 生命周期,未闭合。
+- 【bot:capture_artifact 路径/命名安全规则未定】骨架称其为'唯一允许的文件写',写入 Engine 运行目录,提了 InvalidResource(越界路径) 但未给 name 的校验规则(路径穿越 ../、命名冲突、覆盖)。§15 要求'不接受 Flow 指定任意路径'。
+- 【元 gap:无一条真实任务却设计了完整 API 面】Q3 Layer3 参数化识别、Q6 interrupt drain-to-fixpoint、Q7 子任务加载图+环检测、哈希链等均为 speculative,YAGNI 风险高;所有效率前提/表达力/常数标定都依赖'第一条真实日常任务'与 M0 场景(决策包自身反复标注未知)。
+- 【ADR-013 幽灵条款与 M1 契约重写尚未落地】DESIGN v0.4 §24 只到 ADR-012;Q6 草案把 ADR-013 当既有条款引用。新 ADR'采用命令式 Lua 任务模型'、ADR-001 被取代论证、M1 line723'所有状态和资源引用可在加载时验证'的改写,均为 grill 产出、当前未写入 DESIGN。
+
+### 7.3 约束违背 / 需盯（constraintViolations）
+
+- 【确定性】Q9 保留 math 超越函数(sin/exp 等)'平台性记入 compatibility',等于承认同一脚本跨平台可能产生不同决策,与 §3.1'相同帧/识别器版本/参数产生相同结果'的确定性铁律冲突。裁决自认降级为'rr 式弱确定性(同平台确定)'——这是对灵魂约束的显式让步,需开发者明确批准,不能默认。
+- 【可追踪(过度承诺)】'回放重演决策一致'与 ADR-006/§0'不承诺完整任务确定性重放'冲突(见 contradictions)。把可追踪的实际能力(离线帧复核)表述成了'决策级重演',会误导 M1 验收标准。
+- 【确定性(外部事件)】Q5 指令钩子'同输入→同计数→同触发点'成立,但取消是 Ctrl-C atomic 异步事件,命中的指令位置取决于 OS 调度时刻→含取消的 run 无法确定性复现到取消点之后。裁决按 rr'被记录的外部事件'处理可接受,但这是弱确定性,需在验收标准里明示,不可宣称'含取消 run 可完全复现'。
+- 【简洁优先(元原则)/可追踪】trace 哈希链'不可事后抹除'是裁决新增(DESIGN 从未要求)。唯一用户=作者本人、本地磁盘文件,哈希链只防单条抹除、不防整体重写,防护价值对自用工具存疑,与 §3.7'轻量、不建兼容性基础设施'及 CLAUDE.md'简洁优先/最小影响'张力明显,疑似过度工程。
+- 【确定性(隐藏通道)】__gc 元方法在 GC 触发时随时机运行(collectgarbage 虽禁但自动 GC 仍跑),若 setmetatable 在白名单则脚本可注册 __gc 产生非确定副作用;Lua 5.4 integer/float 隐式转换与 float 格式化也是未消毒通道。Q9'确定性地板'尚未覆盖这批通道。
+- 【严格后台(需盯,非确凿)】Q6 让 capture() 内部自动执行 interrupt handler 的 click——虽走 background_only 注入路径不违反后台能力约束,但产生脚本不可见的输入动作,审计/归因必须由 InterruptMatched span 严格覆盖,否则'可追踪'出现盲区。列此为监控点。
+
+### 7.4 grill 应追问的靶点（grillTargets）
+
+- 双 generation 计数器语义:先画清 FrameId(每 capture,高频)与 TargetGeneration(窗口事件,低频)两个计数器,定死注入层 fencing fence 哪个、lease 字段如何映射 ADR-004、resume/过门各 bump 哪个。这是 S5 地基,阻塞其余一切绑定层裁决。
+- max_action_frame_age 度量:墙钟 ms(守 §8.3 物理 liveness、能拦纯 Lua 长算后旧帧)还是逻辑 tick(暂停冻结但拦不住长算)?建议 safety=generation、liveness=单调墙钟 ms 双轨,拒绝把 frame age 改成逻辑 tick。给出默认值需第一条真实任务的帧率/识别延迟。
+- 错误 kind 拆分:把 wait 超时(Tier B 可捕获)与全局/指令预算耗尽(Tier C 不可捕获)拆成不同 kind;确认 StaleObservation retryable 默认与是否绑定层内建小重试(与 Q2 拍板项统一);确认向脚本暴露原生 pcall 还是仅受控 bot:try(fn) 以保证 Tier C 不可吞。
+- 回放/可追踪的真实边界:明确 M1 交付的回放是 ADR-006 Exploratory 帧复核(不承诺决策级重演),据此改写所有'重演决策'措辞与 M1 退出契约(line723),把可达性/终止性/能力一致性三项净损失显式写入,不假装无损。
+- 第一条真实日常任务 + M0 场景映射 + 首游戏(偏差 A:鸣潮 vs 卡厄斯梦境,真机现停角色详情页):解锁'同帧多查'效率前提、API 表达力验证、以及 Q3 Layer3 / Q6 interrupts / Q7 子任务是否 M0 需要的 YAGNI 判断——头号硬阻塞。
+- YAGNI 压力测试:interrupt drain-to-fixpoint、子任务加载图+环检测、Layer3 参数化识别、trace 哈希链——逐项问'第一条任务真的需要吗',按'简洁优先'把不需要的推迟,避免在无真实用例下过度工程。
+- 沙箱确定性地板补全:补 setmetatable/getmetatable/raw*/next/tonumber 的逐个判定(尤其 setmetatable→__gc/__index 的逃逸与非确定风险),定 Lua 5.4 integer/float 子类型在变量/边界的归一或拒绝规则,补 __gc/字符串地址 tostring 的消毒。
+- Frame 生命周期有界化:定 stale Frame 的强制释放/Frame 数量上限,兑现 §3.6/§19,防止脚本持有多帧导致 8MiB×N 内存堆积。
+- 信任模型(Q9 前提):项目脚本仅可信作者还是可能第三方——决定 string.rep/format 是否需显式上限防内存炸弹、消毒严格度,直接影响 S2 范围。
+- 常数标定确认:指令预算 N、500ms 取消 SLA 是否含纯 Lua 死循环、pause 是否 M0 必需(并明确若后置则 Q2/Q5 哪些机制同步裁剪)、各 kind retryable 默认——先给保守占位、S9 soak 前校准。
+- ADR 结构厘清:确认 ADR-013 即'采用命令式 Lua 任务模型'及其编号,ADR-001 被取代的论证挂靠,interrupts 是否单列 ADR——阻塞 S0 文书落地。
+
+---
+
+## 8. 待 grill 解锁清单
+
+> 汇总所有 `developerInputNeeded` + `critique.grillTargets`，按优先级排。P0 = 硬阻塞（不定则后续无法起步）；P1 = 机制拍板；P2 = 常数标定 / YAGNI。
+
+### 8.1 P0 — 硬阻塞（critique 明确标注的头号靶点）
+
+以下直接取自 `critique.grillTargets`，按 critique 给出的顺序（前列即最先追问）：
+
+- 双 generation 计数器语义:先画清 FrameId(每 capture,高频)与 TargetGeneration(窗口事件,低频)两个计数器,定死注入层 fencing fence 哪个、lease 字段如何映射 ADR-004、resume/过门各 bump 哪个。这是 S5 地基,阻塞其余一切绑定层裁决。
+- max_action_frame_age 度量:墙钟 ms(守 §8.3 物理 liveness、能拦纯 Lua 长算后旧帧)还是逻辑 tick(暂停冻结但拦不住长算)?建议 safety=generation、liveness=单调墙钟 ms 双轨,拒绝把 frame age 改成逻辑 tick。给出默认值需第一条真实任务的帧率/识别延迟。
+- 错误 kind 拆分:把 wait 超时(Tier B 可捕获)与全局/指令预算耗尽(Tier C 不可捕获)拆成不同 kind;确认 StaleObservation retryable 默认与是否绑定层内建小重试(与 Q2 拍板项统一);确认向脚本暴露原生 pcall 还是仅受控 bot:try(fn) 以保证 Tier C 不可吞。
+- 回放/可追踪的真实边界:明确 M1 交付的回放是 ADR-006 Exploratory 帧复核(不承诺决策级重演),据此改写所有'重演决策'措辞与 M1 退出契约(line723),把可达性/终止性/能力一致性三项净损失显式写入,不假装无损。
+- 第一条真实日常任务 + M0 场景映射 + 首游戏(偏差 A:鸣潮 vs 卡厄斯梦境,真机现停角色详情页):解锁'同帧多查'效率前提、API 表达力验证、以及 Q3 Layer3 / Q6 interrupts / Q7 子任务是否 M0 需要的 YAGNI 判断——头号硬阻塞。
+- YAGNI 压力测试:interrupt drain-to-fixpoint、子任务加载图+环检测、Layer3 参数化识别、trace 哈希链——逐项问'第一条任务真的需要吗',按'简洁优先'把不需要的推迟,避免在无真实用例下过度工程。
+- 沙箱确定性地板补全:补 setmetatable/getmetatable/raw*/next/tonumber 的逐个判定(尤其 setmetatable→__gc/__index 的逃逸与非确定风险),定 Lua 5.4 integer/float 子类型在变量/边界的归一或拒绝规则,补 __gc/字符串地址 tostring 的消毒。
+- Frame 生命周期有界化:定 stale Frame 的强制释放/Frame 数量上限,兑现 §3.6/§19,防止脚本持有多帧导致 8MiB×N 内存堆积。
+- 信任模型(Q9 前提):项目脚本仅可信作者还是可能第三方——决定 string.rep/format 是否需显式上限防内存炸弹、消毒严格度,直接影响 S2 范围。
+- 常数标定确认:指令预算 N、500ms 取消 SLA 是否含纯 Lua 死循环、pause 是否 M0 必需(并明确若后置则 Q2/Q5 哪些机制同步裁剪)、各 kind retryable 默认——先给保守占位、S9 soak 前校准。
+- ADR 结构厘清:确认 ADR-013 即'采用命令式 Lua 任务模型'及其编号,ADR-001 被取代的论证挂靠,interrupts 是否单列 ADR——阻塞 S0 文书落地。
+
+### 8.2 三个专属开发者输入（只有开发者能给）
+
+- **第一条真实日常任务是什么**：登录/签到/领取/菜单导航/画面决策？有无弹窗？是否跨文件复用子流程？→ 硬阻塞 **S9 定形**，并决定 Q3 Layer3 参数化识别、Q6 interrupts、Q7 子任务是否 M0 需要（YAGNI），以及 Q1"同帧多查"效率前提、各类常数标定。
+- **M0 场景在卡厄斯梦境里对应哪个游戏内流程**：§26 "Home→点击→等 Result→点击 Reset→等 Home" 映射到哪个流程？真机现停在**角色详情页**（非 §26 起点）。→ 硬阻塞 **S9 真机腿**、项目包无法建、M2 对象连带待定。
+- **分辨率自适应优先级**：现在就做"均匀缩放归一化"档，还是先严格拒、后补模块？→ 决定 S8 自适应模块是否进首交付；第一条任务是否跑在带 DPI 缩放的非 base 分辨率决定其紧迫度。
+
+### 8.3 各题 developerInputNeeded 汇总（P1/P2）
+
+**Q1. observe() 语义:一次调用一帧 vs capture 一帧多识别器查询**
+
+第一条真实日常任务 / §26 M0 场景的真实决策结构:一次决策典型要查几个识别器?这直接验证'同帧多查'的效率前提是否成立,以及 capture→multi-find→click→recapture 是否匹配卡厄思梦境的实际流程(作者已在文档 132–135 行标注真机当前在角色详情页、非 §26 起点,此点必须开发者补)。其余需拍板项:(1)是否把 raw frame:find 暴露给脚本作者,还是只给 bot:wait/exists/match 便利封装、把裸 capture 藏进宿主(人体工学 vs 控制面的取舍);(2)max_action_frame_age 的实际值(§8.3 默认 750ms),需按目标游戏帧率/识别延迟由开发者定;(3)是否接受用两个名词(capture+find)换确定性/trace 红利,还是坚持单名词 observe()+内部缓存(Model C)——这关乎产品实际用法,只有开发者知道。
+
+**Q2. 命令式 Lua 里怎么保住"不对失效观察下手"(租约 = frame generation + 时间)**
+
+1) max_action_frame_age 的单位与默认:DESIGN 定 750ms 墙钟,改逻辑预算后应重定义为'N 个 tick',还是保留'单调时钟毫秒 + generation 双轨'?需拍板逻辑预算的单位与默认值。 2) 租约失效是否允许脚本受控重试(可恢复)还是一律判 run 失败:直接影响日常任务健壮性与 Q4 分野,需第一条真实日常任务的形态才能定(见 grill 文末'第一条真实日常任务')。 3) 是否强制'动作后再观察确认'闭环来兜 TOCTOU Type II:每个动作多一次 capture 的成本值不值,需按 M0 场景(§26 在卡厄思梦境对应哪个游戏内流程,真机现在停在角色详情页)拍。 4) ADR-013 是否即'采用命令式 Lua 任务模型',以及 Q2 租约裁决与 ADR-001 被取代的论证挂哪个 ADR 编号——需开发者确认 ADR 结构。
+
+**Q3. 识别器/模板在哪声明:Lua 里,还是 manifest/项目包**
+
+1) manifest 载体:project.toml 内 [[recognizers]] / 独立 recognizers.toml / 每个 flow 旁置声明——影响多任务共享识别器的组织方式。2) 是否 M0 就要 Layer3 参数化识别,还是先纯静态——取决于 line135 待补的'第一条真实日常任务'是否需要'第 N 格'类动态 ROI。3) 动态索引 bot.templates[expr] 的容忍度:完全禁止(只允许静态点号,最强静态保证但限表达力)还是允许但运行时 fail-closed——需开发者定红线。4) manifest ROI 坐标用 FrameSpace 像素@base_resolution 还是 NormalizedSpace(0-1):后者对分辨率更鲁棒但有子像素精度坑(底料分辨率坑),二选一需拍板。
+
+**Q4. 错误模型:raise(pcall)还是返回 nil/false**
+
+未捕获的 StaleObservation 是否由绑定层内建小重试 N 次(Selenium 式 re-capture+find)后再判 run Failed,还是一律立即失败、重试完全交给脚本——取决于"第一条真实日常任务里 stale 有多频繁"的工效/策略拍板,我无法替你定。是否向脚本暴露原生 pcall(便捷重试)还是只给受控 bot:try(fn) 包装(保证无法捕获 Tier-C)——安全 vs 工效权衡,需你拍。各 kind 的 retryable 默认值(如 ActionRejected 到底可不可重试)依赖真实目标(卡厄思梦境)实测行为,需你给数据或先给保守默认。SOL_EXCEPTIONS_SAFE_PROPAGATION 构建标志与异常配置由构建负责人拍(取决于工具链/是否全程 -fexceptions)。
+
+**Q5. 取消/暂停/超时怎么跨协程工作(yield/resume + 宿主插桩)**
+
+需开发者拍板的:(1)指令预算 N(每钩指令数)与全局 max_runtime/最大 slice 数的标定——多少纯 Lua 指令算『太久』才中断,平衡 500ms 取消响应 vs 开销;此值依赖『第一条真实日常任务』(作者自己也标为未知)。(2)pause 是否 M0 必需还是后置里程碑——§9.2 列了 Pausing/Paused,但 M0(§26 裸 demo)可能只需 cancel+timeout;若 pause 延后,M0 就不必现在做 generation-bump/resume 作废整套机器。(3)取消响应 SLA 确认——成功标准『普通等待 500ms 内响应取消』是否为 M0 硬指标,以及是否同样适用于纯 Lua 死循环中断(这决定指令钩子 N 的量级)。(4)Ctrl-C(CLI)与 Engine.cancel(API)是否共用同一取消路径(很可能是,但需确认 CLI 信号→atomic 的接线)。(5)per-op 分层超时(per-capture/per-recognition/per-retry)在 M0 是否全需还是先做子集——取决于 M0 场景/第一条真实任务的形态。
+
+**Q6. 随机弹窗 interrupts 怎么声明(bot:on + max_hits)**
+
+1) 是否新写 ADR-013『任务级 interrupts』并作废对现有 ADR-013 的引用——草案把它当既有条款引用,但 DESIGN.md v0.4 只到 ADR-012,这条必须开发者拍。2) max_hits 默认值与 on_exhausted 默认策略(fail 还是 stop)——取决于第一条真实日常任务里弹窗的实际频率与性质。3) interrupt 是仅 run 作用域,还是可按 step/阶段启停(有些弹窗只在特定阶段预期)——取决于首条真实任务的流程结构。4) handler 能否调子任务、允许多深——耦合 Q7,需开发者定边界。5) 命中弹窗能否『中止主流程判 run 失败』(致命弹窗)还是只能 handle-and-continue。6) 第一条真实日常任务里具体有哪些弹窗(重连?每日奖励?更新提示?)——文档 §26/待补节自己都标注 M0 场景与首条任务未知,这是验证 API 表达力的前提,只能开发者提供,不替他假设。
+
+**Q7. 子任务/复用:Lua 函数互调,还是宿主级任务注册表**
+
+1) 递归策略拍板:§8.5『v1 禁止递归』对『同 VM 内普通 Lua 函数递归』是否强制——加运行时调用深度守卫(阈值取多少?)还是带论证放宽?这是纯 Lua 函数天然违反、必须开发者定的点。2) 跨文件复用是否 M0/M1 就需要:若第一条真实日常任务单文件足够,bot:load_subtask 可按 YAGNI 推迟到真实多任务共享子流程时再落地——需要开发者告知第一条任务的复杂度与是否跨任务共享子流程(与议程末尾『第一条真实日常任务』同一未知)。3) 子任务边界输出形态:单返回值 vs 多标量输出表,取决于真实任务数据流。4) 子任务命名/寻址是否需要项目内命名空间或版本标记(与 §3.7 schema 版本化平行)。
+
+**Q8. 能力/兼容性门(分辨率/目标)在哪把关 + 要不要现在留自适应口子**
+
+以下必须开发者拍板,不替你假设:(1) 分辨率自适应优先级——文档'需要开发者补充'里已列此条。我的建议是 M0 strict + 留恒等缝、自适应作后置第一模块;但你第一条真实日常任务是否就跑在非 base 分辨率(带 DPI 缩放的笔记本/多显示器)决定这个模块的紧迫度。(2) 目标游戏的实际 scaling_mode(fit/fill/stretch/none)——卡厄思梦境/鸣潮/NIKKE 的渲染缩放模式是实测事实,决定 M0 数据模型是否真的需要 offset/viewport(若都是 none 且你只跑固定分辨率,offset 档可先留空实现)。(3) DPI 处理策略——§6.3 把 DPI Awareness 列为硬需求;你机器是否恒为 per-monitor-v2?门是否要在 M0 就把 DPI 归一(我建议要,否则严格拒会误伤 DPI 放大的同逻辑分辨率目标)。(4) 标准化的 base 分辨率(1920×1080?你的截图/采集设置)。(5) M0 场景/第一条真实任务(文档 open 列表已列)——决定分辨率自适应是否根本不在首个交付的关键路径上;若首任务恒在 base 分辨率,自适应可安心后置。
+
+**Q9. 沙箱:暴露哪些 Lua 标准库,禁 require 后子任务复用怎么办**
+
+信任模型是最需要拍板的前提:项目包脚本只来自可信作者、还是可能来自第三方?这决定消毒严格度(是否需给 string.rep/format 显式上限防内存炸弹,还是交给内存/指令预算兜底)。其次:(1)是否向脚本暴露随机 bot:random——取决于第一条真实日常任务是否需要随机化行为(如反检测抖动),若需要,种子策略(每 run 固定 vs 记录回放)要定;(2)超越函数(math.sin/exp)在 M0 是否就要求跨平台位级复现,还是接受同平台确定即可,这决定 math 库消毒严格度;(3)M0 是否就需要 load_subtask,还是先单文件任务、子任务复用后置——取决于尚未确定的 M0 场景与第一条真实任务的复杂度。
+
+**Q10. 调度：只做"一次一个任务"、无 daemon，还是为托盘常驻留 Engine API 边界**
+
+1) 第一条真实日常任务的**执行频率**：分~时级则进程启动成本(建 state/sandbox/能力协商/Controller 连接)可忽略，no-daemon 无痛；若存在秒级高频轮询需求，需重新评估(但现行 §2.3 已把常驻列为不做)。2) M4 托盘 GUI 的形态定位：是『顺序发火 UI，仍一次一 run』(本裁决前提，零架构债)，还是『真正的并行调度器』——后者会与 §9.1 并发模型和确定性灵魂约束正面冲突，须重新谈判。此为 product 方向，须开发者拍板。3) 将来跨游戏顺序运行时，是否愿意为『每 run 重建 Controller 连接的开销』付代价，还是届时优先做常驻保持连接——属 M4 优化取舍，非当前决定。这三条我不替开发者假设。"
+
+### 8.4 元决策（跨题，建议 grill 优先解决）
+
+- **ADR-013 归属**：DESIGN v0.4 §24 只到 ADR-012，不存在 ADR-013；Q6 草案却把它当既有条款引用。极可能 ADR-013 就是待写的《采用命令式 Lua 任务模型》主 ADR 本身。澄清前不能把 ADR-013 当权威条款引用。
+- **ADR-001 被取代的论证**：ADR-001（显式状态机，理由：直观/可验证/易回放）正是被推翻的决策；新 ADR 须论证 Lua 如何重新赢回"可验证/易回放"（回放靠 ADR-006 Exploratory 帧复核 + 全量 trace 重演决策，非重跑游戏必同果），可验证性是主要牺牲项。
+- **M1 退出契约重写**：§22 line723 "所有状态和资源引用可在加载时验证" 与命令式 Lua 直接冲突，建议改为"已声明资产加载期校验存在+哈希；可静态获知引用 fail-closed；完整可达性/终止性下沉为运行时预算 + lint"。
+
+---
+
+_本决策包由 workflow `wf_54d09969-ad0` 的 journal.jsonl 组装：ground×5 · grill×10 · synth×3 · critique×1。_
