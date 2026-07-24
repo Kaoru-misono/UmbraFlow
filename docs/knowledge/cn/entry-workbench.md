@@ -1,9 +1,11 @@
 # entry/workbench 架构知识
 
-本文解释 Windows 入口 `umbra-workbench` 的 A1 authoring workbench。它不是 annotation schema 的第二套实现，而是围绕 `modules/annotation` 的规范化 authoring、compiler 与 recognition surface 组合 GUI、采集和文件发布能力。
-新开发者应先把它看成一个 composition root，再沿本文给出的边界决定改动属于 Workbench、`annotation`、`image`、`controller` 还是 runtime。
+`umbra-workbench` 是 A1 阶段的 Windows 标注工具。GUI、采集和文件发布都围绕
+`modules/annotation` 已有的编辑模型、编译器和识别接口组织，不另行定义 schema。
+它是这些模块的组合入口；业务规则仍放在 `annotation`、`image`、`controller` 或
+runtime 中。
 
-## 职责与边界
+## Workbench 负责什么
 
 Workbench 拥有从“取得一张完整源图”到“发布可供 runtime 消费的生成闭包”的作者工作流：
 
@@ -15,7 +17,7 @@ Workbench 拥有从“取得一张完整源图”到“发布可供 runtime 消�
 - 用生产侧同一个 `RecognitionRuntime` 对选中 source 做有界 Preview；
 - 按内容寻址资产优先、runtime manifest 最后的顺序发布项目。
 
-它刻意不拥有以下语义：
+以下规则不由 Workbench 定义：
 
 - schema、引用闭合、矩形和 fingerprint 合法性属于 `modules/annotation/source/annotation/authoring-document.hpp`；
 - template crop、runtime manifest 生成和 canonical ordering 属于 `modules/annotation/source/annotation/authoring-compiler.hpp`；
@@ -24,9 +26,8 @@ Workbench 拥有从“取得一张完整源图”到“发布可供 runtime 消�
 - target discovery 与 WGC session 属于 `modules/controller/source/controller/discovery.hpp` 和 `modules/controller/source/controller/capture.hpp`；
 - observation lease、action authorization、input delivery 和 trace 属于 runtime/engine/controller 链。Workbench 没有 click sink，也不能把 Preview evidence 变成输入能力。
 
-因此 `entry/workbench` 不能成为新的 domain module。特别是不要在 panel 中复制
-validation、matcher 或 serialization 规则；作者输入必须下沉到现有 canonical
-factory/compiler，panel 只负责把失败显示给作者。
+`entry/workbench` 不是新的领域模块。panel 不应复制校验、匹配或序列化规则；
+作者输入必须交给现有的规范化工厂和编译器，panel 只负责收集输入和显示错误。
 
 构建结构在 `entry/CMakeLists.txt` 中给出。`umbraflow_workbench_support` 收纳 ImGui-free 的 authoring backend、Preview、canvas math 与 app state，供 `test-workbench` 直接链接；`umbra-workbench` executable 才加入 `panels.cpp`、Win32/D3D11 shell、file dialog、texture cache 和 vendored Dear ImGui。
 `windows-file-publication.cpp` 仍在 support target 中，且 WGC ingestion 也按 `controller` target 条件加入，所以这个 support target 是“无 ImGui”而不是已经跨平台的正式 module。
@@ -35,20 +36,33 @@ GUI 可按三层导航：
 
 1. Platform shell：`entry/workbench/platform/windows-gui-shell.hpp` 的 `GuiShell` 拥有 Win32 window、DXGI swap chain、D3D11 device 与 ImGui context；`TextureCache`、file dialog、WGC adapter 和 publication adapter 也留在 `entry/workbench/platform/`。
 2. ImGui-free app/backend：`AuthoringEditHistory`、`AppState`、ingestion、persistence、Preview 和 canvas math 只处理 project values、`Result` 与 owned bytes，不调用 ImGui。
-3. Panels：`entry/workbench/app/panels.hpp` 暴露 `drawWorkbench`、`PanelUiState` 与 `WorkbenchServices`；`panels.cpp` 把四个 immediate-mode panels 翻译成 app method 调用。OS picker、capture 和 texture upload 只通过 call-scoped service callbacks 进入。
+3. Panels：`entry/workbench/app/panels.hpp` 暴露 `drawWorkbench`、`PanelUiState` 与
+   `WorkbenchServices`；`panels.cpp` 把四个即时模式面板的操作转交给 app 方法。
+   系统文件选择、捕获和纹理上传只通过仅在本次调用期间有效的服务回调进入。
 
-`entry/workbench/app/main.cpp` 是三层的 composition root：解析可选 project root 和 `--smoke`，load 或 create `AppState`，创建 `GuiShell`，绑定三个 `WorkbenchServices` callback，再让 shell 每帧同步调用 `drawWorkbench`。失败只在 `dispatch`/`main` 边界写到 `stderr`。
+`entry/workbench/app/main.cpp` 负责组合这三层：解析可选的项目根目录和 `--smoke`，
+加载或创建 `AppState`，创建 `GuiShell`，绑定三个 `WorkbenchServices` 回调，再由
+shell 每帧同步调用 `drawWorkbench`。只有 `dispatch`/`main` 会把错误写到 `stderr`。
 
-## 关键类型与数据流
+## 编辑与发布流程
 
-### Authoring state 与编辑路由
+### 编辑状态与修改入口
 
-`entry/workbench/authoring-edit.hpp` 定义可编辑 transport：`AuthoringDraft` 聚合 `EditableSource`、`EditableRecognizer`、`EditablePage` 和 `EditableRegression`。这些类型允许 widget 暂时写入普通 string、integer 和 vector，但它们不是可持久化真相。
+`entry/workbench/authoring-edit.hpp` 定义供界面编辑的中间数据：
+`AuthoringDraft` 聚合 `EditableSource`、`EditableRecognizer`、`EditablePage` 和
+`EditableRegression`。控件可以暂时写入普通字符串、整数和 vector，但这些值不能
+直接持久化。
 
-`makeAuthoringDraft` 把 canonical `annotation::AuthoringDocument` 展开成上述 transport；`buildAuthoringDocument` 反向调用 `AuthoringSource::create`、`ResourceName::create`、`SimilarityThreshold::create`、`TemplateOffset::create`、`RecognizerDefinition::create`、`PageSignature::create`，最后调用 `AuthoringDocument::create`。
+`makeAuthoringDraft` 把规范化的 `annotation::AuthoringDocument` 展开成上述中间数据；
+`buildAuthoringDocument` 再依次调用 `AuthoringSource::create`、
+`ResourceName::create`、`SimilarityThreshold::create`、`TemplateOffset::create`、
+`RecognizerDefinition::create`、`PageSignature::create`，最后调用
+`AuthoringDocument::create`。
 这条重建路径解释了为何 GUI 不做“先改半个对象、以后再校验”：一次 edit 要么得到完整有效的 document，要么原版本不动。
 
-`AuthoringEditHistory::apply` 先完成重建，再比较新旧 document 的 canonical serialization。相同 draft 返回 `false`，不污染历史；真正变化把当前 document 移入 undo、清空 redo，并把 undo 限制为 `g_maximumAuthoringUndoEntries == 100`。
+`AuthoringEditHistory::apply` 先完成重建，再比较新旧 document 的规范序列化结果。
+相同 draft 返回 `false`，不写入历史；发生变化时，把当前 document 移入 undo、清空
+redo，并把 undo 限制为 `g_maximumAuthoringUndoEntries == 100`。
 `undo`/`redo` 移动完整 document value，所以跨 recognizer/page 的引用始终作为同一版本恢复。
 
 `entry/workbench/app/workbench-app.hpp` 的 `AppState` 是窗口背后的
@@ -68,7 +82,7 @@ cache 故意不随 undo 回滚。撤销 import 后，PNG 成为 harmless orphan�
 Preview。dirty flag 则保守：undo 回已保存内容仍可能保持 dirty，因为 history
 没有可恢复的 revision cursor；代码中的 `TODO(cpp-debt)` 已明确升级方向。
 
-### ResourceId minting
+### 生成 ResourceId
 
 `entry/workbench/app/workbench-app.cpp` 的 `mintResourceId` 用 `std::random_device` 填满 16 bytes，再设置 UUID version 4 nibble 和 RFC 4122 variant bits，最后调用 `modules/annotation/source/annotation/catalog.hpp` 的 `ResourceId::fromBytes`。
 `fromBytes` 本身按契约不验证 version/variant，因此 authoring caller 负责设置 convention。
@@ -76,7 +90,7 @@ Preview。dirty flag 则保守：undo 回已保存内容仍可能保持 dirty，
 `SourceId`、`RecognizerId`、`PageId` 等是 `ResourceId` 上的 distinct strong types；panel 在新增 source、recognizer 或 page 时先 mint，再包成对应 ID。随机性只决定新资源 identity，不进入 runtime matching。
 ID 一旦进入 document，canonical compiler 以它作为稳定 ordering/reference key。
 
-### Source ingestion
+### 导入源图
 
 PNG 路径从 `WorkbenchServices::m_pickPngToImport` 到
 `entry/workbench/source-ingestion.hpp` 的 `importSourcePng`：
@@ -101,7 +115,7 @@ provenance 记录 frame 的 `TargetGeneration` 和 wall-clock RFC 3339 capture t
 第一张 source 通过 `addIngestedSource` 时替换该 placeholder；后续 source 则由
 完整 `AuthoringDocument::create` 校验必须与项目 fingerprint 相容。
 
-### Save/load round trip 与发布顺序
+### 保存、重开与发布顺序
 
 写入口是 `entry/workbench/project-persistence.hpp` 的
 `saveAndGenerateAuthoringProject`。真实顺序是：
@@ -137,7 +151,7 @@ view 与 runtime view 可能暂时不同步。
 source fingerprint。返回的 `LoadedAuthoringProject` 保留原 PNG bytes，不重新
 编码，因此 load 后直接 save 可维持 byte-identical source assets。
 
-### Bounded Preview
+### 有资源上限的预览
 
 `entry/workbench/preview.hpp` 的 `runPreview` 不含私有 matcher：
 
@@ -157,7 +171,7 @@ API 还支持 `std::stop_token`。`PreviewResult` 保留 completed
 `hit=false`。Preview frame 的 synthetic frame/session/generation identity 只为
 满足真实 recognition API；结果不进入 document、history 或 action delivery。
 
-## 设计不变量
+## 必须保持的约束
 
 ### Fail-closed
 
@@ -176,7 +190,7 @@ content-addressed destination 若已有不同 bytes，publication fail closed。
 collision guard 保护“path 代表 bytes”不变量，也避免一次坏 save 覆盖 runtime
 仍可能引用的旧资产。
 
-### Determinism
+### 确定性
 
 确定性从 ingestion 延伸到 publication：source PNG 被 canonical re-encode；
 template crop/PNG/hash 和 runtime TOML 由 `compileAuthoringDocument` 纯生成；
@@ -189,7 +203,7 @@ authoring-time `mintResourceId` 是有意的非确定性边界。它只创建新
 integer basis-point threshold，Preview 直接调用 production
 `RecognitionRuntime`，没有 GUI-only floating-point decision。
 
-### Ownership 与 lifetime
+### 所有权与生命周期
 
 document、draft、history entries、source bytes、compiled artifacts 和 Preview
 结果均按 value/owned container 流动。`Frame` 的 pixel buffer 使用
@@ -208,7 +222,7 @@ lifetime 内有效的 opaque handle。
 captures 安全依赖这一同步协议：`state`、`services`、`ui` 和 `shell` 都覆盖
 整个 `run` 调用。
 
-### Platform/SAFETY boundary
+### 平台与 SAFETY 边界
 
 Win32 handle bit restoration、`GWLP_USERDATA` pointer conversion、COM out
 parameters、D3D texture handle conversion、Win32 path pointer 和 file I/O
@@ -223,7 +237,7 @@ runtime controller action sink 执行；把 input API 加进 `WorkbenchServices`
 `docs/plans/2026-07-22-annotation-design.md` 明确排除的 “runtime input from the
 workbench”。
 
-## 与其他部分的协作
+## 依赖关系
 
 入站边是用户/OS 到 Workbench：
 
@@ -250,7 +264,7 @@ D3D pointer 或 ImGui widget state。
 - 对 panel 返回 status string、texture handle 和 transient Preview rows。
 
 `umbra-workbench` 在 `entry/CMakeLists.txt` 链接 `engine`，但当前
-`entry/workbench` 源码没有 include 或调用 `engine` symbol。真正与 runtime
+`entry/workbench` 源码没有 include 或调用 `engine` symbol。与 runtime
 共享的 recognition core 是 `annotation::RecognitionRuntime`。不要因为 build
 edge 就把 engine session、lease 或 action port 引入 app state；runtime 只消费
 Workbench 最后发布的 `generated/annotations.runtime.toml` 和 template assets。
@@ -261,7 +275,7 @@ Workbench 最后发布的 `generated/annotations.runtime.toml` 和 template asse
 `PreviewAnchorRow`/`PreviewStop`。这些窄 value 防止 panels 依赖
 `RecognitionRuntime` 私有 evidence layout 或 native platform objects。
 
-## 测试策略
+## 测试
 
 Windows 下 `tests/CMakeLists.txt` 把六个 synthetic 文件合成
 `test-workbench`，直接链接 `umbraflow_workbench_support`，从而绕过 ImGui 和
@@ -297,7 +311,7 @@ GUI shell、file dialog 和 title-based WGC capture 没有 deterministic unit te
 Windows 真机验证。修改 platform lifetime 或 D3D/ImGui wiring 时，不能用
 `test-workbench` 绿灯替代 smoke/人工证据。
 
-## 扩展接缝
+## 后续扩展
 
 `docs/plans/2026-07-21-product-form-and-roadmap.md` 是产品节奏权威：
 A2 扩展多 anchor/page 的 required/forbidden、Unknown/Ambiguous 和样本
@@ -312,8 +326,8 @@ adaptation、OCR 或 recognition policy 语义时，先在该 contract 的后继
 `modules/annotation`/`vision` 中建立 canonical behavior，再把 editing control
 接到 Workbench。
 
-未来抽取 `modules/authoring` 的自然 seam 是当前
-`umbraflow_workbench_support` 中不依赖 ImGui 的 public surface：
+如果以后需要抽取 `modules/authoring`，现有
+`umbraflow_workbench_support` 中不依赖 ImGui 的公开接口就是候选边界：
 `AuthoringEditHistory`、ingestion、compile-facing persistence model、
 Preview adapter、`AppState` 的 document/cache 规则及其 synthetic tests。
 现有代码已经用 value/`Result` API 隔开 panels，因而 consumer 不需要认识
@@ -321,13 +335,13 @@ Dear ImGui。
 
 但不能把整个 support target 原样移动：`project-persistence.cpp` 直接调用
 Windows file-publication adapter，WGC ingestion 直接依赖 `controller`，而
-`AppState` 同时含 project semantics 与 GUI selection/view state。真正抽取时应
+`AppState` 同时含项目语义与 GUI 选择、视图状态。抽取时应
 保留纯 authoring policy，令 publication/capture 继续由 entry 注入 port，
 GUI-only state 留在 entry；否则新 module 只是换目录的 Windows composition
 root。当前 `docs/plans/` 没有为 `modules/authoring` 指定独立 phase，因此这一段
-描述的是现存可验证 seam，不宣称已批准的迁移时序。
+这里只记录现存且可验证的扩展点，不代表迁移时序已经确定。
 
-发布 transaction 的加固也是独立 seam。
+发布事务的加固也是独立扩展点。
 `docs/plans/2026-07-23-engine-architecture.md` 明确把 Workbench publication
 rollback-window fix 排除在当前 phase 外。未来可在
 `saveAndGenerateAuthoringProject` 与 `windows-file-publication` 之间加入
@@ -338,5 +352,5 @@ generation directory/journal 或等价 commit protocol；在那之前必须维�
 Platform 扩展应继续通过 `WorkbenchServices` 和 `platform/` RAII wrapper：
 新的 picker、capture selector 或 renderer 只替换 service/opaque texture
 实现。Recognition 扩展则通过 `compileAuthoringDocument`、
-`RecognitionRuntime` 和 `PreviewResult` 进入。以这两类 seam 区分 OS capability
+`RecognitionRuntime` 和 `PreviewResult` 进入。用这两类扩展点区分系统能力
 与 product semantics，是保持 Workbench 可导航、可测试且未来可抽取的关键。

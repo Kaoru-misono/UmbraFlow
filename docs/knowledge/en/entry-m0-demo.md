@@ -1,11 +1,10 @@
 # entry/m0-demo: the frozen M0 on-hardware substrate
 
-`entry/m0-demo` is an already-frozen Windows acceptance program. Its value is not to provide a
-product runtime, but to preserve the shortest chain of evidence that once ran end to end on a real
-machine, against a real high-integrity target window: WGC background capture, grayscale SAD template
-matching, client-coordinate clicking based on an observation lease, strict-background `PostMessageW`
-delivery, foreground/background and cursor guard, delivery audit, plus input compensation after
-failure and orderly shutdown.
+`entry/m0-demo` is a frozen Windows acceptance program. It preserves the shortest path verified on
+a real machine against a high-integrity target window: WGC background capture, grayscale SAD
+template matching, client-coordinate clicking based on an observation lease, strict-background
+`PostMessageW` delivery, foreground and cursor guards, delivery audit, input compensation after
+failure, and orderly shutdown.
 
 The word "frozen" in this document is defined by `docs/plans/2026-07-20-m0-demo-port-deviations.md`
 and `docs/plans/2026-07-23-engine-architecture.md`: do not keep adding product capabilities to this
@@ -13,7 +12,7 @@ directory, and do not let new product entries link its implementation. When reus
 the already-verified safety semantics into an `engine`/runner adapter and carry them again under a
 product contract.
 
-## Responsibilities and boundaries
+## What It Verifies
 
 The M0 demo has three process entry points, dispatched from `entry/m0-demo/main.cpp`.
 
@@ -79,7 +78,7 @@ Here `delta` is `frame.width/height - client.width/height`. The capture results 
 `delta=(0,0)` is an acceptance fact for that target and that machine configuration, not a universal
 guarantee for all WGC targets.
 
-## Key types and data flow
+## Execution Flow
 
 ### Entry arguments and composition
 
@@ -113,7 +112,7 @@ In `entry/m0-demo/pipeline.hpp`, `Template` owns a label, grayscale pixels as a
 `std::vector<std::byte>`, a width and height, and a `Rect<FrameSpace>` search ROI. `Templates` is
 merely the fixed home/result/reset triple; it is not a generic recognizer collection.
 
-### capture -> SAD -> acceptMatch
+### Capture, SAD Matching, and Result Acceptance
 
 The real recognition chain of the main loop is in `entry/m0-demo/pipeline.cpp`.
 
@@ -169,7 +168,7 @@ manifest persistence. Therefore the engine recognizes only basis points, and
 `docs/plans/2026-07-23-engine-architecture.md` explicitly mandates not migrating M0's recorded
 `--threshold` value.
 
-### acceptMatch -> hitCenterFrame -> lease -> click
+### From a Match to a Background Click
 
 Once a match is accepted, `hitCenterFrame()` constructs a `Rect<FrameSpace>` from the `SadMatch`'s
 top-left corner and the template's width and height, and takes the geometric center.
@@ -206,7 +205,7 @@ Click failures are classified by `clickFailureDisposition()`:
 - other errors: immediately fail the current step and preserve the real error kind, avoiding
   disguising it as a timeout after repeated retries.
 
-### Guard, audit, and shutdown
+### State Guards, Audit, and Shutdown
 
 `GuardPolicy::forMode(Mode::Guard)` in `entry/m0-demo/guard.hpp` requires comparing the foreground and
 the cursor. At the start of each round, `runOne()` obtains a `GuardBaseline`: the baseline foreground
@@ -292,7 +291,7 @@ failure writes a result and stops the agent. After each command completes,
 `clearInputAgentCommandAudit()` clears the audit to prevent the resident agent's records from growing
 without bound.
 
-## Design invariants
+## Constraints That Must Remain True
 
 **Fail closed.** No frame, a search interrupted by a control signal, an exhausted comparison budget,
 an invalid ROI/template, a changed target generation, an unconfirmable instance, an expired lease,
@@ -342,7 +341,7 @@ The console handler sets a lock-free atomic only on Ctrl-C/Ctrl-Break; the pipel
 cooperatively check it. Windows close/logoff/shutdown are not within this handler's coverage, which is
 the frozen deviation recorded as F-19 in `docs/plans/2026-07-20-m0-demo-port-deviations.md`.
 
-## Collaboration with other parts
+## Relationship to Product Code
 
 The inbound edge is the CLI and file assets. The caller provides a window selector, three trusted
 PNGs, three frame-space ROIs, an average SAD threshold, and a run policy; the input-agent caller
@@ -380,7 +379,7 @@ annotation/engine has no link edge with M0. The current product path is
 elevated-agent semantics that M0 has proven, `docs/plans/2026-07-23-engine-architecture.md` requires
 copying the semantics at the adapter layer rather than linking `entry/m0-demo`.
 
-## Test strategy
+## Tests
 
 `tests/CMakeLists.txt` composes the following files into `test-m0-demo`, linking
 `${PROJECT_NAME}_m0_demo_support`.
@@ -415,7 +414,7 @@ the automated tests for the input-agent parser, path races, and shutdown orderin
 10–20 minute long-run verification as incomplete. Therefore these properties cannot be extrapolated
 from the short-run scenarios that M0 has already passed.
 
-## Extension seams
+## Retirement and Migration
 
 M0 has no internal seam for "growing it into a product"; the correct way to extend it is to replace
 it from the outside.

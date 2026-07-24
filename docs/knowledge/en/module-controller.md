@@ -4,11 +4,11 @@ This document describes the current Windows implementation of `modules/controlle
 direction comes from `docs/plans/2026-07-21-product-form-and-roadmap.md`, and the outstanding Win32
 hardening is governed by `docs/plans/2026-07-20-post-port-win32-robustness.md`; where the plans and
 the code disagree, the code below is authoritative, and requirements that are not yet implemented are
-placed under "Extension seams".
+placed under "Future Extensions".
 
-## Responsibilities and boundaries
+## Module Responsibilities
 
-`modules/controller` is the Windows desktop capability adaptation layer. It translates windows,
+`modules/controller` is the Windows desktop capability adaptation layer. It converts windows,
 processes, WGC, D3D11, and window messages into values that `core`/`domain` can express, into
 `Result<T>` and `Status`. `modules/controller/manifest.txt` restricts the whole module to Windows;
 its public dependencies are only `core` and `domain`, while Win32, D3D11, DXGI, DWM, NTDLL, and the
@@ -52,7 +52,7 @@ controller deliberately does not own the following policies:
 This boundary keeps the offline-reproducible authorization semantics in platform-independent modules
 while concentrating all HWND, COM, callback, and driver lifetimes into one auditable area.
 
-## Key types and data flow
+## Targets, Capture, and Input
 
 ### Discovery, resolution, and target generations
 
@@ -228,7 +228,7 @@ This call should happen before any window query that depends on physical pixels.
 the process coordinate precondition; per-window DPI is obtained by discovery's `GetDpiForWindow`, and
 the continuous validation of the project-level DPI fingerprint is not within this API.
 
-## Design invariants
+## Constraints That Must Remain True
 
 ### Fail-closed and generation isolation
 
@@ -277,7 +277,7 @@ the continuous validation of the project-level DPI fingerprint is not within thi
 - `HeldInputs`, `AuditLog`, and `DeliveryTarget` are all explicit caller-owned values; controller has
   no hidden singleton. The span returned by `AuditLog` is only valid until the next append.
 
-### Strict-background and the platform/FFI boundary
+### Strict-Background and the Platform/FFI Boundary
 
 Strict-background is not a runtime switch but a set of reachable APIs. `g_forbiddenBackgroundApis`
 records six original guard names; `scripts/check_safety.py` also statically forbids the direct use of
@@ -295,7 +295,7 @@ carried by `platform/`. `modules/controller/source/controller/detail/` holds por
 and narrow access helpers, whose main purpose is to make the boundary rules offline-testable rather
 than to provide a second public API.
 
-## Collaboration with other parts
+## Dependencies
 
 Downward, controller crosses only two module edges:
 
@@ -336,7 +336,7 @@ low-level `AuditLog` records Win32 message attempts, while the engine `TraceSink
 events such as observe/authorize/deliver; the two serve different purposes and cannot substitute for
 each other.
 
-## Test strategy
+## Tests
 
 `tests/CMakeLists.txt` registers `test-controller` only when the `${PROJECT_NAME}_controller` target
 exists, so these tests are Windows-only, but OS-independent rules are extracted and run offline as far
@@ -378,7 +378,7 @@ resize, recreation, minimize/stall, DPI, occlusion, and focus invariance still r
 verification; `docs/plans/2026-07-20-m0-demo-port-deviations.md` positions the frozen m0-demo as that
 acceptance reference rather than a CI substitute.
 
-## Extension seams
+## Future Extensions
 
 The following seams have a plan basis and do not imply that the capability already exists.
 

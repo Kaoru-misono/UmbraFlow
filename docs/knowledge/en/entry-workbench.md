@@ -1,14 +1,11 @@
 # entry/workbench Architecture Knowledge
 
-This document explains the A1 authoring workbench of the Windows entry point `umbra-workbench`. It
-is not a second implementation of the annotation schema; instead, it composes GUI, capture, and
-file-publication capabilities around the canonical authoring, compiler, and recognition surface of
-`modules/annotation`.
-New developers should first view it as a composition root, then use the boundaries laid out in this
-document to decide whether a change belongs to the Workbench, `annotation`, `image`, `controller`,
-or the runtime.
+`umbra-workbench` is the A1 Windows annotation tool. Its GUI, capture, and file-publication
+capabilities are organized around the editing model, compiler, and recognition interfaces already
+provided by `modules/annotation`; it does not define another schema. It is the composition point for
+these modules, while product rules remain in `annotation`, `image`, `controller`, or runtime.
 
-## Responsibilities and Boundaries
+## What Workbench Owns
 
 The Workbench owns the author workflow that runs from "obtaining a complete source image" to
 "publishing a generated closure that the runtime can consume":
@@ -73,9 +70,9 @@ project root and `--smoke`, loads or creates the `AppState`, creates the `GuiShe
 `WorkbenchServices` callbacks, and then lets the shell call `drawWorkbench` synchronously every
 frame. Failures are written to `stderr` only at the `dispatch`/`main` boundary.
 
-## Key Types and Data Flow
+## Editing and Publication Flow
 
-### Authoring state and edit routing
+### Editing State and Mutation Entry Points
 
 `entry/workbench/authoring-edit.hpp` defines the editable transport: `AuthoringDraft` aggregates
 `EditableSource`, `EditableRecognizer`, `EditablePage`, and `EditableRegression`. These types let a
@@ -167,7 +164,7 @@ fingerprint. The first source replaces that placeholder when it comes through `a
 every subsequent source is validated by the full `AuthoringDocument::create` and must be compatible
 with the project fingerprint.
 
-### Save/load round trip and publication order
+### Save, Reopen, and Publication Order
 
 The write entry point is the `saveAndGenerateAuthoringProject` in
 `entry/workbench/project-persistence.hpp`. The actual order is:
@@ -204,7 +201,7 @@ decoded width/height must equal the source fingerprint. The returned `LoadedAuth
 the original PNG bytes without re-encoding, so saving directly after a load preserves byte-identical
 source assets.
 
-### Bounded Preview
+### Resource-Bounded Preview
 
 The `runPreview` in `entry/workbench/preview.hpp` contains no private matcher:
 
@@ -223,7 +220,7 @@ inside `PreviewStop`. A stop is never collapsed into `hit=false`. The synthetic
 frame/session/generation identity of the Preview frame exists only to satisfy the real recognition
 API; the result does not enter the document, the history, or action delivery.
 
-## Design Invariants
+## Constraints That Must Remain True
 
 ### Fail-closed
 
@@ -288,7 +285,7 @@ an input API to `WorkbenchServices` would cross the existing responsibility boun
 the "runtime input from the workbench" that `docs/plans/2026-07-22-annotation-design.md` explicitly
 excludes.
 
-## Collaboration with Other Parts
+## Dependencies
 
 The inbound edge runs from the user/OS to the Workbench:
 
@@ -326,7 +323,7 @@ across disk is `ContentHash`, the compatibility credential across capture/author
 `PreviewAnchorRow`/`PreviewStop`. These narrow values keep panels from depending on the private
 evidence layout of `RecognitionRuntime` or on native platform objects.
 
-## Testing Strategy
+## Tests
 
 On Windows, `tests/CMakeLists.txt` combines six synthetic files into `test-workbench` and links
 `umbraflow_workbench_support` directly, thereby bypassing ImGui and the real desktop:
@@ -361,7 +358,7 @@ capture and visual interaction still require verification on real Windows hardwa
 platform lifetime or the D3D/ImGui wiring, a green `test-workbench` cannot substitute for
 smoke/manual evidence.
 
-## Extension Seams
+## Future Extensions
 
 `docs/plans/2026-07-21-product-form-and-roadmap.md` is the authority on product cadence: A2 extends
 required/forbidden across multiple anchors/pages, Unknown/Ambiguous, and sample Preview/Test; A3

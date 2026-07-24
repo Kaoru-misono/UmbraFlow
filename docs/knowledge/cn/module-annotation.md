@@ -1,11 +1,12 @@
 # annotation 模块架构知识
 
-本文说明 `modules/annotation` 当前实现的 S0 契约。设计权威是
-`docs/plans/2026-07-22-annotation-design.md`；本文以现有代码为准，帮助新开发者定位实现、理解约束并找到安全的扩展位置。
+本文说明 `modules/annotation` 已经实现的 S0 契约。完整设计见
+`docs/plans/2026-07-22-annotation-design.md`，这里主要说明代码入口、处理流程和必须
+保持的约束。
 
-## 职责与边界
+## 模块职责
 
-`annotation` 是“作者标注数据”到“可授权运行时识别证据”之间的平台无关领域层。它拥有六类职责：
+`annotation` 把作者标注转换为可供运行时授权的识别证据，负责以下六项工作：
 
 1. 定义稳定资源身份、项目指纹、识别器和页面签名，并在对象构造时闭合引用关系。
 2. 定义 GUI authoring document 与 runtime manifest 的精确 S0 schema，以及唯一的 canonical TOML 字节形式。
@@ -21,7 +22,7 @@
 - `vision` 拥有 `GrayImage`、`bgra8ToGray8` 和有界 `matchTemplateSad`；`annotation` 决定如何排序工作、设阈值和解释结果，不另造 matcher。
 - `image` 只在实现内部负责 PNG 解码、像素布局转换、裁剪和编码，因此 consumer 不需要直接依赖图像 codec。
 
-它刻意不拥有以下能力：
+它不负责以下工作：
 
 - 不捕获窗口、不发现目标、不投递点击，也不实现 Windows `PostMessage`。这些分别属于 controller adapter 和 engine composition。
 - 不负责文件系统原子发布。workbench 的发布顺序在
@@ -31,9 +32,10 @@
 - 不做浮点阈值决策、颜色/HSV/OCR/composite recognizer、分辨率缩放、页面优先级或 best-effort schema 兼容。
 - 不保证“点击一定成功”。它只证明 annotation 侧授权条件成立；engine 仍须在 sink 调用前复验目标实例，controller 仍须在实际投递层验证 lease。
 
-因此 `strict-background` 在这里体现为“不能授权可疑坐标动作”，而不是一个输入后端。真正的后台投递在模块之外；`annotation` 的责任是让 `Unknown`、`Ambiguous`、recognition stop、过期证据或不兼容几何都无法越过授权边界。
+`annotation` 不投递后台输入。它负责拒绝可疑坐标动作，确保 `Unknown`、`Ambiguous`、
+识别中止、过期证据或不兼容几何无法越过授权边界。
 
-## 关键类型与数据流
+## 数据模型与处理流程
 
 ### 身份、几何和 Catalog
 
@@ -66,7 +68,7 @@
 `recognizers()`、`pages()`、`pageAnchorOrder()` 返回只读 `std::span`；
 `findRecognizer()` 和 `findPage()` 返回 non-owning pointer。这些 view/pointer 都以 catalog 的生命周期为上界，声明处用 `UF_LIFETIME_BOUND` 或注释明确了约束。
 
-### Canonical authoring document
+### 规范化编辑文档
 
 `modules/annotation/source/annotation/authoring-document.hpp` 定义 schema
 `umbraflow-authoring/v1`。主要类型是：
@@ -91,15 +93,17 @@ regression→source 和 resolved regression→page 引用，并保证 source、r
 `modules/annotation/source/annotation/detail/canonical-toml.cpp`。它不是通用 TOML parser，而是 S0
 生成格式的窄语法：
 
-- 每一行必须以 LF 终止，CR 被拒绝，文件自然要求一个末尾 newline；
+- 每一行必须以 LF 终止，CR 被拒绝，文件末尾也必须有换行；
 - 字段和 table 必须按 writer 的固定顺序出现，未知字段、注释和额外尾部内容没有入口；
 - unsigned integer 只接受十进制 canonical 拼写，数组分隔固定为 `", "`；
 - string 只接受一行 basic-string 语法、有效 UTF-8 和 writer 支持的 canonical escapes；
 - parser 构造对象后重新调用 `serializeAuthoringDocument`，只有字节完全相等才接受。
 
-这个“parse → validate → serialize → byte compare”闭环是 round-trip discipline 的关键。它拒绝的不是 TOML 语义本身，而是任何偏离 GUI 唯一输出的表示方式；因此 generated/source documents 可以稳定哈希、稳定 diff，也不会悄悄吸收 schema drift。
+读取编辑文档时，代码依次执行“解析 → 校验 → 序列化 → 字节比较”。只要输入字节
+不等于 GUI 生成的规范形式，就拒绝加载。这样，生成文档和源文档可以稳定计算哈希、
+稳定比较差异，schema 变化也不会被旧解析器悄悄接受。
 
-### 确定性编译与 runtime manifest
+### 确定性编译与运行时清单
 
 `compileAuthoringDocument` 位于
 `modules/annotation/source/annotation/authoring-compiler.hpp` 和
@@ -142,7 +146,7 @@ regression→source 和 resolved regression→page 引用，并保证 source、r
 先于 page、每类最多 4096 条、文档最多 16 MiB，并在末尾通过
 `serializeRuntimeManifest(manifest) == input` 拒绝非 canonical 输入。
 
-### 阈值、运行时识别与 stop preservation
+### 阈值、运行时识别与停止原因
 
 `SimilarityThreshold` 在 `modules/annotation/source/annotation/catalog.hpp` 中以 basis points
 保存 `[0, 10000]`。`maximumSad(width, height)` 用 checked `uint64` 算术实现：
@@ -183,7 +187,7 @@ frame 是 Gray8 时直接建立同步只读 view；是 Bgra8 时只转换一次�
 相等，并检查 frame width/height 等于项目 base resolution。不匹配返回
 `TargetCompatibilityUnverified`；S0 没有隐式 resampling。
 
-### PageResolver、click pixel 与动作授权
+### 页面解析、点击像素与动作授权
 
 页面证据类型在 `modules/annotation/source/annotation/recognition.hpp`：
 
@@ -223,7 +227,7 @@ required 全 hit 且 forbidden 全 miss 才是 candidate。零个候选返回 `U
 返回值只是 `Status`，没有“部分授权”。`UnknownPage` 和 `AmbiguousPages` 在类型上无法作为参数传入，
 recognition stop 也不会生成 `ResolvedPage`，所以失败状态不会被误当成可点击能力。
 
-## 设计不变量
+## 必须保持的约束
 
 **Fail-closed。** 所有外部数据都经 `Result` factory 构造，schema、资源闭包、hash、geometry、
 fingerprint 或 quota 任一失败都不产生半有效对象。页面不唯一就没有 `ResolvedPage`；matcher stop
@@ -250,7 +254,7 @@ delivery 指纹/身份同时成立。`modules/engine/source/engine/session.cpp` 
 `FrameSource::validateTargetInstance`，把 lease 传到 `ActionSink::click`，并在成功投递后使 observation
 失效。因而 annotation gate 是两层投递围栏中的领域层，而不是完整后台协议的全部。
 
-## 与其他部分的协作
+## 依赖关系
 
 入站 authoring 链路来自 `entry/workbench`：
 
@@ -279,7 +283,7 @@ delivery 指纹/身份同时成立。`modules/engine/source/engine/session.cpp` 
 cancellation 与 absolute deadline 跨 suite。Cancel/timeout 中断后续 case，单 case budget exhaustion
 作为该 case 的诊断保留并允许 suite 继续。
 
-## 测试策略
+## 测试
 
 `tests/annotation` 是确定性离线测试面；各文件固定的契约如下：
 
@@ -308,9 +312,9 @@ cancellation 与 absolute deadline 跨 suite。Cancel/timeout 中断后续 case�
 compiler/runtime 测试”。只增加 parser 单测不足以证明 Preview 与 Runtime 仍走同一路径；只增加
 runtime happy path 也不足以证明非 canonical 输入继续 fail-closed。
 
-## 扩展接缝
+## 后续扩展
 
-以下接缝来自权威计划，不是当前已实现能力。
+以下扩展点来自现有计划，尚未实现。
 
 **P1 分辨率适配。** `docs/plans/2026-07-22-annotation-design.md` §2 和
 `docs/plans/2026-07-21-lua-task-model-grill-decisions.md` D8 要求新增显式
@@ -320,7 +324,7 @@ live frame search/click geometry 的边界，并完整进入 trace；不能修�
 
 **新 recognizer kind。** `RecognizerDefinition` 已把 type、geometry、threshold 和 page membership
 集中，`RecognitionRuntime` 又把已解码模板隔离为内部 `GrayTemplate`。新增颜色、OCR 或 composite
-时，接缝会贯穿 schema version/parser、catalog validation、compiler asset closure、runtime-owned
+时，改动会贯穿 schema version/parser、catalog validation、compiler asset closure、runtime-owned
 kernel 与 evidence；不能只在 workbench 增加一个 UI 选项。权威计划 §7 明确 P0 只允许
 `gray_template`，OCR 只有在真实日常必须读取动态语义且模板/状态锚点无法表达时才能提前裁决。
 
@@ -334,7 +338,7 @@ policy、hash closure 和 evidence 规则，而不是伪装成可授权 action�
 证据改善 authoring 体验；S0 权威禁止在 runtime 加 priority、threshold override 或 heuristic
 tie-break，所以诊断不能改变 `Ambiguous` 的 fail-closed 语义。
 
-**P1/P2 host surface。** Luau opaque handles、popup interrupt、P2 no-activate overlay 和 HTML trace
+**P1/P2 宿主接口。** Luau opaque handles、popup interrupt、P2 no-activate overlay 和 HTML trace
 都在 annotation 之外。它们应消费 `RecognitionCatalog` 的稳定 IDs/names、
 `PageResolutionEvidence`、`AnchorEvidence` 和 stop reason。尤其 overlay 可以展示 evidence，
 但不能成为新的 matcher 或绕过 `authorizeCoordinateAction`。

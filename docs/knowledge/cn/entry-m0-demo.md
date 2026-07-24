@@ -1,7 +1,7 @@
 # entry/m0-demo：冻结的 M0 真机底座
 
-`entry/m0-demo` 是一个已经冻结的 Windows 验收程序。它的价值不是提供产品运行时，
-而是保存一条曾在真实机器、真实高完整性目标窗口上走通的最短证据链：WGC 后台捕获、
+`entry/m0-demo` 是已经冻结的 Windows 验收程序。它保存了一条在真实机器和高完整性
+目标窗口上验证过的最短链路：WGC 后台捕获、
 灰度 SAD 模板匹配、基于观测租约的客户端坐标点击、严格后台 `PostMessageW` 投递、
 前后台与光标 guard、投递审计，以及失败后的输入补偿和有序关闭。
 
@@ -11,7 +11,7 @@
 也不要让新的产品入口链接它的实现。需要复用时，应复制已经验证的安全语义到
 `engine`/runner adapter，并由产品契约重新承载。
 
-## 职责与边界
+## 它验证什么
 
 M0 demo 拥有三种进程入口，分派点在 `entry/m0-demo/main.cpp`。
 
@@ -35,7 +35,7 @@ click home -> wait result -> click reset -> wait home
 `RunSummary::passed()` 仅在未停止、审计干净、无 guard violation、且每次尝试都成功时
 返回 true。
 
-它刻意不拥有以下产品职责。
+它不承担以下产品职责：
 
 - 不读取 `project.toml`、`annotations.toml` 或
   `generated/annotations.runtime.toml`。
@@ -48,9 +48,8 @@ click home -> wait result -> click reset -> wait home
 - 不把 `input-agent` 文件协议当成产品 IPC。它是一次 UAC 后由非提权驱动端持续操纵
   提权代理的验收夹具。
 
-因此它绕过 annotation 授权栈不是遗漏，而是历史阶段边界。M0 先证明底层
-capture/input substrate 在真机可行；S0 之后才把 page evidence、action capability、
-manifest closure 和 fail-closed authorization 定义为产品契约。
+它没有接入 annotation 授权栈，因为 M0 只验证捕获和输入链路。S0 之后，页面证据、
+动作权限、运行时清单闭包和失败关闭授权才成为产品契约。
 `docs/plans/2026-07-22-annotation-design.md` 明确要求
 `Detection + ResolvedPage + ObservationLease + target fingerprint` 共同授权动作，
 而 M0 只有模板命中、租约和目标复验，没有 `ResolvedPage` 这一层能力。
@@ -71,7 +70,7 @@ manifest closure 和 fail-closed authorization 定义为产品契约。
 `capture-mode.cpp` 和 `input-agent.cpp` 的 capture result 都按这个定义记录尺寸差。
 `delta=(0,0)` 是该目标和该真机配置的验收事实，不是所有 WGC 目标的普遍保证。
 
-## 关键类型与数据流
+## 执行流程
 
 ### 入口参数与组合
 
@@ -89,7 +88,7 @@ manifest closure 和 fail-closed authorization 定义为产品契约。
 `entry/m0-demo/args.cpp` 的 `parseArguments` 实施，而公开数据形状在
 `entry/m0-demo/args.hpp`。
 
-`main.cpp` 中的 `runWithLog` 是默认路径的 composition root：
+`main.cpp` 中的 `runWithLog` 是默认路径的组合入口：
 
 1. `ensurePerMonitorAwareV2()` 声明 DPI awareness。
 2. `installConsoleControlHandler()` 安装 Ctrl-C/Ctrl-Break stop flag。
@@ -105,7 +104,7 @@ manifest closure 和 fail-closed authorization 定义为产品契约。
 `std::vector<std::byte>`、宽高和一个 `Rect<FrameSpace>` 搜索 ROI。
 `Templates` 只是固定的 home/result/reset 三元组；它不是通用 recognizer collection。
 
-### capture -> SAD -> acceptMatch
+### 捕获、SAD 匹配与结果验收
 
 主循环的真实识别链在 `entry/m0-demo/pipeline.cpp`。
 
@@ -158,7 +157,7 @@ hit    = sadScore <= maxSad
 `docs/plans/2026-07-23-engine-architecture.md` 明确规定不迁移 M0 的
 `--threshold` 记录值。
 
-### acceptMatch -> hitCenterFrame -> lease -> click
+### 从命中位置到后台点击
 
 匹配被接受后，`hitCenterFrame()` 以 `SadMatch` 左上角和 template 宽高构造
 `Rect<FrameSpace>`，取几何中心。`CoordinateTransform::frameToClient()` 再把中心转换为
@@ -195,7 +194,7 @@ frame，防止旧画面被当成状态转换证据。
 - `ControllerDisconnected`：无法排队，abort 整个 run；
 - 其他错误：立即 fail 当前 step，保留真实 error kind，避免反复重试后伪装成 timeout。
 
-### guard、审计与关闭
+### 状态保护、审计与关闭
 
 `entry/m0-demo/guard.hpp` 的 `GuardPolicy::forMode(Mode::Guard)` 要求比较
 foreground 和 cursor。每轮开始时 `runOne()` 取得 `GuardBaseline`：
@@ -265,7 +264,7 @@ reserve fresh before/after outputs
 -> capture/encode/write after PNG
 ```
 
-before PNG 的编码和 durable flush 被刻意移到点击之后。真机曾发现，把 1600×900
+before PNG 的编码和持久化刷新放在点击之后。真机曾发现，把 1600×900
 BGRA 编码、写盘、`FlushFileBuffers` 放在 capture 与 click 之间，会消耗 750 ms
 lease budget 并制造非预期的过期。移动后仍保存同一个 immutable pre-click `Frame`，
 但不再让取证 I/O 延长 observe -> act。
@@ -274,7 +273,7 @@ lease budget 并制造非预期的过期。移动后仍保存同一个 immutable
 并停止 agent。每条命令完成后 `clearInputAgentCommandAudit()` 清空 audit，
 防止长驻代理的记录无限增长。
 
-## 设计不变量
+## 必须保持的约束
 
 **Fail closed。** 没有 frame、搜索被控制信号中断、comparison budget 耗尽、
 ROI/模板不合法、target generation 改变、instance 无法确认、lease 过期、坐标越界、
@@ -318,7 +317,7 @@ console handler 只在 Ctrl-C/Ctrl-Break 时设置 lock-free atomic；pipeline �
 协作检查它。Windows close/logoff/shutdown 不在该 handler 的覆盖范围内，这是
 `docs/plans/2026-07-20-m0-demo-port-deviations.md` F-19 记录的冻结差异。
 
-## 与其他部分的协作
+## 与产品代码的关系
 
 入站边是 CLI 和文件资产。调用者提供 window selector、三张 trusted PNG、
 三个 frame-space ROI、平均 SAD threshold 以及运行策略；input-agent 调用者提供一个
@@ -354,7 +353,7 @@ annotation/engine 与 M0 没有链接边。当前产品路径是
 补 Up 或提权代理语义，`docs/plans/2026-07-23-engine-architecture.md` 要求在 adapter 层
 复制语义，不链接 `entry/m0-demo`。
 
-## 测试策略
+## 测试
 
 `tests/CMakeLists.txt` 把以下文件组成 `test-m0-demo`，链接
 `${PROJECT_NAME}_m0_demo_support`。
@@ -387,21 +386,21 @@ input-agent parser、path race 和 shutdown ordering 的自动测试。
 `docs/TODO.md` 仍把遮挡、最小化/`CaptureStalled`、投递中 Ctrl-C 和 10–20 分钟长程
 验证列为未完成。因此不能从 M0 已通过的短程场景外推这些性质。
 
-## 扩展接缝
+## 退役与迁移
 
-M0 内部没有“继续扩成产品”的接缝；它的正确扩展方式是从外部替代。
+M0 不应继续扩成产品；后续能力从外部替代。
 
-识别与授权接缝已经迁到 `modules/annotation` 和 `modules/engine`。
+识别与授权已经迁到 `modules/annotation` 和 `modules/engine`。
 新 recognizer、page evidence、action target、default click、basis-point threshold 和
 runtime manifest 都应遵循 `docs/plans/2026-07-22-annotation-design.md`，不能增加第四张
 M0 template 或给 `clickWhenPresent()` 塞 page 特例。
 
-平台组合接缝在产品 runner 的 `FrameSource`/`ActionSink` adapter。
+新平台通过产品 runner 的 `FrameSource`/`ActionSink` 适配器接入。
 `docs/plans/2026-07-23-engine-architecture.md` 要求 engine 保持平台无关，
 Windows WGC 和 background input 在 entry adapter 组合；Fake port 则在 CI 回放合成
 frame 并记录零/有投递。未来第二平台也应实现这些 port，而不是条件编译 M0 pipeline。
 
-提权接缝属于 P0-C。产品计划当前允许 `umbra-flow run` 先整体提权；若 UIPI 真机结果
+提权方案属于 P0-C。产品计划当前允许 `umbra-flow run` 先整体提权；若 UIPI 真机结果
 要求 split-process，再把 M0 input-agent 的协议安全语义复制到 runner adapter：
 append-only framing、strict parser、output confinement、fresh-file create、durable result、
 target/lease revalidation 和 agent stop policy。协议可以演进，但冻结 demo 不随之演进。

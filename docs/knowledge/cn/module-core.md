@@ -5,7 +5,7 @@
 `docs/ARCHITECTURE.md` 的 “Core capability kernel”；下文以
 `modules/core/source/core/` 的实际头文件和保留测试为准。
 
-## 职责与边界
+## 模块范围
 
 `core` 是模块图最底部的平台无关叶节点。`modules/core/manifest.txt` 只有
 `[module]` 与 `[build]`，没有 `[dependencies]`；因此其他模块可以依赖它，
@@ -32,7 +32,7 @@ dependency，并检查整个模块图无环。这不是构建文件的偶然状�
 概念耦合都保持可见。只有需要非模板实现的 facility 才有匹配的 `.cpp`：
 `error/contracts.cpp`、`error/error.cpp` 和 `text/utf8.cpp`。
 
-`core` 刻意不拥有产品语义。它不知道 frame、detection、annotation、engine
+`core` 不包含产品语义。它不知道 frame、detection、annotation、engine
 session、Windows handle、Luau、GUI 或具体游戏，也不决定失败是否应该 retry、
 abort 或展示给用户。`AutomationErrorKind` 与 `FailureResponse` 位于
 `modules/domain/source/domain/error.hpp`，严格后台捕获和输入位于
@@ -45,7 +45,7 @@ abort 或展示给用户。`AutomationErrorKind` 与 `FailureResponse` 位于
 references、自制容器、serialization、VFS、job system、task runtime、channel
 和 profiling；这些不能因为“看起来通用”就进入 `core`。
 
-## 关键类型与数据流
+## 基础能力
 
 ### error：失败的构造、分类和转发
 
@@ -54,7 +54,7 @@ references、自制容器、serialization、VFS、job system、task runtime、ch
 把诊断数据移到堆上。原因在成功路径：`Result<T>` 的 `std::expected` 必须为
 `T` 与 `Error` 的二选一存储付空间成本。小型 `Error` 避免每个成功返回值都内联
 携带多个 `std::string`、`std::vector` 和 `std::source_location`；分配只发生在
-真正构造失败时。源码没有用 `static_assert(sizeof(Error) == sizeof(void*))`
+需要构造错误时。源码没有用 `static_assert(sizeof(Error) == sizeof(void*))`
 声明 ABI 保证，所以应把“一指针”理解为当前布局意图，不是跨实现序列化契约。
 
 `Error::Payload` 保存五类信息：`m_detailCode` 是机器可分支的
@@ -186,7 +186,8 @@ no-escape、unsafe-buffer 与 thread-safety attributes 包装成 `UF_*` 宏；�
 越界返回 `nullptr`，`checkedAt(span, index)` 越界触发 release-active
 `UF_CHECK`。range overload 只接受 contiguous、sized、可构造 `std::span` 的
 lvalue range；`CheckedAccessRange` 明确拒绝 temporary owner，避免返回指针或
-引用后 owner 已析构。返回值仍是 call-scoped borrow，调用方不能在容器失效后保留。
+引用后 owner 已析构。返回值仍是只在本次调用上下文中有效的借用，调用方不能在
+容器失效后保留。
 
 `modules/core/source/core/text/utf8.hpp` 的 `isValidUtf8()` 接受空串和合法的
 1–4 byte scalar encoding，拒绝孤立 continuation、overlong sequence、截断序列、
@@ -238,7 +239,7 @@ addition 报告溢出，`saturatingDurationSince()` 对倒序时刻返回 zero�
 的正差返回 `Duration::max()`。它用于 timeout、age 和 interval，不是墙钟，也不是
 可跨进程、跨机器或落盘的 serialization type。
 
-## 设计不变量
+## 必须保持的约束
 
 **Fail-closed。** 所有危险边界都先拒绝再继续：受检运算返回空值而不 wrap，
 `tryAt` 越界返回空指针，`checkedAt` 与失效 contract 直接终止，UTF-8 validator
@@ -267,7 +268,7 @@ checked numeric 避免坐标溢出，并在内部不变量破坏时终止；“�
 由 `modules/controller` 和组合根执行。把策略留在平台 owner 才能让 `core`
 继续保持可移植。
 
-## 与其他部分的协作
+## 被哪些模块使用
 
 入边从所有消费者指向 `core`，出边只有 C++23 标准库；没有项目模块类型跨入
 `core` API。跨边界传递的是值、标准 view、`Result<T>`/`Error`、
@@ -293,7 +294,7 @@ checked numeric 避免坐标溢出，并在内部不变量破坏时终止；“�
 `domain -> core` 会形成反向边。正确扩展方式是由 owner module 建 category、
 classifier 和更便利的 `fail` overload。
 
-## 测试策略
+## 测试
 
 `tests/CMakeLists.txt` 把以下七个文件组成 `test-core`，链接
 `${PROJECT_NAME}_core`，以 C++23 和仓库 safety profile 编译，并带 `CI` label：
@@ -325,12 +326,12 @@ classifier 和更便利的 `fail` overload。
 固定 `core` 无依赖与模块图无环。扩展某个 facility 时，应把最小边界行为补进
 对应测试文件，而不是只依赖集成测试间接覆盖。
 
-## 扩展接缝
+## 扩展规则
 
-新增能力的首选接缝不是扩大现有类型，而是新增一个精确 header，并让调用方只
-include 它。若需要非模板实现，遵循“一个实现文件对应一个 header”；不要添加
+新增能力时，优先增加职责单一的 header，让调用方只 include 所需概念，不要扩大
+现有类型。若需要非模板实现，遵循“一个实现文件对应一个 header”；不要添加
 聚合 `core.hpp`。错误词汇扩展应发生在 owner module 的 `std::error_category`
-和 classifier；`Error` 已经提供 detail/native/context 接缝，无需增加产品 enum。
+和 classifier；`Error` 已经提供 detail/native/context 扩展点，无需增加产品 enum。
 
 已归档计划 `docs/archive/plans/2026-07-20-safe-cpp-core.md` 是当前 kernel 范围的
 历史权威：generational `SlotMap`、`Signal` 是 product-level candidates，
@@ -340,7 +341,7 @@ serialization、VFS、job system 等仍明确留在共享 core 外。当前
 `core domain` 的消费者，并复用 `Result`/`Status`/`fail`；它没有授权把 Luau
 runtime、取消策略或脚本错误表推进 `core`。
 
-评估未来接缝时遵循仓库的 `evaluate-core-capability` 权威流程：先找至少两个真实
+评估新能力时遵循仓库的 `evaluate-core-capability` 流程：先找至少两个真实
 call site 或可测量需求，确认 C++23 标准库不能同样清晰地解决，再证明新类型确实
 删除 invalid state、lifetime hazard 或重复控制流；最后只提升可移植、可审计、
 有简短 retained test 的最小 contract。标准反射成熟后，

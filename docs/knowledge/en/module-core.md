@@ -7,7 +7,7 @@ overall architectural constraints, see "Core capability kernel" in `docs/ARCHITE
 discussion below takes the actual headers and retained tests under
 `modules/core/source/core/` as authoritative.
 
-## Responsibilities and Boundaries
+## Module Scope
 
 `core` is the platform-independent leaf node at the very bottom of the module graph.
 `modules/core/manifest.txt` contains only `[module]` and `[build]`, with no `[dependencies]`;
@@ -52,7 +52,7 @@ authoritative plan `docs/archive/plans/2026-07-20-safe-cpp-core.md` explicitly e
 references, homegrown containers, serialization, VFS, job system, task runtime, channel, and
 profiling; these must not enter `core` merely because they "look generic."
 
-## Key Types and Data Flow
+## Foundational Capabilities
 
 ### error: Constructing, Classifying, and Forwarding Failure
 
@@ -261,7 +261,7 @@ reversed instant and `Duration::max()` for a positive difference that cannot be 
 used for timeout, age, and interval; it is not a wall clock, and it is not a serialization type
 that can cross processes, cross machines, or be persisted to disk.
 
-## Design Invariants
+## Constraints That Must Remain True
 
 **Fail-closed.** All dangerous boundaries reject before continuing: checked operations return an
 empty value instead of wrapping, `tryAt` returns a null pointer on out-of-bounds, `checkedAt` and
@@ -295,7 +295,7 @@ checked numeric, and terminate when an internal invariant is broken; "never fall
 foreground input" is enforced by `modules/controller` and the composition root. Only by leaving
 the policy with the platform owner can `core` remain portable.
 
-## Collaboration With Other Parts
+## Consumers
 
 Incoming edges point from all consumers toward `core`, and the only outgoing edge is the C++23
 standard library; no project module type crosses into the `core` API. What crosses the boundary
@@ -325,7 +325,7 @@ directly contained `AutomationErrorKind`, every non-automation use would be poll
 product vocabulary, and `domain -> core` would form a reverse edge. The correct way to extend is
 for the owner module to build the category, classifier, and more convenient `fail` overloads.
 
-## Testing Strategy
+## Tests
 
 `tests/CMakeLists.txt` assembles the following seven files into `test-core`, links
 `${PROJECT_NAME}_core`, compiles with C++23 and the repository safety profile, and attaches the
@@ -360,7 +360,7 @@ gates. `scripts/check_safety.py` checks that dangerous operations may only resid
 minimal boundary behavior to the corresponding test file rather than relying only on integration
 tests for indirect coverage.
 
-## Extension Seams
+## Extension Rules
 
 The preferred seam for adding a new capability is not to enlarge an existing type but to add a
 precise header and let callers include only it. If a non-template implementation is needed, follow

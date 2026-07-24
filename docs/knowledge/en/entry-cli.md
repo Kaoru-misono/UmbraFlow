@@ -1,11 +1,10 @@
 # entry/cli Architecture Knowledge
 
-`entry/cli` is the command-line entry point and Windows composition root of the product
-executable `umbra-flow`. It connects the platform-independent `engine` ports to the real capture
-and background-input capabilities of `controller`, while translating arguments, resource names,
-and process exit codes into an operator-facing product contract.
+`entry/cli` is the command-line entry point for `umbra-flow` and the composition point on Windows.
+It connects the platform-independent `engine` ports to the real capture and background-input
+capabilities of `controller`, and owns arguments, resource names, and process exit codes.
 
-## Responsibilities and Boundaries
+## Entry-Point Responsibilities
 
 This directory owns four kinds of product boundary.
 
@@ -52,9 +51,9 @@ This boundary explains why target discovery stays in the entry layer rather than
 platform-independent, while window-title selection, DPI declaration, and Win32 geometry are the
 product's policy for how it obtains that port on Windows.
 
-## Key Types and Data Flow
+## Command Execution Flow
 
-### Executable Surface
+### Command-Line Entry Point
 
 The `dispatch` in `entry/cli/main.cpp` has only two public product paths:
 
@@ -84,7 +83,7 @@ pairs; unknown flags, missing values, non-integers, and out-of-range values all 
 `InvalidResource`. As a result, the later composition only deals with typed values and never
 re-parses strings.
 
-### Offline Loading and name-to-ID
+### Offline Loading and Name Resolution
 
 `runProduct` first calls `engine::loadRuntimeProject` in
 `modules/engine/source/engine/runtime-loader.hpp`. That loader reads
@@ -204,7 +203,7 @@ The error text is composed by `formatRunError` from the automation kind, the mes
 and, when present, the native error category/value. This is the CLI's single-line diagnostic
 format and does not change the classification of the underlying `Error`.
 
-## Design Invariants
+## Constraints That Must Remain True
 
 **Fail-closed.** Resource loading and name resolution complete before any desktop side effect; the
 window substring must be unique; a failure at any step of DPI declaration, geometry creation, WGC,
@@ -252,7 +251,7 @@ delivery-related events can all fail the operation. `FileTraceSink` likewise doe
 errors. This makes "unable to leave the required evidence" an explicit product failure rather than
 an invisible best-effort log loss.
 
-## Collaboration with Other Parts
+## Dependencies
 
 The inbound edge is shell/operator → CLI. What crosses the boundary is string arguments, the
 project path, the target-title substring, names, and exit codes; at this layer the CLI is
@@ -288,7 +287,7 @@ links the controller; on other platforms it adds `run-unsupported.cpp`. As a res
 platform-independent contract can be tested in CI without a Windows desktop, while the product
 executable does not need to export internal functions.
 
-## Testing Strategy
+## Tests
 
 `tests/cli/test-args.cpp` pins down the complete flag happy path, all optional defaults, the four
 required items, unknown/missing/non-integer inputs, the 1/60000 ms boundary of poll, and the
@@ -328,7 +327,7 @@ covering `main`/`dispatch`, `selectCandidate`, console registration, the client-
 the entire real Windows composition; these belong to the on-hardware smoke/E2E verification surface
 and cannot be substituted by the green of the existing offline tests.
 
-## Extension Seams
+## Future Extensions
 
 `docs/plans/2026-07-23-engine-architecture.md` is the direct authority for the current engine/CLI
 composition. It explicitly positions the CLI as the Windows composition root of Phase 3, positions

@@ -2,7 +2,7 @@
 
 `domain` 是 UmbraFlow 的平台无关语义层：它把“哪一帧、哪个目标实例、哪个坐标系、这次动作还是否可信”编码成可跨模块传递的值。它不做识别、窗口管理或输入投递；它提供这些流程共同依赖且不能各自解释的词汇和拒绝规则。
 
-## 职责与边界
+## 模块范围
 
 `modules/domain/manifest.txt` 只公开依赖 `core`。因此 `domain` 可以被 `vision`、`image`、`annotation`、`engine`、`script` 和 Windows-only `controller` 共同使用，而不会把平台 API 或更高层产品策略反向带入底层。
 
@@ -14,7 +14,7 @@
 - `modules/domain/source/domain/detection.hpp` 与 `detection.cpp` 定义同帧 `Detection` 以及动作时效凭证 `ObservationLease`。
 - `modules/domain/source/domain/error.hpp`、`error.cpp`、`time.hpp` 和 `time.cpp` 定义自动化错误分类、恢复范围以及单调时间上的安全运算。
 
-`domain` 刻意不拥有以下职责：
+`domain` 不负责以下工作：
 
 - 不产生 `SessionId` 或 `FrameId`。`SessionId` 由组合根提供，当前 CLI 在 `entry/cli/run-windows.cpp` 构造；`FrameId` 的逐捕获分配由 `modules/controller/source/controller/detail/capture-wgc.hpp` 的 `FrameIdCounter` 完成。
 - 不判断何时目标窗口已换代。`modules/controller/source/controller/target.cpp` 的 `ResolvedTarget` 根据进程实例、窗口句柄、client size 和连续性推进 `TargetGeneration`。
@@ -23,9 +23,10 @@
 - 不实现 strict-background。后台投递由 `modules/controller/source/controller/platform/windows-input.cpp` 的 `PostMessageW` 边界实现；禁止前台化和全局注入的 API 名单位于 `modules/controller/source/controller/input.hpp`。
 - 不给任意 `Point`、`Rect` 或 `Detection` 构造器附加隐式校验。需要安全保证的边界必须显式调用 `create`、`ensure...` 或授权函数，不能把“类型存在”误当成“值已验证”。
 
-这样的边界让 `domain` 保持“小而承重”：机制可以被离线测试和跨平台代码复用，平台事实与产品授权仍由真正掌握上下文的模块判断。
+这些约束使 `domain` 可以被离线测试和跨平台代码复用。平台事实由 controller
+判断，产品授权由 annotation 和 engine 完成。
 
-## 关键类型与数据流
+## 共享数据模型
 
 ### 坐标空间与几何值
 
@@ -97,7 +98,9 @@ D0 的双计数器含义由 `docs/plans/2026-07-21-lua-task-model-grill-decision
 - `TargetGeneration` 是低频 safety 维度。`ResolvedTarget` 在进程实例变化、handle/client size 变化、丢失连续性或显式 re-resolve 时推进它；同一目标的无变化 revalidation 不推进。
 - `SessionId` 再隔离捕获会话，避免新 session 从低 `FrameId` 重新计数时与旧证据碰撞。
 
-因此真正的 frame identity 是三元组 `(SessionId, TargetGeneration, FrameId)`。`Frame`、`Detection`、`ObservationLease`，以及 annotation 的 `FrameIdentity` 都携带或导出这一组值。
+frame identity 由 `(SessionId, TargetGeneration, FrameId)` 三元组组成。`Frame`、
+`Detection`、`ObservationLease`，以及 annotation 的 `FrameIdentity` 都携带或导出
+这一组值。
 
 `FrameBuffer` 独占一个 `std::vector<std::byte>`，只暴露 `span<const byte>`。它不能 copy/move assign，外部也没有可变 byte API。`Frame` 持有 `shared_ptr<FrameBuffer const>`，所以复制 `Frame` 或把像素交给异步识别不会复制整帧，也不会产生悬空 view。
 
@@ -143,7 +146,7 @@ Windows capture 在 `modules/controller/source/controller/platform/windows-captu
 
 `checkedAddMonotonic` 拒绝负 duration 和时间点溢出。`elapsedNanosecondsSince` 对反向时间饱和为零，对不能装入 `uint64` 的结果饱和为最大值；它适合 trace duration，不承担 lease 判定。
 
-## 设计不变量
+## 必须保持的约束
 
 **Fail-closed。** 非有限几何、空/越界区域、整数溢出、transform/frame 尺寸不一致、陈旧身份、过期 lease 和未知错误分类都返回结构化失败；转换函数不会自动裁出一个“看起来能用”的动作目标。矩形边界的 epsilon 只吸收浮点噪声，最终仍 clamp 到真实 extent。
 
@@ -159,7 +162,7 @@ Windows capture 在 `modules/controller/source/controller/platform/windows-captu
 
 **Strict-background 是跨模块不变量。** `domain` 只提供 `Point<ClientSpace>`、lease 和错误语义；`engine::ActionSink` 要求适配器把 lease 传到 delivery layer，Controller 最终使用 `PostMessageW`。`SetForegroundWindow`、`SetFocus`、`SendInput`、`mouse_event`、`keybd_event`、`SetCursorPos` 被列为 forbidden。任何 domain 扩展都不能以“坐标不够表达”为理由降级到前台或全局输入。
 
-## 与其他部分的协作
+## 被哪些模块使用
 
 典型数据流如下：
 
@@ -184,7 +187,7 @@ Windows capture 在 `modules/controller/source/controller/platform/windows-captu
 - `controller` 生产 frame/transform，维护目标 generation，并消费 client point 与 lease。
 - `script` 最终通过宿主绑定看到这些语义，而不直接获得像素 owner 或平台 handle。
 
-## 测试策略
+## 测试
 
 `tests/domain/test-space.cpp` 是坐标契约主测试：已知映射、round-trip tolerance、半开 containment、finite/bounds 检查、`floor`/`ceil` coverage、subpixel 至少一像素、`PixelRect` overflow、hash，以及 `[0, 2^24]` inclusive 边界和整数 round-trip 都在这里固定。
 
@@ -198,7 +201,7 @@ Windows capture 在 `modules/controller/source/controller/platform/windows-captu
 
 `tests/domain/test-time.cpp` 固定 monotonic add、反向 elapsed 饱和为零、负 duration 与 overflow 拒绝。
 
-跨模块测试固定“domain 值如何真正落地”：
+跨模块测试验证 domain 值在实际调用链中的用法：
 
 - `tests/controller/test-capture-wgc.cpp` 固定 session 内 `FrameId` 单调和 overflow 拒绝，并验证 capture geometry 创建 transform。
 - `tests/controller/test-target.cpp` 固定何种窗口身份变化恰好推进一次 `TargetGeneration`。
@@ -209,7 +212,7 @@ Windows capture 在 `modules/controller/source/controller/platform/windows-captu
 
 这些测试大多使用合成 frame 和显式 `MonotonicInstant`，避免真实窗口、墙钟抖动或 GPU 时序进入 domain 的确定性回归面。
 
-## 扩展接缝
+## 后续扩展
 
 **P1 分辨率自适应。** `docs/plans/2026-07-21-product-form-and-roadmap.md` 指定 P0 使用 project `base_resolution`/DPI fingerprint 与 identity gate，P1 才增加显式 Base→Live viewport transform。它应作为新的、命名清楚的空间或变换层接到 `CoordinateTransform` 前后，不能偷偷改变现有 `FrameSpace`、`ClientSpace` 或 `[0, 2^24]` 桥的含义。
 
@@ -217,7 +220,11 @@ Windows capture 在 `modules/controller/source/controller/platform/windows-captu
 
 **常驻 Engine 与第二平台。** 同一计划把 engine ports 留给 P2 常驻生命周期和未来非 Windows adapter。新 capture adapter 必须产生相同的 `Frame`、host monotonic arrival time、递增 `FrameId`、目标 generation 和 transform 证明；新 action adapter 必须保留 lease forwarding 与 strict-background，不得把平台差异泄漏进 domain。
 
-**D0 投递层补强。** 依 `docs/plans/2026-07-21-lua-task-model-grill-decisions.md`，最明确的未闭合接缝是让 Controller delivery 获得可比较的 current `FrameId`，从而在最后投递点独立验证 lease 的双计数器，而非只依赖 engine 单次消费。扩展时需要同时调整 `ActionSink`/Controller delivery contract 和相应测试，不能只改注释。
+**D0 投递层补强。** 根据
+`docs/plans/2026-07-21-lua-task-model-grill-decisions.md`，Controller delivery
+还需要获得可比较的 current `FrameId`，才能在最终投递点独立验证 lease
+的双计数器，而不是只依赖 engine 的单次消费。实现时需要同时调整
+`ActionSink`、Controller delivery contract 和相应测试，不能只改注释。
 
 **新错误 kind。** 在 `AutomationErrorKind` 增项时，应同步 enum reflection、`failureResponse` 穷尽映射、trace/脚本边界和 `tests/domain/test-error.cpp` 的完整 case 表。是否 retry 是控制流政策，不能从错误名字临时猜测。
 

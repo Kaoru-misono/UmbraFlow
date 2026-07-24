@@ -6,7 +6,7 @@ across modules. It does not perform recognition, window management, or input del
 the vocabulary and rejection rules that these flows depend on in common and cannot each interpret on
 their own.
 
-## Responsibilities and Boundaries
+## Module Scope
 
 `modules/domain/manifest.txt` exposes a dependency only on `core`. `domain` can therefore be used in
 common by `vision`, `image`, `annotation`, `engine`, `script`, and the Windows-only `controller`,
@@ -52,7 +52,7 @@ Such boundaries keep `domain` "small but load-bearing": the mechanisms can be te
 reused across platform code, while platform facts and product authorization are still judged by the
 modules that actually hold the context.
 
-## Key Types and Data Flow
+## Shared Data Model
 
 ### Coordinate Spaces and Geometric Values
 
@@ -253,7 +253,7 @@ This function only wraps the native cause; the business kind is still decided by
 saturates to zero on reversed time and saturates to the maximum on a result that cannot fit in
 `uint64`; it is suitable for trace duration and does not take on lease decisions.
 
-## Design Invariants
+## Constraints That Must Remain True
 
 **Fail-closed.** Non-finite geometry, empty/out-of-bounds regions, integer overflow, transform/frame
 size inconsistency, stale identity, an expired lease, and unknown error classification all return a
@@ -299,7 +299,7 @@ delivery layer, and the Controller ultimately uses `PostMessageW`. `SetForegroun
 extension may degrade to foreground or global input on the grounds that "the coordinates are not
 expressive enough".
 
-## Collaboration with Other Parts
+## Consumers
 
 The typical data flow is as follows:
 
@@ -340,7 +340,7 @@ Outbound consumers each take a portion rather than depending on an aggregate hea
 - `script` ultimately sees these semantics through the host bindings, without directly obtaining the
   pixel owner or platform handles.
 
-## Testing Strategy
+## Tests
 
 `tests/domain/test-space.cpp` is the main test for the coordinate contract: known mappings,
 round-trip tolerance, half-open containment, finite/bounds checks, `floor`/`ceil` coverage, subpixel
@@ -386,7 +386,7 @@ Cross-module tests pin "how domain values actually land":
 Most of these tests use synthetic frames and an explicit `MonotonicInstant`, avoiding real windows,
 wall-clock jitter, or GPU timing entering domain's deterministic regression surface.
 
-## Extension Seams
+## Future Extensions
 
 **P1 resolution adaptation.** `docs/plans/2026-07-21-product-form-and-roadmap.md` specifies that P0
 uses the project `base_resolution`/DPI fingerprint and an identity gate, and only P1 adds an explicit

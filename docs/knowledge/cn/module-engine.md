@@ -1,9 +1,11 @@
 # modules/engine 架构知识
 
-本文描述 `modules/engine` 当前实现，而不是未来产品形态的愿景摘要。设计动机以 `docs/plans/2026-07-23-engine-architecture.md` 为主要依据；帧语义、租约与错误追踪的上位裁决来自
-`docs/plans/2026-07-21-lua-task-model-grill-decisions.md` 的 D0、D1、D4。代码与计划不完全重合时，以下内容以代码为准，并把尚未落地的部分放在“扩展接缝”。
+本文说明 `modules/engine` 已经实现的运行时编排。设计背景见
+`docs/plans/2026-07-23-engine-architecture.md`；帧语义、租约和错误追踪的相关决策见
+`docs/plans/2026-07-21-lua-task-model-grill-decisions.md` 的 D0、D1、D4。尚未落地的
+能力集中列在文末。
 
-## 职责与边界
+## 模块职责
 
 `modules/engine` 是产品运行时的编排层。它把已发布的标注项目变成可执行的识别运行时，从已绑定到目标实例的帧源取得画面，在同一帧上解析页面和动作目标，调用 annotation 的授权策略，最后把已授权的 client-space 点击交给输入端口。
 
@@ -14,7 +16,7 @@
 - 坐标动作交付：`EngineSession::act` 把页面证据、动作证据、帧 identity、lease、live fingerprint 和目标实例复核串成一条 fail-closed 路径。
 - 运行证据：`TraceEvent` 与 `serializeTraceEvent` 定义稳定、带版本的 JSON 记录；`TraceSink` 把持久化策略留给组合根。
 
-engine 刻意不拥有以下能力：
+engine 不负责以下工作：
 
 - 不发现窗口、不创建 WGC、不调用 Win32 输入 API。`modules/engine/manifest.txt` 只依赖 `core`、`domain`、`annotation`，没有 `controller`，因此 engine 可以在非 Windows 主机和离线 CI 中构建、测试。
 - 不决定具体平台如何严格后台投递。它通过 `ActionSink` 写下契约；Windows 实现位于 `entry/cli/platform/controller-action-sink.hpp`，平台能力仍由 controller 所有。
@@ -24,9 +26,11 @@ engine 刻意不拥有以下能力：
 - 不把识别算法和授权规则复制进自身。页面/动作识别由 annotation runtime 执行，页面允许关系、fingerprint 与 frame identity 的授权由 annotation 校验。
 - 不定义 trace 文件格式之外的存储策略。engine 的 serializer 不做 I/O，也不追加换行；JSONL 的打开、逐条写入和 flush 位于 `entry/cli/file-trace-sink.cpp`。
 
-这种边界的原因不是单纯追求抽象：严格后台输入只能由平台层兑现，而识别和授权必须能在没有桌面、没有 HWND 的 CI 中复现。窄端口让安全关键的运行时顺序接受 fake 测试，同时让平台代码保持薄且可审计。
+严格后台输入只能由平台层实现，识别和授权则必须能在没有桌面、没有 HWND 的 CI
+中复现。为此，engine 只依赖几个窄端口；测试可以提供替身实现，平台代码也能保持
+简短、便于审查。
 
-## 关键类型与数据流
+## 运行时流程
 
 ### 端口
 
@@ -44,7 +48,7 @@ Windows 产品入口使用两个薄适配器：
 - `entry/cli/platform/wgc-frame-source.hpp` 的 `WgcFrameSource` 拥有 `WgcCaptureSession`，两个方法分别直接转发 `capture` 和 `validateTargetInstance`。
 - `entry/cli/platform/controller-action-sink.cpp` 的 `ControllerActionSink` 拥有 `DeliveryTarget`、`HeldInputs`、`AuditLog`，把 lease 原样传给 controller 的 `uf::click`。失败后调用 `releaseHeld` 补偿可能残留的按下状态，并保留原始错误。
 
-### runtime-loader 读取路径
+### 加载运行时项目
 
 入口是 `modules/engine/source/engine/runtime-loader.hpp` 中的 `loadRuntimeProject(projectRoot) -> Result<LoadedRuntime>`。真实路径如下：
 
@@ -59,7 +63,7 @@ Windows 产品入口使用两个薄适配器：
 
 因此 manifest 是 runtime 的读取权威。当前路径不读取 `project.toml`，也不扫描目录猜测资产；这使“发布 commit point 指向什么”与“运行时实际加载什么”保持一致。
 
-### session 与 Observation
+### 会话与 Observation
 
 公开运行表面位于 `modules/engine/source/engine/session.hpp`：
 
@@ -102,7 +106,7 @@ loadRuntimeProject
 调用者仍可能保留传入的命名右值别名；先作废可保证重试得到 `StaleObservation`，
 不会因为记录失败而双击。
 
-### trace vocabulary
+### 追踪事件
 
 `modules/engine/source/engine/trace.hpp` 定义 schema
 `engine-trace/v1` 与 `TraceEvent`。事件词汇目前是：
@@ -124,7 +128,7 @@ client click point。缺席字段直接省略，不输出 `null`。
 serializer 返回单行 JSON object。`FileTraceSink` 才追加 `\n`，每次 emit 后立即
 flush，使已经生成的证据尽量在 crash 后仍可见。
 
-## 设计不变量
+## 必须保持的约束
 
 ### Fail-closed
 
@@ -150,7 +154,7 @@ flush，使已经生成的证据尽量在 crash 后仍可见。
 session、target generation、age，并校验有限且落在 client area 内的坐标。
 controller 当前没有“最新 FrameId”输入，不能描述成在投递层再次比较当前 frame。
 
-### Model B、所有权与生命周期
+### Model B 的所有权与生命周期
 
 D1 的 Model B 被编码为句柄，而非仅靠调用约定：
 
@@ -167,7 +171,7 @@ D1 的 Model B 被编码为句柄，而非仅靠调用约定：
 - session 独占 runtime 与三个端口；`ActionFound`、`PageWait`、`ActReceipt` 都是
   明确拥有其结果的值，不返回悬空的临时 view。
 
-### Determinism 与有界执行
+### 确定性与有界执行
 
 同一 observation 上的所有查询都读取同一 frame，避免两个隐式 capture 之间游戏状态
 变化。识别 policy 每次由固定 comparison budget、monotonic deadline 和 stop token
@@ -185,7 +189,7 @@ frame 自带的 `CoordinateTransform`。trace 字段顺序和 wire names 也固�
 poll interval，每片之间也检查 cancellation 和 deadline，因此等待不会把取消响应
 绑死在完整 poll interval 上。`sweepKnownPopups` 每轮先调用一次，但当前是明确的 no-op。
 
-### Trace-at-failure-instant
+### 在失败发生时记录追踪
 
 D4 要求错误在向上层传播的瞬间记录，而不是期待未来脚本自觉记录。当前具体机制不是
 全局 exception hook，而是 engine failure site 的显式 emit：
@@ -202,9 +206,9 @@ cancellation、`waitForPage` 自身 timeout/cancellation，以及 `ActionSink::c
 直接失败，目前没有统一生成 `Failure` 事件。扩展错误路径时必须阅读具体 emit site，
 不能假设存在中央拦截器。
 
-### Strict-background
+### 严格后台
 
-engine 只表达“必须严格后台”的端口契约，真正机制位于 Windows adapter 下游：
+engine 只规定“必须严格后台”的端口契约，具体机制由 Windows 适配器实现：
 
 - `modules/controller/source/controller/input.hpp` 明列
   `SetForegroundWindow`、`SetFocus`、`SendInput`、`mouse_event`、`keybd_event`、
@@ -218,7 +222,7 @@ engine 只表达“必须严格后台”的端口契约，真正机制位于 Win
 投递证明分层。任何新 adapter 都必须重新兑现 `ActionSink` 的严格后台和 lease
 pass-through 契约；仅仅“实现了虚函数”并不自动获得该保证。
 
-## 与其他部分的协作
+## 端口与依赖
 
 主要 inbound edges 如下：
 
@@ -246,7 +250,7 @@ pass-through 契约；仅仅“实现了虚函数”并不自动获得该保证�
 include controller。否则 fake 端口无法在平台无关测试中替代桌面能力，也会把 Windows
 类型泄漏进未来 Luau binding 的稳定领域表面。
 
-## 测试策略
+## 测试
 
 `tests/engine/test-runtime-loader.cpp` 固定读取边界：
 
@@ -263,7 +267,7 @@ include controller。否则 fake 端口无法在平台无关测试中替代桌�
 - 最小事件只输出 `schema` 与 `kind`。
 - quote、backslash 与 control bytes 的 JSON escaping。
 
-`tests/cli/test-file-trace-sink.cpp` 固定 JSONL transport：
+`tests/cli/test-file-trace-sink.cpp` 验证 JSONL 写入：
 
 - 每次 emit 产生一条由 `serializeTraceEvent` 定义的行。
 - 不可打开的路径返回 error `Status`，而不是静默丢 trace。
@@ -291,9 +295,9 @@ sink 测试固定 JSONL durability，controller 的 lease、窗口 identity、me
 与 strict-background 约束由 `tests/controller/` 固定。`ControllerActionSink` 的补偿与
 真实组合目前没有单独的 CLI unit test，修改该 adapter 时不能误把下游测试当成直接覆盖。
 
-## 扩展接缝
+## 后续扩展
 
-### B2 Luau binding
+### B2 Luau 绑定
 
 `docs/plans/2026-07-23-engine-architecture.md` 指定当前 API 镜像已锁定的 D1 Model B，
 目的就是 B2 不重构领域表面即可绑定：
@@ -312,7 +316,7 @@ engine。D4 Tier C 的不可吞取消、VM interrupt、instruction/runtime budge
 
 ### 平台与 fake
 
-`FrameSource`、`ActionSink`、`TraceSink` 是 P3 第二平台和测试 fake 的正式接缝。
+P3 第二平台和测试替身都通过 `FrameSource`、`ActionSink`、`TraceSink` 接入。
 新增平台时，目标发现与 adapter 仍放 entry/platform；engine 不增加 `#ifdef Windows`。
 新 `ActionSink` 必须证明目标实例、lease fencing 与 strict-background，而不是只做
 坐标传输。
@@ -345,4 +349,4 @@ serializer golden tests 与所有 sinks/consumers。不能借 C++ enum rename �
 新增 swipe、key 或更丰富 action 时，应扩展明确的 action port/receipt 与对应 lease
 规则，而不是绕过 `act` 直接暴露 controller。无论动作种类如何，delivery-edge
 revalidation、invalidate-before-fallible-post-delivery-work、零焦点窃取和可诊断 trace
-仍是接缝必须保留的形状。
+这些约束在扩展后仍须保留。

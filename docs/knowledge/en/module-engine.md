@@ -1,14 +1,12 @@
 # modules/engine Architecture Knowledge
 
-This document describes the current implementation of `modules/engine`, not a vision summary of a
-future product form. The primary basis for the design motivation is
-`docs/plans/2026-07-23-engine-architecture.md`; the higher-level rulings on frame semantics, lease,
-and error tracing come from D0, D1, and D4 of
-`docs/plans/2026-07-21-lua-task-model-grill-decisions.md`. Where the code and the plans do not fully
-agree, the following content treats the code as authoritative and places what has not yet landed
-under "Extension seams".
+This document explains the runtime orchestration already implemented by `modules/engine`. Design
+background is in `docs/plans/2026-07-23-engine-architecture.md`; related decisions about frame
+semantics, leases, and error tracing are in D0, D1, and D4 of
+`docs/plans/2026-07-21-lua-task-model-grill-decisions.md`. Capabilities that have not yet landed are
+collected at the end.
 
-## Responsibilities and Boundaries
+## Module Responsibilities
 
 `modules/engine` is the orchestration layer of the product runtime. It turns a published annotation
 project into an executable recognition runtime, obtains frames from a frame source already bound to
@@ -55,7 +53,7 @@ honored by the platform layer, while recognition and authorization must be repro
 has no desktop and no HWND. The narrow ports let the safety-critical runtime ordering be tested with
 fakes, while keeping the platform code thin and auditable.
 
-## Key Types and Data Flow
+## Runtime Flow
 
 ### Ports
 
@@ -86,7 +84,7 @@ The Windows product entry uses two thin adapters:
   failure it calls `releaseHeld` to compensate for any pressed state that may remain, and preserves
   the original error.
 
-### The runtime-loader read path
+### Loading a Runtime Project
 
 The entry point is `loadRuntimeProject(projectRoot) -> Result<LoadedRuntime>` in
 `modules/engine/source/engine/runtime-loader.hpp`. The actual path is as follows:
@@ -114,7 +112,7 @@ Thus the manifest is the read authority for the runtime. The current path does n
 `project.toml`, nor scan directories to guess assets; this keeps "what the publication commit point
 points to" consistent with "what the runtime actually loads".
 
-### Session and Observation
+### Sessions and Observation
 
 The public runtime surface lives in `modules/engine/source/engine/session.hpp`:
 
@@ -173,7 +171,7 @@ trace then fails, the caller may still hold the named rvalue alias that was pass
 first guarantees that a retry gets `StaleObservation` and does not double-click because logging
 failed.
 
-### Trace vocabulary
+### Trace Events
 
 `modules/engine/source/engine/trace.hpp` defines the schema `engine-trace/v1` and `TraceEvent`. The
 event vocabulary is currently:
@@ -197,7 +195,7 @@ The serializer returns a single-line JSON object. Only `FileTraceSink` appends `
 immediately after each emit so that evidence already generated remains visible after a crash as much
 as possible.
 
-## Design Invariants
+## Constraints That Must Remain True
 
 ### Fail-closed
 
@@ -227,7 +225,7 @@ the post, and validates that the coordinate is finite and falls within the clien
 controller currently has no "latest FrameId" input, so it cannot be described as comparing the
 current frame again at the delivery layer.
 
-### Model B, ownership, and lifetime
+### Model B Ownership and Lifetime
 
 D1's Model B is encoded as a handle rather than relying on calling conventions alone:
 
@@ -247,7 +245,7 @@ D1's Model B is encoded as a handle rather than relying on calling conventions a
   `ActReceipt` are all values that clearly own their results and do not return a dangling temporary
   view.
 
-### Determinism and bounded execution
+### Determinism and Bounded Execution
 
 All queries on the same observation read the same frame, avoiding a game state change between two
 implicit captures. The recognition policy is constructed each time from a fixed comparison budget, a
@@ -269,7 +267,7 @@ never turn an unknown state into an allowed action.
 does not tie the cancellation response to a full poll interval. `sweepKnownPopups` is called once at
 the start of each round, but is currently an explicit no-op.
 
-### Trace-at-failure-instant
+### Tracing at the Failure Site
 
 D4 requires that an error be recorded at the instant it propagates to the upper layer, rather than
 expecting a future script to record it voluntarily. The current concrete mechanism is not a global
@@ -289,7 +287,7 @@ timeout/cancellation, and a direct failure of `ActionSink::click` currently do n
 generate a `Failure` event. When extending error paths, you must read the specific emit site and
 cannot assume a central interceptor exists.
 
-### Strict-background
+### Strict-Background
 
 The engine only expresses the port contract that "must be strictly background"; the real mechanism
 lives downstream in the Windows adapter:
@@ -308,7 +306,7 @@ timing apart from the non-portable delivery proof. Any new adapter must re-honor
 strict-background and lease pass-through contract; merely "implementing the virtual function" does
 not automatically earn that guarantee.
 
-## Collaboration with Other Parts
+## Ports and Dependencies
 
 The main inbound edges are as follows:
 
@@ -340,7 +338,7 @@ the engine cannot include controller in reverse. Otherwise fake ports cannot sub
 capability in platform-independent tests, and Windows types would leak into the stable domain
 surface of a future Luau binding.
 
-## Testing Strategy
+## Tests
 
 `tests/engine/test-runtime-loader.cpp` pins the read boundaries:
 
@@ -390,9 +388,9 @@ identity, message encoding, and strict-background constraints are pinned by `tes
 compensation and real composition of `ControllerActionSink` currently have no separate CLI unit
 test, so when modifying that adapter you must not mistake downstream tests for direct coverage.
 
-## Extension Seams
+## Future Extensions
 
-### B2 Luau binding
+### B2 Luau Binding
 
 `docs/plans/2026-07-23-engine-architecture.md` specifies that the current API mirrors the locked D1
 Model B, precisely so that B2 can bind without refactoring the domain surface:
@@ -411,7 +409,7 @@ push `lua_State`, userdata, or scheduler concepts back into the engine. D4 Tier 
 cancellation, VM interrupt, instruction/runtime budget, and sandbox are still constrained in their
 implementation by `docs/plans/2026-07-21-p0b-luau-hardening-ledger.md`.
 
-### Platform and fakes
+### Platforms and Fakes
 
 `FrameSource`, `ActionSink`, and `TraceSink` are the formal seams for the P3 second platform and for
 test fakes. When adding a platform, target discovery and the adapter still go in entry/platform; the
@@ -435,7 +433,7 @@ preserved when upgrading from P0's one-run-at-a-time to P2's resident Engine. Th
 should manage the lifetime outside the session and should not weaken the observation's single-frame
 and single-action invariants.
 
-### Runtime and trace evolution
+### Runtime and Trace Evolution
 
 `docs/plans/2026-07-23-engine-architecture.md` explicitly defers reading the project-level
 fingerprint from `project.toml`; the current authority is the fingerprint embedded in the runtime

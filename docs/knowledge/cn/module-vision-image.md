@@ -1,10 +1,11 @@
 # vision 与 image 模块架构知识
 
-本文合并说明两个小型平台无关兄弟模块：`modules/vision` 与 `modules/image`。前者提供确定性的像素识别核，
-后者提供受配额约束的 PNG 与像素布局边界。二者服务 authoring、Preview 和 Runtime，但刻意不直接依赖彼此；
-本文以当前代码为准，并以 `docs/plans/2026-07-22-annotation-design.md` 的 S0 契约解释其设计原因。
+本文合并说明两个小型平台无关模块：`modules/vision` 提供确定性的像素识别，
+`modules/image` 负责有资源上限的 PNG 编解码和像素布局。编辑器、预览和运行时都会
+使用它们，但两个模块互不依赖。相关 S0 设计见
+`docs/plans/2026-07-22-annotation-design.md`。
 
-## 职责与边界
+## 模块分工
 
 `vision` 拥有三件事：
 
@@ -29,7 +30,7 @@
 - 需要“PNG → Gray8”时，`annotation` 或 entry 层显式组合
   `decodePng`、`rgba8ToBgra8`、`bgra8ToGray8`。这个显式桥接避免 codec/FFI 污染纯识别核。
 
-它们刻意不拥有以下策略：
+它们不负责以下策略：
 
 - 不发现窗口、不抓帧、不持有 OS handle，也不发送 `PostMessage`；这些属于 controller 与 entry adapter。
 - 不定义相似度阈值、page signature、required/forbidden anchor、`ResolvedPage` 或动作授权；这些属于
@@ -42,9 +43,9 @@
 - 不实现 strict-background input。这里对该产品契约的贡献是：无效图像被拒绝，未完成搜索保留为 stop，
   从而上层没有条件把不完整证据变成一次后台输入。
 
-## 关键类型与数据流
+## 图像处理与识别流程
 
-### vision 的公开表面
+### vision 的公开接口
 
 公开声明位于 `modules/vision/source/vision/sad.hpp`。
 
@@ -102,7 +103,7 @@ budget 与 poll 都在“执行下一次 pixel comparison 之前”检查。顺�
 multiply/xor 序列从 `seed`、`x`、`y` 生成一个 `uint8`，当前调用者是
 `tests/vision/test-sad.cpp` 的确定性合成 fixture；它不是 PNG hash 或内容身份算法。
 
-### image 的公开表面
+### image 的公开接口
 
 PNG API 位于 `modules/image/source/image/png.hpp`。三个公开 quota 是：
 
@@ -189,7 +190,7 @@ two GrayImage views + independent searchRoi -> bounded matchTemplateSad
 产生不同 PNG bytes，就会得到不同 identity；pinned encoder 与 golden test 是内容寻址契约的一部分，
 并非单纯的压缩性能设置。
 
-## 设计不变量
+## 必须保持的约束
 
 **确定性。** Gray conversion 只有固定宽度整数运算；SAD 只有整数绝对差与 `uint64` 累加；candidate
 顺序、strict-less update、row pruning 和 exact-zero return 固定 tie 结果。channel swap、crop 与
@@ -224,7 +225,7 @@ cooperative poll 和精确 completed count。pruning 是性能优化，但不放
 annotation 产出可授权的 completed evidence 后才可能调用 `ActionSink::click`；stop 会先进入 trace 并
 返回 error。因此这里守住的是 strict-background 的识别前置条件，而不是 delivery protocol 本身。
 
-## 与其他部分的协作
+## 依赖关系
 
 向下依赖中，`core` 提供 `Result`、release-active contracts、checked arithmetic/casts 和 checked
 access；`domain` 提供 `PixelRect`、`PixelFormat`、`Frame` 与 `validateBufferGeometry`。跨这条边的只有
@@ -246,7 +247,7 @@ access；`domain` 提供 `PixelRect`、`PixelFormat`、`Frame` 与 `validateBuff
 
 - `source-ingestion.cpp` 将导入 PNG decode 后重新 canonical encode，或将 WGC BGRA frame 去 padding、
   转 RGBA 后编码；source hash 因而覆盖项目自己的 canonical PNG bytes。
-- `preview.cpp` 走真正的 compiler/runtime 路径，不维护私有 matcher。
+- `preview.cpp` 复用正式的编译器和运行时路径，不维护私有 matcher。
 - `platform/windows-texture-cache.cpp` 只把 `decodePng` 的 RGBA output 交给 D3D texture upload。
 - `project-persistence.cpp` 才拥有文件发布顺序和 encoded asset size gate。
 
@@ -261,7 +262,7 @@ annotation + engine。
 controller 只生产带 `PixelFormat`、stride 与 owning `FrameBuffer` 的 `Frame`。它无需链接任一模块；
 composition 层把 frame 交给 recognition。反向也没有 edge：识别核绝不调用 capture 或 input。
 
-## 测试策略
+## 测试
 
 `tests/vision/test-sad.cpp` 是 `test-vision` 的完整直接测试面，固定：
 
@@ -308,7 +309,7 @@ gray kernel，以及带 padding crop 的紧密输出与短 source 拒绝。
 时点；改动 codec/config 时，不能只做 decode round trip，还要验证 golden bytes、template SHA-256 和
 authoring compiler determinism。前者保护控制语义，后者保护内容身份。
 
-## 扩展接缝
+## 后续扩展
 
 `docs/plans/2026-07-22-annotation-design.md` §7 锁定 P0 只有 bounded deterministic
 `gray_template`。颜色、HSV、OCR、composite、parameterized ROI 和 multi-scale 都不是当前 kernel 的
@@ -327,7 +328,7 @@ OCR 只有在真实日常必须读取动态语义文字/数字且模板或 state
 仍可复用，但 OCR output、determinism、budget/cancellation 和 evidence type 都需要独立设计；SAD score
 不是通用 confidence 接口。
 
-stb 升级或 codec 替换的接缝就是两个 `ffi/*.cpp` 与私有 `image_stb` target，公共
+升级 stb 或替换 codec 时，只需修改两个 `ffi/*.cpp` 和私有 `image_stb` target，公共
 `image/png.hpp` 不必泄漏第三方类型。但 `docs/plans/2026-07-23-engine-architecture.md` Phase 1 明确指出，
 encoder 配置必须在真实资产前冻结，因为 bytes drift 会作废全部 `template_hash`。任何升级都应先解释
 `tests/image/test-png.cpp` golden diff，再决定是否迁移并重生 content-addressed source/template assets；
@@ -337,7 +338,7 @@ encoder 配置必须在真实资产前冻结，因为 bytes drift 会作废全�
 `docs/plans/2026-07-20-m0-demo-port-deviations.md` F-14，并在 FFI preflight/integrity 边界增加相应验证，
 而不是让每个 annotation/engine caller 各自补检查。
 
-真实截图回归的现成接缝是 `tests/workbench/test-real-regression.cpp` 与条件注册的
+真实截图回归可接入 `tests/workbench/test-real-regression.cpp` 和条件注册的
 `tests/assets/real-regression`。`docs/plans/2026-07-23-engine-architecture.md` Phase 5 要求用 workbench
 产出的真实 source 扩展正例、负例与易混淆集；kernel 与 codec 不应包含任何游戏特判。
 

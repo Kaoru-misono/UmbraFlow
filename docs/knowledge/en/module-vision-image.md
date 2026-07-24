@@ -1,13 +1,11 @@
 # vision and image Module Architecture Knowledge
 
-This document jointly describes two small, platform-independent sibling modules: `modules/vision`
-and `modules/image`. The former provides a deterministic pixel recognition kernel, the latter
-provides quota-constrained PNG and pixel-layout boundaries. Both serve authoring, Preview, and
-Runtime, but deliberately do not depend on each other directly. This document follows the current
-code and explains the design rationale in terms of the S0 contract from
-`docs/plans/2026-07-22-annotation-design.md`.
+This document describes two small platform-independent modules together: `modules/vision` provides
+deterministic pixel recognition, while `modules/image` owns resource-bounded PNG encoding/decoding
+and pixel layouts. Authoring, Preview, and Runtime use both modules, but the two do not depend on
+one another. The related S0 design is in `docs/plans/2026-07-22-annotation-design.md`.
 
-## Responsibilities and Boundaries
+## Module Responsibilities
 
 `vision` owns three things:
 
@@ -56,9 +54,9 @@ They deliberately do not own the following policies:
   contract is: invalid images are rejected and incomplete searches are preserved as a stop, so the
   upper layers have no basis to turn incomplete evidence into a background input.
 
-## Key Types and Data Flow
+## Image Processing and Recognition Flow
 
-### The Public Surface of vision
+### The Public Interface of vision
 
 The public declarations live in `modules/vision/source/vision/sad.hpp`.
 
@@ -128,7 +126,7 @@ constant is `g_sadSearchPollIntervalComparisons == 4096`. Therefore:
 caller is the deterministic synthetic fixture in `tests/vision/test-sad.cpp`. It is not a PNG hash
 or a content-identity algorithm.
 
-### The Public Surface of image
+### The Public Interface of image
 
 The PNG API lives in `modules/image/source/image/png.hpp`. The three public quotas are:
 
@@ -230,7 +228,7 @@ pixels produce different PNG bytes under a different encoder/config, they will g
 identity; the pinned encoder and golden test are part of the content-addressed contract, not merely
 a compression-performance setting.
 
-## Design Invariants
+## Constraints That Must Remain True
 
 **Determinism.** Gray conversion uses only fixed-width integer arithmetic; SAD uses only integer
 absolute differences and `uint64` accumulation; candidate order, strict-less update, row pruning,
@@ -276,7 +274,7 @@ they hand to the upper layers is either completed evidence or an explicit stop.
 produces authorizable completed evidence; a stop first enters the trace and returns an error. So what
 is held here is the recognition precondition of strict-background, not the delivery protocol itself.
 
-## Collaboration with Other Parts
+## Dependencies
 
 In the downward dependencies, `core` provides `Result`, release-active contracts, checked
 arithmetic/casts, and checked access; `domain` provides `PixelRect`, `PixelFormat`, `Frame`, and
@@ -319,7 +317,7 @@ The controller only produces a `Frame` with a `PixelFormat`, stride, and an owni
 does not need to link against either module; the composition layer hands the frame to recognition.
 There is no reverse edge either: the recognition kernel never calls capture or input.
 
-## Testing Strategy
+## Tests
 
 `tests/vision/test-sad.cpp` is the complete direct test surface of `test-vision`, pinning:
 
@@ -377,7 +375,7 @@ is not enough to do only a decode round trip; the golden bytes, template SHA-256
 compiler determinism must also be verified. The former protects control semantics, the latter
 protects content identity.
 
-## Extension Seams
+## Future Extensions
 
 `docs/plans/2026-07-22-annotation-design.md` §7 locks P0 to only a bounded deterministic
 `gray_template`. Color, HSV, OCR, composite, parameterized ROI, and multi-scale are not hidden modes

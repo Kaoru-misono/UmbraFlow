@@ -1,10 +1,10 @@
 # entry/cli 架构知识
 
-`entry/cli` 是产品可执行文件 `umbra-flow` 的命令行入口和 Windows 组合根。
+`entry/cli` 是 `umbra-flow` 的命令行入口，也是 Windows 上的组合入口。
 它把平台无关的 `engine` 端口接到 `controller` 的真实捕获与后台输入能力上，
-同时把参数、资源名称和进程退出码翻译成面向操作者的产品契约。
+并负责参数、资源名称和进程退出码。
 
-## 职责与边界
+## 入口职责
 
 该目录拥有四类产品边界。
 
@@ -29,7 +29,7 @@
 `entry/cli/run-unsupported.cpp`，保留同一个产品二进制和可测试命令层，但
 `runProduct` 明确返回 `UnsupportedCapability`。
 
-该目录刻意不拥有以下职责：
+该目录不负责以下工作：
 
 - 不拥有识别、页面判定、动作授权或 observation 生命周期；这些属于
   `modules/annotation/` 与 `modules/engine/`。
@@ -48,9 +48,9 @@
 窗口标题选择、DPI 声明和 Win32 几何则是产品在 Windows 上如何取得该端口的
 策略。
 
-## 关键类型与数据流
+## 命令执行流程
 
-### 可执行表面
+### 命令行入口
 
 `entry/cli/main.cpp` 的 `dispatch` 只有两个公开产品路径：
 
@@ -76,7 +76,7 @@
 flag 以“flag 后紧跟 value”的二元组读取；未知 flag、缺值、非整数和越界值都
 返回 `InvalidResource`。因此后续组合只处理类型化值，不重复解析字符串。
 
-### 离线加载与 name-to-ID
+### 离线加载与名称解析
 
 `runProduct` 首先调用
 `modules/engine/source/engine/runtime-loader.hpp` 的
@@ -97,7 +97,7 @@ manifest 引用读取 `assets/templates/<hash>.png`，由
 失败信息按 catalog 顺序列出所有可用页面或 action target，给操作者直接可改的
 诊断。
 
-这段离线工作刻意发生在接触桌面之前：坏 manifest、缺失模板或未知名称不会
+这段离线工作在访问桌面之前完成：损坏的 manifest、缺失模板或未知名称不会
 先声明 DPI、注册 console handler、枚举窗口或创建捕获资源。
 
 ### Windows 组合序列
@@ -146,7 +146,7 @@ observation 上调用 `findAction(actionId)`，不会为动作另抓一帧。
 `EngineSession::act` 消费 observation，执行授权、frame-to-client 变换和投递，
 返回 `ActReceipt`；CLI 把实际 client click point 写入成功报告。
 
-### 三个端口 adapter
+### 三个端口适配器
 
 `entry/cli/platform/wgc-frame-source.hpp` 的 `platform::WgcFrameSource` 按值拥有
 move-only `WgcCaptureSession`。`capture()` 原样转发到 session，
@@ -159,7 +159,7 @@ frame ID、target generation、content-size 变化失效和 capture stall 都继
 `HeldInputs` 与 `AuditLog`。它的 `click(point, lease)` 把
 `ObservationLease` 不变地传给
 `modules/controller/source/controller/input.hpp` 的 `uf::click`。
-controller 因而在真正投递时再次检查 session、generation、到期时间、坐标有限性、
+controller 在投递时再次检查 session、generation、到期时间、坐标有限性、
 client bounds 与 Win32 signed-16-bit 编码范围。
 
 如果 pointer down/up 链中任一步失败，adapter 保留原始错误，并调用
@@ -197,7 +197,7 @@ client bounds 与 Win32 signed-16-bit 编码范围。
 以及存在时的 native error category/value。这是 CLI 的单行诊断格式，不改变
 底层 `Error` 的分类。
 
-## 设计不变量
+## 必须保持的约束
 
 **Fail-closed。** 资源加载和名称解析在桌面副作用前完成；窗口 substring 必须
 唯一；DPI 声明、几何创建、WGC、delivery 和 trace 任一步失败都通过
@@ -241,7 +241,7 @@ session creation 的 `SessionStarted`、识别失败、授权与投递相关事�
 失败。`FileTraceSink` 也不吞写入错误。这使“无法留下所要求的证据”成为显式产品
 失败，而不是不可见的 best-effort 丢日志。
 
-## 与其他部分的协作
+## 依赖关系
 
 入站边是 shell/operator → CLI。跨边界的是字符串参数、项目路径、目标标题
 substring、名称和退出码；CLI 在这一层负责可读诊断与默认值。
@@ -274,7 +274,7 @@ substring、名称和退出码；CLI 在这一层负责可读诊断与默认值�
 `run-unsupported.cpp`。因此平台无关契约能在没有 Windows desktop 的 CI 中测试，
 而产品 executable 不需要导出内部函数。
 
-## 测试策略
+## 测试
 
 `tests/cli/test-args.cpp` 钉住完整 flag happy path、所有可选默认值、四个必填项、
 unknown/missing/non-integer 输入、poll 的 1/60000 ms 边界，以及退出码映射。
@@ -312,7 +312,7 @@ CLI adapter 的安全语义由下游测试分层固定：
 `selectCandidate`、console registration、client-origin adapter 或整条真实 Windows
 组合；这些属于真机 smoke/E2E 验证面，不能用现有离线测试的绿色替代。
 
-## 扩展接缝
+## 后续扩展
 
 `docs/plans/2026-07-23-engine-architecture.md` 是当前 engine/CLI 组合的直接权威。
 它明确把 CLI 定位为 Phase 3 的 Windows 组合根，把固定 C++ 流程定位为 smoke
@@ -320,7 +320,7 @@ flow，并把任务语言留给 Luau。因此新增任务编排应接到
 `EngineSession` 的 observe/act/wait 表面或 script binding，不应继续在
 `runProduct` 中堆出一套声明式语言。
 
-同一计划列出的接缝包括：
+同一计划还列出以下扩展点：
 
 - P3 第二平台通过实现相同 `FrameSource`、`ActionSink`、`TraceSink` 接入；
   CLI host implementation 可以替换 `run-unsupported.cpp`，engine 无需感知平台。

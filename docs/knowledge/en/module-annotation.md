@@ -1,14 +1,13 @@
 # annotation Module Architecture Knowledge
 
-This document describes the S0 contract currently implemented by `modules/annotation`. The design
-authority is `docs/plans/2026-07-22-annotation-design.md`; this document defers to the existing code
-and helps new developers locate the implementation, understand the constraints, and find safe places
-to extend.
+This document describes the S0 contract already implemented by `modules/annotation`. The complete
+design is in `docs/plans/2026-07-22-annotation-design.md`; this guide focuses on code entry points,
+processing flow, and constraints that must remain true.
 
-## Responsibilities and Boundaries
+## Module Responsibilities
 
-`annotation` is the platform-independent domain layer between "authored annotation data" and
-"authorizable runtime recognition evidence." It owns six categories of responsibility:
+`annotation` converts authored annotations into recognition evidence that runtime can authorize. It
+owns six categories of responsibility:
 
 1. Define stable resource identities, project fingerprints, recognizers, and page signatures, and
    close their reference relationships at object construction time.
@@ -54,7 +53,7 @@ than an input backend. The real background delivery lies outside the module; `an
 responsibility is to ensure that `Unknown`, `Ambiguous`, recognition stop, expired evidence, or
 incompatible geometry can never cross the authorization boundary.
 
-## Key Types and Data Flow
+## Data Model and Processing Flow
 
 ### Identity, Geometry, and Catalog
 
@@ -100,7 +99,7 @@ and `findPage()` return non-owning pointers. These views/pointers are all upper-
 catalog's lifetime, and the declarations make the constraint explicit with `UF_LIFETIME_BOUND` or a
 comment.
 
-### Canonical authoring document
+### Canonical Authoring Document
 
 `modules/annotation/source/annotation/authoring-document.hpp` defines the schema
 `umbraflow-authoring/v1`. The main types are:
@@ -143,7 +142,7 @@ rejects not TOML semantics themselves but any representation that deviates from 
 output; thus generated/source documents can be hashed stably, diffed stably, and will not silently
 absorb schema drift.
 
-### Deterministic Compilation and the runtime manifest
+### Deterministic Compilation and the Runtime Manifest
 
 `compileAuthoringDocument` lives in `modules/annotation/source/annotation/authoring-compiler.hpp` and
 `modules/annotation/source/annotation/authoring-compiler.cpp`. Its inputs are a validated
@@ -192,7 +191,7 @@ canonical reader, requires recognizers to precede pages, at most 4096 entries pe
 most 16 MiB per document, and at the end rejects non-canonical input via
 `serializeRuntimeManifest(manifest) == input`.
 
-### Thresholds, Runtime Recognition, and stop preservation
+### Thresholds, Runtime Recognition, and Stop Reasons
 
 `SimilarityThreshold` in `modules/annotation/source/annotation/catalog.hpp` stores `[0, 10000]` in
 basis points. `maximumSad(width, height)` is implemented with checked `uint64` arithmetic:
@@ -240,7 +239,7 @@ lifetime obligation after `create` returns.
 the manifest fingerprint are equal, and checks that the frame width/height equal the project base
 resolution. A mismatch returns `TargetCompatibilityUnverified`; S0 has no implicit resampling.
 
-### PageResolver, click pixel, and Action Authorization
+### Page Resolution, Click Pixels, and Action Authorization
 
 The page evidence types are in `modules/annotation/source/annotation/recognition.hpp`:
 
@@ -290,7 +289,7 @@ The return value is only a `Status`, with no "partial authorization." `UnknownPa
 `AmbiguousPages` cannot be passed as arguments by type, and a recognition stop never produces a
 `ResolvedPage`, so a failure state cannot be mistaken for a clickable capability.
 
-## Design Invariants
+## Constraints That Must Remain True
 
 **Fail-closed.** All external data is constructed through `Result` factories, and any failure of
 schema, resource closure, hash, geometry, fingerprint, or quota produces no half-valid object. If the
@@ -326,7 +325,7 @@ page, detection, lease, and delivery fingerprint/identity to hold simultaneously
 observation after successful delivery. The annotation gate is therefore the domain layer of a
 two-layer delivery fence, not the entirety of a complete background protocol.
 
-## Collaboration with Other Parts
+## Dependencies
 
 The inbound authoring path comes from `entry/workbench`:
 
@@ -360,7 +359,7 @@ the absolute deadline span the suite. A cancel/timeout interrupts subsequent cas
 single-case budget exhaustion is preserved as that case's diagnostic and allows the suite to
 continue.
 
-## Testing Strategy
+## Tests
 
 `tests/annotation` is a deterministic offline test surface; the fixed contract of each file is as
 follows:
@@ -399,7 +398,7 @@ only parser unit tests is insufficient to prove that Preview and Runtime still t
 adding only a runtime happy path is likewise insufficient to prove that non-canonical input remains
 fail-closed.
 
-## Extension Seams
+## Future Extensions
 
 The following seams come from the authoritative plan and are not currently implemented capabilities.
 

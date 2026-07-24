@@ -1,10 +1,11 @@
 # `modules/script` Architecture Knowledge
 
-`modules/script` is UmbraFlow's current minimal Luau embedding layer. It has proven that a C++23 host
-can run Luau pinned to 0.730, but it is not yet an unattended script runtime: the existing code is only
-the foundation where "the VM can be created, source can execute, and errors can be returned."
+`modules/script` is UmbraFlow's current minimal Luau embedding layer. A C++23 host can run Luau
+pinned to 0.730, but the existing code only creates a VM, executes source synchronously, and returns
+errors. It does not yet have the sandboxing, cancellation, or resource quotas required for
+unattended execution.
 
-## Responsibilities and Boundaries
+## Current Capabilities and Limits
 
 The module currently owns the following responsibilities:
 
@@ -60,7 +61,7 @@ None of the three links `${PROJECT_NAME}_script`, and `modules/engine/manifest.t
 preserves the already-validated embedding foundation while avoiding wiring a VM that is explicitly
 "unsandboxed, non-cancellable, and quota-free" into a strict-background unattended product.
 
-## Key Types and Data Flow
+## Execution Flow
 
 ### Public Surface
 
@@ -139,7 +140,7 @@ share the main `lua_State` and the global table; global modifications opened by 
 stack, and works together with the stack guard to prevent thread objects from accumulating on the main
 stack. True per-task environment isolation is not yet implemented.
 
-## Design Invariants
+## Constraints That Must Remain True
 
 ### Fail-Closed Behavior That Already Holds Today
 
@@ -227,9 +228,9 @@ using `lua_break()` in the interrupt, and must never use `luaL_error()`, which c
 interrupt cannot preempt a stuck C++ call. Together the two form a "500ms total exit" rather than a
 single VM trick.
 
-## Collaboration with Other Parts
+## Relationship to the Product Runtime
 
-### Current Inbound Edges
+### Current Callers
 
 The only actual inbound edge today is `tests/script/test-script.cpp`:
 
@@ -241,7 +242,7 @@ The only actual inbound edge today is `tests/script/test-script.cpp`:
 No entry, `engine`, `annotation`, or `controller` source file includes `script/engine.hpp`. This is a
 boundary that can be verified directly by a repository reference search.
 
-### Current Outbound Edges
+### Current Dependencies
 
 `modules/script/manifest.txt` declares:
 
@@ -259,7 +260,7 @@ establishes the `Luau.*` targets, and only Pass 2 resolves the private dependenc
 that path as the `https://github.com/luau-lang/luau.git` submodule; the exact baseline recorded by the
 integration plan is tag 0.730, commit `5bc7f4b23756f69f4669b419fa9034f117ccd6fe`.
 
-### What Crosses the FFI
+### What Crosses the FFI Boundary
 
 What crosses the Luau boundary is currently only:
 
@@ -276,7 +277,7 @@ Third-party headers are included only in `modules/script/source/script/ffi/engin
 suppress third-party warnings with the corresponding MSVC/Clang/GCC pragmas. The project's own targets
 still apply the strict safety profile; the warning suppression does not spread to the whole module.
 
-### Future Collaboration Direction
+### Planned Integration
 
 The product plan requires the C++ host to hold the screenshot, recognition, input, keypress ledger,
 and trace; Luau consumes only a minimal, read-only, cancellable capability. This means that what
@@ -288,7 +289,7 @@ and `engine -> core, domain, annotation` are independent of each other; any new 
 decided by an actual composition design, not merely a convenience of letting `script` and `engine`
 depend on each other.
 
-## Testing Strategy
+## Tests
 
 The current host tests are concentrated in `tests/script/test-script.cpp`; the `test-script` target in
 `tests/CMakeLists.txt` links `${PROJECT_NAME}_script`, registers only when the module exists, and
@@ -335,7 +336,7 @@ sandboxing, the GC interrupt guard, non-yieldable contexts such as the `table.so
 tests land does the 0.730 spike conclusion get upgraded from one-off evidence to a continuous
 repository guarantee.
 
-## Extension Seams
+## Work Required Before Product Integration
 
 The extension order is governed by `docs/plans/2026-07-21-p0b-luau-hardening-ledger.md`, not by the
 convenience of the current `Engine`. It is recommended to understand the work after the existing

@@ -3,12 +3,12 @@
 本文描述 `modules/controller` 的当前 Windows 实现。上位方向来自
 `docs/plans/2026-07-21-product-form-and-roadmap.md`，未完成的 Win32 加固以
 `docs/plans/2026-07-20-post-port-win32-robustness.md` 为准；计划与代码不一致时，
-以下以代码为准，并把尚未实现的要求放在“扩展接缝”。
+以下以代码为准，尚未实现的要求放在“后续扩展”。
 
-## 职责与边界
+## 模块职责
 
 `modules/controller` 是 Windows 桌面能力适配层。它把窗口、进程、WGC、D3D11
-和窗口消息翻译成 `core`/`domain` 可以表达的值、`Result<T>` 与 `Status`。
+和窗口消息转换成 `core`/`domain` 可以表达的值、`Result<T>` 与 `Status`。
 `modules/controller/manifest.txt` 将整个模块限制为 Windows，公开依赖只有
 `core`、`domain`，Win32、D3D11、DXGI、DWM、NTDLL 与 Windows Runtime 库均为
 Windows private dependency。
@@ -30,7 +30,7 @@ Windows private dependency。
 `uf::controller_platform`。仓库中没有 `uf::controller` 命名空间；新增代码若按
 目录名猜命名空间，会绕开现有组织方式。
 
-controller 刻意不拥有以下策略：
+controller 不负责以下策略：
 
 - 不识别页面、不解释 `Detection`，也不授权动作；这些属于 `annotation` 和
   `engine`。
@@ -48,7 +48,7 @@ controller 刻意不拥有以下策略：
 这种边界把可离线复现的授权语义留在平台无关模块，同时把所有 HWND、COM、
 回调和驱动生命周期集中到一个可审计区域。
 
-## 关键类型与数据流
+## 目标、捕获与输入
 
 ### 发现、解析与目标代际
 
@@ -214,7 +214,7 @@ access denied 且实际 context 已是 V2 时才返回 `AlreadyDeclared`。sette
 每窗口 DPI 由 discovery 的 `GetDpiForWindow` 取得，项目级 DPI fingerprint 的
 持续校验不在此 API 内。
 
-## 设计不变量
+## 必须保持的约束
 
 ### Fail-closed 与代际隔离
 
@@ -233,7 +233,7 @@ access denied 且实际 context 已是 V2 时才返回 `AlreadyDeclared`。sette
   实例。产品路径依靠 `EngineSession::act` 紧邻 sink 调用前执行
   `WgcCaptureSession::validateTargetInstance`，再由 input 层做上述 lease 检查。
 
-### Determinism
+### 确定性
 
 - selector 的字符串比较、候选数量规则、坐标 `floor`、Win32 `lParam` bit layout
   和 release ordering 都是显式规则；不存在 fuzzy match、随机选窗或隐式 rounding。
@@ -262,7 +262,7 @@ access denied 且实际 context 已是 V2 时才返回 `AlreadyDeclared`。sette
 - `HeldInputs`、`AuditLog` 和 `DeliveryTarget` 都是显式 caller-owned values；
   controller 没有隐藏 singleton。`AuditLog` 返回的 span 只在下一次 append 前有效。
 
-### Strict-background 与 platform/FFI 边界
+### 严格后台与 platform/FFI 边界
 
 严格后台不是运行时开关，而是可达 API 集合。`g_forbiddenBackgroundApis` 记录
 六个原始 guard 名；`scripts/check_safety.py` 还静态禁止其他前台化 API 的直接
@@ -280,7 +280,7 @@ bit conversion 与 mapped pointer 都位于
 `modules/controller/source/controller/detail/` 保存可移植的纯算法和窄 access
 helper，主要目的是让边界规则可离线测试，而不是提供第二套 public API。
 
-## 与其他部分的协作
+## 依赖关系
 
 向下，controller 只跨两条模块边：
 
@@ -316,12 +316,12 @@ errors，没有 HWND 或 D3D resource 进入 engine。
 source ingestion。其 visible/non-iconic 和“第一个 title substring match”策略
 属于 workbench，不是 controller 的解析契约。
 
-`entry/m0-demo/` 直接使用 target、capture 和 input surface，现已冻结为真机验收
+`entry/m0-demo/` 直接使用 target、capture 和 input 接口，现已冻结为真机验收
 参考；产品路径由 engine/CLI 组合取代。低层 `AuditLog` 记录 Win32 message
 attempt，engine `TraceSink` 记录 observe/authorize/deliver 等产品事件，二者目的
 不同，不能互相替代。
 
-## 测试策略
+## 测试
 
 `tests/CMakeLists.txt` 只在 `${PROJECT_NAME}_controller` target 存在时注册
 `test-controller`，所以这些测试是 Windows-only，但尽量把 OS-independent
@@ -364,9 +364,9 @@ resize、recreation、minimize/stall、DPI、遮挡与焦点不变仍需要真�
 `docs/plans/2026-07-20-m0-demo-port-deviations.md` 将冻结的 m0-demo 定位为该验收
 参考，而不是 CI 替代品。
 
-## 扩展接缝
+## 后续扩展
 
-以下接缝已有计划依据，不代表当前能力已经存在。
+以下扩展已有计划依据，但当前尚未实现。
 
 第一组是 discovery/identity 加固。
 `docs/plans/2026-07-20-post-port-win32-robustness.md` 的 S-1/S-2 指出
@@ -398,7 +398,7 @@ predicate 与 notification；`WgcCaptureOptions::captureStallTimeout()` 仍是�
 ContentSize latch，不能把静态画面简单当成安全新帧。
 
 第四组是 input compensation。
-同一 Win32 计划记录了三个真实接缝：`releaseHeld` 可在每个 best-effort Up 前
+同一 Win32 计划还记录了三个扩展点：`releaseHeld` 可在每个 best-effort Up 前
 复核窗口实例；clear-before-attempt 可演进为显式 retry/persisted-held policy；
 `scanCodeFor` 返回零时可在构造 `PostSpec` 前以 `ActionRejected` 拒绝。当前
 `ControllerActionSink` 已是产品补偿的集中点，但 identity proof 和 retry
@@ -409,5 +409,5 @@ process-DPI 的更强验证可替换
 `modules/controller/source/controller/platform/windows-dpi.cpp` 中基于 calling
 thread context 的确认方式；现有调用仍要求在线程 DPI override 之前执行。
 borderless capture 已由 `WgcCaptureOptions::requireBorderless` 预留 fail-closed
-开关，真正实现必须先建立调用者拥有的 access grant，再改变 session 设置；不能
+开关。实现前必须先建立由调用者持有的访问许可，再改变 session 设置；不能
 仅凭 OS build 支持就报告 borderless 已兑现。

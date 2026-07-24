@@ -1,9 +1,10 @@
 # `modules/script` 架构知识
 
-`modules/script` 是 UmbraFlow 当前的最小 Luau 嵌入层。它已证明 C++23 宿主可以运行固定到 0.730 的
-Luau，但还不是无人值守脚本运行时：现有代码只有“VM 能创建、源码能执行、错误能返回”的底座。
+`modules/script` 是 UmbraFlow 当前的最小 Luau 嵌入层。C++23 宿主已经可以运行固定
+在 0.730 的 Luau，但现有代码只支持创建 VM、同步执行源码和返回错误，尚未具备
+无人值守运行所需的沙箱、取消和资源配额。
 
-## 职责与边界
+## 当前能力与限制
 
 模块当前拥有以下职责：
 
@@ -17,7 +18,7 @@ Luau，但还不是无人值守脚本运行时：现有代码只有“VM 能创�
 - 在 `modules/script/external/` 下封装 vendored Luau 构建；`modules/script/external/CMakeLists.txt`
   只启用宿主需要的库。
 
-它刻意不拥有以下职责：
+它不负责以下工作：
 
 - 不拥有 observation、page resolution、recognition、action、trace 或 lease；这些能力位于
   `modules/annotation`、`modules/engine`、`modules/controller` 等模块，`script` 当前没有连接它们。
@@ -33,7 +34,7 @@ Luau，但还不是无人值守脚本运行时：现有代码只有“VM 能创�
   指令预算或时间预算。`Engine::create()` 会调用 `luaL_openlibs()`，没有调用
   `luaL_sandbox()` 或 `luaL_sandboxthread()`。
 
-这条边界是有意的阶段划分，不是安全承诺。权威状态记录在
+这只是当前阶段的实现范围，不代表运行时已经安全。具体状态记录在
 `docs/plans/2026-07-21-p0b-luau-hardening-ledger.md`：其中未勾选的条目必须在
 模块进入产品执行路径前完成。`docs/plans/2026-07-21-luau-integration-plan.md`
 也把现有实现标为步骤 1–2 完成，而 sandbox/cancellation、veto suite 和
@@ -51,7 +52,7 @@ observe/act/wait host handles 仍开放。
 验证的嵌入底座，同时避免把一个明确“未沙箱、不可取消、无配额”的 VM 误接进
 严格后台无人值守产品。
 
-## 关键类型与数据流
+## 执行流程
 
 ### 公开表面
 
@@ -119,10 +120,10 @@ observe/act/wait host handles 仍开放。
 “每次新 coroutine”不等于“每次新 VM”。同一个 `Engine` 的多次
 `runNumber()` 共享主 `lua_State` 和 global table；当前
 `luaL_openlibs()` 打开的全局修改可以跨调用保留。新 coroutine 目前只隔离
-执行栈，并配合 stack guard 防止线程对象在主栈累积。真正的 per-task
-environment 隔离尚未实现。
+执行栈，并配合 stack guard 防止线程对象在主栈累积。每个任务独立的 environment
+尚未实现。
 
-## 设计不变量
+## 必须保持的约束
 
 ### 当前已经成立的 fail-closed 行为
 
@@ -148,7 +149,7 @@ environment 隔离尚未实现。
   buffer 都会释放。
 - coroutine 由主 state 栈临时保持可达；第二个 scope guard 恢复原始栈顶，
   因而重复调用不会把 coroutine 永久留在主栈。
-- `source` 和 `chunkName` 是 call-scoped view，没有存入 `Engine`。
+- `source` 和 `chunkName` 只在本次调用期间有效，不会存入 `Engine`。
   `chunkName` 在需要 C string 时先复制；源码只在同步 compile 调用期间借用。
 
 这些机制说明为什么危险操作位于
@@ -206,9 +207,9 @@ abandon coroutine，绝不能使用可被 `pcall` 吞掉的 `luaL_error()`。它
 长耗时 C++ binding 自己遵守 deadline/stop token；VM interrupt 无法抢占卡死的
 C++ 调用。两者共同构成“500ms 总退出”而不是单一 VM 技巧。
 
-## 与其他部分的协作
+## 与产品运行时的关系
 
-### 当前入站边
+### 当前调用方
 
 当前唯一实际入站边是 `tests/script/test-script.cpp`：
 
@@ -220,7 +221,7 @@ C++ 调用。两者共同构成“500ms 总退出”而不是单一 VM 技巧。
 没有 entry、`engine`、`annotation` 或 `controller` 源文件 include
 `script/engine.hpp`。这是一条可由仓库引用搜索直接验证的边界。
 
-### 当前出站边
+### 当前依赖
 
 `modules/script/manifest.txt` 声明：
 
@@ -238,7 +239,7 @@ C++ 调用。两者共同构成“500ms 总退出”而不是单一 VM 技巧。
 `https://github.com/luau-lang/luau.git` submodule；集成计划记录的精确基线是
 tag 0.730、commit `5bc7f4b23756f69f4669b419fa9034f117ccd6fe`。
 
-### FFI 穿越的内容
+### FFI 边界传递的内容
 
 跨 Luau 边界的内容目前只有：
 
@@ -255,7 +256,7 @@ handle 留出空间。
 并用 MSVC/Clang/GCC 对应 pragma 局部压低第三方 warning。项目自己的 target
 仍应用严格 safety profile；warning suppression 没有扩散到整个模块。
 
-### 未来协作方向
+### 计划中的接入方式
 
 产品计划要求 C++ 宿主持有截图、识别、输入、按键账本和 trace；Luau 只消费
 最小、只读、可取消的 capability。这意味着未来跨边界的应是经过验证的句柄和
@@ -265,7 +266,7 @@ handle 留出空间。
 `engine -> core, domain, annotation` 彼此独立；任何新增依赖都必须由实际
 composition 设计决定，不能仅为方便让 `script` 与 `engine` 相互依赖。
 
-## 测试策略
+## 测试
 
 当前宿主测试集中在 `tests/script/test-script.cpp`；`tests/CMakeLists.txt` 的 `test-script` target 链接
 `${PROJECT_NAME}_script`，仅在模块存在时注册，并继承 60 秒 timeout 和 `CI` label。
@@ -305,15 +306,15 @@ hardening ledger 进一步要求覆盖 nested host table freeze、sandbox 后仍
 的端到端 500ms 测试。只有这些测试落地，0.730 的 spike 结论才从一次性证据
 升级为仓库持续保证。
 
-## 扩展接缝
+## 接入产品前的工作
 
 扩展顺序由 `docs/plans/2026-07-21-p0b-luau-hardening-ledger.md` 管辖，而不是
-由当前 `Engine` 的便利性决定。推荐把现有两步底座之后的工作理解为以下接缝：
+由当前 `Engine` 的便利性决定。现有底座完成后，应按以下顺序继续：
 
 1. 在 `modules/script/source/script/ffi/` 内补 sandbox setup：注册最小 host tables、递归 freeze、移除五个残余 globals，
    再执行 `luaL_sandbox()`；每任务 coroutine 执行 `luaL_sandboxthread()`，且只接受源码。
 2. 安装 accounting allocator，使内存配额成为 task-owned policy。OOM 本身是
-   可被脚本捕获的普通错误，真正停机必须依赖 allocator hard quota 与宿主停止
+   可被脚本捕获的普通错误；强制停机必须依赖 allocator hard quota 与宿主停止
    语义，不能把 `LUA_ERRMEM` 误当成不可吞取消。
 3. 增加 cancellation/预算状态：其他线程只写 atomic 状态，VM owning thread
    的 interrupt callback 在非 GC 上下文调用 `lua_break()`，宿主收到
@@ -324,7 +325,7 @@ hardening ledger 进一步要求覆盖 nested host table freeze、sandbox 后仍
    observe/act/wait host calls。其 schema 与动作证据应服从
    `docs/plans/2026-07-22-annotation-design.md` 和现有 engine 契约，而不是在
    Luau binding 中重新发明。
-6. 最后才由 composition root 把任务执行接到严格后台 controller 与 trace。
+6. 最后再由组合入口把任务执行接到严格后台 controller 与 trace。
    VM 创建前完成 backend capability/target compatibility gate；每个长 C++
    binding 都必须有界且 cooperative-cancellable。
 
