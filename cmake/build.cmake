@@ -1,4 +1,4 @@
-# Module autoloader adapted from April2.
+# Manifest-driven module autoloader.
 
 include(cmake/tools.cmake)
 
@@ -40,7 +40,7 @@ function(cpp_define_module MODULE_ROOT_DIR DIR_NAME)
 
     message(STATUS "[AutoLoader] Configuring: ${MODULE_DISPLAY_NAME} (v${MODULE_VERSION})")
 
-    # April2 convention: a module owns its vendored third-party under external/.
+    # A module owns its vendored third-party under external/.
     # When that directory carries a CMakeLists.txt, build it here (Pass 1: Define)
     # so its targets exist before this module is linked (Pass 2). This keeps a
     # single-module library confined to the module — nothing leaks to the
