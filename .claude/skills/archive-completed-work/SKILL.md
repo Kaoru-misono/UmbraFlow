@@ -1,11 +1,11 @@
 ---
 name: archive-completed-work
-description: Archive completed plans to the docs/archive/ directory. Use when a plan's implementation is fully complete and verified.
+description: Archive completed plans to the docs/archive/plans/ directory. Use when a plan's implementation is fully complete and verified.
 ---
 
 # Archive Completed Work
 
-Move completed plan from `docs/plans/` into `docs/archive/`.
+Move completed plan from `docs/plans/` into `docs/archive/plans/`.
 
 ## Steps
 
@@ -25,7 +25,7 @@ Move completed plan from `docs/plans/` into `docs/archive/`.
 
 3. **Move the file**
 
-   Create `docs/archive/` when needed, then move only the selected plan with a
+   Create `docs/archive/plans/` when needed, then move only the selected plan with a
    normal filesystem operation. Preserve unrelated files and existing user
    changes. Do not use `git mv`, because it stages the rename implicitly.
 
@@ -38,7 +38,7 @@ Move completed plan from `docs/plans/` into `docs/archive/`.
 
    ```
    ## Archived
-   - Plan: <filename> → docs/archive/
+   - Plan: <filename> → docs/archive/plans/
    ```
 
    If the user wants a commit, ask for explicit approval first. After approval,
@@ -48,5 +48,6 @@ Move completed plan from `docs/plans/` into `docs/archive/`.
 ## Notes
 
 - If the plan's status field exists, update it to "Completed" before archiving.
+- Closed review documents follow the same workflow into `docs/archive/reviews/`.
 - Discussion point documents are not plans — leave them in place unless explicitly requested.
 - Never stage or commit without explicit user approval.

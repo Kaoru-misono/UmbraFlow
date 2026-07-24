@@ -122,8 +122,8 @@ These are situations where surface checks say "resolved" but architectural analy
 After updating and presenting the summary, check if **every** actionable item in the document is RESOLVED. If so:
 
 1. **Move the file** to the archive directory:
-   - `docs/plans/foo.md` → `docs/archive/foo.md`
-   - `docs/research/foo.md` → `docs/archive/foo.md`
+   - `docs/plans/foo.md` → `docs/archive/plans/foo.md`
+   - `docs/reviews/foo.md` → `docs/archive/reviews/foo.md`
 2. **Announce** to the user: "Archived `<filename>` — all items resolved."
 
 **Do NOT archive if:**

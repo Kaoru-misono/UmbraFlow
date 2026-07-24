@@ -59,23 +59,18 @@ If the investigation reveals a non-obvious root cause that is NOT already in the
 ```markdown
 ## Entry Title
 
-**Discovered:** YYYY-MM-DD
-**Commit:** `<hash>`
-
-### Problem
-What goes wrong and why it's non-obvious.
-
-### Symptoms
+### Symptom
 Observable error messages, behaviors, or patterns that indicate this issue.
 
-### Root Cause
+### Root cause
 The actual underlying reason, with enough detail to understand without re-debugging.
 
 ### Fix
 What was changed and where. Include a code snippet if the fix is non-trivial.
 
-### Rule
-A concise guideline to prevent recurrence.
+### Regression check
+How to verify the issue stays fixed: the command, gate, or test that would
+catch a recurrence.
 ```
 
 ## What NOT to add to the pitfalls base
