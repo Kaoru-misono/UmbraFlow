@@ -4,12 +4,15 @@
 
 - [Architecture](ARCHITECTURE.md)
 - [Current execution checklist](TODO.md)
-- [System architecture overview](knowledge/00-overview.md)
+- [System architecture overview](knowledge/en/00-overview.md)
 
 ## Knowledge base
 
-- [Knowledge base reading guide](knowledge/README.md) — ordered navigation through
-  the reusable modules and executable entry points.
+Mirrored English and Chinese trees; see the [language guide](knowledge/README.md).
+
+- [Knowledge base reading guide (English)](knowledge/en/README.md) — ordered navigation
+  through the reusable modules and executable entry points.
+- [架构知识库导读（中文）](knowledge/cn/README.md)
 
 ## Current plans
 

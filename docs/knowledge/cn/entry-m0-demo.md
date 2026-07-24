@@ -59,7 +59,7 @@ manifest closure 和 fail-closed authorization 定义为产品契约。
 `docs/plans/2026-07-20-post-port-win32-robustness.md` 和已归档的
 `docs/archive/plans/2026-07-20-ui-verification-runbook.md`。2026-07-21 的结果是：
 
-- 卡厄思梦境客户区为 1600×900，WGC frame 与 client 的 K2 crop
+- 卡厄斯梦境客户区为 1600×900，WGC frame 与 client 的 K2 crop
   `delta=(0,0)`；
 - 头像切换三次、标签切换三次成功；
 - 首次“潜力”介绍 overlay 被识别并安全关闭；
