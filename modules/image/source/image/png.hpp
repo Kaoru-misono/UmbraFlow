@@ -11,9 +11,9 @@
 
 namespace uf::image
 {
-    inline constexpr auto g_maximumPngDimension = uint32{8192};
-    inline constexpr auto g_maximumPngPixels = std::size_t{8192} * 8192U;
-    inline constexpr auto g_maximumPngFileBytes = std::size_t{64} * 1024U * 1024U;
+    inline constexpr auto k_maximumPngDimension = uint32{8192};
+    inline constexpr auto k_maximumPngPixels = std::size_t{8192} * 8192U;
+    inline constexpr auto k_maximumPngFileBytes = std::size_t{64} * 1024U * 1024U;
 
     struct RgbaImage final
     {

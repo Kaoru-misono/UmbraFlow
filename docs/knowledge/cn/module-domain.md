@@ -51,7 +51,7 @@
 
 ### 精确的整数—浮点桥
 
-`g_maxExactFrameDimension` 等于 `1 << 24`，即 `16,777,216`。IEEE-754 binary32 能精确表示闭区间 `[0, 2^24]` 中的每个整数，而 `2^24 + 1` 是第一个不能精确表示的整数。这里的 inclusive 边界是接口契约，不应改写成 `< 2^24`。
+`k_maxExactFrameDimension` 等于 `1 << 24`，即 `16,777,216`。IEEE-754 binary32 能精确表示闭区间 `[0, 2^24]` 中的每个整数，而 `2^24 + 1` 是第一个不能精确表示的整数。这里的 inclusive 边界是接口契约，不应改写成 `< 2^24`。
 
 `pixelPointToFramePoint` 逐坐标检查 `x`、`y` 不大于该上界，随后才 `static_cast<float>`。越界返回 `InvalidResource`，因为输入像素资源已经无法无损进入 `FrameSpace`。
 
@@ -125,7 +125,7 @@ Windows capture 在 `modules/controller/source/controller/platform/windows-captu
 
 `ObservationLease` 的构造器私有，只能用 `forFrame` 从真实 `Frame` 派生。它复制 frame 三元身份，并计算 `expiresAt = capturedAt + effectiveAge`。
 
-`g_defaultMaxActionFrameAge` 是 750 ms。`clampMaxActionFrameAge` 只允许调用者缩短该 fuse，不能通过配置放宽：`effectiveAge = min(requested, 750ms)`。负 duration 在 clamp 前被拒绝；`checkedAddMonotonic` 还拒绝 deadline 溢出。
+`k_defaultMaxActionFrameAge` 是 750 ms。`clampMaxActionFrameAge` 只允许调用者缩短该 fuse，不能通过配置放宽：`effectiveAge = min(requested, 750ms)`。负 duration 在 clamp 前被拒绝；`checkedAddMonotonic` 还拒绝 deadline 溢出。
 
 到期判断是严格的 `now > expiresAt`。恰好在 deadline 仍有效；零时长 lease 在 `capturedAt` 当刻有效，之后立即失效。
 

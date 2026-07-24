@@ -92,8 +92,8 @@ namespace uf::cli
         // a value above a minute would leave a Ctrl-C unacknowledged for longer
         // than an operator will tolerate, since the wait only re-checks the token
         // across poll sleeps.
-        constexpr auto g_minPollMilliseconds = uint64{1};
-        constexpr auto g_maxPollMilliseconds = uint64{60'000};
+        constexpr auto k_minPollMilliseconds = uint64{1};
+        constexpr auto k_maxPollMilliseconds = uint64{60'000};
 
         [[nodiscard]]
         auto parsePollInterval(
@@ -103,16 +103,16 @@ namespace uf::cli
         {
             UF_TRY_VALUE(milliseconds, parseUnsigned(value, flag));
             if (
-                milliseconds < g_minPollMilliseconds
-                || milliseconds > g_maxPollMilliseconds
+                milliseconds < k_minPollMilliseconds
+                || milliseconds > k_maxPollMilliseconds
             )
             {
                 return invalid(
                     std::format(
                         "{} must be between {} and {} ms, got {}",
                         flag,
-                        g_minPollMilliseconds,
-                        g_maxPollMilliseconds,
+                        k_minPollMilliseconds,
+                        k_maxPollMilliseconds,
                         milliseconds
                     )
                 );
@@ -161,12 +161,12 @@ namespace uf::cli
         auto page     = std::optional<std::string>{};
         auto action   = std::optional<std::string>{};
 
-        auto timeout            = g_defaultRunTimeout;
-        auto pollInterval       = g_defaultRunPollInterval;
-        auto budget             = g_defaultPixelComparisonBudget;
-        auto recognitionTimeout = g_defaultRunRecognitionTimeout;
-        auto maxFrameAge        = g_defaultRunMaxFrameAge;
-        auto trace              = std::filesystem::path{g_defaultTracePath};
+        auto timeout            = k_defaultRunTimeout;
+        auto pollInterval       = k_defaultRunPollInterval;
+        auto budget             = k_defaultPixelComparisonBudget;
+        auto recognitionTimeout = k_defaultRunRecognitionTimeout;
+        auto maxFrameAge        = k_defaultRunMaxFrameAge;
+        auto trace              = std::filesystem::path{k_defaultTracePath};
 
         auto index = std::size_t{0};
         while (index < raw.size())

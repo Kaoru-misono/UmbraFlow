@@ -31,11 +31,11 @@ namespace uf::annotation
 {
     namespace
     {
-        constexpr auto g_anchorAId = "00000000-0000-0000-0000-000000000011";
-        constexpr auto g_anchorBId = "00000000-0000-0000-0000-000000000012";
-        constexpr auto g_actionId  = "00000000-0000-0000-0000-000000000013";
-        constexpr auto g_pageAId   = "00000000-0000-0000-0000-000000000111";
-        constexpr auto g_pageBId   = "00000000-0000-0000-0000-000000000112";
+        constexpr auto k_anchorAId = "00000000-0000-0000-0000-000000000011";
+        constexpr auto k_anchorBId = "00000000-0000-0000-0000-000000000012";
+        constexpr auto k_actionId  = "00000000-0000-0000-0000-000000000013";
+        constexpr auto k_pageAId   = "00000000-0000-0000-0000-000000000111";
+        constexpr auto k_pageBId   = "00000000-0000-0000-0000-000000000112";
 
         [[nodiscard]]
         constexpr auto asByte(uint8 value) noexcept -> std::byte
@@ -105,10 +105,10 @@ namespace uf::annotation
         ) -> RuntimeInput
         {
             auto const fingerprint    = test::fingerprint(3, 1, 96, 96);
-            auto const anchorA        = test::recognizerId(g_anchorAId);
-            auto const anchorB        = test::recognizerId(g_anchorBId);
-            auto const pageA          = test::pageId(g_pageAId);
-            auto const pageB          = test::pageId(g_pageBId);
+            auto const anchorA        = test::recognizerId(k_anchorAId);
+            auto const anchorB        = test::recognizerId(k_anchorBId);
+            auto const pageA          = test::pageId(k_pageAId);
+            auto const pageB          = test::pageId(k_pageBId);
             auto const templateAWidth = (
                 layout == RuntimeTemplateLayout::MismatchedWidth ? 2U : 1U
             );
@@ -188,10 +188,10 @@ namespace uf::annotation
         {
             RecognitionRuntime m_runtime;
             ProjectFingerprint m_fingerprint{test::fingerprint()};
-            RecognizerId       m_anchorA{test::recognizerId(g_anchorAId)};
-            RecognizerId       m_anchorB{test::recognizerId(g_anchorBId)};
-            PageId             m_pageA{test::pageId(g_pageAId)};
-            PageId             m_pageB{test::pageId(g_pageBId)};
+            RecognizerId       m_anchorA{test::recognizerId(k_anchorAId)};
+            RecognizerId       m_anchorB{test::recognizerId(k_anchorBId)};
+            PageId             m_pageA{test::pageId(k_pageAId)};
+            PageId             m_pageB{test::pageId(k_pageBId)};
         };
 
         [[nodiscard]]
@@ -278,9 +278,9 @@ namespace uf::annotation
         auto actionRuntimeInput() -> ActionRuntimeInput
         {
             auto const fingerprint = test::fingerprint(3, 1, 96, 96);
-            auto const anchorA     = test::recognizerId(g_anchorAId);
-            auto const actionT     = test::recognizerId(g_actionId);
-            auto const pageA       = test::pageId(g_pageAId);
+            auto const anchorA     = test::recognizerId(k_anchorAId);
+            auto const actionT     = test::recognizerId(k_actionId);
+            auto const pageA       = test::pageId(k_pageAId);
             auto anchorTemplate = encodedTemplate(2);
             auto actionTemplate = encodedTemplate(5);
             auto const sourceBytes = std::array{asByte(42)};
@@ -344,9 +344,9 @@ namespace uf::annotation
         {
             RecognitionRuntime m_runtime;
             ProjectFingerprint m_fingerprint{test::fingerprint(3, 1, 96, 96)};
-            RecognizerId       m_anchorA{test::recognizerId(g_anchorAId)};
-            RecognizerId       m_actionTarget{test::recognizerId(g_actionId)};
-            PageId             m_pageA{test::pageId(g_pageAId)};
+            RecognizerId       m_anchorA{test::recognizerId(k_anchorAId)};
+            RecognizerId       m_actionTarget{test::recognizerId(k_actionId)};
+            PageId             m_pageA{test::pageId(k_pageAId)};
         };
 
         [[nodiscard]]
@@ -761,7 +761,7 @@ namespace uf::annotation
         auto const unknown = fixture.m_runtime.evaluateActionTarget(
             frame,
             fixture.m_fingerprint,
-            test::recognizerId(g_anchorBId),
+            test::recognizerId(k_anchorBId),
             continuingPolicy(100)
         );
         REQUIRE_FALSE(unknown.has_value());
@@ -859,8 +859,8 @@ namespace uf::annotation
     TEST_CASE("resolveClickPixel derives deterministic integer click points")
     {
         auto const fingerprint = test::fingerprint(8, 8, 96, 96);
-        auto const actionT     = test::recognizerId(g_actionId);
-        auto const pageA       = test::pageId(g_pageAId);
+        auto const actionT     = test::recognizerId(k_actionId);
+        auto const pageA       = test::pageId(k_pageAId);
 
         auto const offset = TemplateOffset::create(2, 1, 4, 3);
         REQUIRE(offset.has_value());
@@ -903,7 +903,7 @@ namespace uf::annotation
 
         auto const anchor = test::recognizer(
             fingerprint,
-            test::recognizerId(g_anchorAId),
+            test::recognizerId(k_anchorAId),
             "anchor_a",
             AnnotationType::PageAnchor,
             test::pixelRect(0, 0, 3, 5),

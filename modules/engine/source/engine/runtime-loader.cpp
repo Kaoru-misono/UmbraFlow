@@ -24,14 +24,14 @@ namespace uf::engine
 {
     namespace
     {
-        // Mirrors image::g_maximumPngFileBytes (64 MiB) from <image/png.hpp>.
+        // Mirrors image::k_maximumPngFileBytes (64 MiB) from <image/png.hpp>.
         // image is a private dependency of annotation, so engine cannot include
         // that header without adding image to its own dependency set; the value
         // is duplicated here deliberately and must track the image module's
         // encoded-size quota. RecognitionRuntime::create decodes each template
         // under that same quota, so a template accepted by this read still faces
         // the authoritative bound.
-        inline constexpr auto g_maximumTemplateFileBytes = std::size_t{64} * 1024U * 1024U;
+        inline constexpr auto k_maximumTemplateFileBytes = std::size_t{64} * 1024U * 1024U;
 
         [[nodiscard]]
         auto ioFailure(std::string message) -> std::unexpected<Error>
@@ -124,7 +124,7 @@ namespace uf::engine
         auto const manifestPath = projectRoot / "generated" / "annotations.runtime.toml";
         UF_TRY_VALUE(
             manifestToml,
-            readCappedFile(manifestPath, g_maximumRuntimeManifestBytes)
+            readCappedFile(manifestPath, k_maximumRuntimeManifestBytes)
         );
         UF_TRY_VALUE(manifest, annotation::parseRuntimeManifest(manifestToml));
 
@@ -141,7 +141,7 @@ namespace uf::engine
             auto const templatePath = projectRoot / asset.m_templatePath;
             UF_TRY_VALUE(
                 templateText,
-                readCappedFile(templatePath, g_maximumTemplateFileBytes)
+                readCappedFile(templatePath, k_maximumTemplateFileBytes)
             );
             auto const view = std::as_bytes(std::span{templateText});
             encodedTemplates.emplace_back(

@@ -18,7 +18,7 @@ namespace uf::engine
 {
     // The trace schema is versioned so a downstream consumer can reject a line
     // it does not understand. serializeTraceEvent always emits it first.
-    inline constexpr auto g_traceSchema = std::string_view{"engine-trace/v1"};
+    inline constexpr auto k_traceSchema = std::string_view{"engine-trace/v1"};
 
     enum class TraceEventKind : uint8
     {

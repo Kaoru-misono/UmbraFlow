@@ -24,18 +24,18 @@ namespace uf::workbench::platform
         // by a final empty string. It is kept as a raw array rather than a
         // string_view, whose pointer constructor would stop at the first embedded
         // null and truncate the filter to its label.
-        constexpr wchar_t g_pngFilter[] =
+        constexpr wchar_t k_pngFilter[] =
             L"PNG images (*.png)\0*.png\0All files (*.*)\0*.*\0";
-        constexpr auto g_pathBufferLength = std::size_t{1024};
+        constexpr auto k_pathBufferLength = std::size_t{1024};
     }
 
     auto openPngFileDialog() -> Result<std::optional<std::filesystem::path>>
     {
-        auto pathBuffer = std::array<wchar_t, g_pathBufferLength>{};
+        auto pathBuffer = std::array<wchar_t, k_pathBufferLength>{};
 
         auto dialog        = OPENFILENAMEW{};
         dialog.lStructSize = sizeof(OPENFILENAMEW);
-        dialog.lpstrFilter = g_pngFilter;
+        dialog.lpstrFilter = k_pngFilter;
         dialog.lpstrFile   = pathBuffer.data();
         dialog.nMaxFile    = static_cast<DWORD>(pathBuffer.size());
         dialog.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST | OFN_NOCHANGEDIR;

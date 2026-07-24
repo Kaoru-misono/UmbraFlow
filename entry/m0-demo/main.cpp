@@ -181,7 +181,7 @@ namespace uf::m0_demo
                 .m_loops             = args.m_loops,
                 .m_threshold         = args.m_threshold,
                 .m_maxActionFrameAge = args.m_maxActionFrameAge,
-                .m_transitionTimeout = g_defaultTransitionTimeout,
+                .m_transitionTimeout = k_defaultTransitionTimeout,
                 .m_guardPolicy       = GuardPolicy::forMode(args.m_mode),
                 .m_clickDelay        = args.m_clickDelay,
                 .m_seed              = args.m_seed,

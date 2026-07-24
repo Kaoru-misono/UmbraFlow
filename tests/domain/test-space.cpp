@@ -430,8 +430,8 @@ namespace uf
         CHECK((*offsetFrame == Rect<FrameSpace>{1.0F, 1.0F, 2.0F, 3.0F}));
 
         auto const edgeAtBound = PixelRect::create(
-            g_maxExactFrameDimension - 1,
-            g_maxExactFrameDimension - 1,
+            k_maxExactFrameDimension - 1,
+            k_maxExactFrameDimension - 1,
             1,
             1
         );
@@ -439,7 +439,7 @@ namespace uf
         CHECK(pixelRectToFrameRect(*edgeAtBound).has_value());
 
         auto const horizontalBeyond = PixelRect::create(
-            g_maxExactFrameDimension,
+            k_maxExactFrameDimension,
             0,
             1,
             1
@@ -451,7 +451,7 @@ namespace uf
 
         auto const verticalBeyond = PixelRect::create(
             0,
-            g_maxExactFrameDimension,
+            k_maxExactFrameDimension,
             1,
             1
         );
@@ -472,20 +472,20 @@ namespace uf
         CHECK((*offset == Point<FrameSpace>{1.0F, 1.0F}));
 
         auto const atBound = pixelPointToFramePoint(
-            PixelPoint{g_maxExactFrameDimension, g_maxExactFrameDimension}
+            PixelPoint{k_maxExactFrameDimension, k_maxExactFrameDimension}
         );
         REQUIRE(atBound.has_value());
-        auto const boundEdge = static_cast<float>(g_maxExactFrameDimension);
+        auto const boundEdge = static_cast<float>(k_maxExactFrameDimension);
         CHECK((*atBound == Point<FrameSpace>{boundEdge, boundEdge}));
 
         auto const beyondX = pixelPointToFramePoint(
-            PixelPoint{g_maxExactFrameDimension + 1, 0}
+            PixelPoint{k_maxExactFrameDimension + 1, 0}
         );
         REQUIRE_FALSE(beyondX.has_value());
         requireErrorKind(beyondX.error(), AutomationErrorKind::InvalidResource);
 
         auto const beyondY = pixelPointToFramePoint(
-            PixelPoint{0, g_maxExactFrameDimension + 1}
+            PixelPoint{0, k_maxExactFrameDimension + 1}
         );
         REQUIRE_FALSE(beyondY.has_value());
         requireErrorKind(beyondY.error(), AutomationErrorKind::InvalidResource);

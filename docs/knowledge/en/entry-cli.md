@@ -57,7 +57,7 @@ product's policy for how it obtains that port on Windows.
 
 The `dispatch` in `entry/cli/main.cpp` has only two public product paths:
 
-- Empty arguments: print `g_projectName` and `runUsageText()`, and return `0`.
+- Empty arguments: print `k_projectName` and `runUsageText()`, and return `0`.
 - First argument is `run`: hand the remaining arguments to `dispatchRun`.
 
 Any other first argument is treated as an unknown subcommand, prints an error and usage, and

@@ -49,9 +49,9 @@ namespace uf::engine
         // The longest a single poll sleep blocks before it re-checks cancellation
         // and the deadline. It bounds cancellation latency when the poll interval
         // is large, without changing the effective poll cadence.
-        constexpr auto g_maxPollSleepSlice = std::chrono::milliseconds{100};
+        constexpr auto k_maxPollSleepSlice = std::chrono::milliseconds{100};
 
-        // Sleeps for up to `interval`, in slices no longer than g_maxPollSleepSlice,
+        // Sleeps for up to `interval`, in slices no longer than k_maxPollSleepSlice,
         // and stops early once cancellation is requested or the deadline has
         // passed. Sleeping is its only effect: the caller re-checks both conditions
         // and decides the outcome, so this only bounds latency.
@@ -63,7 +63,7 @@ namespace uf::engine
         {
             using Duration   = MonotonicInstant::Duration;
             auto const slice = std::chrono::duration_cast<Duration>(
-                g_maxPollSleepSlice
+                k_maxPollSleepSlice
             );
             auto remaining = interval;
             while (remaining > Duration::zero())

@@ -130,7 +130,7 @@ delta=0). Two behaviors surfaced that belong to the product phase:
   says otherwise. `Frame::capturedAt` is stamped `MonotonicInstant::now()`
   in the FrameArrived callback (windows-capture.cpp:1448) — the HOST arrival
   time, not the GPU produce time. `ObservationLease::forFrame` sets
-  `expiresAt = capturedAt + 750ms` (`g_defaultMaxActionFrameAge`); the click
+  `expiresAt = capturedAt + 750ms` (`k_defaultMaxActionFrameAge`); the click
   is refused when `now > expiresAt` at delivery (detection.cpp:80,
   input-revalidation.cpp:52). The real cause is that the m0-demo
   input-agent's click op does expensive work BETWEEN capturing the
@@ -139,7 +139,7 @@ delta=0). Two behaviors surfaced that belong to the product phase:
   write → `FlushFileBuffers` durable sync**, and only THEN (line 652) is the
   lease created and (669/696) the click delivered. That
   encode+write+durable-flush latency is charged against the 750ms budget.
-  Two amplifiers: (a) `g_defaultCaptureStallTimeout` = 1s (capture.hpp:17) is
+  Two amplifiers: (a) `k_defaultCaptureStallTimeout` = 1s (capture.hpp:17) is
   LARGER than max_action_frame_age = 750ms, so a frame the stall detector
   accepts can already be too old to act on; (b) on slow-delivering
   (static / subtly-animated) screens the consumed frame's arrival time is

@@ -20,7 +20,7 @@ namespace uf::controller_detail
 {
     namespace
     {
-        constexpr auto g_replacementCodePoint = uint32{0xFFFDU};
+        constexpr auto k_replacementCodePoint = uint32{0xFFFDU};
     }
 }
 
@@ -122,17 +122,17 @@ namespace uf::controller_detail
                     }
                     else
                     {
-                        codePoint = g_replacementCodePoint;
+                        codePoint = k_replacementCodePoint;
                     }
                 }
                 else
                 {
-                    codePoint = g_replacementCodePoint;
+                    codePoint = k_replacementCodePoint;
                 }
             }
             else if (lead >= 0xDC00U && lead <= 0xDFFFU)
             {
-                codePoint = g_replacementCodePoint;
+                codePoint = k_replacementCodePoint;
             }
 
             appendUtf8Scalar(output, codePoint);

@@ -26,9 +26,9 @@ namespace uf::workbench
         // display density, so an authoring-time source adopts the conventional
         // 96 DPI. The project fingerprint governs recognition; the source density
         // is reconciled when the source joins a project.
-        constexpr auto g_defaultSourceDpi = uint32{96};
+        constexpr auto k_defaultSourceDpi = uint32{96};
 
-        constexpr auto g_sourceResourceName = std::string_view{
+        constexpr auto k_sourceResourceName = std::string_view{
             "workbench-source.png"
         };
 
@@ -46,14 +46,14 @@ namespace uf::workbench
                 annotation::ProjectFingerprint::create(
                     width,
                     height,
-                    g_defaultSourceDpi,
-                    g_defaultSourceDpi
+                    k_defaultSourceDpi,
+                    k_defaultSourceDpi
                 )
             );
             UF_TRY_VALUE(
                 pngBytes,
                 image::encodeRgbaPng(
-                    g_sourceResourceName,
+                    k_sourceResourceName,
                     width,
                     height,
                     canonicalRgba

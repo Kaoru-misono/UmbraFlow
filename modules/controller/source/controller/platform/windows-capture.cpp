@@ -71,8 +71,8 @@ namespace uf
         using DxgiInterfaceAccess =
             ::Windows::Graphics::DirectX::Direct3D11::IDirect3DDxgiInterfaceAccess;
         using PixelFormat = winrt::Windows::Graphics::DirectX::DirectXPixelFormat;
-        constexpr auto g_framePoolBufferCount = int32{2};
-        constexpr auto g_capturePixelFormat = PixelFormat::B8G8R8A8UIntNormalized;
+        constexpr auto k_framePoolBufferCount = int32{2};
+        constexpr auto k_capturePixelFormat = PixelFormat::B8G8R8A8UIntNormalized;
 
         [[nodiscard]]
         auto windowMarkerSequence() noexcept -> std::atomic_uint64_t&
@@ -1186,7 +1186,7 @@ namespace uf
                     std::format(
                         "cursor capture cannot be disabled on OS build {}; a clean frame requires build {}+",
                         osBuild,
-                        controller_detail::g_cursorCaptureMinBuild
+                        controller_detail::k_cursorCaptureMinBuild
                     )
                 );
             }
@@ -1367,8 +1367,8 @@ namespace uf
                         // NOLINTNEXTLINE(clang-analyzer-core.CallAndMessage)
                         return framePoolStatics.CreateFreeThreaded(
                             d3d.m_runtimeDevice,
-                            g_capturePixelFormat,
-                            g_framePoolBufferCount,
+                            k_capturePixelFormat,
+                            k_framePoolBufferCount,
                             poolSize
                         );
                     }

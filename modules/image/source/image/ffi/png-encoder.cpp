@@ -63,16 +63,16 @@ namespace uf::image
 {
     namespace
     {
-        constexpr auto g_rgbaChannels = std::size_t{4};
+        constexpr auto k_rgbaChannels = std::size_t{4};
         // stb stores (row bytes + one filter byte) * height in signed working
         // integers. The shared decoder quotas keep that total far below INT_MAX.
-        constexpr auto g_maximumFilteredPngBytes = (
-            g_maximumPngPixels * g_rgbaChannels
-            + g_maximumPngDimension
+        constexpr auto k_maximumFilteredPngBytes = (
+            k_maximumPngPixels * k_rgbaChannels
+            + k_maximumPngDimension
         );
 
         static_assert(
-            g_maximumFilteredPngBytes
+            k_maximumFilteredPngBytes
             < static_cast<std::size_t>(std::numeric_limits<int>::max()) / 4U
         );
 
@@ -209,8 +209,8 @@ namespace uf::image
         }
 
         if (
-            width > g_maximumPngDimension
-            || height > g_maximumPngDimension
+            width > k_maximumPngDimension
+            || height > k_maximumPngDimension
         )
         {
             return invalidPng(
@@ -219,7 +219,7 @@ namespace uf::image
                     width,
                     height,
                     resourceName,
-                    g_maximumPngDimension
+                    k_maximumPngDimension
                 )
             );
         }
@@ -231,7 +231,7 @@ namespace uf::image
         {
             pixelCount = checkedMultiply(*widthSize, *heightSize);
         }
-        if (!pixelCount || *pixelCount > g_maximumPngPixels)
+        if (!pixelCount || *pixelCount > k_maximumPngPixels)
         {
             return invalidPng(
                 std::format(
@@ -246,7 +246,7 @@ namespace uf::image
         auto rowBytes = std::optional<std::size_t>{};
         if (widthSize)
         {
-            rowBytes = checkedMultiply(*widthSize, g_rgbaChannels);
+            rowBytes = checkedMultiply(*widthSize, k_rgbaChannels);
         }
         auto filteredRowBytes = std::optional<std::size_t>{};
         if (rowBytes)
@@ -260,7 +260,7 @@ namespace uf::image
         }
         if (
             !filteredBytes
-            || *filteredBytes > g_maximumFilteredPngBytes
+            || *filteredBytes > k_maximumFilteredPngBytes
         )
         {
             return invalidPng(
@@ -331,7 +331,7 @@ namespace uf::image
             &encoded,
             *encodedWidth,
             *encodedHeight,
-            static_cast<int>(g_rgbaChannels),
+            static_cast<int>(k_rgbaChannels),
             pixels.data(),
             *encodedStride
         );

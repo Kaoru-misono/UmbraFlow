@@ -43,11 +43,11 @@ namespace uf::engine
     {
         namespace anno = annotation;
 
-        constexpr auto g_anchorAId  = "00000000-0000-0000-0000-000000000011";
-        constexpr auto g_anchorBId  = "00000000-0000-0000-0000-000000000012";
-        constexpr auto g_actionId   = "00000000-0000-0000-0000-000000000013";
-        constexpr auto g_pageAId    = "00000000-0000-0000-0000-000000000111";
-        constexpr auto g_awayPageId = "00000000-0000-0000-0000-000000000112";
+        constexpr auto k_anchorAId  = "00000000-0000-0000-0000-000000000011";
+        constexpr auto k_anchorBId  = "00000000-0000-0000-0000-000000000012";
+        constexpr auto k_actionId   = "00000000-0000-0000-0000-000000000013";
+        constexpr auto k_pageAId    = "00000000-0000-0000-0000-000000000111";
+        constexpr auto k_awayPageId = "00000000-0000-0000-0000-000000000112";
 
         [[nodiscard]]
         constexpr auto asByte(uint8 value) noexcept -> std::byte
@@ -92,9 +92,9 @@ namespace uf::engine
         auto singlePageRuntime() -> RuntimeParts
         {
             auto const fingerprint = anno::test::fingerprint(3, 1, 96, 96);
-            auto const anchorA     = anno::test::recognizerId(g_anchorAId);
-            auto const actionT     = anno::test::recognizerId(g_actionId);
-            auto const pageA       = anno::test::pageId(g_pageAId);
+            auto const anchorA     = anno::test::recognizerId(k_anchorAId);
+            auto const actionT     = anno::test::recognizerId(k_actionId);
+            auto const pageA       = anno::test::pageId(k_pageAId);
             auto anchorTemplate = encodedTemplate(2);
             auto actionTemplate = encodedTemplate(5);
             auto const sourceBytes = std::array{asByte(42)};
@@ -162,11 +162,11 @@ namespace uf::engine
         auto wrongPageRuntime() -> RuntimeParts
         {
             auto const fingerprint = anno::test::fingerprint(3, 1, 96, 96);
-            auto const anchorA     = anno::test::recognizerId(g_anchorAId);
-            auto const anchorB     = anno::test::recognizerId(g_anchorBId);
-            auto const actionT     = anno::test::recognizerId(g_actionId);
-            auto const homePage    = anno::test::pageId(g_pageAId);
-            auto const awayPage    = anno::test::pageId(g_awayPageId);
+            auto const anchorA     = anno::test::recognizerId(k_anchorAId);
+            auto const anchorB     = anno::test::recognizerId(k_anchorBId);
+            auto const actionT     = anno::test::recognizerId(k_actionId);
+            auto const homePage    = anno::test::pageId(k_pageAId);
+            auto const awayPage    = anno::test::pageId(k_awayPageId);
             auto anchorATemplate = encodedTemplate(2);
             auto anchorBTemplate = encodedTemplate(3);
             auto actionTemplate  = encodedTemplate(5);

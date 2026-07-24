@@ -21,7 +21,7 @@ namespace uf
 {
     namespace
     {
-        constexpr auto g_sessionValue = uint64{1};
+        constexpr auto k_sessionValue = uint64{1};
 
         [[nodiscard]]
         auto automationKind(Error const& error) -> AutomationErrorKind
@@ -54,7 +54,7 @@ namespace uf
             );
             auto const frame = Frame::create(
                 FrameId{1},
-                SessionId{g_sessionValue},
+                SessionId{k_sessionValue},
                 generation,
                 capturedAt,
                 4,
@@ -67,7 +67,7 @@ namespace uf
             REQUIRE(frame.has_value());
             auto const lease = ObservationLease::forFrame(
                 *frame,
-                g_defaultMaxActionFrameAge
+                k_defaultMaxActionFrameAge
             );
             REQUIRE(lease.has_value());
             return *lease;
@@ -110,7 +110,7 @@ namespace uf
         auto const lease = leaseAt(generation, now);
         auto const result = controller_detail::checkPointerPreconditions(
             lease,
-            SessionId{g_sessionValue},
+            SessionId{k_sessionValue},
             generation,
             now,
             Point<ClientSpace>{12.9F, 7.1F},
@@ -131,7 +131,7 @@ namespace uf
         auto const lease = leaseAt(generation, now);
         auto const result = controller_detail::checkPointerPreconditions(
             lease,
-            SessionId{g_sessionValue + 1U},
+            SessionId{k_sessionValue + 1U},
             generation,
             now,
             Point<ClientSpace>{1.0F, 1.0F},
@@ -167,7 +167,7 @@ namespace uf
             INFO(testCase.m_label);
             auto const result = controller_detail::checkPointerPreconditions(
                 lease,
-                SessionId{g_sessionValue},
+                SessionId{k_sessionValue},
                 testCase.m_generation,
                 testCase.m_now,
                 Point<ClientSpace>{1.0F, 1.0F},
@@ -207,7 +207,7 @@ namespace uf
             INFO(testCase.m_label);
             auto const result = controller_detail::checkPointerPreconditions(
                 lease,
-                SessionId{g_sessionValue},
+                SessionId{k_sessionValue},
                 generation,
                 now,
                 testCase.m_point,
@@ -226,7 +226,7 @@ namespace uf
         auto const lease = leaseAt(generation, now);
         auto const accepted = controller_detail::checkPointerPreconditions(
             lease,
-            SessionId{g_sessionValue},
+            SessionId{k_sessionValue},
             generation,
             now,
             Point<ClientSpace>{32'767.9F, 1.0F},
@@ -240,7 +240,7 @@ namespace uf
 
         auto const rejected = controller_detail::checkPointerPreconditions(
             lease,
-            SessionId{g_sessionValue},
+            SessionId{k_sessionValue},
             generation,
             now,
             Point<ClientSpace>{32'768.0F, 1.0F},
@@ -283,7 +283,7 @@ namespace uf
 
         auto const sessionFailure = controller_detail::checkPointerPreconditions(
             lease,
-            SessionId{g_sessionValue + 1U},
+            SessionId{k_sessionValue + 1U},
             bumped,
             expired,
             outside,
@@ -295,7 +295,7 @@ namespace uf
 
         auto const expiryFailure = controller_detail::checkPointerPreconditions(
             lease,
-            SessionId{g_sessionValue},
+            SessionId{k_sessionValue},
             bumped,
             expired,
             outside,
@@ -307,7 +307,7 @@ namespace uf
 
         auto const generationFailure = controller_detail::checkPointerPreconditions(
             lease,
-            SessionId{g_sessionValue},
+            SessionId{k_sessionValue},
             bumped,
             captured,
             outside,
@@ -319,7 +319,7 @@ namespace uf
 
         auto const boundsFailure = controller_detail::checkPointerPreconditions(
             lease,
-            SessionId{g_sessionValue},
+            SessionId{k_sessionValue},
             generation,
             captured,
             outside,

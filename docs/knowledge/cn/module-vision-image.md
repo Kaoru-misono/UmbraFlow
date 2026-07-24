@@ -92,7 +92,7 @@ threshold：只要 template 能在 ROI 中合法放置，completed search 就返
 
 budget 与 poll 都在“执行下一次 pixel comparison 之前”检查。顺序是先检查 budget，再在累计计数为
 `0, 4096, 8192, ...` 时 poll；间隔常量是
-`g_sadSearchPollIntervalComparisons == 4096`。因此：
+`k_sadSearchPollIntervalComparisons == 4096`。因此：
 
 - budget 为零时直接返回 `ComparisonBudgetExhausted`，不调用 poll，计数为零；
 - poll 在第一次比较前就能报告 immediate cancel/timeout；
@@ -107,9 +107,9 @@ multiply/xor 序列从 `seed`、`x`、`y` 生成一个 `uint8`，当前调用者
 
 PNG API 位于 `modules/image/source/image/png.hpp`。三个公开 quota 是：
 
-- `g_maximumPngDimension == 8192`：每个轴的上限；
-- `g_maximumPngPixels == 8192 * 8192`：总 pixel 上限；
-- `g_maximumPngFileBytes == 64 * 1024 * 1024`：encoded decode/load 输入上限。
+- `k_maximumPngDimension == 8192`：每个轴的上限；
+- `k_maximumPngPixels == 8192 * 8192`：总 pixel 上限；
+- `k_maximumPngFileBytes == 64 * 1024 * 1024`：encoded decode/load 输入上限。
 
 `RgbaImage` 拥有 `m_width`、`m_height` 和 `m_pixels`。由 decoder 返回时，pixels 总是
 `width * height * 4` 的紧密 RGBA8，PNG 原始 color type 不泄漏到调用者。
@@ -136,7 +136,7 @@ chunk CRC；这是 `docs/plans/2026-07-20-m0-demo-port-deviations.md` F-14 对�
 `encodeRgbaPng` 和 `writeRgbaPng` 实现在
 `modules/image/source/image/ffi/png-encoder.cpp`。encoder 拒绝零尺寸、轴/pixel quota 超限、stb signed
 geometry 不可表示，以及不等于 `width * height * 4` 的非紧密 RGBA input。它还用私有的
-`g_maximumFilteredPngBytes` 约束 `(rowBytes + filterByte) * height`，并用 `static_assert` 证明该上限
+`k_maximumFilteredPngBytes` 约束 `(rowBytes + filterByte) * height`，并用 `static_assert` 证明该上限
 远低于 stb 的 signed working range。64 MiB quota 是 decode/load encoded-input 上限；encoder 自身的
 本地工作上限由 dimension、pixel 和 filtered-byte checks 构成。
 

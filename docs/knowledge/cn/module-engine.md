@@ -54,7 +54,7 @@ Windows 产品入口使用两个薄适配器：
 
 1. 拼出 `generated/annotations.runtime.toml`。
 2. `readCappedFile` 先用 `file_size` 快速拒绝明显超限文件，再以 64 KiB chunk 实际读取；实际字节数仍受限，因此文件在 stat 后增长也不能绕过上限。
-3. manifest 上限由 `g_maximumRuntimeManifestBytes` 固定为 16 MiB。
+3. manifest 上限由 `k_maximumRuntimeManifestBytes` 固定为 16 MiB。
 4. 文本交给 `annotation::parseRuntimeManifest`；engine 不另写 TOML parser。
 5. 按 manifest 的 `assets()` 顺序读取引用文件。同一 `ContentHash` 只加载一次；未被 manifest 引用的磁盘文件被忽略，允许 content-addressed store 保留历史。
 6. 模板读取上限为 64 MiB。该常数在 `modules/engine/source/engine/runtime-loader.cpp` 中有意镜像 image 模块的 PNG 上限，因为 image 是 annotation 的 private dependency，engine 不能越过模块边界 include 它的 header。
@@ -185,7 +185,7 @@ frame 自带的 `CoordinateTransform`。trace 字段顺序和 wire names 也固�
 墙钟只参与 recognition deadline、lease 陈旧保险丝和 wait deadline。这些路径的
 偏差只会缩短可操作窗口或返回停止/超时，不会把未知状态转成允许动作。
 
-`waitForPage` 的 sleep 被 `g_maxPollSleepSlice = 100ms` 切片。即使调用者给出 10 秒
+`waitForPage` 的 sleep 被 `k_maxPollSleepSlice = 100ms` 切片。即使调用者给出 10 秒
 poll interval，每片之间也检查 cancellation 和 deadline，因此等待不会把取消响应
 绑死在完整 poll interval 上。`sweepKnownPopups` 每轮先调用一次，但当前是明确的 no-op。
 

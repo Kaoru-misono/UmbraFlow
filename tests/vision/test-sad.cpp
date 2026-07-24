@@ -447,7 +447,7 @@ namespace uf
         auto constexpr haystackWidth = uint32{4097};
         static_assert(
             haystackWidth
-            == g_sadSearchPollIntervalComparisons + uint64{1}
+            == k_sadSearchPollIntervalComparisons + uint64{1}
         );
         auto const haystackData = std::vector<std::byte>(
             haystackWidth,
@@ -489,7 +489,7 @@ namespace uf
         );
         CHECK(
             result->m_completedPixelComparisons
-            == g_sadSearchPollIntervalComparisons
+            == k_sadSearchPollIntervalComparisons
         );
         CHECK(pollCount == 2);
     }

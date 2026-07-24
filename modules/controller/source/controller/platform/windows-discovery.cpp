@@ -29,7 +29,7 @@ namespace uf::controller_platform
     {
         // The Win32 path format is QueryFullProcessImageNameW's documented zero flag;
         // the C Windows SDK does not expose the name provided by the Rust binding.
-        constexpr auto g_processNameWin32 = DWORD{0};
+        constexpr auto k_processNameWin32 = DWORD{0};
 
         // The location defaults at the call site so the reported origin is the
         // Win32 call that failed, not this helper.
@@ -295,7 +295,7 @@ namespace uf::controller_platform
                 // slots, and size is a live in/out count initialized to that exact capacity.
                 auto const queried = QueryFullProcessImageNameW(
                     process,
-                    g_processNameWin32,
+                    k_processNameWin32,
                     buffer.data(),
                     &size
                 );

@@ -19,21 +19,21 @@ namespace uf::workbench
 {
     namespace
     {
-        constexpr auto g_sourceId     = "00000000-0000-0000-0000-000000000201";
-        constexpr auto g_anchorId     = "00000000-0000-0000-0000-000000000001";
-        constexpr auto g_actionId     = "00000000-0000-0000-0000-000000000002";
-        constexpr auto g_awayId       = "00000000-0000-0000-0000-000000000003";
-        constexpr auto g_pageId       = "00000000-0000-0000-0000-000000000101";
-        constexpr auto g_regressionId = "00000000-0000-0000-0000-000000000301";
+        constexpr auto k_sourceId     = "00000000-0000-0000-0000-000000000201";
+        constexpr auto k_anchorId     = "00000000-0000-0000-0000-000000000001";
+        constexpr auto k_actionId     = "00000000-0000-0000-0000-000000000002";
+        constexpr auto k_awayId       = "00000000-0000-0000-0000-000000000003";
+        constexpr auto k_pageId       = "00000000-0000-0000-0000-000000000101";
+        constexpr auto k_regressionId = "00000000-0000-0000-0000-000000000301";
 
         [[nodiscard]]
         auto document() -> annotation::AuthoringDocument
         {
             auto const fingerprint = annotation::test::fingerprint(8, 8, 96, 96);
-            auto const sourceId    = annotation::test::sourceId(g_sourceId);
-            auto const anchorId    = annotation::test::recognizerId(g_anchorId);
-            auto const actionId    = annotation::test::recognizerId(g_actionId);
-            auto const pageId      = annotation::test::pageId(g_pageId);
+            auto const sourceId    = annotation::test::sourceId(k_sourceId);
+            auto const anchorId    = annotation::test::recognizerId(k_anchorId);
+            auto const actionId    = annotation::test::recognizerId(k_actionId);
+            auto const pageId      = annotation::test::pageId(k_pageId);
             auto const sourceHash = annotation::sha256(
                 std::span<std::byte const>{}
             );
@@ -88,7 +88,7 @@ namespace uf::workbench
                     annotation::RegressionCase{
                         annotation::RegressionSpec{
                             .m_id = annotation::test::regressionId(
-                                g_regressionId
+                                k_regressionId
                             ),
                             .m_sourceId       = sourceId,
                             .m_classification = classification,
@@ -111,10 +111,10 @@ namespace uf::workbench
         auto variantDocument() -> annotation::AuthoringDocument
         {
             auto const fingerprint = annotation::test::fingerprint(8, 8, 96, 96);
-            auto const sourceId    = annotation::test::sourceId(g_sourceId);
-            auto const anchorId    = annotation::test::recognizerId(g_anchorId);
-            auto const awayId      = annotation::test::recognizerId(g_awayId);
-            auto const pageId      = annotation::test::pageId(g_pageId);
+            auto const sourceId    = annotation::test::sourceId(k_sourceId);
+            auto const anchorId    = annotation::test::recognizerId(k_anchorId);
+            auto const awayId      = annotation::test::recognizerId(k_awayId);
+            auto const pageId      = annotation::test::pageId(k_pageId);
             auto const sourceHash = annotation::sha256(
                 std::span<std::byte const>{}
             );
@@ -175,7 +175,7 @@ namespace uf::workbench
                     annotation::RegressionCase{
                         annotation::RegressionSpec{
                             .m_id = annotation::test::regressionId(
-                                g_regressionId
+                                k_regressionId
                             ),
                             .m_sourceId       = sourceId,
                             .m_classification = classification,
@@ -330,7 +330,7 @@ namespace uf::workbench
         auto history = AuthoringEditHistory{document()};
         for (
             auto index = std::size_t{0};
-            index < g_maximumAuthoringUndoEntries + 1U;
+            index < k_maximumAuthoringUndoEntries + 1U;
             ++index
         )
         {
@@ -345,7 +345,7 @@ namespace uf::workbench
 
         for (
             auto index = std::size_t{0};
-            index < g_maximumAuthoringUndoEntries;
+            index < k_maximumAuthoringUndoEntries;
             ++index
         )
         {

@@ -24,18 +24,18 @@ namespace uf::annotation
 {
     namespace
     {
-        constexpr auto g_templateSourceId  = "00000000-0000-0000-0000-000000000201";
-        constexpr auto g_resolvedSourceId  = "00000000-0000-0000-0000-000000000202";
-        constexpr auto g_unknownSourceId   = "00000000-0000-0000-0000-000000000203";
-        constexpr auto g_ambiguousSourceId = "00000000-0000-0000-0000-000000000204";
-        constexpr auto g_anchorAId         = "00000000-0000-0000-0000-000000000011";
-        constexpr auto g_anchorBId         = "00000000-0000-0000-0000-000000000012";
-        constexpr auto g_pageAId           = "00000000-0000-0000-0000-000000000111";
-        constexpr auto g_pageBId           = "00000000-0000-0000-0000-000000000112";
-        constexpr auto g_resolvedCaseId    = "00000000-0000-0000-0000-000000000301";
-        constexpr auto g_unknownCaseId     = "00000000-0000-0000-0000-000000000302";
-        constexpr auto g_ambiguousCaseId   = "00000000-0000-0000-0000-000000000303";
-        constexpr auto g_duplicateCaseId   = "00000000-0000-0000-0000-000000000304";
+        constexpr auto k_templateSourceId  = "00000000-0000-0000-0000-000000000201";
+        constexpr auto k_resolvedSourceId  = "00000000-0000-0000-0000-000000000202";
+        constexpr auto k_unknownSourceId   = "00000000-0000-0000-0000-000000000203";
+        constexpr auto k_ambiguousSourceId = "00000000-0000-0000-0000-000000000204";
+        constexpr auto k_anchorAId         = "00000000-0000-0000-0000-000000000011";
+        constexpr auto k_anchorBId         = "00000000-0000-0000-0000-000000000012";
+        constexpr auto k_pageAId           = "00000000-0000-0000-0000-000000000111";
+        constexpr auto k_pageBId           = "00000000-0000-0000-0000-000000000112";
+        constexpr auto k_resolvedCaseId    = "00000000-0000-0000-0000-000000000301";
+        constexpr auto k_unknownCaseId     = "00000000-0000-0000-0000-000000000302";
+        constexpr auto k_ambiguousCaseId   = "00000000-0000-0000-0000-000000000303";
+        constexpr auto k_duplicateCaseId   = "00000000-0000-0000-0000-000000000304";
 
         [[nodiscard]]
         constexpr auto asByte(uint8 value) noexcept -> std::byte
@@ -115,29 +115,29 @@ namespace uf::annotation
         {
             auto const fingerprint = test::fingerprint(3, 1, 96, 96);
             auto templateSource = sourceFixture(
-                g_templateSourceId,
+                k_templateSourceId,
                 {2, 3, 0},
                 fingerprint
             );
             auto resolvedSource = sourceFixture(
-                g_resolvedSourceId,
+                k_resolvedSourceId,
                 {2, 3, 1},
                 fingerprint
             );
             auto unknownSource = sourceFixture(
-                g_unknownSourceId,
+                k_unknownSourceId,
                 {0, 0, 0},
                 fingerprint
             );
             auto ambiguousSource = sourceFixture(
-                g_ambiguousSourceId,
+                k_ambiguousSourceId,
                 {1, 2, 1},
                 fingerprint
             );
-            auto const anchorA = test::recognizerId(g_anchorAId);
-            auto const anchorB = test::recognizerId(g_anchorBId);
-            auto const pageA   = test::pageId(g_pageAId);
-            auto const pageB   = test::pageId(g_pageBId);
+            auto const anchorA = test::recognizerId(k_anchorAId);
+            auto const anchorB = test::recognizerId(k_anchorBId);
+            auto const pageA   = test::pageId(k_pageAId);
+            auto const pageB   = test::pageId(k_pageBId);
             auto const resolvedExpectation = (
                 options.m_mismatchedResolvedExpectation ? pageA : pageB
             );
@@ -145,7 +145,7 @@ namespace uf::annotation
             auto regressions = std::vector<RegressionCase>{};
             regressions.emplace_back(
                 RegressionSpec{
-                    .m_id             = test::regressionId(g_resolvedCaseId),
+                    .m_id             = test::regressionId(k_resolvedCaseId),
                     .m_sourceId       = resolvedSource.m_source.id(),
                     .m_classification = RegressionClassification::Positive,
                     .m_expectation    = ResolvedRegression{resolvedExpectation},
@@ -155,7 +155,7 @@ namespace uf::annotation
             {
                 regressions.emplace_back(
                     RegressionSpec{
-                        .m_id             = test::regressionId(g_unknownCaseId),
+                        .m_id             = test::regressionId(k_unknownCaseId),
                         .m_sourceId       = unknownSource.m_source.id(),
                         .m_classification = RegressionClassification::Negative,
                         .m_expectation    = UnknownRegression{},
@@ -163,7 +163,7 @@ namespace uf::annotation
                 );
                 regressions.emplace_back(
                     RegressionSpec{
-                        .m_id             = test::regressionId(g_ambiguousCaseId),
+                        .m_id             = test::regressionId(k_ambiguousCaseId),
                         .m_sourceId       = ambiguousSource.m_source.id(),
                         .m_classification = RegressionClassification::Confusable,
                         .m_expectation    = AmbiguousRegression{},
@@ -174,7 +174,7 @@ namespace uf::annotation
             {
                 regressions.emplace_back(
                     RegressionSpec{
-                        .m_id             = test::regressionId(g_duplicateCaseId),
+                        .m_id             = test::regressionId(k_duplicateCaseId),
                         .m_sourceId       = resolvedSource.m_source.id(),
                         .m_classification = RegressionClassification::Positive,
                         .m_expectation    = ResolvedRegression{pageB},

@@ -36,7 +36,7 @@ namespace uf::workbench
 {
     namespace
     {
-        constexpr auto g_sourceId = "00000000-0000-0000-0000-000000000301";
+        constexpr auto k_sourceId = "00000000-0000-0000-0000-000000000301";
 
         [[nodiscard]]
         constexpr auto asByte(uint8 value) noexcept -> std::byte
@@ -161,7 +161,7 @@ namespace uf::workbench
 
     TEST_CASE("importSourcePng canonically re-encodes and hashes a PNG source")
     {
-        auto const id      = annotation::test::sourceId(g_sourceId);
+        auto const id      = annotation::test::sourceId(k_sourceId);
         auto const pixels  = sampleRgba();
         auto encoded       = image::encodeRgbaPng("on-disk.png", 2, 2, pixels);
         REQUIRE(encoded.has_value());
@@ -197,7 +197,7 @@ namespace uf::workbench
 
     TEST_CASE("importSourcePng rejects a file that is not a PNG")
     {
-        auto const id   = annotation::test::sourceId(g_sourceId);
+        auto const id   = annotation::test::sourceId(k_sourceId);
         auto const file = TemporaryFile{"png"};
         auto const junk = std::vector{
             asByte(0x4E),
@@ -213,7 +213,7 @@ namespace uf::workbench
 
     TEST_CASE("ingestSourceFromFrame encodes BGRA into a WGC-provenance source")
     {
-        auto const id         = annotation::test::sourceId(g_sourceId);
+        auto const id         = annotation::test::sourceId(k_sourceId);
         auto const generation = TargetGeneration::fromValue(7);
         // BGRA channel order for the same pixels sampleRgba() carries in RGBA.
         auto const bgra = std::vector{
@@ -251,7 +251,7 @@ namespace uf::workbench
 
     TEST_CASE("ingestSourceFromFrame drops stride padding from captured rows")
     {
-        auto const id         = annotation::test::sourceId(g_sourceId);
+        auto const id         = annotation::test::sourceId(k_sourceId);
         auto const generation = TargetGeneration::fromValue(1);
         // Two rows of one BGRA pixel each, padded to a 6-byte stride.
         auto const padded = std::vector{
@@ -280,7 +280,7 @@ namespace uf::workbench
 
     TEST_CASE("ingestSourceFromFrame rejects a non-BGRA frame")
     {
-        auto const id = annotation::test::sourceId(g_sourceId);
+        auto const id = annotation::test::sourceId(k_sourceId);
         auto const transform = CoordinateTransform::create(
             Point<DesktopSpace>{0.0F, 0.0F},
             1.0F,

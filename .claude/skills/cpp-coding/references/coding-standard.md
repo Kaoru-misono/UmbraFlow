@@ -35,7 +35,11 @@ review unnoticed. Budget attention accordingly.
 - Data members: `m_camelCase`.
 - Pointer and smart-pointer parameters: `p_camelCase`.
 - Types: `PascalCase`; interfaces: `IPascalCase`.
-- Avoid globals; unavoidable globals/statics use `g_` or `s_`.
+- Avoid non-local state. Named value constants with static storage duration use
+  `k_`. Mutable namespace-scope state uses `g_`. Class or function static state
+  whose meaning is identity, a cache, a singleton, an initialization guard, or
+  mutable storage uses `s_`. Automatic locals remain `camelCase` even when they
+  are `const` or `constexpr`.
 - Macros use `UPPER_CASE_WITH_UNDERSCORES` with the project macro prefix
   `UF_` (the deliberate short form of UmbraFlow; the long
   `UMBRA_FLOW_` form is not used).
@@ -126,7 +130,7 @@ namespace uf::m0_demo
 {
     namespace
     {
-        constexpr auto g_retryLimit = uint32{3};
+        constexpr auto k_retryLimit = uint32{3};
     }
 }
 ```

@@ -27,10 +27,10 @@ namespace uf::workbench
 {
     namespace
     {
-        constexpr auto g_sourceId   = "00000000-0000-0000-0000-000000000401";
-        constexpr auto g_anchorId   = "00000000-0000-0000-0000-000000000411";
-        constexpr auto g_actionId   = "00000000-0000-0000-0000-000000000412";
-        constexpr auto g_pageId     = "00000000-0000-0000-0000-000000000421";
+        constexpr auto k_sourceId   = "00000000-0000-0000-0000-000000000401";
+        constexpr auto k_anchorId   = "00000000-0000-0000-0000-000000000411";
+        constexpr auto k_actionId   = "00000000-0000-0000-0000-000000000412";
+        constexpr auto k_pageId     = "00000000-0000-0000-0000-000000000421";
 
         [[nodiscard]]
         constexpr auto asByte(uint8 value) noexcept -> std::byte
@@ -43,20 +43,20 @@ namespace uf::workbench
             annotation::AuthoringDocument    m_document;
             annotation::AuthoringSourceAsset m_asset;
 
-            annotation::SourceId     m_sourceId{annotation::test::sourceId(g_sourceId)};
-            annotation::RecognizerId m_anchorId{annotation::test::recognizerId(g_anchorId)};
-            annotation::RecognizerId m_actionId{annotation::test::recognizerId(g_actionId)};
-            annotation::PageId       m_pageId{annotation::test::pageId(g_pageId)};
+            annotation::SourceId     m_sourceId{annotation::test::sourceId(k_sourceId)};
+            annotation::RecognizerId m_anchorId{annotation::test::recognizerId(k_anchorId)};
+            annotation::RecognizerId m_actionId{annotation::test::recognizerId(k_actionId)};
+            annotation::PageId       m_pageId{annotation::test::pageId(k_pageId)};
         };
 
         [[nodiscard]]
         auto previewFixture() -> PreviewFixture
         {
             auto const fingerprint = annotation::test::fingerprint(3, 1, 96, 96);
-            auto const sourceId    = annotation::test::sourceId(g_sourceId);
-            auto const anchorId    = annotation::test::recognizerId(g_anchorId);
-            auto const actionId    = annotation::test::recognizerId(g_actionId);
-            auto const pageId      = annotation::test::pageId(g_pageId);
+            auto const sourceId    = annotation::test::sourceId(k_sourceId);
+            auto const anchorId    = annotation::test::recognizerId(k_anchorId);
+            auto const actionId    = annotation::test::recognizerId(k_actionId);
+            auto const pageId      = annotation::test::pageId(k_pageId);
 
             // Three distinct opaque pixels so each 1x1 template matches at exactly
             // one column of the search ROI.

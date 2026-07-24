@@ -21,7 +21,7 @@ namespace uf::m0_demo
 {
     namespace
     {
-        constexpr auto g_maximumCommandBytes = std::size_t{64} * 1024U;
+        constexpr auto k_maximumCommandBytes = std::size_t{64} * 1024U;
 
         [[nodiscard]]
         auto invalidCommand(std::string message) -> std::unexpected<Error>
@@ -401,7 +401,7 @@ namespace uf::m0_demo
                 using Milliseconds = std::chrono::milliseconds;
                 using Duration = MonotonicInstant::Duration;
                 auto const maximum = std::chrono::duration_cast<Milliseconds>(
-                    g_maximumInputAgentSettle
+                    k_maximumInputAgentSettle
                 );
                 auto const maximumCount = checkedCast<uint64>(maximum.count());
                 auto const count = checkedCast<Milliseconds::rep>(milliseconds);
@@ -635,7 +635,7 @@ namespace uf::m0_demo
                     .m_outputBefore = std::move(outputBefore),
                     .m_outputAfter  = std::move(outputAfter),
                     .m_settle = fields.m_settle.value_or(
-                        g_defaultInputAgentSettle
+                        k_defaultInputAgentSettle
                     ),
                 };
             }
@@ -671,12 +671,12 @@ namespace uf::m0_demo
         std::string_view line
     ) -> Result<InputAgentCommand>
     {
-        if (line.size() > g_maximumCommandBytes)
+        if (line.size() > k_maximumCommandBytes)
         {
             return invalidCommand(
                 std::format(
                     "input-agent command exceeds the {}-byte limit",
-                    g_maximumCommandBytes
+                    k_maximumCommandBytes
                 )
             );
         }

@@ -162,7 +162,7 @@ namespace uf::engine
     {
         auto builder = TraceLineBuilder{};
 
-        builder.addString("schema", g_traceSchema);
+        builder.addString("schema", k_traceSchema);
         builder.addString("kind", traceEventKindName(event.m_kind));
 
         if (event.m_frameId.has_value())

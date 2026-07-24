@@ -90,7 +90,7 @@ namespace uf
             REQUIRE(frame.has_value());
             auto const lease = ObservationLease::forFrame(
                 *frame,
-                g_defaultMaxActionFrameAge
+                k_defaultMaxActionFrameAge
             );
             REQUIRE(lease.has_value());
             return *lease;

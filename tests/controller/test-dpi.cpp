@@ -37,7 +37,7 @@ namespace uf
     TEST_CASE("access denied is tolerated only when V2 is already active")
     {
         auto const result = controller_detail::classifyDpiResult(
-            controller_detail::g_accessDeniedError,
+            controller_detail::k_accessDeniedError,
             true
         );
 
@@ -51,7 +51,7 @@ namespace uf
         {
             CHECK(
                 controller_detail::win32Code(hresult)
-                == controller_detail::g_accessDeniedError
+                == controller_detail::k_accessDeniedError
             );
         }
     }
@@ -60,7 +60,7 @@ namespace uf
     {
         auto const outcomes = std::array<std::optional<uint32>, 2>{
             std::nullopt,
-            controller_detail::g_accessDeniedError,
+            controller_detail::k_accessDeniedError,
         };
         for (auto const outcome : outcomes)
         {

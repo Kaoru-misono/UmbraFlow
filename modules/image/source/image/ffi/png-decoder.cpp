@@ -91,7 +91,7 @@ namespace uf::image
             uint8  m_bitDepth{};
         };
 
-        constexpr auto g_pngSignature = std::array{
+        constexpr auto k_pngSignature = std::array{
             std::byte{0x89},
             std::byte{0x50},
             std::byte{0x4E},
@@ -101,20 +101,20 @@ namespace uf::image
             std::byte{0x1A},
             std::byte{0x0A},
         };
-        constexpr auto g_ihdrType = std::array{
+        constexpr auto k_ihdrType = std::array{
             std::byte{0x49},
             std::byte{0x48},
             std::byte{0x44},
             std::byte{0x52},
         };
-        constexpr auto g_iendType = std::array{
+        constexpr auto k_iendType = std::array{
             std::byte{0x49},
             std::byte{0x45},
             std::byte{0x4E},
             std::byte{0x44},
         };
-        constexpr auto g_pngChunkOverhead = std::size_t{12};
-        constexpr auto g_ihdrDataBytes = uint32{13};
+        constexpr auto k_pngChunkOverhead = std::size_t{12};
+        constexpr auto k_ihdrDataBytes = uint32{13};
 
         [[nodiscard]]
         auto readBigEndianU32(
@@ -148,8 +148,8 @@ namespace uf::image
         ) -> Result<PngMetadata>
         {
             if (
-                encoded.size() < g_pngSignature.size()
-                || !bytesEqualAt(encoded, 0, g_pngSignature)
+                encoded.size() < k_pngSignature.size()
+                || !bytesEqualAt(encoded, 0, k_pngSignature)
             )
             {
                 return invalidResource(
@@ -158,13 +158,13 @@ namespace uf::image
             }
 
             auto metadata   = PngMetadata{};
-            auto offset     = g_pngSignature.size();
+            auto offset     = k_pngSignature.size();
             auto firstChunk = true;
             auto sawIend    = false;
             while (offset < encoded.size())
             {
                 auto const remaining = encoded.size() - offset;
-                if (remaining < g_pngChunkOverhead)
+                if (remaining < k_pngChunkOverhead)
                 {
                     return invalidResource(
                         std::format(
@@ -176,7 +176,7 @@ namespace uf::image
 
                 auto const dataBytes = readBigEndianU32(encoded, offset);
                 auto const dataSize = checkedCast<std::size_t>(dataBytes);
-                if (!dataSize || *dataSize > remaining - g_pngChunkOverhead)
+                if (!dataSize || *dataSize > remaining - k_pngChunkOverhead)
                 {
                     return invalidResource(
                         std::format(
@@ -186,8 +186,8 @@ namespace uf::image
                     );
                 }
 
-                auto const isIhdr = bytesEqualAt(encoded, offset + 4U, g_ihdrType);
-                auto const isIend = bytesEqualAt(encoded, offset + 4U, g_iendType);
+                auto const isIhdr = bytesEqualAt(encoded, offset + 4U, k_ihdrType);
+                auto const isIend = bytesEqualAt(encoded, offset + 4U, k_iendType);
                 if (firstChunk)
                 {
                     if (!isIhdr)
@@ -199,7 +199,7 @@ namespace uf::image
                             )
                         );
                     }
-                    if (dataBytes != g_ihdrDataBytes)
+                    if (dataBytes != k_ihdrDataBytes)
                     {
                         return invalidResource(
                             std::format(
@@ -226,7 +226,7 @@ namespace uf::image
                     );
                 }
 
-                offset += g_pngChunkOverhead + *dataSize;
+                offset += k_pngChunkOverhead + *dataSize;
                 if (isIend)
                 {
                     if (dataBytes != 0U || offset != encoded.size())
@@ -267,14 +267,14 @@ namespace uf::image
                 std::format("failed to load template {}: empty PNG", resourceName)
             );
         }
-        if (encoded.size() > g_maximumPngFileBytes)
+        if (encoded.size() > k_maximumPngFileBytes)
         {
             return invalidResource(
                 std::format(
                     "template {} is oversized: {} encoded bytes exceeds {}",
                     resourceName,
                     encoded.size(),
-                    g_maximumPngFileBytes
+                    k_maximumPngFileBytes
                 )
             );
         }
@@ -300,8 +300,8 @@ namespace uf::image
         }
 
         if (
-            metadata.m_width > g_maximumPngDimension
-            || metadata.m_height > g_maximumPngDimension
+            metadata.m_width > k_maximumPngDimension
+            || metadata.m_height > k_maximumPngDimension
         )
         {
             return invalidResource(
@@ -310,7 +310,7 @@ namespace uf::image
                     resourceName,
                     metadata.m_width,
                     metadata.m_height,
-                    g_maximumPngDimension
+                    k_maximumPngDimension
                 )
             );
         }
@@ -324,7 +324,7 @@ namespace uf::image
             );
         }
         auto const pixelCount = checkedMultiply(*widthSize, *heightSize);
-        if (!pixelCount || *pixelCount > g_maximumPngPixels)
+        if (!pixelCount || *pixelCount > k_maximumPngPixels)
         {
             return invalidResource(
                 std::format(
@@ -491,14 +491,14 @@ namespace uf::image
                 )
             );
         }
-        if (fileBytes > g_maximumPngFileBytes)
+        if (fileBytes > k_maximumPngFileBytes)
         {
             return invalidResource(
                 std::format(
                     "template {} is oversized: {} encoded bytes exceeds {}",
                     path.string(),
                     fileBytes,
-                    g_maximumPngFileBytes
+                    k_maximumPngFileBytes
                 )
             );
         }

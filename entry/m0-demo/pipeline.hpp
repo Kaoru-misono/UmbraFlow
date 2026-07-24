@@ -26,7 +26,7 @@ namespace uf::m0_demo
 {
     class JsonlLog;
 
-    inline constexpr auto g_defaultTransitionTimeout = MonotonicInstant::Duration{
+    inline constexpr auto k_defaultTransitionTimeout = MonotonicInstant::Duration{
         std::chrono::seconds{5}
     };
 

@@ -10,7 +10,7 @@ namespace uf::m0_demo
 {
     class JsonlLog;
 
-    inline constexpr auto g_defaultPacingSeed = uint64{0x5EED'C10C'2B1D'1A7E};
+    inline constexpr auto k_defaultPacingSeed = uint64{0x5EED'C10C'2B1D'1A7E};
 
     class ClickDelay final
     {

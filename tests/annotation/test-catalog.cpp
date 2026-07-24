@@ -21,13 +21,13 @@ namespace uf::annotation
 {
     namespace
     {
-        constexpr auto g_anchorId = "00000000-0000-0000-0000-000000000001";
-        constexpr auto g_actionId = "00000000-0000-0000-0000-000000000002";
-        constexpr auto g_secondAnchorId = "00000000-0000-0000-0000-000000000003";
-        constexpr auto g_unknownId = "00000000-0000-0000-0000-0000000000ff";
-        constexpr auto g_pageId = "00000000-0000-0000-0000-000000000101";
-        constexpr auto g_secondPageId = "00000000-0000-0000-0000-000000000102";
-        constexpr auto g_unknownPageId = "00000000-0000-0000-0000-0000000001ff";
+        constexpr auto k_anchorId = "00000000-0000-0000-0000-000000000001";
+        constexpr auto k_actionId = "00000000-0000-0000-0000-000000000002";
+        constexpr auto k_secondAnchorId = "00000000-0000-0000-0000-000000000003";
+        constexpr auto k_unknownId = "00000000-0000-0000-0000-0000000000ff";
+        constexpr auto k_pageId = "00000000-0000-0000-0000-000000000101";
+        constexpr auto k_secondPageId = "00000000-0000-0000-0000-000000000102";
+        constexpr auto k_unknownPageId = "00000000-0000-0000-0000-0000000001ff";
 
         // Deliberately bypasses test::recognizer, which REQUIREs success and so
         // cannot observe a rejection.
@@ -35,7 +35,7 @@ namespace uf::annotation
         auto anchorSpec() -> RecognizerSpec
         {
             return RecognizerSpec{
-                .m_id             = test::recognizerId(g_anchorId),
+                .m_id             = test::recognizerId(k_anchorId),
                 .m_name           = test::resourceName("home_marker"),
                 .m_annotationType = AnnotationType::PageAnchor,
                 .m_templateRect   = test::pixelRect(0, 0, 2, 2),
@@ -158,9 +158,9 @@ namespace uf::annotation
     TEST_CASE("recognition catalog closes page references and rejects duplicate signatures")
     {
         auto const projectFingerprint = test::fingerprint();
-        auto const anchorId = test::recognizerId(g_anchorId);
-        auto const actionId = test::recognizerId(g_actionId);
-        auto const pageId = test::pageId(g_pageId);
+        auto const anchorId = test::recognizerId(k_anchorId);
+        auto const actionId = test::recognizerId(k_actionId);
+        auto const pageId = test::pageId(k_pageId);
         auto recognizers = std::vector<RecognizerDefinition>{};
         recognizers.emplace_back(
             test::recognizer(
@@ -201,7 +201,7 @@ namespace uf::annotation
             {
                 test::page(pageId, "home", {anchorId}),
                 test::page(
-                    test::pageId(g_secondPageId),
+                    test::pageId(k_secondPageId),
                     "home_copy",
                     {anchorId}
                 ),
@@ -217,7 +217,7 @@ namespace uf::annotation
     TEST_CASE("recognizer definition rejects malformed geometry and page membership")
     {
         auto const projectFingerprint = test::fingerprint();
-        auto const pageId             = test::pageId(g_pageId);
+        auto const pageId             = test::pageId(k_pageId);
         auto const outsideTemplate    = TemplateOffset::create(3, 3, 4, 4);
         REQUIRE(outsideTemplate.has_value());
 
@@ -297,8 +297,8 @@ namespace uf::annotation
 
     TEST_CASE("page signature rejects duplicate and contradictory recognizer sets")
     {
-        auto const anchorId = test::recognizerId(g_anchorId);
-        auto const pageId   = test::pageId(g_pageId);
+        auto const anchorId = test::recognizerId(k_anchorId);
+        auto const pageId   = test::pageId(k_pageId);
 
         auto const duplicateRequired = PageSignature::create(
             PageSpec{
@@ -333,7 +333,7 @@ namespace uf::annotation
     {
         auto const rejected = PageSignature::create(
             PageSpec{
-                .m_id        = test::pageId(g_pageId),
+                .m_id        = test::pageId(k_pageId),
                 .m_name      = test::resourceName("home"),
                 .m_required  = {},
                 .m_forbidden = {},
@@ -351,10 +351,10 @@ namespace uf::annotation
     {
         auto const signature = PageSignature::create(
             PageSpec{
-                .m_id        = test::pageId(g_pageId),
+                .m_id        = test::pageId(k_pageId),
                 .m_name      = test::resourceName("home"),
                 .m_required  = {},
-                .m_forbidden = {test::recognizerId(g_anchorId)},
+                .m_forbidden = {test::recognizerId(k_anchorId)},
             }
         );
 
@@ -364,13 +364,13 @@ namespace uf::annotation
     TEST_CASE("recognition catalog rejects every cross-resource inconsistency")
     {
         auto const projectFingerprint = test::fingerprint();
-        auto const anchorId           = test::recognizerId(g_anchorId);
-        auto const secondAnchorId     = test::recognizerId(g_secondAnchorId);
-        auto const actionId           = test::recognizerId(g_actionId);
-        auto const unknownId          = test::recognizerId(g_unknownId);
-        auto const pageId             = test::pageId(g_pageId);
-        auto const secondPageId       = test::pageId(g_secondPageId);
-        auto const unknownPageId      = test::pageId(g_unknownPageId);
+        auto const anchorId           = test::recognizerId(k_anchorId);
+        auto const secondAnchorId     = test::recognizerId(k_secondAnchorId);
+        auto const actionId           = test::recognizerId(k_actionId);
+        auto const unknownId          = test::recognizerId(k_unknownId);
+        auto const pageId             = test::pageId(k_pageId);
+        auto const secondPageId       = test::pageId(k_secondPageId);
+        auto const unknownPageId      = test::pageId(k_unknownPageId);
 
         auto const anchor = [&](RecognizerId id, std::string name)
         {

@@ -50,9 +50,9 @@ namespace uf::m0_demo
 {
     namespace
     {
-        constexpr auto g_inputAgentPollInterval = std::chrono::milliseconds{100};
-        constexpr auto g_queueReadBytesPerPoll = std::size_t{64} * 1024U;
-        constexpr auto g_maximumPendingQueueBytes = std::size_t{1024} * 1024U;
+        constexpr auto k_inputAgentPollInterval = std::chrono::milliseconds{100};
+        constexpr auto k_queueReadBytesPerPoll = std::size_t{64} * 1024U;
+        constexpr auto k_maximumPendingQueueBytes = std::size_t{1024} * 1024U;
 
         [[nodiscard]]
         auto currentIoError() -> std::error_code
@@ -114,14 +114,14 @@ namespace uf::m0_demo
             {
                 --commandBytes;
             }
-            if (commandBytes > g_maximumPendingQueueBytes)
+            if (commandBytes > k_maximumPendingQueueBytes)
             {
                 return fail(
                     AutomationErrorKind::InvalidResource,
                     std::format(
                         "input-agent queue {} has a command exceeding {} bytes",
                         m_path.string(),
-                        g_maximumPendingQueueBytes
+                        k_maximumPendingQueueBytes
                     )
                 );
             }
@@ -138,14 +138,14 @@ namespace uf::m0_demo
         {
             m_pending.erase(0, consumed);
         }
-        if (m_pending.size() > g_maximumPendingQueueBytes)
+        if (m_pending.size() > k_maximumPendingQueueBytes)
         {
             return fail(
                 AutomationErrorKind::InvalidResource,
                 std::format(
                     "input-agent queue {} has an unterminated command exceeding {} bytes",
                     m_path.string(),
-                    g_maximumPendingQueueBytes
+                    k_maximumPendingQueueBytes
                 )
             );
         }
@@ -193,7 +193,7 @@ namespace uf::m0_demo
         auto const readBytes = static_cast<uintmax>(
             std::min<uintmax>(
                 available,
-                g_queueReadBytesPerPoll
+                k_queueReadBytesPerPoll
             )
         );
         auto const streamOffset = checkedCast<std::streamoff>(m_offset);
@@ -622,7 +622,7 @@ namespace uf::m0_demo
                 return finishClick(result);
             }
 
-            if (command.m_settle > g_maximumInputAgentSettle)
+            if (command.m_settle > k_maximumInputAgentSettle)
             {
                 auto failure = fail(
                     AutomationErrorKind::InvalidResource,
@@ -667,7 +667,7 @@ namespace uf::m0_demo
 
             auto lease = ObservationLease::forFrame(
                 *before,
-                g_defaultMaxActionFrameAge
+                k_defaultMaxActionFrameAge
             );
             if (!lease)
             {
@@ -969,7 +969,7 @@ namespace uf::m0_demo
                 UF_TRY(writer.flush());
                 return ok();
             }
-            std::this_thread::sleep_for(g_inputAgentPollInterval);
+            std::this_thread::sleep_for(k_inputAgentPollInterval);
         }
     }
 }

@@ -54,7 +54,7 @@
 
 `entry/cli/main.cpp` 的 `dispatch` 只有两个公开产品路径：
 
-- 空参数：打印 `g_projectName` 与 `runUsageText()`，返回 `0`。
+- 空参数：打印 `k_projectName` 与 `runUsageText()`，返回 `0`。
 - 首参数为 `run`：把剩余参数交给 `dispatchRun`。
 
 其他首参数被视为 unknown subcommand，打印错误与 usage，返回 `1`。

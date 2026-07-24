@@ -18,7 +18,7 @@
 
 namespace uf::annotation
 {
-    inline constexpr auto g_authoringDocumentSchema = std::string_view{
+    inline constexpr auto k_authoringDocumentSchema = std::string_view{
         "umbraflow-authoring/v1"
     };
 

@@ -32,7 +32,7 @@ namespace uf::workbench
 {
     namespace
     {
-        constexpr auto g_windowTitle = std::string_view{"Umbra Workbench"};
+        constexpr auto k_windowTitle = std::string_view{"Umbra Workbench"};
 
         struct Options final
         {
@@ -130,7 +130,7 @@ namespace uf::workbench
             UF_TRY_VALUE(state, makeAppState(options));
 
             auto const config = platform::GuiShellConfig{
-                .m_title       = std::string{g_windowTitle},
+                .m_title       = std::string{k_windowTitle},
                 .m_width       = 1280U,
                 .m_height      = 720U,
                 .m_smokeFrames = options.m_smokeFrames,

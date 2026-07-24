@@ -25,9 +25,9 @@ namespace uf::annotation
 {
     namespace
     {
-        constexpr auto g_rgbaBytesPerPixel            = std::size_t{4};
-        constexpr auto g_maximumCompiledTemplateBytes = std::size_t{512} * 1024U * 1024U;
-        constexpr auto g_maximumCompilationPixelWork  = std::size_t{256} * 1024U * 1024U;
+        constexpr auto k_rgbaBytesPerPixel            = std::size_t{4};
+        constexpr auto k_maximumCompiledTemplateBytes = std::size_t{512} * 1024U * 1024U;
+        constexpr auto k_maximumCompilationPixelWork  = std::size_t{256} * 1024U * 1024U;
 
         struct RecognizerWork final
         {
@@ -112,7 +112,7 @@ namespace uf::annotation
                 );
                 if (
                     !nextPixelWork
-                    || *nextPixelWork > g_maximumCompilationPixelWork
+                    || *nextPixelWork > k_maximumCompilationPixelWork
                 )
                 {
                     return invalidCompilation(
@@ -156,7 +156,7 @@ namespace uf::annotation
                 );
                 if (
                     !nextPixelWork
-                    || *nextPixelWork > g_maximumCompilationPixelWork
+                    || *nextPixelWork > k_maximumCompilationPixelWork
                 )
                 {
                     return invalidCompilation(
@@ -262,7 +262,7 @@ namespace uf::annotation
             auto const& source      = checkedAt(sources, sourceIndex);
             auto const assetIndex   = checkedAt(assetOrder, sourceIndex);
             auto const& sourceAsset = checkedAt(sourceAssets, assetIndex);
-            if (sourceAsset.m_pngBytes.size() > image::g_maximumPngFileBytes)
+            if (sourceAsset.m_pngBytes.size() > image::k_maximumPngFileBytes)
             {
                 return invalidCompilation(
                     std::format(
@@ -312,7 +312,7 @@ namespace uf::annotation
             }
             auto const stride = checkedMultiply(
                 static_cast<std::size_t>(decoded.m_width),
-                g_rgbaBytesPerPixel
+                k_rgbaBytesPerPixel
             );
             if (!stride)
             {
@@ -348,7 +348,7 @@ namespace uf::annotation
                         source.relativePath()
                     )
                 );
-                if (generated.m_pngBytes.size() > image::g_maximumPngFileBytes)
+                if (generated.m_pngBytes.size() > image::k_maximumPngFileBytes)
                 {
                     return invalidCompilation(
                         std::format(
@@ -376,7 +376,7 @@ namespace uf::annotation
                     );
                     if (
                         !nextTotal
-                        || *nextTotal > g_maximumCompiledTemplateBytes
+                        || *nextTotal > k_maximumCompiledTemplateBytes
                     )
                     {
                         return invalidCompilation(

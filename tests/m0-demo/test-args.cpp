@@ -245,7 +245,7 @@ namespace uf::m0_demo
         auto const result = parseArguments(fullArguments());
         REQUIRE(result.has_value());
         CHECK_FALSE(result->m_clickDelay.has_value());
-        CHECK(result->m_seed == g_defaultPacingSeed);
+        CHECK(result->m_seed == k_defaultPacingSeed);
     }
 
     TEST_CASE("m0 arguments reject malformed click delay specifications")
@@ -305,8 +305,8 @@ namespace uf::m0_demo
         REQUIRE(result.has_value());
         CHECK(result->m_selector.m_title == std::optional<std::string>{"Capture Target"});
         CHECK(result->m_output == std::filesystem::path{"capture.png"});
-        CHECK(result->m_frames == g_defaultCaptureFrames);
-        CHECK(result->m_interval == g_defaultCaptureInterval);
+        CHECK(result->m_frames == k_defaultCaptureFrames);
+        CHECK(result->m_interval == k_defaultCaptureInterval);
         CHECK_FALSE(result->m_log.has_value());
 
         auto const missingOutput = parseCaptureArguments(
@@ -438,7 +438,7 @@ namespace uf::m0_demo
         CHECK(result->m_queue == std::filesystem::path{"commands.jsonl"});
         CHECK(result->m_results == std::filesystem::path{"results.jsonl"});
         CHECK(result->m_outputDirectory == std::filesystem::path{"agent-output"});
-        CHECK(result->m_idleTimeout == g_defaultInputAgentIdleTimeout);
+        CHECK(result->m_idleTimeout == k_defaultInputAgentIdleTimeout);
     }
 
     TEST_CASE("m0 input-agent arguments reject missing and invalid values")

@@ -34,8 +34,8 @@ namespace uf::m0_demo
 {
     namespace
     {
-        constexpr auto g_bgraBytesPerPixel = std::size_t{4};
-        constexpr auto g_maximumSadPixelComparisons = (
+        constexpr auto k_bgraBytesPerPixel = std::size_t{4};
+        constexpr auto k_maximumSadPixelComparisons = (
             uint64{64} * 1024U * 1024U
         );
 
@@ -170,7 +170,7 @@ namespace uf::m0_demo
             }
             auto const roiRowBytes = checkedMultiply(
                 *roiWidth,
-                g_bgraBytesPerPixel
+                k_bgraBytesPerPixel
             );
             if (!roiRowBytes)
             {
@@ -240,7 +240,7 @@ namespace uf::m0_demo
                     haystack,
                     templateImage,
                     search,
-                    g_maximumSadPixelComparisons,
+                    k_maximumSadPixelComparisons,
                     poll
                 )
             );
@@ -333,7 +333,7 @@ namespace uf::m0_demo
                                 std::format(
                                     "{} exceeded the {} pixel-comparison search budget",
                                     label,
-                                    g_maximumSadPixelComparisons
+                                    k_maximumSadPixelComparisons
                                 )
                             )
                     )
@@ -1173,7 +1173,7 @@ namespace uf::m0_demo
                 std::format("template {} width is not addressable", path.string())
             );
         }
-        auto const rowBytes = checkedMultiply(*width, g_bgraBytesPerPixel);
+        auto const rowBytes = checkedMultiply(*width, k_bgraBytesPerPixel);
         if (!rowBytes)
         {
             return fail(

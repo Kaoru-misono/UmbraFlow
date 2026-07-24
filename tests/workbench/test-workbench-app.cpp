@@ -20,19 +20,19 @@ namespace uf::workbench
 {
     namespace
     {
-        constexpr auto g_sourceId = "00000000-0000-0000-0000-000000000201";
-        constexpr auto g_anchorId = "00000000-0000-0000-0000-000000000001";
-        constexpr auto g_pageId   = "00000000-0000-0000-0000-000000000101";
-        constexpr auto g_importA  = "00000000-0000-0000-0000-0000000002a1";
-        constexpr auto g_importB  = "00000000-0000-0000-0000-0000000002b2";
+        constexpr auto k_sourceId = "00000000-0000-0000-0000-000000000201";
+        constexpr auto k_anchorId = "00000000-0000-0000-0000-000000000001";
+        constexpr auto k_pageId   = "00000000-0000-0000-0000-000000000101";
+        constexpr auto k_importA  = "00000000-0000-0000-0000-0000000002a1";
+        constexpr auto k_importB  = "00000000-0000-0000-0000-0000000002b2";
 
         [[nodiscard]]
         auto document() -> annotation::AuthoringDocument
         {
             auto const fingerprint = annotation::test::fingerprint(8, 8, 96, 96);
-            auto const sourceId    = annotation::test::sourceId(g_sourceId);
-            auto const anchorId    = annotation::test::recognizerId(g_anchorId);
-            auto const pageId      = annotation::test::pageId(g_pageId);
+            auto const sourceId    = annotation::test::sourceId(k_sourceId);
+            auto const anchorId    = annotation::test::recognizerId(k_anchorId);
+            auto const pageId      = annotation::test::pageId(k_pageId);
             auto const sourceHash  = annotation::sha256(
                 std::span<std::byte const>{}
             );
@@ -218,7 +218,7 @@ namespace uf::workbench
     {
         auto state = appState();
 
-        auto const sourceId = annotation::test::sourceId(g_sourceId);
+        auto const sourceId = annotation::test::sourceId(k_sourceId);
         state.setSelectedSourceId(sourceId);
         REQUIRE(state.selectedSourceId().has_value());
         CHECK(*state.selectedSourceId() == sourceId);
@@ -234,7 +234,7 @@ namespace uf::workbench
         auto state          = emptyState();
         auto const finger   = annotation::test::fingerprint(4, 4, 96, 96);
         auto const imported = state.addIngestedSource(
-            ingestedSource(g_importA, finger, std::byte{0x11})
+            ingestedSource(k_importA, finger, std::byte{0x11})
         );
         REQUIRE(imported.has_value());
         CHECK(*imported);
@@ -255,7 +255,7 @@ namespace uf::workbench
         auto const finger = annotation::test::fingerprint(4, 4, 96, 96);
         REQUIRE(
             state.addIngestedSource(
-                ingestedSource(g_importA, finger, std::byte{0x11})
+                ingestedSource(k_importA, finger, std::byte{0x11})
             ).has_value()
         );
 
@@ -266,7 +266,7 @@ namespace uf::workbench
         auto const assets = state.compilerSourceAssets();
         REQUIRE(assets.has_value());
         REQUIRE(assets->size() == 1U);
-        CHECK(assets->front().m_id == annotation::test::sourceId(g_importA));
+        CHECK(assets->front().m_id == annotation::test::sourceId(k_importA));
     }
 
     TEST_CASE("importing after an undone import compiles exactly the newer source")
@@ -275,20 +275,20 @@ namespace uf::workbench
         auto const finger = annotation::test::fingerprint(4, 4, 96, 96);
         REQUIRE(
             state.addIngestedSource(
-                ingestedSource(g_importA, finger, std::byte{0x11})
+                ingestedSource(k_importA, finger, std::byte{0x11})
             ).has_value()
         );
         CHECK(state.undo());
         REQUIRE(
             state.addIngestedSource(
-                ingestedSource(g_importB, finger, std::byte{0x22})
+                ingestedSource(k_importB, finger, std::byte{0x22})
             ).has_value()
         );
 
         auto const assets = state.compilerSourceAssets();
         REQUIRE(assets.has_value());
         REQUIRE(assets->size() == 1U);
-        CHECK(assets->front().m_id == annotation::test::sourceId(g_importB));
+        CHECK(assets->front().m_id == annotation::test::sourceId(k_importB));
     }
 
     TEST_CASE("a committed edit clears the stored preview")

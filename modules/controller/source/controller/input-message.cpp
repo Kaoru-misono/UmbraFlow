@@ -151,7 +151,7 @@ namespace uf::controller_detail
     ) noexcept -> PostSpec
     {
         return PostSpec{
-            .m_message = transition == KeyTransition::Down ? g_wmKeyDown : g_wmKeyUp,
+            .m_message = transition == KeyTransition::Down ? k_wmKeyDown : k_wmKeyUp,
             .m_wParam = key.virtualKey(),
             .m_lParam = lParamFromBits(
                 keyboardLParamBits(scanCode, key.isExtended(), transition)
@@ -166,18 +166,18 @@ namespace uf::controller_detail
         switch (message)
         {
         case PointerMessage::Move:
-            messageId = g_wmMouseMove;
+            messageId = k_wmMouseMove;
             break;
         case PointerMessage::MoveWithLeftButton:
-            messageId = g_wmMouseMove;
-            wParam    = g_leftButtonMask;
+            messageId = k_wmMouseMove;
+            wParam    = k_leftButtonMask;
             break;
         case PointerMessage::LeftDown:
-            messageId = g_wmLeftButtonDown;
-            wParam    = g_leftButtonMask;
+            messageId = k_wmLeftButtonDown;
+            wParam    = k_leftButtonMask;
             break;
         case PointerMessage::LeftUp:
-            messageId = g_wmLeftButtonUp;
+            messageId = k_wmLeftButtonUp;
             break;
         }
 
@@ -191,7 +191,7 @@ namespace uf::controller_detail
     auto charSpec(uint16 codeUnit) noexcept -> PostSpec
     {
         return PostSpec{
-            .m_message = g_wmChar,
+            .m_message = k_wmChar,
             .m_wParam  = codeUnit,
             .m_lParam  = 1,
         };
@@ -200,7 +200,7 @@ namespace uf::controller_detail
     auto unicharSpec(char32_t codePoint) noexcept -> PostSpec
     {
         return PostSpec{
-            .m_message = g_wmUnichar,
+            .m_message = k_wmUnichar,
             .m_wParam  = static_cast<uintptr>(codePoint),
             .m_lParam  = 1,
         };

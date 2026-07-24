@@ -27,7 +27,7 @@ dependency，并检查整个模块图无环。这不是构建文件的偶然状�
 - `time/`：进程内单调时刻及其溢出安全运算。
 - `utility/`：`std::variant` visitor 组合与确定性 scope cleanup。
 
-`modules/core/source/core/project.hpp` 另提供 `g_projectName`，但不存在聚合
+`modules/core/source/core/project.hpp` 另提供 `k_projectName`，但不存在聚合
 `core.hpp`。调用方必须 include 所需的精确 facility；这样依赖面、编译成本和
 概念耦合都保持可见。只有需要非模板实现的 facility 才有匹配的 `.cpp`：
 `error/contracts.cpp`、`error/error.cpp` 和 `text/utf8.cpp`。
@@ -151,7 +151,7 @@ rvalue callable，避免把外部 callable 本身当作隐式存储 borrow。
 
 读写只能经过 `withLock(function)`。non-const overload 把 `Value&` 交给 callback，
 const overload 交 `Value const&`，两者都在 `std::lock_guard` 生命周期内调用。
-返回类型可为值或 `void`，但 `g_lockResultDoesNotExposeStorage` 在编译期拒绝直接
+返回类型可为值或 `void`，但 `k_lockResultDoesNotExposeStorage` 在编译期拒绝直接
 返回 pointer 或 reference，防止最明显的锁外 alias。它不能证明 callback 没把
 地址藏进另一个对象，因此它缩小而没有夸大 C++ 能强制的安全范围；跨线程存储的
 callback lifetime、取消和 join 仍由拥有并发工作的上层负责。

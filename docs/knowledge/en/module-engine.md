@@ -93,7 +93,7 @@ The entry point is `loadRuntimeProject(projectRoot) -> Result<LoadedRuntime>` in
 2. `readCappedFile` first uses `file_size` to quickly reject files that obviously exceed the limit,
    then actually reads in 64 KiB chunks; the actual byte count is still bounded, so a file that
    grows after the stat cannot bypass the cap.
-3. The manifest cap is fixed at 16 MiB by `g_maximumRuntimeManifestBytes`.
+3. The manifest cap is fixed at 16 MiB by `k_maximumRuntimeManifestBytes`.
 4. The text is handed to `annotation::parseRuntimeManifest`; the engine does not write a separate
    TOML parser.
 5. Referenced files are read in the order of the manifest's `assets()`. The same `ContentHash` is
@@ -262,7 +262,7 @@ The wall clock participates only in the recognition deadline, the lease stalenes
 deadline. Deviations on these paths only shorten the actionable window or return a stop/timeout, and
 never turn an unknown state into an allowed action.
 
-`waitForPage`'s sleep is sliced by `g_maxPollSleepSlice = 100ms`. Even if the caller provides a
+`waitForPage`'s sleep is sliced by `k_maxPollSleepSlice = 100ms`. Even if the caller provides a
 10-second poll interval, cancellation and the deadline are checked between each slice, so a wait
 does not tie the cancellation response to a full poll interval. `sweepKnownPopups` is called once at
 the start of each round, but is currently an explicit no-op.

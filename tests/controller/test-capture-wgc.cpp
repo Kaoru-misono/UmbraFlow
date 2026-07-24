@@ -233,7 +233,7 @@ namespace uf
         }
 
         auto const options = WgcCaptureOptions{};
-        CHECK(options.captureStallTimeout() == g_defaultCaptureStallTimeout);
+        CHECK(options.captureStallTimeout() == k_defaultCaptureStallTimeout);
         CHECK_FALSE(options.requireBorderless());
         CHECK(options.captureStallTimeout() > MonotonicInstant::Duration::zero());
     }

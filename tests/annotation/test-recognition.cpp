@@ -21,10 +21,10 @@ namespace uf::annotation
 {
     namespace
     {
-        constexpr auto g_anchorAId = "00000000-0000-0000-0000-000000000001";
-        constexpr auto g_anchorBId = "00000000-0000-0000-0000-000000000002";
-        constexpr auto g_pageAId = "00000000-0000-0000-0000-000000000101";
-        constexpr auto g_pageBId = "00000000-0000-0000-0000-000000000102";
+        constexpr auto k_anchorAId = "00000000-0000-0000-0000-000000000001";
+        constexpr auto k_anchorBId = "00000000-0000-0000-0000-000000000002";
+        constexpr auto k_pageAId = "00000000-0000-0000-0000-000000000101";
+        constexpr auto k_pageBId = "00000000-0000-0000-0000-000000000102";
 
         auto anchorEvaluation(
             RecognizerDefinition const& recognizer,
@@ -42,19 +42,19 @@ namespace uf::annotation
         struct ResolutionFixture final
         {
             RecognitionCatalog m_catalog;
-            RecognizerId m_anchorA{test::recognizerId(g_anchorAId)};
-            RecognizerId m_anchorB{test::recognizerId(g_anchorBId)};
-            PageId m_pageA{test::pageId(g_pageAId)};
-            PageId m_pageB{test::pageId(g_pageBId)};
+            RecognizerId m_anchorA{test::recognizerId(k_anchorAId)};
+            RecognizerId m_anchorB{test::recognizerId(k_anchorBId)};
+            PageId m_pageA{test::pageId(k_pageAId)};
+            PageId m_pageB{test::pageId(k_pageBId)};
         };
 
         auto resolutionFixture() -> ResolutionFixture
         {
             auto const projectFingerprint = test::fingerprint();
-            auto const anchorA = test::recognizerId(g_anchorAId);
-            auto const anchorB = test::recognizerId(g_anchorBId);
-            auto const pageA = test::pageId(g_pageAId);
-            auto const pageB = test::pageId(g_pageBId);
+            auto const anchorA = test::recognizerId(k_anchorAId);
+            auto const anchorB = test::recognizerId(k_anchorBId);
+            auto const pageA = test::pageId(k_pageAId);
+            auto const pageB = test::pageId(k_pageBId);
             auto recognizers = std::vector<RecognizerDefinition>{};
             recognizers.emplace_back(
                 test::recognizer(
@@ -119,7 +119,7 @@ namespace uf::annotation
         auto const projectFingerprint = test::fingerprint();
         auto const anchor = test::recognizer(
             projectFingerprint,
-            test::recognizerId(g_anchorAId),
+            test::recognizerId(k_anchorAId),
             "anchor",
             AnnotationType::PageAnchor,
             test::pixelRect(0, 0, 2, 2),

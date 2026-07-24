@@ -42,10 +42,10 @@ namespace uf::engine
     {
         namespace anno = annotation;
 
-        constexpr auto g_sourceId = "00000000-0000-0000-0000-000000000201";
-        constexpr auto g_anchorId = "00000000-0000-0000-0000-000000000001";
-        constexpr auto g_actionId = "00000000-0000-0000-0000-000000000002";
-        constexpr auto g_pageId   = "00000000-0000-0000-0000-000000000101";
+        constexpr auto k_sourceId = "00000000-0000-0000-0000-000000000201";
+        constexpr auto k_anchorId = "00000000-0000-0000-0000-000000000001";
+        constexpr auto k_actionId = "00000000-0000-0000-0000-000000000002";
+        constexpr auto k_pageId   = "00000000-0000-0000-0000-000000000101";
 
         [[nodiscard]]
         constexpr auto asByte(uint8 value) noexcept -> std::byte
@@ -83,7 +83,7 @@ namespace uf::engine
         auto projectFixture() -> ProjectFixture
         {
             auto const fingerprint = anno::test::fingerprint(3, 2, 96, 96);
-            auto const sourceId    = anno::test::sourceId(g_sourceId);
+            auto const sourceId    = anno::test::sourceId(k_sourceId);
             auto pngBytes          = encodedSource();
             auto const sourceHash  = anno::sha256(pngBytes);
             REQUIRE(sourceHash.has_value());
@@ -97,9 +97,9 @@ namespace uf::engine
                 }
             );
             REQUIRE(source.has_value());
-            auto const anchorId = anno::test::recognizerId(g_anchorId);
-            auto const actionId = anno::test::recognizerId(g_actionId);
-            auto const pageId   = anno::test::pageId(g_pageId);
+            auto const anchorId = anno::test::recognizerId(k_anchorId);
+            auto const actionId = anno::test::recognizerId(k_actionId);
+            auto const pageId   = anno::test::pageId(k_pageId);
             auto const click    = anno::TemplateOffset::create(1, 1, 2, 2);
             REQUIRE(click.has_value());
             auto document = anno::AuthoringDocument::create(
@@ -308,7 +308,7 @@ namespace uf::engine
         REQUIRE(std::holds_alternative<anno::ResolvedPage>(*outcome));
         CHECK(
             std::get<anno::ResolvedPage>(*outcome).pageId()
-            == anno::test::pageId(g_pageId)
+            == anno::test::pageId(k_pageId)
         );
     }
 
@@ -385,7 +385,7 @@ namespace uf::engine
         REQUIRE(stream.is_open());
         // Grow the file past the cap with a single trailing byte rather than
         // materializing the whole payload, exercising the stat-first guard.
-        auto const beyondCap = checkedCast<std::streamoff>(g_maximumRuntimeManifestBytes);
+        auto const beyondCap = checkedCast<std::streamoff>(k_maximumRuntimeManifestBytes);
         REQUIRE(beyondCap.has_value());
         stream.seekp(*beyondCap);
         stream.put('\0');

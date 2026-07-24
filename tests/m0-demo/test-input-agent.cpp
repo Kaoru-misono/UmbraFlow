@@ -92,7 +92,7 @@ namespace uf::m0_demo
             REQUIRE(frame.has_value());
             auto const lease = ObservationLease::forFrame(
                 *frame,
-                g_defaultMaxActionFrameAge
+                k_defaultMaxActionFrameAge
             );
             REQUIRE(lease.has_value());
             return *lease;
@@ -184,7 +184,7 @@ namespace uf::m0_demo
         auto const defaultSettle = parsedClick(
             R"({"op":"click","x":1,"y":2,"out_before":"before.png","out_after":"after.png"})"
         );
-        CHECK(defaultSettle.m_settle == g_defaultInputAgentSettle);
+        CHECK(defaultSettle.m_settle == k_defaultInputAgentSettle);
 
         auto const quit = parseInputAgentCommand(
             "  { \"op\" : \"quit\" }  "
@@ -225,7 +225,7 @@ namespace uf::m0_demo
         auto const boundary = parsedClick(
             R"({"op":"click","x":1,"y":2,"out_before":"a.png","out_after":"b.png","settle_ms":5000})"
         );
-        CHECK(boundary.m_settle == g_maximumInputAgentSettle);
+        CHECK(boundary.m_settle == k_maximumInputAgentSettle);
 
         auto const result = parseInputAgentCommand(
             R"({"op":"click","x":1,"y":2,"out_before":"a.png","out_after":"b.png","settle_ms":5001})"

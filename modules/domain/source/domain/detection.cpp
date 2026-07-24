@@ -10,7 +10,7 @@ namespace uf
         MonotonicInstant::Duration requested
     ) noexcept -> MonotonicInstant::Duration
     {
-        return std::min(requested, g_defaultMaxActionFrameAge);
+        return std::min(requested, k_defaultMaxActionFrameAge);
     }
 
     Detection::Detection(

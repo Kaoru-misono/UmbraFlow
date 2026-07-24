@@ -10,14 +10,14 @@
 
 namespace uf::controller_detail
 {
-    inline constexpr auto g_wmKeyDown = uint32{0x0100U};
-    inline constexpr auto g_wmKeyUp = uint32{0x0101U};
-    inline constexpr auto g_wmChar = uint32{0x0102U};
-    inline constexpr auto g_wmUnichar = uint32{0x0109U};
-    inline constexpr auto g_wmMouseMove = uint32{0x0200U};
-    inline constexpr auto g_wmLeftButtonDown = uint32{0x0201U};
-    inline constexpr auto g_wmLeftButtonUp = uint32{0x0202U};
-    inline constexpr auto g_leftButtonMask = uintptr{0x0001U};
+    inline constexpr auto k_wmKeyDown = uint32{0x0100U};
+    inline constexpr auto k_wmKeyUp = uint32{0x0101U};
+    inline constexpr auto k_wmChar = uint32{0x0102U};
+    inline constexpr auto k_wmUnichar = uint32{0x0109U};
+    inline constexpr auto k_wmMouseMove = uint32{0x0200U};
+    inline constexpr auto k_wmLeftButtonDown = uint32{0x0201U};
+    inline constexpr auto k_wmLeftButtonUp = uint32{0x0202U};
+    inline constexpr auto k_leftButtonMask = uintptr{0x0001U};
 
     enum class KeyTransition : uint8
     {

@@ -32,11 +32,11 @@ namespace uf::workbench
 {
     namespace
     {
-        constexpr auto g_sourceId       = "00000000-0000-0000-0000-000000000201";
-        constexpr auto g_secondSourceId = "00000000-0000-0000-0000-000000000202";
-        constexpr auto g_anchorId       = "00000000-0000-0000-0000-000000000001";
-        constexpr auto g_secondAnchorId = "00000000-0000-0000-0000-000000000002";
-        constexpr auto g_pageId         = "00000000-0000-0000-0000-000000000101";
+        constexpr auto k_sourceId       = "00000000-0000-0000-0000-000000000201";
+        constexpr auto k_secondSourceId = "00000000-0000-0000-0000-000000000202";
+        constexpr auto k_anchorId       = "00000000-0000-0000-0000-000000000001";
+        constexpr auto k_secondAnchorId = "00000000-0000-0000-0000-000000000002";
+        constexpr auto k_pageId         = "00000000-0000-0000-0000-000000000101";
 
         struct ProjectFixture final
         {
@@ -142,9 +142,9 @@ namespace uf::workbench
         auto projectFixture(uint8 redOffset) -> ProjectFixture
         {
             auto const fingerprint = annotation::test::fingerprint(2, 2, 96, 96);
-            auto const sourceId    = annotation::test::sourceId(g_sourceId);
-            auto const anchorId    = annotation::test::recognizerId(g_anchorId);
-            auto const pageId      = annotation::test::pageId(g_pageId);
+            auto const sourceId    = annotation::test::sourceId(k_sourceId);
+            auto const anchorId    = annotation::test::recognizerId(k_anchorId);
+            auto const pageId      = annotation::test::pageId(k_pageId);
             auto pngBytes          = encodedSource(redOffset);
             auto const sourceHash  = annotation::sha256(pngBytes);
             REQUIRE(sourceHash.has_value());
@@ -192,11 +192,11 @@ namespace uf::workbench
         auto multiSourceProjectFixture() -> MultiSourceProjectFixture
         {
             auto const fingerprint    = annotation::test::fingerprint(2, 2, 96, 96);
-            auto const firstSourceId  = annotation::test::sourceId(g_sourceId);
-            auto const secondSourceId = annotation::test::sourceId(g_secondSourceId);
-            auto const firstAnchorId  = annotation::test::recognizerId(g_anchorId);
-            auto const secondAnchorId = annotation::test::recognizerId(g_secondAnchorId);
-            auto const pageId         = annotation::test::pageId(g_pageId);
+            auto const firstSourceId  = annotation::test::sourceId(k_sourceId);
+            auto const secondSourceId = annotation::test::sourceId(k_secondSourceId);
+            auto const firstAnchorId  = annotation::test::recognizerId(k_anchorId);
+            auto const secondAnchorId = annotation::test::recognizerId(k_secondAnchorId);
+            auto const pageId         = annotation::test::pageId(k_pageId);
 
             auto firstPng  = encodedSource(0);
             auto secondPng = encodedSource(0x40);

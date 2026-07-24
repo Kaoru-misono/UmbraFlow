@@ -90,12 +90,12 @@ namespace uf::cli
     {
         auto const result = parse(minimalArgs());
         REQUIRE(result.has_value());
-        CHECK(result->m_timeout == g_defaultRunTimeout);
-        CHECK(result->m_pollInterval == g_defaultRunPollInterval);
-        CHECK(result->m_budget == g_defaultPixelComparisonBudget);
-        CHECK(result->m_recognitionTimeout == g_defaultRunRecognitionTimeout);
-        CHECK(result->m_maxFrameAge == g_defaultRunMaxFrameAge);
-        CHECK(result->m_trace == g_defaultTracePath);
+        CHECK(result->m_timeout == k_defaultRunTimeout);
+        CHECK(result->m_pollInterval == k_defaultRunPollInterval);
+        CHECK(result->m_budget == k_defaultPixelComparisonBudget);
+        CHECK(result->m_recognitionTimeout == k_defaultRunRecognitionTimeout);
+        CHECK(result->m_maxFrameAge == k_defaultRunMaxFrameAge);
+        CHECK(result->m_trace == k_defaultTracePath);
     }
 
     TEST_CASE("parseRunArguments reports each missing required flag")

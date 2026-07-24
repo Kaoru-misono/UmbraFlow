@@ -88,7 +88,7 @@ namespace uf::workbench
             return ok();
         }
 
-        constexpr auto g_maximumAuthoringTomlBytes = std::size_t{16} * 1024U * 1024U;
+        constexpr auto k_maximumAuthoringTomlBytes = std::size_t{16} * 1024U * 1024U;
 
         // Reads a whole file as raw bytes held in a std::string, rejecting a
         // file larger than maximumBytes and a file that does not exist. The
@@ -292,7 +292,7 @@ namespace uf::workbench
             authoringToml,
             readCappedFile(
                 absoluteRoot / "annotations.toml",
-                g_maximumAuthoringTomlBytes,
+                k_maximumAuthoringTomlBytes,
                 "annotations document"
             )
         );
@@ -310,7 +310,7 @@ namespace uf::workbench
                 pngText,
                 readCappedFile(
                     absoluteRoot / source.relativePath(),
-                    image::g_maximumPngFileBytes,
+                    image::k_maximumPngFileBytes,
                     "source image"
                 )
             );

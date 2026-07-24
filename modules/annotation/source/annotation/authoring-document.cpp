@@ -25,8 +25,8 @@ namespace uf::annotation
 {
     namespace
     {
-        constexpr auto g_maximumAuthoringDocumentBytes = std::size_t{16} * 1024U * 1024U;
-        constexpr auto g_maximumAuthoringResources     = std::size_t{4096};
+        constexpr auto k_maximumAuthoringDocumentBytes = std::size_t{16} * 1024U * 1024U;
+        constexpr auto k_maximumAuthoringResources     = std::size_t{4096};
 
         [[nodiscard]]
         auto invalidAuthoring(std::string message) -> std::unexpected<Error>
@@ -746,10 +746,10 @@ namespace uf::annotation
     ) -> Result<AuthoringDocument>
     {
         if (
-            sources.size() > g_maximumAuthoringResources
-            || recognizers.size() > g_maximumAuthoringResources
-            || pages.size() > g_maximumAuthoringResources
-            || regressions.size() > g_maximumAuthoringResources
+            sources.size() > k_maximumAuthoringResources
+            || recognizers.size() > k_maximumAuthoringResources
+            || pages.size() > k_maximumAuthoringResources
+            || regressions.size() > k_maximumAuthoringResources
         )
         {
             return invalidAuthoring(
@@ -907,7 +907,7 @@ namespace uf::annotation
             std::move(recognizerSources),
             std::move(regressions)
         };
-        if (serializeAuthoringDocument(document).size() > g_maximumAuthoringDocumentBytes)
+        if (serializeAuthoringDocument(document).size() > k_maximumAuthoringDocumentBytes)
         {
             return invalidAuthoring(
                 "authoring document exceeds the 16 MiB serialized quota"
@@ -945,7 +945,7 @@ namespace uf::annotation
     ) -> std::string
     {
         auto output = std::string{};
-        detail::appendStringField(output, "schema", g_authoringDocumentSchema);
+        detail::appendStringField(output, "schema", k_authoringDocumentSchema);
         detail::appendStringField(
             output,
             "project_id",
@@ -1133,7 +1133,7 @@ namespace uf::annotation
     {
         if (
             canonicalToml.empty()
-            || canonicalToml.size() > g_maximumAuthoringDocumentBytes
+            || canonicalToml.size() > k_maximumAuthoringDocumentBytes
         )
         {
             return invalidAuthoring(
@@ -1146,7 +1146,7 @@ namespace uf::annotation
             std::string{canonicalToml}
         };
         UF_TRY_VALUE(schema, reader.takeStringField("schema"));
-        if (schema != g_authoringDocumentSchema)
+        if (schema != k_authoringDocumentSchema)
         {
             return invalidAuthoring(
                 std::format("unsupported authoring document schema '{}'", schema)
@@ -1173,7 +1173,7 @@ namespace uf::annotation
             if (header == "[[source]]")
             {
                 rank = 1;
-                if (sources.size() >= g_maximumAuthoringResources)
+                if (sources.size() >= k_maximumAuthoringResources)
                 {
                     return invalidAuthoring("authoring source quota exceeded");
                 }
@@ -1183,7 +1183,7 @@ namespace uf::annotation
             else if (header == "[[annotation]]")
             {
                 rank = 2;
-                if (recognizers.size() >= g_maximumAuthoringResources)
+                if (recognizers.size() >= k_maximumAuthoringResources)
                 {
                     return invalidAuthoring("authoring annotation quota exceeded");
                 }
@@ -1196,7 +1196,7 @@ namespace uf::annotation
             else if (header == "[[page]]")
             {
                 rank = 3;
-                if (pages.size() >= g_maximumAuthoringResources)
+                if (pages.size() >= k_maximumAuthoringResources)
                 {
                     return invalidAuthoring("authoring page quota exceeded");
                 }
@@ -1206,7 +1206,7 @@ namespace uf::annotation
             else if (header == "[[regression]]")
             {
                 rank = 4;
-                if (regressions.size() >= g_maximumAuthoringResources)
+                if (regressions.size() >= k_maximumAuthoringResources)
                 {
                     return invalidAuthoring("authoring regression quota exceeded");
                 }

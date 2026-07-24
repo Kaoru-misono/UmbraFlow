@@ -8,7 +8,7 @@
 
 namespace uf::controller_detail
 {
-    inline constexpr auto g_accessDeniedError = uint32{5};
+    inline constexpr auto k_accessDeniedError = uint32{5};
 
     [[nodiscard]]
     constexpr auto win32Code(uint32 hresult) noexcept -> uint32

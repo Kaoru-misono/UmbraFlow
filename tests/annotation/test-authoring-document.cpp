@@ -17,12 +17,12 @@ namespace uf::annotation
 {
     namespace
     {
-        constexpr auto g_sourceId     = "00000000-0000-0000-0000-000000000201";
-        constexpr auto g_anchorId     = "00000000-0000-0000-0000-000000000001";
-        constexpr auto g_actionId     = "00000000-0000-0000-0000-000000000002";
-        constexpr auto g_pageId       = "00000000-0000-0000-0000-000000000101";
-        constexpr auto g_regressionId = "00000000-0000-0000-0000-000000000301";
-        constexpr auto g_sourceHash =
+        constexpr auto k_sourceId     = "00000000-0000-0000-0000-000000000201";
+        constexpr auto k_anchorId     = "00000000-0000-0000-0000-000000000001";
+        constexpr auto k_actionId     = "00000000-0000-0000-0000-000000000002";
+        constexpr auto k_pageId       = "00000000-0000-0000-0000-000000000101";
+        constexpr auto k_regressionId = "00000000-0000-0000-0000-000000000301";
+        constexpr auto k_sourceHash =
             "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
             "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 
@@ -38,14 +38,14 @@ namespace uf::annotation
         auto authoringDocument() -> AuthoringDocument
         {
             auto const fingerprint = test::fingerprint(8, 6, 96, 96);
-            auto const sourceId    = test::sourceId(g_sourceId);
-            auto const anchorId    = test::recognizerId(g_anchorId);
-            auto const actionId    = test::recognizerId(g_actionId);
-            auto const pageId      = test::pageId(g_pageId);
+            auto const sourceId    = test::sourceId(k_sourceId);
+            auto const anchorId    = test::recognizerId(k_anchorId);
+            auto const actionId    = test::recognizerId(k_actionId);
+            auto const pageId      = test::pageId(k_pageId);
             auto source = AuthoringSource::create(
                 AuthoringSourceSpec{
                     .m_id          = sourceId,
-                    .m_contentHash = contentHash(g_sourceHash),
+                    .m_contentHash = contentHash(k_sourceHash),
                     .m_fingerprint = fingerprint,
                     .m_provenance  = WgcSourceProvenance{
                         .m_targetGeneration = TargetGeneration::fromValue(7),
@@ -58,7 +58,7 @@ namespace uf::annotation
             REQUIRE(click.has_value());
             auto regression = RegressionCase{
                 RegressionSpec{
-                    .m_id             = test::regressionId(g_regressionId),
+                    .m_id             = test::regressionId(k_regressionId),
                     .m_sourceId       = sourceId,
                     .m_classification = RegressionClassification::Positive,
                     .m_expectation    = ResolvedRegression{pageId},
@@ -220,8 +220,8 @@ namespace uf::annotation
         invalid.emplace_back(
             replaceOnce(
                 canonical,
-                std::string{"id = \""} + g_regressionId + '"',
-                std::string{"id = \""} + g_sourceId + '"'
+                std::string{"id = \""} + k_regressionId + '"',
+                std::string{"id = \""} + k_sourceId + '"'
             )
         );
         invalid.emplace_back(
@@ -283,7 +283,7 @@ namespace uf::annotation
                 &regression.expectation()
             );
             REQUIRE(p_resolved != nullptr);
-            CHECK(p_resolved->m_pageId == test::pageId(g_pageId));
+            CHECK(p_resolved->m_pageId == test::pageId(k_pageId));
             CHECK(serializeAuthoringDocument(*parsed) == encoded);
         }
     }

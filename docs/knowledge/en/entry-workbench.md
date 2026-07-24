@@ -89,7 +89,7 @@ edit either yields a complete, valid document or leaves the original version unt
 `AuthoringEditHistory::apply` performs the rebuild first, then compares the canonical serialization
 of the new and old documents. An identical draft returns `false` and does not pollute the history; a
 genuine change moves the current document into undo, clears redo, and caps undo at
-`g_maximumAuthoringUndoEntries == 100`.
+`k_maximumAuthoringUndoEntries == 100`.
 `undo`/`redo` move a complete document value, so references spanning recognizers/pages are always
 restored as one and the same version.
 
@@ -196,7 +196,7 @@ temporarily out of sync.
 
 The read entry point `loadAuthoringProject` limits `annotations.toml` to 16 MiB, hands it to
 `parseAuthoringDocument`, and then reads each `assets/sources/<hash>.png` in document order. Each PNG
-is bounded by `image::g_maximumPngFileBytes`, must re-hash to equal the document record, and its
+is bounded by `image::k_maximumPngFileBytes`, must re-hash to equal the document record, and its
 decoded width/height must equal the source fingerprint. The returned `LoadedAuthoringProject` keeps
 the original PNG bytes without re-encoding, so saving directly after a load preserves byte-identical
 source assets.

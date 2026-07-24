@@ -19,7 +19,7 @@ namespace uf::m0_demo
 {
     namespace
     {
-        constexpr auto g_sleepStep = std::chrono::milliseconds{20};
+        constexpr auto k_sleepStep = std::chrono::milliseconds{20};
 
         [[nodiscard]]
         auto interruptibleSleep(uint64 totalMilliseconds) -> bool
@@ -47,7 +47,7 @@ namespace uf::m0_demo
                 auto const remaining = totalMilliseconds - elapsedCount;
                 auto const stepCount = std::min<uint64>(
                     remaining,
-                    static_cast<uint64>(g_sleepStep.count())
+                    static_cast<uint64>(k_sleepStep.count())
                 );
                 auto const step = checkedCast<std::chrono::milliseconds::rep>(stepCount);
                 if (!step)

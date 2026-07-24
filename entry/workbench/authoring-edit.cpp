@@ -265,7 +265,7 @@ namespace uf::workbench
             return false;
         }
 
-        if (m_undo.size() == g_maximumAuthoringUndoEntries)
+        if (m_undo.size() == k_maximumAuthoringUndoEntries)
         {
             m_undo.erase(m_undo.begin());
         }

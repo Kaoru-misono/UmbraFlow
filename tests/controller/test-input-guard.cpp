@@ -9,7 +9,7 @@
 
 TEST_CASE("runtime forbidden list matches the Rust guard names")
 {
-    CHECK(uf::g_forbiddenBackgroundApis.size() == 6U);
+    CHECK(uf::k_forbiddenBackgroundApis.size() == 6U);
     for (auto const name : std::array<std::string_view, 6>{
         "SetForegroundWindow",
         "SetFocus",
@@ -19,7 +19,7 @@ TEST_CASE("runtime forbidden list matches the Rust guard names")
         "SetCursorPos",
     })
     {
-        CHECK(std::ranges::find(uf::g_forbiddenBackgroundApis, name) != uf::g_forbiddenBackgroundApis.end());
+        CHECK(std::ranges::find(uf::k_forbiddenBackgroundApis, name) != uf::k_forbiddenBackgroundApis.end());
     }
 }
 

@@ -15,16 +15,16 @@ namespace uf::annotation
 {
     namespace
     {
-        constexpr auto g_anchorId = "00000000-0000-0000-0000-000000000001";
-        constexpr auto g_actionId = "00000000-0000-0000-0000-000000000002";
-        constexpr auto g_pageId = "00000000-0000-0000-0000-000000000101";
-        constexpr auto g_anchorHash =
+        constexpr auto k_anchorId = "00000000-0000-0000-0000-000000000001";
+        constexpr auto k_actionId = "00000000-0000-0000-0000-000000000002";
+        constexpr auto k_pageId = "00000000-0000-0000-0000-000000000101";
+        constexpr auto k_anchorHash =
             "sha256:11111111111111111111111111111111"
             "11111111111111111111111111111111";
-        constexpr auto g_actionHash =
+        constexpr auto k_actionHash =
             "sha256:22222222222222222222222222222222"
             "22222222222222222222222222222222";
-        constexpr auto g_sourceHash =
+        constexpr auto k_sourceHash =
             "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
             "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 
@@ -40,9 +40,9 @@ namespace uf::annotation
         auto runtimeManifest(std::string project = "personal.test") -> RuntimeManifest
         {
             auto const fingerprint = test::fingerprint(8, 6, 96, 96);
-            auto const anchorId = test::recognizerId(g_anchorId);
-            auto const actionId = test::recognizerId(g_actionId);
-            auto const pageId = test::pageId(g_pageId);
+            auto const anchorId = test::recognizerId(k_anchorId);
+            auto const actionId = test::recognizerId(k_actionId);
+            auto const pageId = test::pageId(k_pageId);
             auto const click = TemplateOffset::create(1, 0, 2, 1);
             REQUIRE(click.has_value());
 
@@ -61,8 +61,8 @@ namespace uf::annotation
                             {pageId},
                             *click
                         ),
-                        .m_templateHash = contentHash(g_actionHash),
-                        .m_sourceHash   = contentHash(g_sourceHash),
+                        .m_templateHash = contentHash(k_actionHash),
+                        .m_sourceHash   = contentHash(k_sourceHash),
                     },
                     RuntimeRecognizerSpec{
                         .m_definition = test::recognizer(
@@ -73,8 +73,8 @@ namespace uf::annotation
                             test::pixelRect(1, 1, 1, 1),
                             test::pixelRect(0, 0, 3, 3)
                         ),
-                        .m_templateHash = contentHash(g_anchorHash),
-                        .m_sourceHash   = contentHash(g_sourceHash),
+                        .m_templateHash = contentHash(k_anchorHash),
+                        .m_sourceHash   = contentHash(k_sourceHash),
                     },
                 },
                 {test::page(pageId, "home", {anchorId})}
@@ -148,9 +148,9 @@ namespace uf::annotation
         CHECK(serializeRuntimeManifest(*parsed) == encoded);
         CHECK(parsed->catalog().recognizers().size() == 2U);
         CHECK(parsed->catalog().pages().size() == 1U);
-        auto const* p_asset = parsed->findAsset(test::recognizerId(g_anchorId));
+        auto const* p_asset = parsed->findAsset(test::recognizerId(k_anchorId));
         REQUIRE(p_asset != nullptr);
-        CHECK(p_asset->m_templateHash == contentHash(g_anchorHash));
+        CHECK(p_asset->m_templateHash == contentHash(k_anchorHash));
     }
 
     TEST_CASE("annotation runtime manifest preserves canonical TOML string escapes")

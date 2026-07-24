@@ -88,7 +88,7 @@ namespace uf
     {
         CHECK(
             clampMaxActionFrameAge(clockDuration(std::chrono::seconds{5}))
-            == g_defaultMaxActionFrameAge
+            == k_defaultMaxActionFrameAge
         );
         CHECK(
             clampMaxActionFrameAge(clockDuration(std::chrono::milliseconds{100}))
@@ -147,7 +147,7 @@ namespace uf
         CHECK(lease->frameId() == frame.id());
         CHECK(
             lease->expiresAt().saturatingDurationSince(frame.capturedAt())
-            == g_defaultMaxActionFrameAge
+            == k_defaultMaxActionFrameAge
         );
     }
 
@@ -162,7 +162,7 @@ namespace uf
         );
         auto const lease = ObservationLease::forFrame(
             frame,
-            g_defaultMaxActionFrameAge
+            k_defaultMaxActionFrameAge
         );
         REQUIRE(lease.has_value());
 
@@ -221,7 +221,7 @@ namespace uf
     {
         using Duration = MonotonicInstant::Duration;
 
-        auto const lastValidCapture = Duration::max() - g_defaultMaxActionFrameAge;
+        auto const lastValidCapture = Duration::max() - k_defaultMaxActionFrameAge;
         auto const validFrame = makeFrame(
             1,
             TargetGeneration{},
@@ -230,7 +230,7 @@ namespace uf
         );
         auto const validLease = ObservationLease::forFrame(
             validFrame,
-            g_defaultMaxActionFrameAge
+            k_defaultMaxActionFrameAge
         );
         REQUIRE(validLease.has_value());
         CHECK(
@@ -246,7 +246,7 @@ namespace uf
         );
         auto const overflowLease = ObservationLease::forFrame(
             overflowFrame,
-            g_defaultMaxActionFrameAge
+            k_defaultMaxActionFrameAge
         );
         REQUIRE_FALSE(overflowLease.has_value());
         auto const kind = automationErrorKind(overflowLease.error());

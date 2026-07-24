@@ -88,7 +88,7 @@ containers; it is not a persistence hash or a content identifier.
 
 ### The Exact Integer–Float Bridge
 
-`g_maxExactFrameDimension` equals `1 << 24`, that is `16,777,216`. IEEE-754 binary32 can exactly
+`k_maxExactFrameDimension` equals `1 << 24`, that is `16,777,216`. IEEE-754 binary32 can exactly
 represent every integer in the closed interval `[0, 2^24]`, while `2^24 + 1` is the first integer
 that cannot be represented exactly. This inclusive bound is an interface contract and must not be
 rewritten as `< 2^24`.
@@ -215,7 +215,7 @@ const reference bound to the owner's lifetime, while `Detection::label()` return
 `forFrame`. It copies the frame's identity triple and computes `expiresAt = capturedAt +
 effectiveAge`.
 
-`g_defaultMaxActionFrameAge` is 750 ms. `clampMaxActionFrameAge` only allows a caller to shorten this
+`k_defaultMaxActionFrameAge` is 750 ms. `clampMaxActionFrameAge` only allows a caller to shorten this
 fuse and cannot loosen it via configuration: `effectiveAge = min(requested, 750ms)`. A negative
 duration is rejected before the clamp; `checkedAddMonotonic` also rejects deadline overflow.
 

@@ -14,7 +14,7 @@
 
 namespace uf
 {
-    inline constexpr auto g_defaultCaptureStallTimeout = MonotonicInstant::Duration{
+    inline constexpr auto k_defaultCaptureStallTimeout = MonotonicInstant::Duration{
         std::chrono::seconds{1}
     };
 
@@ -36,7 +36,7 @@ namespace uf
 
     public:
         constexpr WgcCaptureOptions() noexcept
-            : m_captureStallTimeout{g_defaultCaptureStallTimeout}
+            : m_captureStallTimeout{k_defaultCaptureStallTimeout}
             , m_requireBorderless{false}
         {
         }

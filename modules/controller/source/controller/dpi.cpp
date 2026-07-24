@@ -33,14 +33,14 @@ namespace uf::controller_detail
             return DpiDeclaration::Declared;
         }
         if (
-            win32Error == g_accessDeniedError
+            win32Error == k_accessDeniedError
             && isPerMonitorAwareV2
         )
         {
             return DpiDeclaration::AlreadyDeclared;
         }
         if (
-            (!win32Error || win32Error == g_accessDeniedError)
+            (!win32Error || win32Error == k_accessDeniedError)
             && !isPerMonitorAwareV2
         )
         {

@@ -62,7 +62,7 @@ shell 每帧同步调用 `drawWorkbench`。只有 `dispatch`/`main` 会把错误
 
 `AuthoringEditHistory::apply` 先完成重建，再比较新旧 document 的规范序列化结果。
 相同 draft 返回 `false`，不写入历史；发生变化时，把当前 document 移入 undo、清空
-redo，并把 undo 限制为 `g_maximumAuthoringUndoEntries == 100`。
+redo，并把 undo 限制为 `k_maximumAuthoringUndoEntries == 100`。
 `undo`/`redo` 移动完整 document value，所以跨 recognizer/page 的引用始终作为同一版本恢复。
 
 `entry/workbench/app/workbench-app.hpp` 的 `AppState` 是窗口背后的
@@ -146,7 +146,7 @@ view 与 runtime view 可能暂时不同步。
 
 读入口 `loadAuthoringProject` 把 `annotations.toml` 限制在 16 MiB，交给
 `parseAuthoringDocument`，再按 document order 读取每个
-`assets/sources/<hash>.png`。每个 PNG 受 `image::g_maximumPngFileBytes`
+`assets/sources/<hash>.png`。每个 PNG 受 `image::k_maximumPngFileBytes`
 限制，必须重新 hash 等于 document record，且 decoded width/height 必须等于
 source fingerprint。返回的 `LoadedAuthoringProject` 保留原 PNG bytes，不重新
 编码，因此 load 后直接 save 可维持 byte-identical source assets。

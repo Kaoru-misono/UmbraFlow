@@ -28,10 +28,10 @@ namespace uf
     namespace detail
     {
         template <typename Type, typename Enum>
-        inline constexpr bool g_isEnumEntryArray = false;
+        inline constexpr bool k_isEnumEntryArray = false;
 
         template <typename Enum, std::size_t Size>
-        inline constexpr bool g_isEnumEntryArray<std::array<EnumEntry<Enum>, Size>, Enum> = true;
+        inline constexpr bool k_isEnumEntryArray<std::array<EnumEntry<Enum>, Size>, Enum> = true;
 
         [[nodiscard]]
         constexpr auto trimEnumToken(
@@ -97,9 +97,9 @@ namespace uf
     template <typename Enum>
     concept ReflectedEnum = (
         std::is_enum_v<Enum>
-        && requires { EnumTraits<Enum>::s_entries; }
-        && detail::g_isEnumEntryArray<
-            std::remove_cv_t<decltype(EnumTraits<Enum>::s_entries)>,
+        && requires { EnumTraits<Enum>::k_entries; }
+        && detail::k_isEnumEntryArray<
+            std::remove_cv_t<decltype(EnumTraits<Enum>::k_entries)>,
             Enum
         >
     );
@@ -110,7 +110,7 @@ namespace uf
         [[nodiscard]]
         consteval auto enumReflectionIsValid() noexcept -> bool
         {
-            auto const& entries = EnumTraits<Enum>::s_entries;
+            auto const& entries = EnumTraits<Enum>::k_entries;
             if (entries.empty())
             {
                 return false;
@@ -141,13 +141,13 @@ namespace uf
 
     template <ReflectedEnum Enum>
     [[nodiscard]]
-    constexpr auto enumEntries() noexcept -> decltype((EnumTraits<Enum>::s_entries))
+    constexpr auto enumEntries() noexcept -> decltype((EnumTraits<Enum>::k_entries))
     {
         static_assert(
             detail::enumReflectionIsValid<Enum>(),
             "Enum reflection requires non-empty, unique names and values."
         );
-        return EnumTraits<Enum>::s_entries;
+        return EnumTraits<Enum>::k_entries;
     }
 
     template <ReflectedEnum Enum>
@@ -185,7 +185,7 @@ namespace uf
     template <> \
     struct uf::EnumTraits<enumType> final \
     { \
-        static constexpr auto s_entries = ::uf::detail::makeEnumEntries( \
+        static constexpr auto k_entries = ::uf::detail::makeEnumEntries( \
             ::std::to_array<enumType>({__VA_ARGS__}), \
             #__VA_ARGS__ \
         ); \

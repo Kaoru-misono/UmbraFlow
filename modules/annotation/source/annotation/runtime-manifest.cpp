@@ -24,8 +24,8 @@ namespace uf::annotation
 {
     namespace
     {
-        constexpr auto g_maximumRuntimeManifestBytes = std::size_t{16} * 1024U * 1024U;
-        constexpr auto g_maximumRuntimeResources     = std::size_t{4096};
+        constexpr auto k_maximumRuntimeManifestBytes = std::size_t{16} * 1024U * 1024U;
+        constexpr auto k_maximumRuntimeResources     = std::size_t{4096};
 
         [[nodiscard]]
         auto invalidManifest(std::string message) -> std::unexpected<Error>
@@ -337,8 +337,8 @@ namespace uf::annotation
     ) -> Result<RuntimeManifest>
     {
         if (
-            recognizers.size() > g_maximumRuntimeResources
-            || pages.size() > g_maximumRuntimeResources
+            recognizers.size() > k_maximumRuntimeResources
+            || pages.size() > k_maximumRuntimeResources
         )
         {
             return invalidManifest(
@@ -386,7 +386,7 @@ namespace uf::annotation
             std::move(catalog),
             std::move(assets)
         };
-        if (serializeRuntimeManifest(manifest).size() > g_maximumRuntimeManifestBytes)
+        if (serializeRuntimeManifest(manifest).size() > k_maximumRuntimeManifestBytes)
         {
             return invalidManifest(
                 "runtime manifest exceeds the 16 MiB serialized quota"
@@ -420,7 +420,7 @@ namespace uf::annotation
     auto serializeRuntimeManifest(RuntimeManifest const& manifest) -> std::string
     {
         auto output = std::string{};
-        detail::appendStringField(output, "schema", g_runtimeManifestSchema);
+        detail::appendStringField(output, "schema", k_runtimeManifestSchema);
         detail::appendStringField(
             output,
             "project_id",
@@ -512,7 +512,7 @@ namespace uf::annotation
     {
         if (
             canonicalToml.empty()
-            || canonicalToml.size() > g_maximumRuntimeManifestBytes
+            || canonicalToml.size() > k_maximumRuntimeManifestBytes
         )
         {
             return invalidManifest(
@@ -525,7 +525,7 @@ namespace uf::annotation
             std::string{canonicalToml}
         };
         UF_TRY_VALUE(schema, reader.takeStringField("schema"));
-        if (schema != g_runtimeManifestSchema)
+        if (schema != k_runtimeManifestSchema)
         {
             return invalidManifest(
                 std::format("unsupported runtime manifest schema '{}'", schema)
@@ -570,7 +570,7 @@ namespace uf::annotation
                         "runtime manifest recognizers must precede pages"
                     );
                 }
-                if (recognizers.size() >= g_maximumRuntimeResources)
+                if (recognizers.size() >= k_maximumRuntimeResources)
                 {
                     return invalidManifest(
                         "runtime manifest exceeds the recognizer quota"
@@ -583,7 +583,7 @@ namespace uf::annotation
             if (header == "[[page]]")
             {
                 parsingPages = true;
-                if (pages.size() >= g_maximumRuntimeResources)
+                if (pages.size() >= k_maximumRuntimeResources)
                 {
                     return invalidManifest(
                         "runtime manifest exceeds the page quota"

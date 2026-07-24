@@ -39,10 +39,10 @@ namespace uf::workbench::platform
 {
     namespace
     {
-        constexpr auto g_windowClassName = std::wstring_view{
+        constexpr auto k_windowClassName = std::wstring_view{
             L"UmbraWorkbenchWindow"
         };
-        constexpr auto g_swapChainBufferCount = uint32{2};
+        constexpr auto k_swapChainBufferCount = uint32{2};
     }
 
     struct GuiShellState final
@@ -100,7 +100,7 @@ namespace uf::workbench::platform
                 // SAFETY: the class was registered against m_instance under this
                 // name and no window of it survives the DestroyWindow above.
                 static_cast<void>(
-                    UnregisterClassW(g_windowClassName.data(), m_instance)
+                    UnregisterClassW(k_windowClassName.data(), m_instance)
                 );
             }
         }
@@ -242,7 +242,7 @@ namespace uf::workbench::platform
         windowClass.lpfnWndProc   = guiShellWndProc;
         windowClass.hInstance     = state->m_instance;
         windowClass.hCursor       = LoadCursorW(nullptr, IDC_ARROW);
-        windowClass.lpszClassName = g_windowClassName.data();
+        windowClass.lpszClassName = k_windowClassName.data();
 
         // SAFETY: windowClass is fully initialized and lives for this call; the
         // atom it returns is recorded so the destructor can unregister the class.
@@ -263,7 +263,7 @@ namespace uf::workbench::platform
         // recorded in state and torn down by the destructor.
         state->m_window = CreateWindowExW(
             0,
-            g_windowClassName.data(),
+            k_windowClassName.data(),
             title.c_str(),
             WS_OVERLAPPEDWINDOW,
             CW_USEDEFAULT,
@@ -289,7 +289,7 @@ namespace uf::workbench::platform
         SetWindowLongPtrW(state->m_window, GWLP_USERDATA, userData);
 
         auto swapChainDesc                        = DXGI_SWAP_CHAIN_DESC{};
-        swapChainDesc.BufferCount                 = g_swapChainBufferCount;
+        swapChainDesc.BufferCount                 = k_swapChainBufferCount;
         swapChainDesc.BufferDesc.Format           = DXGI_FORMAT_R8G8B8A8_UNORM;
         swapChainDesc.BufferUsage                 = DXGI_USAGE_RENDER_TARGET_OUTPUT;
         swapChainDesc.OutputWindow                = state->m_window;

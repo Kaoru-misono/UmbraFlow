@@ -29,8 +29,8 @@ namespace uf::workbench::platform
 {
     namespace
     {
-        constexpr auto g_temporaryFileAttempts = uint32{64};
-        constexpr auto g_readBufferBytes       = std::size_t{64} * 1024U;
+        constexpr auto k_temporaryFileAttempts = uint32{64};
+        constexpr auto k_readBufferBytes       = std::size_t{64} * 1024U;
 
         class NativeHandle final
         {
@@ -194,7 +194,7 @@ namespace uf::workbench::platform
                 return false;
             }
 
-            auto buffer    = std::array<std::byte, g_readBufferBytes>{};
+            auto buffer    = std::array<std::byte, k_readBufferBytes>{};
             auto remaining = expected;
             while (!remaining.empty())
             {
@@ -245,7 +245,7 @@ namespace uf::workbench::platform
         {
             static auto s_sequence = std::atomic<uint64>{1U};
 
-            for (auto attempt = uint32{0}; attempt < g_temporaryFileAttempts; ++attempt)
+            for (auto attempt = uint32{0}; attempt < k_temporaryFileAttempts; ++attempt)
             {
                 auto temporary = destination;
                 temporary += std::format(

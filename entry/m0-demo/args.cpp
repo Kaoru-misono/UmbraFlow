@@ -25,7 +25,7 @@ namespace uf::m0_demo
 {
     namespace
     {
-        constexpr auto g_maximumAveragePixelSad = uint64{255};
+        constexpr auto k_maximumAveragePixelSad = uint64{255};
 
         [[nodiscard]]
         auto isValueFlag(std::string_view flag) noexcept -> bool
@@ -440,7 +440,7 @@ namespace uf::m0_demo
             std::chrono::milliseconds{1000}
         );
         auto clickDelay = std::optional<ClickDelay>{};
-        auto seed       = g_defaultPacingSeed;
+        auto seed       = k_defaultPacingSeed;
         auto log        = std::optional<std::filesystem::path>{};
 
         auto index = std::size_t{0};
@@ -536,12 +536,12 @@ namespace uf::m0_demo
         }
 
         UF_TRY_VALUE(requiredThreshold, require(threshold, "--threshold"));
-        if (requiredThreshold > g_maximumAveragePixelSad)
+        if (requiredThreshold > k_maximumAveragePixelSad)
         {
             return invalid(
                 std::format(
                     "--threshold must be in 0..={}, got {}",
-                    g_maximumAveragePixelSad,
+                    k_maximumAveragePixelSad,
                     requiredThreshold
                 )
             );
@@ -585,8 +585,8 @@ namespace uf::m0_demo
     {
         auto selector = SelectorArgs{};
         auto output   = std::optional<std::filesystem::path>{};
-        auto frames   = g_defaultCaptureFrames;
-        auto interval = g_defaultCaptureInterval;
+        auto frames   = k_defaultCaptureFrames;
+        auto interval = k_defaultCaptureInterval;
         auto log      = std::optional<std::filesystem::path>{};
 
         auto index = std::size_t{0};
@@ -656,7 +656,7 @@ namespace uf::m0_demo
         auto queue           = std::optional<std::filesystem::path>{};
         auto results         = std::optional<std::filesystem::path>{};
         auto outputDirectory = std::optional<std::filesystem::path>{};
-        auto idleTimeout     = g_defaultInputAgentIdleTimeout;
+        auto idleTimeout     = k_defaultInputAgentIdleTimeout;
 
         auto index = std::size_t{0};
         while (index < raw.size())

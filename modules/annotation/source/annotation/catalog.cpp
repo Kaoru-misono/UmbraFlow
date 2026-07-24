@@ -21,7 +21,7 @@ namespace uf::annotation
 {
     namespace
     {
-        constexpr auto g_luauReservedWords = std::array{
+        constexpr auto k_luauReservedWords = std::array{
             std::string_view{"and"},
             std::string_view{"break"},
             std::string_view{"do"},
@@ -91,7 +91,7 @@ namespace uf::annotation
         [[nodiscard]]
         constexpr auto isLuauReservedWord(std::string_view value) noexcept -> bool
         {
-            return std::ranges::find(g_luauReservedWords, value) != g_luauReservedWords.end();
+            return std::ranges::find(k_luauReservedWords, value) != k_luauReservedWords.end();
         }
 
         template <typename Id>
@@ -192,7 +192,7 @@ namespace uf::annotation
 
     auto ResourceId::toString() const -> std::string
     {
-        static constexpr auto s_hexDigits = std::string_view{"0123456789abcdef"};
+        static constexpr auto k_hexDigits = std::string_view{"0123456789abcdef"};
 
         auto result = std::string{};
         result.reserve(36);
@@ -204,8 +204,8 @@ namespace uf::annotation
             }
 
             auto const value = checkedAt(m_bytes, index);
-            result.push_back(s_hexDigits[value >> 4]);
-            result.push_back(s_hexDigits[value & uint8{0x0F}]);
+            result.push_back(k_hexDigits[value >> 4]);
+            result.push_back(k_hexDigits[value & uint8{0x0F}]);
         }
 
         return result;
@@ -286,7 +286,7 @@ namespace uf::annotation
 
     auto SimilarityThreshold::create(uint32 basisPoints) -> Result<SimilarityThreshold>
     {
-        if (basisPoints > s_basisPointMaximum)
+        if (basisPoints > k_basisPointMaximum)
         {
             return fail(
                 AutomationErrorKind::InvalidResource,
@@ -315,7 +315,7 @@ namespace uf::annotation
             static_cast<uint64>(templateHeight)
         );
         auto const distanceBasisPoints = static_cast<uint64>(
-            s_basisPointMaximum - m_basisPoints
+            k_basisPointMaximum - m_basisPoints
         );
         auto const scaledDistance = checkedMultiply(distanceBasisPoints, uint64{255});
         if (!pixels || !scaledDistance)
@@ -335,7 +335,7 @@ namespace uf::annotation
             );
         }
 
-        return *numerator / static_cast<uint64>(s_basisPointMaximum);
+        return *numerator / static_cast<uint64>(k_basisPointMaximum);
     }
 
     auto TemplateOffset::create(

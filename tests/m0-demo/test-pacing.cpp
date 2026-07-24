@@ -47,7 +47,7 @@ namespace uf::m0_demo
     {
         auto const delay = ClickDelay::create(600, 1800);
         REQUIRE(delay.has_value());
-        auto random = SplitMix64{g_defaultPacingSeed};
+        auto random = SplitMix64{k_defaultPacingSeed};
         for (auto index = 0; index < 10'000; ++index)
         {
             auto const milliseconds = delay->pickMilliseconds(random.next());
@@ -96,7 +96,7 @@ namespace uf::m0_demo
 
         CHECK(draw(42) == draw(42));
         CHECK(draw(42) != draw(43));
-        auto const sequence = draw(g_defaultPacingSeed);
+        auto const sequence = draw(k_defaultPacingSeed);
         auto advances = false;
         for (auto index = std::size_t{1}; index < sequence.size(); ++index)
         {

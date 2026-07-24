@@ -37,7 +37,7 @@ namespace uf::engine
 
         uint64                     m_maximumPixelComparisons{};
         MonotonicInstant::Duration m_recognitionTimeout{};
-        MonotonicInstant::Duration m_maxActionFrameAge{g_defaultMaxActionFrameAge};
+        MonotonicInstant::Duration m_maxActionFrameAge{k_defaultMaxActionFrameAge};
 
         std::stop_token m_cancellation{};
     };

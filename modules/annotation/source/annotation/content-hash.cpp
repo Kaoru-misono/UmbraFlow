@@ -21,13 +21,13 @@ namespace uf::annotation
 {
     namespace
     {
-        constexpr auto g_sha256Prefix = std::string_view{"sha256:"};
-        constexpr auto g_hexDigits = std::string_view{"0123456789abcdef"};
-        constexpr auto g_sha256BlockBytes = std::size_t{64};
-        constexpr auto g_sha256LengthBytes = std::size_t{8};
-        constexpr auto g_sha256DigestBytes = std::size_t{32};
+        constexpr auto k_sha256Prefix = std::string_view{"sha256:"};
+        constexpr auto k_hexDigits = std::string_view{"0123456789abcdef"};
+        constexpr auto k_sha256BlockBytes = std::size_t{64};
+        constexpr auto k_sha256LengthBytes = std::size_t{8};
+        constexpr auto k_sha256DigestBytes = std::size_t{32};
 
-        constexpr auto g_initialState = std::array<uint32, 8>{
+        constexpr auto k_initialState = std::array<uint32, 8>{
             0x6A09E667U,
             0xBB67AE85U,
             0x3C6EF372U,
@@ -38,7 +38,7 @@ namespace uf::annotation
             0x5BE0CD19U,
         };
 
-        constexpr auto g_roundConstants = std::array<uint32, 64>{
+        constexpr auto k_roundConstants = std::array<uint32, 64>{
             0x428A2F98U, 0x71374491U, 0xB5C0FBCFU, 0xE9B5DBA5U,
             0x3956C25BU, 0x59F111F1U, 0x923F82A4U, 0xAB1C5ED5U,
             0xD807AA98U, 0x12835B01U, 0x243185BEU, 0x550C7DC3U,
@@ -126,7 +126,7 @@ namespace uf::annotation
             std::span<std::byte const> block
         ) noexcept -> void
         {
-            UF_CHECK(block.size() == g_sha256BlockBytes);
+            UF_CHECK(block.size() == k_sha256BlockBytes);
 
             auto schedule = std::array<uint32, 64>{};
             for (auto index = std::size_t{0}; index < 16U; ++index)
@@ -158,7 +158,7 @@ namespace uf::annotation
                     h
                     + bigSigma1(e)
                     + choose(e, f, g)
-                    + checkedAt(g_roundConstants, index)
+                    + checkedAt(k_roundConstants, index)
                     + checkedAt(schedule, index)
                 );
                 auto const second = bigSigma0(a) + majority(a, b, c);
@@ -185,10 +185,10 @@ namespace uf::annotation
 
     auto ContentHash::parse(std::string_view value) -> Result<ContentHash>
     {
-        auto constexpr encodedSize = g_sha256Prefix.size() + g_sha256DigestBytes * 2U;
+        auto constexpr encodedSize = k_sha256Prefix.size() + k_sha256DigestBytes * 2U;
         if (
             value.size() != encodedSize
-            || !value.starts_with(g_sha256Prefix)
+            || !value.starts_with(k_sha256Prefix)
         )
         {
             return fail(
@@ -197,11 +197,11 @@ namespace uf::annotation
             );
         }
 
-        auto bytes = std::array<uint8, g_sha256DigestBytes>{};
+        auto bytes = std::array<uint8, k_sha256DigestBytes>{};
         for (auto index = std::size_t{0}; index < bytes.size(); ++index)
         {
-            auto const high = lowerHexValue(checkedAt(value, g_sha256Prefix.size() + index * 2U));
-            auto const low = lowerHexValue(checkedAt(value, g_sha256Prefix.size() + index * 2U + 1U));
+            auto const high = lowerHexValue(checkedAt(value, k_sha256Prefix.size() + index * 2U));
+            auto const low = lowerHexValue(checkedAt(value, k_sha256Prefix.size() + index * 2U + 1U));
             if (high == uint8{0xFF} || low == uint8{0xFF})
             {
                 return fail(
@@ -217,18 +217,18 @@ namespace uf::annotation
     auto ContentHash::hex() const -> std::string
     {
         auto result = std::string{};
-        result.reserve(g_sha256DigestBytes * 2U);
+        result.reserve(k_sha256DigestBytes * 2U);
         for (auto const byte : m_bytes)
         {
-            result.push_back(checkedAt(g_hexDigits, byte >> 4U));
-            result.push_back(checkedAt(g_hexDigits, byte & uint8{0x0F}));
+            result.push_back(checkedAt(k_hexDigits, byte >> 4U));
+            result.push_back(checkedAt(k_hexDigits, byte & uint8{0x0F}));
         }
         return result;
     }
 
     auto ContentHash::toString() const -> std::string
     {
-        auto result = std::string{g_sha256Prefix};
+        auto result = std::string{k_sha256Prefix};
         result += hex();
         return result;
     }
@@ -252,34 +252,34 @@ namespace uf::annotation
             );
         }
 
-        auto state  = g_initialState;
+        auto state  = k_initialState;
         auto offset = std::size_t{0};
-        while (bytes.size() - offset >= g_sha256BlockBytes)
+        while (bytes.size() - offset >= k_sha256BlockBytes)
         {
-            processBlock(state, bytes.subspan(offset, g_sha256BlockBytes));
-            offset += g_sha256BlockBytes;
+            processBlock(state, bytes.subspan(offset, k_sha256BlockBytes));
+            offset += k_sha256BlockBytes;
         }
 
-        auto tail = std::array<std::byte, g_sha256BlockBytes * 2U>{};
+        auto tail = std::array<std::byte, k_sha256BlockBytes * 2U>{};
         auto const remainder = bytes.subspan(offset);
         std::ranges::copy(remainder, tail.begin());
         checkedAt(tail, remainder.size()) = std::byte{0x80};
         auto const paddedSize = remainder.size() < 56U
-            ? g_sha256BlockBytes
-            : g_sha256BlockBytes * 2U;
-        for (auto index = std::size_t{0}; index < g_sha256LengthBytes; ++index)
+            ? k_sha256BlockBytes
+            : k_sha256BlockBytes * 2U;
+        for (auto index = std::size_t{0}; index < k_sha256LengthBytes; ++index)
         {
             checkedAt(tail, paddedSize - 1U - index) = static_cast<std::byte>(
                 *bitLength >> static_cast<uint32>(index * 8U)
             );
         }
-        processBlock(state, std::span<std::byte const>{tail}.first(g_sha256BlockBytes));
-        if (paddedSize == g_sha256BlockBytes * 2U)
+        processBlock(state, std::span<std::byte const>{tail}.first(k_sha256BlockBytes));
+        if (paddedSize == k_sha256BlockBytes * 2U)
         {
-            processBlock(state, std::span<std::byte const>{tail}.last(g_sha256BlockBytes));
+            processBlock(state, std::span<std::byte const>{tail}.last(k_sha256BlockBytes));
         }
 
-        auto digest = std::array<uint8, g_sha256DigestBytes>{};
+        auto digest = std::array<uint8, k_sha256DigestBytes>{};
         for (auto index = std::size_t{0}; index < state.size(); ++index)
         {
             auto const word = checkedAt(state, index);

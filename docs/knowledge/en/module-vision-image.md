@@ -111,7 +111,7 @@ tie keeps the earliest position; a zero score returns immediately, because no be
 
 Both the budget and the poll are checked "before performing the next pixel comparison". The order is
 to check the budget first, then poll when the cumulative count is `0, 4096, 8192, ...`; the interval
-constant is `g_sadSearchPollIntervalComparisons == 4096`. Therefore:
+constant is `k_sadSearchPollIntervalComparisons == 4096`. Therefore:
 
 - when the budget is zero, it returns `ComparisonBudgetExhausted` directly, without calling the
   poll, with a count of zero;
@@ -130,9 +130,9 @@ or a content-identity algorithm.
 
 The PNG API lives in `modules/image/source/image/png.hpp`. The three public quotas are:
 
-- `g_maximumPngDimension == 8192`: the per-axis upper bound;
-- `g_maximumPngPixels == 8192 * 8192`: the total pixel upper bound;
-- `g_maximumPngFileBytes == 64 * 1024 * 1024`: the upper bound on encoded decode/load input.
+- `k_maximumPngDimension == 8192`: the per-axis upper bound;
+- `k_maximumPngPixels == 8192 * 8192`: the total pixel upper bound;
+- `k_maximumPngFileBytes == 64 * 1024 * 1024`: the upper bound on encoded decode/load input.
 
 `RgbaImage` owns `m_width`, `m_height`, and `m_pixels`. When returned by the decoder, the pixels are
 always tightly packed RGBA8 of `width * height * 4`, and the PNG's original color type does not leak
@@ -167,7 +167,7 @@ integrity check.
 `modules/image/source/image/ffi/png-encoder.cpp`. The encoder rejects zero dimensions, axis/pixel
 quota overruns, stb signed geometry that is not representable, and non-tight RGBA input that does not
 equal `width * height * 4`. It also constrains `(rowBytes + filterByte) * height` with the private
-`g_maximumFilteredPngBytes`, and uses `static_assert` to prove that this upper bound is well below
+`k_maximumFilteredPngBytes`, and uses `static_assert` to prove that this upper bound is well below
 stb's signed working range. The 64 MiB quota is the upper bound on decode/load encoded input; the
 encoder's own local working bound is made up of the dimension, pixel, and filtered-byte checks.
 

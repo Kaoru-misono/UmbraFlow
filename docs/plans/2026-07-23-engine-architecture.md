@@ -96,7 +96,7 @@ wait hook→D6/P1 `bot:on`;engine 操作面(capture/find/click/wait)→B2 Luau 1
 ## Phase 1 — domain/annotation 补缺口
 
 1. `modules/domain/source/domain/space.hpp`:加 `pixelRectToFrameRect`
-   (`frameRectToPixelRect` 的逆,整数 <2^24 精确,已有 `s_maxExactFrameDimension`
+   (`frameRectToPixelRect` 的逆,整数 <2^24 精确,已有 `k_maxExactFrameDimension`
    注释背书)+ 精确性测试。
 2. `modules/annotation`:`RecognitionRuntime` 增加 action_target 评估
    (单 recognizer、同一有界 policy、产出 `AnchorEvidence`;miss 为 Tier A 缺席不是错误)

@@ -26,11 +26,11 @@ namespace uf::annotation
 {
     namespace
     {
-        constexpr auto g_anchorId = "00000000-0000-0000-0000-000000000001";
-        constexpr auto g_actionId = "00000000-0000-0000-0000-000000000002";
-        constexpr auto g_awayAnchorId = "00000000-0000-0000-0000-000000000003";
-        constexpr auto g_pageId = "00000000-0000-0000-0000-000000000101";
-        constexpr auto g_awayPageId = "00000000-0000-0000-0000-000000000102";
+        constexpr auto k_anchorId = "00000000-0000-0000-0000-000000000001";
+        constexpr auto k_actionId = "00000000-0000-0000-0000-000000000002";
+        constexpr auto k_awayAnchorId = "00000000-0000-0000-0000-000000000003";
+        constexpr auto k_pageId = "00000000-0000-0000-0000-000000000101";
+        constexpr auto k_awayPageId = "00000000-0000-0000-0000-000000000102";
 
         // Pins each rejection to the branch it targets. Every guard below
         // returns ActionRejected, so the kind alone cannot tell them apart.
@@ -47,7 +47,7 @@ namespace uf::annotation
         {
             ProjectFingerprint m_fingerprint{test::fingerprint()};
             RecognitionCatalog m_catalog;
-            RecognizerId m_actionId{test::recognizerId(g_actionId)};
+            RecognizerId m_actionId{test::recognizerId(k_actionId)};
             Frame            m_frame;
             ResolvedPage     m_resolvedPage;
             ObservationLease m_lease;
@@ -56,9 +56,9 @@ namespace uf::annotation
         auto authorizationFixture() -> AuthorizationFixture
         {
             auto const projectFingerprint = test::fingerprint();
-            auto const anchorId = test::recognizerId(g_anchorId);
-            auto const actionId = test::recognizerId(g_actionId);
-            auto const pageId = test::pageId(g_pageId);
+            auto const anchorId = test::recognizerId(k_anchorId);
+            auto const actionId = test::recognizerId(k_actionId);
+            auto const pageId = test::pageId(k_pageId);
             auto recognizers = std::vector<RecognizerDefinition>{};
             recognizers.emplace_back(
                 test::recognizer(
@@ -229,7 +229,7 @@ namespace uf::annotation
 
         auto const anchorBound = ActionDetection::create(
             fixture.m_catalog,
-            test::recognizerId(g_anchorId),
+            test::recognizerId(k_anchorId),
             detection(fixture, fixture.m_frame.id(), "home_marker")
         );
         REQUIRE_FALSE(anchorBound.has_value());
@@ -242,11 +242,11 @@ namespace uf::annotation
     TEST_CASE("coordinate action refuses a page the recognizer does not authorize")
     {
         auto const projectFingerprint = test::fingerprint();
-        auto const homeAnchorId       = test::recognizerId(g_anchorId);
-        auto const awayAnchorId       = test::recognizerId(g_awayAnchorId);
-        auto const actionId           = test::recognizerId(g_actionId);
-        auto const homePageId         = test::pageId(g_pageId);
-        auto const awayPageId         = test::pageId(g_awayPageId);
+        auto const homeAnchorId       = test::recognizerId(k_anchorId);
+        auto const awayAnchorId       = test::recognizerId(k_awayAnchorId);
+        auto const actionId           = test::recognizerId(k_actionId);
+        auto const homePageId         = test::pageId(k_pageId);
+        auto const awayPageId         = test::pageId(k_awayPageId);
 
         auto recognizers = std::vector<RecognizerDefinition>{};
         recognizers.emplace_back(
@@ -375,8 +375,8 @@ namespace uf::annotation
         );
         REQUIRE(actionDetection.has_value());
 
-        auto const anchorId = test::recognizerId(g_anchorId);
-        auto const pageId   = test::pageId(g_pageId);
+        auto const anchorId = test::recognizerId(k_anchorId);
+        auto const pageId   = test::pageId(k_pageId);
         auto anchorOnly     = std::vector<RecognizerDefinition>{};
         anchorOnly.emplace_back(
             test::recognizer(

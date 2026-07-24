@@ -16,9 +16,9 @@
 
 namespace uf::m0_demo
 {
-    inline constexpr auto g_defaultCaptureFrames = uint32{1};
-    inline constexpr auto g_defaultCaptureInterval = MonotonicInstant::Duration::zero();
-    inline constexpr auto g_defaultInputAgentIdleTimeout = (
+    inline constexpr auto k_defaultCaptureFrames = uint32{1};
+    inline constexpr auto k_defaultCaptureInterval = MonotonicInstant::Duration::zero();
+    inline constexpr auto k_defaultInputAgentIdleTimeout = (
         std::chrono::duration_cast<MonotonicInstant::Duration>(
             std::chrono::seconds{120}
         )

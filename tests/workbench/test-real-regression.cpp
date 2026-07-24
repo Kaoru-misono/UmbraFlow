@@ -30,10 +30,10 @@ namespace uf::workbench
     namespace
     {
         // A generous ceiling that never bounds a real project's comparisons.
-        constexpr auto g_comparisonBudget = uint64{1} << 30;
+        constexpr auto k_comparisonBudget = uint64{1} << 30;
 
         // Per-project wall-clock safety bound shared across one suite run.
-        constexpr auto g_deadlineWindow = std::chrono::seconds{30};
+        constexpr auto k_deadlineWindow = std::chrono::seconds{30};
 
         [[nodiscard]]
         auto projectDirectories(
@@ -87,7 +87,7 @@ namespace uf::workbench
             REQUIRE(loaded.has_value());
 
             auto const deadline = MonotonicInstant::now().checkedAdd(
-                g_deadlineWindow
+                k_deadlineWindow
             );
             REQUIRE(deadline.has_value());
 
@@ -95,7 +95,7 @@ namespace uf::workbench
                 loaded->m_document,
                 loaded->m_sources,
                 annotation::RecognitionPolicy{
-                    .m_maximumPixelComparisons = g_comparisonBudget,
+                    .m_maximumPixelComparisons = k_comparisonBudget,
                     .m_deadline                = deadline,
                 }
             );

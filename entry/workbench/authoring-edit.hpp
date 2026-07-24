@@ -13,7 +13,7 @@
 
 namespace uf::workbench
 {
-    inline constexpr auto g_maximumAuthoringUndoEntries = std::size_t{100};
+    inline constexpr auto k_maximumAuthoringUndoEntries = std::size_t{100};
 
     struct EditableTemplateOffset final
     {

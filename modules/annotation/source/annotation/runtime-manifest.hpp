@@ -13,7 +13,7 @@
 
 namespace uf::annotation
 {
-    inline constexpr auto g_runtimeManifestSchema = std::string_view{
+    inline constexpr auto k_runtimeManifestSchema = std::string_view{
         "umbraflow-annotations/v1"
     };
 

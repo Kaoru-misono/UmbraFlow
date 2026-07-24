@@ -12,7 +12,7 @@ namespace uf::engine
     // The runtime manifest is a small canonical TOML document. A file larger
     // than this is rejected by its stat-reported size before any bytes are read,
     // so a malformed or hostile project cannot force an unbounded allocation.
-    inline constexpr auto g_maximumRuntimeManifestBytes = std::size_t{16} * 1024U * 1024U;
+    inline constexpr auto k_maximumRuntimeManifestBytes = std::size_t{16} * 1024U * 1024U;
 
     // A recognition runtime loaded from a published annotation project, holding
     // everything the engine needs to recognize pages and evaluate action

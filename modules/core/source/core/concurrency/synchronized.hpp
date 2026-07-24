@@ -11,7 +11,7 @@ namespace uf
     namespace detail
     {
         template <typename Result>
-        constexpr auto g_lockResultDoesNotExposeStorage = (
+        constexpr auto k_lockResultDoesNotExposeStorage = (
             !std::is_reference_v<Result>
             && !std::is_pointer_v<std::remove_cv_t<Result>>
         );
@@ -52,7 +52,7 @@ namespace uf
         {
             using Result = std::invoke_result_t<Function, Value&>;
             static_assert(
-                detail::g_lockResultDoesNotExposeStorage<Result>,
+                detail::k_lockResultDoesNotExposeStorage<Result>,
                 "A synchronized operation cannot return a pointer or reference to protected storage."
             );
 
@@ -66,7 +66,7 @@ namespace uf
         {
             using Result = std::invoke_result_t<Function, Value const&>;
             static_assert(
-                detail::g_lockResultDoesNotExposeStorage<Result>,
+                detail::k_lockResultDoesNotExposeStorage<Result>,
                 "A synchronized operation cannot return a pointer or reference to protected storage."
             );
 

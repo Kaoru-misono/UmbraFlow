@@ -34,33 +34,33 @@ namespace uf::workbench
 {
     namespace
     {
-        constexpr auto g_templateColor = IM_COL32(96, 220, 120, 255);
-        constexpr auto g_searchRoiColor = IM_COL32(96, 168, 255, 255);
-        constexpr auto g_gripColor      = IM_COL32(240, 240, 240, 255);
-        constexpr auto g_gripRadius     = 5.0F;
-        constexpr auto g_zoomWheelBase  = 1.1F;
-        constexpr auto g_thresholdMax   = 10'000;
+        constexpr auto k_templateColor = IM_COL32(96, 220, 120, 255);
+        constexpr auto k_searchRoiColor = IM_COL32(96, 168, 255, 255);
+        constexpr auto k_gripColor      = IM_COL32(240, 240, 240, 255);
+        constexpr auto k_gripRadius     = 5.0F;
+        constexpr auto k_zoomWheelBase  = 1.1F;
+        constexpr auto k_thresholdMax   = 10'000;
 
         // The Preview action runs on the GUI thread, so it is bounded twice
         // over. The comparison budget matches the 256 Mi-pixel order of
         // magnitude the authoring compiler bounds its own work with
-        // (g_maximumCompilationPixelWork in authoring-compiler.cpp), and the
+        // (k_maximumCompilationPixelWork in authoring-compiler.cpp), and the
         // deadline caps the wall-clock time a large source may spend before the
         // next frame. Hitting either limit surfaces as a PreviewStop row.
-        constexpr auto g_previewComparisonBudget = uint64{256} * 1024U * 1024U;
-        constexpr auto g_previewDeadline         = std::chrono::seconds{2};
+        constexpr auto k_previewComparisonBudget = uint64{256} * 1024U * 1024U;
+        constexpr auto k_previewDeadline         = std::chrono::seconds{2};
 
-        constexpr auto g_annotationTypeItems = std::array<char const*, 3>{
+        constexpr auto k_annotationTypeItems = std::array<char const*, 3>{
             "PageAnchor",
             "ActionTarget",
             "InfoRegion",
         };
-        constexpr auto g_classificationItems = std::array<char const*, 3>{
+        constexpr auto k_classificationItems = std::array<char const*, 3>{
             "Positive",
             "Negative",
             "Confusable",
         };
-        constexpr auto g_pageRoleItems = std::array<char const*, 3>{
+        constexpr auto k_pageRoleItems = std::array<char const*, 3>{
             "None",
             "Required",
             "Forbidden",
@@ -239,9 +239,9 @@ namespace uf::workbench
             for (auto const& center : centers)
             {
                 drawList.AddRectFilled(
-                    ImVec2{center.m_x - g_gripRadius, center.m_y - g_gripRadius},
-                    ImVec2{center.m_x + g_gripRadius, center.m_y + g_gripRadius},
-                    g_gripColor
+                    ImVec2{center.m_x - k_gripRadius, center.m_y - k_gripRadius},
+                    ImVec2{center.m_x + k_gripRadius, center.m_y + k_gripRadius},
+                    k_gripColor
                 );
             }
         }
@@ -442,7 +442,7 @@ namespace uf::workbench
                     static_cast<float>(templateRect.width()) * view.m_zoom,
                     static_cast<float>(templateRect.height()) * view.m_zoom,
                     CanvasPoint{mouse.x, mouse.y},
-                    g_gripRadius
+                    k_gripRadius
                 );
                 if (templateGrip.has_value())
                 {
@@ -462,7 +462,7 @@ namespace uf::workbench
                         static_cast<float>(searchRoi.width()) * view.m_zoom,
                         static_cast<float>(searchRoi.height()) * view.m_zoom,
                         CanvasPoint{mouse.x, mouse.y},
-                        g_gripRadius
+                        k_gripRadius
                     );
                     if (roiGrip.has_value())
                     {
@@ -530,14 +530,14 @@ namespace uf::workbench
                 view,
                 canvasOrigin,
                 previewRoi,
-                g_searchRoiColor
+                k_searchRoiColor
             );
             drawRectWithGrips(
                 drawList,
                 view,
                 canvasOrigin,
                 previewTemplate,
-                g_templateColor
+                k_templateColor
             );
         }
 
@@ -612,7 +612,7 @@ namespace uf::workbench
                     view,
                     under.m_x,
                     under.m_y,
-                    view.m_zoom * std::pow(g_zoomWheelBase, wheel)
+                    view.m_zoom * std::pow(k_zoomWheelBase, wheel)
                 );
                 state.setCanvasView(view);
             }
@@ -714,8 +714,8 @@ namespace uf::workbench
                     ImGui::Combo(
                         "role",
                         &role,
-                        g_pageRoleItems.data(),
-                        static_cast<int>(g_pageRoleItems.size())
+                        k_pageRoleItems.data(),
+                        static_cast<int>(k_pageRoleItems.size())
                     )
                 )
                 {
@@ -776,8 +776,8 @@ namespace uf::workbench
                 ImGui::Combo(
                     "Classification",
                     &classification,
-                    g_classificationItems.data(),
-                    static_cast<int>(g_classificationItems.size())
+                    k_classificationItems.data(),
+                    static_cast<int>(k_classificationItems.size())
                 )
             )
             {
@@ -867,8 +867,8 @@ namespace uf::workbench
                 ImGui::Combo(
                     "Type",
                     &typeIndex,
-                    g_annotationTypeItems.data(),
-                    static_cast<int>(g_annotationTypeItems.size())
+                    k_annotationTypeItems.data(),
+                    static_cast<int>(k_annotationTypeItems.size())
                 )
             )
             {
@@ -886,7 +886,7 @@ namespace uf::workbench
             ImGui::InputInt("Threshold (bp)", &threshold);
             if (ImGui::IsItemDeactivatedAfterEdit())
             {
-                threshold  = std::clamp(threshold, 0, g_thresholdMax);
+                threshold  = std::clamp(threshold, 0, k_thresholdMax);
                 auto draft = state.draft();
                 auto* recognizer = findEditableRecognizer(draft, *recognizerId);
                 if (recognizer != nullptr)
@@ -1081,9 +1081,9 @@ namespace uf::workbench
                 else
                 {
                     auto const policy = annotation::RecognitionPolicy{
-                        .m_maximumPixelComparisons = g_previewComparisonBudget,
+                        .m_maximumPixelComparisons = k_previewComparisonBudget,
                         .m_deadline = MonotonicInstant::now().checkedAdd(
-                            g_previewDeadline
+                            k_previewDeadline
                         ),
                     };
                     auto preview = runPreview(

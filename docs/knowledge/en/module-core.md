@@ -32,7 +32,7 @@ What it owns are portable, auditable "small mechanisms" that eliminate a class o
 - `time/`: an in-process monotonic instant and its overflow-safe arithmetic.
 - `utility/`: `std::variant` visitor composition and deterministic scope cleanup.
 
-`modules/core/source/core/project.hpp` additionally provides `g_projectName`, but there is no
+`modules/core/source/core/project.hpp` additionally provides `k_projectName`, but there is no
 aggregate `core.hpp`. Callers must include the precise facility they need; this keeps the
 dependency surface, compilation cost, and conceptual coupling all visible. Only facilities that
 require a non-template implementation have a matching `.cpp`: `error/contracts.cpp`,
@@ -167,7 +167,7 @@ itself as an implicitly stored borrow.
 Reading and writing can only go through `withLock(function)`. The non-const overload hands a
 `Value&` to the callback, the const overload hands a `Value const&`, and both are invoked within
 the lifetime of a `std::lock_guard`. The return type may be a value or `void`, but
-`g_lockResultDoesNotExposeStorage` rejects at compile time directly returning a pointer or
+`k_lockResultDoesNotExposeStorage` rejects at compile time directly returning a pointer or
 reference, preventing the most obvious out-of-lock alias. It cannot prove that the callback did
 not stash an address into another object, so it narrows rather than exaggerates the safety that
 C++ can enforce; the lifetime, cancellation, and join of a callback stored across threads remain

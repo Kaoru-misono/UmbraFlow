@@ -86,13 +86,13 @@ namespace uf
         // Compute the far edges in uint64 so a near-maximum rect cannot wrap the
         // uint32 addition and hide an out-of-range edge. Every integer in
         // [0, 2^24] inclusive is exactly representable in a 32-bit float, so
-        // edges up to and including g_maxExactFrameDimension make every cast
+        // edges up to and including k_maxExactFrameDimension make every cast
         // below lossless.
         auto const right = uint64{rect.x()} + uint64{rect.width()};
         auto const bottom = uint64{rect.y()} + uint64{rect.height()};
         if (
-            right > g_maxExactFrameDimension
-            || bottom > g_maxExactFrameDimension
+            right > k_maxExactFrameDimension
+            || bottom > k_maxExactFrameDimension
         )
         {
             return fail(
@@ -106,7 +106,7 @@ namespace uf
                     rect.height(),
                     right,
                     bottom,
-                    g_maxExactFrameDimension
+                    k_maxExactFrameDimension
                 )
             );
         }
@@ -126,8 +126,8 @@ namespace uf
         // Every integer in [0, 2^24] inclusive is exactly representable in a
         // 32-bit float; past that bound the conversion would silently round.
         if (
-            point.x() > g_maxExactFrameDimension
-            || point.y() > g_maxExactFrameDimension
+            point.x() > k_maxExactFrameDimension
+            || point.y() > k_maxExactFrameDimension
         )
         {
             return fail(
@@ -136,7 +136,7 @@ namespace uf
                     "pixel point ({}, {}) exceeds exact float bound {}",
                     point.x(),
                     point.y(),
-                    g_maxExactFrameDimension
+                    k_maxExactFrameDimension
                 )
             );
         }
@@ -167,8 +167,8 @@ namespace uf
             || clientHeight <= 0.0F
             || frameWidth == 0
             || frameHeight == 0
-            || frameWidth > s_maxExactFrameDimension
-            || frameHeight > s_maxExactFrameDimension
+            || frameWidth > k_maxExactFrameDimension
+            || frameHeight > k_maxExactFrameDimension
         )
         {
             return fail(
@@ -342,10 +342,10 @@ namespace uf
         }
 
         if (
-            rect.x() < -s_frameBoundsEpsilon
-            || rect.y() < -s_frameBoundsEpsilon
-            || rect.x() + rect.width() > frameWidth + s_frameBoundsEpsilon
-            || rect.y() + rect.height() > frameHeight + s_frameBoundsEpsilon
+            rect.x() < -k_frameBoundsEpsilon
+            || rect.y() < -k_frameBoundsEpsilon
+            || rect.x() + rect.width() > frameWidth + k_frameBoundsEpsilon
+            || rect.y() + rect.height() > frameHeight + k_frameBoundsEpsilon
         )
         {
             return fail(

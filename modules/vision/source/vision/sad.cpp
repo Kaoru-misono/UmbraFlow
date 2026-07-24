@@ -156,7 +156,7 @@ namespace uf
                     };
                 }
                 if (
-                    completedPixelComparisons % g_sadSearchPollIntervalComparisons == 0
+                    completedPixelComparisons % k_sadSearchPollIntervalComparisons == 0
                 )
                 {
                     switch (poll())

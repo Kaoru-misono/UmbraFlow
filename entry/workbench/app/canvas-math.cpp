@@ -12,13 +12,13 @@ namespace uf::workbench
 {
     namespace
     {
-        constexpr auto g_minimumZoom = 0.05F;
-        constexpr auto g_maximumZoom = 64.0F;
+        constexpr auto k_minimumZoom = 0.05F;
+        constexpr auto k_maximumZoom = 64.0F;
 
         [[nodiscard]]
         auto clampZoom(float zoom) noexcept -> float
         {
-            return std::clamp(zoom, g_minimumZoom, g_maximumZoom);
+            return std::clamp(zoom, k_minimumZoom, k_maximumZoom);
         }
 
         // Clamps a signed edge coordinate into an inclusive integer extent so a

@@ -29,7 +29,7 @@ namespace uf
         struct HeldInputsAccess;
     }
 
-    inline constexpr auto g_forbiddenBackgroundApis = std::array<std::string_view, 6>{
+    inline constexpr auto k_forbiddenBackgroundApis = std::array<std::string_view, 6>{
         "SetForegroundWindow",
         "SetFocus",
         "SendInput",

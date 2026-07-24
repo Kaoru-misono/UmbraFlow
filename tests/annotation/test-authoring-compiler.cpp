@@ -27,11 +27,11 @@ namespace uf::annotation
 {
     namespace
     {
-        constexpr auto g_sourceId       = "00000000-0000-0000-0000-000000000201";
-        constexpr auto g_secondSourceId = "00000000-0000-0000-0000-000000000202";
-        constexpr auto g_anchorId       = "00000000-0000-0000-0000-000000000001";
-        constexpr auto g_actionId       = "00000000-0000-0000-0000-000000000002";
-        constexpr auto g_pageId         = "00000000-0000-0000-0000-000000000101";
+        constexpr auto k_sourceId       = "00000000-0000-0000-0000-000000000201";
+        constexpr auto k_secondSourceId = "00000000-0000-0000-0000-000000000202";
+        constexpr auto k_anchorId       = "00000000-0000-0000-0000-000000000001";
+        constexpr auto k_actionId       = "00000000-0000-0000-0000-000000000002";
+        constexpr auto k_pageId         = "00000000-0000-0000-0000-000000000101";
 
         [[nodiscard]]
         constexpr auto asByte(uint8 value) noexcept -> std::byte
@@ -96,7 +96,7 @@ namespace uf::annotation
         auto compilerFixture() -> CompilerFixture
         {
             auto const fingerprint = test::fingerprint(3, 2, 96, 96);
-            auto const sourceId    = test::sourceId(g_sourceId);
+            auto const sourceId    = test::sourceId(k_sourceId);
             auto pngBytes          = encodedSource();
             auto const sourceHash  = sha256(pngBytes);
             REQUIRE(sourceHash.has_value());
@@ -109,9 +109,9 @@ namespace uf::annotation
                 }
             );
             REQUIRE(source.has_value());
-            auto const anchorId = test::recognizerId(g_anchorId);
-            auto const actionId = test::recognizerId(g_actionId);
-            auto const pageId   = test::pageId(g_pageId);
+            auto const anchorId = test::recognizerId(k_anchorId);
+            auto const actionId = test::recognizerId(k_actionId);
+            auto const pageId   = test::pageId(k_pageId);
             auto const click    = TemplateOffset::create(1, 1, 2, 2);
             REQUIRE(click.has_value());
             auto document = AuthoringDocument::create(
@@ -165,7 +165,7 @@ namespace uf::annotation
             REQUIRE_FALSE(templateRects.empty());
 
             auto const fingerprint = test::fingerprint(8192, 8192, 96, 96);
-            auto const sourceId    = test::sourceId(g_sourceId);
+            auto const sourceId    = test::sourceId(k_sourceId);
             auto const sourceBytes = std::vector<std::byte>{};
             auto const sourceHash  = sha256(sourceBytes);
             REQUIRE(sourceHash.has_value());
@@ -215,7 +215,7 @@ namespace uf::annotation
                 std::move(recognizers),
                 {
                     test::page(
-                        test::pageId(g_pageId),
+                        test::pageId(k_pageId),
                         "workload",
                         {recognizerIds.front()}
                     )
@@ -377,7 +377,7 @@ namespace uf::annotation
                 "client_size = [3, 2]\n"
                 "dpi = [96, 96]\n"
                 "capture_backend = \"imported\"\n",
-                g_secondSourceId,
+                k_secondSourceId,
                 secondHash->hex(),
                 secondHash->toString()
             )
@@ -385,14 +385,14 @@ namespace uf::annotation
         auto const actionPosition = authoringToml.find("name = \"daily_button\"");
         REQUIRE(actionPosition != std::string::npos);
         auto const relationshipPosition = authoringToml.find(
-            std::string{"source_id = \""} + g_sourceId + '"',
+            std::string{"source_id = \""} + k_sourceId + '"',
             actionPosition
         );
         REQUIRE(relationshipPosition != std::string::npos);
         authoringToml.replace(
             relationshipPosition,
-            std::string_view{"source_id = \""}.size() + std::string_view{g_sourceId}.size() + 1U,
-            std::string{"source_id = \""} + g_secondSourceId + '"'
+            std::string_view{"source_id = \""}.size() + std::string_view{k_sourceId}.size() + 1U,
+            std::string{"source_id = \""} + k_secondSourceId + '"'
         );
 
         auto const document = parseAuthoringDocument(authoringToml);
@@ -401,7 +401,7 @@ namespace uf::annotation
         REQUIRE(firstHash.has_value());
         auto const assets = std::array{
             AuthoringSourceAsset{
-                .m_id       = test::sourceId(g_secondSourceId),
+                .m_id       = test::sourceId(k_secondSourceId),
                 .m_pngBytes = std::move(secondPng),
             },
             fixture.m_sourceAsset,
@@ -410,10 +410,10 @@ namespace uf::annotation
         REQUIRE(compiled.has_value());
 
         auto const* p_anchor = compiled->m_runtimeManifest.findAsset(
-            test::recognizerId(g_anchorId)
+            test::recognizerId(k_anchorId)
         );
         auto const* p_action = compiled->m_runtimeManifest.findAsset(
-            test::recognizerId(g_actionId)
+            test::recognizerId(k_actionId)
         );
         REQUIRE(p_anchor != nullptr);
         REQUIRE(p_action != nullptr);
@@ -570,8 +570,8 @@ namespace uf::annotation
             }
         );
         REQUIRE(replacementSource.has_value());
-        auto const anchorId = test::recognizerId(g_anchorId);
-        auto const pageId   = test::pageId(g_pageId);
+        auto const anchorId = test::recognizerId(k_anchorId);
+        auto const pageId   = test::pageId(k_pageId);
         auto replacementDocument = AuthoringDocument::create(
             test::projectId(),
             fingerprint,

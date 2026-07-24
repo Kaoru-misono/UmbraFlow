@@ -23,7 +23,7 @@ namespace uf::annotation::detail
 {
     namespace
     {
-        constexpr auto g_hexDigits = std::string_view{"0123456789abcdef"};
+        constexpr auto k_hexDigits = std::string_view{"0123456789abcdef"};
 
         [[nodiscard]]
         constexpr auto lowerHexValue(char value) noexcept -> std::optional<uint8>
@@ -491,9 +491,9 @@ namespace uf::annotation::detail
                 if (byte < uint8{0x20} || byte == uint8{0x7F})
                 {
                     output += "\\u00";
-                    output.push_back(checkedAt(g_hexDigits, byte >> 4U));
+                    output.push_back(checkedAt(k_hexDigits, byte >> 4U));
                     output.push_back(
-                        checkedAt(g_hexDigits, byte & uint8{0x0F})
+                        checkedAt(k_hexDigits, byte & uint8{0x0F})
                     );
                 }
                 else

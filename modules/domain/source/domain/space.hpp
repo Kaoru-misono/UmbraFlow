@@ -105,7 +105,7 @@ namespace uf
     // 32-bit float; 2^24 + 1 is the first integer that is not. Frame dimensions
     // and pixel edges must stay within this inclusive bound for the
     // integer-to-float geometry conversions to be lossless.
-    inline constexpr auto g_maxExactFrameDimension = uint32{1} << 24;
+    inline constexpr auto k_maxExactFrameDimension = uint32{1} << 24;
 
     class PixelPoint final
     {
@@ -174,7 +174,7 @@ namespace uf
     };
 
     // Exact inverse of the lossy frameRectToPixelRect direction. Fails when an
-    // edge exceeds g_maxExactFrameDimension, beyond which float cannot represent
+    // edge exceeds k_maxExactFrameDimension, beyond which float cannot represent
     // the integer coordinate exactly and the conversion would silently round.
     [[nodiscard]]
     auto pixelRectToFrameRect(PixelRect const& rect) -> Result<Rect<FrameSpace>>;
@@ -184,8 +184,8 @@ namespace uf
 
     class CoordinateTransform final
     {
-        static constexpr auto s_frameBoundsEpsilon = 1e-3F;
-        static constexpr auto s_maxExactFrameDimension = g_maxExactFrameDimension;
+        static constexpr auto k_frameBoundsEpsilon = 1e-3F;
+        static constexpr auto k_maxExactFrameDimension = k_maxExactFrameDimension;
 
         float  m_clientOriginX;
         float  m_clientOriginY;

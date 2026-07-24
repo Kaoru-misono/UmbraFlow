@@ -19,13 +19,13 @@ namespace uf::workbench
 {
     namespace
     {
-        constexpr auto g_defaultProjectId  = std::string_view{"personal.workbench"};
-        constexpr auto g_defaultWidth      = uint32{1280};
-        constexpr auto g_defaultHeight     = uint32{720};
-        constexpr auto g_defaultDpi        = uint32{96};
-        constexpr auto g_uuidVersionByte   = std::size_t{6};
-        constexpr auto g_uuidVariantByte   = std::size_t{8};
-        constexpr auto g_randomWordBytes   = std::size_t{4};
+        constexpr auto k_defaultProjectId  = std::string_view{"personal.workbench"};
+        constexpr auto k_defaultWidth      = uint32{1280};
+        constexpr auto k_defaultHeight     = uint32{720};
+        constexpr auto k_defaultDpi        = uint32{96};
+        constexpr auto k_uuidVersionByte   = std::size_t{6};
+        constexpr auto k_uuidVariantByte   = std::size_t{8};
+        constexpr auto k_randomWordBytes   = std::size_t{4};
     }
 
     auto mintResourceId() -> annotation::ResourceId
@@ -37,7 +37,7 @@ namespace uf::workbench
         for (
             auto offset = std::size_t{0};
             offset < bytes.size();
-            offset += g_randomWordBytes
+            offset += k_randomWordBytes
         )
         {
             auto const word = static_cast<uint32>(device());
@@ -48,12 +48,12 @@ namespace uf::workbench
         }
 
         // Version 4: clear the high nibble of byte 6 and set it to 0100.
-        bytes.at(g_uuidVersionByte) = (
-            (bytes.at(g_uuidVersionByte) & std::byte{0x0F}) | std::byte{0x40}
+        bytes.at(k_uuidVersionByte) = (
+            (bytes.at(k_uuidVersionByte) & std::byte{0x0F}) | std::byte{0x40}
         );
         // Variant 1 (RFC 4122): clear the top two bits of byte 8 and set 10.
-        bytes.at(g_uuidVariantByte) = (
-            (bytes.at(g_uuidVariantByte) & std::byte{0x3F}) | std::byte{0x80}
+        bytes.at(k_uuidVariantByte) = (
+            (bytes.at(k_uuidVariantByte) & std::byte{0x3F}) | std::byte{0x80}
         );
 
         return annotation::ResourceId::fromBytes(bytes);
@@ -76,15 +76,15 @@ namespace uf::workbench
     {
         UF_TRY_VALUE(
             projectId,
-            annotation::ProjectId::create(std::string{g_defaultProjectId})
+            annotation::ProjectId::create(std::string{k_defaultProjectId})
         );
         UF_TRY_VALUE(
             fingerprint,
             annotation::ProjectFingerprint::create(
-                g_defaultWidth,
-                g_defaultHeight,
-                g_defaultDpi,
-                g_defaultDpi
+                k_defaultWidth,
+                k_defaultHeight,
+                k_defaultDpi,
+                k_defaultDpi
             )
         );
         UF_TRY_VALUE(

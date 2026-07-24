@@ -126,7 +126,7 @@ namespace uf::annotation
 
     class SimilarityThreshold final
     {
-        static constexpr auto s_basisPointMaximum = uint32{10'000};
+        static constexpr auto k_basisPointMaximum = uint32{10'000};
 
         uint32 m_basisPoints;
 

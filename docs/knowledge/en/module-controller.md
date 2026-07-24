@@ -279,7 +279,7 @@ the continuous validation of the project-level DPI fingerprint is not within thi
 
 ### Strict-Background and the Platform/FFI Boundary
 
-Strict-background is not a runtime switch but a set of reachable APIs. `g_forbiddenBackgroundApis`
+Strict-background is not a runtime switch but a set of reachable APIs. `k_forbiddenBackgroundApis`
 records six original guard names; `scripts/check_safety.py` also statically forbids the direct use of
 other foregrounding APIs. controller's only injection primitive is `PostMessageW`; it never calls
 focus, activation, global input, or cursor-position APIs, and it has no post-failure fallback branch.

@@ -118,7 +118,7 @@ namespace uf
             0x1EU,
             controller_detail::KeyTransition::Down
         );
-        CHECK(down.m_message == controller_detail::g_wmKeyDown);
+        CHECK(down.m_message == controller_detail::k_wmKeyDown);
         CHECK(down.m_wParam == 0x41U);
         CHECK(down.m_lParam == intptr{0x001E'0001});
 
@@ -127,7 +127,7 @@ namespace uf
             0x1EU,
             controller_detail::KeyTransition::Up
         );
-        CHECK(up.m_message == controller_detail::g_wmKeyUp);
+        CHECK(up.m_message == controller_detail::k_wmKeyUp);
         CHECK(up.m_lParam == intptr{0xC01E'0001});
     }
 
@@ -161,7 +161,7 @@ namespace uf
                 controller_detail::PointerMessage::Move,
                 clientPixel
             ) == controller_detail::PostSpec{
-                .m_message = controller_detail::g_wmMouseMove,
+                .m_message = controller_detail::k_wmMouseMove,
                 .m_wParam  = 0,
                 .m_lParam = 0x00C8'0064,
             }
@@ -171,8 +171,8 @@ namespace uf
                 controller_detail::PointerMessage::MoveWithLeftButton,
                 clientPixel
             ) == controller_detail::PostSpec{
-                .m_message = controller_detail::g_wmMouseMove,
-                .m_wParam  = controller_detail::g_leftButtonMask,
+                .m_message = controller_detail::k_wmMouseMove,
+                .m_wParam  = controller_detail::k_leftButtonMask,
                 .m_lParam = 0x00C8'0064,
             }
         );
@@ -181,8 +181,8 @@ namespace uf
                 controller_detail::PointerMessage::LeftDown,
                 clientPixel
             ) == controller_detail::PostSpec{
-                .m_message = controller_detail::g_wmLeftButtonDown,
-                .m_wParam  = controller_detail::g_leftButtonMask,
+                .m_message = controller_detail::k_wmLeftButtonDown,
+                .m_wParam  = controller_detail::k_leftButtonMask,
                 .m_lParam = 0x00C8'0064,
             }
         );
@@ -191,7 +191,7 @@ namespace uf
                 controller_detail::PointerMessage::LeftUp,
                 clientPixel
             ) == controller_detail::PostSpec{
-                .m_message = controller_detail::g_wmLeftButtonUp,
+                .m_message = controller_detail::k_wmLeftButtonUp,
                 .m_wParam  = 0,
                 .m_lParam = 0x00C8'0064,
             }
@@ -202,7 +202,7 @@ namespace uf
     {
         CHECK(
             controller_detail::charSpec(0x0041U) == controller_detail::PostSpec{
-                .m_message = controller_detail::g_wmChar,
+                .m_message = controller_detail::k_wmChar,
                 .m_wParam  = 0x41U,
                 .m_lParam  = 1,
             }
@@ -210,7 +210,7 @@ namespace uf
         CHECK(
             controller_detail::unicharSpec(U'\U0001F600')
             == controller_detail::PostSpec{
-                .m_message = controller_detail::g_wmUnichar,
+                .m_message = controller_detail::k_wmUnichar,
                 .m_wParam = 0x0001'F600U,
                 .m_lParam = 1,
             }
@@ -278,7 +278,7 @@ namespace uf
         REQUIRE_FALSE(result.has_value());
         CHECK(automationKind(result.error()) == AutomationErrorKind::ControllerDisconnected);
         REQUIRE(audit.size() == 1U);
-        CHECK(audit.records()[0].m_message == controller_detail::g_wmChar);
+        CHECK(audit.records()[0].m_message == controller_detail::k_wmChar);
         CHECK(audit.records()[0].m_wParam == 0x41U);
         CHECK(audit.records()[0].m_target == uintptr{0xDEAD'BEEF});
     }

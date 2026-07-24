@@ -26,7 +26,7 @@ namespace uf::m0_demo
                 .m_selector = {},
                 .m_output   = std::move(output),
                 .m_frames   = frames,
-                .m_interval = g_defaultCaptureInterval,
+                .m_interval = k_defaultCaptureInterval,
                 .m_log      = std::move(log),
             };
         }

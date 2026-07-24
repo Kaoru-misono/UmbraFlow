@@ -264,7 +264,7 @@ access denied 且实际 context 已是 V2 时才返回 `AlreadyDeclared`。sette
 
 ### 严格后台与 platform/FFI 边界
 
-严格后台不是运行时开关，而是可达 API 集合。`g_forbiddenBackgroundApis` 记录
+严格后台不是运行时开关，而是可达 API 集合。`k_forbiddenBackgroundApis` 记录
 六个原始 guard 名；`scripts/check_safety.py` 还静态禁止其他前台化 API 的直接
 使用。controller 唯一注入 primitive 是 `PostMessageW`，不会调用 focus、
 activation、global input 或 cursor-position API，也没有失败后降级分支。

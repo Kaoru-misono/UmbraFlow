@@ -10,12 +10,12 @@
 
 namespace uf::m0_demo
 {
-    inline constexpr auto g_defaultInputAgentSettle = (
+    inline constexpr auto k_defaultInputAgentSettle = (
         std::chrono::duration_cast<MonotonicInstant::Duration>(
             std::chrono::milliseconds{400}
         )
     );
-    inline constexpr auto g_maximumInputAgentSettle = (
+    inline constexpr auto k_maximumInputAgentSettle = (
         std::chrono::duration_cast<MonotonicInstant::Duration>(
             std::chrono::milliseconds{5'000}
         )

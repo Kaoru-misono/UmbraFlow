@@ -65,7 +65,7 @@ namespace uf::cli
         {
             if (raw.empty())
             {
-                std::cout << g_projectName << '\n';
+                std::cout << k_projectName << '\n';
                 std::cout << runUsageText();
                 return ExitCode::Success;
             }

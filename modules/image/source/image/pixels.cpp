@@ -20,7 +20,7 @@ namespace uf::image
 {
     namespace
     {
-        constexpr auto g_bgraBytesPerPixel = std::size_t{4};
+        constexpr auto k_bgraBytesPerPixel = std::size_t{4};
 
         [[nodiscard]]
         auto swapRedBlueChannels(
@@ -28,7 +28,7 @@ namespace uf::image
             std::string_view layout
         ) -> Result<std::vector<std::byte>>
         {
-            if (pixels.size() % g_bgraBytesPerPixel != 0U)
+            if (pixels.size() % k_bgraBytesPerPixel != 0U)
             {
                 return fail(
                     AutomationErrorKind::InvalidResource,
@@ -42,7 +42,7 @@ namespace uf::image
             for (
                 auto index = std::size_t{0};
                 index < pixels.size();
-                index += g_bgraBytesPerPixel
+                index += k_bgraBytesPerPixel
             )
             {
                 std::swap(
@@ -95,7 +95,7 @@ namespace uf::image
         auto const sourceWidthSize = checkedCast<std::size_t>(sourceWidth);
         auto const sourceHeightSize = checkedCast<std::size_t>(sourceHeight);
         auto const sourceRowBytes = sourceWidthSize
-            ? checkedMultiply(*sourceWidthSize, g_bgraBytesPerPixel)
+            ? checkedMultiply(*sourceWidthSize, k_bgraBytesPerPixel)
             : std::optional<std::size_t>{};
         auto const finalRow = sourceHeightSize && *sourceHeightSize > 0U
             ? std::optional<std::size_t>{*sourceHeightSize - 1U}
@@ -135,8 +135,8 @@ namespace uf::image
                 "cropped BGRA8 rectangle is not addressable"
             );
         }
-        auto const xBytes = checkedMultiply(*x, g_bgraBytesPerPixel);
-        auto const rowBytes = checkedMultiply(*width, g_bgraBytesPerPixel);
+        auto const xBytes = checkedMultiply(*x, k_bgraBytesPerPixel);
+        auto const rowBytes = checkedMultiply(*width, k_bgraBytesPerPixel);
         auto const totalBytes = rowBytes
             ? checkedMultiply(*rowBytes, *height)
             : std::optional<std::size_t>{};

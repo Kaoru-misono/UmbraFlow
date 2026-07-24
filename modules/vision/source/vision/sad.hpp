@@ -29,7 +29,7 @@ namespace uf
         ComparisonBudgetExhausted,
     };
 
-    inline constexpr auto g_sadSearchPollIntervalComparisons = uint64{4096};
+    inline constexpr auto k_sadSearchPollIntervalComparisons = uint64{4096};
 
     // Invoked synchronously during matching and never retained by the matcher.
     using SadSearchPoll = std::function<SadSearchControl()>;

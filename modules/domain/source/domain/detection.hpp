@@ -6,7 +6,7 @@
 
 namespace uf
 {
-    inline constexpr auto g_defaultMaxActionFrameAge = std::chrono::duration_cast<MonotonicInstant::Duration>(
+    inline constexpr auto k_defaultMaxActionFrameAge = std::chrono::duration_cast<MonotonicInstant::Duration>(
         std::chrono::milliseconds{750}
     );
 
