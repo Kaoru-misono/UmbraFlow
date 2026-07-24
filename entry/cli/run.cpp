@@ -40,7 +40,10 @@ namespace uf::cli
         return formatted;
     }
 
-    auto exitCodeForError(Error const& error, bool stopRequested) noexcept -> int32
+    auto exitCodeForError(
+        Error const& error,
+        bool stopRequested
+    ) noexcept -> ExitCode
     {
         // A Ctrl-C during a blocked step surfaces as that step's failure (a stalled
         // capture reports CaptureStalled, for example), not as Cancelled. The
@@ -48,22 +51,22 @@ namespace uf::cli
         // cancellation always maps to the documented cancellation code.
         if (stopRequested)
         {
-            return 5;
+            return ExitCode::Cancelled;
         }
 
         auto const kind = automationErrorKind(error);
         if (!kind)
         {
-            return 1;
+            return ExitCode::Failure;
         }
         switch (*kind)
         {
         case AutomationErrorKind::Cancelled:
-            return 5;
+            return ExitCode::Cancelled;
         case AutomationErrorKind::Timeout:
-            return 4;
+            return ExitCode::Timeout;
         case AutomationErrorKind::TargetCompatibilityUnverified:
-            return 2;
+            return ExitCode::TargetCompatibilityUnverified;
         case AutomationErrorKind::InvalidResource:
         case AutomationErrorKind::UnsupportedCapability:
         case AutomationErrorKind::TargetUnavailable:
@@ -76,8 +79,8 @@ namespace uf::cli
         case AutomationErrorKind::InternalInvariant:
         case AutomationErrorKind::IoFailure:
         case AutomationErrorKind::ExternalFailure:
-            return 1;
+            return ExitCode::Failure;
         }
-        return 1;
+        return ExitCode::Failure;
     }
 }

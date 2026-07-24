@@ -6,10 +6,12 @@
 
 #include <doctest/doctest.h>
 
+#include <array>
 #include <chrono>
 #include <span>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 namespace uf::cli
@@ -223,25 +225,54 @@ namespace uf::cli
         }
     }
 
+    TEST_CASE("ExitCode preserves the documented process values")
+    {
+        auto constexpr cases = std::array{
+            std::pair{ExitCode::Success, uint8{0}},
+            std::pair{ExitCode::Failure, uint8{1}},
+            std::pair{ExitCode::TargetCompatibilityUnverified, uint8{2}},
+            std::pair{ExitCode::ActionAbsent, uint8{3}},
+            std::pair{ExitCode::Timeout, uint8{4}},
+            std::pair{ExitCode::Cancelled, uint8{5}},
+        };
+
+        for (auto const& [code, value] : cases)
+        {
+            CHECK(std::to_underlying(code) == value);
+        }
+    }
+
     TEST_CASE("exitCodeForError maps each failure kind to its documented code")
     {
-        CHECK(exitCodeForError(errorOfKind(AutomationErrorKind::Cancelled), false) == 5);
-        CHECK(exitCodeForError(errorOfKind(AutomationErrorKind::Timeout), false) == 4);
-        CHECK(
-            exitCodeForError(
-                errorOfKind(AutomationErrorKind::TargetCompatibilityUnverified),
-                false
-            ) == 2
-        );
-        CHECK(exitCodeForError(errorOfKind(AutomationErrorKind::CaptureStalled), false) == 1);
+        auto constexpr cases = std::array{
+            std::pair{AutomationErrorKind::Cancelled, ExitCode::Cancelled},
+            std::pair{AutomationErrorKind::Timeout, ExitCode::Timeout},
+            std::pair{
+                AutomationErrorKind::TargetCompatibilityUnverified,
+                ExitCode::TargetCompatibilityUnverified,
+            },
+            std::pair{AutomationErrorKind::CaptureStalled, ExitCode::Failure},
+        };
+
+        for (auto const& [kind, code] : cases)
+        {
+            CHECK(exitCodeForError(errorOfKind(kind), false) == code);
+        }
     }
 
     TEST_CASE("exitCodeForError reports cancellation when a stop was requested")
     {
         // A Ctrl-C during a blocked capture surfaces as the capture failure, but
         // the operator's stop intent takes precedence in the reported exit code.
-        CHECK(exitCodeForError(errorOfKind(AutomationErrorKind::CaptureStalled), true) == 5);
-        CHECK(exitCodeForError(errorOfKind(AutomationErrorKind::Timeout), true) == 5);
-        CHECK(exitCodeForError(errorOfKind(AutomationErrorKind::IoFailure), true) == 5);
+        auto constexpr kinds = std::array{
+            AutomationErrorKind::CaptureStalled,
+            AutomationErrorKind::Timeout,
+            AutomationErrorKind::IoFailure,
+        };
+
+        for (auto const kind : kinds)
+        {
+            CHECK(exitCodeForError(errorOfKind(kind), true) == ExitCode::Cancelled);
+        }
     }
 }

@@ -176,7 +176,8 @@ client bounds 与 Win32 signed-16-bit 编码范围。
 
 ### 退出码契约
 
-退出码由 `entry/cli/main.cpp` 与 `entry/cli/run.cpp` 共同定义：
+`entry/cli/run.hpp` 的强类型 `ExitCode` 统一定义退出码，`run.cpp` 负责把结构化错误
+映射到该枚举；只有 `main.cpp` 在进程边界使用 `std::to_underlying` 转为 `int`：
 
 | 退出码 | 含义 |
 |---:|---|
@@ -187,6 +188,7 @@ client bounds 与 Win32 signed-16-bit 编码范围。
 | `4` | `Timeout` |
 | `5` | `Cancelled`，或运行失败返回时 console stop 已被请求 |
 
+所有 CLI 路径都返回 `ExitCode`，避免 `EXIT_FAILURE` 与裸数字分散表达同一契约。
 `exitCodeForError(error, stopRequested)` 先检查 `stopRequested`，再检查
 `AutomationErrorKind`。因此 Ctrl-C 发生在阻塞 capture 等步骤时，即使底层最终
 冒出 `CaptureStalled`、`IoFailure` 或 `Timeout`，操作者的取消意图仍优先报告

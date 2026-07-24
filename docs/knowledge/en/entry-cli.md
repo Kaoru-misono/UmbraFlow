@@ -181,7 +181,9 @@ claim a filesystem-level durable-sync guarantee.
 
 ### Exit-Code Contract
 
-The exit codes are jointly defined by `entry/cli/main.cpp` and `entry/cli/run.cpp`:
+The strongly typed `ExitCode` in `entry/cli/run.hpp` defines the exit-code contract in one place,
+and `run.cpp` maps structured errors to that enum. Only `main.cpp` converts it to `int` with
+`std::to_underlying` at the process boundary:
 
 | Exit Code | Meaning |
 |---:|---|
@@ -192,12 +194,13 @@ The exit codes are jointly defined by `entry/cli/main.cpp` and `entry/cli/run.cp
 | `4` | `Timeout` |
 | `5` | `Cancelled`, or a console stop was already requested when the run failure returned |
 
-`exitCodeForError(error, stopRequested)` checks `stopRequested` first and `AutomationErrorKind`
-second. Therefore, when Ctrl-C occurs during a blocking step such as capture, even if the
-underlying layer eventually surfaces `CaptureStalled`, `IoFailure`, or `Timeout`, the operator's
-cancellation intent is still reported preferentially as `5`. Argument parsing precedes handler
-installation, so a parse error is mapped explicitly with `stopRequested=false`; the non-Windows
-implementation also always reports that no cancellation was received.
+Every CLI path returns `ExitCode`, avoiding a mix of `EXIT_FAILURE` and bare integers for the same
+contract. `exitCodeForError(error, stopRequested)` checks `stopRequested` first and
+`AutomationErrorKind` second. Therefore, when Ctrl-C occurs during a blocking step such as capture,
+even if the underlying layer eventually surfaces `CaptureStalled`, `IoFailure`, or `Timeout`, the
+operator's cancellation intent is still reported preferentially as `5`. Argument parsing precedes
+handler installation, so a parse error is mapped explicitly with `stopRequested=false`; the
+non-Windows implementation also always reports that no cancellation was received.
 
 The error text is composed by `formatRunError` from the automation kind, the message, all context,
 and, when present, the native error category/value. This is the CLI's single-line diagnostic

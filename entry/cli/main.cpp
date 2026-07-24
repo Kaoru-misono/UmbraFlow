@@ -5,12 +5,12 @@
 #include <core/project.hpp>
 
 #include <cstddef>
-#include <cstdlib>
 #include <exception>
 #include <format>
 #include <iostream>
 #include <span>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace uf::cli
@@ -18,7 +18,7 @@ namespace uf::cli
     namespace
     {
         [[nodiscard]]
-        auto dispatchRun(std::span<std::string const> raw) -> int
+        auto dispatchRun(std::span<std::string const> raw) -> ExitCode
         {
             auto const args = parseRunArguments(raw);
             if (!args)
@@ -46,7 +46,7 @@ namespace uf::cli
                     report->m_actionName,
                     report->m_tracePath
                 );
-                return 3;
+                return ExitCode::ActionAbsent;
             }
 
             std::cout << std::format(
@@ -57,17 +57,17 @@ namespace uf::cli
                 report->m_clickClientY,
                 report->m_tracePath
             );
-            return 0;
+            return ExitCode::Success;
         }
 
         [[nodiscard]]
-        auto dispatch(std::span<std::string const> raw) -> int
+        auto dispatch(std::span<std::string const> raw) -> ExitCode
         {
             if (raw.empty())
             {
                 std::cout << g_projectName << '\n';
                 std::cout << runUsageText();
-                return EXIT_SUCCESS;
+                return ExitCode::Success;
             }
 
             if (raw.front() == "run")
@@ -77,7 +77,7 @@ namespace uf::cli
 
             std::cerr << std::format("unknown subcommand \"{}\"\n", raw.front());
             std::cerr << runUsageText();
-            return 1;
+            return ExitCode::Failure;
         }
     }
 }
@@ -92,7 +92,7 @@ auto main(int argumentCount, char const* const* p_arguments) -> int
         if (!convertedArgumentCount || *convertedArgumentCount == 0U)
         {
             std::cerr << "umbra-flow error: invalid process argument vector\n";
-            return EXIT_FAILURE;
+            return std::to_underlying(uf::cli::ExitCode::Failure);
         }
         auto const arguments = std::span<char const* const>{
             p_arguments,
@@ -104,16 +104,16 @@ auto main(int argumentCount, char const* const* p_arguments) -> int
             raw.emplace_back(argument);
         }
 
-        return uf::cli::dispatch(raw);
+        return std::to_underlying(uf::cli::dispatch(raw));
     }
     catch (std::exception const& error)
     {
         std::cerr << "umbra-flow exception: " << error.what() << '\n';
-        return EXIT_FAILURE;
+        return std::to_underlying(uf::cli::ExitCode::Failure);
     }
     catch (...)
     {
         std::cerr << "umbra-flow exception: unknown failure\n";
-        return EXIT_FAILURE;
+        return std::to_underlying(uf::cli::ExitCode::Failure);
     }
 }

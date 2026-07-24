@@ -9,6 +9,18 @@
 
 namespace uf::cli
 {
+    // Stable process-exit contract for the product CLI. `main` converts this
+    // value to int only at the process boundary.
+    enum class ExitCode : uint8
+    {
+        Success                       = 0,
+        Failure                       = 1,
+        TargetCompatibilityUnverified = 2,
+        ActionAbsent                  = 3,
+        Timeout                       = 4,
+        Cancelled                     = 5,
+    };
+
     // The product of one `run` invocation. When m_actionDelivered is true the
     // click landed and the client coordinates are meaningful; when it is false
     // the page resolved but the action target was absent on it, and the caller
@@ -46,11 +58,13 @@ namespace uf::cli
     [[nodiscard]]
     auto formatRunError(Error const& error) -> std::string;
 
-    // Maps a failure to its documented process exit code: 5 cancelled, 4 timeout,
-    // 2 target compatibility, 1 for every other failure. When stopRequested is
-    // true the run always reports the cancellation code regardless of the
-    // underlying kind, so an operator's Ctrl-C intent takes precedence over the
-    // failure a blocked step happened to surface.
+    // Maps a failure to its documented process exit code. When stopRequested
+    // is true the run always reports cancellation regardless of the underlying
+    // kind, so an operator's Ctrl-C intent takes precedence over the failure a
+    // blocked step happened to surface.
     [[nodiscard]]
-    auto exitCodeForError(Error const& error, bool stopRequested) noexcept -> int32;
+    auto exitCodeForError(
+        Error const& error,
+        bool stopRequested
+    ) noexcept -> ExitCode;
 }
