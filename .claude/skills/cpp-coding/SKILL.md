@@ -49,7 +49,7 @@ concurrency, numeric safety, serialization, or an `unsafe/`, `platform/`, or
     ownership category.
 12. Keep headers minimal and use forward declarations where ownership permits.
 13. All code and comments must be English.
-14. Follow the April2 line-wrapping and source-normalization rules in
+14. Follow the repository line-wrapping and source-normalization rules in
     `references/coding-standard.md` exactly. Do not introduce a local wrapping
     style.
 15. Declare every enum as `enum class` or `enum struct` with an explicit
@@ -90,7 +90,7 @@ Windows.
 Nothing checks the items below. They are the ones that reach review unnoticed,
 so verify each one deliberately:
 
-- April2 delimiter-based wrapping on every wrapped statement, not only calls
+- Repository delimiter-based wrapping on every wrapped statement, not only calls
 - Trailing return types, Allman braces, AAA locals, east const, and braces on
   control statements
 - Where an alignment block boundary belongs, and any declaration form the

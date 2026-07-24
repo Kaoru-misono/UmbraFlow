@@ -235,7 +235,7 @@ auto source = AuthoringSourceSpec{
 > No formatter reproduces this convention. It was measured against clang-format
 > and every configuration diverged, so no tool will ever catch a violation here.
 
-Follow the April2 wrapping convention exactly. It applies to every wrapped
+Follow the repository wrapping convention exactly. It applies to every wrapped
 statement, not only function calls.
 
 - If a statement needs wrapping, the first wrapped element must appear after a

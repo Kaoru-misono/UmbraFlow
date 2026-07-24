@@ -10,12 +10,13 @@ Tests use doctest and live under `tests/<module>/`.
 
 #include <limits>
 
-TEST_CASE("checked multiplication rejects overflow")
+namespace uf
 {
-    auto constexpr maximum = std::numeric_limits<uf::uint64>::max();
-    CHECK_FALSE(
-        uf::checkedMultiply(maximum, uf::uint64{2}).has_value()
-    );
+    TEST_CASE("checked multiplication rejects overflow")
+    {
+        auto constexpr maximum = std::numeric_limits<uint64>::max();
+        CHECK_FALSE(checkedMultiply(maximum, uint64{2}).has_value());
+    }
 }
 ```
 
