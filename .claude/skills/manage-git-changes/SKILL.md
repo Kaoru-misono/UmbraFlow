@@ -1,6 +1,6 @@
 ---
 name: manage-git-changes
-description: Prepare and execute safe, semantic Git workspace changes, pull requests, and CI follow-up. Use when the user asks to stage files, create or reorganize commits, soft-reset or recombine unpublished commits, run or unwind a bisect, push a branch, open or update a pull request, or inspect a workspace specifically in preparation for those actions. Do not use for read-only status, log, blame, or code-review history inspection.
+description: Prepare and execute safe, semantic Git workspace changes, tags, pull requests, and CI follow-up. Use when the user asks to stage files, create or reorganize commits, soft-reset or recombine unpublished commits, run or unwind a bisect, create a session or milestone tag, push a branch, open or update a pull request, or inspect a workspace specifically in preparation for those actions. Also use at the end of a substantial working session to create the session review tag. Do not use for read-only status, log, blame, or code-review history inspection.
 ---
 
 # Manage Git Changes
@@ -46,3 +46,29 @@ Treat the workflow red lines in `CLAUDE.md` as mandatory.
 When the user asks to recombine unpublished commits, preserve semantic commit
 boundaries and review the final staged diff and commit list before reporting
 completion.
+
+## Tagging
+
+Always use annotated tags (`git tag -a`). Two kinds exist:
+
+- **Session review tags** — `session/YYYY-MM-DD-<topic>` on the final commit of
+  each substantial working session, so the user can review one session's work
+  as a unit. Creating one at session end is standing-approved. When the name
+  is already taken that day, append a numeric suffix. The tag message must
+  contain: the review range `<base>..<tag>` where base is the parent of the
+  session's first commit, commit bullets grouped by phase or topic, and every
+  item still awaiting the user's acceptance. The user browses sessions with
+  `git tag -n99 --list 'session/*'` and reviews one with
+  `git log --reverse <base>..<tag>` and `git diff <base>..<tag>`.
+- **Milestone tags** — flat names in the project's milestone vocabulary
+  (for example `m0-acceptance`), created only on a state whose verification
+  actually happened and is recorded, such as a documented real-machine
+  acceptance. Never tag a merely code-complete or CI-green state as a
+  milestone, and confirm the verification evidence with the user before
+  creating one. Do not use semver names while no packaged release exists.
+
+Never move, re-create, or delete an existing tag. `git push` does not transfer
+tags, and `--follow-tags` pushes the branch plus every reachable annotated tag
+rather than one tag. Push exactly the requested tag with
+`git push origin <tag>`, only when the user asks and after the local gates
+pass, then verify the remote tag points at the intended commit.
