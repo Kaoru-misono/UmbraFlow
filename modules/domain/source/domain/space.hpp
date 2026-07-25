@@ -185,7 +185,6 @@ namespace uf
     class CoordinateTransform final
     {
         static constexpr auto k_frameBoundsEpsilon = 1e-3F;
-        static constexpr auto k_maxExactFrameDimension = k_maxExactFrameDimension;
 
         float  m_clientOriginX;
         float  m_clientOriginY;
