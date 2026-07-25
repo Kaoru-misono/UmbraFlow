@@ -3,11 +3,15 @@
 #include <core/error/contracts.hpp>
 #include <core/safety/checked-access.hpp>
 
+#include <domain/error.hpp>
+
 #include <algorithm>
 #include <cstddef>
+#include <format>
 #include <optional>
 #include <string>
 #include <utility>
+#include <variant>
 #include <vector>
 
 namespace uf::workbench
@@ -222,6 +226,324 @@ namespace uf::workbench
             std::move(pages),
             std::move(regressions)
         );
+    }
+
+    auto retypeRecognizer(
+        AuthoringDraft draft,
+        annotation::RecognizerId id,
+        annotation::AnnotationType type
+    ) -> Result<RetypedRecognizer>
+    {
+        auto const target = std::ranges::find(
+            draft.m_recognizers,
+            id,
+            &EditableRecognizer::m_id
+        );
+        if (target == draft.m_recognizers.end())
+        {
+            return fail(
+                AutomationErrorKind::InvalidResource,
+                std::format(
+                    "recognizer {} is not part of this draft",
+                    id.value().toString()
+                )
+            );
+        }
+        if (target->m_annotationType == type)
+        {
+            return RetypedRecognizer{.m_draft = std::move(draft)};
+        }
+
+        // Only a page anchor may fill a required or forbidden role, so leaving
+        // the page anchor type withdraws this recognizer from every signature. A
+        // signature naming nothing else cannot survive that withdrawal, and the
+        // author has to resolve which anchor takes over.
+        auto withdrawnRoles = std::size_t{0};
+        auto anchoredPages  = std::vector<annotation::PageId>{};
+        if (target->m_annotationType == annotation::AnnotationType::PageAnchor)
+        {
+            for (auto const& page : draft.m_pages)
+            {
+                auto const named = (
+                    std::ranges::contains(page.m_required, id)
+                    || std::ranges::contains(page.m_forbidden, id)
+                );
+                auto const alone = (
+                    page.m_required.size() + page.m_forbidden.size() == 1U
+                );
+                if (named && alone)
+                {
+                    return fail(
+                        AutomationErrorKind::InvalidResource,
+                        std::format(
+                            "\"{}\" is the only recognizer page \"{}\" names; "
+                            "give that page another page anchor before changing "
+                            "this recognizer's type",
+                            target->m_name,
+                            page.m_name
+                        )
+                    );
+                }
+                // Remembered before the withdrawal: a page this recognizer was
+                // required on is where it demonstrably appears, which is a far
+                // better authorization to offer than an arbitrary page. A page
+                // it was forbidden on is the opposite and is never offered.
+                if (std::ranges::contains(page.m_required, id))
+                {
+                    anchoredPages.emplace_back(page.m_id);
+                }
+            }
+            for (auto& page : draft.m_pages)
+            {
+                auto const before = page.m_required.size() + page.m_forbidden.size();
+                std::erase(page.m_required, id);
+                std::erase(page.m_forbidden, id);
+                withdrawnRoles += (
+                    before - (page.m_required.size() + page.m_forbidden.size())
+                );
+            }
+        }
+
+        auto authorizedPage        = std::optional<annotation::PageId>{};
+        auto clearedAuthorizations = std::size_t{0};
+        auto clearedClick          = false;
+        if (type == annotation::AnnotationType::ActionTarget)
+        {
+            // An action target must authorize at least one page. Authorize
+            // exactly one rather than every page: an action target is acted on
+            // only where it is authorized, so widening that reach stays the
+            // author's explicit decision.
+            if (target->m_allowedPageIds.empty())
+            {
+                if (draft.m_pages.empty())
+                {
+                    return fail(
+                        AutomationErrorKind::InvalidResource,
+                        "an action target must authorize at least one page and "
+                        "this project has none; add a page first"
+                    );
+                }
+                authorizedPage = anchoredPages.empty()
+                    ? draft.m_pages.front().m_id
+                    : anchoredPages.front();
+                target->m_allowedPageIds.emplace_back(*authorizedPage);
+            }
+        }
+        else
+        {
+            // Only an action target may carry a default click.
+            clearedClick = target->m_defaultClick.has_value();
+            target->m_defaultClick.reset();
+            if (type == annotation::AnnotationType::PageAnchor)
+            {
+                // A page anchor's membership is its signature role, never an
+                // authorization it holds itself.
+                clearedAuthorizations = target->m_allowedPageIds.size();
+                target->m_allowedPageIds.clear();
+            }
+        }
+        target->m_annotationType = type;
+
+        return RetypedRecognizer{
+            .m_draft                 = std::move(draft),
+            .m_authorizedPage        = authorizedPage,
+            .m_withdrawnRoles        = withdrawnRoles,
+            .m_clearedAuthorizations = clearedAuthorizations,
+            .m_clearedClick          = clearedClick,
+        };
+    }
+
+    auto deleteRecognizer(
+        AuthoringDraft draft,
+        annotation::RecognizerId id
+    ) -> Result<DeletedEntity>
+    {
+        auto const target = std::ranges::find(
+            draft.m_recognizers,
+            id,
+            &EditableRecognizer::m_id
+        );
+        if (target == draft.m_recognizers.end())
+        {
+            return fail(
+                AutomationErrorKind::InvalidResource,
+                std::format(
+                    "recognizer {} is not part of this draft",
+                    id.value().toString()
+                )
+            );
+        }
+
+        for (auto const& page : draft.m_pages)
+        {
+            auto const named = (
+                std::ranges::contains(page.m_required, id)
+                || std::ranges::contains(page.m_forbidden, id)
+            );
+            auto const alone = (
+                page.m_required.size() + page.m_forbidden.size() == 1U
+            );
+            if (named && alone)
+            {
+                return fail(
+                    AutomationErrorKind::InvalidResource,
+                    std::format(
+                        "\"{}\" is the only recognizer page \"{}\" names; "
+                        "delete that page first, or give it another page anchor",
+                        target->m_name,
+                        page.m_name
+                    )
+                );
+            }
+        }
+
+        auto withdrawnRoles = std::size_t{0};
+        for (auto& page : draft.m_pages)
+        {
+            auto const before = page.m_required.size() + page.m_forbidden.size();
+            std::erase(page.m_required, id);
+            std::erase(page.m_forbidden, id);
+            withdrawnRoles += (
+                before - (page.m_required.size() + page.m_forbidden.size())
+            );
+        }
+        draft.m_recognizers.erase(target);
+
+        return DeletedEntity{
+            .m_draft          = std::move(draft),
+            .m_withdrawnRoles = withdrawnRoles,
+        };
+    }
+
+    auto deletePage(
+        AuthoringDraft draft,
+        annotation::PageId id
+    ) -> Result<DeletedEntity>
+    {
+        auto const target = std::ranges::find(
+            draft.m_pages,
+            id,
+            &EditablePage::m_id
+        );
+        if (target == draft.m_pages.end())
+        {
+            return fail(
+                AutomationErrorKind::InvalidResource,
+                std::format(
+                    "page {} is not part of this draft",
+                    id.value().toString()
+                )
+            );
+        }
+
+        for (auto const& recognizer : draft.m_recognizers)
+        {
+            auto const onlyAuthorization = (
+                recognizer.m_annotationType == annotation::AnnotationType::ActionTarget
+                && recognizer.m_allowedPageIds.size() == 1U
+                && std::ranges::contains(recognizer.m_allowedPageIds, id)
+            );
+            if (onlyAuthorization)
+            {
+                return fail(
+                    AutomationErrorKind::InvalidResource,
+                    std::format(
+                        "page \"{}\" is the only page action target \"{}\" is "
+                        "authorized on; authorize it elsewhere or delete it first",
+                        target->m_name,
+                        recognizer.m_name
+                    )
+                );
+            }
+        }
+
+        for (auto const& regression : draft.m_regressions)
+        {
+            auto const* p_resolved = std::get_if<annotation::ResolvedRegression>(
+                &regression.m_expectation
+            );
+            if (p_resolved != nullptr && p_resolved->m_pageId == id)
+            {
+                return fail(
+                    AutomationErrorKind::InvalidResource,
+                    std::format(
+                        "a regression case expects page \"{}\" to resolve; "
+                        "reclassify it before deleting the page",
+                        target->m_name
+                    )
+                );
+            }
+        }
+
+        auto clearedAuthorizations = std::size_t{0};
+        for (auto& recognizer : draft.m_recognizers)
+        {
+            auto const before = recognizer.m_allowedPageIds.size();
+            std::erase(recognizer.m_allowedPageIds, id);
+            clearedAuthorizations += before - recognizer.m_allowedPageIds.size();
+        }
+        draft.m_pages.erase(target);
+
+        return DeletedEntity{
+            .m_draft                 = std::move(draft),
+            .m_clearedAuthorizations = clearedAuthorizations,
+        };
+    }
+
+    auto deleteSource(
+        AuthoringDraft draft,
+        annotation::SourceId id
+    ) -> Result<DeletedEntity>
+    {
+        auto const target = std::ranges::find(
+            draft.m_sources,
+            id,
+            &EditableSource::m_id
+        );
+        if (target == draft.m_sources.end())
+        {
+            return fail(
+                AutomationErrorKind::InvalidResource,
+                std::format(
+                    "source {} is not part of this draft",
+                    id.value().toString()
+                )
+            );
+        }
+
+        auto const authored = std::ranges::count(
+            draft.m_recognizers,
+            id,
+            &EditableRecognizer::m_sourceId
+        );
+        if (authored > 0)
+        {
+            return fail(
+                AutomationErrorKind::InvalidResource,
+                std::format(
+                    "{} recognizer{} authored on this source; delete {} first",
+                    authored,
+                    authored == 1 ? " is" : "s are",
+                    authored == 1 ? "it" : "them"
+                )
+            );
+        }
+
+        auto const before = draft.m_regressions.size();
+        std::erase_if(
+            draft.m_regressions,
+            [id](EditableRegression const& regression) -> bool
+            {
+                return regression.m_sourceId == id;
+            }
+        );
+        auto const removedRegressions = before - draft.m_regressions.size();
+        draft.m_sources.erase(target);
+
+        return DeletedEntity{
+            .m_draft              = std::move(draft),
+            .m_removedRegressions = removedRegressions,
+        };
     }
 
     AuthoringEditHistory::AuthoringEditHistory(

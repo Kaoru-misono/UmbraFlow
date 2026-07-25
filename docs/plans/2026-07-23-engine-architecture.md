@@ -11,8 +11,18 @@
 > A1+B1:workbench 授权后端(经临时程序化 driver 驱动)生成完整 runtime 项目 → release umbra-flow 吃它 →
 > 真机后台点击成功,证明 authoring→生成→runtime→点击整条链路。期间修了 4 个 workbench 真机使能 bug
 > (高 DPI capture 几何+DPI 串入、中文字体、docking 接线、New Page 空页)+ 反自动化诱饵窗口选择器,
-> 均已提交。纯 GUI 人工走查为可选剩余确认。详见 Open items 与
-> `docs/pitfalls/capture-and-target-selection.md`。
+> 均已提交。详见 Open items 与 `docs/pitfalls/capture-and-target-selection.md`。
+>
+> 更新(2026-07-25 晚):**纯 GUI 人工走查完成,且超出原完成标准**——原标准是「一个页面 + 一个按钮」,
+> 实际由开发者全程鼠标操作标了**两个页面 + 两个按钮**,并用两次 release `umbra-flow run` 串成
+> 主界面 → 角色详情 → 角色特写的**导航链**,两步 exit=0、trace 干净。step 2 首帧即
+> `PageResolved(page_1)` 这件事本身证明 step 1 的点击生效;未跳转时 step 2 会 poll 超时 fail-closed。
+> 由此确认:**多步编排在 P0-B Luau 引擎落地前,可用串接 CLI 调用达成且不打折安全性**——
+> 每步都重新观察、重新解析页面才肯投递,引擎内仍无循环(`act` 即作废 Observation)。
+> 走查另外暴露 7 个 workbench 缺口(recognizer 不可重选、page 不可见不可删、完全没有删除、
+> 类型切换互锁、默认名必撞、成功编辑不留痕、属性面板 use-after-free),均已修复,
+> 见 `docs/pitfalls/workbench-authoring-ui.md` 与
+> `docs/pitfalls/page-modeling-and-multi-step.md`。
 
 ## Context
 

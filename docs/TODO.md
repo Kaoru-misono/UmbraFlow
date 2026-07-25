@@ -31,7 +31,22 @@
       D3D11)、四面板、`--smoke` 自检通过。**2026-07-25 真机 GUI 使能修复**(`fix(workbench)` 提交):
       WGC 抓帧在高 DPI 目标上采用线程级 per-monitor 感知 + 真实 DPI 串入 source fingerprint(否则
       1066×600 虚拟几何 / 96 DPI manifest → umbra-flow 指纹不符);ImGui 载入中文系统字体(否则中文标题显示 `？`);
-      启用 docking(vendored 已是 docking 分支,原先没接线)。纯人工 GUI 走查仍待开发者。
+      启用 docking(vendored 已是 docking 分支,原先没接线)。
+      **2026-07-25 人工 GUI 走查暴露并修复的可用性/正确性缺口**(见
+      [`pitfalls/workbench-authoring-ui.md`](pitfalls/workbench-authoring-ui.md)):
+      ① recognizer 只在新建那一刻可选中(`setSelectedRecognizerId` 全项目仅一处调用),
+      建了第二个后第一个永久不可达 → 新增 **Recognizers 面板**,选中时同步跟到它所属 source
+      (否则框会画在无关图上);② page 只在选中某 recognizer 时才在属性面板露一眼且**无法删除**
+      → 新增 **Pages 面板**;③ **完全没有删除**(建错只能立刻 undo)→ 补
+      `deleteRecognizer`/`deletePage`/`deleteSource`,连带撤出 page signature、清授权、
+      删源上的回归用例,级联会触及只有作者能决定的东西时改为拒绝并给出可执行提示;
+      ④ `page_anchor` ↔ `action_target` 类型切换在逐控件提交模型下**无解**(两条规则互锁)
+      → `retypeRecognizer` 单事务改写类型及全部依赖字段;⑤ 默认名固定导致第二次新建必撞
+      (名字跨 recognizer/page 全局唯一)→ 取第一个空闲 `<stem>_N`;
+      ⑥ 成功编辑不写日志,只有失败留痕 → 每次被接受的编辑都要带描述;
+      ⑦ **既有 use-after-free**:属性面板持有 `RecognizerDefinition const*` 贯穿整帧,
+      而每次提交 `m_current = std::move(next)` 会整体换掉 document → 改为
+      `PendingEdit` 延迟提交,在借用 document 的面板画完之后、actions 面板之前统一 apply。
 - [ ] 标注类型:`page_anchor`、`action_target`、`info_region`;分别编辑 `template_rect` 与
       `search_roi`,以及 page、整数定点阈值和 required/forbidden 关系。
       **A1 属性面板已覆盖全部字段(2026-07-24)**;多 page 编辑体验留 A2。
@@ -73,8 +88,21 @@
       release `umbra-flow run` 吃该 workbench 生成的 manifest → 真机后台点击成功
       (能力值→卡牌,sadScore=0,ClickDelivered,不抢焦点)。经临时程序化 driver 驱动整条后端链路验证,
       无需人工 GUI 操作即证明 authoring→生成→runtime→真机点击闭环。
-      **纯 GUI 人工走一遍**(在 workbench 里鼠标框选标注)是可选的剩余确认;capture/字体/New Page/docking
-      的真机 GUI 使能修复见下 §1 更新与 `fix(workbench)` 提交。
+- [x] **纯 GUI 人工走查 + 多页面导航链(2026-07-25 通过)**:开发者全程鼠标操作,在 workbench 里
+      抓两屏(主界面 / 角色详情)、标 2 个 `page_anchor` + 2 个 `action_target`、建 2 个 page、
+      保存生成 → **两次 release `umbra-flow run` 串成一条导航链**:主界面点 `battleCharacter`
+      → 进角色详情 → 点 `meiling` → 进角色特写,两步均 `exit=0`。
+      trace:step 1 先 11 帧 `PageUnknown`(画面未稳)才 `PageResolved`,
+      `sadScore=9780 / maximumSad=299880` → `ActionAuthorized` → `ClickDelivered(1469,558)`
+      → `ObservationInvalidated`;step 2 **首帧**即 `PageResolved(page_1)`、`sadScore=0`
+      → `ClickDelivered(513,287)`。**step 2 能解析出 `page_1` 本身就是 step 1 点击生效的证明**
+      ——若未跳转,step 2 会 poll 到超时并 fail-closed,而不是盲点。
+      离线复刻匹配器(同灰度、同阈值公式)验证两个 anchor 交叉方向余量 2.85–4.15 倍,
+      故**不需要 forbidden 互斥**(此前凭「两个模板都在左上角」的猜测被实测推翻)。
+      注意 `sadScore` 一个 0 一个 9780:实机帧与标定静态图必然有漂移,
+      9000 bp 阈值留了约 30 倍余量才是它能过的原因,不是「截图与实机一模一样」。
+      多步编排现状与页面建模陷阱记入
+      [`pitfalls/page-modeling-and-multi-step.md`](pitfalls/page-modeling-and-multi-step.md)。
 
 ## 2. P0-B — Luau Engine
 

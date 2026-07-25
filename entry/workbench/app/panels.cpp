@@ -28,7 +28,9 @@
 #include <format>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <utility>
+#include <vector>
 
 namespace uf::workbench
 {
@@ -72,13 +74,6 @@ namespace uf::workbench
             return id.toString().substr(0, 8);
         }
 
-        template <typename Range, typename Value>
-        [[nodiscard]]
-        auto containsId(Range const& range, Value const& value) -> bool
-        {
-            return std::ranges::find(range, value) != std::ranges::end(range);
-        }
-
         auto seedBuffer(
             std::array<char, 256>& buffer,
             std::string const& text
@@ -107,22 +102,228 @@ namespace uf::workbench
             return &*found;
         }
 
-        // Commits an edited draft, surfacing a build rejection on the status line.
-        // A no-op edit (identical draft) leaves the status untouched.
-        auto commitDraft(
-            AppState& state,
-            AuthoringDraft const& draft,
-            PanelUiState& ui
+        [[nodiscard]]
+        auto pageName(AppState const& state, annotation::PageId id) -> std::string
+        {
+            auto const* page = state.document().catalog().findPage(id);
+            if (page != nullptr)
+            {
+                return page->name().value();
+            }
+            return shortId(id.value());
+        }
+
+        // Names the type change and everything the conversion had to repair with
+        // it, so an authorization the author did not ask for and a field the
+        // conversion could not keep are both stated rather than discovered later.
+        [[nodiscard]]
+        auto retypeSummary(
+            AppState const& state,
+            RetypedRecognizer const& retyped,
+            char const* typeName
+        ) -> std::string
+        {
+            auto summary = std::format("type set to {}", typeName);
+            if (auto const page = retyped.m_authorizedPage)
+            {
+                summary += std::format(
+                    "; authorized page \"{}\"",
+                    pageName(state, *page)
+                );
+            }
+            if (retyped.m_withdrawnRoles > 0U)
+            {
+                summary += std::format(
+                    "; withdrew from {} page {}",
+                    retyped.m_withdrawnRoles,
+                    retyped.m_withdrawnRoles == 1U ? "signature" : "signatures"
+                );
+            }
+            if (retyped.m_clearedAuthorizations > 0U)
+            {
+                summary += std::format(
+                    "; cleared {} page {}",
+                    retyped.m_clearedAuthorizations,
+                    retyped.m_clearedAuthorizations == 1U
+                        ? "authorization"
+                        : "authorizations"
+                );
+            }
+            if (retyped.m_clearedClick)
+            {
+                summary += "; cleared the default click";
+            }
+            return summary;
+        }
+
+        // Queues an edited draft for the end of the frame instead of committing it
+        // where the widget was handled; see PendingEdit for why a mid-draw commit
+        // is unsafe. Every request describes its edit, because the description
+        // becomes the status line and the status line is what the operation log
+        // records; an edit that left no trace there is one nobody can reconstruct
+        // afterwards. A frame carries one request: a second would have been built
+        // against the same document as the first and would silently drop it, and
+        // only a widget deactivating in the same frame as another's click can
+        // produce one, so the first request wins and the second click is retried
+        // by the user on the next frame.
+        auto requestEdit(
+            PanelUiState& ui,
+            AuthoringDraft draft,
+            std::string description
         ) -> void
         {
-            auto const applied = state.applyEdit(draft);
+            if (ui.m_pendingEdit.has_value())
+            {
+                return;
+            }
+            ui.m_pendingEdit = PendingEdit{
+                .m_draft       = std::move(draft),
+                .m_description = std::move(description),
+            };
+        }
+
+        // Commits the frame's queued edit, if any, and states the outcome on the
+        // status line: the requester's description when the document changed, the
+        // build's rejection when it was refused. An edit that changes nothing
+        // leaves the line alone.
+        auto applyPendingEdit(AppState& state, PanelUiState& ui) -> void
+        {
+            if (!ui.m_pendingEdit.has_value())
+            {
+                return;
+            }
+            auto const request = *std::exchange(ui.m_pendingEdit, std::nullopt);
+
+            auto const applied = state.applyEdit(request.m_draft);
             if (!applied)
             {
                 ui.m_statusLine = std::format(
                     "edit rejected: {}",
                     toString(applied.error())
                 );
+                return;
             }
+            if (*applied)
+            {
+                ui.m_statusLine = request.m_description;
+            }
+        }
+
+        // Every recognizer and page name in a draft. The catalog requires names to
+        // be unique across both kinds, so a fresh name has to be checked against
+        // all of them, not just its own kind.
+        [[nodiscard]]
+        auto takenNames(AuthoringDraft const& draft) -> std::vector<std::string>
+        {
+            auto names = std::vector<std::string>{};
+            names.reserve(draft.m_recognizers.size() + draft.m_pages.size());
+            for (auto const& recognizer : draft.m_recognizers)
+            {
+                names.emplace_back(recognizer.m_name);
+            }
+            for (auto const& page : draft.m_pages)
+            {
+                names.emplace_back(page.m_name);
+            }
+            return names;
+        }
+
+        // A fresh entity takes the first free "<stem>_N" instead of a fixed name
+        // that the catalog refuses the second time the button is pressed. One of
+        // the first size() + 1 candidates is always free, so the search ends.
+        [[nodiscard]]
+        auto freshName(
+            std::vector<std::string> const& taken,
+            std::string_view stem
+        ) -> std::string
+        {
+            auto candidate = std::string{};
+            for (auto index = std::size_t{1}; index <= taken.size() + 1U; ++index)
+            {
+                candidate = std::format("{}_{}", stem, index);
+                if (!std::ranges::contains(taken, candidate))
+                {
+                    break;
+                }
+            }
+            return candidate;
+        }
+
+        // Names a deletion and the neighbours it had to edit, so a withdrawal or
+        // a discarded regression case is stated rather than discovered later.
+        [[nodiscard]]
+        auto deletionSummary(
+            std::string_view what,
+            DeletedEntity const& deleted
+        ) -> std::string
+        {
+            auto summary = std::format("deleted {}", what);
+            if (deleted.m_withdrawnRoles > 0U)
+            {
+                summary += std::format(
+                    "; withdrew it from {} page {}",
+                    deleted.m_withdrawnRoles,
+                    deleted.m_withdrawnRoles == 1U ? "signature" : "signatures"
+                );
+            }
+            if (deleted.m_clearedAuthorizations > 0U)
+            {
+                summary += std::format(
+                    "; cleared it from {} recognizer {}",
+                    deleted.m_clearedAuthorizations,
+                    deleted.m_clearedAuthorizations == 1U
+                        ? "authorization"
+                        : "authorizations"
+                );
+            }
+            if (deleted.m_removedRegressions > 0U)
+            {
+                summary += std::format(
+                    "; removed {} regression {}",
+                    deleted.m_removedRegressions,
+                    deleted.m_removedRegressions == 1U ? "case" : "cases"
+                );
+            }
+            return summary;
+        }
+
+        // Queues a deletion, reporting a refusal immediately. Deletions are
+        // refused rather than cascaded when the cascade would reach something
+        // only the author can decide about.
+        auto requestDeletion(
+            PanelUiState& ui,
+            Result<DeletedEntity> deleted,
+            std::string_view what
+        ) -> void
+        {
+            if (!deleted)
+            {
+                ui.m_statusLine = std::format(
+                    "delete rejected: {}",
+                    toString(deleted.error())
+                );
+                return;
+            }
+            auto description = deletionSummary(what, *deleted);
+            requestEdit(ui, std::move(deleted->m_draft), std::move(description));
+        }
+
+        // The source a recognizer was authored against, so a selection can follow
+        // the recognizer to the image its rectangles are meaningful on.
+        [[nodiscard]]
+        auto sourceOfRecognizer(
+            AppState const& state,
+            annotation::RecognizerId id
+        ) -> std::optional<annotation::SourceId>
+        {
+            for (auto const& relationship : state.document().recognizerSources())
+            {
+                if (relationship.m_recognizerId == id)
+                {
+                    return relationship.m_sourceId;
+                }
+            }
+            return std::nullopt;
         }
 
         [[nodiscard]]
@@ -157,7 +358,7 @@ namespace uf::workbench
             edited.m_recognizers.emplace_back(
                 EditableRecognizer{
                     .m_id             = id,
-                    .m_name           = "recognizer",
+                    .m_name           = freshName(takenNames(edited), "recognizer"),
                     .m_annotationType = annotation::AnnotationType::PageAnchor,
                     .m_sourceId       = *source,
                     .m_templateRect   = templateRect,
@@ -207,7 +408,7 @@ namespace uf::workbench
             edited.m_pages.emplace_back(
                 EditablePage{
                     .m_id        = id,
-                    .m_name      = "page",
+                    .m_name      = freshName(takenNames(edited), "page"),
                     .m_required  = {*selected},
                     .m_forbidden = {},
                 }
@@ -369,6 +570,19 @@ namespace uf::workbench
                 );
             }
 
+            auto const selectedSource = state.selectedSourceId();
+            ImGui::SameLine();
+            ImGui::BeginDisabled(!selectedSource.has_value());
+            if (ImGui::Button("Delete Source") && selectedSource.has_value())
+            {
+                requestDeletion(
+                    ui,
+                    deleteSource(state.draft(), *selectedSource),
+                    "source"
+                );
+            }
+            ImGui::EndDisabled();
+
             if (ImGui::Button("Import PNG..."))
             {
                 auto picked = services.m_pickPngToImport();
@@ -408,6 +622,116 @@ namespace uf::workbench
             ImGui::End();
         }
 
+        // The catalog's recognizers, so any of them can be selected again. Without
+        // this list a recognizer is reachable only in the moment it is created:
+        // the properties panel edits whatever is selected, and nothing else moves
+        // the selection.
+        auto drawRecognizersPanel(AppState& state, PanelUiState& ui) -> void
+        {
+            if (!ImGui::Begin("Recognizers"))
+            {
+                ImGui::End();
+                return;
+            }
+
+            for (auto const& recognizer : state.document().catalog().recognizers())
+            {
+                auto const id       = recognizer.id();
+                auto const selected = state.selectedRecognizerId() == id;
+
+                // Scope the row by the stable id: names are unique today, but the
+                // row must keep its identity while a rename is in flight.
+                auto const idText = id.value().toString();
+                ImGui::PushID(idText.c_str());
+                auto const row = std::format(
+                    "{}  [{}]",
+                    recognizer.name().value(),
+                    k_annotationTypeItems.at(
+                        static_cast<std::size_t>(
+                            std::to_underlying(recognizer.annotationType())
+                        )
+                    )
+                );
+                if (ImGui::Selectable(row.c_str(), selected))
+                {
+                    state.setSelectedRecognizerId(id);
+                    // The canvas draws the selected recognizer's rectangles over
+                    // the selected source, so follow the recognizer to the source
+                    // it was authored against; otherwise its rectangles would be
+                    // drawn over an unrelated image.
+                    if (auto const source = sourceOfRecognizer(state, id))
+                    {
+                        state.setSelectedSourceId(*source);
+                    }
+                }
+                ImGui::PopID();
+            }
+
+            if (state.document().catalog().recognizers().empty())
+            {
+                ImGui::TextUnformatted(
+                    "No recognizers yet. Capture a source, then New Recognizer."
+                );
+            }
+
+            auto const selected = state.selectedRecognizerId();
+            ImGui::BeginDisabled(!selected.has_value());
+            if (ImGui::Button("Delete Recognizer") && selected.has_value())
+            {
+                requestDeletion(
+                    ui,
+                    deleteRecognizer(state.draft(), *selected),
+                    "recognizer"
+                );
+            }
+            ImGui::EndDisabled();
+
+            ImGui::End();
+        }
+
+        // The catalog's pages. Page membership is edited from the properties
+        // panel, but a page is otherwise invisible unless some recognizer happens
+        // to be selected, and there was no way to remove one at all.
+        auto drawPagesPanel(AppState& state, PanelUiState& ui) -> void
+        {
+            if (!ImGui::Begin("Pages"))
+            {
+                ImGui::End();
+                return;
+            }
+
+            for (auto const& page : state.document().catalog().pages())
+            {
+                auto const idText = page.id().value().toString();
+                ImGui::PushID(idText.c_str());
+                ImGui::Text(
+                    "%s  %zu required  %zu forbidden",
+                    page.name().value().c_str(),
+                    page.required().size(),
+                    page.forbidden().size()
+                );
+                ImGui::SameLine();
+                if (ImGui::SmallButton("Delete"))
+                {
+                    requestDeletion(
+                        ui,
+                        deletePage(state.draft(), page.id()),
+                        std::format("page \"{}\"", page.name().value())
+                    );
+                }
+                ImGui::PopID();
+            }
+
+            if (state.document().catalog().pages().empty())
+            {
+                ImGui::TextUnformatted(
+                    "No pages yet. Select a page anchor, then New Page."
+                );
+            }
+
+            ImGui::End();
+        }
+
         auto editSelectedRectOnRelease(
             AppState& state,
             PanelUiState& ui,
@@ -421,7 +745,10 @@ namespace uf::workbench
             auto* recognizer = findEditableRecognizer(draft, recognizerId);
             if (recognizer != nullptr)
             {
-                if (ui.m_dragTarget == CanvasDragTarget::TemplateRect)
+                auto const isTemplate = (
+                    ui.m_dragTarget == CanvasDragTarget::TemplateRect
+                );
+                if (isTemplate)
                 {
                     recognizer->m_templateRect = editedRect;
                 }
@@ -429,7 +756,18 @@ namespace uf::workbench
                 {
                     recognizer->m_searchRoi = editedRect;
                 }
-                commitDraft(state, draft, ui);
+                requestEdit(
+                    ui,
+                    std::move(draft),
+                    std::format(
+                        "{} set to {},{} {}x{}",
+                        isTemplate ? "template rect" : "search roi",
+                        editedRect.x(),
+                        editedRect.y(),
+                        editedRect.width(),
+                        editedRect.height()
+                    )
+                );
             }
             ui.m_dragTarget = CanvasDragTarget::None;
             ui.m_dragGrip.reset();
@@ -704,13 +1042,26 @@ namespace uf::workbench
         ) -> void
         {
             auto const recognizerId = definition.id();
+            // The two columns are mutually exclusive by the catalog's rules: a
+            // page anchor belongs to a page by holding a role in its signature
+            // and may authorize none, while every other type authorizes pages
+            // directly and may hold no role. Offering both for either type only
+            // produces a rejected edit, so each is disabled where it cannot
+            // apply.
+            auto const isAnchor = (
+                definition.annotationType() == annotation::AnnotationType::PageAnchor
+            );
             ImGui::SeparatorText("Pages");
             for (auto const& page : state.document().catalog().pages())
             {
                 auto const pageId = page.id();
                 ImGui::PushID(page.name().value().c_str());
 
-                auto member = containsId(definition.allowedPageIds(), pageId);
+                auto member = std::ranges::contains(
+                    definition.allowedPageIds(),
+                    pageId
+                );
+                ImGui::BeginDisabled(isAnchor);
                 if (ImGui::Checkbox(page.name().value().c_str(), &member))
                 {
                     auto draft       = state.draft();
@@ -722,29 +1073,59 @@ namespace uf::workbench
                         {
                             recognizer->m_allowedPageIds.emplace_back(pageId);
                         }
-                        commitDraft(state, draft, ui);
+                        requestEdit(
+                            ui,
+                            std::move(draft),
+                            std::format(
+                                "{} page \"{}\"",
+                                member ? "authorized" : "withdrew authorization on",
+                                page.name().value()
+                            )
+                        );
                     }
+                }
+                ImGui::EndDisabled();
+                if (
+                    isAnchor
+                    && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)
+                )
+                {
+                    ImGui::SetTooltip(
+                        "A page anchor joins a page through the role beside it, "
+                        "not through an authorization"
+                    );
                 }
 
                 auto role = 0;
-                if (containsId(page.required(), recognizerId))
+                if (std::ranges::contains(page.required(), recognizerId))
                 {
                     role = 1;
                 }
-                else if (containsId(page.forbidden(), recognizerId))
+                else if (std::ranges::contains(page.forbidden(), recognizerId))
                 {
                     role = 2;
                 }
                 ImGui::SameLine();
                 ImGui::SetNextItemWidth(120.0F);
+                ImGui::BeginDisabled(!isAnchor);
+                auto const roleChanged = ImGui::Combo(
+                    "role",
+                    &role,
+                    k_pageRoleItems.data(),
+                    static_cast<int>(k_pageRoleItems.size())
+                );
+                ImGui::EndDisabled();
                 if (
-                    ImGui::Combo(
-                        "role",
-                        &role,
-                        k_pageRoleItems.data(),
-                        static_cast<int>(k_pageRoleItems.size())
-                    )
+                    !isAnchor
+                    && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)
                 )
+                {
+                    ImGui::SetTooltip(
+                        "Only a page anchor may be a page's required or "
+                        "forbidden recognizer"
+                    );
+                }
+                if (roleChanged)
                 {
                     auto draft      = state.draft();
                     auto const spot = std::ranges::find(
@@ -764,7 +1145,15 @@ namespace uf::workbench
                         {
                             spot->m_forbidden.emplace_back(recognizerId);
                         }
-                        commitDraft(state, draft, ui);
+                        requestEdit(
+                            ui,
+                            std::move(draft),
+                            std::format(
+                                "page \"{}\" role {}",
+                                page.name().value(),
+                                k_pageRoleItems.at(static_cast<std::size_t>(role))
+                            )
+                        );
                     }
                 }
 
@@ -820,7 +1209,16 @@ namespace uf::workbench
                         static_cast<annotation::RegressionClassification>(
                             classification
                         );
-                    commitDraft(state, draft, ui);
+                    requestEdit(
+                        ui,
+                        std::move(draft),
+                        std::format(
+                            "classification {}",
+                            k_classificationItems.at(
+                                static_cast<std::size_t>(classification)
+                            )
+                        )
+                    );
                 }
             }
         }
@@ -883,7 +1281,12 @@ namespace uf::workbench
                 if (recognizer != nullptr)
                 {
                     recognizer->m_name = std::string{ui.m_nameBuffer.data()};
-                    commitDraft(state, draft, ui);
+                    auto description = std::format(
+                        "renamed \"{}\" to \"{}\"",
+                        currentName,
+                        recognizer->m_name
+                    );
+                    requestEdit(ui, std::move(draft), std::move(description));
                 }
             }
 
@@ -899,13 +1302,33 @@ namespace uf::workbench
                 )
             )
             {
-                auto draft       = state.draft();
-                auto* recognizer = findEditableRecognizer(draft, *recognizerId);
-                if (recognizer != nullptr)
+                // The type and the fields the catalog ties to it have to move
+                // together, so this goes through retypeRecognizer rather than
+                // writing the field and committing.
+                auto retyped = retypeRecognizer(
+                    state.draft(),
+                    *recognizerId,
+                    static_cast<annotation::AnnotationType>(typeIndex)
+                );
+                if (!retyped)
                 {
-                    recognizer->m_annotationType =
-                        static_cast<annotation::AnnotationType>(typeIndex);
-                    commitDraft(state, draft, ui);
+                    ui.m_statusLine = std::format(
+                        "type change rejected: {}",
+                        toString(retyped.error())
+                    );
+                }
+                else
+                {
+                    // Summarized against the pre-commit document so a page named
+                    // in the summary is resolved before the edit lands.
+                    auto const summary = retypeSummary(
+                        state,
+                        *retyped,
+                        k_annotationTypeItems.at(
+                            static_cast<std::size_t>(typeIndex)
+                        )
+                    );
+                    requestEdit(ui, std::move(retyped->m_draft), summary);
                 }
             }
 
@@ -920,12 +1343,37 @@ namespace uf::workbench
                 {
                     recognizer->m_similarityBasisPoints =
                         static_cast<uint32>(threshold);
-                    commitDraft(state, draft, ui);
+                    requestEdit(
+                        ui,
+                        std::move(draft),
+                        std::format("threshold set to {} bp", threshold)
+                    );
                 }
             }
 
+            // Only an action target may define a default click, so the toggle is
+            // unavailable for the other types instead of committing a rejected
+            // edit.
+            auto const isActionTarget = (
+                definition->annotationType() == annotation::AnnotationType::ActionTarget
+            );
             auto hasClickOffset = definition->defaultClick().has_value();
-            if (ImGui::Checkbox("Click offset", &hasClickOffset))
+            ImGui::BeginDisabled(!isActionTarget);
+            auto const clickToggled = ImGui::Checkbox(
+                "Click offset",
+                &hasClickOffset
+            );
+            ImGui::EndDisabled();
+            if (
+                !isActionTarget
+                && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)
+            )
+            {
+                ImGui::SetTooltip(
+                    "Only an action target may define a default click"
+                );
+            }
+            if (clickToggled)
             {
                 auto draft       = state.draft();
                 auto* recognizer = findEditableRecognizer(draft, *recognizerId);
@@ -936,7 +1384,13 @@ namespace uf::workbench
                             EditableTemplateOffset{.m_x = 0U, .m_y = 0U}
                         }
                         : std::nullopt;
-                    commitDraft(state, draft, ui);
+                    requestEdit(
+                        ui,
+                        std::move(draft),
+                        hasClickOffset
+                            ? "click offset enabled at 0,0"
+                            : "click offset removed"
+                    );
                 }
             }
             if (auto const offset = definition->defaultClick())
@@ -968,7 +1422,15 @@ namespace uf::workbench
                             .m_x = static_cast<uint32>(offsetX),
                             .m_y = static_cast<uint32>(offsetY),
                         };
-                        commitDraft(state, draft, ui);
+                        requestEdit(
+                            ui,
+                            std::move(draft),
+                            std::format(
+                                "click offset set to {},{}",
+                                offsetX,
+                                offsetY
+                            )
+                        );
                     }
                 }
             }
@@ -1223,8 +1685,18 @@ namespace uf::workbench
         static_cast<void>(ImGui::DockSpaceOverViewport());
 
         drawSourcesPanel(state, services, ui);
+        drawRecognizersPanel(state, ui);
+        drawPagesPanel(state, ui);
         drawCanvasPanel(state, services, ui);
         drawPropertiesPanel(state, ui);
+
+        // Every panel above borrows into the document while it draws, so the
+        // frame's edit lands here, once they are all done with it. The actions
+        // panel follows rather than precedes it: it mutates the document itself
+        // and re-reads what it touches, so it must see the frame's edit already
+        // applied -- undoing right after a rename has to undo that rename, not
+        // race it.
+        applyPendingEdit(state, ui);
         drawActionsPanel(state, ui);
 
         // Mirror each new status-line outcome to the operation log so a session's

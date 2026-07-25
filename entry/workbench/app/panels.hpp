@@ -53,6 +53,19 @@ namespace uf::workbench
         std::function<void(std::string_view)> m_appendLog{};
     };
 
+    // A draft a panel wants committed, held until the panels that borrow into the
+    // document have finished drawing. A recognizer definition, page signature, or
+    // source asset a panel reads is owned by the document, and committing
+    // replaces the document wholesale -- so committing mid-draw would leave the
+    // rest of that panel reading freed storage. The request is applied once per
+    // frame, after the borrowing panels and before the actions panel, which
+    // re-reads everything it touches.
+    struct PendingEdit final
+    {
+        AuthoringDraft m_draft;
+        std::string    m_description{};
+    };
+
     // Which rectangle a canvas drag is editing, so a released gesture commits the
     // right recognizer field. None means no drag is in progress.
     enum class CanvasDragTarget : uint8
@@ -77,6 +90,7 @@ namespace uf::workbench
         bool                                    m_nameInputActive{};
         std::string                             m_statusLine{};
         std::string                             m_lastLoggedStatus{};
+        std::optional<PendingEdit>              m_pendingEdit{};
 
         CanvasDragTarget            m_dragTarget{CanvasDragTarget::None};
         std::optional<RectGripKind> m_dragGrip{};

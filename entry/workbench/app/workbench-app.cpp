@@ -214,6 +214,10 @@ namespace uf::workbench
             // The stored preview describes the pre-edit document, so a committed
             // mutation invalidates it.
             m_lastPreview.reset();
+            // An edit may remove the very entity the selection names -- a
+            // deletion always does -- and a selection pointing at something this
+            // revision does not hold would be edited into a rejected draft.
+            reconcileSelectionToDocument();
         }
         return changed;
     }

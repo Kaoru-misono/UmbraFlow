@@ -78,6 +78,77 @@ namespace uf::workbench
         AuthoringDraft const& draft
     ) -> Result<annotation::AuthoringDocument>;
 
+    // A recognizer type change together with every repair the change carried
+    // with it. The caller reports all of them: the authorization is a permission
+    // the author did not ask for, and the cleared fields make the conversion
+    // lossy, so neither may happen silently.
+    struct RetypedRecognizer final
+    {
+        AuthoringDraft                    m_draft;
+        std::optional<annotation::PageId> m_authorizedPage{};
+        std::size_t                       m_withdrawnRoles{};
+        std::size_t                       m_clearedAuthorizations{};
+        bool                              m_clearedClick{};
+    };
+
+    // Changes one recognizer's annotation type, repairing in the same draft every
+    // field the catalog ties to the type, so the whole change commits as a single
+    // valid edit. Editing the type on its own can never succeed: an action target
+    // must authorize at least one page while a page anchor must authorize none,
+    // only an action target may carry a default click, and only a page anchor may
+    // appear in a page signature -- so no order of one-field-at-a-time edits
+    // reaches the new type. Fails when no repair exists: becoming an action
+    // target with no page to authorize, or leaving the page anchor type while
+    // being the only recognizer some page names.
+    [[nodiscard]]
+    auto retypeRecognizer(
+        AuthoringDraft draft,
+        annotation::RecognizerId id,
+        annotation::AnnotationType type
+    ) -> Result<RetypedRecognizer>;
+
+    // A deletion together with what it took with it. Every entity in a document
+    // is referenced by others, so removing one always edits its neighbours; the
+    // counts let the caller state what else moved. Which counts apply depends on
+    // what was deleted, and the rest stay zero.
+    struct DeletedEntity final
+    {
+        AuthoringDraft m_draft;
+        std::size_t    m_withdrawnRoles{};
+        std::size_t    m_clearedAuthorizations{};
+        std::size_t    m_removedRegressions{};
+    };
+
+    // Removes one recognizer and withdraws it from every page signature that
+    // names it. Refuses when a page names it and nothing else, because that page
+    // would be left identifying no screen at all; the author decides whether the
+    // page goes too or another anchor takes over.
+    [[nodiscard]]
+    auto deleteRecognizer(
+        AuthoringDraft draft,
+        annotation::RecognizerId id
+    ) -> Result<DeletedEntity>;
+
+    // Removes one page and withdraws it from every recognizer that authorizes it.
+    // Refuses when an action target would be left authorizing no page, or when a
+    // regression expects the page to resolve: silently rewriting a recorded
+    // expectation would destroy the intent the case was written to pin.
+    [[nodiscard]]
+    auto deletePage(
+        AuthoringDraft draft,
+        annotation::PageId id
+    ) -> Result<DeletedEntity>;
+
+    // Removes one source and the regression cases recorded against it, which
+    // cannot outlive the image they classify. Refuses while any recognizer is
+    // still authored on the source, since a recognizer's rectangles are only
+    // meaningful against the image they were drawn on.
+    [[nodiscard]]
+    auto deleteSource(
+        AuthoringDraft draft,
+        annotation::SourceId id
+    ) -> Result<DeletedEntity>;
+
     class AuthoringEditHistory final
     {
         annotation::AuthoringDocument              m_current;
