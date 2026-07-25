@@ -1,5 +1,6 @@
 #include "run.hpp"
 
+#include "candidate-selection.hpp"
 #include "file-trace-sink.hpp"
 #include "name-resolution.hpp"
 #include "platform/controller-action-sink.hpp"
@@ -21,71 +22,11 @@
 #include <engine/session.hpp>
 
 #include <cstddef>
-#include <format>
 #include <memory>
-#include <span>
-#include <string>
-#include <string_view>
 #include <utility>
-#include <vector>
 
 namespace uf::cli
 {
-    namespace
-    {
-        // Picks the single candidate whose title contains the selector substring.
-        // Zero or multiple matches are a resolution failure the caller must refine,
-        // so the flow never guesses which window the operator meant.
-        [[nodiscard]]
-        auto selectCandidate(
-            std::span<TargetCandidate const> candidates,
-            std::string_view selector
-        ) -> Result<TargetCandidate>
-        {
-            auto matches = std::vector<TargetCandidate const*>{};
-            for (auto const& candidate : candidates)
-            {
-                if (candidate.title().find(selector) != std::string::npos)
-                {
-                    matches.emplace_back(&candidate);
-                }
-            }
-
-            if (matches.empty())
-            {
-                return fail(
-                    AutomationErrorKind::TargetUnavailable,
-                    std::format("no window title contains \"{}\"", selector)
-                );
-            }
-            if (matches.size() > 1U)
-            {
-                auto titles = std::string{};
-                for (auto const* p_match : matches)
-                {
-                    if (!titles.empty())
-                    {
-                        titles += ", ";
-                    }
-                    titles += '"';
-                    titles += p_match->title();
-                    titles += '"';
-                }
-                return fail(
-                    AutomationErrorKind::TargetUnavailable,
-                    std::format(
-                        "selector \"{}\" matches {} windows; refine it: {}",
-                        selector,
-                        matches.size(),
-                        titles
-                    )
-                );
-            }
-
-            return *matches.front();
-        }
-    }
-
     auto runProduct(RunArgs const& args) -> Result<RunReport>
     {
         // Load the project and resolve the page and action names before touching

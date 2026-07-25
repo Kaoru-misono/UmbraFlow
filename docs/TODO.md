@@ -53,9 +53,19 @@
       发现→指纹→会话→waitForPage→findAction→act,区分退出码,Ctrl-C 进 stop_token。
 - [x] Fake FrameSource 合成帧回放 + fail-closed 全谱(Unknown/Ambiguous/stop reasons/
       租约过期/指纹不符/失效句柄复用 → 全部零投递)进 CI。
-- [ ] **真机冒烟(等开发者)**:手写最小 manifest,卡厄斯梦境识别+授权+后台点击;
-      等价检查点:严格后台、K2 delta=0、租约 fail-closed。
-- [ ] 真机端到端(等开发者):workbench 标注 → `umbra-flow run` 吃生成 manifest(A1+B1 闭环)。
+- [x] **真机冒烟(2026-07-25 通过,release + 生产 750ms 租约)**:手写最小 manifest,
+      卡厄思梦境识别+授权+后台点击。**release `umbra-flow run` 在无任何租约放宽下**:识别精确
+      (page anchor + action target,sadScore=0)、授权、后台 `PostMessage` 投递、页面真的从
+      「能力值」切到「卡牌」、trace 全程干净(ClickDelivered,无 StaleObservation)、
+      全程游戏不获前台焦点、K2 delta=0。fail-closed 亦已验证(debug/过期租约 → StaleObservation 零投递)。
+      **debug↔release 说明**:先前 debug 构建识别 ≈1030ms 超 750ms 租约导致 StaleObservation;
+      release 识别 ≈32ms 通过——故真机/生产一律用 **release**,无产品 bug、无需改代码
+      (「2fps 渲染」结论已作废)。根因与实测见
+      [`pitfalls/capture-and-target-selection.md`](pitfalls/capture-and-target-selection.md)。
+      顺带修复:反自动化诱饵窗口(数十个不可见同名窗口)——`selectCandidate` 加可见性/非最小化过滤;
+      WGC 绑定需与目标同完整性级别(提权)。(CJK `--selector` 经核实无 bug:已嵌 UTF-8 manifest,
+      当时 mojibake 是测试输入构造失误。)
+- [ ] 真机端到端(等开发者):workbench 标注 → `umbra-flow run`(release)吃生成 manifest(A1+B1 闭环)。
 
 ## 2. P0-B — Luau Engine
 

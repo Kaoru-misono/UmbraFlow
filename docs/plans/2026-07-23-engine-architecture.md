@@ -4,6 +4,14 @@
 > ImGui workbench A1、全部双路对抗评审修复);Phase 3 真机冒烟与 Phase 5 真机端到端
 > **等开发者执行**,步骤见 docs/TODO.md §1.5。合成帧 fail-closed 全谱已进 CI;
 > 真实截图回归集待真机资产产出后建立。
+>
+> 更新(2026-07-25):Phase 3 真机冒烟**通过**(release + 生产 750ms 租约)。release `umbra-flow run`
+> 在无租约放宽下:识别(sadScore=0)/授权/后台 PostMessage 投递/页面切换(能力值→卡牌)/trace 干净
+> (ClickDelivered)/严格后台不抢焦点/K2 delta=0 全部真机验证通过;fail-closed 亦已验证。
+> debug↔release:debug 识别 ≈1030ms 超 750ms 租约(StaleObservation),release ≈32ms 通过——
+> 真机/生产一律用 **release**,无产品 bug、无需改代码(早前「2fps 渲染」结论作废,是测量假象)。
+> 剩余:A1+B1 端到端需在 umbra-workbench GUI 里人工标注(需开发者)。顺带修了反自动化诱饵窗口的选择器 bug。
+> 详见下方 Open items 与 `docs/pitfalls/capture-and-target-selection.md`。
 
 ## Context
 
@@ -180,9 +188,24 @@ m0-demo 退役。
 
 ## Open items
 
+- **[已定位, 非 bug — 更正 2026-07-25] StaleObservation 真因是 debug 识别太慢**:
+  冒烟当时跑的是 **debug 构建**。实测(计时探针直调 RecognitionRuntime,真机 1600×900 帧):
+  `evaluatePage`+`evaluateActionTarget` 在 x64-debug ≈1030ms、x64-release ≈32ms(约 32×)。
+  SAD 是无 SIMD 的标量三重循环 + 每像素边界检查 + 每像素 64 位取模,`/Od /RTC1` 下极慢,
+  单识别就超过 750ms 租约 → 即使帧完全新鲜也 StaleObservation。**早前「~2fps 渲染节流」结论作废**:
+  那数字是 `m0-demo capture` 的累积墙钟率(含每帧 PNG 编码+落盘+帧间 sleep),非游戏渲染率。
+  **修法**:真机冒烟/生产自动化用 **release** 构建即可,无需改代码;750ms 租约是按 release 调的预算,
+  capture/租约/CaptureStalled 设计均正确,不放宽 clamp、不改 capture 新鲜度。
+  详见 `docs/pitfalls/capture-and-target-selection.md`。
+- **[已澄清, 非 bug] CJK selector 编码**:umbra-flow/m0-demo 已嵌 UTF-8 activeCodePage
+  manifest(`cpp_apply_utf8_manifest`),argv 本就是 UTF-8,字面 CJK `--selector` 正常匹配。
+  验收时的 `鍗″巹` mojibake 是我把 `卡厄` 先按 GBK 重解释再传入所致,工具忠实搜了错字符串。
+  无需改动。
 - **提权模型**:Phase 3 以整体提权单进程跑真机;若 UIPI 实测仍拦
   (游戏窗口完整性更高),再把 m0-demo 的 input-agent 协议语义复制进 runner
-  适配层。届时是复制不是链接。
+  适配层。届时是复制不是链接。**2026-07-25 实测**:WGC 绑定(`SetPropW`)确实被 UIPI 拦
+  (Win32 error 5),capture 侧需与目标同完整性级别提权;而 `PostMessage` 投递不提权也过——
+  两者完整性要求不同。
 - **project.toml** 读取(项目级 fingerprint 权威)推后:P0 fingerprint 以
   runtime manifest 内嵌值为准。
 - 阈值语义:engine 只认基点模型;m0-demo 的 `--threshold` 记录值随其冻结,不迁移。

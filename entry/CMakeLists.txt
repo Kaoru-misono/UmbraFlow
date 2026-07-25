@@ -26,6 +26,8 @@ target_compile_features(${CLI_LIBRARY} PUBLIC cxx_std_23)
 if(WIN32 AND TARGET ${PROJECT_NAME}_controller)
     target_sources(${CLI_LIBRARY}
         PRIVATE
+            cli/candidate-selection.cpp
+            cli/candidate-selection.hpp
             cli/run-windows.cpp
             cli/platform/controller-action-sink.cpp
             cli/platform/controller-action-sink.hpp

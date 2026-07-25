@@ -94,12 +94,20 @@ cpp_add_test(
         ${PROJECT_NAME}_image
 )
 
+set(CLI_TEST_SOURCES
+    cli/test-args.cpp
+    cli/test-file-trace-sink.cpp
+    cli/test-name-resolution.cpp
+)
+# selectCandidate operates on the controller's TargetCandidate and is compiled
+# into cli_support only on Windows, so its test is registered only there.
+if(WIN32 AND TARGET ${PROJECT_NAME}_controller)
+    list(APPEND CLI_TEST_SOURCES cli/test-candidate-selection.cpp)
+endif()
 cpp_add_test(
     NAME test-cli
     SOURCES
-        cli/test-args.cpp
-        cli/test-file-trace-sink.cpp
-        cli/test-name-resolution.cpp
+        ${CLI_TEST_SOURCES}
     LIBS
         ${PROJECT_NAME}_cli_support
 )
