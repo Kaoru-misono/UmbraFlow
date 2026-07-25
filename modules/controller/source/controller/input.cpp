@@ -231,6 +231,63 @@ namespace uf
             UF_CHECK(released);
             return ok();
         }
+
+        [[nodiscard]]
+        auto deliverKeyTransition(
+            DeliveryTarget const& target,
+            TargetGeneration actionGeneration,
+            KeyInput key,
+            controller_detail::KeyTransition transition,
+            HeldInputs& held,
+            AuditLog& audit
+        ) -> Status
+        {
+            UF_TRY(
+                controller_detail::checkKeyboardPreconditions(
+                    actionGeneration,
+                    target.generation()
+                )
+            );
+            UF_TRY(controller_detail::HeldInputsAccess::ensureTarget(held, target));
+            auto const isDown = transition == controller_detail::KeyTransition::Down;
+            if (isDown && held.holdsKey(key))
+            {
+                return fail(
+                    AutomationErrorKind::ActionRejected,
+                    "key " + keyDebug(key) + " is already held"
+                );
+            }
+            if (!isDown && !held.holdsKey(key))
+            {
+                return fail(
+                    AutomationErrorKind::ActionRejected,
+                    "key " + keyDebug(key) + " is not held"
+                );
+            }
+            UF_TRY(controller_detail::ensureWindowAlive(target.windowHandle()));
+
+            auto const scanCode = controller_detail::scanCodeFor(key.virtualKey());
+            UF_TRY(
+                controller_detail::deliver(
+                    target.windowHandle(),
+                    controller_detail::keySpec(key, scanCode, transition),
+                    audit
+                )
+            );
+            if (isDown)
+            {
+                UF_TRY(
+                    controller_detail::HeldInputsAccess::onKeyDown(held, target, key)
+                );
+                return ok();
+            }
+            UF_TRY_VALUE(
+                released,
+                controller_detail::HeldInputsAccess::onKeyUp(held, target, key)
+            );
+            UF_CHECK(released);
+            return ok();
+        }
     }
 }
 
@@ -363,51 +420,23 @@ namespace uf
     ) -> Status
     {
         UF_TRY(
-            controller_detail::checkKeyboardPreconditions(
+            deliverKeyTransition(
+                target,
                 actionGeneration,
-                target.generation()
-            )
-        );
-        UF_TRY(controller_detail::HeldInputsAccess::ensureTarget(held, target));
-        if (held.holdsKey(key))
-        {
-            return fail(
-                AutomationErrorKind::ActionRejected,
-                "key " + keyDebug(key) + " is already held"
-            );
-        }
-        UF_TRY(controller_detail::ensureWindowAlive(target.windowHandle()));
-
-        auto const scanCode = controller_detail::scanCodeFor(key.virtualKey());
-        UF_TRY(
-            controller_detail::deliver(
-                target.windowHandle(),
-                controller_detail::keySpec(
-                    key,
-                    scanCode,
-                    controller_detail::KeyTransition::Down
-                ),
+                key,
+                controller_detail::KeyTransition::Down,
+                held,
                 audit
             )
         );
-        UF_TRY(controller_detail::HeldInputsAccess::onKeyDown(held, target, key));
-        UF_TRY(
-            controller_detail::deliver(
-                target.windowHandle(),
-                controller_detail::keySpec(
-                    key,
-                    scanCode,
-                    controller_detail::KeyTransition::Up
-                ),
-                audit
-            )
+        return deliverKeyTransition(
+            target,
+            actionGeneration,
+            key,
+            controller_detail::KeyTransition::Up,
+            held,
+            audit
         );
-        UF_TRY_VALUE(
-            released,
-            controller_detail::HeldInputsAccess::onKeyUp(held, target, key)
-        );
-        UF_CHECK(released);
-        return ok();
     }
 
     auto keyDown(
@@ -418,36 +447,14 @@ namespace uf
         AuditLog& audit
     ) -> Status
     {
-        UF_TRY(
-            controller_detail::checkKeyboardPreconditions(
-                actionGeneration,
-                target.generation()
-            )
+        return deliverKeyTransition(
+            target,
+            actionGeneration,
+            key,
+            controller_detail::KeyTransition::Down,
+            held,
+            audit
         );
-        UF_TRY(controller_detail::HeldInputsAccess::ensureTarget(held, target));
-        if (held.holdsKey(key))
-        {
-            return fail(
-                AutomationErrorKind::ActionRejected,
-                "key " + keyDebug(key) + " is already held"
-            );
-        }
-        UF_TRY(controller_detail::ensureWindowAlive(target.windowHandle()));
-
-        auto const scanCode = controller_detail::scanCodeFor(key.virtualKey());
-        UF_TRY(
-            controller_detail::deliver(
-                target.windowHandle(),
-                controller_detail::keySpec(
-                    key,
-                    scanCode,
-                    controller_detail::KeyTransition::Down
-                ),
-                audit
-            )
-        );
-        UF_TRY(controller_detail::HeldInputsAccess::onKeyDown(held, target, key));
-        return ok();
     }
 
     auto keyUp(
@@ -458,40 +465,14 @@ namespace uf
         AuditLog& audit
     ) -> Status
     {
-        UF_TRY(
-            controller_detail::checkKeyboardPreconditions(
-                actionGeneration,
-                target.generation()
-            )
+        return deliverKeyTransition(
+            target,
+            actionGeneration,
+            key,
+            controller_detail::KeyTransition::Up,
+            held,
+            audit
         );
-        UF_TRY(controller_detail::HeldInputsAccess::ensureTarget(held, target));
-        if (!held.holdsKey(key))
-        {
-            return fail(
-                AutomationErrorKind::ActionRejected,
-                "key " + keyDebug(key) + " is not held"
-            );
-        }
-        UF_TRY(controller_detail::ensureWindowAlive(target.windowHandle()));
-
-        auto const scanCode = controller_detail::scanCodeFor(key.virtualKey());
-        UF_TRY(
-            controller_detail::deliver(
-                target.windowHandle(),
-                controller_detail::keySpec(
-                    key,
-                    scanCode,
-                    controller_detail::KeyTransition::Up
-                ),
-                audit
-            )
-        );
-        UF_TRY_VALUE(
-            released,
-            controller_detail::HeldInputsAccess::onKeyUp(held, target, key)
-        );
-        UF_CHECK(released);
-        return ok();
     }
 
     auto inputText(

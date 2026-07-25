@@ -13,6 +13,7 @@
 #include <controller/target.hpp>
 #include <core/error/result.hpp>
 #include <core/numeric/checked-cast.hpp>
+#include <core/types/enum-reflection.hpp>
 #include <domain/error.hpp>
 #include <domain/ids.hpp>
 
@@ -33,17 +34,6 @@ namespace uf::m0_demo
 {
     namespace
     {
-        [[nodiscard]]
-        auto dpiDeclarationName(DpiDeclaration declaration) noexcept -> std::string_view
-        {
-            switch (declaration)
-            {
-            case DpiDeclaration::Declared: return "Declared";
-            case DpiDeclaration::AlreadyDeclared: return "AlreadyDeclared";
-            }
-            return "Unknown";
-        }
-
         [[nodiscard]]
         auto logIntegrity(
             JsonlLog& log,
@@ -89,7 +79,7 @@ namespace uf::m0_demo
                 log.write(
                     LogLine{"setup", "dpi_declared"}
                         .outcome("ok")
-                        .detail(std::string{dpiDeclarationName(dpiDeclaration)})
+                        .detail(std::string{enumName(dpiDeclaration).value_or("Unknown")})
                 )
             );
 

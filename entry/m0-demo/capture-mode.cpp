@@ -10,6 +10,7 @@
 #include <controller/dpi.hpp>
 #include <controller/target.hpp>
 #include <core/time/monotonic-time.hpp>
+#include <core/types/enum-reflection.hpp>
 #include <core/types/integer.hpp>
 #include <domain/error.hpp>
 #include <domain/ids.hpp>
@@ -29,17 +30,6 @@ namespace uf::m0_demo
 {
     namespace
     {
-        [[nodiscard]]
-        auto dpiDeclarationName(DpiDeclaration declaration) noexcept -> std::string_view
-        {
-            switch (declaration)
-            {
-            case DpiDeclaration::Declared: return "Declared";
-            case DpiDeclaration::AlreadyDeclared: return "AlreadyDeclared";
-            }
-            return "Unknown";
-        }
-
         [[nodiscard]]
         auto captureFps(
             uint32 frameCount,
@@ -65,7 +55,7 @@ namespace uf::m0_demo
                 log.write(
                     LogLine{"setup", "dpi_declared"}
                         .outcome("ok")
-                        .detail(std::string{dpiDeclarationName(dpiDeclaration)})
+                        .detail(std::string{enumName(dpiDeclaration).value_or("Unknown")})
                 )
             );
 

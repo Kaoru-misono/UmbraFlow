@@ -1,5 +1,6 @@
 #include "runtime-manifest.hpp"
 
+#include "detail/annotation-fields.hpp"
 #include "detail/canonical-toml.hpp"
 
 #include <core/error/contracts.hpp>
@@ -46,34 +47,6 @@ namespace uf::annotation
         }
 
         [[nodiscard]]
-        auto parsePixelRectField(
-            detail::CanonicalTomlReader& reader,
-            std::string_view key
-        ) -> Result<PixelRect>
-        {
-            UF_TRY_VALUE(values, reader.takeUnsigned32ArrayField(key));
-            if (values.size() != 4U)
-            {
-                return invalidManifest(
-                    std::format("runtime manifest '{}' must have four integers", key)
-                );
-            }
-            auto const rect = PixelRect::create(
-                checkedAt(values, 0),
-                checkedAt(values, 1),
-                checkedAt(values, 2),
-                checkedAt(values, 3)
-            );
-            if (!rect)
-            {
-                return invalidManifest(
-                    std::format("runtime manifest '{}' is not a valid rectangle", key)
-                );
-            }
-            return *rect;
-        }
-
-        [[nodiscard]]
         auto parseRecognizerIds(
             std::vector<std::string> const& encoded
         ) -> Result<std::vector<RecognizerId>>
@@ -104,26 +77,6 @@ namespace uf::annotation
         }
 
         [[nodiscard]]
-        auto parseAnnotationType(std::string_view value) -> Result<AnnotationType>
-        {
-            if (value == "page_anchor")
-            {
-                return AnnotationType::PageAnchor;
-            }
-            if (value == "action_target")
-            {
-                return AnnotationType::ActionTarget;
-            }
-            if (value == "info_region")
-            {
-                return AnnotationType::InfoRegion;
-            }
-            return invalidManifest(
-                std::format("runtime manifest has unknown annotation_type '{}'", value)
-            );
-        }
-
-        [[nodiscard]]
         auto parseRecognizer(
             detail::CanonicalTomlReader& reader,
             ProjectFingerprint fingerprint
@@ -135,7 +88,13 @@ namespace uf::annotation
             UF_TRY_VALUE(nameText, reader.takeStringField("name"));
             UF_TRY_VALUE(name, ResourceName::create(std::move(nameText)));
             UF_TRY_VALUE(typeText, reader.takeStringField("annotation_type"));
-            UF_TRY_VALUE(annotationType, parseAnnotationType(typeText));
+            auto const annotationType = detail::annotationTypeFromText(typeText);
+            if (!annotationType)
+            {
+                return invalidManifest(
+                    std::format("runtime manifest has unknown annotation_type '{}'", typeText)
+                );
+            }
             UF_TRY_VALUE(kind, reader.takeStringField("kind"));
             if (kind != "gray_template")
             {
@@ -160,8 +119,8 @@ namespace uf::annotation
                 reader.takeStringField("source_hash")
             );
             UF_TRY_VALUE(sourceHash, ContentHash::parse(sourceHashText));
-            UF_TRY_VALUE(templateRect, parsePixelRectField(reader, "template_rect"));
-            UF_TRY_VALUE(searchRoi, parsePixelRectField(reader, "search_roi"));
+            UF_TRY_VALUE(templateRect, detail::parsePixelRectField(reader, "template_rect"));
+            UF_TRY_VALUE(searchRoi, detail::parsePixelRectField(reader, "search_roi"));
             UF_TRY_VALUE(
                 thresholdValue,
                 reader.takeUnsigned32Field("min_similarity_bp")
@@ -219,7 +178,7 @@ namespace uf::annotation
                     RecognizerSpec{
                         .m_id             = id,
                         .m_name           = std::move(name),
-                        .m_annotationType = annotationType,
+                        .m_annotationType = *annotationType,
                         .m_templateRect   = templateRect,
                         .m_searchRoi      = searchRoi,
                         .m_threshold      = threshold,
@@ -265,59 +224,6 @@ namespace uf::annotation
             );
         }
 
-        template <typename Id>
-        auto appendIdArray(
-            std::string& output,
-            std::span<Id const> ids
-        ) -> void
-        {
-            output.push_back('[');
-            for (auto index = std::size_t{0}; index < ids.size(); ++index)
-            {
-                if (index != 0U)
-                {
-                    output += ", ";
-                }
-                detail::appendTomlString(
-                    output,
-                    checkedAt(ids, index).value().toString()
-                );
-            }
-            output.push_back(']');
-        }
-
-        [[nodiscard]]
-        auto annotationTypeText(AnnotationType type) noexcept -> std::string_view
-        {
-            switch (type)
-            {
-            case AnnotationType::PageAnchor:
-                return "page_anchor";
-            case AnnotationType::ActionTarget:
-                return "action_target";
-            case AnnotationType::InfoRegion:
-                return "info_region";
-            }
-            UF_UNREACHABLE_MSG("unknown annotation type");
-        }
-
-        auto appendRectField(
-            std::string& output,
-            std::string_view key,
-            PixelRect rect
-        ) -> void
-        {
-            output += key;
-            output += " = ";
-            auto const values = std::array{
-                rect.x(),
-                rect.y(),
-                rect.width(),
-                rect.height(),
-            };
-            detail::appendUnsigned32Array(output, values);
-            output.push_back('\n');
-        }
     }
 
     RuntimeManifest::RuntimeManifest(
@@ -457,7 +363,7 @@ namespace uf::annotation
             detail::appendStringField(
                 output,
                 "annotation_type",
-                annotationTypeText(recognizer.annotationType())
+                detail::annotationTypeText(recognizer.annotationType())
             );
             detail::appendStringField(output, "kind", "gray_template");
             detail::appendStringField(output, "template", p_asset->m_templatePath);
@@ -471,8 +377,8 @@ namespace uf::annotation
                 "source_hash",
                 p_asset->m_sourceHash.toString()
             );
-            appendRectField(output, "template_rect", recognizer.templateRect());
-            appendRectField(output, "search_roi", recognizer.searchRoi());
+            detail::appendRectField(output, "template_rect", recognizer.templateRect());
+            detail::appendRectField(output, "search_roi", recognizer.searchRoi());
             output += "min_similarity_bp = ";
             output += std::to_string(recognizer.threshold().basisPoints());
             output.push_back('\n');
@@ -486,7 +392,7 @@ namespace uf::annotation
             if (!recognizer.allowedPageIds().empty())
             {
                 output += "allowed_page_ids = ";
-                appendIdArray(output, recognizer.allowedPageIds());
+                detail::appendIdArray(output, recognizer.allowedPageIds());
                 output.push_back('\n');
             }
         }
@@ -497,10 +403,10 @@ namespace uf::annotation
             detail::appendStringField(output, "id", page.id().value().toString());
             detail::appendStringField(output, "name", page.name().value());
             output += "required = ";
-            appendIdArray(output, page.required());
+            detail::appendIdArray(output, page.required());
             output.push_back('\n');
             output += "forbidden = ";
-            appendIdArray(output, page.forbidden());
+            detail::appendIdArray(output, page.forbidden());
             output.push_back('\n');
         }
         return output;

@@ -1,6 +1,5 @@
 #pragma once
 
-#include <controller/capture.hpp>
 #include <core/error/result.hpp>
 #include <core/types/integer.hpp>
 #include <domain/frame.hpp>
@@ -29,10 +28,4 @@ namespace uf::m0_demo
         Frame const& frame,
         std::filesystem::path const& output
     ) -> Result<std::vector<std::byte>>;
-
-    [[nodiscard]]
-    auto captureFramePng(
-        WgcCaptureSession& session,
-        std::filesystem::path const& output
-    ) -> Result<Frame>;
 }

@@ -19,9 +19,6 @@ namespace uf::annotation::detail
         std::size_t m_line{1};
 
         [[nodiscard]]
-        auto invalid(std::string message) const -> std::unexpected<Error>;
-
-        [[nodiscard]]
         auto lineAtOffset() const -> Result<std::string>;
 
         [[nodiscard]]
@@ -51,6 +48,9 @@ namespace uf::annotation::detail
             std::string documentName,
             std::string text
         ) noexcept;
+
+        [[nodiscard]]
+        auto invalid(std::string message) const -> std::unexpected<Error>;
 
         [[nodiscard]] auto eof() const noexcept -> bool;
         [[nodiscard]] auto line() const noexcept -> std::size_t;

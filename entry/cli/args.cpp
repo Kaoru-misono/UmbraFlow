@@ -9,6 +9,7 @@
 #include <array>
 #include <charconv>
 #include <chrono>
+#include <concepts>
 #include <cstddef>
 #include <format>
 #include <memory>
@@ -65,27 +66,34 @@ namespace uf::cli
             return parsed;
         }
 
+        template <typename Unit>
         [[nodiscard]]
-        auto parseMilliseconds(
-            std::string_view value,
+        auto parseDurationCount(
+            uint64 count,
             std::string_view flag
         ) -> Result<MonotonicInstant::Duration>
         {
-            UF_TRY_VALUE(milliseconds, parseUnsigned(value, flag));
-            using Milliseconds = std::chrono::milliseconds;
-            using Duration     = MonotonicInstant::Duration;
-            auto const maximum = std::chrono::duration_cast<Milliseconds>(
-                Duration::max()
-            );
+            using Duration = MonotonicInstant::Duration;
+            auto const maximum      = std::chrono::duration_cast<Unit>(Duration::max());
             auto const maximumCount = checkedCast<uint64>(maximum.count());
-            auto const count        = checkedCast<Milliseconds::rep>(milliseconds);
-            if (!maximumCount || milliseconds > *maximumCount || !count)
+            auto const unitCount    = checkedCast<typename Unit::rep>(count);
+            if (!maximumCount || count > *maximumCount || !unitCount)
             {
-                return invalid(
-                    std::format("{} millisecond count is too large", flag)
-                );
+                if constexpr (std::same_as<Unit, std::chrono::milliseconds>)
+                {
+                    return invalid(
+                        std::format("{} millisecond count is too large", flag)
+                    );
+                }
+                else
+                {
+                    static_assert(std::same_as<Unit, std::chrono::seconds>);
+                    return invalid(
+                        std::format("{} second count is too large", flag)
+                    );
+                }
             }
-            return std::chrono::duration_cast<Duration>(Milliseconds{*count});
+            return std::chrono::duration_cast<Duration>(Unit{*unitCount});
         }
 
         // --poll bounds. 0 would spin the wait loop with no delay between frames;
@@ -117,26 +125,7 @@ namespace uf::cli
                     )
                 );
             }
-            return parseMilliseconds(value, flag);
-        }
-
-        [[nodiscard]]
-        auto parseSeconds(
-            std::string_view value,
-            std::string_view flag
-        ) -> Result<MonotonicInstant::Duration>
-        {
-            UF_TRY_VALUE(seconds, parseUnsigned(value, flag));
-            using Seconds  = std::chrono::seconds;
-            using Duration = MonotonicInstant::Duration;
-            auto const maximum      = std::chrono::duration_cast<Seconds>(Duration::max());
-            auto const maximumCount = checkedCast<uint64>(maximum.count());
-            auto const count        = checkedCast<Seconds::rep>(seconds);
-            if (!maximumCount || seconds > *maximumCount || !count)
-            {
-                return invalid(std::format("{} second count is too large", flag));
-            }
-            return std::chrono::duration_cast<Duration>(Seconds{*count});
+            return parseDurationCount<std::chrono::milliseconds>(milliseconds, flag);
         }
 
         template <typename Value>
@@ -200,7 +189,11 @@ namespace uf::cli
             }
             else if (flag == "--timeout")
             {
-                UF_TRY_VALUE(parsed, parseSeconds(value, flag));
+                UF_TRY_VALUE(count, parseUnsigned(value, flag));
+                UF_TRY_VALUE(
+                    parsed,
+                    parseDurationCount<std::chrono::seconds>(count, flag)
+                );
                 timeout = parsed;
             }
             else if (flag == "--poll")
@@ -215,12 +208,20 @@ namespace uf::cli
             }
             else if (flag == "--recognition-timeout")
             {
-                UF_TRY_VALUE(parsed, parseMilliseconds(value, flag));
+                UF_TRY_VALUE(count, parseUnsigned(value, flag));
+                UF_TRY_VALUE(
+                    parsed,
+                    parseDurationCount<std::chrono::milliseconds>(count, flag)
+                );
                 recognitionTimeout = parsed;
             }
             else if (flag == "--max-frame-age")
             {
-                UF_TRY_VALUE(parsed, parseMilliseconds(value, flag));
+                UF_TRY_VALUE(count, parseUnsigned(value, flag));
+                UF_TRY_VALUE(
+                    parsed,
+                    parseDurationCount<std::chrono::milliseconds>(count, flag)
+                );
                 maxFrameAge = parsed;
             }
             else if (flag == "--trace")

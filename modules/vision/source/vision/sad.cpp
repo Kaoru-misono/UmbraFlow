@@ -32,18 +32,6 @@ namespace uf
                 return std::nullopt;
             }
 
-            auto const lastIndex = checkedSubtract(*end, std::size_t{1});
-            if (
-                count != 0
-                && (
-                    !lastIndex
-                    || tryAt(data, *lastIndex) == nullptr
-                )
-            )
-            {
-                return std::nullopt;
-            }
-
             return data.subspan(offset, count);
         }
     }

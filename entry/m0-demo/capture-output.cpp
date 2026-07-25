@@ -120,14 +120,4 @@ namespace uf::m0_demo
             rgba
         );
     }
-
-    auto captureFramePng(
-        WgcCaptureSession& session,
-        std::filesystem::path const& output
-    ) -> Result<Frame>
-    {
-        UF_TRY_VALUE(frame, session.capture());
-        UF_TRY(writeFramePng(frame, output));
-        return frame;
-    }
 }

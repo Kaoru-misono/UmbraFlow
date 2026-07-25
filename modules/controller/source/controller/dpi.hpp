@@ -2,6 +2,7 @@
 
 #include <core/error/result.hpp>
 
+#include <core/types/enum-reflection.hpp>
 #include <core/types/integer.hpp>
 
 namespace uf
@@ -14,3 +15,9 @@ namespace uf
 
     [[nodiscard]] auto ensurePerMonitorAwareV2() -> Result<DpiDeclaration>;
 }
+
+UF_REFLECT_ENUM(
+    uf::DpiDeclaration,
+    uf::DpiDeclaration::Declared,
+    uf::DpiDeclaration::AlreadyDeclared
+);

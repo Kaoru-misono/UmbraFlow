@@ -1017,66 +1017,55 @@ namespace uf
                 }
             };
 
-            if (m_sessionOpen)
+            // open is caller-owned teardown state this step clears in place on success;
+            // mutating it is the step's primary operation, so it is taken by reference
+            // rather than returned.
+            auto step = [&](bool& open, std::string_view context, auto&& action) -> void
             {
-                auto closed = winrtCall(
-                    "GraphicsCaptureSession::Close",
-                    [this]
-                    {
-                        m_session.Close();
-                    }
-                );
-                if (closed)
+                if (!open)
                 {
-                    m_sessionOpen = false;
+                    return;
                 }
-                retainFirstError(std::move(closed));
-            }
-            if (m_frameArrivedRegistered)
-            {
-                auto revoked = winrtCall(
-                    "revoke Direct3D11CaptureFramePool::FrameArrived",
-                    [this]
-                    {
-                        m_framePool.FrameArrived(m_frameArrivedToken);
-                    }
-                );
-                if (revoked)
+                auto outcome = winrtCall(context, action);
+                if (outcome)
                 {
-                    m_frameArrivedRegistered = false;
+                    open = false;
                 }
-                retainFirstError(std::move(revoked));
-            }
-            if (m_itemClosedRegistered)
-            {
-                auto revoked = winrtCall(
-                    "revoke GraphicsCaptureItem::Closed",
-                    [this]
-                    {
-                        m_item.Closed(m_itemClosedToken);
-                    }
-                );
-                if (revoked)
+                retainFirstError(std::move(outcome));
+            };
+
+            step(
+                m_sessionOpen,
+                "GraphicsCaptureSession::Close",
+                [this]
                 {
-                    m_itemClosedRegistered = false;
+                    m_session.Close();
                 }
-                retainFirstError(std::move(revoked));
-            }
-            if (m_framePoolOpen)
-            {
-                auto closed = winrtCall(
-                    "Direct3D11CaptureFramePool::Close",
-                    [this]
-                    {
-                        m_framePool.Close();
-                    }
-                );
-                if (closed)
+            );
+            step(
+                m_frameArrivedRegistered,
+                "revoke Direct3D11CaptureFramePool::FrameArrived",
+                [this]
                 {
-                    m_framePoolOpen = false;
+                    m_framePool.FrameArrived(m_frameArrivedToken);
                 }
-                retainFirstError(std::move(closed));
-            }
+            );
+            step(
+                m_itemClosedRegistered,
+                "revoke GraphicsCaptureItem::Closed",
+                [this]
+                {
+                    m_item.Closed(m_itemClosedToken);
+                }
+            );
+            step(
+                m_framePoolOpen,
+                "Direct3D11CaptureFramePool::Close",
+                [this]
+                {
+                    m_framePool.Close();
+                }
+            );
             retainFirstError(clearLatestFrame(m_frameSlot));
             retainFirstError(m_windowMarker.close());
             return result;
