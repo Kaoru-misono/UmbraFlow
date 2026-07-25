@@ -4,6 +4,7 @@
 #include <annotation/authoring-document.hpp>
 
 #include <core/error/result.hpp>
+#include <core/types/integer.hpp>
 
 #include <filesystem>
 #include <string>
@@ -39,13 +40,18 @@ namespace uf::workbench
     ) -> Result<IngestedSource>;
 
     // Encodes an already-captured BGRA frame into a canonical source asset and
-    // records Windows Graphics Capture provenance. The wall-clock capture instant
-    // is supplied by the caller because a monotonic frame timestamp cannot be
+    // records Windows Graphics Capture provenance. The source fingerprint adopts
+    // the captured window's display density in dpi, so a project authored from a
+    // high-DPI target matches that target's runtime fingerprint; the caller
+    // resolves the real DPI (the capture geometry must be read under per-monitor
+    // DPI awareness for it to be correct). The wall-clock capture instant is
+    // supplied by the caller because a monotonic frame timestamp cannot be
     // rendered as a stable calendar string.
     [[nodiscard]]
     auto ingestSourceFromFrame(
         annotation::SourceId id,
         Frame const& frame,
+        uint32 dpi,
         std::string capturedAt
     ) -> Result<IngestedSource>;
 }

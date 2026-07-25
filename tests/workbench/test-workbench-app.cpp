@@ -249,6 +249,31 @@ namespace uf::workbench
         CHECK(assets->empty());
     }
 
+    TEST_CASE("undo clears a selection the reverted revision no longer contains")
+    {
+        auto state        = emptyState();
+        auto const finger = annotation::test::fingerprint(4, 4, 96, 96);
+        REQUIRE(
+            state.addIngestedSource(
+                ingestedSource(k_importA, finger, std::byte{0x11})
+            ).has_value()
+        );
+        // Ingesting a source selects it.
+        CHECK(state.selectedSourceId().has_value());
+
+        // Undo removes the source, so the dangling selection must be cleared;
+        // otherwise a later edit would reference a source this revision lacks.
+        CHECK(state.undo());
+        CHECK(state.document().sources().empty());
+        CHECK_FALSE(state.selectedSourceId().has_value());
+
+        // Redo restores the source but not the selection: re-selecting is not the
+        // history's job.
+        CHECK(state.redo());
+        REQUIRE(state.document().sources().size() == 1U);
+        CHECK_FALSE(state.selectedSourceId().has_value());
+    }
+
     TEST_CASE("redo restores an undone import for the compiler inputs")
     {
         auto state        = emptyState();

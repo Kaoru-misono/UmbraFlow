@@ -175,6 +175,9 @@ namespace uf::workbench
         CHECK(imported->m_asset.m_id == id);
         CHECK(imported->m_spec.m_fingerprint.width() == 2);
         CHECK(imported->m_spec.m_fingerprint.height() == 2);
+        // A bare PNG carries no density, so an import keeps the conventional 96.
+        CHECK(imported->m_spec.m_fingerprint.dpiX() == 96);
+        CHECK(imported->m_spec.m_fingerprint.dpiY() == 96);
         CHECK(
             std::holds_alternative<annotation::ImportedSourceProvenance>(
                 imported->m_spec.m_provenance
@@ -224,11 +227,20 @@ namespace uf::workbench
         };
         auto frame = bgraFrame(2, 2, std::size_t{8}, bgra, generation);
 
-        auto const ingested = ingestSourceFromFrame(id, frame, "2026-07-23T00:00:00Z");
+        auto const ingested = ingestSourceFromFrame(
+            id,
+            frame,
+            120,
+            "2026-07-23T00:00:00Z"
+        );
         REQUIRE(ingested.has_value());
 
         CHECK(ingested->m_spec.m_fingerprint.width() == 2);
         CHECK(ingested->m_spec.m_fingerprint.height() == 2);
+        // The captured window's density is stamped into the source fingerprint,
+        // not defaulted to 96, so a high-DPI target authors against its real DPI.
+        CHECK(ingested->m_spec.m_fingerprint.dpiX() == 120);
+        CHECK(ingested->m_spec.m_fingerprint.dpiY() == 120);
         auto const* p_wgc = std::get_if<annotation::WgcSourceProvenance>(
             &ingested->m_spec.m_provenance
         );
@@ -260,7 +272,7 @@ namespace uf::workbench
         };
         auto frame = bgraFrame(1, 2, std::size_t{6}, padded, generation);
 
-        auto const ingested = ingestSourceFromFrame(id, frame, "t");
+        auto const ingested = ingestSourceFromFrame(id, frame, 96, "t");
         REQUIRE(ingested.has_value());
         auto const decoded = image::decodePng(
             ingested->m_asset.m_pngBytes,
@@ -306,7 +318,7 @@ namespace uf::workbench
         );
         REQUIRE(grayFrame.has_value());
 
-        auto const ingested = ingestSourceFromFrame(id, *grayFrame, "t");
+        auto const ingested = ingestSourceFromFrame(id, *grayFrame, 96, "t");
         REQUIRE_FALSE(ingested.has_value());
         annotation::test::requireErrorKind(
             ingested.error(),

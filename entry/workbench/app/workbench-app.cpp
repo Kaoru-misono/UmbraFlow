@@ -264,8 +264,10 @@ namespace uf::workbench
             return false;
         }
         m_dirty = true;
-        // The document moved, so the stored preview no longer describes it.
+        // The document moved, so the stored preview no longer describes it, and
+        // the selection may now point at an entity this revision does not hold.
         m_lastPreview.reset();
+        reconcileSelectionToDocument();
         return true;
     }
 
@@ -277,7 +279,43 @@ namespace uf::workbench
         }
         m_dirty = true;
         m_lastPreview.reset();
+        reconcileSelectionToDocument();
         return true;
+    }
+
+    auto AppState::reconcileSelectionToDocument() -> void
+    {
+        auto const& document = m_history.document();
+        if (m_selectedRecognizerId.has_value())
+        {
+            auto const target  = *m_selectedRecognizerId;
+            auto const present = std::ranges::any_of(
+                document.catalog().recognizers(),
+                [target](annotation::RecognizerDefinition const& recognizer)
+                {
+                    return recognizer.id() == target;
+                }
+            );
+            if (!present)
+            {
+                m_selectedRecognizerId.reset();
+            }
+        }
+        if (m_selectedSourceId.has_value())
+        {
+            auto const target  = *m_selectedSourceId;
+            auto const present = std::ranges::any_of(
+                document.sources(),
+                [target](annotation::AuthoringSource const& source)
+                {
+                    return source.id() == target;
+                }
+            );
+            if (!present)
+            {
+                m_selectedSourceId.reset();
+            }
+        }
     }
 
     auto AppState::setSelectedSourceId(

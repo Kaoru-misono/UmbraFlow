@@ -45,6 +45,12 @@ namespace uf::workbench
                 std::string const&
             )
         > m_captureFromTarget{};
+
+        // Appends one timestamped operation-log line. Optional: when unset the
+        // panels simply do not log. The entry point wires it to a file so a
+        // session's actions and errors survive being overwritten on the
+        // transient status line.
+        std::function<void(std::string_view)> m_appendLog{};
     };
 
     // Which rectangle a canvas drag is editing, so a released gesture commits the
@@ -70,6 +76,7 @@ namespace uf::workbench
         std::string                             m_nameSeededValue{};
         bool                                    m_nameInputActive{};
         std::string                             m_statusLine{};
+        std::string                             m_lastLoggedStatus{};
 
         CanvasDragTarget            m_dragTarget{CanvasDragTarget::None};
         std::optional<RectGripKind> m_dragGrip{};

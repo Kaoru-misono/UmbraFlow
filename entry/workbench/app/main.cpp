@@ -15,11 +15,13 @@
 #include <domain/error.hpp>
 
 #include <charconv>
+#include <chrono>
 #include <cstddef>
 #include <cstdlib>
 #include <exception>
 #include <filesystem>
 #include <format>
+#include <fstream>
 #include <iostream>
 #include <optional>
 #include <span>
@@ -137,6 +139,8 @@ namespace uf::workbench
             };
             UF_TRY_VALUE(shell, platform::GuiShell::create(config));
 
+            auto const logPath = state.projectRoot() / "workbench.log";
+
             auto services = WorkbenchServices{
                 .m_textureFor =
                     [&shell](
@@ -160,6 +164,23 @@ namespace uf::workbench
                             id,
                             titleSubstring
                         );
+                    },
+                .m_appendLog =
+                    [logPath](std::string_view message) -> void
+                    {
+                        auto stream = std::ofstream{
+                            logPath,
+                            std::ios::app | std::ios::binary
+                        };
+                        if (!stream.is_open())
+                        {
+                            return;
+                        }
+                        auto const now = std::chrono::floor<
+                            std::chrono::seconds
+                        >(std::chrono::system_clock::now());
+                        stream << std::format("{:%Y-%m-%dT%H:%M:%SZ}  ", now)
+                               << message << '\n';
                     },
             };
             auto ui = PanelUiState{};

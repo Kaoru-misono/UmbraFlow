@@ -175,13 +175,40 @@ namespace uf::workbench
         [[nodiscard]]
         auto addDefaultPage(AppState& state) -> Result<annotation::PageId>
         {
-            auto edited   = state.draft();
+            // A page is rejected unless it names at least one required or
+            // forbidden recognizer, and only a page anchor may fill either role,
+            // so a new page is seeded with the selected page anchor as its
+            // required recognizer. Further membership is then adjusted from the
+            // properties panel. An empty page can never be committed.
+            auto const selected = state.selectedRecognizerId();
+            if (!selected.has_value())
+            {
+                return fail(
+                    AutomationErrorKind::InvalidResource,
+                    "adding a page requires a selected page anchor recognizer"
+                );
+            }
+
+            auto edited        = state.draft();
+            auto const* anchor = findEditableRecognizer(edited, *selected);
+            if (
+                anchor == nullptr
+                || anchor->m_annotationType != annotation::AnnotationType::PageAnchor
+            )
+            {
+                return fail(
+                    AutomationErrorKind::InvalidResource,
+                    "the selected recognizer is not a page anchor; "
+                    "a page must be anchored by one"
+                );
+            }
+
             auto const id = annotation::PageId{mintResourceId()};
             edited.m_pages.emplace_back(
                 EditablePage{
                     .m_id        = id,
                     .m_name      = "page",
-                    .m_required  = {},
+                    .m_required  = {*selected},
                     .m_forbidden = {},
                 }
             );
@@ -1111,14 +1138,28 @@ namespace uf::workbench
             ImGui::BeginDisabled(!state.canUndo());
             if (ImGui::Button("Undo"))
             {
-                static_cast<void>(state.undo());
+                if (state.undo())
+                {
+                    ui.m_statusLine = std::format(
+                        "undo: {} recognizers, {} pages",
+                        state.document().catalog().recognizers().size(),
+                        state.document().catalog().pages().size()
+                    );
+                }
             }
             ImGui::EndDisabled();
             ImGui::SameLine();
             ImGui::BeginDisabled(!state.canRedo());
             if (ImGui::Button("Redo"))
             {
-                static_cast<void>(state.redo());
+                if (state.redo())
+                {
+                    ui.m_statusLine = std::format(
+                        "redo: {} recognizers, {} pages",
+                        state.document().catalog().recognizers().size(),
+                        state.document().catalog().pages().size()
+                    );
+                }
             }
             ImGui::EndDisabled();
 
@@ -1136,7 +1177,10 @@ namespace uf::workbench
                 else
                 {
                     state.setSelectedRecognizerId(*created);
-                    ui.m_statusLine = "added recognizer";
+                    ui.m_statusLine = std::format(
+                        "added recognizer ({} total)",
+                        state.document().catalog().recognizers().size()
+                    );
                 }
             }
             ImGui::EndDisabled();
@@ -1145,7 +1189,10 @@ namespace uf::workbench
             {
                 auto const created = addDefaultPage(state);
                 ui.m_statusLine = created.has_value()
-                    ? std::string{"added page"}
+                    ? std::format(
+                        "added page ({} total)",
+                        state.document().catalog().pages().size()
+                    )
                     : std::format("new page failed: {}", toString(created.error()));
             }
 
@@ -1169,9 +1216,28 @@ namespace uf::workbench
         PanelUiState& ui
     ) -> void
     {
+        // Host a full-viewport dock space so the four panels can be docked and
+        // resized against each other. Enabled by ImGuiConfigFlags_DockingEnable
+        // in the GUI shell; with no ini file the layout is not persisted between
+        // launches, so panels start floating.
+        static_cast<void>(ImGui::DockSpaceOverViewport());
+
         drawSourcesPanel(state, services, ui);
         drawCanvasPanel(state, services, ui);
         drawPropertiesPanel(state, ui);
         drawActionsPanel(state, ui);
+
+        // Mirror each new status-line outcome to the operation log so a session's
+        // actions and errors are not lost when the next action overwrites the
+        // transient line. Consecutive identical outcomes collapse to one entry.
+        if (
+            services.m_appendLog
+            && !ui.m_statusLine.empty()
+            && ui.m_statusLine != ui.m_lastLoggedStatus
+        )
+        {
+            services.m_appendLog(ui.m_statusLine);
+            ui.m_lastLoggedStatus = ui.m_statusLine;
+        }
     }
 }

@@ -37,6 +37,39 @@ anonymous namespace in the Windows-only entry). Real-machine check: with the
 game running, `umbra-flow run --selector <title>` resolves exactly one target
 instead of reporting an N-window ambiguity.
 
+## "No visible window title contains X" usually means the target is minimized
+
+### Symptom
+
+`umbra-flow run` (or the workbench Capture) fails with `no visible window title
+contains "<selector>"` even though the game is clearly running.
+
+### Root cause
+
+Target selection requires a **visible, non-minimized** window (`isVisible() &&
+!isIconic()`), which is correct — a minimized window renders nothing to capture.
+When the game is minimized every candidate is filtered out. This is easy to
+misread as a DPI or elevation bug. Two traps make it confusing:
+
+- `IsWindowVisible` returns TRUE for a minimized window (WS_VISIBLE is set); only
+  `IsIconic` distinguishes it, so a minimized window is excluded by the
+  `!isIconic()` clause, not the visibility clause.
+- `Get-Process(...).MainWindowHandle` can point at a *minimized decoy* while the
+  real rendered window is a different HWND, so a quick probe of that one handle
+  reports `iconic=True` while the actual game window is fine. Enumerate all
+  top-level windows and check each, rather than trusting `MainWindowHandle`.
+
+### Fix
+
+Not a code bug — restore the target window. A Medium-integrity helper cannot
+restore a window owned by an elevated (High-integrity) game via `ShowWindow`
+(UIPI); restore it from the taskbar or an elevated context.
+
+### Regression check
+
+Real-machine: with the game minimized, capture/run reports the "no visible
+window" error; restoring it lets the same command resolve the target.
+
 ## WGC capture bind needs the same integrity level as the target
 
 ### Symptom

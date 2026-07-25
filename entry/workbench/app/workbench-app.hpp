@@ -164,5 +164,10 @@ namespace uf::workbench
         // Drops cache entries whose SourceId is absent from the current
         // document, run once a save has persisted that document.
         auto pruneSourceCacheToDocument() -> void;
+
+        // Clears the source or recognizer selection when undo or redo moved the
+        // document to a revision that no longer contains the selected entity, so
+        // later edits never reference a dangling id.
+        auto reconcileSelectionToDocument() -> void;
     };
 }

@@ -18,11 +18,13 @@
 #pragma warning(pop)
 
 #include <array>
+#include <filesystem>
 #include <format>
 #include <memory>
 #include <optional>
 #include <string>
 #include <string_view>
+#include <system_error>
 #include <utility>
 
 // The Dear ImGui Win32 backend keeps this declaration in a #if 0 block to avoid
@@ -358,7 +360,48 @@ namespace uf::workbench::platform
         state->m_imguiContext = true;
         // A1 keeps no persisted layout, so disable the settings file entirely.
         ImGui::GetIO().IniFilename = nullptr;
+        // Enable docking so the panels can be arranged against each other; the
+        // dock host is submitted each frame in drawWorkbench. The vendored ImGui
+        // is the docking branch, so the flag and DockSpaceOverViewport are
+        // available.
+        ImGui::GetIO().ConfigFlags |= ImGuiConfigFlags_DockingEnable;
         ImGui::StyleColorsDark();
+
+        // Load a CJK-capable system font so CJK window titles render as text
+        // instead of missing-glyph boxes; ImGui's built-in font is ASCII-only.
+        // Existence is checked first because ImGui asserts (in debug builds) on a
+        // font file it cannot read; when the font is absent the built-in font is
+        // kept.
+        {
+            auto systemRoot = std::array<wchar_t, MAX_PATH>{};
+            // SAFETY: GetWindowsDirectoryW writes at most the passed capacity and
+            // returns the character count; systemRoot owns MAX_PATH writable units
+            // for the duration of the call and no pointer is retained.
+            auto const rootLength = GetWindowsDirectoryW(
+                systemRoot.data(),
+                static_cast<UINT>(systemRoot.size())
+            );
+            if (rootLength != 0U && rootLength < systemRoot.size())
+            {
+                auto fontPath = std::filesystem::path{
+                    std::wstring_view{systemRoot.data(), rootLength}
+                };
+                fontPath /= L"Fonts";
+                fontPath /= L"msyh.ttc";
+                auto existsError = std::error_code{};
+                if (std::filesystem::exists(fontPath, existsError))
+                {
+                    auto const narrowPath = fontPath.string();
+                    auto& fonts           = *ImGui::GetIO().Fonts;
+                    static_cast<void>(fonts.AddFontFromFileTTF(
+                        narrowPath.c_str(),
+                        18.0F,
+                        nullptr,
+                        fonts.GetGlyphRangesChineseFull()
+                    ));
+                }
+            }
+        }
 
         if (!ImGui_ImplWin32_Init(state->m_window))
         {

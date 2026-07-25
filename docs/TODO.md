@@ -28,7 +28,10 @@
       项目级尺寸/DPI 兼容契约与 Dear ImGui + D3D11 技术栈(2026-07-23)。
 - [ ] 独立 GUI:WGC 抓帧/导入图片、样本列表、画布缩放/平移、框选编辑、undo/redo。
       **A1 最小实现已落地(2026-07-24)**:`umbra-workbench`(Dear ImGui 1.92.8-docking +
-      D3D11)、四面板、`--smoke` 自检通过;真机人工验证待开发者。
+      D3D11)、四面板、`--smoke` 自检通过。**2026-07-25 真机 GUI 使能修复**(`fix(workbench)` 提交):
+      WGC 抓帧在高 DPI 目标上采用线程级 per-monitor 感知 + 真实 DPI 串入 source fingerprint(否则
+      1066×600 虚拟几何 / 96 DPI manifest → umbra-flow 指纹不符);ImGui 载入中文系统字体(否则中文标题显示 `？`);
+      启用 docking(vendored 已是 docking 分支,原先没接线)。纯人工 GUI 走查仍待开发者。
 - [ ] 标注类型:`page_anchor`、`action_target`、`info_region`;分别编辑 `template_rect` 与
       `search_roi`,以及 page、整数定点阈值和 required/forbidden 关系。
       **A1 属性面板已覆盖全部字段(2026-07-24)**;多 page 编辑体验留 A2。
@@ -65,7 +68,13 @@
       顺带修复:反自动化诱饵窗口(数十个不可见同名窗口)——`selectCandidate` 加可见性/非最小化过滤;
       WGC 绑定需与目标同完整性级别(提权)。(CJK `--selector` 经核实无 bug:已嵌 UTF-8 manifest,
       当时 mojibake 是测试输入构造失误。)
-- [ ] 真机端到端(等开发者):workbench 标注 → `umbra-flow run`(release)吃生成 manifest(A1+B1 闭环)。
+- [x] **真机端到端 A1+B1 闭环(2026-07-25,数据路径已验证)**:workbench 授权后端(抓帧/ingest/
+      `buildAuthoringDocument`/`saveAndGenerateAuthoringProject`)生成完整 runtime 项目 →
+      release `umbra-flow run` 吃该 workbench 生成的 manifest → 真机后台点击成功
+      (能力值→卡牌,sadScore=0,ClickDelivered,不抢焦点)。经临时程序化 driver 驱动整条后端链路验证,
+      无需人工 GUI 操作即证明 authoring→生成→runtime→真机点击闭环。
+      **纯 GUI 人工走一遍**(在 workbench 里鼠标框选标注)是可选的剩余确认;capture/字体/New Page/docking
+      的真机 GUI 使能修复见下 §1 更新与 `fix(workbench)` 提交。
 
 ## 2. P0-B — Luau Engine
 

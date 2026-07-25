@@ -22,10 +22,10 @@ namespace uf::workbench
 {
     namespace
     {
-        // Bare PNG imports and Windows Graphics Capture frames do not carry a
-        // display density, so an authoring-time source adopts the conventional
-        // 96 DPI. The project fingerprint governs recognition; the source density
-        // is reconciled when the source joins a project.
+        // A bare PNG import carries no display density, so it adopts the
+        // conventional 96 DPI. A WGC capture supplies the real target density
+        // instead (see ingestSourceFromFrame) so a project authored from a
+        // high-DPI window matches that window's runtime fingerprint.
         constexpr auto k_defaultSourceDpi = uint32{96};
 
         constexpr auto k_sourceResourceName = std::string_view{
@@ -37,6 +37,7 @@ namespace uf::workbench
             annotation::SourceId id,
             uint32 width,
             uint32 height,
+            uint32 dpi,
             std::vector<std::byte> const& canonicalRgba,
             annotation::SourceProvenance provenance
         ) -> Result<IngestedSource>
@@ -46,8 +47,8 @@ namespace uf::workbench
                 annotation::ProjectFingerprint::create(
                     width,
                     height,
-                    k_defaultSourceDpi,
-                    k_defaultSourceDpi
+                    dpi,
+                    dpi
                 )
             );
             UF_TRY_VALUE(
@@ -85,6 +86,7 @@ namespace uf::workbench
             id,
             decoded.m_width,
             decoded.m_height,
+            k_defaultSourceDpi,
             decoded.m_pixels,
             annotation::ImportedSourceProvenance{}
         );
@@ -93,6 +95,7 @@ namespace uf::workbench
     auto ingestSourceFromFrame(
         annotation::SourceId id,
         Frame const& frame,
+        uint32 dpi,
         std::string capturedAt
     ) -> Result<IngestedSource>
     {
@@ -122,6 +125,7 @@ namespace uf::workbench
             id,
             frame.width(),
             frame.height(),
+            dpi,
             rgba,
             annotation::WgcSourceProvenance{
                 .m_targetGeneration = frame.targetGeneration(),

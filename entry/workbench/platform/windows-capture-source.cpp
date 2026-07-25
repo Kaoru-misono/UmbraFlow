@@ -29,6 +29,47 @@ namespace uf::workbench::platform
 {
     namespace
     {
+        // Makes the calling thread per-monitor-DPI-aware (v2) for the capture
+        // scope and restores the prior context on destruction. The workbench UI
+        // thread is otherwise DPI-unaware, which virtualizes a high-DPI target's
+        // client rectangle (for example 1066x600 for a 1600x900 window at 150%)
+        // and both desyncs it from the physical captured frame and hides the real
+        // display density. Scoping the awareness keeps the workbench window itself
+        // rendering at its comfortable system-scaled size.
+        class ScopedPerMonitorDpiAwareness final
+        {
+            DPI_AWARENESS_CONTEXT m_previous{nullptr};
+
+        public:
+            ScopedPerMonitorDpiAwareness() noexcept
+            {
+                // SAFETY: SetThreadDpiAwarenessContext takes an opaque context
+                // token, mutates only calling-thread state, and returns the prior
+                // context (null when unsupported). No pointer is dereferenced.
+                m_previous = SetThreadDpiAwarenessContext(
+                    DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2
+                );
+            }
+
+            ScopedPerMonitorDpiAwareness(ScopedPerMonitorDpiAwareness const&) = delete;
+            auto operator=(ScopedPerMonitorDpiAwareness const&)
+                -> ScopedPerMonitorDpiAwareness& = delete;
+            ScopedPerMonitorDpiAwareness(ScopedPerMonitorDpiAwareness&&) = delete;
+            auto operator=(ScopedPerMonitorDpiAwareness&&)
+                -> ScopedPerMonitorDpiAwareness& = delete;
+
+            ~ScopedPerMonitorDpiAwareness() noexcept
+            {
+                if (m_previous != nullptr)
+                {
+                    // SAFETY: restores the exact context captured in the
+                    // constructor on the same thread; the token is opaque and is
+                    // never dereferenced.
+                    static_cast<void>(SetThreadDpiAwarenessContext(m_previous));
+                }
+            }
+        };
+
         [[nodiscard]]
         auto clientOriginDesktop(
             WindowHandle windowHandle
@@ -71,11 +112,12 @@ namespace uf::workbench::platform
     auto captureSourceFromSession(
         annotation::SourceId id,
         WgcCaptureSession& session,
+        uint32 dpi,
         std::string capturedAt
     ) -> Result<IngestedSource>
     {
         UF_TRY_VALUE(frame, session.capture());
-        return ingestSourceFromFrame(id, frame, std::move(capturedAt));
+        return ingestSourceFromFrame(id, frame, dpi, std::move(capturedAt));
     }
 
     auto captureSourceFromTargetTitle(
@@ -90,6 +132,11 @@ namespace uf::workbench::platform
                 "capture requires a non-empty target title"
             );
         }
+
+        // Window discovery and WGC geometry below must read the target's physical
+        // client rectangle and true display density; the UI thread is DPI-unaware,
+        // so raise per-monitor awareness for just this capture.
+        auto const dpiScope = ScopedPerMonitorDpiAwareness{};
 
         UF_TRY_VALUE(candidates, enumerateCandidates());
         auto const match = std::ranges::find_if(
@@ -133,6 +180,11 @@ namespace uf::workbench::platform
             )
         );
 
-        return captureSourceFromSession(id, session, formatCapturedAtNow());
+        return captureSourceFromSession(
+            id,
+            session,
+            match->dpi().value(),
+            formatCapturedAtNow()
+        );
     }
 }

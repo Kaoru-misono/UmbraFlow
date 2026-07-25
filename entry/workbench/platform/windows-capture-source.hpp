@@ -5,6 +5,7 @@
 #include <annotation/authoring-document.hpp>
 
 #include <core/error/result.hpp>
+#include <core/types/integer.hpp>
 
 #include <string>
 
@@ -16,14 +17,16 @@ namespace uf
 namespace uf::workbench::platform
 {
     // Captures one frame from an active Windows Graphics Capture session and
-    // ingests it into a canonical source asset carrying WGC provenance. The
-    // session is borrowed for the duration of the call; the caller owns the
+    // ingests it into a canonical source asset carrying WGC provenance. dpi is
+    // the target window's display density, stamped into the source fingerprint.
+    // The session is borrowed for the duration of the call; the caller owns the
     // session lifetime and its bound target. Real-machine only: exercised
     // through the workbench, not unit tests.
     [[nodiscard]]
     auto captureSourceFromSession(
         annotation::SourceId id,
         WgcCaptureSession& session,
+        uint32 dpi,
         std::string capturedAt
     ) -> Result<IngestedSource>;
 

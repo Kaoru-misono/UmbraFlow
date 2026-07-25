@@ -5,13 +5,14 @@
 > **等开发者执行**,步骤见 docs/TODO.md §1.5。合成帧 fail-closed 全谱已进 CI;
 > 真实截图回归集待真机资产产出后建立。
 >
-> 更新(2026-07-25):Phase 3 真机冒烟**通过**(release + 生产 750ms 租约)。release `umbra-flow run`
-> 在无租约放宽下:识别(sadScore=0)/授权/后台 PostMessage 投递/页面切换(能力值→卡牌)/trace 干净
-> (ClickDelivered)/严格后台不抢焦点/K2 delta=0 全部真机验证通过;fail-closed 亦已验证。
-> debug↔release:debug 识别 ≈1030ms 超 750ms 租约(StaleObservation),release ≈32ms 通过——
-> 真机/生产一律用 **release**,无产品 bug、无需改代码(早前「2fps 渲染」结论作废,是测量假象)。
-> 剩余:A1+B1 端到端需在 umbra-workbench GUI 里人工标注(需开发者)。顺带修了反自动化诱饵窗口的选择器 bug。
-> 详见下方 Open items 与 `docs/pitfalls/capture-and-target-selection.md`。
+> 更新(2026-07-25):Phase 3 真机冒烟**通过**(release + 生产 750ms 租约),Phase 5 **A1+B1 数据路径闭环达成**。
+> B1:release `umbra-flow run` 在无租约放宽下识别(sadScore=0)/授权/后台投递/页面切换/trace 干净/不抢焦点/
+> K2 delta=0/fail-closed 全部真机通过;debug 识别 ≈1030ms 超租约、release ≈32ms 通过,真机/生产一律用 **release**。
+> A1+B1:workbench 授权后端(经临时程序化 driver 驱动)生成完整 runtime 项目 → release umbra-flow 吃它 →
+> 真机后台点击成功,证明 authoring→生成→runtime→点击整条链路。期间修了 4 个 workbench 真机使能 bug
+> (高 DPI capture 几何+DPI 串入、中文字体、docking 接线、New Page 空页)+ 反自动化诱饵窗口选择器,
+> 均已提交。纯 GUI 人工走查为可选剩余确认。详见 Open items 与
+> `docs/pitfalls/capture-and-target-selection.md`。
 
 ## Context
 
