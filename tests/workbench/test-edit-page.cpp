@@ -498,4 +498,206 @@ namespace uf::workbench
         REQUIRE(view.claimedScreen.has_value());
         CHECK(*view.claimedScreen == sourceId);
     }
+
+    namespace
+    {
+        // The base project with the interactive region placed on the away page as
+        // well as home, at a different search rectangle on each, so an edit to one
+        // page's range can be checked against the other's.
+        [[nodiscard]]
+        auto twoPlacementState() -> AppState
+        {
+            auto const fingerprint = annotation::test::fingerprint(8, 8, 96, 96);
+            auto const sourceId    = annotation::test::sourceId(k_sourceId);
+            auto const anchorId    = annotation::test::recognizerId(k_anchorId);
+            auto const awayId      = annotation::test::recognizerId(k_awayId);
+            auto const regionId    = annotation::test::recognizerId(k_regionId);
+            auto const homePage    = annotation::test::pageId(k_homePage);
+            auto const awayPage    = annotation::test::pageId(k_awayPage);
+            auto const sourceHash  = annotation::sha256(
+                std::span<std::byte const>{}
+            );
+            REQUIRE(sourceHash.has_value());
+
+            auto source = annotation::AuthoringSource::create(
+                annotation::AuthoringSourceSpec{
+                    .id          = sourceId,
+                    .contentHash = *sourceHash,
+                    .fingerprint = fingerprint,
+                    .provenance  = annotation::ImportedSourceProvenance{},
+                }
+            );
+            REQUIRE(source.has_value());
+
+            auto created = annotation::AuthoringDocument::create(
+                annotation::test::projectId(),
+                fingerprint,
+                {*source},
+                {
+                    annotation::test::anchorElement(
+                        fingerprint,
+                        anchorId,
+                        "home_marker",
+                        sourceId,
+                        annotation::test::pixelRect(0, 0, 2, 2),
+                        annotation::test::pixelRect(0, 0, 4, 4)
+                    ),
+                    annotation::test::anchorElement(
+                        fingerprint,
+                        awayId,
+                        "away_marker",
+                        sourceId,
+                        annotation::test::pixelRect(0, 0, 2, 2),
+                        annotation::test::pixelRect(0, 0, 4, 4)
+                    ),
+                    annotation::test::interactiveElement(
+                        fingerprint,
+                        regionId,
+                        "daily_button",
+                        sourceId,
+                        annotation::test::pixelRect(4, 4, 2, 2),
+                        annotation::test::pixelRect(3, 3, 4, 4)
+                    ),
+                },
+                {
+                    annotation::test::page(homePage, "home", {anchorId}),
+                    annotation::test::page(awayPage, "away", {awayId}),
+                },
+                {
+                    annotation::test::placement(
+                        homePage,
+                        regionId,
+                        annotation::test::pixelRect(3, 3, 4, 4)
+                    ),
+                    annotation::test::placement(
+                        awayPage,
+                        regionId,
+                        annotation::test::pixelRect(4, 4, 4, 4)
+                    ),
+                },
+                {
+                    annotation::RegressionCase{
+                        annotation::RegressionSpec{
+                            .id       = annotation::test::regressionId(k_regId),
+                            .sourceId = sourceId,
+                            .classification =
+                                annotation::RegressionClassification::Positive,
+                            .expectation    = annotation::ResolvedRegression{
+                                .pageId = homePage,
+                            },
+                        }
+                    },
+                }
+            );
+            REQUIRE(created.has_value());
+            return AppState{
+                std::filesystem::path{"personal.workbench"},
+                *std::move(created),
+                {},
+            };
+        }
+
+        [[nodiscard]]
+        auto placementRoi(
+            AppState const& state,
+            annotation::PageId page,
+            annotation::RecognizerId element
+        ) -> std::optional<PixelRect>
+        {
+            for (auto const& placement : state.document().placements())
+            {
+                if (
+                    placement.pageId == page
+                    && placement.elementId == element
+                )
+                {
+                    return placement.searchRoi;
+                }
+            }
+            return std::nullopt;
+        }
+    }
+
+    TEST_CASE("placementContext resolves the page that claims the shown screen")
+    {
+        auto const state    = twoPlacementState();
+        auto const sourceId = annotation::test::sourceId(k_sourceId);
+        auto const regionId = annotation::test::recognizerId(k_regionId);
+        auto const anchorId = annotation::test::recognizerId(k_anchorId);
+        auto const homePage = annotation::test::pageId(k_homePage);
+
+        // The source is recorded as the home page's example, and the region is
+        // placed on home, so its home placement is the editing context.
+        auto const context = placementContext(state, regionId, sourceId);
+        REQUIRE(context.has_value());
+        CHECK(context->page == homePage);
+        CHECK(context->searchRoi == annotation::test::pixelRect(3, 3, 4, 4));
+
+        // An anchor joins its page through the signature, not a placement, so it
+        // never resolves to a placement context.
+        CHECK_FALSE(placementContext(state, anchorId, sourceId).has_value());
+    }
+
+    TEST_CASE("a page-context ROI edit moves only that page's placement")
+    {
+        auto state = twoPlacementState();
+        auto ui    = PanelUiState{};
+        auto const regionId = annotation::test::recognizerId(k_regionId);
+        auto const homePage = annotation::test::pageId(k_homePage);
+        auto const awayPage = annotation::test::pageId(k_awayPage);
+        auto const edited   = annotation::test::pixelRect(1, 1, 6, 6);
+
+        editSelectedRectOnRelease(
+            state,
+            ui,
+            regionId,
+            std::optional<annotation::PageId>{homePage},
+            edited
+        );
+        applyPendingEdit(state, ui);
+
+        // The home placement moved; the away placement and the element's own
+        // default range are both untouched -- the defect this covers moved all of
+        // them at once.
+        CHECK(placementRoi(state, homePage, regionId) == edited);
+        CHECK(
+            placementRoi(state, awayPage, regionId)
+            == annotation::test::pixelRect(4, 4, 4, 4)
+        );
+        auto const* element = state.document().findElement(regionId);
+        REQUIRE(element != nullptr);
+        CHECK(element->searchRoi() == annotation::test::pixelRect(3, 3, 4, 4));
+        CHECK(ui.statusLine.find("on page \"home\"") != std::string::npos);
+    }
+
+    TEST_CASE("a context-free ROI edit moves the element default, not a placement")
+    {
+        auto state = twoPlacementState();
+        auto ui    = PanelUiState{};
+        auto const regionId = annotation::test::recognizerId(k_regionId);
+        auto const homePage = annotation::test::pageId(k_homePage);
+        auto const awayPage = annotation::test::pageId(k_awayPage);
+        auto const edited   = annotation::test::pixelRect(1, 1, 6, 6);
+
+        editSelectedRectOnRelease(
+            state,
+            ui,
+            regionId,
+            std::optional<annotation::PageId>{},
+            edited
+        );
+        applyPendingEdit(state, ui);
+
+        auto const* element = state.document().findElement(regionId);
+        REQUIRE(element != nullptr);
+        CHECK(element->searchRoi() == edited);
+        CHECK(
+            placementRoi(state, homePage, regionId)
+            == annotation::test::pixelRect(3, 3, 4, 4)
+        );
+        CHECK(
+            placementRoi(state, awayPage, regionId)
+            == annotation::test::pixelRect(4, 4, 4, 4)
+        );
+    }
 }

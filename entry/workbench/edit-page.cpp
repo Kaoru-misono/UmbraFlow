@@ -578,6 +578,23 @@ namespace uf::workbench
 
     auto InteractiveRegion::searchRoiOnThisPage() const -> PixelRect
     {
+        // The per-page range is the placement's, not the element's default: an
+        // element placed on several pages searches a different rectangle on each.
+        auto const& draft     = m_page.draftView();
+        auto const placement  = std::ranges::find_if(
+            draft.placements,
+            [this](EditablePlacement const& candidate)
+            {
+                return candidate.pageId == m_page.pageId()
+                    && candidate.elementId == m_id;
+            }
+        );
+        if (placement != draft.placements.end())
+        {
+            return placement->searchRoi;
+        }
+        // Not placed here yet: the element's own default range is the seed a
+        // placement would start from.
         auto const* target = m_page.findRecognizer(m_id);
         UF_CHECK(target != nullptr);
         return target->searchRoi;
@@ -653,7 +670,26 @@ namespace uf::workbench
 
     auto InteractiveRegion::setSearchRoi(PixelRect roi) -> Status
     {
-        auto draft   = m_page.draftCopy();
+        auto draft = m_page.draftCopy();
+        // Write this page's placement, so refining the range here leaves every
+        // other page's range untouched -- the defect this replaces mutated the
+        // element's shared default and moved the ROI on every page at once.
+        auto const placement = std::ranges::find_if(
+            draft.placements,
+            [this](EditablePlacement const& candidate)
+            {
+                return candidate.pageId == m_page.pageId()
+                    && candidate.elementId == m_id;
+            }
+        );
+        if (placement != draft.placements.end())
+        {
+            placement->searchRoi = roi;
+            m_page.replaceDraft(std::move(draft));
+            return ok();
+        }
+        // Not placed here: fall back to the element's default so an unplaced
+        // region stays editable rather than silently dropping the edit.
         auto* target = findEditableRecognizer(draft, m_id);
         if (target == nullptr)
         {

@@ -1,6 +1,7 @@
 #include "authoring-actions.hpp"
 
 #include "authoring-edit.hpp"
+#include "edit-page.hpp"
 #include "model-check-view.hpp"
 #include "preview.hpp"
 #include "app/workbench-app.hpp"
@@ -304,6 +305,60 @@ namespace uf::workbench
         return std::nullopt;
     }
 
+    auto placementContext(
+        AppState const& state,
+        annotation::RecognizerId id,
+        annotation::SourceId shownScreen
+    ) -> std::optional<PlacementContext>
+    {
+        // The page that claims the shown screen, if any -- the inverse of
+        // claimedScreen. A screen resolves to exactly one page.
+        auto pageContext = std::optional<annotation::PageId>{};
+        for (auto const& regression : state.document().regressions())
+        {
+            auto const* p_resolved = std::get_if<annotation::ResolvedRegression>(
+                &regression.expectation()
+            );
+            if (p_resolved != nullptr && regression.sourceId() == shownScreen)
+            {
+                pageContext = p_resolved->pageId;
+                break;
+            }
+        }
+        if (!pageContext.has_value())
+        {
+            return std::nullopt;
+        }
+
+        // Only an interactive region carries a per-page placement the canvas can
+        // edit here: an anchor joins its page through the signature, and an info
+        // region's default range is left to the properties panel.
+        auto const* definition = state.document().catalog().findRecognizer(id);
+        if (
+            definition == nullptr
+            || definition->annotationType()
+                != annotation::AnnotationType::ActionTarget
+        )
+        {
+            return std::nullopt;
+        }
+
+        for (auto const& placement : state.document().placements())
+        {
+            if (
+                placement.pageId == *pageContext
+                && placement.elementId == id
+            )
+            {
+                return PlacementContext{
+                    .page      = *pageContext,
+                    .searchRoi = placement.searchRoi,
+                };
+            }
+        }
+        return std::nullopt;
+    }
+
     auto isRegionShared(
         AppState const& state,
         annotation::RecognizerId id
@@ -457,6 +512,7 @@ namespace uf::workbench
         AppState& state,
         PanelUiState& ui,
         annotation::RecognizerId recognizerId,
+        std::optional<annotation::PageId> pageContext,
         PixelRect const& editedRect
     ) -> void
     {
@@ -507,8 +563,57 @@ namespace uf::workbench
                 );
             }
         }
+        else if (pageContext.has_value())
+        {
+            // With a page context the drag edits that page's placement, not the
+            // element's shared default, so the range set here moves on this page
+            // alone. Routed through EditPage so the placement write and the
+            // one-commit-per-frame guard stay in one place.
+            auto opened = EditPage::open(state, *pageContext);
+            if (!opened)
+            {
+                ui.statusLine = std::format(
+                    "search roi change rejected: {}",
+                    toString(opened.error())
+                );
+            }
+            else if (
+                auto region = opened->region(recognizerId);
+                !region
+            )
+            {
+                ui.statusLine = std::format(
+                    "search roi change rejected: {}",
+                    toString(region.error())
+                );
+            }
+            else if (
+                auto const set = region->setSearchRoi(editedRect);
+                !set
+            )
+            {
+                ui.statusLine = std::format(
+                    "search roi change rejected: {}",
+                    toString(set.error())
+                );
+            }
+            else
+            {
+                std::move(*opened).commit(
+                    ui,
+                    std::format(
+                        "search roi set to {} on page \"{}\"",
+                        geometry,
+                        pageName(state, *pageContext)
+                    )
+                );
+            }
+        }
         else
         {
+            // No page context: this writes the element's own default search
+            // range, which seeds new placements and every page that has not
+            // refined its own.
             auto draft       = state.draft();
             auto* recognizer = findEditableRecognizer(draft, recognizerId);
             if (recognizer != nullptr)
@@ -517,7 +622,7 @@ namespace uf::workbench
                 requestEdit(
                     ui,
                     std::move(draft),
-                    std::format("search roi set to {}", geometry)
+                    std::format("default search range set to {}", geometry)
                 );
             }
         }

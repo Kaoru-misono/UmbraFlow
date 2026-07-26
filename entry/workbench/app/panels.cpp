@@ -970,6 +970,8 @@ namespace uf::workbench
             CanvasView view,
             CanvasPoint canvasOrigin,
             annotation::RecognizerDefinition const& definition,
+            PixelRect const& searchRoi,
+            std::optional<annotation::PageId> pageContext,
             uint32 sourceWidth,
             uint32 sourceHeight,
             bool hovered,
@@ -978,7 +980,6 @@ namespace uf::workbench
         {
             auto const recognizerId = definition.id();
             auto const templateRect = definition.templateRect();
-            auto const searchRoi    = definition.searchRoi();
             auto const mouse        = ImGui::GetIO().MousePos;
 
             if (
@@ -1070,6 +1071,7 @@ namespace uf::workbench
                             state,
                             ui,
                             recognizerId,
+                            pageContext,
                             *edited
                         );
                     }
@@ -1229,6 +1231,21 @@ namespace uf::workbench
                     // from. For a shared element seen from another page they are
                     // different images.
                     auto const authoredOn = sourceOfRecognizer(state, *recognizerId);
+                    // The page that claims this screen and places this region, if
+                    // any: then the canvas draws and edits that page's own search
+                    // range, so editing it on one page does not move it on the
+                    // others. Otherwise the element's default range is shown.
+                    auto const context = placementContext(
+                        state,
+                        *recognizerId,
+                        *selectedSource
+                    );
+                    auto const searchRoi = context.has_value()
+                        ? context->searchRoi
+                        : definition->searchRoi();
+                    auto const pageContext = context.has_value()
+                        ? std::optional<annotation::PageId>{context->page}
+                        : std::optional<annotation::PageId>{};
                     handleRectEditing(
                         state,
                         ui,
@@ -1236,6 +1253,8 @@ namespace uf::workbench
                         view,
                         canvasOrigin,
                         *definition,
+                        searchRoi,
+                        pageContext,
                         texture->width,
                         texture->height,
                         hovered,

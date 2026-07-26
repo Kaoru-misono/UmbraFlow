@@ -105,6 +105,26 @@ namespace uf::workbench
         annotation::PageId pageId
     ) -> std::optional<annotation::SourceId>;
 
+    // The page whose placement of an interactive region the canvas edits when
+    // that region is shown over a given screen, together with that placement's
+    // per-page search ROI. It is the inverse of claimedScreen -- the page that
+    // claims the shown screen -- narrowed to the case the canvas can act on: the
+    // recognizer is an interactive region and that page places it. Empty for an
+    // unclaimed screen, an anchor, or a region not placed on the claiming page,
+    // in which case the canvas falls back to the element's own default range.
+    struct PlacementContext final
+    {
+        annotation::PageId page;
+        PixelRect          searchRoi;
+    };
+
+    [[nodiscard]]
+    auto placementContext(
+        AppState const& state,
+        annotation::RecognizerId id,
+        annotation::SourceId shownScreen
+    ) -> std::optional<PlacementContext>;
+
     // Selects a recognizer and follows to the screen it was authored against,
     // without which its rectangles are drawn over whatever image the canvas
     // happens to hold.
@@ -149,11 +169,15 @@ namespace uf::workbench
     ) -> void;
 
     // Commits a finished canvas drag as one undo entry, on release rather than
-    // per mouse-move.
+    // per mouse-move. A page context (from placementContext) routes a search-ROI
+    // edit to that page's placement, so editing the range while viewing one page
+    // leaves every other page's range untouched; without it the edit writes the
+    // element's own default range.
     auto editSelectedRectOnRelease(
         AppState& state,
         PanelUiState& ui,
         annotation::RecognizerId recognizerId,
+        std::optional<annotation::PageId> pageContext,
         PixelRect const& editedRect
     ) -> void;
 }
