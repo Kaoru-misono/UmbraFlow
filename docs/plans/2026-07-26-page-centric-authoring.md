@@ -407,3 +407,51 @@ abandoned, phase 1 still stands.
 - Phase 3: per-page ROI round-trip; a shared region searched at different
   rectangles on two pages, through the compiler and a synthetic runtime
   evaluation.
+
+## 7. 2026-07-26 — per-page search ROI at generation time
+
+Real-machine GUI verification of phase 3 surfaced two defects, both fixed
+now.
+
+**Compiler, not deriveModel.** The v2 truth is elements plus per-page
+placements; the derived `catalog()` is the UI's read model and stays
+one-recognizer-per-element (its `PERMANENT BRIDGE`). Expanding an element
+into one recognizer per placement *there* would surface synthetic per-page
+recognizers as phantom rows in every panel that reads `catalog()`. So the
+expansion lives in `compileAuthoringDocument`, built from `elements()` and
+`placements()` at generation time — the roadmap's own phrasing, "per-page
+search ROI at generation time":
+
+- anchors and unplaced elements → one recognizer, element id/name/ROI,
+  exactly as the derived one;
+- exactly one placement → one recognizer keeping the element id and name,
+  `allowed_page_ids = [that page]`, and the *placement's* ROI. Migrated
+  data has placement ROI == element ROI, so the golden manifest is
+  byte-identical (verified — the golden test is unchanged);
+- N ≥ 2 placements → N recognizers, one per placement in canonical order,
+  each with that placement's ROI and single allowed page.
+
+Templates still dedupe by `(source, template rect)`, so the N recognizers
+of one element share a single template asset.
+
+**Deterministic id/name scheme.** A per-placement recognizer needs an
+identity distinct from the element's, stable across compiles. The id is
+`sha256(elementId.toString() bytes ++ pageId.toString() bytes)` truncated
+to 16 bytes through `ResourceId::fromBytes` — deterministic, and
+collision-resistant enough that a clash with a real id is astronomically
+unlikely and would fail loudly in `RecognitionCatalog::create`'s
+uniqueness guard rather than silently drop a recognizer. The name is
+`"<elementName>_<pageName>"`: both are already valid ASCII Luau member
+keys so their underscore join is one too, it can never spell a reserved
+word, and the page name is unique among pages so the pair reads as "which
+element, on which page". Any residual name clash across elements is caught
+loudly by the same guard.
+
+**Canvas edits the placement, not the element.** The canvas resolves a
+page context in the workbench layer (`placementContext`): the page that
+claims the shown screen, narrowed to an interactive region that page
+places. With a context the canvas draws and edits that page's placement
+ROI (routed through `EditPage::open` + `region(id).setSearchRoi`, whose
+handle was fixed to write the placement rather than the element field);
+without one — an unclaimed screen, an anchor, or an unplaced region — the
+edit writes the element's own default range and says so.

@@ -657,4 +657,144 @@ namespace uf::annotation
         };
         CHECK(compiled->runtimeManifestToml == expected);
     }
+
+    TEST_CASE("annotation authoring compilation expands per-page placement ROIs")
+    {
+        // One interactive element placed on two pages with DIFFERENT search
+        // rectangles. The v1 copy model gave each page its own recognizer and ROI;
+        // the v2 single-element model must reproduce that at generation time --
+        // one runtime recognizer per placement, each with its own ROI and its own
+        // single allowed page -- or every page would ship the element's one shared
+        // range and lose its detection range.
+        constexpr auto k_anchorTwoId = "00000000-0000-0000-0000-000000000003";
+        constexpr auto k_pageTwoId   = "00000000-0000-0000-0000-000000000102";
+
+        auto const fingerprint = test::fingerprint(3, 2, 96, 96);
+        auto const sourceId    = test::sourceId(k_sourceId);
+        auto pngBytes          = encodedSource();
+        auto const sourceHash  = sha256(pngBytes);
+        REQUIRE(sourceHash.has_value());
+        auto source = AuthoringSource::create(
+            AuthoringSourceSpec{
+                .id          = sourceId,
+                .contentHash = *sourceHash,
+                .fingerprint = fingerprint,
+                .provenance  = ImportedSourceProvenance{},
+            }
+        );
+        REQUIRE(source.has_value());
+
+        auto const anchorOneId = test::recognizerId(k_anchorId);
+        auto const anchorTwoId = test::recognizerId(k_anchorTwoId);
+        auto const actionId    = test::recognizerId(k_actionId);
+        auto const pageOneId   = test::pageId(k_pageId);
+        auto const pageTwoId   = test::pageId(k_pageTwoId);
+        auto const roiOne      = test::pixelRect(0, 0, 3, 2);
+        auto const roiTwo      = test::pixelRect(1, 0, 2, 2);
+
+        // A distinct template crop for the action, so the single shared template
+        // asset the two per-page recognizers point at is visible in the count.
+        auto elements = std::vector<Element>{};
+        elements.emplace_back(
+            test::anchorElement(
+                fingerprint,
+                anchorOneId,
+                "home_marker",
+                sourceId,
+                test::pixelRect(0, 0, 1, 1),
+                test::pixelRect(0, 0, 3, 2)
+            )
+        );
+        elements.emplace_back(
+            test::anchorElement(
+                fingerprint,
+                anchorTwoId,
+                "second_marker",
+                sourceId,
+                test::pixelRect(0, 0, 1, 1),
+                test::pixelRect(0, 0, 3, 2)
+            )
+        );
+        elements.emplace_back(
+            test::interactiveElement(
+                fingerprint,
+                actionId,
+                "daily_button",
+                sourceId,
+                test::pixelRect(1, 0, 2, 2),
+                test::pixelRect(0, 0, 3, 2)
+            )
+        );
+
+        auto document = AuthoringDocument::create(
+            test::projectId(),
+            fingerprint,
+            {*source},
+            std::move(elements),
+            {
+                test::page(pageOneId, "home", {anchorOneId}),
+                test::page(pageTwoId, "second", {anchorTwoId}),
+            },
+            {
+                test::placement(pageOneId, actionId, roiOne),
+                test::placement(pageTwoId, actionId, roiTwo),
+            },
+            {}
+        );
+        REQUIRE(document.has_value());
+
+        auto const asset = AuthoringSourceAsset{
+            .id       = sourceId,
+            .pngBytes = std::move(pngBytes),
+        };
+        auto const assets = std::span{&asset, std::size_t{1}};
+        auto const first  = compileAuthoringDocument(*document, assets);
+        auto const second = compileAuthoringDocument(*document, assets);
+        REQUIRE(first.has_value());
+        REQUIRE(second.has_value());
+        // Derived ids and names are stable across compiles of the same document.
+        CHECK(first->runtimeManifestToml == second->runtimeManifestToml);
+
+        auto const& recognizers = first->runtimeManifest.catalog().recognizers();
+        // Two anchors plus one recognizer per placement of the shared element.
+        CHECK(recognizers.size() == 4U);
+
+        auto const actionOn = [&recognizers](PageId page)
+            -> RecognizerDefinition const*
+        {
+            for (auto const& recognizer : recognizers)
+            {
+                if (
+                    recognizer.annotationType() == AnnotationType::ActionTarget
+                    && recognizer.allowedPageIds().size() == 1U
+                    && recognizer.allowedPageIds().front() == page
+                )
+                {
+                    return &recognizer;
+                }
+            }
+            return nullptr;
+        };
+        auto const* p_one = actionOn(pageOneId);
+        auto const* p_two = actionOn(pageTwoId);
+        REQUIRE(p_one != nullptr);
+        REQUIRE(p_two != nullptr);
+
+        // Each page ships its own detection range against a single allowed page.
+        CHECK(p_one->searchRoi() == roiOne);
+        CHECK(p_two->searchRoi() == roiTwo);
+        CHECK(p_one->id() != p_two->id());
+        CHECK(p_one->name().value() != p_two->name().value());
+        CHECK(p_one->name().value().starts_with("daily_button"));
+        CHECK(p_two->name().value().starts_with("daily_button"));
+
+        // The two per-page recognizers share one template asset: the crop dedupes
+        // by content hash, so N placements of one element cost one template.
+        CHECK(first->templateAssets.size() == 2U);
+        auto const* p_oneAsset = first->runtimeManifest.findAsset(p_one->id());
+        auto const* p_twoAsset = first->runtimeManifest.findAsset(p_two->id());
+        REQUIRE(p_oneAsset != nullptr);
+        REQUIRE(p_twoAsset != nullptr);
+        CHECK(p_oneAsset->templateHash == p_twoAsset->templateHash);
+    }
 }

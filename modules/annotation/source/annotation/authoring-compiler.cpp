@@ -10,15 +10,18 @@
 #include <image/png.hpp>
 
 #include <algorithm>
+#include <array>
 #include <cstddef>
 #include <format>
 #include <map>
+#include <optional>
 #include <ranges>
 #include <set>
 #include <span>
 #include <string>
 #include <tuple>
 #include <utility>
+#include <variant>
 #include <vector>
 
 namespace uf::annotation
@@ -167,6 +170,70 @@ namespace uf::annotation
             }
 
             return templateTasks;
+        }
+
+        // The id for one per-placement runtime recognizer. An element placed on
+        // several pages expands into one recognizer per page, and each needs an
+        // id distinct from the element's own and stable across compiles. sha256
+        // over the element id bytes concatenated with the page id bytes gives
+        // both: deterministic for fixed inputs, and collision-resistant enough
+        // that a clash with a real id is astronomically unlikely -- and if one
+        // ever occurred it would fail loudly in RecognitionCatalog::create's
+        // uniqueness guard rather than silently drop a recognizer.
+        [[nodiscard]]
+        auto derivedRecognizerId(
+            RecognizerId elementId,
+            PageId pageId
+        ) -> RecognizerId
+        {
+            auto seed             = std::vector<std::byte>{};
+            auto const elementHex = elementId.value().toString();
+            auto const pageHex    = pageId.value().toString();
+            seed.reserve(elementHex.size() + pageHex.size());
+            for (auto const character : elementHex)
+            {
+                seed.emplace_back(static_cast<std::byte>(character));
+            }
+            for (auto const character : pageHex)
+            {
+                seed.emplace_back(static_cast<std::byte>(character));
+            }
+            // sha256 over an in-memory buffer cannot fail; the Result models a
+            // streaming source, which this is not.
+            auto const digest = sha256(seed);
+            UF_CHECK_MSG(
+                digest.has_value(),
+                "hashing a derived recognizer id seed must not fail"
+            );
+            auto const digestBytes = digest->bytes();
+            auto truncated         = std::array<std::byte, 16>{};
+            for (auto index = std::size_t{0}; index < truncated.size(); ++index)
+            {
+                checkedAt(truncated, index) = static_cast<std::byte>(
+                    checkedAt(digestBytes, index)
+                );
+            }
+            return RecognizerId{
+                ResourceId::fromBytes(std::span<std::byte const, 16>{truncated})
+            };
+        }
+
+        // The name for one per-placement runtime recognizer: the element name and
+        // the page name joined by an underscore. Both are already valid ASCII
+        // Luau member keys, so their underscore-joined form is one too, and the
+        // join can never spell a reserved word (each carries an underscore). The
+        // page name is unique among pages, so the pair reads as "which element,
+        // on which page"; any residual clash across elements fails loudly in the
+        // catalog's name-uniqueness guard.
+        [[nodiscard]]
+        auto derivedRecognizerName(
+            ResourceName const& elementName,
+            ResourceName const& pageName
+        ) -> Result<ResourceName>
+        {
+            return ResourceName::create(
+                std::format("{}_{}", elementName.value(), pageName.value())
+            );
         }
 
     }
@@ -408,34 +475,144 @@ namespace uf::annotation
             taskIterator == templateTasks.end(),
             "authoring recognizer source closure references an unknown source"
         );
-        for (auto const& work : recognizerWork)
+        // Per-page search ROIs reach the runtime here, at generation time. The
+        // derived catalog() stays one-recognizer-per-element -- it is the UI's
+        // read model, and expanding it there would surface synthetic per-page
+        // recognizers as phantom rows -- so the expansion lives in the compiler,
+        // built from the v2 truth (elements + placements). An element placed on N
+        // pages becomes N runtime recognizers, each carrying that page's own ROI
+        // and allowed page. Templates still dedupe by (source, template rect), so
+        // the N recognizers of one element share a single template asset.
+        auto const elements   = document.elements();
+        auto const placements = document.placements();
+        for (auto const& element : elements)
         {
-            auto const& recognizer = checkedAt(
-                recognizers,
-                work.recognizerIndex
-            );
             auto const generated = generatedTaskHashes.find(
                 TemplateTaskKey{
-                    .sourceId     = work.sourceId,
-                    .templateRect = recognizer.templateRect(),
+                    .sourceId     = element.sourceId(),
+                    .templateRect = element.templateRect(),
                 }
             );
             UF_CHECK_MSG(
                 generated != generatedTaskHashes.end(),
                 "authoring recognizer template task was not generated"
             );
-            auto const* p_source = document.findSource(work.sourceId);
+            auto const* p_source = document.findSource(element.sourceId());
             UF_CHECK_MSG(
                 p_source != nullptr,
                 "authoring recognizer source closure references an unknown source"
             );
-            runtimeRecognizers.emplace_back(
-                RuntimeRecognizerSpec{
-                    .definition   = recognizer,
-                    .templateHash = generated->second,
-                    .sourceHash   = p_source->contentHash(),
+            auto const templateHash = generated->second;
+            auto const sourceHash   = p_source->contentHash();
+
+            auto defaultClick = std::optional<TemplateOffset>{};
+            if (
+                auto const* p_interactive = std::get_if<InteractiveElement>(
+                    &element.kind()
+                )
+            )
+            {
+                defaultClick = p_interactive->clickOffset;
+            }
+
+            // The placements naming this element, in canonical order: placements()
+            // is sorted by page then element, so filtering by element preserves
+            // that order.
+            auto elementPlacements = std::vector<AuthoringPlacement>{};
+            for (auto const& placement : placements)
+            {
+                if (placement.elementId == element.id())
+                {
+                    elementPlacements.emplace_back(placement);
                 }
-            );
+            }
+
+            auto buildSpec =
+                [&](
+                    RecognizerId id,
+                    ResourceName name,
+                    PixelRect searchRoi,
+                    std::vector<PageId> allowedPageIds
+                ) -> Result<RuntimeRecognizerSpec>
+            {
+                UF_TRY_VALUE(
+                    definition,
+                    RecognizerDefinition::create(
+                        document.catalog().fingerprint(),
+                        RecognizerSpec{
+                            .id             = id,
+                            .name           = std::move(name),
+                            .annotationType = element.annotationType(),
+                            .templateRect   = element.templateRect(),
+                            .searchRoi      = searchRoi,
+                            .threshold      = element.threshold(),
+                            .defaultClick   = defaultClick,
+                            .allowedPageIds = std::move(allowedPageIds),
+                        }
+                    )
+                );
+                return RuntimeRecognizerSpec{
+                    .definition   = std::move(definition),
+                    .templateHash = templateHash,
+                    .sourceHash   = sourceHash,
+                };
+            };
+
+            if (elementPlacements.size() <= 1U)
+            {
+                // Anchor, unplaced element, or a single placement -- one runtime
+                // recognizer keeping the element's own id and name, exactly as the
+                // derived catalog carries it today. A single placement contributes
+                // its ROI and page; for migrated data that ROI equals the
+                // element's own, so the manifest is byte-identical to before.
+                auto searchRoi      = element.searchRoi();
+                auto allowedPageIds = std::vector<PageId>{};
+                if (!elementPlacements.empty())
+                {
+                    searchRoi = elementPlacements.front().searchRoi;
+                    allowedPageIds.emplace_back(elementPlacements.front().pageId);
+                }
+                UF_TRY_VALUE(
+                    spec,
+                    buildSpec(
+                        element.id(),
+                        element.name(),
+                        searchRoi,
+                        std::move(allowedPageIds)
+                    )
+                );
+                runtimeRecognizers.emplace_back(std::move(spec));
+            }
+            else
+            {
+                // N placements -> N runtime recognizers, one per page, each with
+                // its own search ROI. Deterministic ids and names keep the
+                // manifest stable across compiles of the same document.
+                for (auto const& placement : elementPlacements)
+                {
+                    auto const* p_page = document.catalog().findPage(
+                        placement.pageId
+                    );
+                    UF_CHECK_MSG(
+                        p_page != nullptr,
+                        "authoring placement references an unknown page"
+                    );
+                    UF_TRY_VALUE(
+                        name,
+                        derivedRecognizerName(element.name(), p_page->name())
+                    );
+                    UF_TRY_VALUE(
+                        spec,
+                        buildSpec(
+                            derivedRecognizerId(element.id(), placement.pageId),
+                            std::move(name),
+                            placement.searchRoi,
+                            std::vector<PageId>{placement.pageId}
+                        )
+                    );
+                    runtimeRecognizers.emplace_back(std::move(spec));
+                }
+            }
         }
         std::ranges::sort(
             templateAssets,
