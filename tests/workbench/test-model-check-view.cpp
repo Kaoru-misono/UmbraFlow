@@ -46,10 +46,10 @@ namespace uf::workbench
 
             auto source = annotation::AuthoringSource::create(
                 annotation::AuthoringSourceSpec{
-                    .m_id          = sourceId,
-                    .m_contentHash = *sourceHash,
-                    .m_fingerprint = fingerprint,
-                    .m_provenance  = annotation::ImportedSourceProvenance{},
+                    .id          = sourceId,
+                    .contentHash = *sourceHash,
+                    .fingerprint = fingerprint,
+                    .provenance  = annotation::ImportedSourceProvenance{},
                 }
             );
             REQUIRE(source.has_value());
@@ -60,7 +60,7 @@ namespace uf::workbench
                 {*source},
                 {
                     annotation::AuthoringRecognizerSpec{
-                        .m_definition = annotation::test::recognizer(
+                        .definition = annotation::test::recognizer(
                             fingerprint,
                             anchorId,
                             "home_marker",
@@ -68,7 +68,7 @@ namespace uf::workbench
                             annotation::test::pixelRect(0, 0, 2, 2),
                             annotation::test::pixelRect(0, 0, 4, 4)
                         ),
-                        .m_sourceId = sourceId,
+                        .sourceId = sourceId,
                     },
                 },
                 {annotation::test::page(pageId, "home", {anchorId})},
@@ -88,8 +88,8 @@ namespace uf::workbench
         auto screen(ScreenCheckOutcome outcome, char const* id = k_sourceId) -> ScreenCheck
         {
             return ScreenCheck{
-                .m_sourceId = annotation::test::sourceId(id),
-                .m_outcome  = outcome,
+                .sourceId = annotation::test::sourceId(id),
+                .outcome  = outcome,
             };
         }
 
@@ -97,13 +97,13 @@ namespace uf::workbench
         // collectModelCheck produces can be held to its meaning directly.
         auto deliver(PanelUiState& ui, ModelCheck check) -> void
         {
-            ui.m_modelCheck.startWith(
+            ui.modelCheck.startWith(
                 [check = std::move(check)](std::stop_token) -> Result<ModelCheck>
                 {
                     return check;
                 }
             );
-            while (ui.m_modelCheck.running())
+            while (ui.modelCheck.running())
             {
                 std::this_thread::sleep_for(std::chrono::milliseconds{1});
             }
@@ -154,13 +154,13 @@ namespace uf::workbench
         auto ui    = PanelUiState{};
 
         auto check = ModelCheck{};
-        check.m_screens.emplace_back(screen(ScreenCheckOutcome::Correct, k_sourceId));
-        check.m_screens.emplace_back(screen(ScreenCheckOutcome::Correct, k_otherId));
+        check.screens.emplace_back(screen(ScreenCheckOutcome::Correct, k_sourceId));
+        check.screens.emplace_back(screen(ScreenCheckOutcome::Correct, k_otherId));
         deliver(ui, std::move(check));
 
         collectModelCheck(state, ui);
 
-        CHECK(ui.m_statusLine.find("all 2 judged screens resolve correctly") != std::string::npos);
+        CHECK(ui.statusLine.find("all 2 judged screens resolve correctly") != std::string::npos);
         CHECK(state.lastModelCheck().has_value());
     }
 
@@ -170,16 +170,16 @@ namespace uf::workbench
         auto ui    = PanelUiState{};
 
         auto check = ModelCheck{};
-        check.m_screens.emplace_back(screen(ScreenCheckOutcome::Correct, k_sourceId));
-        check.m_screens.emplace_back(screen(ScreenCheckOutcome::Stopped, k_otherId));
+        check.screens.emplace_back(screen(ScreenCheckOutcome::Correct, k_sourceId));
+        check.screens.emplace_back(screen(ScreenCheckOutcome::Stopped, k_otherId));
         deliver(ui, std::move(check));
 
         collectModelCheck(state, ui);
 
         // One screen was judged and it was right, so the model is not reported
         // as broken; the screen the clock never reached is stated separately.
-        CHECK(ui.m_statusLine.find("all 1 judged screens resolve correctly") != std::string::npos);
-        CHECK(ui.m_statusLine.find("1 not reached before the deadline") != std::string::npos);
+        CHECK(ui.statusLine.find("all 1 judged screens resolve correctly") != std::string::npos);
+        CHECK(ui.statusLine.find("1 not reached before the deadline") != std::string::npos);
     }
 
     TEST_CASE("a screen with no recorded page is counted apart from a wrong one")
@@ -188,14 +188,14 @@ namespace uf::workbench
         auto ui    = PanelUiState{};
 
         auto check = ModelCheck{};
-        check.m_screens.emplace_back(screen(ScreenCheckOutcome::Correct, k_sourceId));
-        check.m_screens.emplace_back(screen(ScreenCheckOutcome::Unclaimed, k_otherId));
+        check.screens.emplace_back(screen(ScreenCheckOutcome::Correct, k_sourceId));
+        check.screens.emplace_back(screen(ScreenCheckOutcome::Unclaimed, k_otherId));
         deliver(ui, std::move(check));
 
         collectModelCheck(state, ui);
 
-        CHECK(ui.m_statusLine.find("all 1 judged screens resolve correctly") != std::string::npos);
-        CHECK(ui.m_statusLine.find("1 have no recorded page") != std::string::npos);
+        CHECK(ui.statusLine.find("all 1 judged screens resolve correctly") != std::string::npos);
+        CHECK(ui.statusLine.find("1 have no recorded page") != std::string::npos);
     }
 
     TEST_CASE("a screen that resolves to the wrong page is reported as one")
@@ -204,14 +204,14 @@ namespace uf::workbench
         auto ui    = PanelUiState{};
 
         auto check = ModelCheck{};
-        check.m_screens.emplace_back(screen(ScreenCheckOutcome::WrongPage, k_sourceId));
-        check.m_screens.emplace_back(screen(ScreenCheckOutcome::Correct, k_otherId));
+        check.screens.emplace_back(screen(ScreenCheckOutcome::WrongPage, k_sourceId));
+        check.screens.emplace_back(screen(ScreenCheckOutcome::Correct, k_otherId));
         deliver(ui, std::move(check));
 
         collectModelCheck(state, ui);
 
         CHECK(
-            ui.m_statusLine.find("1 of 2 judged screens do not resolve as recorded")
+            ui.statusLine.find("1 of 2 judged screens do not resolve as recorded")
             != std::string::npos
         );
     }
@@ -221,32 +221,32 @@ namespace uf::workbench
         auto state = appState();
         auto ui    = PanelUiState{};
 
-        ui.m_modelCheck.startWith(
+        ui.modelCheck.startWith(
             [](std::stop_token) -> Result<ModelCheck>
             {
                 return fail(AutomationErrorKind::InvalidResource, "could not build a runtime");
             }
         );
-        while (ui.m_modelCheck.running())
+        while (ui.modelCheck.running())
         {
             std::this_thread::sleep_for(std::chrono::milliseconds{1});
         }
 
         collectModelCheck(state, ui);
 
-        CHECK(ui.m_statusLine.find("check failed") != std::string::npos);
+        CHECK(ui.statusLine.find("check failed") != std::string::npos);
         CHECK_FALSE(state.lastModelCheck().has_value());
     }
 
     TEST_CASE("collecting with nothing in flight leaves the status line alone")
     {
-        auto state      = appState();
-        auto ui         = PanelUiState{};
-        ui.m_statusLine = "untouched";
+        auto state    = appState();
+        auto ui       = PanelUiState{};
+        ui.statusLine = "untouched";
 
         collectModelCheck(state, ui);
 
-        CHECK(ui.m_statusLine == "untouched");
+        CHECK(ui.statusLine == "untouched");
     }
 
     TEST_CASE("a check result is found by screen and by recognizer")
@@ -254,22 +254,22 @@ namespace uf::workbench
         auto state = appState();
 
         auto check = ModelCheck{};
-        check.m_screens.emplace_back(screen(ScreenCheckOutcome::Correct, k_sourceId));
-        check.m_margins.emplace_back(
+        check.screens.emplace_back(screen(ScreenCheckOutcome::Correct, k_sourceId));
+        check.margins.emplace_back(
             RecognizerMargin{
-                .m_recognizerId = annotation::test::recognizerId(k_anchorId),
-                .m_maximumSad   = 1234U,
+                .recognizerId = annotation::test::recognizerId(k_anchorId),
+                .maximumSad   = 1234U,
             }
         );
         state.setLastModelCheck(std::move(check));
 
         auto const* p_screen = findScreenCheck(state, annotation::test::sourceId(k_sourceId));
         REQUIRE(p_screen != nullptr);
-        CHECK(p_screen->m_outcome == ScreenCheckOutcome::Correct);
+        CHECK(p_screen->outcome == ScreenCheckOutcome::Correct);
 
         auto const* p_margin = findMargin(state, annotation::test::recognizerId(k_anchorId));
         REQUIRE(p_margin != nullptr);
-        CHECK(p_margin->m_maximumSad == 1234U);
+        CHECK(p_margin->maximumSad == 1234U);
 
         // A screen the last check did not cover has no entry, rather than a
         // default-constructed one that would read as a verdict.

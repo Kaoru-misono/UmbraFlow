@@ -43,10 +43,10 @@ namespace uf::workbench
         {
             sources.emplace_back(
                 EditableSource{
-                    .m_id          = source.id(),
-                    .m_contentHash = source.contentHash(),
-                    .m_fingerprint = source.fingerprint(),
-                    .m_provenance  = source.provenance(),
+                    .id          = source.id(),
+                    .contentHash = source.contentHash(),
+                    .fingerprint = source.fingerprint(),
+                    .provenance  = source.provenance(),
                 }
             );
         }
@@ -60,31 +60,31 @@ namespace uf::workbench
         {
             auto const& definition   = checkedAt(definitions, index);
             auto const& relationship = checkedAt(relationships, index);
-            UF_CHECK(definition.id() == relationship.m_recognizerId);
+            UF_CHECK(definition.id() == relationship.recognizerId);
 
             auto defaultClick = std::optional<EditableTemplateOffset>{};
             if (auto const offset = definition.defaultClick())
             {
                 defaultClick = EditableTemplateOffset{
-                    .m_x = offset->x(),
-                    .m_y = offset->y(),
+                    .x = offset->x(),
+                    .y = offset->y(),
                 };
             }
             recognizers.emplace_back(
                 EditableRecognizer{
-                    .m_id                    = definition.id(),
-                    .m_name                  = definition.name().value(),
-                    .m_annotationType        = definition.annotationType(),
-                    .m_sourceId              = relationship.m_sourceId,
-                    .m_templateRect          = definition.templateRect(),
-                    .m_searchRoi             = definition.searchRoi(),
-                    .m_similarityBasisPoints = definition.threshold().basisPoints(),
-                    .m_defaultClick          = defaultClick,
-                    .m_allowedPageIds = {
+                    .id                    = definition.id(),
+                    .name                  = definition.name().value(),
+                    .annotationType        = definition.annotationType(),
+                    .sourceId              = relationship.sourceId,
+                    .templateRect          = definition.templateRect(),
+                    .searchRoi             = definition.searchRoi(),
+                    .similarityBasisPoints = definition.threshold().basisPoints(),
+                    .defaultClick          = defaultClick,
+                    .allowedPageIds = {
                         definition.allowedPageIds().begin(),
                         definition.allowedPageIds().end(),
                     },
-                    .m_shared = relationship.m_shared,
+                    .shared = relationship.shared,
                 }
             );
         }
@@ -95,10 +95,10 @@ namespace uf::workbench
         {
             pages.emplace_back(
                 EditablePage{
-                    .m_id        = page.id(),
-                    .m_name      = page.name().value(),
-                    .m_required  = {page.required().begin(), page.required().end()},
-                    .m_forbidden = {page.forbidden().begin(), page.forbidden().end()},
+                    .id        = page.id(),
+                    .name      = page.name().value(),
+                    .required  = {page.required().begin(), page.required().end()},
+                    .forbidden = {page.forbidden().begin(), page.forbidden().end()},
                 }
             );
         }
@@ -109,21 +109,21 @@ namespace uf::workbench
         {
             regressions.emplace_back(
                 EditableRegression{
-                    .m_id             = regression.id(),
-                    .m_sourceId       = regression.sourceId(),
-                    .m_classification = regression.classification(),
-                    .m_expectation    = regression.expectation(),
+                    .id             = regression.id(),
+                    .sourceId       = regression.sourceId(),
+                    .classification = regression.classification(),
+                    .expectation    = regression.expectation(),
                 }
             );
         }
 
         return AuthoringDraft{
-            .m_projectId   = document.catalog().projectId(),
-            .m_fingerprint = document.catalog().fingerprint(),
-            .m_sources     = std::move(sources),
-            .m_recognizers = std::move(recognizers),
-            .m_pages       = std::move(pages),
-            .m_regressions = std::move(regressions),
+            .projectId   = document.catalog().projectId(),
+            .fingerprint = document.catalog().fingerprint(),
+            .sources     = std::move(sources),
+            .recognizers = std::move(recognizers),
+            .pages       = std::move(pages),
+            .regressions = std::move(regressions),
         };
     }
 
@@ -132,17 +132,17 @@ namespace uf::workbench
     ) -> Result<annotation::AuthoringDocument>
     {
         auto sources = std::vector<annotation::AuthoringSource>{};
-        sources.reserve(draft.m_sources.size());
-        for (auto const& source : draft.m_sources)
+        sources.reserve(draft.sources.size());
+        for (auto const& source : draft.sources)
         {
             UF_TRY_VALUE(
                 validated,
                 annotation::AuthoringSource::create(
                     annotation::AuthoringSourceSpec{
-                        .m_id          = source.m_id,
-                        .m_contentHash = source.m_contentHash,
-                        .m_fingerprint = source.m_fingerprint,
-                        .m_provenance  = source.m_provenance,
+                        .id          = source.id,
+                        .contentHash = source.contentHash,
+                        .fingerprint = source.fingerprint,
+                        .provenance  = source.provenance,
                     }
                 )
             );
@@ -150,30 +150,30 @@ namespace uf::workbench
         }
 
         auto recognizers = std::vector<annotation::AuthoringRecognizerSpec>{};
-        recognizers.reserve(draft.m_recognizers.size());
-        for (auto const& recognizer : draft.m_recognizers)
+        recognizers.reserve(draft.recognizers.size());
+        for (auto const& recognizer : draft.recognizers)
         {
             UF_TRY_VALUE(
                 name,
-                annotation::ResourceName::create(recognizer.m_name)
+                annotation::ResourceName::create(recognizer.name)
             );
             UF_TRY_VALUE(
                 threshold,
                 annotation::SimilarityThreshold::create(
-                    recognizer.m_similarityBasisPoints
+                    recognizer.similarityBasisPoints
                 )
             );
 
             auto defaultClick = std::optional<annotation::TemplateOffset>{};
-            if (recognizer.m_defaultClick)
+            if (recognizer.defaultClick)
             {
                 UF_TRY_VALUE(
                     offset,
                     annotation::TemplateOffset::create(
-                        recognizer.m_defaultClick->m_x,
-                        recognizer.m_defaultClick->m_y,
-                        recognizer.m_templateRect.width(),
-                        recognizer.m_templateRect.height()
+                        recognizer.defaultClick->x,
+                        recognizer.defaultClick->y,
+                        recognizer.templateRect.width(),
+                        recognizer.templateRect.height()
                     )
                 );
                 defaultClick = offset;
@@ -182,41 +182,41 @@ namespace uf::workbench
             UF_TRY_VALUE(
                 definition,
                 annotation::RecognizerDefinition::create(
-                    draft.m_fingerprint,
+                    draft.fingerprint,
                     annotation::RecognizerSpec{
-                        .m_id             = recognizer.m_id,
-                        .m_name           = std::move(name),
-                        .m_annotationType = recognizer.m_annotationType,
-                        .m_templateRect   = recognizer.m_templateRect,
-                        .m_searchRoi      = recognizer.m_searchRoi,
-                        .m_threshold      = threshold,
-                        .m_defaultClick   = defaultClick,
-                        .m_allowedPageIds = recognizer.m_allowedPageIds,
+                        .id             = recognizer.id,
+                        .name           = std::move(name),
+                        .annotationType = recognizer.annotationType,
+                        .templateRect   = recognizer.templateRect,
+                        .searchRoi      = recognizer.searchRoi,
+                        .threshold      = threshold,
+                        .defaultClick   = defaultClick,
+                        .allowedPageIds = recognizer.allowedPageIds,
                     }
                 )
             );
             recognizers.emplace_back(
                 annotation::AuthoringRecognizerSpec{
-                    .m_definition = std::move(definition),
-                    .m_sourceId   = recognizer.m_sourceId,
-                    .m_shared     = recognizer.m_shared,
+                    .definition = std::move(definition),
+                    .sourceId   = recognizer.sourceId,
+                    .shared     = recognizer.shared,
                 }
             );
         }
 
         auto pages = std::vector<annotation::PageSignature>{};
-        pages.reserve(draft.m_pages.size());
-        for (auto const& page : draft.m_pages)
+        pages.reserve(draft.pages.size());
+        for (auto const& page : draft.pages)
         {
-            UF_TRY_VALUE(name, annotation::ResourceName::create(page.m_name));
+            UF_TRY_VALUE(name, annotation::ResourceName::create(page.name));
             UF_TRY_VALUE(
                 validated,
                 annotation::PageSignature::create(
                     annotation::PageSpec{
-                        .m_id        = page.m_id,
-                        .m_name      = std::move(name),
-                        .m_required  = page.m_required,
-                        .m_forbidden = page.m_forbidden,
+                        .id        = page.id,
+                        .name      = std::move(name),
+                        .required  = page.required,
+                        .forbidden = page.forbidden,
                     }
                 )
             );
@@ -224,22 +224,22 @@ namespace uf::workbench
         }
 
         auto regressions = std::vector<annotation::RegressionCase>{};
-        regressions.reserve(draft.m_regressions.size());
-        for (auto const& regression : draft.m_regressions)
+        regressions.reserve(draft.regressions.size());
+        for (auto const& regression : draft.regressions)
         {
             regressions.emplace_back(
                 annotation::RegressionSpec{
-                    .m_id             = regression.m_id,
-                    .m_sourceId       = regression.m_sourceId,
-                    .m_classification = regression.m_classification,
-                    .m_expectation    = regression.m_expectation,
+                    .id             = regression.id,
+                    .sourceId       = regression.sourceId,
+                    .classification = regression.classification,
+                    .expectation    = regression.expectation,
                 }
             );
         }
 
         return annotation::AuthoringDocument::create(
-            draft.m_projectId,
-            draft.m_fingerprint,
+            draft.projectId,
+            draft.fingerprint,
             std::move(sources),
             std::move(recognizers),
             std::move(pages),
@@ -255,18 +255,18 @@ namespace uf::workbench
         auto const taken = [&draft](std::string_view candidate)
         {
             return std::ranges::contains(
-                       draft.m_recognizers,
+                       draft.recognizers,
                        candidate,
-                       &EditableRecognizer::m_name
+                       &EditableRecognizer::name
                    )
                 || std::ranges::contains(
-                       draft.m_pages,
+                       draft.pages,
                        candidate,
-                       &EditablePage::m_name
+                       &EditablePage::name
                    );
         };
 
-        auto const limit = draft.m_recognizers.size() + draft.m_pages.size() + 1U;
+        auto const limit = draft.recognizers.size() + draft.pages.size() + 1U;
         auto candidate   = std::string{};
         for (auto index = std::size_t{1}; index <= limit; ++index)
         {
@@ -286,56 +286,56 @@ namespace uf::workbench
     {
         if (
             !std::ranges::contains(
-                draft.m_sources,
-                spec.m_sourceId,
-                &EditableSource::m_id
+                draft.sources,
+                spec.sourceId,
+                &EditableSource::id
             )
         )
         {
-            return missingSource(spec.m_sourceId);
+            return missingSource(spec.sourceId);
         }
 
         auto anchorName = freshAuthoringName(draft, "anchor");
-        draft.m_recognizers.emplace_back(
+        draft.recognizers.emplace_back(
             EditableRecognizer{
-                .m_id                    = spec.m_anchorId,
-                .m_name                  = anchorName,
-                .m_annotationType        = annotation::AnnotationType::PageAnchor,
-                .m_sourceId              = spec.m_sourceId,
-                .m_templateRect          = spec.m_templateRect,
-                .m_searchRoi             = spec.m_searchRoi,
-                .m_similarityBasisPoints = spec.m_similarityBasisPoints,
-                .m_defaultClick          = {},
-                .m_allowedPageIds        = {},
+                .id                    = spec.anchorId,
+                .name                  = anchorName,
+                .annotationType        = annotation::AnnotationType::PageAnchor,
+                .sourceId              = spec.sourceId,
+                .templateRect          = spec.templateRect,
+                .searchRoi             = spec.searchRoi,
+                .similarityBasisPoints = spec.similarityBasisPoints,
+                .defaultClick          = {},
+                .allowedPageIds        = {},
             }
         );
 
         auto pageName = freshAuthoringName(draft, "page");
-        draft.m_pages.emplace_back(
+        draft.pages.emplace_back(
             EditablePage{
-                .m_id        = spec.m_pageId,
-                .m_name      = pageName,
-                .m_required  = {spec.m_anchorId},
-                .m_forbidden = {},
+                .id        = spec.pageId,
+                .name      = pageName,
+                .required  = {spec.anchorId},
+                .forbidden = {},
             }
         );
 
         // The case is what states "this screen is that page". Nothing else in the
         // document records it: an anchor names the page it identifies, but the
         // image the anchor happens to be drawn on is not the same claim.
-        draft.m_regressions.emplace_back(
+        draft.regressions.emplace_back(
             EditableRegression{
-                .m_id             = spec.m_regressionId,
-                .m_sourceId       = spec.m_sourceId,
-                .m_classification = annotation::RegressionClassification::Positive,
-                .m_expectation    = annotation::ResolvedRegression{spec.m_pageId},
+                .id             = spec.regressionId,
+                .sourceId       = spec.sourceId,
+                .classification = annotation::RegressionClassification::Positive,
+                .expectation    = annotation::ResolvedRegression{spec.pageId},
             }
         );
 
         return CreatedPage{
-            .m_draft      = std::move(draft),
-            .m_pageName   = std::move(pageName),
-            .m_anchorName = std::move(anchorName),
+            .draft      = std::move(draft),
+            .pageName   = std::move(pageName),
+            .anchorName = std::move(anchorName),
         };
     }
 
@@ -346,58 +346,58 @@ namespace uf::workbench
     {
         if (
             !std::ranges::contains(
-                draft.m_sources,
-                spec.m_sourceId,
-                &EditableSource::m_id
+                draft.sources,
+                spec.sourceId,
+                &EditableSource::id
             )
         )
         {
-            return missingSource(spec.m_sourceId);
+            return missingSource(spec.sourceId);
         }
 
         auto const page = std::ranges::find(
-            draft.m_pages,
-            spec.m_pageId,
-            &EditablePage::m_id
+            draft.pages,
+            spec.pageId,
+            &EditablePage::id
         );
-        if (page == draft.m_pages.end())
+        if (page == draft.pages.end())
         {
             return fail(
                 AutomationErrorKind::InvalidResource,
                 std::format(
                     "page {} is not part of this draft",
-                    spec.m_pageId.value().toString()
+                    spec.pageId.value().toString()
                 )
             );
         }
 
-        auto const isAnchor = spec.m_kind == PageMemberKind::Anchor;
+        auto const isAnchor = spec.kind == PageMemberKind::Anchor;
         auto name = freshAuthoringName(draft, isAnchor ? "anchor" : "region");
-        draft.m_recognizers.emplace_back(
+        draft.recognizers.emplace_back(
             EditableRecognizer{
-                .m_id   = spec.m_recognizerId,
-                .m_name = name,
-                .m_annotationType = isAnchor
+                .id   = spec.recognizerId,
+                .name = name,
+                .annotationType = isAnchor
                     ? annotation::AnnotationType::PageAnchor
                     : annotation::AnnotationType::ActionTarget,
-                .m_sourceId              = spec.m_sourceId,
-                .m_templateRect          = spec.m_templateRect,
-                .m_searchRoi             = spec.m_searchRoi,
-                .m_similarityBasisPoints = spec.m_similarityBasisPoints,
-                .m_defaultClick          = {},
-                .m_allowedPageIds        = isAnchor
+                .sourceId              = spec.sourceId,
+                .templateRect          = spec.templateRect,
+                .searchRoi             = spec.searchRoi,
+                .similarityBasisPoints = spec.similarityBasisPoints,
+                .defaultClick          = {},
+                .allowedPageIds        = isAnchor
                     ? std::vector<annotation::PageId>{}
-                    : std::vector<annotation::PageId>{spec.m_pageId},
+                    : std::vector<annotation::PageId>{spec.pageId},
             }
         );
         if (isAnchor)
         {
-            page->m_required.emplace_back(spec.m_recognizerId);
+            page->required.emplace_back(spec.recognizerId);
         }
 
         return AddedPageMember{
-            .m_draft = std::move(draft),
-            .m_name  = std::move(name),
+            .draft = std::move(draft),
+            .name  = std::move(name),
         };
     }
 
@@ -408,11 +408,11 @@ namespace uf::workbench
     {
         auto members = std::vector<annotation::RecognizerId>{};
         auto const origin = std::ranges::find(
-            draft.m_recognizers,
+            draft.recognizers,
             id,
-            &EditableRecognizer::m_id
+            &EditableRecognizer::id
         );
-        if (origin == draft.m_recognizers.end())
+        if (origin == draft.recognizers.end())
         {
             return members;
         }
@@ -420,21 +420,21 @@ namespace uf::workbench
         // pixels, because reuse only happens through a marked element, and
         // returning it keeps a plain template drag on the same path as a shared
         // one.
-        if (!origin->m_shared)
+        if (!origin->shared)
         {
-            members.emplace_back(origin->m_id);
+            members.emplace_back(origin->id);
             return members;
         }
-        for (auto const& recognizer : draft.m_recognizers)
+        for (auto const& recognizer : draft.recognizers)
         {
             if (
-                recognizer.m_shared
-                && recognizer.m_sourceId == origin->m_sourceId
-                && recognizer.m_templateRect == origin->m_templateRect
-                && recognizer.m_annotationType == origin->m_annotationType
+                recognizer.shared
+                && recognizer.sourceId == origin->sourceId
+                && recognizer.templateRect == origin->templateRect
+                && recognizer.annotationType == origin->annotationType
             )
             {
-                members.emplace_back(recognizer.m_id);
+                members.emplace_back(recognizer.id);
             }
         }
         return members;
@@ -447,11 +447,11 @@ namespace uf::workbench
     ) -> Result<AuthoringDraft>
     {
         auto const target = std::ranges::find(
-            draft.m_recognizers,
+            draft.recognizers,
             id,
-            &EditableRecognizer::m_id
+            &EditableRecognizer::id
         );
-        if (target == draft.m_recognizers.end())
+        if (target == draft.recognizers.end())
         {
             return fail(
                 AutomationErrorKind::InvalidResource,
@@ -461,14 +461,14 @@ namespace uf::workbench
                 )
             );
         }
-        if (target->m_annotationType != annotation::AnnotationType::ActionTarget)
+        if (target->annotationType != annotation::AnnotationType::ActionTarget)
         {
             return fail(
                 AutomationErrorKind::InvalidResource,
                 std::format(
                     "\"{}\" is not an interactive region; only those are reused "
                     "across pages",
-                    target->m_name
+                    target->name
                 )
             );
         }
@@ -481,7 +481,7 @@ namespace uf::workbench
                 std::format(
                     "\"{}\" is still used on {} pages; remove it from the others "
                     "before making it page-local again",
-                    target->m_name,
+                    target->name,
                     members.size()
                 )
             );
@@ -490,12 +490,12 @@ namespace uf::workbench
         for (auto const& memberId : members)
         {
             auto const member = std::ranges::find(
-                draft.m_recognizers,
+                draft.recognizers,
                 memberId,
-                &EditableRecognizer::m_id
+                &EditableRecognizer::id
             );
-            UF_CHECK(member != draft.m_recognizers.end());
-            member->m_shared = shared;
+            UF_CHECK(member != draft.recognizers.end());
+            member->shared = shared;
         }
         return draft;
     }
@@ -506,54 +506,54 @@ namespace uf::workbench
     ) -> Result<AddedPageMember>
     {
         auto const origin = std::ranges::find(
-            draft.m_recognizers,
-            spec.m_shareFrom,
-            &EditableRecognizer::m_id
+            draft.recognizers,
+            spec.shareFrom,
+            &EditableRecognizer::id
         );
-        if (origin == draft.m_recognizers.end())
+        if (origin == draft.recognizers.end())
         {
             return fail(
                 AutomationErrorKind::InvalidResource,
                 std::format(
                     "recognizer {} is not part of this draft",
-                    spec.m_shareFrom.value().toString()
+                    spec.shareFrom.value().toString()
                 )
             );
         }
-        if (origin->m_annotationType != annotation::AnnotationType::ActionTarget)
+        if (origin->annotationType != annotation::AnnotationType::ActionTarget)
         {
             return fail(
                 AutomationErrorKind::InvalidResource,
                 std::format(
                     "\"{}\" is not an interactive region; only those are shared "
                     "across pages",
-                    origin->m_name
+                    origin->name
                 )
             );
         }
         if (
-            !std::ranges::contains(draft.m_pages, spec.m_pageId, &EditablePage::m_id)
+            !std::ranges::contains(draft.pages, spec.pageId, &EditablePage::id)
         )
         {
             return fail(
                 AutomationErrorKind::InvalidResource,
                 std::format(
                     "page {} is not part of this draft",
-                    spec.m_pageId.value().toString()
+                    spec.pageId.value().toString()
                 )
             );
         }
 
         auto const alreadyThere = std::ranges::any_of(
-            draft.m_recognizers,
+            draft.recognizers,
             [&origin, &spec](EditableRecognizer const& recognizer)
             {
-                return recognizer.m_sourceId == origin->m_sourceId
-                    && recognizer.m_templateRect == origin->m_templateRect
-                    && recognizer.m_annotationType == origin->m_annotationType
+                return recognizer.sourceId == origin->sourceId
+                    && recognizer.templateRect == origin->templateRect
+                    && recognizer.annotationType == origin->annotationType
                     && std::ranges::contains(
-                           recognizer.m_allowedPageIds,
-                           spec.m_pageId
+                           recognizer.allowedPageIds,
+                           spec.pageId
                        );
             }
         );
@@ -563,7 +563,7 @@ namespace uf::workbench
                 AutomationErrorKind::InvalidResource,
                 std::format(
                     "\"{}\" is already on that page",
-                    origin->m_name
+                    origin->name
                 )
             );
         }
@@ -573,45 +573,45 @@ namespace uf::workbench
         // old buffer. Reuse is what being shared means, so an element that
         // reaches a second page is marked whether or not the author ticked the
         // box first.
-        origin->m_shared        = true;
-        auto const templateRect = origin->m_templateRect;
-        auto const sourceId     = origin->m_sourceId;
-        auto const threshold    = origin->m_similarityBasisPoints;
-        auto const defaultClick = origin->m_defaultClick;
-        auto const originName   = origin->m_name;
+        origin->shared        = true;
+        auto const templateRect = origin->templateRect;
+        auto const sourceId     = origin->sourceId;
+        auto const threshold    = origin->similarityBasisPoints;
+        auto const defaultClick = origin->defaultClick;
+        auto const originName   = origin->name;
 
         // Named after the element and the page it lands on, rather than the next
         // free "region_N". The copy is that element on that page, and a generated
         // number says neither -- which is what left a renamed element paired with
         // a stale one the first time this existed.
         auto const page = std::ranges::find(
-            draft.m_pages,
-            spec.m_pageId,
-            &EditablePage::m_id
+            draft.pages,
+            spec.pageId,
+            &EditablePage::id
         );
-        UF_CHECK(page != draft.m_pages.end());
+        UF_CHECK(page != draft.pages.end());
         auto name = freshAuthoringName(
             draft,
-            std::format("{}_{}", originName, page->m_name)
+            std::format("{}_{}", originName, page->name)
         );
-        draft.m_recognizers.emplace_back(
+        draft.recognizers.emplace_back(
             EditableRecognizer{
-                .m_id                    = spec.m_recognizerId,
-                .m_name                  = name,
-                .m_annotationType        = annotation::AnnotationType::ActionTarget,
-                .m_sourceId              = sourceId,
-                .m_templateRect          = templateRect,
-                .m_searchRoi             = spec.m_searchRoi,
-                .m_similarityBasisPoints = threshold,
-                .m_defaultClick          = defaultClick,
-                .m_allowedPageIds        = {spec.m_pageId},
-                .m_shared                = true,
+                .id                    = spec.recognizerId,
+                .name                  = name,
+                .annotationType        = annotation::AnnotationType::ActionTarget,
+                .sourceId              = sourceId,
+                .templateRect          = templateRect,
+                .searchRoi             = spec.searchRoi,
+                .similarityBasisPoints = threshold,
+                .defaultClick          = defaultClick,
+                .allowedPageIds        = {spec.pageId},
+                .shared                = true,
             }
         );
 
         return AddedPageMember{
-            .m_draft = std::move(draft),
-            .m_name  = std::move(name),
+            .draft = std::move(draft),
+            .name  = std::move(name),
         };
     }
 
@@ -636,14 +636,14 @@ namespace uf::workbench
         for (auto const& memberId : members)
         {
             auto const member = std::ranges::find(
-                draft.m_recognizers,
+                draft.recognizers,
                 memberId,
-                &EditableRecognizer::m_id
+                &EditableRecognizer::id
             );
-            UF_CHECK(member != draft.m_recognizers.end());
+            UF_CHECK(member != draft.recognizers.end());
             if (
-                templateRect.width() > member->m_searchRoi.width()
-                || templateRect.height() > member->m_searchRoi.height()
+                templateRect.width() > member->searchRoi.width()
+                || templateRect.height() > member->searchRoi.height()
             )
             {
                 return fail(
@@ -651,7 +651,7 @@ namespace uf::workbench
                     std::format(
                         "the new template does not fit the range \"{}\" searches; "
                         "widen that range first",
-                        member->m_name
+                        member->name
                     )
                 );
             }
@@ -660,19 +660,19 @@ namespace uf::workbench
         for (auto const& memberId : members)
         {
             auto const member = std::ranges::find(
-                draft.m_recognizers,
+                draft.recognizers,
                 memberId,
-                &EditableRecognizer::m_id
+                &EditableRecognizer::id
             );
-            UF_CHECK(member != draft.m_recognizers.end());
-            member->m_templateRect = templateRect;
+            UF_CHECK(member != draft.recognizers.end());
+            member->templateRect = templateRect;
         }
 
         return RetemplatedRegion{
-            .m_draft = std::move(draft),
+            .draft = std::move(draft),
             // The recognizer being dragged is not something the author needs
             // reporting back to them; the others are.
-            .m_movedMembers = members.size() - 1U,
+            .movedMembers = members.size() - 1U,
         };
     }
 
@@ -683,47 +683,47 @@ namespace uf::workbench
     {
         if (
             !std::ranges::contains(
-                draft.m_sources,
-                spec.m_sourceId,
-                &EditableSource::m_id
+                draft.sources,
+                spec.sourceId,
+                &EditableSource::id
             )
         )
         {
-            return missingSource(spec.m_sourceId);
+            return missingSource(spec.sourceId);
         }
         if (
-            !std::ranges::contains(draft.m_pages, spec.m_pageId, &EditablePage::m_id)
+            !std::ranges::contains(draft.pages, spec.pageId, &EditablePage::id)
         )
         {
             return fail(
                 AutomationErrorKind::InvalidResource,
                 std::format(
                     "page {} is not part of this draft",
-                    spec.m_pageId.value().toString()
+                    spec.pageId.value().toString()
                 )
             );
         }
 
         auto const expectation = annotation::RegressionExpectation{
-            annotation::ResolvedRegression{spec.m_pageId},
+            annotation::ResolvedRegression{spec.pageId},
         };
         auto const existing = std::ranges::find(
-            draft.m_regressions,
-            spec.m_sourceId,
-            &EditableRegression::m_sourceId
+            draft.regressions,
+            spec.sourceId,
+            &EditableRegression::sourceId
         );
-        if (existing != draft.m_regressions.end())
+        if (existing != draft.regressions.end())
         {
-            existing->m_expectation = expectation;
+            existing->expectation = expectation;
             return draft;
         }
 
-        draft.m_regressions.emplace_back(
+        draft.regressions.emplace_back(
             EditableRegression{
-                .m_id             = spec.m_regressionId,
-                .m_sourceId       = spec.m_sourceId,
-                .m_classification = annotation::RegressionClassification::Positive,
-                .m_expectation    = expectation,
+                .id             = spec.regressionId,
+                .sourceId       = spec.sourceId,
+                .classification = annotation::RegressionClassification::Positive,
+                .expectation    = expectation,
             }
         );
         return draft;
@@ -736,11 +736,11 @@ namespace uf::workbench
     ) -> Result<RetypedRecognizer>
     {
         auto const target = std::ranges::find(
-            draft.m_recognizers,
+            draft.recognizers,
             id,
-            &EditableRecognizer::m_id
+            &EditableRecognizer::id
         );
-        if (target == draft.m_recognizers.end())
+        if (target == draft.recognizers.end())
         {
             return fail(
                 AutomationErrorKind::InvalidResource,
@@ -750,9 +750,9 @@ namespace uf::workbench
                 )
             );
         }
-        if (target->m_annotationType == type)
+        if (target->annotationType == type)
         {
-            return RetypedRecognizer{.m_draft = std::move(draft)};
+            return RetypedRecognizer{.draft = std::move(draft)};
         }
 
         // Only a page anchor may fill a required or forbidden role, so leaving
@@ -761,16 +761,16 @@ namespace uf::workbench
         // author has to resolve which anchor takes over.
         auto withdrawnRoles = std::size_t{0};
         auto anchoredPages  = std::vector<annotation::PageId>{};
-        if (target->m_annotationType == annotation::AnnotationType::PageAnchor)
+        if (target->annotationType == annotation::AnnotationType::PageAnchor)
         {
-            for (auto const& page : draft.m_pages)
+            for (auto const& page : draft.pages)
             {
                 auto const named = (
-                    std::ranges::contains(page.m_required, id)
-                    || std::ranges::contains(page.m_forbidden, id)
+                    std::ranges::contains(page.required, id)
+                    || std::ranges::contains(page.forbidden, id)
                 );
                 auto const alone = (
-                    page.m_required.size() + page.m_forbidden.size() == 1U
+                    page.required.size() + page.forbidden.size() == 1U
                 );
                 if (named && alone)
                 {
@@ -780,8 +780,8 @@ namespace uf::workbench
                             "\"{}\" is the only recognizer page \"{}\" names; "
                             "give that page another page anchor before changing "
                             "this recognizer's type",
-                            target->m_name,
-                            page.m_name
+                            target->name,
+                            page.name
                         )
                     );
                 }
@@ -789,18 +789,18 @@ namespace uf::workbench
                 // required on is where it demonstrably appears, which is a far
                 // better authorization to offer than an arbitrary page. A page
                 // it was forbidden on is the opposite and is never offered.
-                if (std::ranges::contains(page.m_required, id))
+                if (std::ranges::contains(page.required, id))
                 {
-                    anchoredPages.emplace_back(page.m_id);
+                    anchoredPages.emplace_back(page.id);
                 }
             }
-            for (auto& page : draft.m_pages)
+            for (auto& page : draft.pages)
             {
-                auto const before = page.m_required.size() + page.m_forbidden.size();
-                std::erase(page.m_required, id);
-                std::erase(page.m_forbidden, id);
+                auto const before = page.required.size() + page.forbidden.size();
+                std::erase(page.required, id);
+                std::erase(page.forbidden, id);
                 withdrawnRoles += (
-                    before - (page.m_required.size() + page.m_forbidden.size())
+                    before - (page.required.size() + page.forbidden.size())
                 );
             }
         }
@@ -814,9 +814,9 @@ namespace uf::workbench
             // exactly one rather than every page: an action target is acted on
             // only where it is authorized, so widening that reach stays the
             // author's explicit decision.
-            if (target->m_allowedPageIds.empty())
+            if (target->allowedPageIds.empty())
             {
-                if (draft.m_pages.empty())
+                if (draft.pages.empty())
                 {
                     return fail(
                         AutomationErrorKind::InvalidResource,
@@ -825,32 +825,32 @@ namespace uf::workbench
                     );
                 }
                 authorizedPage = anchoredPages.empty()
-                    ? draft.m_pages.front().m_id
+                    ? draft.pages.front().id
                     : anchoredPages.front();
-                target->m_allowedPageIds.emplace_back(*authorizedPage);
+                target->allowedPageIds.emplace_back(*authorizedPage);
             }
         }
         else
         {
             // Only an action target may carry a default click.
-            clearedClick = target->m_defaultClick.has_value();
-            target->m_defaultClick.reset();
+            clearedClick = target->defaultClick.has_value();
+            target->defaultClick.reset();
             if (type == annotation::AnnotationType::PageAnchor)
             {
                 // A page anchor's membership is its signature role, never an
                 // authorization it holds itself.
-                clearedAuthorizations = target->m_allowedPageIds.size();
-                target->m_allowedPageIds.clear();
+                clearedAuthorizations = target->allowedPageIds.size();
+                target->allowedPageIds.clear();
             }
         }
-        target->m_annotationType = type;
+        target->annotationType = type;
 
         return RetypedRecognizer{
-            .m_draft                 = std::move(draft),
-            .m_authorizedPage        = authorizedPage,
-            .m_withdrawnRoles        = withdrawnRoles,
-            .m_clearedAuthorizations = clearedAuthorizations,
-            .m_clearedClick          = clearedClick,
+            .draft                 = std::move(draft),
+            .authorizedPage        = authorizedPage,
+            .withdrawnRoles        = withdrawnRoles,
+            .clearedAuthorizations = clearedAuthorizations,
+            .clearedClick          = clearedClick,
         };
     }
 
@@ -860,11 +860,11 @@ namespace uf::workbench
     ) -> Result<DeletedEntity>
     {
         auto const target = std::ranges::find(
-            draft.m_recognizers,
+            draft.recognizers,
             id,
-            &EditableRecognizer::m_id
+            &EditableRecognizer::id
         );
-        if (target == draft.m_recognizers.end())
+        if (target == draft.recognizers.end())
         {
             return fail(
                 AutomationErrorKind::InvalidResource,
@@ -875,14 +875,14 @@ namespace uf::workbench
             );
         }
 
-        for (auto const& page : draft.m_pages)
+        for (auto const& page : draft.pages)
         {
             auto const named = (
-                std::ranges::contains(page.m_required, id)
-                || std::ranges::contains(page.m_forbidden, id)
+                std::ranges::contains(page.required, id)
+                || std::ranges::contains(page.forbidden, id)
             );
             auto const alone = (
-                page.m_required.size() + page.m_forbidden.size() == 1U
+                page.required.size() + page.forbidden.size() == 1U
             );
             if (named && alone)
             {
@@ -891,28 +891,28 @@ namespace uf::workbench
                     std::format(
                         "\"{}\" is the only recognizer page \"{}\" names; "
                         "delete that page first, or give it another page anchor",
-                        target->m_name,
-                        page.m_name
+                        target->name,
+                        page.name
                     )
                 );
             }
         }
 
         auto withdrawnRoles = std::size_t{0};
-        for (auto& page : draft.m_pages)
+        for (auto& page : draft.pages)
         {
-            auto const before = page.m_required.size() + page.m_forbidden.size();
-            std::erase(page.m_required, id);
-            std::erase(page.m_forbidden, id);
+            auto const before = page.required.size() + page.forbidden.size();
+            std::erase(page.required, id);
+            std::erase(page.forbidden, id);
             withdrawnRoles += (
-                before - (page.m_required.size() + page.m_forbidden.size())
+                before - (page.required.size() + page.forbidden.size())
             );
         }
-        draft.m_recognizers.erase(target);
+        draft.recognizers.erase(target);
 
         return DeletedEntity{
-            .m_draft          = std::move(draft),
-            .m_withdrawnRoles = withdrawnRoles,
+            .draft          = std::move(draft),
+            .withdrawnRoles = withdrawnRoles,
         };
     }
 
@@ -922,11 +922,11 @@ namespace uf::workbench
     ) -> Result<DeletedEntity>
     {
         auto const target = std::ranges::find(
-            draft.m_pages,
+            draft.pages,
             id,
-            &EditablePage::m_id
+            &EditablePage::id
         );
-        if (target == draft.m_pages.end())
+        if (target == draft.pages.end())
         {
             return fail(
                 AutomationErrorKind::InvalidResource,
@@ -937,12 +937,12 @@ namespace uf::workbench
             );
         }
 
-        for (auto const& recognizer : draft.m_recognizers)
+        for (auto const& recognizer : draft.recognizers)
         {
             auto const onlyAuthorization = (
-                recognizer.m_annotationType == annotation::AnnotationType::ActionTarget
-                && recognizer.m_allowedPageIds.size() == 1U
-                && std::ranges::contains(recognizer.m_allowedPageIds, id)
+                recognizer.annotationType == annotation::AnnotationType::ActionTarget
+                && recognizer.allowedPageIds.size() == 1U
+                && std::ranges::contains(recognizer.allowedPageIds, id)
             );
             if (onlyAuthorization)
             {
@@ -951,19 +951,19 @@ namespace uf::workbench
                     std::format(
                         "page \"{}\" is the only page action target \"{}\" is "
                         "authorized on; authorize it elsewhere or delete it first",
-                        target->m_name,
-                        recognizer.m_name
+                        target->name,
+                        recognizer.name
                     )
                 );
             }
         }
 
         auto clearedAuthorizations = std::size_t{0};
-        for (auto& recognizer : draft.m_recognizers)
+        for (auto& recognizer : draft.recognizers)
         {
-            auto const before = recognizer.m_allowedPageIds.size();
-            std::erase(recognizer.m_allowedPageIds, id);
-            clearedAuthorizations += before - recognizer.m_allowedPageIds.size();
+            auto const before = recognizer.allowedPageIds.size();
+            std::erase(recognizer.allowedPageIds, id);
+            clearedAuthorizations += before - recognizer.allowedPageIds.size();
         }
 
         // A case expecting this page to resolve cannot be reclassified into
@@ -971,21 +971,21 @@ namespace uf::workbench
         // blocking the deletion. Every page created from a captured screen owns
         // one, so refusing here would make such a page undeletable.
         auto const removedRegressions = std::erase_if(
-            draft.m_regressions,
+            draft.regressions,
             [id](EditableRegression const& regression)
             {
                 auto const* p_resolved = std::get_if<annotation::ResolvedRegression>(
-                    &regression.m_expectation
+                    &regression.expectation
                 );
-                return p_resolved != nullptr && p_resolved->m_pageId == id;
+                return p_resolved != nullptr && p_resolved->pageId == id;
             }
         );
-        draft.m_pages.erase(target);
+        draft.pages.erase(target);
 
         return DeletedEntity{
-            .m_draft                 = std::move(draft),
-            .m_clearedAuthorizations = clearedAuthorizations,
-            .m_removedRegressions    = removedRegressions,
+            .draft                 = std::move(draft),
+            .clearedAuthorizations = clearedAuthorizations,
+            .removedRegressions    = removedRegressions,
         };
     }
 
@@ -995,11 +995,11 @@ namespace uf::workbench
     ) -> Result<DeletedEntity>
     {
         auto const target = std::ranges::find(
-            draft.m_sources,
+            draft.sources,
             id,
-            &EditableSource::m_id
+            &EditableSource::id
         );
-        if (target == draft.m_sources.end())
+        if (target == draft.sources.end())
         {
             return fail(
                 AutomationErrorKind::InvalidResource,
@@ -1011,9 +1011,9 @@ namespace uf::workbench
         }
 
         auto const authored = std::ranges::count(
-            draft.m_recognizers,
+            draft.recognizers,
             id,
-            &EditableRecognizer::m_sourceId
+            &EditableRecognizer::sourceId
         );
         if (authored > 0)
         {
@@ -1028,20 +1028,20 @@ namespace uf::workbench
             );
         }
 
-        auto const before = draft.m_regressions.size();
+        auto const before = draft.regressions.size();
         std::erase_if(
-            draft.m_regressions,
+            draft.regressions,
             [id](EditableRegression const& regression) -> bool
             {
-                return regression.m_sourceId == id;
+                return regression.sourceId == id;
             }
         );
-        auto const removedRegressions = before - draft.m_regressions.size();
-        draft.m_sources.erase(target);
+        auto const removedRegressions = before - draft.regressions.size();
+        draft.sources.erase(target);
 
         return DeletedEntity{
-            .m_draft              = std::move(draft),
-            .m_removedRegressions = removedRegressions,
+            .draft              = std::move(draft),
+            .removedRegressions = removedRegressions,
         };
     }
 
@@ -1073,6 +1073,11 @@ namespace uf::workbench
         return !m_redo.empty();
     }
 
+    auto AuthoringEditHistory::revision() const noexcept -> uint64
+    {
+        return m_revision;
+    }
+
     auto AuthoringEditHistory::apply(
         AuthoringDraft const& draft
     ) -> Result<bool>
@@ -1093,6 +1098,7 @@ namespace uf::workbench
         m_undo.emplace_back(std::move(m_current));
         m_current = std::move(next);
         m_redo.clear();
+        ++m_revision;
         return true;
     }
 
@@ -1103,6 +1109,7 @@ namespace uf::workbench
         m_redo.emplace_back(std::move(m_current));
         m_current = std::move(m_undo.back());
         m_undo.pop_back();
+        ++m_revision;
         return true;
     }
 
@@ -1113,6 +1120,7 @@ namespace uf::workbench
         m_undo.emplace_back(std::move(m_current));
         m_current = std::move(m_redo.back());
         m_redo.pop_back();
+        ++m_revision;
         return true;
     }
 }

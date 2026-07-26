@@ -22,40 +22,40 @@ namespace uf::workbench
 
     TEST_CASE("source and screen coordinates round-trip through the view")
     {
-        auto const view   = CanvasView{.m_zoom = 2.0F, .m_panX = 10.0F, .m_panY = 8.0F};
+        auto const view   = CanvasView{.zoom = 2.0F, .panX = 10.0F, .panY = 8.0F};
         auto const origin = CanvasPoint{100.0F, 120.0F};
 
         auto const screen = sourceToScreen(view, origin, 30.0F, 40.0F);
-        CHECK(screen.m_x == doctest::Approx(100.0F + (30.0F - 10.0F) * 2.0F));
-        CHECK(screen.m_y == doctest::Approx(120.0F + (40.0F - 8.0F) * 2.0F));
+        CHECK(screen.x == doctest::Approx(100.0F + (30.0F - 10.0F) * 2.0F));
+        CHECK(screen.y == doctest::Approx(120.0F + (40.0F - 8.0F) * 2.0F));
 
-        auto const back = screenToSource(view, origin, screen.m_x, screen.m_y);
-        CHECK(back.m_x == doctest::Approx(30.0F));
-        CHECK(back.m_y == doctest::Approx(40.0F));
+        auto const back = screenToSource(view, origin, screen.x, screen.y);
+        CHECK(back.x == doctest::Approx(30.0F));
+        CHECK(back.y == doctest::Approx(40.0F));
     }
 
     TEST_CASE("zooming around a source point keeps that point fixed on screen")
     {
-        auto const view   = CanvasView{.m_zoom = 2.0F, .m_panX = 10.0F, .m_panY = 10.0F};
+        auto const view   = CanvasView{.zoom = 2.0F, .panX = 10.0F, .panY = 10.0F};
         auto const origin = CanvasPoint{100.0F, 100.0F};
 
         auto const before = sourceToScreen(view, origin, 30.0F, 40.0F);
         auto const zoomed = zoomCanvasAroundSourcePoint(view, 30.0F, 40.0F, 4.0F);
         auto const after  = sourceToScreen(zoomed, origin, 30.0F, 40.0F);
 
-        CHECK(zoomed.m_zoom == doctest::Approx(4.0F));
-        CHECK(after.m_x == doctest::Approx(before.m_x));
-        CHECK(after.m_y == doctest::Approx(before.m_y));
+        CHECK(zoomed.zoom == doctest::Approx(4.0F));
+        CHECK(after.x == doctest::Approx(before.x));
+        CHECK(after.y == doctest::Approx(before.y));
     }
 
     TEST_CASE("panning shifts the view by the screen delta scaled by zoom")
     {
-        auto const view   = CanvasView{.m_zoom = 2.0F, .m_panX = 10.0F, .m_panY = 10.0F};
+        auto const view   = CanvasView{.zoom = 2.0F, .panX = 10.0F, .panY = 10.0F};
         auto const panned = panCanvas(view, 4.0F, -6.0F);
 
-        CHECK(panned.m_zoom == doctest::Approx(2.0F));
-        CHECK(panned.m_panX == doctest::Approx(8.0F));
-        CHECK(panned.m_panY == doctest::Approx(13.0F));
+        CHECK(panned.zoom == doctest::Approx(2.0F));
+        CHECK(panned.panX == doctest::Approx(8.0F));
+        CHECK(panned.panY == doctest::Approx(13.0F));
     }
 
     TEST_CASE("grip hit-testing distinguishes corners, edges, body, and misses")

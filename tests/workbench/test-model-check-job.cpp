@@ -37,19 +37,19 @@ namespace uf::workbench
         auto markedResult(uint64 marker) -> ModelCheck
         {
             auto check = ModelCheck{};
-            check.m_margins.emplace_back(
+            check.margins.emplace_back(
                 RecognizerMargin{
-                    .m_recognizerId = annotation::test::recognizerId(
+                    .recognizerId = annotation::test::recognizerId(
                         k_markerRecognizerId
                     ),
-                    .m_maximumSad = marker,
+                    .maximumSad = marker,
                 }
             );
             return check;
         }
 
         [[nodiscard]]
-        auto immediateWork(uint64 marker) -> ModelCheckWork
+        auto immediateWork(uint64 marker) -> ModelCheckJob::Work
         {
             return [marker](std::stop_token) -> Result<ModelCheck>
             {
@@ -61,15 +61,15 @@ namespace uf::workbench
         // test controls rather than one it races.
         struct Gate final
         {
-            std::binary_semaphore m_release{0};
-            std::latch            m_entered{1};
+            std::binary_semaphore release{0};
+            std::latch            entered{1};
 
-            auto work(uint64 marker) -> ModelCheckWork
+            auto work(uint64 marker) -> ModelCheckJob::Work
             {
                 return [this, marker](std::stop_token) -> Result<ModelCheck>
                 {
-                    m_entered.count_down();
-                    m_release.acquire();
+                    entered.count_down();
+                    release.acquire();
                     return markedResult(marker);
                 };
             }
@@ -78,11 +78,11 @@ namespace uf::workbench
         [[nodiscard]]
         auto markerOf(std::optional<Result<ModelCheck>> const& taken) -> std::optional<uint64>
         {
-            if (!taken.has_value() || !*taken || (*taken)->m_margins.empty())
+            if (!taken.has_value() || !*taken || (*taken)->margins.empty())
             {
                 return std::nullopt;
             }
-            return (*taken)->m_margins.front().m_maximumSad;
+            return (*taken)->margins.front().maximumSad;
         }
 
         // Spins takeResult until the worker has delivered. Every work above
@@ -150,11 +150,11 @@ namespace uf::workbench
         auto gate = Gate{};
         job.startWith(gate.work(7U));
 
-        gate.m_entered.wait();
+        gate.entered.wait();
         CHECK(job.running());
         CHECK_FALSE(job.takeResult().has_value());
 
-        gate.m_release.release();
+        gate.release.release();
         CHECK(markerOf(awaitResult(job)) == std::optional<uint64>{7U});
     }
 
@@ -163,13 +163,13 @@ namespace uf::workbench
         auto job  = ModelCheckJob{};
         auto gate = Gate{};
         job.startWith(gate.work(1U));
-        gate.m_entered.wait();
+        gate.entered.wait();
 
         // The caller disables the button, but a second press must not replace a
         // check already answering the same question.
         job.startWith(immediateWork(2U));
 
-        gate.m_release.release();
+        gate.release.release();
         CHECK(markerOf(awaitResult(job)) == std::optional<uint64>{1U});
     }
 
@@ -178,13 +178,13 @@ namespace uf::workbench
         auto job  = ModelCheckJob{};
         auto gate = Gate{};
         job.startWith(gate.work(9U));
-        gate.m_entered.wait();
+        gate.entered.wait();
 
         // An edit landed: the answer would describe a document that no longer
         // exists, so it must not reach the status line even though the worker
         // goes on to compute it.
         job.discard();
-        gate.m_release.release();
+        gate.release.release();
 
         CHECK_FALSE(job.running());
         CHECK_FALSE(job.takeResult().has_value());
@@ -197,7 +197,7 @@ namespace uf::workbench
         job.startWith(
             [&gate](std::stop_token stop) -> Result<ModelCheck>
             {
-                gate.m_entered.count_down();
+                gate.entered.count_down();
                 while (!stop.stop_requested())
                 {
                     std::this_thread::sleep_for(std::chrono::milliseconds{1});
@@ -205,7 +205,7 @@ namespace uf::workbench
                 return markedResult(0U);
             }
         );
-        gate.m_entered.wait();
+        gate.entered.wait();
 
         job.discard();
 
@@ -245,7 +245,7 @@ namespace uf::workbench
     TEST_CASE("an empty unit of work is refused rather than started")
     {
         auto job = ModelCheckJob{};
-        job.startWith(ModelCheckWork{});
+        job.startWith(ModelCheckJob::Work{});
 
         CHECK_FALSE(job.running());
         CHECK_FALSE(job.takeResult().has_value());

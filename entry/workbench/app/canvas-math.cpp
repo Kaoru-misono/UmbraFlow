@@ -38,8 +38,8 @@ namespace uf::workbench
     ) -> CanvasPoint
     {
         return CanvasPoint{
-            .m_x = canvasOrigin.m_x + (sourceX - view.m_panX) * view.m_zoom,
-            .m_y = canvasOrigin.m_y + (sourceY - view.m_panY) * view.m_zoom,
+            .x = canvasOrigin.x + (sourceX - view.panX) * view.zoom,
+            .y = canvasOrigin.y + (sourceY - view.panY) * view.zoom,
         };
     }
 
@@ -51,8 +51,8 @@ namespace uf::workbench
     ) -> CanvasPoint
     {
         return CanvasPoint{
-            .m_x = view.m_panX + (screenX - canvasOrigin.m_x) / view.m_zoom,
-            .m_y = view.m_panY + (screenY - canvasOrigin.m_y) / view.m_zoom,
+            .x = view.panX + (screenX - canvasOrigin.x) / view.zoom,
+            .y = view.panY + (screenY - canvasOrigin.y) / view.zoom,
         };
     }
 
@@ -64,15 +64,15 @@ namespace uf::workbench
     ) -> CanvasView
     {
         auto const clamped = clampZoom(newZoom);
-        auto const ratio   = view.m_zoom / clamped;
+        auto const ratio   = view.zoom / clamped;
 
         // The screen offset of the anchor from the pan origin is
         // (source - pan) * oldZoom; holding it fixed at the new zoom means the new
         // pan keeps (source - newPan) * newZoom equal, which reduces to this.
         return CanvasView{
-            .m_zoom = clamped,
-            .m_panX = sourceX - (sourceX - view.m_panX) * ratio,
-            .m_panY = sourceY - (sourceY - view.m_panY) * ratio,
+            .zoom = clamped,
+            .panX = sourceX - (sourceX - view.panX) * ratio,
+            .panY = sourceY - (sourceY - view.panY) * ratio,
         };
     }
 
@@ -83,9 +83,9 @@ namespace uf::workbench
     ) -> CanvasView
     {
         return CanvasView{
-            .m_zoom = view.m_zoom,
-            .m_panX = view.m_panX - screenDeltaX / view.m_zoom,
-            .m_panY = view.m_panY - screenDeltaY / view.m_zoom,
+            .zoom = view.zoom,
+            .panX = view.panX - screenDeltaX / view.zoom,
+            .panY = view.panY - screenDeltaY / view.zoom,
         };
     }
 
@@ -97,17 +97,17 @@ namespace uf::workbench
         float gripRadius
     ) -> std::optional<RectGripKind>
     {
-        auto const left   = rectOrigin.m_x;
-        auto const top    = rectOrigin.m_y;
-        auto const right  = rectOrigin.m_x + rectWidth;
-        auto const bottom = rectOrigin.m_y + rectHeight;
-        auto const midX   = rectOrigin.m_x + rectWidth / 2.0F;
-        auto const midY   = rectOrigin.m_y + rectHeight / 2.0F;
+        auto const left   = rectOrigin.x;
+        auto const top    = rectOrigin.y;
+        auto const right  = rectOrigin.x + rectWidth;
+        auto const bottom = rectOrigin.y + rectHeight;
+        auto const midX   = rectOrigin.x + rectWidth / 2.0F;
+        auto const midY   = rectOrigin.y + rectHeight / 2.0F;
 
         auto const near = [&](float x, float y) noexcept -> bool
         {
-            return std::abs(point.m_x - x) <= gripRadius
-                && std::abs(point.m_y - y) <= gripRadius;
+            return std::abs(point.x - x) <= gripRadius
+                && std::abs(point.y - y) <= gripRadius;
         };
 
         // Corners first so an overlapping corner grip wins over its two edges.
@@ -121,10 +121,10 @@ namespace uf::workbench
         if (near(left, midY)) return RectGripKind::Left;
 
         if (
-            point.m_x >= left
-            && point.m_x <= right
-            && point.m_y >= top
-            && point.m_y <= bottom
+            point.x >= left
+            && point.x <= right
+            && point.y >= top
+            && point.y <= bottom
         )
         {
             return RectGripKind::Move;

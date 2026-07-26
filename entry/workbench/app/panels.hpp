@@ -34,24 +34,24 @@ namespace uf::workbench
             Result<platform::GpuSourceTexture>(
                 annotation::AuthoringSourceAsset const&
             )
-        > m_textureFor{};
+        > textureFor{};
 
         std::function<
             Result<std::optional<std::filesystem::path>>()
-        > m_pickPngToImport{};
+        > pickPngToImport{};
 
         std::function<
             Result<IngestedSource>(
                 annotation::SourceId,
                 std::string const&
             )
-        > m_captureFromTarget{};
+        > captureFromTarget{};
 
         // Appends one timestamped operation-log line. Optional: when unset the
         // panels simply do not log. The entry point wires it to a file so a
         // session's actions and errors survive being overwritten on the
         // transient status line.
-        std::function<void(std::string_view)> m_appendLog{};
+        std::function<void(std::string_view)> appendLog{};
     };
 
     // Draws the whole workbench for one frame: the sources, canvas, properties,

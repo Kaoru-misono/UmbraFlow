@@ -33,9 +33,9 @@ namespace uf::workbench
     // canvas origin; both are plain view state that never feeds the document.
     struct CanvasView final
     {
-        float m_zoom{1.0F};
-        float m_panX{};
-        float m_panY{};
+        float zoom{1.0F};
+        float panX{};
+        float panY{};
     };
 
     // The complete, platform-free editing state behind the workbench window. It
@@ -92,6 +92,12 @@ namespace uf::workbench
         [[nodiscard]] auto draft() const -> AuthoringDraft;
         [[nodiscard]] auto canUndo() const noexcept -> bool;
         [[nodiscard]] auto canRedo() const noexcept -> bool;
+
+        // The edit history's current position, stamped onto an EditPage at
+        // open() so a commit built against a version the author has since left
+        // (through undo or redo) is refused rather than silently resurrecting
+        // it. Advances on every committed change, undo, and redo.
+        [[nodiscard]] auto revision() const noexcept -> uint64;
 
         // The whole asset cache, including orphans. Callers look an asset up by
         // SourceId, for which a lingering orphan is harmless; assembling compiler

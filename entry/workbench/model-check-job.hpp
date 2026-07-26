@@ -20,9 +20,6 @@
 
 namespace uf::workbench
 {
-    // What one background run computes, given the token that cancels it.
-    using ModelCheckWork = std::function<Result<ModelCheck>(std::stop_token)>;
-
     // Runs runModelCheck off the GUI thread and hands the result back one frame
     // at a time.
     //
@@ -38,14 +35,19 @@ namespace uf::workbench
     // touching state the GUI thread owns.
     class ModelCheckJob final
     {
+    public:
+        // What one background run computes, given the token that cancels it.
+        using Work = std::function<Result<ModelCheck>(std::stop_token)>;
+
+    private:
         // The one object both threads touch, held by shared_ptr so the worker
         // keeps it alive even if the job is destroyed mid-run. Every field is
         // guarded by m_mutex.
         struct Slot final
         {
-            std::mutex                        m_mutex{};
-            std::optional<Result<ModelCheck>> m_result{};
-            bool                              m_finished{};
+            std::mutex                        mutex{};
+            std::optional<Result<ModelCheck>> result{};
+            bool                              finished{};
         };
 
         std::shared_ptr<Slot> m_slot{};
@@ -95,7 +97,7 @@ namespace uf::workbench
         // copies: a lambda that borrows the caller's state would outlive it. Its
         // stop_token is the worker's own, and honouring it is what keeps the wait
         // in start() and the destructor short.
-        auto startWith(ModelCheckWork work) -> void;
+        auto startWith(Work work) -> void;
 
         [[nodiscard]] auto running() const -> bool;
 

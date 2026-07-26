@@ -212,7 +212,7 @@ namespace uf::workbench
             {},
             [&sourceAssets](std::size_t index) -> annotation::ResourceId
             {
-                return checkedAt(sourceAssets, index).m_id.value();
+                return checkedAt(sourceAssets, index).id.value();
             }
         );
 
@@ -225,21 +225,21 @@ namespace uf::workbench
                 sourceAssets,
                 checkedAt(assetOrder, index)
             );
-            UF_CHECK(source.id() == asset.m_id);
+            UF_CHECK(source.id() == asset.id);
             UF_TRY(
                 platform::publishImmutableFile(
                     absoluteRoot / source.relativePath(),
-                    asset.m_pngBytes
+                    asset.pngBytes
                 )
             );
         }
 
-        for (auto const& asset : compiled.m_templateAssets)
+        for (auto const& asset : compiled.templateAssets)
         {
             UF_TRY(
                 platform::publishImmutableFile(
-                    absoluteRoot / asset.m_relativePath,
-                    asset.m_pngBytes
+                    absoluteRoot / asset.relativePath,
+                    asset.pngBytes
                 )
             );
         }
@@ -254,7 +254,7 @@ namespace uf::workbench
         );
 
         auto const runtimeBytes = std::as_bytes(
-            std::span{compiled.m_runtimeManifestToml}
+            std::span{compiled.runtimeManifestToml}
         );
         UF_TRY(
             platform::replaceFileAtomically(
@@ -342,16 +342,16 @@ namespace uf::workbench
             );
             auto const fingerprint = source.fingerprint();
             if (
-                decoded.m_width != fingerprint.width()
-                || decoded.m_height != fingerprint.height()
+                decoded.width != fingerprint.width()
+                || decoded.height != fingerprint.height()
             )
             {
                 return invalidProject(
                     std::format(
                         "workbench source {} decoded as {}x{}, expected {}x{}",
                         source.relativePath(),
-                        decoded.m_width,
-                        decoded.m_height,
+                        decoded.width,
+                        decoded.height,
                         fingerprint.width(),
                         fingerprint.height()
                     )
@@ -360,15 +360,15 @@ namespace uf::workbench
 
             sourceAssets.emplace_back(
                 annotation::AuthoringSourceAsset{
-                    .m_id       = source.id(),
-                    .m_pngBytes = std::move(pngBytes),
+                    .id       = source.id(),
+                    .pngBytes = std::move(pngBytes),
                 }
             );
         }
 
         return LoadedAuthoringProject{
-            .m_document = std::move(document),
-            .m_sources  = std::move(sourceAssets),
+            .document = std::move(document),
+            .sources  = std::move(sourceAssets),
         };
     }
 }

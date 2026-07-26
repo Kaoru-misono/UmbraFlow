@@ -4,7 +4,9 @@
 #include "workbench-app.hpp"
 
 #include "authoring-actions.hpp"
+#include "edit-page.hpp"
 #include "model-check-view.hpp"
+#include "page-view.hpp"
 #include "panel-state.hpp"
 #include "preview.hpp"
 #include "project-persistence.hpp"
@@ -119,11 +121,11 @@ namespace uf::workbench
         ) -> void
         {
             auto const origin = rectScreenOrigin(view, canvasOrigin, rect);
-            auto const width  = static_cast<float>(rect.width()) * view.m_zoom;
-            auto const height = static_cast<float>(rect.height()) * view.m_zoom;
+            auto const width  = static_cast<float>(rect.width()) * view.zoom;
+            auto const height = static_cast<float>(rect.height()) * view.zoom;
             drawList.AddRect(
-                ImVec2{origin.m_x, origin.m_y},
-                ImVec2{origin.m_x + width, origin.m_y + height},
+                ImVec2{origin.x, origin.y},
+                ImVec2{origin.x + width, origin.y + height},
                 color,
                 0.0F,
                 0,
@@ -140,12 +142,12 @@ namespace uf::workbench
         ) -> void
         {
             auto const origin = rectScreenOrigin(view, canvasOrigin, rect);
-            auto const width  = static_cast<float>(rect.width()) * view.m_zoom;
-            auto const height = static_cast<float>(rect.height()) * view.m_zoom;
+            auto const width  = static_cast<float>(rect.width()) * view.zoom;
+            auto const height = static_cast<float>(rect.height()) * view.zoom;
 
             drawList.AddRect(
-                ImVec2{origin.m_x, origin.m_y},
-                ImVec2{origin.m_x + width, origin.m_y + height},
+                ImVec2{origin.x, origin.y},
+                ImVec2{origin.x + width, origin.y + height},
                 color,
                 0.0F,
                 0,
@@ -153,20 +155,20 @@ namespace uf::workbench
             );
 
             auto const centers = std::array<CanvasPoint, 8>{
-                CanvasPoint{origin.m_x, origin.m_y},
-                CanvasPoint{origin.m_x + width / 2.0F, origin.m_y},
-                CanvasPoint{origin.m_x + width, origin.m_y},
-                CanvasPoint{origin.m_x + width, origin.m_y + height / 2.0F},
-                CanvasPoint{origin.m_x + width, origin.m_y + height},
-                CanvasPoint{origin.m_x + width / 2.0F, origin.m_y + height},
-                CanvasPoint{origin.m_x, origin.m_y + height},
-                CanvasPoint{origin.m_x, origin.m_y + height / 2.0F},
+                CanvasPoint{origin.x, origin.y},
+                CanvasPoint{origin.x + width / 2.0F, origin.y},
+                CanvasPoint{origin.x + width, origin.y},
+                CanvasPoint{origin.x + width, origin.y + height / 2.0F},
+                CanvasPoint{origin.x + width, origin.y + height},
+                CanvasPoint{origin.x + width / 2.0F, origin.y + height},
+                CanvasPoint{origin.x, origin.y + height},
+                CanvasPoint{origin.x, origin.y + height / 2.0F},
             };
             for (auto const& center : centers)
             {
                 drawList.AddRectFilled(
-                    ImVec2{center.m_x - k_gripRadius, center.m_y - k_gripRadius},
-                    ImVec2{center.m_x + k_gripRadius, center.m_y + k_gripRadius},
+                    ImVec2{center.x - k_gripRadius, center.y - k_gripRadius},
+                    ImVec2{center.x + k_gripRadius, center.y + k_gripRadius},
                     k_gripColor
                 );
             }
@@ -216,20 +218,20 @@ namespace uf::workbench
 
             ImGui::InputText(
                 "Target title",
-                ui.m_targetTitle.data(),
-                ui.m_targetTitle.size()
+                ui.targetTitle.data(),
+                ui.targetTitle.size()
             );
-            auto const hasTarget = ui.m_targetTitle.at(0) != '\0';
+            auto const hasTarget = ui.targetTitle.at(0) != '\0';
 
             ImGui::BeginDisabled(!hasTarget);
             if (ImGui::Button("Capture"))
             {
                 auto const id = annotation::SourceId{mintResourceId()};
-                auto const title = std::string{ui.m_targetTitle.data()};
-                auto ingested = services.m_captureFromTarget(id, title);
+                auto const title = std::string{ui.targetTitle.data()};
+                auto ingested = services.captureFromTarget(id, title);
                 if (!ingested)
                 {
-                    ui.m_statusLine = std::format(
+                    ui.statusLine = std::format(
                         "capture failed: {}",
                         toString(ingested.error())
                     );
@@ -239,7 +241,7 @@ namespace uf::workbench
                     auto const added = state.addIngestedSource(
                         std::move(*ingested)
                     );
-                    ui.m_statusLine = added.has_value()
+                    ui.statusLine = added.has_value()
                         ? std::string{"captured source"}
                         : std::format("capture add failed: {}", toString(added.error()));
                 }
@@ -270,10 +272,10 @@ namespace uf::workbench
 
             if (ImGui::Button("Import PNG..."))
             {
-                auto picked = services.m_pickPngToImport();
+                auto picked = services.pickPngToImport();
                 if (!picked)
                 {
-                    ui.m_statusLine = std::format(
+                    ui.statusLine = std::format(
                         "import dialog failed: {}",
                         toString(picked.error())
                     );
@@ -284,7 +286,7 @@ namespace uf::workbench
                     auto ingested = importSourcePng(id, **picked);
                     if (!ingested)
                     {
-                        ui.m_statusLine = std::format(
+                        ui.statusLine = std::format(
                             "import failed: {}",
                             toString(ingested.error())
                         );
@@ -294,7 +296,7 @@ namespace uf::workbench
                         auto const added = state.addIngestedSource(
                             std::move(*ingested)
                         );
-                        ui.m_statusLine = added.has_value()
+                        ui.statusLine = added.has_value()
                             ? std::string{"imported source"}
                             : std::format(
                                 "import add failed: {}",
@@ -402,30 +404,194 @@ namespace uf::workbench
                 auto summary = std::format(
                     "here {}  elsewhere {}",
                     budgetPercentText(
-                        p_margin->m_ownSadScore,
-                        p_margin->m_maximumSad
+                        p_margin->ownSadScore,
+                        p_margin->maximumSad
                     ),
                     budgetPercentText(
-                        p_margin->m_nearestOtherSadScore,
-                        p_margin->m_maximumSad
+                        p_margin->nearestOtherSadScore,
+                        p_margin->maximumSad
                     )
                 );
                 // Only shown once a live check has produced one. This is the
                 // number that moves: the stills never change, the running game
                 // does.
-                if (p_margin->m_liveSadScore.has_value())
+                if (p_margin->liveSadScore.has_value())
                 {
                     summary += std::format(
                         "  live {}",
                         budgetPercentText(
-                            p_margin->m_liveSadScore,
-                            p_margin->m_maximumSad
+                            p_margin->liveSadScore,
+                            p_margin->maximumSad
                         )
                     );
                 }
                 ImGui::TextDisabled("%s", summary.c_str());
             }
             ImGui::PopID();
+        }
+
+        // Opens a fresh page from the selected screen through EditPage. The
+        // created page's anchor is selected once the commit lands, and every
+        // refusal reads exactly as the free-function flow it replaces did.
+        auto createPageFromSelectedScreen(
+            AppState& state,
+            PanelUiState& ui
+        ) -> void
+        {
+            auto const source = state.selectedSourceId();
+            if (!source.has_value())
+            {
+                ui.statusLine = "select a screen first";
+                return;
+            }
+
+            auto page = EditPage::createFrom(state, *source);
+            if (!page)
+            {
+                ui.statusLine = std::format(
+                    "new page failed: {}",
+                    toString(page.error())
+                );
+                return;
+            }
+
+            // createFrom mints exactly one anchor for the page, so the view's
+            // first signature row names it; that is what the description and the
+            // selection both point at.
+            auto const view = page->view();
+            UF_CHECK(!view.identifiedBy.empty());
+            auto const anchorId = view.identifiedBy.front().id;
+            auto description     = std::format(
+                "added page \"{}\" with \"{}\" identifying it; "
+                "drag its box over a mark unique to this screen",
+                view.name,
+                view.identifiedBy.front().name
+            );
+            std::move(*page).commitSelecting(
+                ui,
+                std::move(description),
+                anchorId,
+                source
+            );
+        }
+
+        // The status line a new page member leaves, worded by the button that
+        // created it, so an anchor and a region each say what to drag its box
+        // over.
+        [[nodiscard]]
+        auto newMemberDescription(
+            std::string_view name,
+            PageMemberKind kind
+        ) -> std::string
+        {
+            return std::format(
+                "added \"{}\" as {}; drag its box over the {}",
+                name,
+                kind == PageMemberKind::Anchor
+                    ? "a mark identifying this page"
+                    : "an interactive region on this page",
+                kind == PageMemberKind::Anchor ? "mark" : "region"
+            );
+        }
+
+        // Adds one member to a page through EditPage, typed by the group whose
+        // button was pressed, and selects it once the commit lands.
+        auto placeNewMember(
+            AppState& state,
+            PanelUiState& ui,
+            annotation::PageId pageId,
+            annotation::SourceId sourceId,
+            PageMemberKind kind
+        ) -> void
+        {
+            auto page = EditPage::open(state, pageId);
+            if (!page)
+            {
+                ui.statusLine = std::format(
+                    "add failed: {}",
+                    toString(page.error())
+                );
+                return;
+            }
+
+            if (kind == PageMemberKind::Anchor)
+            {
+                auto added = page->placeAnchor(
+                    EditPage::NewAnchorSpec{.sourceId = sourceId}
+                );
+                if (!added)
+                {
+                    ui.statusLine = std::format(
+                        "add failed: {}",
+                        toString(added.error())
+                    );
+                    return;
+                }
+                auto const newId = added->id;
+                std::move(*page).commitSelecting(
+                    ui,
+                    newMemberDescription(added->name, kind),
+                    newId,
+                    sourceId
+                );
+            }
+            else
+            {
+                auto added = page->placeRegion(
+                    EditPage::NewRegionSpec{.sourceId = sourceId}
+                );
+                if (!added)
+                {
+                    ui.statusLine = std::format(
+                        "add failed: {}",
+                        toString(added.error())
+                    );
+                    return;
+                }
+                auto const newId = added->id;
+                std::move(*page).commitSelecting(
+                    ui,
+                    newMemberDescription(added->name, kind),
+                    newId,
+                    sourceId
+                );
+            }
+        }
+
+        // Records that one screen is an example of a page through EditPage,
+        // leaving the same status line the free-function claim did.
+        auto recordScreenForPage(
+            AppState& state,
+            PanelUiState& ui,
+            annotation::PageId pageId,
+            annotation::SourceId sourceId
+        ) -> void
+        {
+            auto page = EditPage::open(state, pageId);
+            if (!page)
+            {
+                ui.statusLine = std::format(
+                    "recording the screen failed: {}",
+                    toString(page.error())
+                );
+                return;
+            }
+            if (auto const status = page->claimScreen(sourceId); !status)
+            {
+                ui.statusLine = std::format(
+                    "recording the screen failed: {}",
+                    toString(status.error())
+                );
+                return;
+            }
+            std::move(*page).commit(
+                ui,
+                std::format(
+                    "screen {} recorded as page \"{}\"",
+                    shortId(sourceId.value()),
+                    pageName(state, pageId)
+                )
+            );
         }
 
         // The workbench's navigator. A page is a screen the author captured, and
@@ -445,7 +611,7 @@ namespace uf::workbench
             ImGui::BeginDisabled(!state.selectedSourceId().has_value());
             if (ImGui::Button("New Page From Selected Screen"))
             {
-                requestNewPage(state, ui);
+                createPageFromSelectedScreen(state, ui);
             }
             ImGui::EndDisabled();
             if (
@@ -514,7 +680,7 @@ namespace uf::workbench
                             &marker,
                             sizeof(marker)
                         );
-                        ui.m_draggedRegion = recognizer.id();
+                        ui.draggedRegion = recognizer.id();
                         ImGui::Text(
                             "put \"%s\" on a page",
                             recognizer.name().value().c_str()
@@ -533,11 +699,20 @@ namespace uf::workbench
                 );
             }
 
+            // The pages are drawn reflectively from their views: each row comes
+            // from the page's own signature and placements rather than from a
+            // per-page scan of every recognizer. The draft is copied once and the
+            // views built from it; margins, live scores, and screen verdicts stay
+            // id-keyed and are merged at draw time through the existing lookups.
+            auto const draft = state.draft();
+
             for (auto const& page : catalog.pages())
             {
                 auto const pageId = page.id();
                 auto const idText = pageId.value().toString();
                 ImGui::PushID(idText.c_str());
+
+                auto const view = PageView::of(draft, pageId);
 
                 auto const open = ImGui::TreeNodeEx(
                     page.name().value().c_str(),
@@ -576,7 +751,7 @@ namespace uf::workbench
                     {
                         ImGui::SameLine();
                         auto const correct = (
-                            p_screen->m_outcome == ScreenCheckOutcome::Correct
+                            p_screen->outcome == ScreenCheckOutcome::Correct
                         );
                         ImGui::TextColored(
                             correct ? k_passColor : k_failColor,
@@ -593,7 +768,7 @@ namespace uf::workbench
                         ImGui::SameLine();
                         if (ImGui::SmallButton("Record this screen"))
                         {
-                            requestScreenClaim(state, ui, pageId, *sample);
+                            recordScreenForPage(state, ui, pageId, *sample);
                         }
                     }
                 }
@@ -603,17 +778,23 @@ namespace uf::workbench
                 }
 
                 ImGui::SeparatorText("Identified by");
-                for (auto const& recognizer : catalog.recognizers())
+                if (view.has_value())
                 {
-                    if (std::ranges::contains(page.required(), recognizer.id()))
+                    for (auto const& row : view->identifiedBy)
                     {
-                        drawPageMemberRow(state, ui, recognizer, sample);
+                        if (
+                            auto const* p_recognizer =
+                                catalog.findRecognizer(row.id)
+                        )
+                        {
+                            drawPageMemberRow(state, ui, *p_recognizer, sample);
+                        }
                     }
                 }
                 ImGui::BeginDisabled(!sample.has_value());
                 if (ImGui::SmallButton("+ Identifying mark") && sample.has_value())
                 {
-                    requestNewPageMember(
+                    placeNewMember(
                         state,
                         ui,
                         pageId,
@@ -624,22 +805,23 @@ namespace uf::workbench
                 ImGui::EndDisabled();
 
                 ImGui::SeparatorText("Interactive regions");
-                for (auto const& recognizer : catalog.recognizers())
+                if (view.has_value())
                 {
-                    auto const authorized = (
-                        recognizer.annotationType()
-                            == annotation::AnnotationType::ActionTarget
-                        && std::ranges::contains(recognizer.allowedPageIds(), pageId)
-                    );
-                    if (authorized)
+                    for (auto const& row : view->regions)
                     {
-                        drawPageMemberRow(state, ui, recognizer, sample);
+                        if (
+                            auto const* p_recognizer =
+                                catalog.findRecognizer(row.id)
+                        )
+                        {
+                            drawPageMemberRow(state, ui, *p_recognizer, sample);
+                        }
                     }
                 }
                 ImGui::BeginDisabled(!sample.has_value());
                 if (ImGui::SmallButton("+ Interactive region") && sample.has_value())
                 {
-                    requestNewPageMember(
+                    placeNewMember(
                         state,
                         ui,
                         pageId,
@@ -686,14 +868,17 @@ namespace uf::workbench
                 // A forbidden anchor is an exclusivity rule between two pages
                 // rather than something authored on this screen, so it is only
                 // shown once one exists.
-                if (!page.forbidden().empty())
+                if (view.has_value() && !view->mustNotShow.empty())
                 {
                     ImGui::SeparatorText("Must not show");
-                    for (auto const& recognizer : catalog.recognizers())
+                    for (auto const& row : view->mustNotShow)
                     {
-                        if (std::ranges::contains(page.forbidden(), recognizer.id()))
+                        if (
+                            auto const* p_recognizer =
+                                catalog.findRecognizer(row.id)
+                        )
                         {
-                            drawPageMemberRow(state, ui, recognizer, sample);
+                            drawPageMemberRow(state, ui, *p_recognizer, sample);
                         }
                     }
                 }
@@ -744,15 +929,15 @@ namespace uf::workbench
             // Acted on after every panel row has been drawn, so the edit is
             // parked rather than committed while the tree is still reading the
             // document it would replace.
-            if (droppedOnPage.has_value() && ui.m_draggedRegion.has_value())
+            if (droppedOnPage.has_value() && ui.draggedRegion.has_value())
             {
                 requestSharedRegionOnPage(
                     state,
                     ui,
-                    *ui.m_draggedRegion,
+                    *ui.draggedRegion,
                     *droppedOnPage
                 );
-                ui.m_draggedRegion.reset();
+                ui.draggedRegion.reset();
             }
 
             ImGui::End();
@@ -778,7 +963,7 @@ namespace uf::workbench
             auto const mouse        = ImGui::GetIO().MousePos;
 
             if (
-                ui.m_dragTarget == CanvasDragTarget::None
+                ui.dragTarget == PanelUiState::CanvasDragTarget::None
                 && hovered
                 && ImGui::IsMouseClicked(ImGuiMouseButton_Left)
             )
@@ -791,17 +976,17 @@ namespace uf::workbench
                 auto const templateGrip = templateEditable
                     ? hitTestGrip(
                         rectScreenOrigin(view, canvasOrigin, templateRect),
-                        static_cast<float>(templateRect.width()) * view.m_zoom,
-                        static_cast<float>(templateRect.height()) * view.m_zoom,
+                        static_cast<float>(templateRect.width()) * view.zoom,
+                        static_cast<float>(templateRect.height()) * view.zoom,
                         CanvasPoint{mouse.x, mouse.y},
                         k_gripRadius
                     )
                     : std::nullopt;
                 if (templateGrip.has_value())
                 {
-                    ui.m_dragTarget    = CanvasDragTarget::TemplateRect;
-                    ui.m_dragGrip      = templateGrip;
-                    ui.m_dragStartRect = templateRect;
+                    ui.dragTarget    = PanelUiState::CanvasDragTarget::TemplateRect;
+                    ui.dragGrip      = templateGrip;
+                    ui.dragStartRect = templateRect;
                 }
                 else
                 {
@@ -812,16 +997,16 @@ namespace uf::workbench
                     );
                     auto const roiGrip = hitTestGrip(
                         roiOrigin,
-                        static_cast<float>(searchRoi.width()) * view.m_zoom,
-                        static_cast<float>(searchRoi.height()) * view.m_zoom,
+                        static_cast<float>(searchRoi.width()) * view.zoom,
+                        static_cast<float>(searchRoi.height()) * view.zoom,
                         CanvasPoint{mouse.x, mouse.y},
                         k_gripRadius
                     );
                     if (roiGrip.has_value())
                     {
-                        ui.m_dragTarget    = CanvasDragTarget::SearchRoi;
-                        ui.m_dragGrip      = roiGrip;
-                        ui.m_dragStartRect = searchRoi;
+                        ui.dragTarget    = PanelUiState::CanvasDragTarget::SearchRoi;
+                        ui.dragGrip      = roiGrip;
+                        ui.dragStartRect = searchRoi;
                     }
                 }
             }
@@ -829,21 +1014,21 @@ namespace uf::workbench
             auto previewTemplate = templateRect;
             auto previewRoi      = searchRoi;
             if (
-                ui.m_dragTarget != CanvasDragTarget::None
-                && ui.m_dragGrip.has_value()
-                && ui.m_dragStartRect.has_value()
+                ui.dragTarget != PanelUiState::CanvasDragTarget::None
+                && ui.dragGrip.has_value()
+                && ui.dragStartRect.has_value()
             )
             {
                 auto const delta = ImGui::GetMouseDragDelta(ImGuiMouseButton_Left);
                 auto const deltaX = static_cast<int32>(
-                    std::lround(delta.x / view.m_zoom)
+                    std::lround(delta.x / view.zoom)
                 );
                 auto const deltaY = static_cast<int32>(
-                    std::lround(delta.y / view.m_zoom)
+                    std::lround(delta.y / view.zoom)
                 );
                 auto const edited = resizeRectByGrip(
-                    *ui.m_dragStartRect,
-                    *ui.m_dragGrip,
+                    *ui.dragStartRect,
+                    *ui.dragGrip,
                     deltaX,
                     deltaY,
                     sourceWidth,
@@ -851,7 +1036,7 @@ namespace uf::workbench
                 );
                 if (edited.has_value())
                 {
-                    if (ui.m_dragTarget == CanvasDragTarget::TemplateRect)
+                    if (ui.dragTarget == PanelUiState::CanvasDragTarget::TemplateRect)
                     {
                         previewTemplate = *edited;
                     }
@@ -872,9 +1057,9 @@ namespace uf::workbench
                 }
                 else if (ImGui::IsMouseReleased(ImGuiMouseButton_Left))
                 {
-                    ui.m_dragTarget = CanvasDragTarget::None;
-                    ui.m_dragGrip.reset();
-                    ui.m_dragStartRect.reset();
+                    ui.dragTarget = PanelUiState::CanvasDragTarget::None;
+                    ui.dragGrip.reset();
+                    ui.dragStartRect.reset();
                 }
             }
 
@@ -934,7 +1119,7 @@ namespace uf::workbench
             auto const asset  = std::ranges::find(
                 assets,
                 *selectedSource,
-                &annotation::AuthoringSourceAsset::m_id
+                &annotation::AuthoringSourceAsset::id
             );
             if (asset == assets.end())
             {
@@ -943,7 +1128,7 @@ namespace uf::workbench
                 return;
             }
 
-            auto const texture = services.m_textureFor(*asset);
+            auto const texture = services.textureFor(*asset);
             if (!texture)
             {
                 ImGui::TextUnformatted("Failed to decode the source image.");
@@ -979,9 +1164,9 @@ namespace uf::workbench
                 );
                 view = zoomCanvasAroundSourcePoint(
                     view,
-                    under.m_x,
-                    under.m_y,
-                    view.m_zoom * std::pow(k_zoomWheelBase, wheel)
+                    under.x,
+                    under.y,
+                    view.zoom * std::pow(k_zoomWheelBase, wheel)
                 );
                 state.setCanvasView(view);
             }
@@ -996,8 +1181,8 @@ namespace uf::workbench
 
             auto* drawList = ImGui::GetWindowDrawList();
             drawList->PushClipRect(
-                ImVec2{canvasOrigin.m_x, canvasOrigin.m_y},
-                ImVec2{canvasOrigin.m_x + size.x, canvasOrigin.m_y + size.y},
+                ImVec2{canvasOrigin.x, canvasOrigin.y},
+                ImVec2{canvasOrigin.x + size.x, canvasOrigin.y + size.y},
                 true
             );
 
@@ -1005,13 +1190,13 @@ namespace uf::workbench
             auto const bottomRight = sourceToScreen(
                 view,
                 canvasOrigin,
-                static_cast<float>(texture->m_width),
-                static_cast<float>(texture->m_height)
+                static_cast<float>(texture->width),
+                static_cast<float>(texture->height)
             );
             drawList->AddImage(
-                static_cast<ImTextureID>(texture->m_textureHandle),
-                ImVec2{topLeft.m_x, topLeft.m_y},
-                ImVec2{bottomRight.m_x, bottomRight.m_y}
+                static_cast<ImTextureID>(texture->textureHandle),
+                ImVec2{topLeft.x, topLeft.y},
+                ImVec2{bottomRight.x, bottomRight.y}
             );
 
             if (auto const recognizerId = state.selectedRecognizerId())
@@ -1032,8 +1217,8 @@ namespace uf::workbench
                         view,
                         canvasOrigin,
                         *definition,
-                        texture->m_width,
-                        texture->m_height,
+                        texture->width,
+                        texture->height,
                         hovered,
                         authoredOn == selectedSource
                     );
@@ -1121,7 +1306,7 @@ namespace uf::workbench
             );
             if (!retyped)
             {
-                ui.m_statusLine = std::format(
+                ui.statusLine = std::format(
                     "type change rejected: {}",
                     toString(retyped.error())
                 );
@@ -1135,7 +1320,7 @@ namespace uf::workbench
                 *retyped,
                 k_annotationTypeItems.at(static_cast<std::size_t>(typeIndex))
             );
-            requestEdit(ui, std::move(retyped->m_draft), summary);
+            requestEdit(ui, std::move(retyped->draft), summary);
         }
 
         auto drawPageMembership(
@@ -1171,10 +1356,10 @@ namespace uf::workbench
                     auto* recognizer = findEditableRecognizer(draft, recognizerId);
                     if (recognizer != nullptr)
                     {
-                        std::erase(recognizer->m_allowedPageIds, pageId);
+                        std::erase(recognizer->allowedPageIds, pageId);
                         if (member)
                         {
-                            recognizer->m_allowedPageIds.emplace_back(pageId);
+                            recognizer->allowedPageIds.emplace_back(pageId);
                         }
                         requestEdit(
                             ui,
@@ -1232,21 +1417,21 @@ namespace uf::workbench
                 {
                     auto draft      = state.draft();
                     auto const spot = std::ranges::find(
-                        draft.m_pages,
+                        draft.pages,
                         pageId,
-                        &EditablePage::m_id
+                        &EditablePage::id
                     );
-                    if (spot != draft.m_pages.end())
+                    if (spot != draft.pages.end())
                     {
-                        std::erase(spot->m_required, recognizerId);
-                        std::erase(spot->m_forbidden, recognizerId);
+                        std::erase(spot->required, recognizerId);
+                        std::erase(spot->forbidden, recognizerId);
                         if (role == 1)
                         {
-                            spot->m_required.emplace_back(recognizerId);
+                            spot->required.emplace_back(recognizerId);
                         }
                         else if (role == 2)
                         {
-                            spot->m_forbidden.emplace_back(recognizerId);
+                            spot->forbidden.emplace_back(recognizerId);
                         }
                         requestEdit(
                             ui,
@@ -1302,13 +1487,13 @@ namespace uf::workbench
             {
                 auto draft      = state.draft();
                 auto const spot = std::ranges::find(
-                    draft.m_regressions,
+                    draft.regressions,
                     existing->id(),
-                    &EditableRegression::m_id
+                    &EditableRegression::id
                 );
-                if (spot != draft.m_regressions.end())
+                if (spot != draft.regressions.end())
                 {
-                    spot->m_classification =
+                    spot->classification =
                         static_cast<annotation::RegressionClassification>(
                             classification
                         );
@@ -1360,34 +1545,34 @@ namespace uf::workbench
             // field itself, which is only submitted below.
             auto const currentName = definition->name().value();
             if (
-                ui.m_nameBufferFor != *recognizerId
+                ui.nameBufferFor != *recognizerId
                 || (
-                    ui.m_nameSeededValue != currentName
-                    && !ui.m_nameInputActive
+                    ui.nameSeededValue != currentName
+                    && !ui.nameInputActive
                 )
             )
             {
-                seedBuffer(ui.m_nameBuffer, currentName);
-                ui.m_nameBufferFor   = *recognizerId;
-                ui.m_nameSeededValue = currentName;
+                seedBuffer(ui.nameBuffer, currentName);
+                ui.nameBufferFor   = *recognizerId;
+                ui.nameSeededValue = currentName;
             }
             ImGui::InputText(
                 "Name",
-                ui.m_nameBuffer.data(),
-                ui.m_nameBuffer.size()
+                ui.nameBuffer.data(),
+                ui.nameBuffer.size()
             );
-            ui.m_nameInputActive = ImGui::IsItemActive();
+            ui.nameInputActive = ImGui::IsItemActive();
             if (ImGui::IsItemDeactivatedAfterEdit())
             {
                 auto draft       = state.draft();
                 auto* recognizer = findEditableRecognizer(draft, *recognizerId);
                 if (recognizer != nullptr)
                 {
-                    recognizer->m_name = std::string{ui.m_nameBuffer.data()};
+                    recognizer->name = std::string{ui.nameBuffer.data()};
                     auto description = std::format(
                         "renamed \"{}\" to \"{}\"",
                         currentName,
-                        recognizer->m_name
+                        recognizer->name
                     );
                     requestEdit(ui, std::move(draft), std::move(description));
                 }
@@ -1402,7 +1587,7 @@ namespace uf::workbench
                 auto* recognizer = findEditableRecognizer(draft, *recognizerId);
                 if (recognizer != nullptr)
                 {
-                    recognizer->m_similarityBasisPoints =
+                    recognizer->similarityBasisPoints =
                         static_cast<uint32>(threshold);
                     requestEdit(
                         ui,
@@ -1440,9 +1625,9 @@ namespace uf::workbench
                 auto* recognizer = findEditableRecognizer(draft, *recognizerId);
                 if (recognizer != nullptr)
                 {
-                    recognizer->m_defaultClick = hasClickOffset
+                    recognizer->defaultClick = hasClickOffset
                         ? std::optional<EditableTemplateOffset>{
-                            EditableTemplateOffset{.m_x = 0U, .m_y = 0U}
+                            EditableTemplateOffset{.x = 0U, .y = 0U}
                         }
                         : std::nullopt;
                     requestEdit(
@@ -1479,9 +1664,9 @@ namespace uf::workbench
                     auto* recognizer = findEditableRecognizer(draft, *recognizerId);
                     if (recognizer != nullptr)
                     {
-                        recognizer->m_defaultClick = EditableTemplateOffset{
-                            .m_x = static_cast<uint32>(offsetX),
-                            .m_y = static_cast<uint32>(offsetY),
+                        recognizer->defaultClick = EditableTemplateOffset{
+                            .x = static_cast<uint32>(offsetX),
+                            .y = static_cast<uint32>(offsetY),
                         };
                         requestEdit(
                             ui,
@@ -1511,71 +1696,71 @@ namespace uf::workbench
         auto drawPreviewResult(PreviewResult const& preview) -> void
         {
             ImGui::SeparatorText("Preview");
-            if (preview.m_pageStop.has_value())
+            if (preview.pageStop.has_value())
             {
                 ImGui::Text(
                     "page stop: recognizer %s reason %d",
-                    shortId(preview.m_pageStop->m_recognizerId.value()).c_str(),
+                    shortId(preview.pageStop->recognizerId.value()).c_str(),
                     static_cast<int>(
-                        std::to_underlying(preview.m_pageStop->m_reason)
+                        std::to_underlying(preview.pageStop->reason)
                     )
                 );
             }
-            else if (preview.m_pageKind.has_value())
+            else if (preview.pageKind.has_value())
             {
-                if (preview.m_resolvedPageId.has_value())
+                if (preview.resolvedPageId.has_value())
                 {
                     ImGui::Text(
                         "page: %s (%s)",
-                        previewPageKindName(*preview.m_pageKind),
-                        shortId(preview.m_resolvedPageId->value()).c_str()
+                        previewPageKindName(*preview.pageKind),
+                        shortId(preview.resolvedPageId->value()).c_str()
                     );
                 }
                 else
                 {
-                    ImGui::Text("page: %s", previewPageKindName(*preview.m_pageKind));
+                    ImGui::Text("page: %s", previewPageKindName(*preview.pageKind));
                 }
             }
 
-            for (auto const& row : preview.m_anchorRows)
+            for (auto const& row : preview.anchorRows)
             {
-                auto const sad = row.m_sadScore.has_value()
-                    ? std::format("{}", *row.m_sadScore)
+                auto const sad = row.sadScore.has_value()
+                    ? std::format("{}", *row.sadScore)
                     : std::string{"-"};
-                auto const rect = row.m_matchedRect.has_value()
+                auto const rect = row.matchedRect.has_value()
                     ? std::format(
                         "{},{} {}x{}",
-                        row.m_matchedRect->x(),
-                        row.m_matchedRect->y(),
-                        row.m_matchedRect->width(),
-                        row.m_matchedRect->height()
+                        row.matchedRect->x(),
+                        row.matchedRect->y(),
+                        row.matchedRect->width(),
+                        row.matchedRect->height()
                     )
                     : std::string{"-"};
                 ImGui::Text(
                     "%s  hit=%d  sad=%s/%llu  rect=%s",
-                    shortId(row.m_recognizerId.value()).c_str(),
-                    row.m_hit ? 1 : 0,
+                    shortId(row.recognizerId.value()).c_str(),
+                    row.hit ? 1 : 0,
                     sad.c_str(),
-                    static_cast<unsigned long long>(row.m_maximumSad),
+                    static_cast<unsigned long long>(row.maximumSad),
                     rect.c_str()
                 );
             }
 
-            if (preview.m_actionStop.has_value())
+            if (preview.actionStop.has_value())
             {
                 ImGui::Text(
                     "action stop: reason %d",
                     static_cast<int>(
-                        std::to_underlying(preview.m_actionStop->m_reason)
+                        std::to_underlying(preview.actionStop->reason)
                     )
                 );
             }
-            else if (preview.m_actionEvidence.has_value())
+            else if (preview.actionEvidence.has_value())
             {
                 ImGui::Text(
                     "action %s  hit=%d",
-                    shortId(preview.m_actionEvidence->m_recognizerId.value()).c_str(),
-                    preview.m_actionEvidence->m_hit ? 1 : 0
+                    shortId(preview.actionEvidence->recognizerId.value()).c_str(),
+                    preview.actionEvidence->hit ? 1 : 0
                 );
             }
         }
@@ -1599,7 +1784,7 @@ namespace uf::workbench
                 auto const assets = state.compilerSourceAssets();
                 if (!assets)
                 {
-                    ui.m_statusLine = std::format(
+                    ui.statusLine = std::format(
                         "save failed: {}",
                         toString(assets.error())
                     );
@@ -1613,7 +1798,7 @@ namespace uf::workbench
                     );
                     if (!status)
                     {
-                        ui.m_statusLine = std::format(
+                        ui.statusLine = std::format(
                             "save failed: {}",
                             toString(status.error())
                         );
@@ -1621,7 +1806,7 @@ namespace uf::workbench
                     else
                     {
                         state.markSaved();
-                        ui.m_statusLine = "saved and generated";
+                        ui.statusLine = "saved and generated";
                     }
                 }
             }
@@ -1631,11 +1816,11 @@ namespace uf::workbench
                 auto const selectedSource = state.selectedSourceId();
                 if (!selectedSource.has_value())
                 {
-                    ui.m_statusLine = "preview requires a selected source";
+                    ui.statusLine = "preview requires a selected source";
                 }
                 else if (auto const assets = state.compilerSourceAssets(); !assets)
                 {
-                    ui.m_statusLine = std::format(
+                    ui.statusLine = std::format(
                         "preview failed: {}",
                         toString(assets.error())
                     );
@@ -1643,8 +1828,8 @@ namespace uf::workbench
                 else
                 {
                     auto const policy = annotation::RecognitionPolicy{
-                        .m_maximumPixelComparisons = k_recognitionComparisonBudget,
-                        .m_deadline = MonotonicInstant::now().checkedAdd(
+                        .maximumPixelComparisons = k_recognitionComparisonBudget,
+                        .deadline = MonotonicInstant::now().checkedAdd(
                             k_previewDeadline
                         ),
                     };
@@ -1657,7 +1842,7 @@ namespace uf::workbench
                     );
                     if (!preview)
                     {
-                        ui.m_statusLine = std::format(
+                        ui.statusLine = std::format(
                             "preview failed: {}",
                             toString(preview.error())
                         );
@@ -1665,7 +1850,7 @@ namespace uf::workbench
                     else
                     {
                         state.setLastPreview(std::move(*preview));
-                        ui.m_statusLine = "preview complete";
+                        ui.statusLine = "preview complete";
                     }
                 }
             }
@@ -1674,7 +1859,7 @@ namespace uf::workbench
             // matches the image it was cut from, so only its score on the other
             // screens says whether it identifies one screen or merely exists.
             // It runs on a worker thread; see ModelCheckJob for why.
-            auto const checking = ui.m_modelCheck.running();
+            auto const checking = ui.modelCheck.running();
             ImGui::BeginDisabled(checking);
             if (ImGui::Button(checking ? "Checking..." : "Check Model"))
             {
@@ -1685,27 +1870,27 @@ namespace uf::workbench
             // target drifts, with highlights, counters, and animation. Measuring
             // against it is the one check that says whether a mark still holds on
             // the game as it is right now.
-            auto const hasTarget = ui.m_targetTitle.at(0) != '\0';
+            auto const hasTarget = ui.targetTitle.at(0) != '\0';
             ImGui::SameLine();
             ImGui::BeginDisabled(!hasTarget);
             if (ImGui::Button("Check Against Live Screen"))
             {
                 // Capture stays here: it belongs to the GUI thread that owns the
                 // graphics device. Only the searching moves off it.
-                auto captured = services.m_captureFromTarget(
+                auto captured = services.captureFromTarget(
                     annotation::SourceId{mintResourceId()},
-                    std::string{ui.m_targetTitle.data()}
+                    std::string{ui.targetTitle.data()}
                 );
                 if (!captured)
                 {
-                    ui.m_statusLine = std::format(
+                    ui.statusLine = std::format(
                         "live capture failed: {}",
                         toString(captured.error())
                     );
                 }
                 else
                 {
-                    startModelCheck(state, ui, captured->m_asset.m_pngBytes);
+                    startModelCheck(state, ui, captured->asset.pngBytes);
                 }
             }
             ImGui::EndDisabled();
@@ -1725,7 +1910,7 @@ namespace uf::workbench
             {
                 if (state.undo())
                 {
-                    ui.m_statusLine = std::format(
+                    ui.statusLine = std::format(
                         "undo: {} recognizers, {} pages",
                         state.document().catalog().recognizers().size(),
                         state.document().catalog().pages().size()
@@ -1739,7 +1924,7 @@ namespace uf::workbench
             {
                 if (state.redo())
                 {
-                    ui.m_statusLine = std::format(
+                    ui.statusLine = std::format(
                         "redo: {} recognizers, {} pages",
                         state.document().catalog().recognizers().size(),
                         state.document().catalog().pages().size()
@@ -1748,9 +1933,9 @@ namespace uf::workbench
             }
             ImGui::EndDisabled();
 
-            if (!ui.m_statusLine.empty())
+            if (!ui.statusLine.empty())
             {
-                ImGui::TextWrapped("%s", ui.m_statusLine.c_str());
+                ImGui::TextWrapped("%s", ui.statusLine.c_str());
             }
 
             if (auto const& preview = state.lastPreview())
@@ -1796,13 +1981,13 @@ namespace uf::workbench
         // actions and errors are not lost when the next action overwrites the
         // transient line. Consecutive identical outcomes collapse to one entry.
         if (
-            services.m_appendLog
-            && !ui.m_statusLine.empty()
-            && ui.m_statusLine != ui.m_lastLoggedStatus
+            services.appendLog
+            && !ui.statusLine.empty()
+            && ui.statusLine != ui.lastLoggedStatus
         )
         {
-            services.m_appendLog(ui.m_statusLine);
-            ui.m_lastLoggedStatus = ui.m_statusLine;
+            services.appendLog(ui.statusLine);
+            ui.lastLoggedStatus = ui.statusLine;
         }
     }
 }

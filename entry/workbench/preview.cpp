@@ -35,11 +35,11 @@ namespace uf::workbench
         auto toAnchorRow(annotation::AnchorEvidence const& evidence) -> PreviewAnchorRow
         {
             return PreviewAnchorRow{
-                .m_recognizerId = evidence.recognizerId(),
-                .m_hit          = evidence.hit(),
-                .m_sadScore     = evidence.sadScore(),
-                .m_maximumSad   = evidence.maximumSad(),
-                .m_matchedRect  = evidence.matchedRect(),
+                .recognizerId = evidence.recognizerId(),
+                .hit          = evidence.hit(),
+                .sadScore     = evidence.sadScore(),
+                .maximumSad   = evidence.maximumSad(),
+                .matchedRect  = evidence.matchedRect(),
             };
         }
 
@@ -68,8 +68,8 @@ namespace uf::workbench
                 image::decodePng(pngBytes, "workbench-preview-source.png")
             );
             if (
-                decoded.m_width != fingerprint.width()
-                || decoded.m_height != fingerprint.height()
+                decoded.width != fingerprint.width()
+                || decoded.height != fingerprint.height()
             )
             {
                 return fail(
@@ -77,7 +77,7 @@ namespace uf::workbench
                     "preview source geometry does not match the project fingerprint"
                 );
             }
-            UF_TRY_VALUE(bgra, image::rgba8ToBgra8(std::move(decoded.m_pixels)));
+            UF_TRY_VALUE(bgra, image::rgba8ToBgra8(std::move(decoded.pixels)));
             UF_TRY_VALUE(
                 transform,
                 CoordinateTransform::create(
@@ -140,18 +140,18 @@ namespace uf::workbench
                 annotation::compileAuthoringDocument(document, sourceAssets)
             );
             auto encodedTemplates = std::vector<annotation::EncodedRuntimeTemplate>{};
-            encodedTemplates.reserve(compiled.m_templateAssets.size());
-            for (auto& asset : compiled.m_templateAssets)
+            encodedTemplates.reserve(compiled.templateAssets.size());
+            for (auto& asset : compiled.templateAssets)
             {
                 encodedTemplates.emplace_back(
                     annotation::EncodedRuntimeTemplate{
-                        .m_hash     = asset.m_hash,
-                        .m_pngBytes = std::move(asset.m_pngBytes),
+                        .hash     = asset.hash,
+                        .pngBytes = std::move(asset.pngBytes),
                     }
                 );
             }
             return annotation::RecognitionRuntime::create(
-                std::move(compiled.m_runtimeManifest),
+                std::move(compiled.runtimeManifest),
                 std::move(encodedTemplates)
             );
         }
@@ -173,33 +173,33 @@ namespace uf::workbench
             );
 
             auto result = PreviewResult{};
-            result.m_anchorRows.reserve(pageAttempt.m_completedAnchorEvidence.size());
-            for (auto const& evidence : pageAttempt.m_completedAnchorEvidence)
+            result.anchorRows.reserve(pageAttempt.completedAnchorEvidence.size());
+            for (auto const& evidence : pageAttempt.completedAnchorEvidence)
             {
-                result.m_anchorRows.emplace_back(toAnchorRow(evidence));
+                result.anchorRows.emplace_back(toAnchorRow(evidence));
             }
             if (
                 auto const* p_stop = std::get_if<annotation::PageRecognitionStop>(
-                    &pageAttempt.m_result
+                    &pageAttempt.result
                 )
             )
             {
-                result.m_pageStop = PreviewStop{
-                    .m_recognizerId = p_stop->m_recognizerId,
-                    .m_reason       = p_stop->m_reason,
+                result.pageStop = PreviewStop{
+                    .recognizerId = p_stop->recognizerId,
+                    .reason       = p_stop->reason,
                 };
                 return result;
             }
 
             auto const& outcome = std::get<annotation::PageOutcome>(
-                pageAttempt.m_result
+                pageAttempt.result
             );
-            result.m_pageKind = toPageKind(outcome);
+            result.pageKind = toPageKind(outcome);
             if (
                 auto const* p_resolved = std::get_if<annotation::ResolvedPage>(&outcome)
             )
             {
-                result.m_resolvedPageId = p_resolved->pageId();
+                result.resolvedPageId = p_resolved->pageId();
             }
             return result;
         }
@@ -224,7 +224,7 @@ namespace uf::workbench
                     )
                 )
                 {
-                    return p_resolved->m_pageId;
+                    return p_resolved->pageId;
                 }
             }
             return std::nullopt;
@@ -236,11 +236,11 @@ namespace uf::workbench
             PreviewResult const& preview
         ) noexcept -> ScreenCheckOutcome
         {
-            if (preview.m_pageStop.has_value() || !preview.m_pageKind.has_value())
+            if (preview.pageStop.has_value() || !preview.pageKind.has_value())
             {
                 return ScreenCheckOutcome::Stopped;
             }
-            switch (*preview.m_pageKind)
+            switch (*preview.pageKind)
             {
             case PreviewPageKind::Unknown:
                 return ScreenCheckOutcome::Unknown;
@@ -253,7 +253,7 @@ namespace uf::workbench
             {
                 return ScreenCheckOutcome::Unclaimed;
             }
-            return preview.m_resolvedPageId == expected
+            return preview.resolvedPageId == expected
                 ? ScreenCheckOutcome::Correct
                 : ScreenCheckOutcome::WrongPage;
         }
@@ -261,8 +261,8 @@ namespace uf::workbench
         // Which screen one recognizer has to work on, paired with its identity.
         struct WorkingScreen final
         {
-            annotation::RecognizerId            m_recognizerId;
-            std::optional<annotation::SourceId> m_sourceId{};
+            annotation::RecognizerId            recognizerId;
+            std::optional<annotation::SourceId> sourceId{};
         };
 
         // The screen each recognizer is searched on at runtime: the screen
@@ -290,7 +290,7 @@ namespace uf::workbench
                     auto const* p_resolved = std::get_if<annotation::ResolvedRegression>(
                         &regression.expectation()
                     );
-                    if (p_resolved != nullptr && p_resolved->m_pageId == pageId)
+                    if (p_resolved != nullptr && p_resolved->pageId == pageId)
                     {
                         return std::optional<annotation::SourceId>{
                             regression.sourceId()
@@ -338,18 +338,18 @@ namespace uf::workbench
                     auto const authored = std::ranges::find(
                         document.recognizerSources(),
                         recognizer.id(),
-                        &annotation::AuthoringRecognizerSource::m_recognizerId
+                        &annotation::AuthoringRecognizerSource::recognizerId
                     );
                     if (authored != document.recognizerSources().end())
                     {
-                        working = authored->m_sourceId;
+                        working = authored->sourceId;
                     }
                 }
 
                 screens.emplace_back(
                     WorkingScreen{
-                        .m_recognizerId = recognizer.id(),
-                        .m_sourceId     = working,
+                        .recognizerId = recognizer.id(),
+                        .sourceId     = working,
                     }
                 );
             }
@@ -369,44 +369,44 @@ namespace uf::workbench
         {
             auto found = std::ranges::find(
                 margins,
-                row.m_recognizerId,
-                &RecognizerMargin::m_recognizerId
+                row.recognizerId,
+                &RecognizerMargin::recognizerId
             );
             if (found == margins.end())
             {
                 auto const entry = std::ranges::find(
                     working,
-                    row.m_recognizerId,
-                    &WorkingScreen::m_recognizerId
+                    row.recognizerId,
+                    &WorkingScreen::recognizerId
                 );
                 margins.emplace_back(
                     RecognizerMargin{
-                        .m_recognizerId = row.m_recognizerId,
-                        .m_maximumSad   = row.m_maximumSad,
-                        .m_ownSourceId  = entry == working.end()
+                        .recognizerId = row.recognizerId,
+                        .maximumSad   = row.maximumSad,
+                        .ownSourceId  = entry == working.end()
                             ? std::optional<annotation::SourceId>{}
-                            : entry->m_sourceId,
+                            : entry->sourceId,
                     }
                 );
                 found = std::prev(margins.end());
             }
 
-            if (!row.m_sadScore.has_value())
+            if (!row.sadScore.has_value())
             {
                 return;
             }
-            if (found->m_ownSourceId == sourceId)
+            if (found->ownSourceId == sourceId)
             {
-                found->m_ownSadScore = row.m_sadScore;
+                found->ownSadScore = row.sadScore;
                 return;
             }
             if (
-                !found->m_nearestOtherSadScore.has_value()
-                || *row.m_sadScore < *found->m_nearestOtherSadScore
+                !found->nearestOtherSadScore.has_value()
+                || *row.sadScore < *found->nearestOtherSadScore
             )
             {
-                found->m_nearestOtherSadScore = row.m_sadScore;
-                found->m_nearestOtherSourceId = sourceId;
+                found->nearestOtherSadScore = row.sadScore;
+                found->nearestOtherSourceId = sourceId;
             }
         }
 
@@ -420,12 +420,12 @@ namespace uf::workbench
         {
             auto const found = std::ranges::find(
                 margins,
-                row.m_recognizerId,
-                &RecognizerMargin::m_recognizerId
+                row.recognizerId,
+                &RecognizerMargin::recognizerId
             );
             if (found != margins.end())
             {
-                found->m_liveSadScore = row.m_sadScore;
+                found->liveSadScore = row.sadScore;
             }
         }
 
@@ -459,7 +459,7 @@ namespace uf::workbench
                 );
                 if (
                     auto const* p_evidence = std::get_if<annotation::AnchorEvidence>(
-                        &attempt.m_result
+                        &attempt.result
                     )
                 )
                 {
@@ -520,7 +520,7 @@ namespace uf::workbench
         auto const selected = std::ranges::find(
             sourceAssets,
             selectedSourceId,
-            &annotation::AuthoringSourceAsset::m_id
+            &annotation::AuthoringSourceAsset::id
         );
         if (selected == sourceAssets.end())
         {
@@ -533,7 +533,7 @@ namespace uf::workbench
         UF_TRY_VALUE(runtime, buildRuntime(document, sourceAssets));
 
         auto const fingerprint = document.catalog().fingerprint();
-        UF_TRY_VALUE(frame, previewFrame(fingerprint, selected->m_pngBytes));
+        UF_TRY_VALUE(frame, previewFrame(fingerprint, selected->pngBytes));
         UF_TRY_VALUE(result, evaluatePageOn(runtime, frame, fingerprint, policy));
 
         if (selectedRecognizerId.has_value())
@@ -557,19 +557,19 @@ namespace uf::workbench
                 );
                 if (
                     auto const* p_actionStop = std::get_if<annotation::PageRecognitionStop>(
-                        &actionAttempt.m_result
+                        &actionAttempt.result
                     )
                 )
                 {
-                    result.m_actionStop = PreviewStop{
-                        .m_recognizerId = p_actionStop->m_recognizerId,
-                        .m_reason       = p_actionStop->m_reason,
+                    result.actionStop = PreviewStop{
+                        .recognizerId = p_actionStop->recognizerId,
+                        .reason       = p_actionStop->reason,
                     };
                 }
                 else
                 {
-                    result.m_actionEvidence = toAnchorRow(
-                        std::get<annotation::AnchorEvidence>(actionAttempt.m_result)
+                    result.actionEvidence = toAnchorRow(
+                        std::get<annotation::AnchorEvidence>(actionAttempt.result)
                     );
                 }
             }
@@ -589,7 +589,7 @@ namespace uf::workbench
         auto const screen = std::ranges::find(
             sourceAssets,
             screenId,
-            &annotation::AuthoringSourceAsset::m_id
+            &annotation::AuthoringSourceAsset::id
         );
         if (screen == sourceAssets.end())
         {
@@ -612,14 +612,14 @@ namespace uf::workbench
 
         UF_TRY_VALUE(runtime, buildRuntime(document, sourceAssets));
         auto const fingerprint = document.catalog().fingerprint();
-        UF_TRY_VALUE(frame, previewFrame(fingerprint, screen->m_pngBytes));
+        UF_TRY_VALUE(frame, previewFrame(fingerprint, screen->pngBytes));
         UF_TRY_VALUE(
             attempt,
             runtime.evaluateActionTarget(frame, fingerprint, recognizerId, policy)
         );
 
         auto const* p_evidence = std::get_if<annotation::AnchorEvidence>(
-            &attempt.m_result
+            &attempt.result
         );
         if (p_evidence == nullptr)
         {
@@ -657,7 +657,7 @@ namespace uf::workbench
         auto const working = workingScreens(document);
 
         auto check = ModelCheck{};
-        check.m_screens.reserve(sourceAssets.size());
+        check.screens.reserve(sourceAssets.size());
 
         // The live frame is one more screen for the purpose of dividing the
         // clock, so counting it here keeps every screen's slice equal instead of
@@ -669,30 +669,30 @@ namespace uf::workbench
             // One screen's whole evaluation -- its page anchors and every action
             // target below -- shares this screen's slice of the run's clock.
             auto screenPolicy       = policy;
-            screenPolicy.m_deadline = screenDeadline(
-                policy.m_deadline,
+            screenPolicy.deadline = screenDeadline(
+                policy.deadline,
                 remainingScreens
             );
             remainingScreens -= 1U;
 
-            UF_TRY_VALUE(frame, previewFrame(fingerprint, asset.m_pngBytes));
+            UF_TRY_VALUE(frame, previewFrame(fingerprint, asset.pngBytes));
             UF_TRY_VALUE(
                 preview,
                 evaluatePageOn(runtime, frame, fingerprint, screenPolicy)
             );
 
-            auto const expected = expectedPageOf(document, asset.m_id);
-            check.m_screens.emplace_back(
+            auto const expected = expectedPageOf(document, asset.id);
+            check.screens.emplace_back(
                 ScreenCheck{
-                    .m_sourceId       = asset.m_id,
-                    .m_expectedPageId = expected,
-                    .m_resolvedPageId = preview.m_resolvedPageId,
-                    .m_outcome        = screenOutcome(expected, preview),
+                    .sourceId       = asset.id,
+                    .expectedPageId = expected,
+                    .resolvedPageId = preview.resolvedPageId,
+                    .outcome        = screenOutcome(expected, preview),
                 }
             );
-            for (auto const& row : preview.m_anchorRows)
+            for (auto const& row : preview.anchorRows)
             {
-                recordMargin(check.m_margins, working, asset.m_id, row);
+                recordMargin(check.margins, working, asset.id, row);
             }
 
             UF_TRY_VALUE(
@@ -707,7 +707,7 @@ namespace uf::workbench
             );
             for (auto const& row : actionRows)
             {
-                recordMargin(check.m_margins, working, asset.m_id, row);
+                recordMargin(check.margins, working, asset.id, row);
             }
         }
 
@@ -719,22 +719,22 @@ namespace uf::workbench
         // The live frame is measured last, once every recognizer already has a
         // margin entry, and it is never added to the project: a frame taken to
         // measure against is not a screen the model is authored on.
-        auto livePolicy       = policy;
-        livePolicy.m_deadline = screenDeadline(policy.m_deadline, remainingScreens);
+        auto livePolicy     = policy;
+        livePolicy.deadline = screenDeadline(policy.deadline, remainingScreens);
 
         UF_TRY_VALUE(liveFrame, previewFrame(fingerprint, liveFrameBytes));
         UF_TRY_VALUE(
             livePreview,
             evaluatePageOn(runtime, liveFrame, fingerprint, livePolicy)
         );
-        check.m_live = LiveScreenCheck{
-            .m_pageKind       = livePreview.m_pageKind,
-            .m_resolvedPageId = livePreview.m_resolvedPageId,
-            .m_stop           = livePreview.m_pageStop,
+        check.live = LiveScreenCheck{
+            .pageKind       = livePreview.pageKind,
+            .resolvedPageId = livePreview.resolvedPageId,
+            .stop           = livePreview.pageStop,
         };
-        for (auto const& row : livePreview.m_anchorRows)
+        for (auto const& row : livePreview.anchorRows)
         {
-            recordLiveMargin(check.m_margins, row);
+            recordLiveMargin(check.margins, row);
         }
 
         UF_TRY_VALUE(
@@ -749,7 +749,7 @@ namespace uf::workbench
         );
         for (auto const& row : liveActionRows)
         {
-            recordLiveMargin(check.m_margins, row);
+            recordLiveMargin(check.margins, row);
         }
 
         return check;

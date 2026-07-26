@@ -38,8 +38,8 @@ namespace uf::workbench
 
         struct Options final
         {
-            std::optional<uint32>                m_smokeFrames{};
-            std::optional<std::filesystem::path> m_projectRoot{};
+            std::optional<uint32>                smokeFrames{};
+            std::optional<std::filesystem::path> projectRoot{};
         };
 
         [[nodiscard]]
@@ -84,7 +84,7 @@ namespace uf::workbench
                             "--smoke requires a positive frame count"
                         );
                     }
-                    options.m_smokeFrames = frames;
+                    options.smokeFrames = frames;
                 }
                 else if (argument.starts_with("--"))
                 {
@@ -93,9 +93,9 @@ namespace uf::workbench
                         std::format("unknown option \"{}\"", argument)
                     );
                 }
-                else if (!options.m_projectRoot.has_value())
+                else if (!options.projectRoot.has_value())
                 {
-                    options.m_projectRoot = std::filesystem::path{argument};
+                    options.projectRoot = std::filesystem::path{argument};
                 }
                 else
                 {
@@ -111,16 +111,16 @@ namespace uf::workbench
         [[nodiscard]]
         auto makeAppState(Options const& options) -> Result<AppState>
         {
-            if (options.m_projectRoot.has_value())
+            if (options.projectRoot.has_value())
             {
                 UF_TRY_VALUE(
                     loaded,
-                    loadAuthoringProject(*options.m_projectRoot)
+                    loadAuthoringProject(*options.projectRoot)
                 );
                 return AppState{
-                    *options.m_projectRoot,
-                    std::move(loaded.m_document),
-                    std::move(loaded.m_sources),
+                    *options.projectRoot,
+                    std::move(loaded.document),
+                    std::move(loaded.sources),
                 };
             }
             return AppState::createEmpty(std::filesystem::current_path());
@@ -132,29 +132,29 @@ namespace uf::workbench
             UF_TRY_VALUE(state, makeAppState(options));
 
             auto const config = platform::GuiShellConfig{
-                .m_title       = std::string{k_windowTitle},
-                .m_width       = 1280U,
-                .m_height      = 720U,
-                .m_smokeFrames = options.m_smokeFrames,
+                .title       = std::string{k_windowTitle},
+                .width       = 1280U,
+                .height      = 720U,
+                .smokeFrames = options.smokeFrames,
             };
             UF_TRY_VALUE(shell, platform::GuiShell::create(config));
 
             auto const logPath = state.projectRoot() / "workbench.log";
 
             auto services = WorkbenchServices{
-                .m_textureFor =
+                .textureFor =
                     [&shell](
                         annotation::AuthoringSourceAsset const& asset
                     ) -> Result<platform::GpuSourceTexture>
                     {
                         return shell.textures().textureFor(asset);
                     },
-                .m_pickPngToImport =
+                .pickPngToImport =
                     []() -> Result<std::optional<std::filesystem::path>>
                     {
                         return platform::openPngFileDialog();
                     },
-                .m_captureFromTarget =
+                .captureFromTarget =
                     [](
                         annotation::SourceId id,
                         std::string const& titleSubstring
@@ -165,7 +165,7 @@ namespace uf::workbench
                             titleSubstring
                         );
                     },
-                .m_appendLog =
+                .appendLog =
                     [logPath](std::string_view message) -> void
                     {
                         auto stream = std::ofstream{

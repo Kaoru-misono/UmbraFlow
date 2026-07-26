@@ -36,20 +36,20 @@ namespace uf::workbench
     // never depends on the recognition module's evidence type.
     struct PreviewAnchorRow final
     {
-        annotation::RecognizerId m_recognizerId;
+        annotation::RecognizerId recognizerId;
 
-        bool                     m_hit{};
-        std::optional<uint64>    m_sadScore{};
-        uint64                   m_maximumSad{};
-        std::optional<PixelRect> m_matchedRect{};
+        bool                     hit{};
+        std::optional<uint64>    sadScore{};
+        uint64                   maximumSad{};
+        std::optional<PixelRect> matchedRect{};
     };
 
     // A recognizer search that a policy limit interrupted before it produced
     // evidence, naming the recognizer that was running and why it stopped.
     struct PreviewStop final
     {
-        annotation::RecognizerId m_recognizerId;
-        SadSearchStopReason      m_reason{};
+        annotation::RecognizerId recognizerId;
+        SadSearchStopReason      reason{};
     };
 
     // The outcome of previewing the current document against one source image.
@@ -59,13 +59,13 @@ namespace uf::workbench
     // recognizer is an action target that was evaluated.
     struct PreviewResult final
     {
-        std::optional<PreviewPageKind>    m_pageKind{};
-        std::optional<annotation::PageId> m_resolvedPageId{};
-        std::vector<PreviewAnchorRow>     m_anchorRows{};
-        std::optional<PreviewStop>        m_pageStop{};
+        std::optional<PreviewPageKind>    pageKind{};
+        std::optional<annotation::PageId> resolvedPageId{};
+        std::vector<PreviewAnchorRow>     anchorRows{};
+        std::optional<PreviewStop>        pageStop{};
 
-        std::optional<PreviewAnchorRow> m_actionEvidence{};
-        std::optional<PreviewStop>      m_actionStop{};
+        std::optional<PreviewAnchorRow> actionEvidence{};
+        std::optional<PreviewStop>      actionStop{};
     };
 
     // The pixel-comparison ceiling one search may spend, shared by the preview
@@ -124,10 +124,10 @@ namespace uf::workbench
 
     struct ScreenCheck final
     {
-        annotation::SourceId              m_sourceId;
-        std::optional<annotation::PageId> m_expectedPageId{};
-        std::optional<annotation::PageId> m_resolvedPageId{};
-        ScreenCheckOutcome                m_outcome{};
+        annotation::SourceId              sourceId;
+        std::optional<annotation::PageId> expectedPageId{};
+        std::optional<annotation::PageId> resolvedPageId{};
+        ScreenCheckOutcome                outcome{};
     };
 
     // One recognizer's similarity scores on the screen it was drawn on and on
@@ -142,8 +142,8 @@ namespace uf::workbench
     // passes elsewhere will eventually resolve the wrong page.
     struct RecognizerMargin final
     {
-        annotation::RecognizerId m_recognizerId;
-        uint64                   m_maximumSad{};
+        annotation::RecognizerId recognizerId;
+        uint64                   maximumSad{};
 
         // The screen this recognizer has to work on -- the one recorded for the
         // page it belongs to -- and its score there. For anything drawn on the
@@ -151,18 +151,18 @@ namespace uf::workbench
         // shared element is the exception: cut from one screen and used on
         // another, it must be read against the page's screen, because that is
         // the only screen it is ever searched on.
-        std::optional<annotation::SourceId> m_ownSourceId{};
-        std::optional<uint64>               m_ownSadScore{};
+        std::optional<annotation::SourceId> ownSourceId{};
+        std::optional<uint64>               ownSadScore{};
 
-        std::optional<annotation::SourceId> m_nearestOtherSourceId{};
-        std::optional<uint64>               m_nearestOtherSadScore{};
+        std::optional<annotation::SourceId> nearestOtherSourceId{};
+        std::optional<uint64>               nearestOtherSadScore{};
 
         // The score on a frame captured from the running target, when the check
         // was given one. This is the only number that moves on its own: the
         // captured screens are stills that never change, while the live one
         // drifts with highlights, counters, and animation. A mark that passes on
         // its own still and fails here is over-fitted to the still.
-        std::optional<uint64> m_liveSadScore{};
+        std::optional<uint64> liveSadScore{};
     };
 
     // The running target's current screen. A live frame carries no recorded
@@ -170,16 +170,16 @@ namespace uf::workbench
     // classified is reported, with no correct-or-not verdict attached.
     struct LiveScreenCheck final
     {
-        std::optional<PreviewPageKind>    m_pageKind{};
-        std::optional<annotation::PageId> m_resolvedPageId{};
-        std::optional<PreviewStop>        m_stop{};
+        std::optional<PreviewPageKind>    pageKind{};
+        std::optional<annotation::PageId> resolvedPageId{};
+        std::optional<PreviewStop>        stop{};
     };
 
     struct ModelCheck final
     {
-        std::vector<ScreenCheck>       m_screens{};
-        std::vector<RecognizerMargin>  m_margins{};
-        std::optional<LiveScreenCheck> m_live{};
+        std::vector<ScreenCheck>       screens{};
+        std::vector<RecognizerMargin>  margins{};
+        std::optional<LiveScreenCheck> live{};
     };
 
     // Evaluates every recognizer against every captured screen, once, and reports

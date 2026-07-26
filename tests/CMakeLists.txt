@@ -167,6 +167,7 @@ if(TARGET ${PROJECT_NAME}_workbench_support)
             workbench/test-authoring-actions.cpp
             workbench/test-authoring-edit.cpp
             workbench/test-canvas-math.cpp
+            workbench/test-edit-page.cpp
             workbench/test-model-check-job.cpp
             workbench/test-model-check-view.cpp
             workbench/test-preview.cpp

@@ -28,8 +28,8 @@ namespace uf::workbench
     // content-addressed files; callers decode them for display.
     struct LoadedAuthoringProject final
     {
-        annotation::AuthoringDocument                 m_document;
-        std::vector<annotation::AuthoringSourceAsset> m_sources{};
+        annotation::AuthoringDocument                 document;
+        std::vector<annotation::AuthoringSourceAsset> sources{};
     };
 
     // Reads annotations.toml (capped at 16 MiB, parsed with parseAuthoringDocument)

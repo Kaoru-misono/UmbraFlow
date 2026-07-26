@@ -89,76 +89,76 @@ namespace uf::workbench::platform
         }
     }
 
-    struct GuiShellState final
+    struct GuiShell::State final
     {
-        HWND      m_window{nullptr};
-        HINSTANCE m_instance{nullptr};
-        ATOM      m_windowClass{0};
+        HWND      window{nullptr};
+        HINSTANCE instance{nullptr};
+        ATOM      windowClass{0};
 
-        winrt::com_ptr<ID3D11Device>           m_device{};
-        winrt::com_ptr<ID3D11DeviceContext>    m_context{};
-        winrt::com_ptr<IDXGISwapChain>         m_swapChain{};
-        winrt::com_ptr<ID3D11RenderTargetView> m_renderTarget{};
+        winrt::com_ptr<ID3D11Device>           device{};
+        winrt::com_ptr<ID3D11DeviceContext>    context{};
+        winrt::com_ptr<IDXGISwapChain>         swapChain{};
+        winrt::com_ptr<ID3D11RenderTargetView> renderTarget{};
 
-        std::optional<uint32> m_smokeFrames{};
+        std::optional<uint32> smokeFrames{};
 
         // Backing storage for ImGui's IniFilename, which ImGui stores as a bare
         // pointer rather than copying. It must outlive the context and must not
         // be written again once handed over, so it is set once during create and
         // destroyed with this object -- after the destructor body has torn the
         // context down. Empty when the layout is not being persisted.
-        std::string m_layoutSettingsPath{};
+        std::string layoutSettingsPath{};
 
         // A queued client-area size, set from WM_SIZE and applied before the next
         // frame. Zero in either field means no resize is pending.
-        uint32 m_pendingWidth{0};
-        uint32 m_pendingHeight{0};
+        uint32 pendingWidth{0};
+        uint32 pendingHeight{0};
 
-        bool m_imguiContext{false};
-        bool m_win32Backend{false};
-        bool m_dx11Backend{false};
+        bool imguiContext{false};
+        bool win32Backend{false};
+        bool dx11Backend{false};
 
-        std::optional<TextureCache> m_textures{};
+        std::optional<TextureCache> textures{};
 
-        GuiShellState() noexcept = default;
-        GuiShellState(GuiShellState const&) = delete;
-        auto operator=(GuiShellState const&) -> GuiShellState& = delete;
-        GuiShellState(GuiShellState&&) = delete;
-        auto operator=(GuiShellState&&) -> GuiShellState& = delete;
+        State() noexcept = default;
+        State(State const&) = delete;
+        auto operator=(State const&) -> State& = delete;
+        State(State&&) = delete;
+        auto operator=(State&&) -> State& = delete;
 
-        ~GuiShellState()
+        ~State()
         {
-            if (m_dx11Backend)
+            if (dx11Backend)
             {
                 ImGui_ImplDX11_Shutdown();
             }
-            if (m_win32Backend)
+            if (win32Backend)
             {
                 ImGui_ImplWin32_Shutdown();
             }
-            if (m_imguiContext)
+            if (imguiContext)
             {
                 // ImGui flushes settings on a timer inside NewFrame and not at
                 // shutdown, so a layout rearranged in the last few seconds before
                 // closing would otherwise be lost.
-                if (!m_layoutSettingsPath.empty())
+                if (!layoutSettingsPath.empty())
                 {
-                    ImGui::SaveIniSettingsToDisk(m_layoutSettingsPath.c_str());
+                    ImGui::SaveIniSettingsToDisk(layoutSettingsPath.c_str());
                 }
                 ImGui::DestroyContext();
             }
-            if (m_window != nullptr)
+            if (window != nullptr)
             {
                 // SAFETY: m_window is the single top-level window this object
                 // created and still owns; DestroyWindow consumes it once.
-                static_cast<void>(DestroyWindow(m_window));
+                static_cast<void>(DestroyWindow(window));
             }
-            if (m_windowClass != 0 && m_instance != nullptr)
+            if (windowClass != 0 && instance != nullptr)
             {
                 // SAFETY: the class was registered against m_instance under this
                 // name and no window of it survives the DestroyWindow above.
                 static_cast<void>(
-                    UnregisterClassW(k_windowClassName.data(), m_instance)
+                    UnregisterClassW(k_windowClassName.data(), instance)
                 );
             }
         }
@@ -236,10 +236,10 @@ namespace uf::workbench::platform
                 return 1;
             }
 
-            // SAFETY: GWLP_USERDATA holds the GuiShellState that owns this window;
+            // SAFETY: GWLP_USERDATA holds the GuiShell::State that owns this window;
             // it outlives the window because the owner destroys the window before
             // freeing the state, and is null only before create() publishes it.
-            auto* p_state = reinterpret_cast<GuiShellState*>(
+            auto* p_state = reinterpret_cast<GuiShell::State*>(
                 GetWindowLongPtrW(window, GWLP_USERDATA)
             );
 
@@ -248,8 +248,8 @@ namespace uf::workbench::platform
             case WM_SIZE:
                 if (p_state != nullptr && wParam != SIZE_MINIMIZED)
                 {
-                    p_state->m_pendingWidth  = static_cast<uint32>(LOWORD(lParam));
-                    p_state->m_pendingHeight = static_cast<uint32>(HIWORD(lParam));
+                    p_state->pendingWidth  = static_cast<uint32>(LOWORD(lParam));
+                    p_state->pendingHeight = static_cast<uint32>(HIWORD(lParam));
                 }
                 return 0;
             case WM_DESTROY:
@@ -276,7 +276,7 @@ namespace uf::workbench::platform
         }
     }
 
-    GuiShell::GuiShell(std::unique_ptr<GuiShellState> state) noexcept
+    GuiShell::GuiShell(std::unique_ptr<GuiShell::State> state) noexcept
         : m_state{std::move(state)}
     {
     }
@@ -287,25 +287,25 @@ namespace uf::workbench::platform
 
     auto GuiShell::create(GuiShellConfig const& config) -> Result<GuiShell>
     {
-        auto state = std::make_unique<GuiShellState>();
-        state->m_smokeFrames = config.m_smokeFrames;
+        auto state = std::make_unique<GuiShell::State>();
+        state->smokeFrames = config.smokeFrames;
 
         // SAFETY: GetModuleHandleW(nullptr) returns the process image base; it
         // owns no resource and needs no release.
-        state->m_instance = GetModuleHandleW(nullptr);
+        state->instance = GetModuleHandleW(nullptr);
 
         auto windowClass   = WNDCLASSEXW{};
         windowClass.cbSize = sizeof(WNDCLASSEXW);
         windowClass.style         = CS_HREDRAW | CS_VREDRAW;
         windowClass.lpfnWndProc   = guiShellWndProc;
-        windowClass.hInstance     = state->m_instance;
+        windowClass.hInstance     = state->instance;
         windowClass.hCursor       = LoadCursorW(nullptr, IDC_ARROW);
         windowClass.lpszClassName = k_windowClassName.data();
 
         // SAFETY: windowClass is fully initialized and lives for this call; the
         // atom it returns is recorded so the destructor can unregister the class.
-        state->m_windowClass = RegisterClassExW(&windowClass);
-        if (state->m_windowClass == 0)
+        state->windowClass = RegisterClassExW(&windowClass);
+        if (state->windowClass == 0)
         {
             return shellHresult(
                 "register the window class",
@@ -313,13 +313,13 @@ namespace uf::workbench::platform
             );
         }
 
-        auto const title  = widenAscii(config.m_title);
-        auto const width  = checkedCast<int>(config.m_width).value_or(1280);
-        auto const height = checkedCast<int>(config.m_height).value_or(720);
+        auto const title  = widenAscii(config.title);
+        auto const width  = checkedCast<int>(config.width).value_or(1280);
+        auto const height = checkedCast<int>(config.height).value_or(720);
 
         // SAFETY: the class atom and instance are live; the returned window is
         // recorded in state and torn down by the destructor.
-        state->m_window = CreateWindowExW(
+        state->window = CreateWindowExW(
             0,
             k_windowClassName.data(),
             title.c_str(),
@@ -330,10 +330,10 @@ namespace uf::workbench::platform
             height,
             nullptr,
             nullptr,
-            state->m_instance,
+            state->instance,
             nullptr
         );
-        if (state->m_window == nullptr)
+        if (state->window == nullptr)
         {
             return shellHresult(
                 "create the window",
@@ -344,13 +344,13 @@ namespace uf::workbench::platform
         // SAFETY: state outlives the window, so publishing its address for the
         // window procedure to read back cannot dangle.
         auto const userData = reinterpret_cast<LONG_PTR>(state.get());
-        SetWindowLongPtrW(state->m_window, GWLP_USERDATA, userData);
+        SetWindowLongPtrW(state->window, GWLP_USERDATA, userData);
 
         auto swapChainDesc                        = DXGI_SWAP_CHAIN_DESC{};
         swapChainDesc.BufferCount                 = k_swapChainBufferCount;
         swapChainDesc.BufferDesc.Format           = DXGI_FORMAT_R8G8B8A8_UNORM;
         swapChainDesc.BufferUsage                 = DXGI_USAGE_RENDER_TARGET_OUTPUT;
-        swapChainDesc.OutputWindow                = state->m_window;
+        swapChainDesc.OutputWindow                = state->window;
         swapChainDesc.SampleDesc.Count = 1U;
         swapChainDesc.Windowed         = TRUE;
         swapChainDesc.SwapEffect                  = DXGI_SWAP_EFFECT_DISCARD;
@@ -380,52 +380,52 @@ namespace uf::workbench::platform
                 static_cast<UINT>(featureLevels.size()),
                 D3D11_SDK_VERSION,
                 &swapChainDesc,
-                state->m_swapChain.put(),
-                state->m_device.put(),
+                state->swapChain.put(),
+                state->device.put(),
                 &selectedLevel,
-                state->m_context.put()
+                state->context.put()
             );
             if (SUCCEEDED(deviceResult))
             {
                 break;
             }
-            state->m_swapChain = nullptr;
-            state->m_device    = nullptr;
-            state->m_context   = nullptr;
+            state->swapChain = nullptr;
+            state->device    = nullptr;
+            state->context   = nullptr;
         }
-        if (FAILED(deviceResult) || !state->m_device || !state->m_swapChain)
+        if (FAILED(deviceResult) || !state->device || !state->swapChain)
         {
             return shellHresult("create the Direct3D 11 device", deviceResult);
         }
 
         UF_TRY_VALUE(
             renderTarget,
-            createRenderTarget(*state->m_device, *state->m_swapChain)
+            createRenderTarget(*state->device, *state->swapChain)
         );
-        state->m_renderTarget = std::move(renderTarget);
+        state->renderTarget = std::move(renderTarget);
 
         // SAFETY: the window handle is live; showing and updating it retains no
         // pointer and only queues paint work.
-        static_cast<void>(ShowWindow(state->m_window, SW_SHOWDEFAULT));
-        static_cast<void>(UpdateWindow(state->m_window));
+        static_cast<void>(ShowWindow(state->window, SW_SHOWDEFAULT));
+        static_cast<void>(UpdateWindow(state->window));
 
         if (ImGui::CreateContext() == nullptr)
         {
             return shellFailure("workbench GUI shell failed to create the ImGui context");
         }
-        state->m_imguiContext = true;
+        state->imguiContext = true;
 
         // Persist the docking layout between launches, so the panels come back
         // where they were left rather than floating. A smoke run is excluded: it
         // draws a handful of frames with no layout of its own and would overwrite
         // the arrangement the user actually made.
-        auto const settingsPath = state->m_smokeFrames.has_value()
+        auto const settingsPath = state->smokeFrames.has_value()
             ? std::nullopt
             : layoutSettingsPath();
         if (settingsPath.has_value())
         {
-            state->m_layoutSettingsPath = settingsPath->string();
-            ImGui::GetIO().IniFilename  = state->m_layoutSettingsPath.c_str();
+            state->layoutSettingsPath = settingsPath->string();
+            ImGui::GetIO().IniFilename  = state->layoutSettingsPath.c_str();
         }
         else
         {
@@ -474,30 +474,30 @@ namespace uf::workbench::platform
             }
         }
 
-        if (!ImGui_ImplWin32_Init(state->m_window))
+        if (!ImGui_ImplWin32_Init(state->window))
         {
             return shellFailure("workbench GUI shell failed to initialize the Win32 backend");
         }
-        state->m_win32Backend = true;
+        state->win32Backend = true;
 
-        if (!ImGui_ImplDX11_Init(state->m_device.get(), state->m_context.get()))
+        if (!ImGui_ImplDX11_Init(state->device.get(), state->context.get()))
         {
             return shellFailure("workbench GUI shell failed to initialize the Direct3D 11 backend");
         }
-        state->m_dx11Backend = true;
+        state->dx11Backend = true;
 
-        UF_TRY_VALUE(textures, TextureCache::create(*state->m_device));
-        state->m_textures = std::move(textures);
+        UF_TRY_VALUE(textures, TextureCache::create(*state->device));
+        state->textures = std::move(textures);
 
         return GuiShell{std::move(state)};
     }
 
     auto GuiShell::textures() noexcept -> TextureCache&
     {
-        return *m_state->m_textures;
+        return *m_state->textures;
     }
 
-    auto GuiShell::run(GuiFrameCallback const& callback) -> Status
+    auto GuiShell::run(FrameCallback const& callback) -> Status
     {
         auto& shell = *m_state;
         auto renderedFrames = uint32{0};
@@ -522,7 +522,7 @@ namespace uf::workbench::platform
                 break;
             }
 
-            if (shell.m_pendingWidth != 0U && shell.m_pendingHeight != 0U)
+            if (shell.pendingWidth != 0U && shell.pendingHeight != 0U)
             {
                 // SAFETY: DXGI ResizeBuffers requires every outstanding reference
                 // to the swap chain's back buffers to be released first. The
@@ -534,13 +534,13 @@ namespace uf::workbench::platform
                 // view before resizing; the next frame's ImGui pass re-binds the
                 // whole pipeline. The device, context, and swap chain stay owned
                 // by shell throughout.
-                shell.m_context->OMSetRenderTargets(0U, nullptr, nullptr);
-                shell.m_context->ClearState();
-                shell.m_renderTarget = nullptr;
-                auto const resizeResult = shell.m_swapChain->ResizeBuffers(
+                shell.context->OMSetRenderTargets(0U, nullptr, nullptr);
+                shell.context->ClearState();
+                shell.renderTarget = nullptr;
+                auto const resizeResult = shell.swapChain->ResizeBuffers(
                     0U,
-                    shell.m_pendingWidth,
-                    shell.m_pendingHeight,
+                    shell.pendingWidth,
+                    shell.pendingHeight,
                     DXGI_FORMAT_UNKNOWN,
                     0U
                 );
@@ -550,11 +550,11 @@ namespace uf::workbench::platform
                 }
                 UF_TRY_VALUE(
                     renderTarget,
-                    createRenderTarget(*shell.m_device, *shell.m_swapChain)
+                    createRenderTarget(*shell.device, *shell.swapChain)
                 );
-                shell.m_renderTarget  = std::move(renderTarget);
-                shell.m_pendingWidth  = 0U;
-                shell.m_pendingHeight = 0U;
+                shell.renderTarget  = std::move(renderTarget);
+                shell.pendingWidth  = 0U;
+                shell.pendingHeight = 0U;
             }
 
             ImGui_ImplDX11_NewFrame();
@@ -566,11 +566,11 @@ namespace uf::workbench::platform
             ImGui::Render();
 
             auto const clearColor = std::array{0.10F, 0.10F, 0.12F, 1.0F};
-            auto* p_renderTarget = shell.m_renderTarget.get();
+            auto* p_renderTarget = shell.renderTarget.get();
             // SAFETY: p_renderTarget is the live target owned by shell; the
             // context borrows it for this synchronous binding and clear.
-            shell.m_context->OMSetRenderTargets(1U, &p_renderTarget, nullptr);
-            shell.m_context->ClearRenderTargetView(
+            shell.context->OMSetRenderTargets(1U, &p_renderTarget, nullptr);
+            shell.context->ClearRenderTargetView(
                 p_renderTarget,
                 clearColor.data()
             );
@@ -578,12 +578,12 @@ namespace uf::workbench::platform
 
             // SAFETY: the swap chain is live; Present schedules the frame and
             // retains no caller pointer.
-            static_cast<void>(shell.m_swapChain->Present(1U, 0U));
+            static_cast<void>(shell.swapChain->Present(1U, 0U));
 
             ++renderedFrames;
             if (
-                shell.m_smokeFrames.has_value()
-                && renderedFrames >= *shell.m_smokeFrames
+                shell.smokeFrames.has_value()
+                && renderedFrames >= *shell.smokeFrames
             )
             {
                 quit = true;

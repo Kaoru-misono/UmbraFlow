@@ -62,15 +62,15 @@ namespace uf::workbench
             );
             UF_TRY_VALUE(contentHash, annotation::sha256(pngBytes));
             return IngestedSource{
-                .m_spec = annotation::AuthoringSourceSpec{
-                    .m_id          = id,
-                    .m_contentHash = contentHash,
-                    .m_fingerprint = fingerprint,
-                    .m_provenance  = std::move(provenance),
+                .spec = annotation::AuthoringSourceSpec{
+                    .id          = id,
+                    .contentHash = contentHash,
+                    .fingerprint = fingerprint,
+                    .provenance  = std::move(provenance),
                 },
-                .m_asset = annotation::AuthoringSourceAsset{
-                    .m_id       = id,
-                    .m_pngBytes = std::move(pngBytes),
+                .asset = annotation::AuthoringSourceAsset{
+                    .id       = id,
+                    .pngBytes = std::move(pngBytes),
                 },
             };
         }
@@ -84,10 +84,10 @@ namespace uf::workbench
         UF_TRY_VALUE(decoded, image::loadPng(path));
         return assembleSource(
             id,
-            decoded.m_width,
-            decoded.m_height,
+            decoded.width,
+            decoded.height,
             k_defaultSourceDpi,
-            decoded.m_pixels,
+            decoded.pixels,
             annotation::ImportedSourceProvenance{}
         );
     }
@@ -128,8 +128,8 @@ namespace uf::workbench
             dpi,
             rgba,
             annotation::WgcSourceProvenance{
-                .m_targetGeneration = frame.targetGeneration(),
-                .m_capturedAt       = std::move(capturedAt),
+                .targetGeneration = frame.targetGeneration(),
+                .capturedAt       = std::move(capturedAt),
             }
         );
     }

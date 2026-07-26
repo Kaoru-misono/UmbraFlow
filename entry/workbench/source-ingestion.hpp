@@ -25,8 +25,8 @@ namespace uf::workbench
     // higher-layer concern and the runtime never mints.
     struct IngestedSource final
     {
-        annotation::AuthoringSourceSpec  m_spec;
-        annotation::AuthoringSourceAsset m_asset;
+        annotation::AuthoringSourceSpec  spec;
+        annotation::AuthoringSourceAsset asset;
     };
 
     // Decodes an external PNG and re-encodes it into the project's canonical PNG

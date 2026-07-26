@@ -41,14 +41,14 @@ namespace uf::workbench
             {
                 // The worker's own token, so destroying the job cuts a search
                 // that is still sweeping a template rather than waiting it out.
-                auto workerPolicy           = policy;
-                workerPolicy.m_cancellation = std::move(stop);
+                auto workerPolicy         = policy;
+                workerPolicy.cancellation = std::move(stop);
                 return runModelCheck(document, assets, live, workerPolicy);
             }
         );
     }
 
-    auto ModelCheckJob::startWith(ModelCheckWork work) -> void
+    auto ModelCheckJob::startWith(Work work) -> void
     {
         if (!work || running())
         {
@@ -68,9 +68,9 @@ namespace uf::workbench
             {
                 auto result = work(std::move(stop));
 
-                auto const guard = std::scoped_lock{slot->m_mutex};
-                slot->m_result   = std::move(result);
-                slot->m_finished = true;
+                auto const guard = std::scoped_lock{slot->mutex};
+                slot->result   = std::move(result);
+                slot->finished = true;
             }
         };
     }
@@ -81,8 +81,8 @@ namespace uf::workbench
         {
             return false;
         }
-        auto const guard = std::scoped_lock{m_slot->m_mutex};
-        return !m_slot->m_finished;
+        auto const guard = std::scoped_lock{m_slot->mutex};
+        return !m_slot->finished;
     }
 
     auto ModelCheckJob::discard() -> void
@@ -104,13 +104,13 @@ namespace uf::workbench
 
         auto taken = std::optional<Result<ModelCheck>>{};
         {
-            auto const guard = std::scoped_lock{m_slot->m_mutex};
-            if (!m_slot->m_finished)
+            auto const guard = std::scoped_lock{m_slot->mutex};
+            if (!m_slot->finished)
             {
                 return std::nullopt;
             }
-            taken = std::move(m_slot->m_result);
-            m_slot->m_result.reset();
+            taken = std::move(m_slot->result);
+            m_slot->result.reset();
         }
 
         if (m_worker.joinable())

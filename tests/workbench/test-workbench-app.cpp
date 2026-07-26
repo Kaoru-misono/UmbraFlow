@@ -40,10 +40,10 @@ namespace uf::workbench
 
             auto source = annotation::AuthoringSource::create(
                 annotation::AuthoringSourceSpec{
-                    .m_id          = sourceId,
-                    .m_contentHash = *sourceHash,
-                    .m_fingerprint = fingerprint,
-                    .m_provenance  = annotation::ImportedSourceProvenance{},
+                    .id          = sourceId,
+                    .contentHash = *sourceHash,
+                    .fingerprint = fingerprint,
+                    .provenance  = annotation::ImportedSourceProvenance{},
                 }
             );
             REQUIRE(source.has_value());
@@ -54,7 +54,7 @@ namespace uf::workbench
                 {*source},
                 {
                     annotation::AuthoringRecognizerSpec{
-                        .m_definition = annotation::test::recognizer(
+                        .definition = annotation::test::recognizer(
                             fingerprint,
                             anchorId,
                             "home_marker",
@@ -62,7 +62,7 @@ namespace uf::workbench
                             annotation::test::pixelRect(0, 0, 2, 2),
                             annotation::test::pixelRect(0, 0, 4, 4)
                         ),
-                        .m_sourceId = sourceId,
+                        .sourceId = sourceId,
                     },
                 },
                 {annotation::test::page(pageId, "home", {anchorId})},
@@ -104,15 +104,15 @@ namespace uf::workbench
             REQUIRE(hash.has_value());
 
             return IngestedSource{
-                .m_spec = annotation::AuthoringSourceSpec{
-                    .m_id          = id,
-                    .m_contentHash = *hash,
-                    .m_fingerprint = fingerprint,
-                    .m_provenance  = annotation::ImportedSourceProvenance{},
+                .spec = annotation::AuthoringSourceSpec{
+                    .id          = id,
+                    .contentHash = *hash,
+                    .fingerprint = fingerprint,
+                    .provenance  = annotation::ImportedSourceProvenance{},
                 },
-                .m_asset = annotation::AuthoringSourceAsset{
-                    .m_id       = id,
-                    .m_pngBytes = std::move(bytes),
+                .asset = annotation::AuthoringSourceAsset{
+                    .id       = id,
+                    .pngBytes = std::move(bytes),
                 },
             };
         }
@@ -170,7 +170,7 @@ namespace uf::workbench
         CHECK_FALSE(state.canUndo());
 
         auto edited = state.draft();
-        edited.m_recognizers.at(0).m_name = "renamed_marker";
+        edited.recognizers.at(0).name = "renamed_marker";
 
         auto const applied = state.applyEdit(edited);
         REQUIRE(applied.has_value());
@@ -178,7 +178,7 @@ namespace uf::workbench
         CHECK(state.dirty());
         CHECK(state.canUndo());
         CHECK_FALSE(state.canRedo());
-        CHECK(state.draft().m_recognizers.at(0).m_name == "renamed_marker");
+        CHECK(state.draft().recognizers.at(0).name == "renamed_marker");
 
         state.markSaved();
         CHECK_FALSE(state.dirty());
@@ -200,16 +200,16 @@ namespace uf::workbench
         auto state = appState();
 
         auto edited = state.draft();
-        edited.m_recognizers.at(0).m_name = "renamed_marker";
+        edited.recognizers.at(0).name = "renamed_marker";
         REQUIRE(state.applyEdit(edited).has_value());
 
         CHECK(state.undo());
-        CHECK(state.draft().m_recognizers.at(0).m_name == "home_marker");
+        CHECK(state.draft().recognizers.at(0).name == "home_marker");
         CHECK_FALSE(state.canUndo());
         CHECK(state.canRedo());
 
         CHECK(state.redo());
-        CHECK(state.draft().m_recognizers.at(0).m_name == "renamed_marker");
+        CHECK(state.draft().recognizers.at(0).name == "renamed_marker");
         CHECK(state.canUndo());
         CHECK_FALSE(state.canRedo());
     }
@@ -223,10 +223,10 @@ namespace uf::workbench
         REQUIRE(state.selectedSourceId().has_value());
         CHECK(*state.selectedSourceId() == sourceId);
 
-        state.setCanvasView(CanvasView{.m_zoom = 2.5F, .m_panX = 4.0F, .m_panY = 8.0F});
-        CHECK(state.canvasView().m_zoom == doctest::Approx(2.5F));
-        CHECK(state.canvasView().m_panX == doctest::Approx(4.0F));
-        CHECK(state.canvasView().m_panY == doctest::Approx(8.0F));
+        state.setCanvasView(CanvasView{.zoom = 2.5F, .panX = 4.0F, .panY = 8.0F});
+        CHECK(state.canvasView().zoom == doctest::Approx(2.5F));
+        CHECK(state.canvasView().panX == doctest::Approx(4.0F));
+        CHECK(state.canvasView().panY == doctest::Approx(8.0F));
     }
 
     TEST_CASE("compiler inputs after an undone import cover only document sources")
@@ -291,7 +291,7 @@ namespace uf::workbench
         auto const assets = state.compilerSourceAssets();
         REQUIRE(assets.has_value());
         REQUIRE(assets->size() == 1U);
-        CHECK(assets->front().m_id == annotation::test::sourceId(k_importA));
+        CHECK(assets->front().id == annotation::test::sourceId(k_importA));
     }
 
     TEST_CASE("importing after an undone import compiles exactly the newer source")
@@ -313,7 +313,7 @@ namespace uf::workbench
         auto const assets = state.compilerSourceAssets();
         REQUIRE(assets.has_value());
         REQUIRE(assets->size() == 1U);
-        CHECK(assets->front().m_id == annotation::test::sourceId(k_importB));
+        CHECK(assets->front().id == annotation::test::sourceId(k_importB));
     }
 
     TEST_CASE("a committed edit clears the stored preview")
@@ -323,7 +323,7 @@ namespace uf::workbench
         REQUIRE(state.lastPreview().has_value());
 
         auto edited = state.draft();
-        edited.m_recognizers.at(0).m_name = "renamed_marker";
+        edited.recognizers.at(0).name = "renamed_marker";
         REQUIRE(state.applyEdit(edited).has_value());
 
         CHECK_FALSE(state.lastPreview().has_value());

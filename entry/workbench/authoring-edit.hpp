@@ -18,61 +18,61 @@ namespace uf::workbench
 
     struct EditableTemplateOffset final
     {
-        uint32 m_x{};
-        uint32 m_y{};
+        uint32 x{};
+        uint32 y{};
     };
 
     struct EditableSource final
     {
-        annotation::SourceId           m_id;
-        annotation::ContentHash        m_contentHash;
-        annotation::ProjectFingerprint m_fingerprint;
-        annotation::SourceProvenance   m_provenance{};
+        annotation::SourceId           id;
+        annotation::ContentHash        contentHash;
+        annotation::ProjectFingerprint fingerprint;
+        annotation::SourceProvenance   provenance{};
     };
 
     struct EditableRecognizer final
     {
-        annotation::RecognizerId              m_id;
-        std::string                           m_name{};
-        annotation::AnnotationType            m_annotationType{};
-        annotation::SourceId                  m_sourceId;
-        PixelRect                             m_templateRect;
-        PixelRect                             m_searchRoi;
-        uint32                                m_similarityBasisPoints{};
-        std::optional<EditableTemplateOffset> m_defaultClick{};
-        std::vector<annotation::PageId>       m_allowedPageIds{};
+        annotation::RecognizerId              id;
+        std::string                           name{};
+        annotation::AnnotationType            annotationType{};
+        annotation::SourceId                  sourceId;
+        PixelRect                             templateRect;
+        PixelRect                             searchRoi;
+        uint32                                similarityBasisPoints{};
+        std::optional<EditableTemplateOffset> defaultClick{};
+        std::vector<annotation::PageId>       allowedPageIds{};
 
         // The author marked these pixels as reusable on other pages. Intent
         // rather than fact: it is set before any second page exists, which is
         // the whole point -- it is what puts the element somewhere the author
         // can reach it from the page they want to put it on.
-        bool m_shared{};
+        bool shared{};
     };
 
     struct EditablePage final
     {
-        annotation::PageId                    m_id;
-        std::string                           m_name{};
-        std::vector<annotation::RecognizerId> m_required{};
-        std::vector<annotation::RecognizerId> m_forbidden{};
+        annotation::PageId                    id;
+        std::string                           name{};
+        std::vector<annotation::RecognizerId> required{};
+        std::vector<annotation::RecognizerId> forbidden{};
     };
 
     struct EditableRegression final
     {
-        annotation::RegressionId             m_id;
-        annotation::SourceId                 m_sourceId;
-        annotation::RegressionClassification m_classification{};
-        annotation::RegressionExpectation    m_expectation;
+        annotation::RegressionId             id;
+        annotation::SourceId                 sourceId;
+        annotation::RegressionClassification classification{};
+        annotation::RegressionExpectation    expectation;
     };
 
     struct AuthoringDraft final
     {
-        annotation::ProjectId           m_projectId;
-        annotation::ProjectFingerprint  m_fingerprint;
-        std::vector<EditableSource>     m_sources{};
-        std::vector<EditableRecognizer> m_recognizers{};
-        std::vector<EditablePage>       m_pages{};
-        std::vector<EditableRegression> m_regressions{};
+        annotation::ProjectId           projectId;
+        annotation::ProjectFingerprint  fingerprint;
+        std::vector<EditableSource>     sources{};
+        std::vector<EditableRecognizer> recognizers{};
+        std::vector<EditablePage>       pages{};
+        std::vector<EditableRegression> regressions{};
     };
 
     [[nodiscard]]
@@ -99,20 +99,20 @@ namespace uf::workbench
     // testable; the names are derived from the draft.
     struct NewPageSpec final
     {
-        annotation::PageId       m_pageId;
-        annotation::RecognizerId m_anchorId;
-        annotation::RegressionId m_regressionId;
-        annotation::SourceId     m_sourceId;
-        PixelRect                m_templateRect;
-        PixelRect                m_searchRoi;
-        uint32                   m_similarityBasisPoints{};
+        annotation::PageId       pageId;
+        annotation::RecognizerId anchorId;
+        annotation::RegressionId regressionId;
+        annotation::SourceId     sourceId;
+        PixelRect                templateRect;
+        PixelRect                searchRoi;
+        uint32                   similarityBasisPoints{};
     };
 
     struct CreatedPage final
     {
-        AuthoringDraft m_draft;
-        std::string    m_pageName{};
-        std::string    m_anchorName{};
+        AuthoringDraft draft;
+        std::string    pageName{};
+        std::string    anchorName{};
     };
 
     // Creates a page from one captured screen in a single edit: the first anchor
@@ -141,19 +141,19 @@ namespace uf::workbench
 
     struct PageMemberSpec final
     {
-        annotation::RecognizerId m_recognizerId;
-        annotation::PageId       m_pageId;
-        annotation::SourceId     m_sourceId;
-        PixelRect                m_templateRect;
-        PixelRect                m_searchRoi;
-        uint32                   m_similarityBasisPoints{};
-        PageMemberKind           m_kind{};
+        annotation::RecognizerId recognizerId;
+        annotation::PageId       pageId;
+        annotation::SourceId     sourceId;
+        PixelRect                templateRect;
+        PixelRect                searchRoi;
+        uint32                   similarityBasisPoints{};
+        PageMemberKind           kind{};
     };
 
     struct AddedPageMember final
     {
-        AuthoringDraft m_draft;
-        std::string    m_name{};
+        AuthoringDraft draft;
+        std::string    name{};
     };
 
     // Adds one recognizer to a page, typed and linked in the same edit: an anchor
@@ -203,10 +203,10 @@ namespace uf::workbench
 
     struct SharedRegionSpec final
     {
-        annotation::RecognizerId m_recognizerId;
-        annotation::RecognizerId m_shareFrom;
-        annotation::PageId       m_pageId;
-        PixelRect                m_searchRoi;
+        annotation::RecognizerId recognizerId;
+        annotation::RecognizerId shareFrom;
+        annotation::PageId       pageId;
+        PixelRect                searchRoi;
     };
 
     // Reuses one interactive region template on another page: a second
@@ -226,8 +226,8 @@ namespace uf::workbench
 
     struct RetemplatedRegion final
     {
-        AuthoringDraft m_draft;
-        std::size_t    m_movedMembers{};
+        AuthoringDraft draft;
+        std::size_t    movedMembers{};
     };
 
     // Moves a recognizer's template rectangle, carrying every other member of its
@@ -247,9 +247,9 @@ namespace uf::workbench
 
     struct ScreenClaimSpec final
     {
-        annotation::RegressionId m_regressionId;
-        annotation::SourceId     m_sourceId;
-        annotation::PageId       m_pageId;
+        annotation::RegressionId regressionId;
+        annotation::SourceId     sourceId;
+        annotation::PageId       pageId;
     };
 
     // Records that one captured screen is expected to resolve to one page,
@@ -273,11 +273,11 @@ namespace uf::workbench
     // lossy, so neither may happen silently.
     struct RetypedRecognizer final
     {
-        AuthoringDraft                    m_draft;
-        std::optional<annotation::PageId> m_authorizedPage{};
-        std::size_t                       m_withdrawnRoles{};
-        std::size_t                       m_clearedAuthorizations{};
-        bool                              m_clearedClick{};
+        AuthoringDraft                    draft;
+        std::optional<annotation::PageId> authorizedPage{};
+        std::size_t                       withdrawnRoles{};
+        std::size_t                       clearedAuthorizations{};
+        bool                              clearedClick{};
     };
 
     // Changes one recognizer's annotation type, repairing in the same draft every
@@ -302,10 +302,10 @@ namespace uf::workbench
     // what was deleted, and the rest stay zero.
     struct DeletedEntity final
     {
-        AuthoringDraft m_draft;
-        std::size_t    m_withdrawnRoles{};
-        std::size_t    m_clearedAuthorizations{};
-        std::size_t    m_removedRegressions{};
+        AuthoringDraft draft;
+        std::size_t    withdrawnRoles{};
+        std::size_t    clearedAuthorizations{};
+        std::size_t    removedRegressions{};
     };
 
     // Removes one recognizer and withdraws it from every page signature that
@@ -345,6 +345,16 @@ namespace uf::workbench
         std::vector<annotation::AuthoringDocument> m_undo{};
         std::vector<annotation::AuthoringDocument> m_redo{};
 
+        // A monotonic count of the versions this history has moved through. It
+        // advances on every applied change and on every undo and redo, so no
+        // two document positions the author can reach share a value within a
+        // session. An EditPage records it at open() and its commit is refused
+        // when the count no longer matches -- a draft built against a version
+        // the author has since undone can then never overwrite the one that
+        // replaced it. Undo does not restore the prior count: the revision is
+        // the history's position in time, not the document's identity.
+        uint64 m_revision{};
+
     public:
         explicit AuthoringEditHistory(
             annotation::AuthoringDocument document
@@ -357,6 +367,10 @@ namespace uf::workbench
         [[nodiscard]] auto draft() const -> AuthoringDraft;
         [[nodiscard]] auto canUndo() const noexcept -> bool;
         [[nodiscard]] auto canRedo() const noexcept -> bool;
+
+        // The current position in the sequence of versions, for the stale-commit
+        // guard. Advances on every applied change, undo, and redo.
+        [[nodiscard]] auto revision() const noexcept -> uint64;
 
         [[nodiscard]]
         auto apply(

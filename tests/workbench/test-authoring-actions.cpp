@@ -45,10 +45,10 @@ namespace uf::workbench
 
             auto source = annotation::AuthoringSource::create(
                 annotation::AuthoringSourceSpec{
-                    .m_id          = sourceId,
-                    .m_contentHash = *sourceHash,
-                    .m_fingerprint = fingerprint,
-                    .m_provenance  = annotation::ImportedSourceProvenance{},
+                    .id          = sourceId,
+                    .contentHash = *sourceHash,
+                    .fingerprint = fingerprint,
+                    .provenance  = annotation::ImportedSourceProvenance{},
                 }
             );
             REQUIRE(source.has_value());
@@ -59,7 +59,7 @@ namespace uf::workbench
                 {*source},
                 {
                     annotation::AuthoringRecognizerSpec{
-                        .m_definition = annotation::test::recognizer(
+                        .definition = annotation::test::recognizer(
                             fingerprint,
                             anchorId,
                             "home_marker",
@@ -67,7 +67,7 @@ namespace uf::workbench
                             annotation::test::pixelRect(0, 0, 2, 2),
                             annotation::test::pixelRect(0, 0, 4, 4)
                         ),
-                        .m_sourceId = sourceId,
+                        .sourceId = sourceId,
                     },
                 },
                 {annotation::test::page(pageId, "home", {anchorId})},
@@ -89,8 +89,8 @@ namespace uf::workbench
         auto renamedDraft(AppState const& state, std::string name) -> AuthoringDraft
         {
             auto draft = state.draft();
-            REQUIRE_FALSE(draft.m_recognizers.empty());
-            draft.m_recognizers.front().m_name = std::move(name);
+            REQUIRE_FALSE(draft.recognizers.empty());
+            draft.recognizers.front().name = std::move(name);
             return draft;
         }
     }
@@ -111,9 +111,9 @@ namespace uf::workbench
 
         // Panels are still borrowing into the document at this point, so the
         // rename must not have replaced it yet.
-        CHECK(ui.m_pendingEdit.has_value());
+        CHECK(ui.pendingEdit.has_value());
         CHECK(state.document().catalog().recognizers().front().name().value() == "home_marker");
-        CHECK(ui.m_statusLine.empty());
+        CHECK(ui.statusLine.empty());
     }
 
     TEST_CASE("the parked edit is committed once and then cleared")
@@ -124,15 +124,15 @@ namespace uf::workbench
         requestEdit(ui, renamedDraft(state, "renamed"), "renamed the marker");
         applyPendingEdit(state, ui);
 
-        CHECK_FALSE(ui.m_pendingEdit.has_value());
+        CHECK_FALSE(ui.pendingEdit.has_value());
         CHECK(state.document().catalog().recognizers().front().name().value() == "renamed");
-        CHECK(ui.m_statusLine == "renamed the marker");
+        CHECK(ui.statusLine == "renamed the marker");
         CHECK(state.canUndo());
 
         // A second apply in the next frame must not repeat it.
-        ui.m_statusLine.clear();
+        ui.statusLine.clear();
         applyPendingEdit(state, ui);
-        CHECK(ui.m_statusLine.empty());
+        CHECK(ui.statusLine.empty());
     }
 
     TEST_CASE("a second request in the same frame does not displace the first")
@@ -147,7 +147,7 @@ namespace uf::workbench
         // One frame commits one edit, so the second press is dropped rather than
         // silently overwriting an edit the author already made.
         CHECK(state.document().catalog().recognizers().front().name().value() == "first");
-        CHECK(ui.m_statusLine == "first edit");
+        CHECK(ui.statusLine == "first edit");
     }
 
     TEST_CASE("an invalid draft is reported and leaves the document untouched")
@@ -160,10 +160,10 @@ namespace uf::workbench
         requestEdit(ui, renamedDraft(state, ""), "renamed the marker");
         applyPendingEdit(state, ui);
 
-        CHECK(ui.m_statusLine.find("edit rejected") != std::string::npos);
+        CHECK(ui.statusLine.find("edit rejected") != std::string::npos);
         CHECK(state.document().catalog().recognizers().front().name().value() == "home_marker");
         CHECK_FALSE(state.canUndo());
-        CHECK_FALSE(ui.m_pendingEdit.has_value());
+        CHECK_FALSE(ui.pendingEdit.has_value());
     }
 
     TEST_CASE("an entity is selected only once its edit has landed")
@@ -214,13 +214,13 @@ namespace uf::workbench
         auto state = appState();
         auto ui    = PanelUiState{};
 
-        ui.m_modelCheck.startWith(
+        ui.modelCheck.startWith(
             [](std::stop_token) -> Result<ModelCheck>
             {
                 return ModelCheck{};
             }
         );
-        while (ui.m_modelCheck.running())
+        while (ui.modelCheck.running())
         {
             std::this_thread::sleep_for(std::chrono::milliseconds{1});
         }
@@ -230,7 +230,7 @@ namespace uf::workbench
 
         // Its verdict would describe marks that have since moved, so it must not
         // survive to be collected against the new document.
-        CHECK_FALSE(ui.m_modelCheck.takeResult().has_value());
+        CHECK_FALSE(ui.modelCheck.takeResult().has_value());
     }
 
     TEST_CASE("a refused deletion is reported and parks nothing")
@@ -243,8 +243,8 @@ namespace uf::workbench
             "page"
         );
 
-        CHECK_FALSE(ui.m_pendingEdit.has_value());
-        CHECK(ui.m_statusLine.find("page") != std::string::npos);
+        CHECK_FALSE(ui.pendingEdit.has_value());
+        CHECK(ui.statusLine.find("page") != std::string::npos);
     }
 
     TEST_CASE("a deletion states what it withdrew along the way")
@@ -253,11 +253,11 @@ namespace uf::workbench
 
         auto const quiet = deletionSummary(
             "recognizer",
-            DeletedEntity{.m_draft = state.draft(), .m_withdrawnRoles = 0U}
+            DeletedEntity{.draft = state.draft(), .withdrawnRoles = 0U}
         );
         auto const noisy = deletionSummary(
             "recognizer",
-            DeletedEntity{.m_draft = state.draft(), .m_withdrawnRoles = 3U}
+            DeletedEntity{.draft = state.draft(), .withdrawnRoles = 3U}
         );
 
         // A membership the author did not ask to remove must not be silent.

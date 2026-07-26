@@ -31,8 +31,8 @@ namespace uf::workbench
     // out-parameters so the coordinate pair stays a single value.
     struct CanvasPoint final
     {
-        float m_x{};
-        float m_y{};
+        float x{};
+        float y{};
     };
 
     // Maps a source pixel to the canvas screen point that displays it, given the

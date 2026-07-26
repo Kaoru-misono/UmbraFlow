@@ -92,11 +92,11 @@ namespace uf::workbench
             REQUIRE(deadline.has_value());
 
             auto const report = annotation::runAuthoringRegressions(
-                loaded->m_document,
-                loaded->m_sources,
+                loaded->document,
+                loaded->sources,
                 annotation::RecognitionPolicy{
-                    .m_maximumPixelComparisons = k_comparisonBudget,
-                    .m_deadline                = deadline,
+                    .maximumPixelComparisons = k_comparisonBudget,
+                    .deadline                = deadline,
                 }
             );
             auto const reportInfo = report
@@ -104,18 +104,18 @@ namespace uf::workbench
                 : toString(report.error());
             INFO("run: " << reportInfo);
             REQUIRE(report.has_value());
-            REQUIRE(report->m_completedAllCases);
+            REQUIRE(report->completedAllCases);
 
-            for (auto const& caseReport : report->m_cases)
+            for (auto const& caseReport : report->cases)
             {
                 INFO(
                     "case "
-                    << caseReport.m_id.value().toString()
+                    << caseReport.id.value().toString()
                     << " (source "
-                    << caseReport.m_sourceId.value().toString()
+                    << caseReport.sourceId.value().toString()
                     << ")"
                 );
-                CHECK(caseReport.m_matchesExpectation);
+                CHECK(caseReport.matchesExpectation);
             }
         }
     }

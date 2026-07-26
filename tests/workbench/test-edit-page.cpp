@@ -1,0 +1,474 @@
+#include "../annotation/test-helpers.hpp"
+
+#include <authoring-actions.hpp>
+#include <authoring-edit.hpp>
+#include <edit-page.hpp>
+#include <page-view.hpp>
+#include <panel-state.hpp>
+#include <app/workbench-app.hpp>
+
+#include <annotation/authoring-document.hpp>
+#include <annotation/catalog.hpp>
+#include <annotation/content-hash.hpp>
+
+#include <core/error/result.hpp>
+
+#include <doctest/doctest.h>
+
+#include <algorithm>
+#include <cstddef>
+#include <filesystem>
+#include <optional>
+#include <span>
+#include <string>
+#include <utility>
+#include <vector>
+
+namespace uf::workbench
+{
+    namespace
+    {
+        constexpr auto k_sourceId  = "00000000-0000-0000-0000-000000000801";
+        constexpr auto k_anchorId  = "00000000-0000-0000-0000-000000000811";
+        constexpr auto k_awayId    = "00000000-0000-0000-0000-000000000812";
+        constexpr auto k_regionId  = "00000000-0000-0000-0000-000000000821";
+        constexpr auto k_homePage  = "00000000-0000-0000-0000-000000000831";
+        constexpr auto k_awayPage  = "00000000-0000-0000-0000-000000000832";
+        constexpr auto k_regId     = "00000000-0000-0000-0000-000000000841";
+
+        // A two-page project: "home" identified by home_marker with an
+        // interactive region on it, and "away" identified by away_marker. The
+        // source is recorded as an example of the home page. Enough shape to
+        // reach every EditPage operation the phase-1 plan names.
+        [[nodiscard]]
+        auto document() -> annotation::AuthoringDocument
+        {
+            auto const fingerprint = annotation::test::fingerprint(8, 8, 96, 96);
+            auto const sourceId    = annotation::test::sourceId(k_sourceId);
+            auto const anchorId    = annotation::test::recognizerId(k_anchorId);
+            auto const awayId      = annotation::test::recognizerId(k_awayId);
+            auto const regionId    = annotation::test::recognizerId(k_regionId);
+            auto const homePage    = annotation::test::pageId(k_homePage);
+            auto const awayPage    = annotation::test::pageId(k_awayPage);
+            auto const sourceHash  = annotation::sha256(
+                std::span<std::byte const>{}
+            );
+            REQUIRE(sourceHash.has_value());
+
+            auto source = annotation::AuthoringSource::create(
+                annotation::AuthoringSourceSpec{
+                    .id          = sourceId,
+                    .contentHash = *sourceHash,
+                    .fingerprint = fingerprint,
+                    .provenance  = annotation::ImportedSourceProvenance{},
+                }
+            );
+            REQUIRE(source.has_value());
+
+            auto created = annotation::AuthoringDocument::create(
+                annotation::test::projectId(),
+                fingerprint,
+                {*source},
+                {
+                    annotation::AuthoringRecognizerSpec{
+                        .definition = annotation::test::recognizer(
+                            fingerprint,
+                            anchorId,
+                            "home_marker",
+                            annotation::AnnotationType::PageAnchor,
+                            annotation::test::pixelRect(0, 0, 2, 2),
+                            annotation::test::pixelRect(0, 0, 4, 4)
+                        ),
+                        .sourceId = sourceId,
+                    },
+                    annotation::AuthoringRecognizerSpec{
+                        .definition = annotation::test::recognizer(
+                            fingerprint,
+                            awayId,
+                            "away_marker",
+                            annotation::AnnotationType::PageAnchor,
+                            annotation::test::pixelRect(0, 0, 2, 2),
+                            annotation::test::pixelRect(0, 0, 4, 4)
+                        ),
+                        .sourceId = sourceId,
+                    },
+                    annotation::AuthoringRecognizerSpec{
+                        .definition = annotation::test::recognizer(
+                            fingerprint,
+                            regionId,
+                            "daily_button",
+                            annotation::AnnotationType::ActionTarget,
+                            annotation::test::pixelRect(4, 4, 2, 2),
+                            annotation::test::pixelRect(3, 3, 4, 4),
+                            {homePage}
+                        ),
+                        .sourceId = sourceId,
+                    },
+                },
+                {
+                    annotation::test::page(homePage, "home", {anchorId}),
+                    annotation::test::page(awayPage, "away", {awayId}),
+                },
+                {
+                    annotation::RegressionCase{
+                        annotation::RegressionSpec{
+                            .id       = annotation::test::regressionId(k_regId),
+                            .sourceId = sourceId,
+                            .classification =
+                                annotation::RegressionClassification::Positive,
+                            .expectation    = annotation::ResolvedRegression{
+                                .pageId = homePage,
+                            },
+                        }
+                    },
+                }
+            );
+            REQUIRE(created.has_value());
+            return *std::move(created);
+        }
+
+        [[nodiscard]]
+        auto appState() -> AppState
+        {
+            return AppState{
+                std::filesystem::path{"personal.workbench"},
+                document(),
+                {},
+            };
+        }
+
+        [[nodiscard]]
+        auto recognizerName(
+            AppState const& state,
+            annotation::RecognizerId id
+        ) -> std::string
+        {
+            for (auto const& recognizer : state.document().catalog().recognizers())
+            {
+                if (recognizer.id() == id)
+                {
+                    return recognizer.name().value();
+                }
+            }
+            return {};
+        }
+    }
+
+    TEST_CASE("an opened page edits and commits through the queue")
+    {
+        auto state = appState();
+        auto ui    = PanelUiState{};
+        auto const anchorId = annotation::test::recognizerId(k_anchorId);
+
+        auto page = EditPage::open(state, annotation::test::pageId(k_homePage));
+        REQUIRE(page.has_value());
+
+        auto anchor = page->anchor(anchorId);
+        REQUIRE(anchor.has_value());
+        CHECK(anchor->name() == "home_marker");
+        CHECK(anchor->rename("renamed_marker").has_value());
+
+        // The live document is untouched until the commit is applied: EditPage
+        // routes through the same one-per-frame queue the free functions use.
+        std::move(*page).commit(ui, "renamed the marker");
+        CHECK(recognizerName(state, anchorId) == "home_marker");
+
+        applyPendingEdit(state, ui);
+        CHECK(recognizerName(state, anchorId) == "renamed_marker");
+        CHECK(ui.statusLine == "renamed the marker");
+        CHECK(state.canUndo());
+    }
+
+    TEST_CASE("a commit over a stale base is refused after an undo")
+    {
+        auto state = appState();
+        auto ui    = PanelUiState{};
+        auto const anchorId = annotation::test::recognizerId(k_anchorId);
+
+        // A first edit lands so there is something to undo, and to advance the
+        // revision the second EditPage will be opened against.
+        {
+            auto first = EditPage::open(state, annotation::test::pageId(k_homePage));
+            REQUIRE(first.has_value());
+            REQUIRE(first->anchor(anchorId).has_value());
+            REQUIRE(first->anchor(anchorId)->rename("first_name").has_value());
+            std::move(*first).commit(ui, "first edit");
+            applyPendingEdit(state, ui);
+        }
+        REQUIRE(recognizerName(state, anchorId) == "first_name");
+
+        auto page = EditPage::open(state, annotation::test::pageId(k_homePage));
+        REQUIRE(page.has_value());
+        REQUIRE(page->anchor(anchorId)->rename("second_name").has_value());
+
+        // The author undoes between opening the page and committing it, so the
+        // version this draft was built against is no longer current.
+        REQUIRE(state.undo());
+        REQUIRE(recognizerName(state, anchorId) == "home_marker");
+
+        std::move(*page).commit(ui, "second edit");
+        applyPendingEdit(state, ui);
+
+        // The stale commit must not resurrect the undone version.
+        CHECK(ui.statusLine.find("rejected") != std::string::npos);
+        CHECK(recognizerName(state, anchorId) == "home_marker");
+    }
+
+    TEST_CASE("a rejected commit moves nothing")
+    {
+        auto state = appState();
+        auto ui    = PanelUiState{};
+        auto const anchorId = annotation::test::recognizerId(k_anchorId);
+
+        auto page = EditPage::open(state, annotation::test::pageId(k_homePage));
+        REQUIRE(page.has_value());
+        // An empty name cannot survive the rebuild, so the commit is refused.
+        REQUIRE(page->anchor(anchorId)->rename("").has_value());
+        std::move(*page).commit(ui, "renamed the marker");
+        applyPendingEdit(state, ui);
+
+        CHECK(ui.statusLine.find("edit rejected") != std::string::npos);
+        CHECK(recognizerName(state, anchorId) == "home_marker");
+        CHECK_FALSE(state.canUndo());
+    }
+
+    TEST_CASE("a second commit in one frame does not displace the first")
+    {
+        auto state = appState();
+        auto ui    = PanelUiState{};
+        auto const anchorId = annotation::test::recognizerId(k_anchorId);
+
+        auto first  = EditPage::open(state, annotation::test::pageId(k_homePage));
+        auto second = EditPage::open(state, annotation::test::pageId(k_homePage));
+        REQUIRE(first.has_value());
+        REQUIRE(second.has_value());
+        REQUIRE(first->anchor(anchorId)->rename("first").has_value());
+        REQUIRE(second->anchor(anchorId)->rename("second").has_value());
+
+        std::move(*first).commit(ui, "first edit");
+        std::move(*second).commit(ui, "second edit");
+        applyPendingEdit(state, ui);
+
+        CHECK(recognizerName(state, anchorId) == "first");
+        CHECK(ui.statusLine == "first edit");
+    }
+
+    TEST_CASE("a created member is selected only once its commit lands")
+    {
+        auto state = appState();
+        auto ui    = PanelUiState{};
+
+        auto page = EditPage::open(state, annotation::test::pageId(k_homePage));
+        REQUIRE(page.has_value());
+        auto added = page->placeAnchor(
+            EditPage::NewAnchorSpec{.sourceId = annotation::test::sourceId(k_sourceId)}
+        );
+        REQUIRE(added.has_value());
+        auto const addedId = added->id;
+
+        std::move(*page).commitSelecting(
+            ui,
+            "placed an identifying mark",
+            addedId,
+            std::optional<annotation::SourceId>{annotation::test::sourceId(k_sourceId)}
+        );
+
+        // Selecting before the commit lands would point the selection at an id a
+        // rejected edit never added.
+        CHECK_FALSE(state.selectedRecognizerId().has_value());
+
+        applyPendingEdit(state, ui);
+        REQUIRE(state.selectedRecognizerId().has_value());
+        CHECK(*state.selectedRecognizerId() == addedId);
+        CHECK(recognizerName(state, addedId) == "anchor_1");
+    }
+
+    TEST_CASE("placeExisting authorizes an existing region on this page")
+    {
+        auto state = appState();
+        auto ui    = PanelUiState{};
+        auto const regionId = annotation::test::recognizerId(k_regionId);
+        auto const awayPage = annotation::test::pageId(k_awayPage);
+
+        auto page = EditPage::open(state, awayPage);
+        REQUIRE(page.has_value());
+        CHECK(page->placeExisting(regionId).has_value());
+        std::move(*page).commit(ui, "placed daily_button on away");
+        applyPendingEdit(state, ui);
+
+        auto const* recognizer =
+            state.document().catalog().findRecognizer(regionId);
+        REQUIRE(recognizer != nullptr);
+        CHECK(std::ranges::contains(recognizer->allowedPageIds(), awayPage));
+    }
+
+    TEST_CASE("classifyScreen sets an existing case's classification")
+    {
+        auto state = appState();
+        auto ui    = PanelUiState{};
+        auto const sourceId = annotation::test::sourceId(k_sourceId);
+
+        auto page = EditPage::open(state, annotation::test::pageId(k_homePage));
+        REQUIRE(page.has_value());
+        CHECK(
+            page->classifyScreen(
+                sourceId,
+                annotation::RegressionClassification::Negative
+            ).has_value()
+        );
+        std::move(*page).commit(ui, "classified the screen");
+        applyPendingEdit(state, ui);
+
+        auto classification =
+            std::optional<annotation::RegressionClassification>{};
+        for (auto const& regression : state.document().regressions())
+        {
+            if (regression.sourceId() == sourceId)
+            {
+                classification = regression.classification();
+            }
+        }
+        REQUIRE(classification.has_value());
+        CHECK(*classification == annotation::RegressionClassification::Negative);
+    }
+
+    TEST_CASE("setTemplateRect carries every shared member of the element")
+    {
+        auto state = appState();
+        auto ui    = PanelUiState{};
+        auto const regionId = annotation::test::recognizerId(k_regionId);
+        auto const awayPage = annotation::test::pageId(k_awayPage);
+        auto const newRect  = annotation::test::pixelRect(3, 3, 3, 3);
+
+        auto page = EditPage::open(state, annotation::test::pageId(k_homePage));
+        REQUIRE(page.has_value());
+
+        // Mark the region reusable and place it on a second page, so a template
+        // correction has more than one member to carry.
+        REQUIRE(page->region(regionId)->setShared(true).has_value());
+        REQUIRE(page->region(regionId)->shareToPage(awayPage).has_value());
+        REQUIRE(page->region(regionId)->pagesPlacedOn().size() == 2U);
+
+        REQUIRE(page->region(regionId)->setTemplateRect(newRect).has_value());
+        std::move(*page).commit(ui, "moved the template");
+        applyPendingEdit(state, ui);
+
+        // Both the origin and the copy share the corrected pixels.
+        auto moved = std::size_t{0};
+        for (auto const& recognizer : state.document().catalog().recognizers())
+        {
+            if (recognizer.templateRect() == newRect)
+            {
+                ++moved;
+            }
+        }
+        CHECK(moved == 2U);
+    }
+
+    TEST_CASE("a page view assembles the authored data and ids")
+    {
+        auto const state = appState();
+        auto const anchorId = annotation::test::recognizerId(k_anchorId);
+        auto const regionId = annotation::test::recognizerId(k_regionId);
+
+        auto page = EditPage::open(state, annotation::test::pageId(k_homePage));
+        REQUIRE(page.has_value());
+        auto const view = page->view();
+
+        CHECK(view.id == annotation::test::pageId(k_homePage));
+        CHECK(view.name == "home");
+        REQUIRE(view.claimedScreen.has_value());
+        CHECK(*view.claimedScreen == annotation::test::sourceId(k_sourceId));
+
+        REQUIRE(view.identifiedBy.size() == 1U);
+        CHECK(view.identifiedBy.front().id == anchorId);
+        CHECK(view.identifiedBy.front().name == "home_marker");
+
+        REQUIRE(view.regions.size() == 1U);
+        CHECK(view.regions.front().id == regionId);
+        CHECK(view.regions.front().name == "daily_button");
+
+        // Two pages, so PageView::all yields both, in draft order.
+        auto const views = PageView::all(state.draft());
+        REQUIRE(views.size() == 2U);
+        CHECK(views.front().name == "home");
+        CHECK(views.back().name == "away");
+    }
+
+    TEST_CASE("createFrom builds a page around a screen and its first anchor")
+    {
+        auto state = appState();
+        auto ui    = PanelUiState{};
+        auto const sourceId = annotation::test::sourceId(k_sourceId);
+
+        auto page = EditPage::createFrom(state, sourceId);
+        REQUIRE(page.has_value());
+
+        // The page comes with exactly one identifying mark, which is what the
+        // pages panel selects once the commit lands.
+        auto const view = page->view();
+        REQUIRE(view.identifiedBy.size() == 1U);
+        auto const anchorId = view.identifiedBy.front().id;
+
+        std::move(*page).commitSelecting(
+            ui,
+            "added a page",
+            anchorId,
+            std::optional<annotation::SourceId>{sourceId}
+        );
+        CHECK_FALSE(state.selectedRecognizerId().has_value());
+
+        applyPendingEdit(state, ui);
+        CHECK(state.document().catalog().pages().size() == 3U);
+        REQUIRE(state.selectedRecognizerId().has_value());
+        CHECK(*state.selectedRecognizerId() == anchorId);
+    }
+
+    TEST_CASE("placeRegion authorizes a fresh interactive region on this page")
+    {
+        auto state = appState();
+        auto ui    = PanelUiState{};
+        auto const awayPage = annotation::test::pageId(k_awayPage);
+
+        auto page = EditPage::open(state, awayPage);
+        REQUIRE(page.has_value());
+        auto added = page->placeRegion(
+            EditPage::NewRegionSpec{.sourceId = annotation::test::sourceId(k_sourceId)}
+        );
+        REQUIRE(added.has_value());
+        auto const newId = added->id;
+        std::move(*page).commit(ui, "placed a region");
+        applyPendingEdit(state, ui);
+
+        auto const* recognizer =
+            state.document().catalog().findRecognizer(newId);
+        REQUIRE(recognizer != nullptr);
+        CHECK(
+            recognizer->annotationType()
+                == annotation::AnnotationType::ActionTarget
+        );
+        CHECK(std::ranges::contains(recognizer->allowedPageIds(), awayPage));
+    }
+
+    TEST_CASE("claimScreen records the screen as this page's example")
+    {
+        auto state = appState();
+        auto ui    = PanelUiState{};
+        auto const awayPage = annotation::test::pageId(k_awayPage);
+        auto const sourceId = annotation::test::sourceId(k_sourceId);
+
+        auto page = EditPage::open(state, awayPage);
+        REQUIRE(page.has_value());
+        CHECK(page->claimScreen(sourceId).has_value());
+        std::move(*page).commit(ui, "recorded the screen");
+        applyPendingEdit(state, ui);
+
+        // A screen resolves to one page, so the claim re-points the existing
+        // case; the away page's view now names the source as its example.
+        auto reopened = EditPage::open(state, awayPage);
+        REQUIRE(reopened.has_value());
+        auto const view = reopened->view();
+        REQUIRE(view.claimedScreen.has_value());
+        CHECK(*view.claimedScreen == sourceId);
+    }
+}

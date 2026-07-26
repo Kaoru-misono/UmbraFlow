@@ -132,6 +132,11 @@ namespace uf::workbench
         return m_history.canRedo();
     }
 
+    auto AppState::revision() const noexcept -> uint64
+    {
+        return m_history.revision();
+    }
+
     auto AppState::sources() const noexcept
         -> std::span<annotation::AuthoringSourceAsset const>
     {
@@ -149,7 +154,7 @@ namespace uf::workbench
             auto const cached = std::ranges::find(
                 m_sources,
                 source.id(),
-                &annotation::AuthoringSourceAsset::m_id
+                &annotation::AuthoringSourceAsset::id
             );
             if (cached == m_sources.end())
             {
@@ -232,37 +237,37 @@ namespace uf::workbench
     auto AppState::addIngestedSource(IngestedSource source) -> Result<bool>
     {
         auto edited = m_history.draft();
-        if (edited.m_sources.empty())
+        if (edited.sources.empty())
         {
-            edited.m_fingerprint = source.m_spec.m_fingerprint;
+            edited.fingerprint = source.spec.fingerprint;
         }
-        edited.m_sources.emplace_back(
+        edited.sources.emplace_back(
             EditableSource{
-                .m_id          = source.m_spec.m_id,
-                .m_contentHash = source.m_spec.m_contentHash,
-                .m_fingerprint = source.m_spec.m_fingerprint,
-                .m_provenance  = source.m_spec.m_provenance,
+                .id          = source.spec.id,
+                .contentHash = source.spec.contentHash,
+                .fingerprint = source.spec.fingerprint,
+                .provenance  = source.spec.provenance,
             }
         );
 
         UF_TRY_VALUE(changed, applyEdit(edited));
         if (changed)
         {
-            m_selectedSourceId = source.m_spec.m_id;
+            m_selectedSourceId = source.spec.id;
             // The cache is keyed by SourceId; a fresh mint never collides, but
             // guard the invariant so a repeat id replaces rather than duplicates.
             auto const cached = std::ranges::find(
                 m_sources,
-                source.m_spec.m_id,
-                &annotation::AuthoringSourceAsset::m_id
+                source.spec.id,
+                &annotation::AuthoringSourceAsset::id
             );
             if (cached == m_sources.end())
             {
-                m_sources.emplace_back(std::move(source.m_asset));
+                m_sources.emplace_back(std::move(source.asset));
             }
             else
             {
-                *cached = std::move(source.m_asset);
+                *cached = std::move(source.asset);
             }
         }
         return changed;
@@ -387,7 +392,7 @@ namespace uf::workbench
                     documentSources,
                     [&asset](annotation::AuthoringSource const& source) -> bool
                     {
-                        return source.id() == asset.m_id;
+                        return source.id() == asset.id;
                     }
                 );
             }

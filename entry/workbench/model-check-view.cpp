@@ -103,15 +103,15 @@ namespace uf::workbench
         ScreenCheck const& screen
     ) -> std::string
     {
-        switch (screen.m_outcome)
+        switch (screen.outcome)
         {
         case ScreenCheckOutcome::Correct:
             return "resolves correctly";
         case ScreenCheckOutcome::WrongPage:
             return std::format(
                 "resolves to \"{}\" instead",
-                screen.m_resolvedPageId.has_value()
-                    ? pageName(state, *screen.m_resolvedPageId)
+                screen.resolvedPageId.has_value()
+                    ? pageName(state, *screen.resolvedPageId)
                     : std::string{"?"}
             );
         case ScreenCheckOutcome::Unknown:
@@ -138,11 +138,11 @@ namespace uf::workbench
             return nullptr;
         }
         auto const found = std::ranges::find(
-            check->m_screens,
+            check->screens,
             sourceId,
-            &ScreenCheck::m_sourceId
+            &ScreenCheck::sourceId
         );
-        return found == check->m_screens.end() ? nullptr : &*found;
+        return found == check->screens.end() ? nullptr : &*found;
     }
 
     [[nodiscard]]
@@ -157,11 +157,11 @@ namespace uf::workbench
             return nullptr;
         }
         auto const found = std::ranges::find(
-            check->m_margins,
+            check->margins,
             recognizerId,
-            &RecognizerMargin::m_recognizerId
+            &RecognizerMargin::recognizerId
         );
-        return found == check->m_margins.end() ? nullptr : &*found;
+        return found == check->margins.end() ? nullptr : &*found;
     }
 
     // Hands the whole model to a worker, with a frame from the running target
@@ -177,7 +177,7 @@ namespace uf::workbench
         auto const assets = state.compilerSourceAssets();
         if (!assets)
         {
-            ui.m_statusLine = std::format(
+            ui.statusLine = std::format(
                 "check failed: {}",
                 toString(assets.error())
             );
@@ -210,16 +210,16 @@ namespace uf::workbench
         auto const deadline = MonotonicInstant::now().checkedAdd(allowance);
         UF_CHECK(deadline.has_value());
 
-        ui.m_modelCheck.start(
+        ui.modelCheck.start(
             state.document(),
             *assets,
             liveFrameBytes,
             annotation::RecognitionPolicy{
-                .m_maximumPixelComparisons = k_recognitionComparisonBudget,
-                .m_deadline                = deadline,
+                .maximumPixelComparisons = k_recognitionComparisonBudget,
+                .deadline                = deadline,
             }
         );
-        ui.m_statusLine = liveFrameBytes.empty()
+        ui.statusLine = liveFrameBytes.empty()
             ? "checking every mark against every screen..."
             : "checking every mark against every screen and the live one...";
     }
@@ -229,14 +229,14 @@ namespace uf::workbench
     // can describe a document other than the current one.
     auto collectModelCheck(AppState& state, PanelUiState& ui) -> void
     {
-        auto finished = ui.m_modelCheck.takeResult();
+        auto finished = ui.modelCheck.takeResult();
         if (!finished.has_value())
         {
             return;
         }
         if (!*finished)
         {
-            ui.m_statusLine = std::format(
+            ui.statusLine = std::format(
                 "check failed: {}",
                 toString(finished->error())
             );
@@ -248,13 +248,13 @@ namespace uf::workbench
         // regression case says which page it should be. Counting either as
         // a failure tells the author their model is broken when the check
         // simply has nothing to say, so each is reported as what it is.
-        auto const countOf = [&screens = (*finished)->m_screens](
+        auto const countOf = [&screens = (*finished)->screens](
             ScreenCheckOutcome outcome
         ) -> std::ptrdiff_t
         {
-            return std::ranges::count(screens, outcome, &ScreenCheck::m_outcome);
+            return std::ranges::count(screens, outcome, &ScreenCheck::outcome);
         };
-        auto const total     = (*finished)->m_screens.size();
+        auto const total     = (*finished)->screens.size();
         auto const stopped   = countOf(ScreenCheckOutcome::Stopped);
         auto const unclaimed = countOf(ScreenCheckOutcome::Unclaimed);
         auto const judged    = static_cast<std::ptrdiff_t>(total)
@@ -267,23 +267,23 @@ namespace uf::workbench
         // it resolved to and left out of the counts above. Read before the
         // move, which empties the result.
         auto live = std::string{};
-        if (auto const& liveCheck = (*finished)->m_live)
+        if (auto const& liveCheck = (*finished)->live)
         {
             live = "; live screen ";
-            if (liveCheck->m_stop.has_value())
+            if (liveCheck->stop.has_value())
             {
                 live += "not reached before the deadline";
             }
-            else if (liveCheck->m_resolvedPageId.has_value())
+            else if (liveCheck->resolvedPageId.has_value())
             {
                 live += std::format(
                     "is \"{}\"",
-                    pageName(state, *liveCheck->m_resolvedPageId)
+                    pageName(state, *liveCheck->resolvedPageId)
                 );
             }
-            else if (liveCheck->m_pageKind.has_value())
+            else if (liveCheck->pageKind.has_value())
             {
-                live += previewPageKindName(*liveCheck->m_pageKind);
+                live += previewPageKindName(*liveCheck->pageKind);
             }
         }
 
@@ -308,6 +308,6 @@ namespace uf::workbench
             summary += std::format("; {} have no recorded page", unclaimed);
         }
         summary += live;
-        ui.m_statusLine = std::move(summary);
+        ui.statusLine = std::move(summary);
     }
 }

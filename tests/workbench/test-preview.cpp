@@ -42,13 +42,13 @@ namespace uf::workbench
 
         struct PreviewFixture final
         {
-            annotation::AuthoringDocument    m_document;
-            annotation::AuthoringSourceAsset m_asset;
+            annotation::AuthoringDocument    document;
+            annotation::AuthoringSourceAsset asset;
 
-            annotation::SourceId     m_sourceId{annotation::test::sourceId(k_sourceId)};
-            annotation::RecognizerId m_anchorId{annotation::test::recognizerId(k_anchorId)};
-            annotation::RecognizerId m_actionId{annotation::test::recognizerId(k_actionId)};
-            annotation::PageId       m_pageId{annotation::test::pageId(k_pageId)};
+            annotation::SourceId     sourceId{annotation::test::sourceId(k_sourceId)};
+            annotation::RecognizerId anchorId{annotation::test::recognizerId(k_anchorId)};
+            annotation::RecognizerId actionId{annotation::test::recognizerId(k_actionId)};
+            annotation::PageId       pageId{annotation::test::pageId(k_pageId)};
         };
 
         [[nodiscard]]
@@ -74,10 +74,10 @@ namespace uf::workbench
 
             auto source = annotation::AuthoringSource::create(
                 annotation::AuthoringSourceSpec{
-                    .m_id          = sourceId,
-                    .m_contentHash = *sourceHash,
-                    .m_fingerprint = fingerprint,
-                    .m_provenance  = annotation::ImportedSourceProvenance{},
+                    .id          = sourceId,
+                    .contentHash = *sourceHash,
+                    .fingerprint = fingerprint,
+                    .provenance  = annotation::ImportedSourceProvenance{},
                 }
             );
             REQUIRE(source.has_value());
@@ -88,7 +88,7 @@ namespace uf::workbench
                 {*source},
                 {
                     annotation::AuthoringRecognizerSpec{
-                        .m_definition = annotation::test::recognizer(
+                        .definition = annotation::test::recognizer(
                             fingerprint,
                             anchorId,
                             "anchor",
@@ -96,10 +96,10 @@ namespace uf::workbench
                             annotation::test::pixelRect(0, 0, 1, 1),
                             annotation::test::pixelRect(0, 0, 3, 1)
                         ),
-                        .m_sourceId = sourceId,
+                        .sourceId = sourceId,
                     },
                     annotation::AuthoringRecognizerSpec{
-                        .m_definition = annotation::test::recognizer(
+                        .definition = annotation::test::recognizer(
                             fingerprint,
                             actionId,
                             "action",
@@ -108,7 +108,7 @@ namespace uf::workbench
                             annotation::test::pixelRect(0, 0, 3, 1),
                             {pageId}
                         ),
-                        .m_sourceId = sourceId,
+                        .sourceId = sourceId,
                     },
                 },
                 {annotation::test::page(pageId, "home", {anchorId})},
@@ -117,10 +117,10 @@ namespace uf::workbench
             REQUIRE(document.has_value());
 
             return PreviewFixture{
-                .m_document = *std::move(document),
-                .m_asset    = annotation::AuthoringSourceAsset{
-                    .m_id       = sourceId,
-                    .m_pngBytes = *std::move(pngBytes),
+                .document = *std::move(document),
+                .asset    = annotation::AuthoringSourceAsset{
+                    .id       = sourceId,
+                    .pngBytes = *std::move(pngBytes),
                 },
             };
         }
@@ -129,7 +129,7 @@ namespace uf::workbench
         auto continuingPolicy(uint64 budget) -> annotation::RecognitionPolicy
         {
             return annotation::RecognitionPolicy{
-                .m_maximumPixelComparisons = budget,
+                .maximumPixelComparisons = budget,
             };
         }
     }
@@ -137,76 +137,76 @@ namespace uf::workbench
     TEST_CASE("runPreview resolves the fixture page and reports anchor evidence")
     {
         auto const fixture = previewFixture();
-        auto const assets  = std::span{&fixture.m_asset, std::size_t{1}};
+        auto const assets  = std::span{&fixture.asset, std::size_t{1}};
 
         auto const preview = runPreview(
-            fixture.m_document,
+            fixture.document,
             assets,
-            fixture.m_sourceId,
+            fixture.sourceId,
             std::nullopt,
             continuingPolicy(1000)
         );
         REQUIRE(preview.has_value());
 
-        REQUIRE(preview->m_pageKind.has_value());
-        CHECK(*preview->m_pageKind == PreviewPageKind::Resolved);
-        REQUIRE(preview->m_resolvedPageId.has_value());
-        CHECK(*preview->m_resolvedPageId == fixture.m_pageId);
-        CHECK_FALSE(preview->m_pageStop.has_value());
+        REQUIRE(preview->pageKind.has_value());
+        CHECK(*preview->pageKind == PreviewPageKind::Resolved);
+        REQUIRE(preview->resolvedPageId.has_value());
+        CHECK(*preview->resolvedPageId == fixture.pageId);
+        CHECK_FALSE(preview->pageStop.has_value());
 
-        REQUIRE(preview->m_anchorRows.size() == 1U);
-        auto const& row = preview->m_anchorRows.front();
-        CHECK(row.m_recognizerId == fixture.m_anchorId);
-        CHECK(row.m_hit);
-        REQUIRE(row.m_sadScore.has_value());
-        CHECK(row.m_sadScore.value() == 0);
-        CHECK(row.m_sadScore.value() <= row.m_maximumSad);
-        REQUIRE(row.m_matchedRect.has_value());
-        CHECK(row.m_matchedRect.value() == annotation::test::pixelRect(0, 0, 1, 1));
+        REQUIRE(preview->anchorRows.size() == 1U);
+        auto const& row = preview->anchorRows.front();
+        CHECK(row.recognizerId == fixture.anchorId);
+        CHECK(row.hit);
+        REQUIRE(row.sadScore.has_value());
+        CHECK(row.sadScore.value() == 0);
+        CHECK(row.sadScore.value() <= row.maximumSad);
+        REQUIRE(row.matchedRect.has_value());
+        CHECK(row.matchedRect.value() == annotation::test::pixelRect(0, 0, 1, 1));
 
-        CHECK_FALSE(preview->m_actionEvidence.has_value());
+        CHECK_FALSE(preview->actionEvidence.has_value());
     }
 
     TEST_CASE("runPreview evaluates a selected action target into match evidence")
     {
         auto const fixture = previewFixture();
-        auto const assets  = std::span{&fixture.m_asset, std::size_t{1}};
+        auto const assets  = std::span{&fixture.asset, std::size_t{1}};
 
         auto const preview = runPreview(
-            fixture.m_document,
+            fixture.document,
             assets,
-            fixture.m_sourceId,
-            fixture.m_actionId,
+            fixture.sourceId,
+            fixture.actionId,
             continuingPolicy(1000)
         );
         REQUIRE(preview.has_value());
-        REQUIRE(preview->m_actionEvidence.has_value());
-        auto const& action = preview->m_actionEvidence.value();
-        CHECK(action.m_recognizerId == fixture.m_actionId);
-        CHECK(action.m_hit);
-        REQUIRE(action.m_matchedRect.has_value());
-        CHECK(action.m_matchedRect.value() == annotation::test::pixelRect(1, 0, 1, 1));
-        CHECK_FALSE(preview->m_actionStop.has_value());
+        REQUIRE(preview->actionEvidence.has_value());
+        auto const& action = preview->actionEvidence.value();
+        CHECK(action.recognizerId == fixture.actionId);
+        CHECK(action.hit);
+        REQUIRE(action.matchedRect.has_value());
+        CHECK(action.matchedRect.value() == annotation::test::pixelRect(1, 0, 1, 1));
+        CHECK_FALSE(preview->actionStop.has_value());
     }
 
     TEST_CASE("runPreview surfaces the stop reason when the budget is exhausted")
     {
         auto const fixture = previewFixture();
-        auto const assets  = std::span{&fixture.m_asset, std::size_t{1}};
+        auto const assets  = std::span{&fixture.asset, std::size_t{1}};
 
         auto const preview = runPreview(
-            fixture.m_document,
+            fixture.document,
             assets,
-            fixture.m_sourceId,
+            fixture.sourceId,
             std::nullopt,
             continuingPolicy(0)
         );
         REQUIRE(preview.has_value());
-        CHECK_FALSE(preview->m_pageKind.has_value());
-        REQUIRE(preview->m_pageStop.has_value());
-        CHECK(preview->m_pageStop->m_recognizerId == fixture.m_anchorId);
+        CHECK_FALSE(preview->pageKind.has_value());
+        REQUIRE(preview->pageStop.has_value());
+        CHECK(preview->pageStop->recognizerId == fixture.anchorId);
         CHECK(
-            preview->m_pageStop->m_reason
+            preview->pageStop->reason
             == SadSearchStopReason::ComparisonBudgetExhausted
         );
     }
@@ -222,8 +222,8 @@ namespace uf::workbench
 
         struct ModelFixture final
         {
-            annotation::AuthoringDocument                 m_document;
-            std::vector<annotation::AuthoringSourceAsset> m_assets{};
+            annotation::AuthoringDocument                 document;
+            std::vector<annotation::AuthoringSourceAsset> assets{};
         };
 
         [[nodiscard]]
@@ -247,10 +247,10 @@ namespace uf::workbench
             REQUIRE(hash.has_value());
             auto source = annotation::AuthoringSource::create(
                 annotation::AuthoringSourceSpec{
-                    .m_id          = id,
-                    .m_contentHash = *hash,
-                    .m_fingerprint = fingerprint,
-                    .m_provenance  = annotation::ImportedSourceProvenance{},
+                    .id          = id,
+                    .contentHash = *hash,
+                    .fingerprint = fingerprint,
+                    .provenance  = annotation::ImportedSourceProvenance{},
                 }
             );
             REQUIRE(source.has_value());
@@ -290,25 +290,25 @@ namespace uf::workbench
             {
                 regressions.emplace_back(
                     annotation::RegressionSpec{
-                        .m_id       = annotation::test::regressionId(k_regressionId),
-                        .m_sourceId = sourceId,
-                        .m_classification =
+                        .id       = annotation::test::regressionId(k_regressionId),
+                        .sourceId = sourceId,
+                        .classification =
                             annotation::RegressionClassification::Positive,
-                        .m_expectation = annotation::ResolvedRegression{
-                            .m_pageId = pageId,
+                        .expectation = annotation::ResolvedRegression{
+                            .pageId = pageId,
                         },
                     }
                 );
                 regressions.emplace_back(
                     annotation::RegressionSpec{
-                        .m_id = annotation::test::regressionId(
+                        .id = annotation::test::regressionId(
                             k_otherRegressionId
                         ),
-                        .m_sourceId = otherId,
-                        .m_classification =
+                        .sourceId = otherId,
+                        .classification =
                             annotation::RegressionClassification::Positive,
-                        .m_expectation = annotation::ResolvedRegression{
-                            .m_pageId = otherPageId,
+                        .expectation = annotation::ResolvedRegression{
+                            .pageId = otherPageId,
                         },
                     }
                 );
@@ -323,7 +323,7 @@ namespace uf::workbench
                 },
                 {
                     annotation::AuthoringRecognizerSpec{
-                        .m_definition = annotation::test::recognizer(
+                        .definition = annotation::test::recognizer(
                             fingerprint,
                             anchorId,
                             "dark_mark",
@@ -331,10 +331,10 @@ namespace uf::workbench
                             annotation::test::pixelRect(0, 0, 1, 1),
                             annotation::test::pixelRect(0, 0, 1, 1)
                         ),
-                        .m_sourceId = sourceId,
+                        .sourceId = sourceId,
                     },
                     annotation::AuthoringRecognizerSpec{
-                        .m_definition = annotation::test::recognizer(
+                        .definition = annotation::test::recognizer(
                             fingerprint,
                             otherAnchor,
                             "light_mark",
@@ -342,7 +342,7 @@ namespace uf::workbench
                             annotation::test::pixelRect(0, 0, 1, 1),
                             annotation::test::pixelRect(0, 0, 1, 1)
                         ),
-                        .m_sourceId = otherId,
+                        .sourceId = otherId,
                     },
                 },
                 {
@@ -354,15 +354,15 @@ namespace uf::workbench
             REQUIRE(document.has_value());
 
             return ModelFixture{
-                .m_document = *std::move(document),
-                .m_assets   = {
+                .document = *std::move(document),
+                .assets   = {
                     annotation::AuthoringSourceAsset{
-                        .m_id       = sourceId,
-                        .m_pngBytes = std::move(darkPng),
+                        .id       = sourceId,
+                        .pngBytes = std::move(darkPng),
                     },
                     annotation::AuthoringSourceAsset{
-                        .m_id       = otherId,
-                        .m_pngBytes = std::move(lightPng),
+                        .id       = otherId,
+                        .pngBytes = std::move(lightPng),
                     },
                 },
             };
@@ -376,23 +376,23 @@ namespace uf::workbench
         auto const fixture = modelFixture(true);
 
         auto const check = runModelCheck(
-            fixture.m_document,
-            fixture.m_assets,
+            fixture.document,
+            fixture.assets,
             {},
             continuingPolicy(1000)
         );
         REQUIRE(check.has_value());
 
-        REQUIRE(check->m_margins.size() == 2U);
-        for (auto const& margin : check->m_margins)
+        REQUIRE(check->margins.size() == 2U);
+        for (auto const& margin : check->margins)
         {
-            REQUIRE(margin.m_ownSadScore.has_value());
-            CHECK(*margin.m_ownSadScore == 0U);
-            CHECK(*margin.m_ownSadScore <= margin.m_maximumSad);
+            REQUIRE(margin.ownSadScore.has_value());
+            CHECK(*margin.ownSadScore == 0U);
+            CHECK(*margin.ownSadScore <= margin.maximumSad);
 
-            REQUIRE(margin.m_nearestOtherSadScore.has_value());
-            CHECK(*margin.m_nearestOtherSadScore > margin.m_maximumSad);
-            CHECK(margin.m_nearestOtherSourceId != margin.m_ownSourceId);
+            REQUIRE(margin.nearestOtherSadScore.has_value());
+            CHECK(*margin.nearestOtherSadScore > margin.maximumSad);
+            CHECK(margin.nearestOtherSourceId != margin.ownSourceId);
         }
     }
 
@@ -401,17 +401,17 @@ namespace uf::workbench
         auto const fixture = modelFixture(true);
 
         auto const check = runModelCheck(
-            fixture.m_document,
-            fixture.m_assets,
+            fixture.document,
+            fixture.assets,
             {},
             continuingPolicy(1000)
         );
         REQUIRE(check.has_value());
-        REQUIRE(check->m_screens.size() == 2U);
-        for (auto const& screen : check->m_screens)
+        REQUIRE(check->screens.size() == 2U);
+        for (auto const& screen : check->screens)
         {
-            CHECK(screen.m_outcome == ScreenCheckOutcome::Correct);
-            CHECK(screen.m_resolvedPageId == screen.m_expectedPageId);
+            CHECK(screen.outcome == ScreenCheckOutcome::Correct);
+            CHECK(screen.resolvedPageId == screen.expectedPageId);
         }
     }
 
@@ -422,18 +422,18 @@ namespace uf::workbench
         auto const fixture = modelFixture(false);
 
         auto const check = runModelCheck(
-            fixture.m_document,
-            fixture.m_assets,
+            fixture.document,
+            fixture.assets,
             {},
             continuingPolicy(1000)
         );
         REQUIRE(check.has_value());
-        REQUIRE(check->m_screens.size() == 2U);
-        for (auto const& screen : check->m_screens)
+        REQUIRE(check->screens.size() == 2U);
+        for (auto const& screen : check->screens)
         {
-            CHECK(screen.m_outcome == ScreenCheckOutcome::Unclaimed);
-            CHECK_FALSE(screen.m_expectedPageId.has_value());
-            CHECK(screen.m_resolvedPageId.has_value());
+            CHECK(screen.outcome == ScreenCheckOutcome::Unclaimed);
+            CHECK_FALSE(screen.expectedPageId.has_value());
+            CHECK(screen.resolvedPageId.has_value());
         }
     }
 
@@ -442,11 +442,11 @@ namespace uf::workbench
         // Both screens are recorded as the same page, so one of them must be
         // reported as resolving elsewhere rather than passing quietly.
         auto fixture = modelFixture(true);
-        auto draft   = makeAuthoringDraft(fixture.m_document);
-        for (auto& regression : draft.m_regressions)
+        auto draft   = makeAuthoringDraft(fixture.document);
+        for (auto& regression : draft.regressions)
         {
-            regression.m_expectation = annotation::ResolvedRegression{
-                .m_pageId = annotation::test::pageId(k_pageId),
+            regression.expectation = annotation::ResolvedRegression{
+                .pageId = annotation::test::pageId(k_pageId),
             };
         }
         auto rebuilt = buildAuthoringDocument(draft);
@@ -454,16 +454,16 @@ namespace uf::workbench
 
         auto const check = runModelCheck(
             *rebuilt,
-            fixture.m_assets,
+            fixture.assets,
             {},
             continuingPolicy(1000)
         );
         REQUIRE(check.has_value());
         auto const wrong = std::ranges::count_if(
-            check->m_screens,
+            check->screens,
             [](ScreenCheck const& screen)
             {
-                return screen.m_outcome == ScreenCheckOutcome::WrongPage;
+                return screen.outcome == ScreenCheckOutcome::WrongPage;
             }
         );
         CHECK(wrong == 1);
@@ -483,18 +483,18 @@ namespace uf::workbench
         auto const lightPage   = annotation::test::pageId(k_otherPageId);
 
         auto const fixture = modelFixture(true);
-        auto draft         = makeAuthoringDraft(fixture.m_document);
-        draft.m_recognizers.emplace_back(
+        auto draft         = makeAuthoringDraft(fixture.document);
+        draft.recognizers.emplace_back(
             EditableRecognizer{
-                .m_id             = sharedId,
-                .m_name           = "shared_region",
-                .m_annotationType = annotation::AnnotationType::ActionTarget,
-                .m_sourceId       = darkSource,
-                .m_templateRect   = annotation::test::pixelRect(0, 0, 1, 1),
-                .m_searchRoi      = annotation::test::pixelRect(0, 0, 1, 1),
-                .m_similarityBasisPoints = 9'000U,
-                .m_defaultClick   = {},
-                .m_allowedPageIds = {lightPage},
+                .id             = sharedId,
+                .name           = "shared_region",
+                .annotationType = annotation::AnnotationType::ActionTarget,
+                .sourceId       = darkSource,
+                .templateRect   = annotation::test::pixelRect(0, 0, 1, 1),
+                .searchRoi      = annotation::test::pixelRect(0, 0, 1, 1),
+                .similarityBasisPoints = 9'000U,
+                .defaultClick   = {},
+                .allowedPageIds = {lightPage},
             }
         );
         auto const document = buildAuthoringDocument(draft);
@@ -502,30 +502,30 @@ namespace uf::workbench
 
         auto const check = runModelCheck(
             *document,
-            fixture.m_assets,
+            fixture.assets,
             {},
             continuingPolicy(1000)
         );
         REQUIRE(check.has_value());
 
         auto const margin = std::ranges::find(
-            check->m_margins,
+            check->margins,
             sharedId,
-            &RecognizerMargin::m_recognizerId
+            &RecognizerMargin::recognizerId
         );
-        REQUIRE(margin != check->m_margins.end());
+        REQUIRE(margin != check->margins.end());
 
         // Measured on the light screen, which is the page it is authorized on,
         // and where these dark pixels do not match.
-        CHECK(margin->m_ownSourceId == lightSource);
-        REQUIRE(margin->m_ownSadScore.has_value());
-        CHECK(*margin->m_ownSadScore > margin->m_maximumSad);
+        CHECK(margin->ownSourceId == lightSource);
+        REQUIRE(margin->ownSadScore.has_value());
+        CHECK(*margin->ownSadScore > margin->maximumSad);
 
         // The screen its template came from is now the "elsewhere" it matches
         // perfectly, which is exactly the wrong way round for a working region.
-        CHECK(margin->m_nearestOtherSourceId == darkSource);
-        REQUIRE(margin->m_nearestOtherSadScore.has_value());
-        CHECK(*margin->m_nearestOtherSadScore == 0U);
+        CHECK(margin->nearestOtherSourceId == darkSource);
+        REQUIRE(margin->nearestOtherSadScore.has_value());
+        CHECK(*margin->nearestOtherSadScore == 0U);
     }
 
     TEST_CASE("runModelCheck folds a live frame into the same margins")
@@ -535,40 +535,40 @@ namespace uf::workbench
         // of the dark screen, so the dark mark must score zero on it and the
         // light mark must miss it by the same margin it misses the dark still.
         auto const fixture = modelFixture(true);
-        auto const live    = fixture.m_assets.at(0).m_pngBytes;
+        auto const live    = fixture.assets.at(0).pngBytes;
 
         auto const check = runModelCheck(
-            fixture.m_document,
-            fixture.m_assets,
+            fixture.document,
+            fixture.assets,
             live,
             continuingPolicy(1000)
         );
         REQUIRE(check.has_value());
 
-        REQUIRE(check->m_live.has_value());
-        CHECK_FALSE(check->m_live->m_stop.has_value());
-        REQUIRE(check->m_live->m_resolvedPageId.has_value());
-        CHECK(*check->m_live->m_resolvedPageId == annotation::test::pageId(k_pageId));
+        REQUIRE(check->live.has_value());
+        CHECK_FALSE(check->live->stop.has_value());
+        REQUIRE(check->live->resolvedPageId.has_value());
+        CHECK(*check->live->resolvedPageId == annotation::test::pageId(k_pageId));
 
         auto const darkId  = annotation::test::recognizerId(k_anchorId);
         auto const lightId = annotation::test::recognizerId(k_otherAnchorId);
-        for (auto const& margin : check->m_margins)
+        for (auto const& margin : check->margins)
         {
-            REQUIRE(margin.m_liveSadScore.has_value());
-            if (margin.m_recognizerId == darkId)
+            REQUIRE(margin.liveSadScore.has_value());
+            if (margin.recognizerId == darkId)
             {
-                CHECK(*margin.m_liveSadScore == 0U);
+                CHECK(*margin.liveSadScore == 0U);
             }
-            else if (margin.m_recognizerId == lightId)
+            else if (margin.recognizerId == lightId)
             {
-                CHECK(*margin.m_liveSadScore > margin.m_maximumSad);
+                CHECK(*margin.liveSadScore > margin.maximumSad);
             }
         }
 
         // The captured screens are judged exactly as they are without one.
-        for (auto const& screen : check->m_screens)
+        for (auto const& screen : check->screens)
         {
-            CHECK(screen.m_outcome == ScreenCheckOutcome::Correct);
+            CHECK(screen.outcome == ScreenCheckOutcome::Correct);
         }
     }
 
@@ -577,29 +577,29 @@ namespace uf::workbench
         auto const fixture = modelFixture(true);
 
         auto const check = runModelCheck(
-            fixture.m_document,
-            fixture.m_assets,
+            fixture.document,
+            fixture.assets,
             {},
             continuingPolicy(1000)
         );
         REQUIRE(check.has_value());
-        CHECK_FALSE(check->m_live.has_value());
-        for (auto const& margin : check->m_margins)
+        CHECK_FALSE(check->live.has_value());
+        for (auto const& margin : check->margins)
         {
-            CHECK_FALSE(margin.m_liveSadScore.has_value());
+            CHECK_FALSE(margin.liveSadScore.has_value());
         }
     }
 
     TEST_CASE("runPreview rejects a source that is absent from the project")
     {
         auto const fixture = previewFixture();
-        auto const assets  = std::span{&fixture.m_asset, std::size_t{1}};
+        auto const assets  = std::span{&fixture.asset, std::size_t{1}};
         auto const missing = annotation::test::sourceId(
             "00000000-0000-0000-0000-0000000004ff"
         );
 
         auto const preview = runPreview(
-            fixture.m_document,
+            fixture.document,
             assets,
             missing,
             std::nullopt,

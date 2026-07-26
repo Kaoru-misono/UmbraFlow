@@ -23,44 +23,6 @@
 
 namespace uf::workbench
 {
-    namespace
-    {
-        // What a newly drawn recognizer starts as before the author drags it: a
-        // box small enough to be legal at any project resolution, and the 90 %
-        // similarity the annotation design takes as the default.
-        constexpr auto k_startingTemplateExtent        = uint32{16};
-        constexpr auto k_startingSimilarityBasisPoints = uint32{9'000};
-
-        struct StartingRects final
-        {
-            PixelRect m_templateRect;
-            PixelRect m_searchRoi;
-        };
-
-        [[nodiscard]]
-        auto startingRects(
-            annotation::ProjectFingerprint fingerprint
-        ) -> Result<StartingRects>
-        {
-            auto const width  = fingerprint.width();
-            auto const height = fingerprint.height();
-            UF_TRY_VALUE(
-                templateRect,
-                PixelRect::create(
-                    0U,
-                    0U,
-                    std::min<uint32>(k_startingTemplateExtent, width),
-                    std::min<uint32>(k_startingTemplateExtent, height)
-                )
-            );
-            UF_TRY_VALUE(searchRoi, PixelRect::create(0U, 0U, width, height));
-            return StartingRects{
-                .m_templateRect = templateRect,
-                .m_searchRoi    = searchRoi,
-            };
-        }
-    }
-
     [[nodiscard]]
     auto shortId(annotation::ResourceId const& id) -> std::string
     {
@@ -74,11 +36,11 @@ namespace uf::workbench
     ) -> EditableRecognizer*
     {
         auto const found = std::ranges::find(
-            draft.m_recognizers,
+            draft.recognizers,
             id,
-            &EditableRecognizer::m_id
+            &EditableRecognizer::id
         );
-        if (found == draft.m_recognizers.end())
+        if (found == draft.recognizers.end())
         {
             return nullptr;
         }
@@ -105,30 +67,30 @@ namespace uf::workbench
     ) -> std::string
     {
         auto summary = std::format("deleted {}", what);
-        if (deleted.m_withdrawnRoles > 0U)
+        if (deleted.withdrawnRoles > 0U)
         {
             summary += std::format(
                 "; withdrew it from {} page {}",
-                deleted.m_withdrawnRoles,
-                deleted.m_withdrawnRoles == 1U ? "signature" : "signatures"
+                deleted.withdrawnRoles,
+                deleted.withdrawnRoles == 1U ? "signature" : "signatures"
             );
         }
-        if (deleted.m_clearedAuthorizations > 0U)
+        if (deleted.clearedAuthorizations > 0U)
         {
             summary += std::format(
                 "; cleared it from {} recognizer {}",
-                deleted.m_clearedAuthorizations,
-                deleted.m_clearedAuthorizations == 1U
+                deleted.clearedAuthorizations,
+                deleted.clearedAuthorizations == 1U
                     ? "authorization"
                     : "authorizations"
             );
         }
-        if (deleted.m_removedRegressions > 0U)
+        if (deleted.removedRegressions > 0U)
         {
             summary += std::format(
                 "; removed {} regression {}",
-                deleted.m_removedRegressions,
-                deleted.m_removedRegressions == 1U ? "case" : "cases"
+                deleted.removedRegressions,
+                deleted.removedRegressions == 1U ? "case" : "cases"
             );
         }
         return summary;
@@ -145,32 +107,32 @@ namespace uf::workbench
     ) -> std::string
     {
         auto summary = std::format("type set to {}", typeName);
-        if (auto const page = retyped.m_authorizedPage)
+        if (auto const page = retyped.authorizedPage)
         {
             summary += std::format(
                 "; authorized page \"{}\"",
                 pageName(state, *page)
             );
         }
-        if (retyped.m_withdrawnRoles > 0U)
+        if (retyped.withdrawnRoles > 0U)
         {
             summary += std::format(
                 "; withdrew from {} page {}",
-                retyped.m_withdrawnRoles,
-                retyped.m_withdrawnRoles == 1U ? "signature" : "signatures"
+                retyped.withdrawnRoles,
+                retyped.withdrawnRoles == 1U ? "signature" : "signatures"
             );
         }
-        if (retyped.m_clearedAuthorizations > 0U)
+        if (retyped.clearedAuthorizations > 0U)
         {
             summary += std::format(
                 "; cleared {} page {}",
-                retyped.m_clearedAuthorizations,
-                retyped.m_clearedAuthorizations == 1U
+                retyped.clearedAuthorizations,
+                retyped.clearedAuthorizations == 1U
                     ? "authorization"
                     : "authorizations"
             );
         }
-        if (retyped.m_clearedClick)
+        if (retyped.clearedClick)
         {
             summary += "; cleared the default click";
         }
@@ -193,13 +155,13 @@ namespace uf::workbench
         std::string description
     ) -> void
     {
-        if (ui.m_pendingEdit.has_value())
+        if (ui.pendingEdit.has_value())
         {
             return;
         }
-        ui.m_pendingEdit = PendingEdit{
-            .m_draft       = std::move(draft),
-            .m_description = std::move(description),
+        ui.pendingEdit = PanelUiState::PendingEdit{
+            .draft       = std::move(draft),
+            .description = std::move(description),
         };
     }
 
@@ -214,15 +176,15 @@ namespace uf::workbench
         std::optional<annotation::SourceId> sourceId
     ) -> void
     {
-        if (ui.m_pendingEdit.has_value())
+        if (ui.pendingEdit.has_value())
         {
             return;
         }
-        ui.m_pendingEdit = PendingEdit{
-            .m_draft            = std::move(draft),
-            .m_description      = std::move(description),
-            .m_selectRecognizer = recognizerId,
-            .m_selectSource     = sourceId,
+        ui.pendingEdit = PanelUiState::PendingEdit{
+            .draft            = std::move(draft),
+            .description      = std::move(description),
+            .selectRecognizer = recognizerId,
+            .selectSource     = sourceId,
         };
     }
 
@@ -232,16 +194,32 @@ namespace uf::workbench
     // leaves the line alone.
     auto applyPendingEdit(AppState& state, PanelUiState& ui) -> void
     {
-        if (!ui.m_pendingEdit.has_value())
+        if (!ui.pendingEdit.has_value())
         {
             return;
         }
-        auto const request = *std::exchange(ui.m_pendingEdit, std::nullopt);
+        auto const request = *std::exchange(ui.pendingEdit, std::nullopt);
 
-        auto const applied = state.applyEdit(request.m_draft);
+        // A draft carrying a base revision was built by an EditPage against a
+        // specific history version. If the author has since undone or redone,
+        // the version it edits is gone, and committing it would resurrect state
+        // they left behind. Refuse it visibly rather than apply it -- the edit
+        // is discarded either way, since the request was already taken above.
+        if (
+            request.baseRevision.has_value()
+            && *request.baseRevision != state.revision()
+        )
+        {
+            ui.statusLine =
+                "edit rejected: the project changed while this edit was open; "
+                "reopen it and try again";
+            return;
+        }
+
+        auto const applied = state.applyEdit(request.draft);
         if (!applied)
         {
-            ui.m_statusLine = std::format(
+            ui.statusLine = std::format(
                 "edit rejected: {}",
                 toString(applied.error())
             );
@@ -252,15 +230,15 @@ namespace uf::workbench
             // A check in flight is answering a question about the document
             // this edit just replaced, so its verdict would be attached to
             // marks that have since moved.
-            ui.m_modelCheck.discard();
-            ui.m_statusLine = request.m_description;
-            if (request.m_selectRecognizer.has_value())
+            ui.modelCheck.discard();
+            ui.statusLine = request.description;
+            if (request.selectRecognizer.has_value())
             {
-                state.setSelectedRecognizerId(*request.m_selectRecognizer);
+                state.setSelectedRecognizerId(*request.selectRecognizer);
             }
-            if (request.m_selectSource.has_value())
+            if (request.selectSource.has_value())
             {
-                state.setSelectedSourceId(*request.m_selectSource);
+                state.setSelectedSourceId(*request.selectSource);
             }
         }
     }
@@ -276,14 +254,14 @@ namespace uf::workbench
     {
         if (!deleted)
         {
-            ui.m_statusLine = std::format(
+            ui.statusLine = std::format(
                 "delete rejected: {}",
                 toString(deleted.error())
             );
             return;
         }
         auto description = deletionSummary(what, *deleted);
-        requestEdit(ui, std::move(deleted->m_draft), std::move(description));
+        requestEdit(ui, std::move(deleted->draft), std::move(description));
     }
 
     // The source a recognizer was authored against, so a selection can follow
@@ -296,135 +274,12 @@ namespace uf::workbench
     {
         for (auto const& relationship : state.document().recognizerSources())
         {
-            if (relationship.m_recognizerId == id)
+            if (relationship.recognizerId == id)
             {
-                return relationship.m_sourceId;
+                return relationship.sourceId;
             }
         }
         return std::nullopt;
-    }
-
-    // Turns the selected screen into a page: the anchor that identifies it,
-    // the page requiring that anchor, and the record that this screen is
-    // expected to resolve to it, all in one edit.
-    auto requestNewPage(AppState& state, PanelUiState& ui) -> void
-    {
-        auto const source = state.selectedSourceId();
-        if (!source.has_value())
-        {
-            ui.m_statusLine = "select a screen first";
-            return;
-        }
-
-        auto draft        = state.draft();
-        auto const rects  = startingRects(draft.m_fingerprint);
-        if (!rects)
-        {
-            ui.m_statusLine = std::format(
-                "new page failed: {}",
-                toString(rects.error())
-            );
-            return;
-        }
-
-        auto const anchorId = annotation::RecognizerId{mintResourceId()};
-        auto created        = createPageFromSource(
-            std::move(draft),
-            NewPageSpec{
-                .m_pageId   = annotation::PageId{mintResourceId()},
-                .m_anchorId = anchorId,
-                .m_regressionId          = annotation::RegressionId{
-                    mintResourceId()
-                },
-                .m_sourceId              = *source,
-                .m_templateRect          = rects->m_templateRect,
-                .m_searchRoi             = rects->m_searchRoi,
-                .m_similarityBasisPoints = k_startingSimilarityBasisPoints,
-            }
-        );
-        if (!created)
-        {
-            ui.m_statusLine = std::format(
-                "new page failed: {}",
-                toString(created.error())
-            );
-            return;
-        }
-
-        auto description = std::format(
-            "added page \"{}\" with \"{}\" identifying it; "
-            "drag its box over a mark unique to this screen",
-            created->m_pageName,
-            created->m_anchorName
-        );
-        requestEditSelecting(
-            ui,
-            std::move(created->m_draft),
-            std::move(description),
-            anchorId,
-            *source
-        );
-    }
-
-    // Adds one member to a page, typed and linked by which button was
-    // pressed. The author never names the annotation type or fills in a role
-    // or an authorization: both follow from the question the button asks.
-    auto requestNewPageMember(
-        AppState& state,
-        PanelUiState& ui,
-        annotation::PageId pageId,
-        annotation::SourceId sourceId,
-        PageMemberKind kind
-    ) -> void
-    {
-        auto draft       = state.draft();
-        auto const rects = startingRects(draft.m_fingerprint);
-        if (!rects)
-        {
-            ui.m_statusLine = std::format(
-                "add failed: {}",
-                toString(rects.error())
-            );
-            return;
-        }
-
-        auto const recognizerId = annotation::RecognizerId{mintResourceId()};
-        auto added              = addPageMember(
-            std::move(draft),
-            PageMemberSpec{
-                .m_recognizerId = recognizerId,
-                .m_pageId       = pageId,
-                .m_sourceId     = sourceId,
-                .m_templateRect          = rects->m_templateRect,
-                .m_searchRoi             = rects->m_searchRoi,
-                .m_similarityBasisPoints = k_startingSimilarityBasisPoints,
-                .m_kind                  = kind,
-            }
-        );
-        if (!added)
-        {
-            ui.m_statusLine = std::format(
-                "add failed: {}",
-                toString(added.error())
-            );
-            return;
-        }
-
-        auto description = std::format(
-            "added \"{}\" as {}; drag its box over the {}",
-            added->m_name,
-            kind == PageMemberKind::Anchor
-                ? "a mark identifying this page"
-                : "an interactive region on this page",
-            kind == PageMemberKind::Anchor ? "mark" : "region"
-        );
-        requestEditSelecting(
-            ui,
-            std::move(added->m_draft),
-            std::move(description),
-            recognizerId,
-            sourceId
-        );
     }
 
     // The screen explicitly recorded as this page, if any. Distinct from
@@ -441,46 +296,12 @@ namespace uf::workbench
             auto const* p_resolved = std::get_if<annotation::ResolvedRegression>(
                 &regression.expectation()
             );
-            if (p_resolved != nullptr && p_resolved->m_pageId == pageId)
+            if (p_resolved != nullptr && p_resolved->pageId == pageId)
             {
                 return regression.sourceId();
             }
         }
         return std::nullopt;
-    }
-
-    auto requestScreenClaim(
-        AppState& state,
-        PanelUiState& ui,
-        annotation::PageId pageId,
-        annotation::SourceId sourceId
-    ) -> void
-    {
-        auto claimed = claimScreenForPage(
-            state.draft(),
-            ScreenClaimSpec{
-                .m_regressionId = annotation::RegressionId{mintResourceId()},
-                .m_sourceId     = sourceId,
-                .m_pageId       = pageId,
-            }
-        );
-        if (!claimed)
-        {
-            ui.m_statusLine = std::format(
-                "recording the screen failed: {}",
-                toString(claimed.error())
-            );
-            return;
-        }
-        requestEdit(
-            ui,
-            *std::move(claimed),
-            std::format(
-                "screen {} recorded as page \"{}\"",
-                shortId(sourceId.value()),
-                pageName(state, pageId)
-            )
-        );
     }
 
     auto isRegionShared(
@@ -491,10 +312,10 @@ namespace uf::workbench
         auto const found = std::ranges::find(
             state.document().recognizerSources(),
             id,
-            &annotation::AuthoringRecognizerSource::m_recognizerId
+            &annotation::AuthoringRecognizerSource::recognizerId
         );
         return found != state.document().recognizerSources().end()
-            && found->m_shared;
+            && found->shared;
     }
 
     auto requestRegionShared(
@@ -507,7 +328,7 @@ namespace uf::workbench
         auto marked = setRegionShared(state.draft(), id, shared);
         if (!marked)
         {
-            ui.m_statusLine = std::format(
+            ui.statusLine = std::format(
                 "{} failed: {}",
                 shared ? "sharing" : "unsharing",
                 toString(marked.error())
@@ -534,7 +355,7 @@ namespace uf::workbench
         auto const* origin = findEditableRecognizer(draft, shareFrom);
         if (origin == nullptr)
         {
-            ui.m_statusLine = "that region is no longer in the project";
+            ui.statusLine = "that region is no longer in the project";
             return;
         }
 
@@ -543,15 +364,15 @@ namespace uf::workbench
         auto shared             = shareRegionOnPage(
             state.draft(),
             SharedRegionSpec{
-                .m_recognizerId = newId,
-                .m_shareFrom    = shareFrom,
-                .m_pageId       = pageId,
-                .m_searchRoi    = origin->m_searchRoi,
+                .recognizerId = newId,
+                .shareFrom    = shareFrom,
+                .pageId       = pageId,
+                .searchRoi    = origin->searchRoi,
             }
         );
         if (!shared)
         {
-            ui.m_statusLine = std::format(
+            ui.statusLine = std::format(
                 "share failed: {}",
                 toString(shared.error())
             );
@@ -573,20 +394,20 @@ namespace uf::workbench
                     shareFrom,
                     *targetScreen,
                     annotation::RecognitionPolicy{
-                        .m_maximumPixelComparisons = k_recognitionComparisonBudget,
+                        .maximumPixelComparisons = k_recognitionComparisonBudget,
                     }
                 );
                 if (scored.has_value())
                 {
-                    verdict = scored->m_hit
+                    verdict = scored->hit
                         ? std::format(
                             "; it matches there, using {} of its budget",
-                            budgetPercentText(scored->m_sadScore, scored->m_maximumSad)
+                            budgetPercentText(scored->sadScore, scored->maximumSad)
                         )
                         : std::format(
                             "; WARNING it does not match there ({} of budget) -- "
                             "these pixels look different on that screen",
-                            budgetPercentText(scored->m_sadScore, scored->m_maximumSad)
+                            budgetPercentText(scored->sadScore, scored->maximumSad)
                         );
                 }
             }
@@ -594,12 +415,12 @@ namespace uf::workbench
 
         requestEditSelecting(
             ui,
-            std::move(shared->m_draft),
+            std::move(shared->draft),
             std::format(
                 "\"{}\" added to page \"{}\" as \"{}\"{}",
-                origin->m_name,
+                origin->name,
                 pageName(state, pageId),
-                shared->m_name,
+                shared->name,
                 verdict
             ),
             newId,
@@ -645,7 +466,7 @@ namespace uf::workbench
         // Committing only on release keeps a whole drag gesture to a single
         // undo entry instead of one per moved pixel.
         auto const isTemplate = (
-            ui.m_dragTarget == CanvasDragTarget::TemplateRect
+            ui.dragTarget == PanelUiState::CanvasDragTarget::TemplateRect
         );
         auto const geometry = std::format(
             "{},{} {}x{}",
@@ -667,7 +488,7 @@ namespace uf::workbench
             );
             if (!retemplated)
             {
-                ui.m_statusLine = std::format(
+                ui.statusLine = std::format(
                     "template change rejected: {}",
                     toString(retemplated.error())
                 );
@@ -675,17 +496,17 @@ namespace uf::workbench
             else
             {
                 auto description = std::format("template rect set to {}", geometry);
-                if (retemplated->m_movedMembers > 0U)
+                if (retemplated->movedMembers > 0U)
                 {
                     description += std::format(
                         "; moved it on {} other {}",
-                        retemplated->m_movedMembers,
-                        retemplated->m_movedMembers == 1U ? "page" : "pages"
+                        retemplated->movedMembers,
+                        retemplated->movedMembers == 1U ? "page" : "pages"
                     );
                 }
                 requestEdit(
                     ui,
-                    std::move(retemplated->m_draft),
+                    std::move(retemplated->draft),
                     std::move(description)
                 );
             }
@@ -696,7 +517,7 @@ namespace uf::workbench
             auto* recognizer = findEditableRecognizer(draft, recognizerId);
             if (recognizer != nullptr)
             {
-                recognizer->m_searchRoi = editedRect;
+                recognizer->searchRoi = editedRect;
                 requestEdit(
                     ui,
                     std::move(draft),
@@ -705,8 +526,8 @@ namespace uf::workbench
             }
         }
 
-        ui.m_dragTarget = CanvasDragTarget::None;
-        ui.m_dragGrip.reset();
-        ui.m_dragStartRect.reset();
+        ui.dragTarget = PanelUiState::CanvasDragTarget::None;
+        ui.dragGrip.reset();
+        ui.dragStartRect.reset();
     }
 }

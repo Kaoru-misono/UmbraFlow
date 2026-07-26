@@ -98,35 +98,12 @@ namespace uf::workbench
         annotation::RecognizerId id
     ) -> std::optional<annotation::SourceId>;
 
-    // Creates a page, its anchor, and the regression case that records which
-    // screen the page stands for, as one draft.
-    auto requestNewPage(AppState& state, PanelUiState& ui) -> void;
-
-    // Adds a recognizer to a page's required or forbidden set, authoring the
-    // recognizer against the given screen.
-    auto requestNewPageMember(
-        AppState& state,
-        PanelUiState& ui,
-        annotation::PageId pageId,
-        annotation::SourceId sourceId,
-        PageMemberKind kind
-    ) -> void;
-
     // The screen a page's regression case claims, if it has one.
     [[nodiscard]]
     auto claimedScreen(
         AppState const& state,
         annotation::PageId pageId
     ) -> std::optional<annotation::SourceId>;
-
-    // Records that a screen is an example of a page, which is what gives the
-    // model check something to check that page's resolution against.
-    auto requestScreenClaim(
-        AppState& state,
-        PanelUiState& ui,
-        annotation::PageId pageId,
-        annotation::SourceId sourceId
-    ) -> void;
 
     // Selects a recognizer and follows to the screen it was authored against,
     // without which its rectangles are drawn over whatever image the canvas

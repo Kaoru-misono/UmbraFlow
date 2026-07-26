@@ -40,14 +40,14 @@ namespace uf::workbench
 
         struct ProjectFixture final
         {
-            annotation::AuthoringDocument    m_document;
-            annotation::AuthoringSourceAsset m_sourceAsset;
+            annotation::AuthoringDocument    document;
+            annotation::AuthoringSourceAsset sourceAsset;
         };
 
         struct MultiSourceProjectFixture final
         {
-            annotation::AuthoringDocument                  m_document;
-            std::array<annotation::AuthoringSourceAsset, 2> m_sourceAssets;
+            annotation::AuthoringDocument                  document;
+            std::array<annotation::AuthoringSourceAsset, 2> sourceAssets;
         };
 
         class TemporaryProject final
@@ -151,10 +151,10 @@ namespace uf::workbench
 
             auto source = annotation::AuthoringSource::create(
                 annotation::AuthoringSourceSpec{
-                    .m_id          = sourceId,
-                    .m_contentHash = *sourceHash,
-                    .m_fingerprint = fingerprint,
-                    .m_provenance  = annotation::ImportedSourceProvenance{},
+                    .id          = sourceId,
+                    .contentHash = *sourceHash,
+                    .fingerprint = fingerprint,
+                    .provenance  = annotation::ImportedSourceProvenance{},
                 }
             );
             REQUIRE(source.has_value());
@@ -164,7 +164,7 @@ namespace uf::workbench
                 {*source},
                 {
                     annotation::AuthoringRecognizerSpec{
-                        .m_definition = annotation::test::recognizer(
+                        .definition = annotation::test::recognizer(
                             fingerprint,
                             anchorId,
                             "home_marker",
@@ -172,7 +172,7 @@ namespace uf::workbench
                             annotation::test::pixelRect(0, 0, 1, 1),
                             annotation::test::pixelRect(0, 0, 2, 2)
                         ),
-                        .m_sourceId = sourceId,
+                        .sourceId = sourceId,
                     },
                 },
                 {annotation::test::page(pageId, "home", {anchorId})},
@@ -180,10 +180,10 @@ namespace uf::workbench
             );
             REQUIRE(document.has_value());
             return ProjectFixture{
-                .m_document    = *std::move(document),
-                .m_sourceAsset = annotation::AuthoringSourceAsset{
-                    .m_id       = sourceId,
-                    .m_pngBytes = std::move(pngBytes),
+                .document    = *std::move(document),
+                .sourceAsset = annotation::AuthoringSourceAsset{
+                    .id       = sourceId,
+                    .pngBytes = std::move(pngBytes),
                 },
             };
         }
@@ -207,18 +207,18 @@ namespace uf::workbench
 
             auto firstSource  = annotation::AuthoringSource::create(
                 annotation::AuthoringSourceSpec{
-                    .m_id          = firstSourceId,
-                    .m_contentHash = *firstHash,
-                    .m_fingerprint = fingerprint,
-                    .m_provenance  = annotation::ImportedSourceProvenance{},
+                    .id          = firstSourceId,
+                    .contentHash = *firstHash,
+                    .fingerprint = fingerprint,
+                    .provenance  = annotation::ImportedSourceProvenance{},
                 }
             );
             auto secondSource = annotation::AuthoringSource::create(
                 annotation::AuthoringSourceSpec{
-                    .m_id          = secondSourceId,
-                    .m_contentHash = *secondHash,
-                    .m_fingerprint = fingerprint,
-                    .m_provenance  = annotation::ImportedSourceProvenance{},
+                    .id          = secondSourceId,
+                    .contentHash = *secondHash,
+                    .fingerprint = fingerprint,
+                    .provenance  = annotation::ImportedSourceProvenance{},
                 }
             );
             REQUIRE(firstSource.has_value());
@@ -230,7 +230,7 @@ namespace uf::workbench
                 {*firstSource, *secondSource},
                 {
                     annotation::AuthoringRecognizerSpec{
-                        .m_definition = annotation::test::recognizer(
+                        .definition = annotation::test::recognizer(
                             fingerprint,
                             firstAnchorId,
                             "first_marker",
@@ -238,10 +238,10 @@ namespace uf::workbench
                             annotation::test::pixelRect(0, 0, 1, 1),
                             annotation::test::pixelRect(0, 0, 2, 2)
                         ),
-                        .m_sourceId = firstSourceId,
+                        .sourceId = firstSourceId,
                     },
                     annotation::AuthoringRecognizerSpec{
-                        .m_definition = annotation::test::recognizer(
+                        .definition = annotation::test::recognizer(
                             fingerprint,
                             secondAnchorId,
                             "second_marker",
@@ -249,7 +249,7 @@ namespace uf::workbench
                             annotation::test::pixelRect(0, 0, 1, 1),
                             annotation::test::pixelRect(0, 0, 2, 2)
                         ),
-                        .m_sourceId = secondSourceId,
+                        .sourceId = secondSourceId,
                     },
                 },
                 {
@@ -264,15 +264,15 @@ namespace uf::workbench
             REQUIRE(document.has_value());
 
             return MultiSourceProjectFixture{
-                .m_document     = *std::move(document),
-                .m_sourceAssets = {
+                .document     = *std::move(document),
+                .sourceAssets = {
                     annotation::AuthoringSourceAsset{
-                        .m_id       = firstSourceId,
-                        .m_pngBytes = std::move(firstPng),
+                        .id       = firstSourceId,
+                        .pngBytes = std::move(firstPng),
                     },
                     annotation::AuthoringSourceAsset{
-                        .m_id       = secondSourceId,
-                        .m_pngBytes = std::move(secondPng),
+                        .id       = secondSourceId,
+                        .pngBytes = std::move(secondPng),
                     },
                 },
             };
@@ -368,16 +368,16 @@ namespace uf::workbench
     {
         auto const project = TemporaryProject{"complete"};
         auto const fixture = projectFixture(0);
-        auto const assets  = std::span{&fixture.m_sourceAsset, std::size_t{1}};
+        auto const assets  = std::span{&fixture.sourceAsset, std::size_t{1}};
         auto const compiled = annotation::compileAuthoringDocument(
-            fixture.m_document,
+            fixture.document,
             assets
         );
         REQUIRE(compiled.has_value());
 
         auto const saved = saveAndGenerateAuthoringProject(
             project.path(),
-            fixture.m_document,
+            fixture.document,
             assets
         );
         auto const savedInfo = saved
@@ -388,7 +388,7 @@ namespace uf::workbench
         REQUIRE(
             saveAndGenerateAuthoringProject(
                 project.path(),
-                fixture.m_document,
+                fixture.document,
                 assets
             ).has_value()
         );
@@ -396,7 +396,7 @@ namespace uf::workbench
         auto const authoringToml = readText(project.path() / "annotations.toml");
         CHECK(
             authoringToml
-            == annotation::serializeAuthoringDocument(fixture.m_document)
+            == annotation::serializeAuthoringDocument(fixture.document)
         );
         auto const reopened = annotation::parseAuthoringDocument(authoringToml);
         REQUIRE(reopened.has_value());
@@ -404,19 +404,19 @@ namespace uf::workbench
         auto const runtimeToml = readText(
             project.path() / "generated" / "annotations.runtime.toml"
         );
-        CHECK(runtimeToml == compiled->m_runtimeManifestToml);
+        CHECK(runtimeToml == compiled->runtimeManifestToml);
         auto const parsedRuntime = annotation::parseRuntimeManifest(runtimeToml);
         REQUIRE(parsedRuntime.has_value());
 
         CHECK(
-            readBytes(project.path() / fixture.m_document.sources().front().relativePath())
-            == fixture.m_sourceAsset.m_pngBytes
+            readBytes(project.path() / fixture.document.sources().front().relativePath())
+            == fixture.sourceAsset.pngBytes
         );
-        for (auto const& asset : compiled->m_templateAssets)
+        for (auto const& asset : compiled->templateAssets)
         {
             CHECK(
-                readBytes(project.path() / asset.m_relativePath)
-                == asset.m_pngBytes
+                readBytes(project.path() / asset.relativePath)
+                == asset.pngBytes
             );
         }
         CHECK_FALSE(containsTemporaryFile(project.path()));
@@ -427,67 +427,67 @@ namespace uf::workbench
         auto const project = TemporaryProject{"replace"};
         auto const first   = projectFixture(0);
         auto const firstAssets = std::span{
-            &first.m_sourceAsset,
+            &first.sourceAsset,
             std::size_t{1}
         };
         REQUIRE(
             saveAndGenerateAuthoringProject(
                 project.path(),
-                first.m_document,
+                first.document,
                 firstAssets
             ).has_value()
         );
         auto const firstCompiled = annotation::compileAuthoringDocument(
-            first.m_document,
+            first.document,
             firstAssets
         );
         REQUIRE(firstCompiled.has_value());
-        REQUIRE(firstCompiled->m_templateAssets.size() == 1U);
+        REQUIRE(firstCompiled->templateAssets.size() == 1U);
         auto const firstSourcePath = project.path()
-            / first.m_document.sources().front().relativePath();
+            / first.document.sources().front().relativePath();
         auto const firstTemplatePath = project.path()
-            / firstCompiled->m_templateAssets.front().m_relativePath;
+            / firstCompiled->templateAssets.front().relativePath;
 
         auto const second = projectFixture(0x40);
         auto const secondAssets = std::span{
-            &second.m_sourceAsset,
+            &second.sourceAsset,
             std::size_t{1}
         };
         auto const secondCompiled = annotation::compileAuthoringDocument(
-            second.m_document,
+            second.document,
             secondAssets
         );
         REQUIRE(secondCompiled.has_value());
-        REQUIRE(secondCompiled->m_templateAssets.size() == 1U);
+        REQUIRE(secondCompiled->templateAssets.size() == 1U);
         REQUIRE(
             saveAndGenerateAuthoringProject(
                 project.path(),
-                second.m_document,
+                second.document,
                 secondAssets
             ).has_value()
         );
 
         CHECK(
             readText(project.path() / "annotations.toml")
-            == annotation::serializeAuthoringDocument(second.m_document)
+            == annotation::serializeAuthoringDocument(second.document)
         );
         CHECK(
             readText(project.path() / "generated" / "annotations.runtime.toml")
-            == secondCompiled->m_runtimeManifestToml
+            == secondCompiled->runtimeManifestToml
         );
         CHECK(std::filesystem::is_regular_file(firstSourcePath));
         CHECK(std::filesystem::is_regular_file(firstTemplatePath));
         CHECK(
             readBytes(
                 project.path()
-                / second.m_document.sources().front().relativePath()
-            ) == second.m_sourceAsset.m_pngBytes
+                / second.document.sources().front().relativePath()
+            ) == second.sourceAsset.pngBytes
         );
         CHECK(
             readBytes(
                 project.path()
-                / secondCompiled->m_templateAssets.front().m_relativePath
-            ) == secondCompiled->m_templateAssets.front().m_pngBytes
+                / secondCompiled->templateAssets.front().relativePath
+            ) == secondCompiled->templateAssets.front().pngBytes
         );
         CHECK_FALSE(containsTemporaryFile(project.path()));
     }
@@ -496,9 +496,9 @@ namespace uf::workbench
     {
         auto const project = TemporaryProject{"invalid"};
         auto const fixture = projectFixture(0);
-        auto tampered      = fixture.m_sourceAsset;
-        REQUIRE_FALSE(tampered.m_pngBytes.empty());
-        tampered.m_pngBytes.back() ^= std::byte{1};
+        auto tampered      = fixture.sourceAsset;
+        REQUIRE_FALSE(tampered.pngBytes.empty());
+        tampered.pngBytes.back() ^= std::byte{1};
 
         auto error         = std::error_code{};
         auto const removed = std::filesystem::remove(project.path(), error);
@@ -508,7 +508,7 @@ namespace uf::workbench
         auto const assets = std::span{&tampered, std::size_t{1}};
         auto const saved  = saveAndGenerateAuthoringProject(
             project.path(),
-            fixture.m_document,
+            fixture.document,
             assets
         );
         REQUIRE_FALSE(saved.has_value());
@@ -525,25 +525,25 @@ namespace uf::workbench
         auto const project = TemporaryProject{"source-order"};
         auto const fixture = multiSourceProjectFixture();
         auto const reversedAssets = std::array{
-            fixture.m_sourceAssets[1],
-            fixture.m_sourceAssets[0],
+            fixture.sourceAssets[1],
+            fixture.sourceAssets[0],
         };
         auto const saved = saveAndGenerateAuthoringProject(
             project.path(),
-            fixture.m_document,
+            fixture.document,
             reversedAssets
         );
         REQUIRE(saved.has_value());
 
-        auto const sources = fixture.m_document.sources();
-        REQUIRE(sources.size() == fixture.m_sourceAssets.size());
+        auto const sources = fixture.document.sources();
+        REQUIRE(sources.size() == fixture.sourceAssets.size());
         CHECK(
             readBytes(project.path() / sources[0].relativePath())
-            == fixture.m_sourceAssets[0].m_pngBytes
+            == fixture.sourceAssets[0].pngBytes
         );
         CHECK(
             readBytes(project.path() / sources[1].relativePath())
-            == fixture.m_sourceAssets[1].m_pngBytes
+            == fixture.sourceAssets[1].pngBytes
         );
         CHECK_FALSE(containsTemporaryFile(project.path()));
     }
@@ -553,12 +553,12 @@ namespace uf::workbench
         auto const project = TemporaryProject{"rollback"};
         auto const first   = projectFixture(0);
         auto const firstAssets = std::span{
-            &first.m_sourceAsset,
+            &first.sourceAsset,
             std::size_t{1}
         };
         auto const firstSaved = saveAndGenerateAuthoringProject(
             project.path(),
-            first.m_document,
+            first.document,
             firstAssets
         );
         auto const firstSavedInfo = firstSaved
@@ -575,21 +575,21 @@ namespace uf::workbench
 
         auto const second = projectFixture(0x40);
         auto const secondAssets = std::span{
-            &second.m_sourceAsset,
+            &second.sourceAsset,
             std::size_t{1}
         };
         auto const secondCompiled = annotation::compileAuthoringDocument(
-            second.m_document,
+            second.document,
             secondAssets
         );
         REQUIRE(secondCompiled.has_value());
-        REQUIRE(secondCompiled->m_templateAssets.size() == 1U);
+        REQUIRE(secondCompiled->templateAssets.size() == 1U);
         auto const blockedTemplate = project.path()
-            / secondCompiled->m_templateAssets.front().m_relativePath;
+            / secondCompiled->templateAssets.front().relativePath;
         REQUIRE_FALSE(std::filesystem::exists(blockedTemplate));
         auto error = std::error_code{};
         auto const blocked = std::filesystem::copy_file(
-            project.path() / first.m_document.sources().front().relativePath(),
+            project.path() / first.document.sources().front().relativePath(),
             blockedTemplate,
             error
         );
@@ -598,7 +598,7 @@ namespace uf::workbench
 
         auto const failed = saveAndGenerateAuthoringProject(
             project.path(),
-            second.m_document,
+            second.document,
             secondAssets
         );
         REQUIRE_FALSE(failed.has_value());
@@ -618,11 +618,11 @@ namespace uf::workbench
     {
         auto const project = TemporaryProject{"load"};
         auto const fixture = projectFixture(0);
-        auto const assets  = std::span{&fixture.m_sourceAsset, std::size_t{1}};
+        auto const assets  = std::span{&fixture.sourceAsset, std::size_t{1}};
         REQUIRE(
             saveAndGenerateAuthoringProject(
                 project.path(),
-                fixture.m_document,
+                fixture.document,
                 assets
             ).has_value()
         );
@@ -635,14 +635,14 @@ namespace uf::workbench
         REQUIRE(loaded.has_value());
 
         CHECK(
-            annotation::serializeAuthoringDocument(loaded->m_document)
-            == annotation::serializeAuthoringDocument(fixture.m_document)
+            annotation::serializeAuthoringDocument(loaded->document)
+            == annotation::serializeAuthoringDocument(fixture.document)
         );
-        REQUIRE(loaded->m_sources.size() == 1U);
-        CHECK(loaded->m_sources.front().m_id == fixture.m_sourceAsset.m_id);
+        REQUIRE(loaded->sources.size() == 1U);
+        CHECK(loaded->sources.front().id == fixture.sourceAsset.id);
         CHECK(
-            loaded->m_sources.front().m_pngBytes
-            == fixture.m_sourceAsset.m_pngBytes
+            loaded->sources.front().pngBytes
+            == fixture.sourceAsset.pngBytes
         );
     }
 
@@ -650,18 +650,18 @@ namespace uf::workbench
     {
         auto const project = TemporaryProject{"load-hash"};
         auto const fixture = projectFixture(0);
-        auto const assets  = std::span{&fixture.m_sourceAsset, std::size_t{1}};
+        auto const assets  = std::span{&fixture.sourceAsset, std::size_t{1}};
         REQUIRE(
             saveAndGenerateAuthoringProject(
                 project.path(),
-                fixture.m_document,
+                fixture.document,
                 assets
             ).has_value()
         );
 
         auto const sourcePath = project.path()
-            / fixture.m_document.sources().front().relativePath();
-        auto tampered = fixture.m_sourceAsset.m_pngBytes;
+            / fixture.document.sources().front().relativePath();
+        auto tampered = fixture.sourceAsset.pngBytes;
         REQUIRE_FALSE(tampered.empty());
         tampered.back() ^= std::byte{1};
         overwriteFile(sourcePath, tampered);
@@ -678,17 +678,17 @@ namespace uf::workbench
     {
         auto const project = TemporaryProject{"load-missing"};
         auto const fixture = projectFixture(0);
-        auto const assets  = std::span{&fixture.m_sourceAsset, std::size_t{1}};
+        auto const assets  = std::span{&fixture.sourceAsset, std::size_t{1}};
         REQUIRE(
             saveAndGenerateAuthoringProject(
                 project.path(),
-                fixture.m_document,
+                fixture.document,
                 assets
             ).has_value()
         );
 
         auto const sourcePath = project.path()
-            / fixture.m_document.sources().front().relativePath();
+            / fixture.document.sources().front().relativePath();
         auto error         = std::error_code{};
         auto const removed = std::filesystem::remove(sourcePath, error);
         REQUIRE(removed);

@@ -171,31 +171,31 @@ namespace uf::workbench
         auto const imported = importSourcePng(id, file.path());
         REQUIRE(imported.has_value());
 
-        CHECK(imported->m_spec.m_id == id);
-        CHECK(imported->m_asset.m_id == id);
-        CHECK(imported->m_spec.m_fingerprint.width() == 2);
-        CHECK(imported->m_spec.m_fingerprint.height() == 2);
+        CHECK(imported->spec.id == id);
+        CHECK(imported->asset.id == id);
+        CHECK(imported->spec.fingerprint.width() == 2);
+        CHECK(imported->spec.fingerprint.height() == 2);
         // A bare PNG carries no density, so an import keeps the conventional 96.
-        CHECK(imported->m_spec.m_fingerprint.dpiX() == 96);
-        CHECK(imported->m_spec.m_fingerprint.dpiY() == 96);
+        CHECK(imported->spec.fingerprint.dpiX() == 96);
+        CHECK(imported->spec.fingerprint.dpiY() == 96);
         CHECK(
             std::holds_alternative<annotation::ImportedSourceProvenance>(
-                imported->m_spec.m_provenance
+                imported->spec.provenance
             )
         );
 
         // The re-encode is canonical: identical input bytes reproduce exactly.
-        CHECK(imported->m_asset.m_pngBytes == *encoded);
-        auto const rehash = annotation::sha256(imported->m_asset.m_pngBytes);
+        CHECK(imported->asset.pngBytes == *encoded);
+        auto const rehash = annotation::sha256(imported->asset.pngBytes);
         REQUIRE(rehash.has_value());
-        CHECK(imported->m_spec.m_contentHash == *rehash);
+        CHECK(imported->spec.contentHash == *rehash);
 
         auto const decoded = image::decodePng(
-            imported->m_asset.m_pngBytes,
+            imported->asset.pngBytes,
             "reimported.png"
         );
         REQUIRE(decoded.has_value());
-        CHECK(decoded->m_pixels == pixels);
+        CHECK(decoded->pixels == pixels);
     }
 
     TEST_CASE("importSourcePng rejects a file that is not a PNG")
@@ -235,30 +235,30 @@ namespace uf::workbench
         );
         REQUIRE(ingested.has_value());
 
-        CHECK(ingested->m_spec.m_fingerprint.width() == 2);
-        CHECK(ingested->m_spec.m_fingerprint.height() == 2);
+        CHECK(ingested->spec.fingerprint.width() == 2);
+        CHECK(ingested->spec.fingerprint.height() == 2);
         // The captured window's density is stamped into the source fingerprint,
         // not defaulted to 96, so a high-DPI target authors against its real DPI.
-        CHECK(ingested->m_spec.m_fingerprint.dpiX() == 120);
-        CHECK(ingested->m_spec.m_fingerprint.dpiY() == 120);
+        CHECK(ingested->spec.fingerprint.dpiX() == 120);
+        CHECK(ingested->spec.fingerprint.dpiY() == 120);
         auto const* p_wgc = std::get_if<annotation::WgcSourceProvenance>(
-            &ingested->m_spec.m_provenance
+            &ingested->spec.provenance
         );
         REQUIRE(p_wgc != nullptr);
-        CHECK(p_wgc->m_targetGeneration == generation);
-        CHECK(p_wgc->m_capturedAt == "2026-07-23T00:00:00Z");
+        CHECK(p_wgc->targetGeneration == generation);
+        CHECK(p_wgc->capturedAt == "2026-07-23T00:00:00Z");
 
-        auto const rehash = annotation::sha256(ingested->m_asset.m_pngBytes);
+        auto const rehash = annotation::sha256(ingested->asset.pngBytes);
         REQUIRE(rehash.has_value());
-        CHECK(ingested->m_spec.m_contentHash == *rehash);
+        CHECK(ingested->spec.contentHash == *rehash);
 
         // The encoded asset is the RGBA view of the captured BGRA pixels.
         auto const decoded = image::decodePng(
-            ingested->m_asset.m_pngBytes,
+            ingested->asset.pngBytes,
             "captured.png"
         );
         REQUIRE(decoded.has_value());
-        CHECK(decoded->m_pixels == sampleRgba());
+        CHECK(decoded->pixels == sampleRgba());
     }
 
     TEST_CASE("ingestSourceFromFrame drops stride padding from captured rows")
@@ -275,14 +275,14 @@ namespace uf::workbench
         auto const ingested = ingestSourceFromFrame(id, frame, 96, "t");
         REQUIRE(ingested.has_value());
         auto const decoded = image::decodePng(
-            ingested->m_asset.m_pngBytes,
+            ingested->asset.pngBytes,
             "padded.png"
         );
         REQUIRE(decoded.has_value());
-        CHECK(decoded->m_width == 1);
-        CHECK(decoded->m_height == 2);
+        CHECK(decoded->width == 1);
+        CHECK(decoded->height == 2);
         CHECK(
-            decoded->m_pixels
+            decoded->pixels
             == std::vector{
                 asByte(10), asByte(20), asByte(30), asByte(255),
                 asByte(70), asByte(80), asByte(90), asByte(255),

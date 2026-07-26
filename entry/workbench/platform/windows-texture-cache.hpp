@@ -17,9 +17,9 @@ namespace uf::workbench::platform
     // this boundary. The handle stays valid for the cache's lifetime.
     struct GpuSourceTexture final
     {
-        uint64 m_textureHandle{};
-        uint32 m_width{};
-        uint32 m_height{};
+        uint64 textureHandle{};
+        uint32 width{};
+        uint32 height{};
     };
 
     // Decodes and uploads workbench source images to Direct3D 11 textures on
