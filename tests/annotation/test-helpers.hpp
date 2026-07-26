@@ -142,6 +142,103 @@ namespace uf::annotation::test
         return *std::move(result);
     }
 
+    inline auto anchorElement(
+        ProjectFingerprint projectFingerprint,
+        RecognizerId id,
+        std::string name,
+        SourceId sourceId,
+        PixelRect templateRect,
+        PixelRect searchRoi,
+        SimilarityThreshold similarityThreshold = threshold(),
+        bool shared                             = false
+    ) -> Element
+    {
+        auto result = Element::create(
+            projectFingerprint,
+            Element::Spec{
+                .id           = id,
+                .name         = resourceName(std::move(name)),
+                .sourceId     = sourceId,
+                .templateRect = templateRect,
+                .searchRoi    = searchRoi,
+                .threshold    = similarityThreshold,
+                .kind         = AnchorElement{},
+                .shared       = shared,
+            }
+        );
+        REQUIRE(result.has_value());
+        return *std::move(result);
+    }
+
+    inline auto interactiveElement(
+        ProjectFingerprint projectFingerprint,
+        RecognizerId id,
+        std::string name,
+        SourceId sourceId,
+        PixelRect templateRect,
+        PixelRect searchRoi,
+        std::optional<TemplateOffset> clickOffset = std::nullopt,
+        SimilarityThreshold similarityThreshold   = threshold(),
+        bool shared                               = false
+    ) -> Element
+    {
+        auto result = Element::create(
+            projectFingerprint,
+            Element::Spec{
+                .id           = id,
+                .name         = resourceName(std::move(name)),
+                .sourceId     = sourceId,
+                .templateRect = templateRect,
+                .searchRoi    = searchRoi,
+                .threshold    = similarityThreshold,
+                .kind         = InteractiveElement{.clickOffset = clickOffset},
+                .shared       = shared,
+            }
+        );
+        REQUIRE(result.has_value());
+        return *std::move(result);
+    }
+
+    inline auto infoElement(
+        ProjectFingerprint projectFingerprint,
+        RecognizerId id,
+        std::string name,
+        SourceId sourceId,
+        PixelRect templateRect,
+        PixelRect searchRoi,
+        SimilarityThreshold similarityThreshold = threshold()
+    ) -> Element
+    {
+        auto result = Element::create(
+            projectFingerprint,
+            Element::Spec{
+                .id           = id,
+                .name         = resourceName(std::move(name)),
+                .sourceId     = sourceId,
+                .templateRect = templateRect,
+                .searchRoi    = searchRoi,
+                .threshold    = similarityThreshold,
+                .kind         = InfoElement{},
+                .shared       = false,
+            }
+        );
+        REQUIRE(result.has_value());
+        return *std::move(result);
+    }
+
+    inline auto placement(
+        PageId pageId,
+        RecognizerId elementId,
+        PixelRect searchRoi
+    ) -> AuthoringPlacement
+    {
+        return AuthoringPlacement{
+            .pageId    = pageId,
+            .elementId = elementId,
+            .searchRoi = searchRoi,
+        };
+    }
+
     inline auto catalog(
         ProjectFingerprint projectFingerprint,
         std::vector<RecognizerDefinition> recognizers,

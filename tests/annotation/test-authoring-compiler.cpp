@@ -604,4 +604,73 @@ namespace uf::annotation
             AutomationErrorKind::InvalidResource
         );
     }
+
+    TEST_CASE("annotation authoring compilation is byte-identical for a v1-equivalent and a native v2 model")
+    {
+        // The compiler inverts placements back into runtime allowed_page_ids.
+        // For an equivalent model the runtime manifest must be exactly what the
+        // v1 recognizer-carried membership produced, since the runtime schema
+        // and serialization are frozen. compilerFixture is built through the
+        // v1-shaped compatibility path; here the same model is built natively
+        // from elements and a placement, and the two must compile identically.
+        auto const fixture     = compilerFixture();
+        auto const fingerprint = test::fingerprint(3, 2, 96, 96);
+        auto const sourceId    = test::sourceId(k_sourceId);
+        auto const anchorId    = test::recognizerId(k_anchorId);
+        auto const actionId    = test::recognizerId(k_actionId);
+        auto const pageId      = test::pageId(k_pageId);
+        auto const click       = TemplateOffset::create(1, 1, 2, 2);
+        REQUIRE(click.has_value());
+
+        auto source = AuthoringSource::create(
+            AuthoringSourceSpec{
+                .id          = sourceId,
+                .contentHash = fixture.document.sources().front().contentHash(),
+                .fingerprint = fingerprint,
+                .provenance  = ImportedSourceProvenance{},
+            }
+        );
+        REQUIRE(source.has_value());
+
+        auto elements = std::vector<Element>{};
+        elements.emplace_back(
+            test::anchorElement(
+                fingerprint,
+                anchorId,
+                "home_marker",
+                sourceId,
+                test::pixelRect(0, 0, 1, 1),
+                test::pixelRect(0, 0, 3, 2)
+            )
+        );
+        elements.emplace_back(
+            test::interactiveElement(
+                fingerprint,
+                actionId,
+                "daily_button",
+                sourceId,
+                test::pixelRect(1, 0, 2, 2),
+                test::pixelRect(0, 0, 3, 2),
+                *click
+            )
+        );
+
+        auto native = AuthoringDocument::create(
+            test::projectId(),
+            fingerprint,
+            {*std::move(source)},
+            std::move(elements),
+            {test::page(pageId, "home", {anchorId})},
+            {test::placement(pageId, actionId, test::pixelRect(0, 0, 3, 2))},
+            {}
+        );
+        REQUIRE(native.has_value());
+
+        auto const assets     = std::span{&fixture.sourceAsset, std::size_t{1}};
+        auto const viaCompat  = compileAuthoringDocument(fixture.document, assets);
+        auto const viaNative  = compileAuthoringDocument(*native, assets);
+        REQUIRE(viaCompat.has_value());
+        REQUIRE(viaNative.has_value());
+        CHECK(viaCompat->runtimeManifestToml == viaNative->runtimeManifestToml);
+    }
 }

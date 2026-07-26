@@ -51,40 +51,51 @@ namespace uf::workbench
             );
         }
 
-        auto const definitions   = document.catalog().recognizers();
-        auto const relationships = document.recognizerSources();
-        UF_CHECK(definitions.size() == relationships.size());
+        // The draft stays v1-shaped in this phase: each EditableRecognizer keeps
+        // its own allowedPageIds so panels, EditPage, and page-view need no
+        // change. Here that membership is derived from the document's placements
+        // rather than from an inverted field on the element.
         auto recognizers = std::vector<EditableRecognizer>{};
-        recognizers.reserve(definitions.size());
-        for (auto index = std::size_t{0}; index < definitions.size(); ++index)
+        recognizers.reserve(document.elements().size());
+        for (auto const& element : document.elements())
         {
-            auto const& definition   = checkedAt(definitions, index);
-            auto const& relationship = checkedAt(relationships, index);
-            UF_CHECK(definition.id() == relationship.recognizerId);
-
             auto defaultClick = std::optional<EditableTemplateOffset>{};
-            if (auto const offset = definition.defaultClick())
+            if (
+                auto const* p_interactive = std::get_if<annotation::InteractiveElement>(
+                    &element.kind()
+                )
+            )
             {
-                defaultClick = EditableTemplateOffset{
-                    .x = offset->x(),
-                    .y = offset->y(),
-                };
+                if (auto const offset = p_interactive->clickOffset)
+                {
+                    defaultClick = EditableTemplateOffset{
+                        .x = offset->x(),
+                        .y = offset->y(),
+                    };
+                }
             }
+
+            auto allowedPageIds = std::vector<annotation::PageId>{};
+            for (auto const& placement : document.placements())
+            {
+                if (placement.elementId == element.id())
+                {
+                    allowedPageIds.emplace_back(placement.pageId);
+                }
+            }
+
             recognizers.emplace_back(
                 EditableRecognizer{
-                    .id                    = definition.id(),
-                    .name                  = definition.name().value(),
-                    .annotationType        = definition.annotationType(),
-                    .sourceId              = relationship.sourceId,
-                    .templateRect          = definition.templateRect(),
-                    .searchRoi             = definition.searchRoi(),
-                    .similarityBasisPoints = definition.threshold().basisPoints(),
+                    .id                    = element.id(),
+                    .name                  = element.name().value(),
+                    .annotationType        = element.annotationType(),
+                    .sourceId              = element.sourceId(),
+                    .templateRect          = element.templateRect(),
+                    .searchRoi             = element.searchRoi(),
+                    .similarityBasisPoints = element.threshold().basisPoints(),
                     .defaultClick          = defaultClick,
-                    .allowedPageIds = {
-                        definition.allowedPageIds().begin(),
-                        definition.allowedPageIds().end(),
-                    },
-                    .shared = relationship.shared,
+                    .allowedPageIds        = std::move(allowedPageIds),
+                    .shared                = element.shared(),
                 }
             );
         }
@@ -149,8 +160,13 @@ namespace uf::workbench
             sources.emplace_back(std::move(validated));
         }
 
-        auto recognizers = std::vector<annotation::AuthoringRecognizerSpec>{};
-        recognizers.reserve(draft.recognizers.size());
+        // Invert the draft's per-recognizer allowedPageIds back into page-side
+        // placements. An anchor with a stray authorization becomes a placement
+        // that references it, which the document rejects -- the same failure the
+        // v1 catalog produced for a page anchor carrying allowed_page_ids.
+        auto elements   = std::vector<annotation::Element>{};
+        auto placements = std::vector<annotation::AuthoringPlacement>{};
+        elements.reserve(draft.recognizers.size());
         for (auto const& recognizer : draft.recognizers)
         {
             UF_TRY_VALUE(
@@ -164,7 +180,7 @@ namespace uf::workbench
                 )
             );
 
-            auto defaultClick = std::optional<annotation::TemplateOffset>{};
+            auto clickOffset = std::optional<annotation::TemplateOffset>{};
             if (recognizer.defaultClick)
             {
                 UF_TRY_VALUE(
@@ -176,32 +192,50 @@ namespace uf::workbench
                         recognizer.templateRect.height()
                     )
                 );
-                defaultClick = offset;
+                clickOffset = offset;
+            }
+
+            auto kind = annotation::ElementKind{annotation::AnchorElement{}};
+            switch (recognizer.annotationType)
+            {
+            case annotation::AnnotationType::PageAnchor:
+                kind = annotation::AnchorElement{};
+                break;
+            case annotation::AnnotationType::ActionTarget:
+                kind = annotation::InteractiveElement{.clickOffset = clickOffset};
+                break;
+            case annotation::AnnotationType::InfoRegion:
+                kind = annotation::InfoElement{};
+                break;
             }
 
             UF_TRY_VALUE(
-                definition,
-                annotation::RecognizerDefinition::create(
+                element,
+                annotation::Element::create(
                     draft.fingerprint,
-                    annotation::RecognizerSpec{
-                        .id             = recognizer.id,
-                        .name           = std::move(name),
-                        .annotationType = recognizer.annotationType,
-                        .templateRect   = recognizer.templateRect,
-                        .searchRoi      = recognizer.searchRoi,
-                        .threshold      = threshold,
-                        .defaultClick   = defaultClick,
-                        .allowedPageIds = recognizer.allowedPageIds,
+                    annotation::Element::Spec{
+                        .id           = recognizer.id,
+                        .name         = std::move(name),
+                        .sourceId     = recognizer.sourceId,
+                        .templateRect = recognizer.templateRect,
+                        .searchRoi    = recognizer.searchRoi,
+                        .threshold    = threshold,
+                        .kind         = std::move(kind),
+                        .shared       = recognizer.shared,
                     }
                 )
             );
-            recognizers.emplace_back(
-                annotation::AuthoringRecognizerSpec{
-                    .definition = std::move(definition),
-                    .sourceId   = recognizer.sourceId,
-                    .shared     = recognizer.shared,
-                }
-            );
+            for (auto const pageId : recognizer.allowedPageIds)
+            {
+                placements.emplace_back(
+                    annotation::AuthoringPlacement{
+                        .pageId    = pageId,
+                        .elementId = recognizer.id,
+                        .searchRoi = recognizer.searchRoi,
+                    }
+                );
+            }
+            elements.emplace_back(std::move(element));
         }
 
         auto pages = std::vector<annotation::PageSignature>{};
@@ -241,8 +275,9 @@ namespace uf::workbench
             draft.projectId,
             draft.fingerprint,
             std::move(sources),
-            std::move(recognizers),
+            std::move(elements),
             std::move(pages),
+            std::move(placements),
             std::move(regressions)
         );
     }

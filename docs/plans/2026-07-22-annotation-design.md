@@ -147,6 +147,19 @@ A WGC source uses `capture_backend = "wgc"` and requires
 `target_generation` plus canonical RFC 3339 `captured_at`. An imported PNG uses
 `capture_backend = "imported"` and omits those WGC-only fields.
 
+> **Amendment (2026-07-26).** By user decision, and per
+> [`2026-07-26-page-centric-authoring.md`](2026-07-26-page-centric-authoring.md)
+> phase 2, three clauses of this section are overridden for the **authoring**
+> document only: the "exact schema identifier `umbraflow-authoring/v1`" clause,
+> the "minor-version best-effort loading is deferred" clause, and the "reopening
+> rejects schema drift" clause. The GUI now writes `umbraflow-authoring/v2`
+> (page membership moved off the recognizer onto page-side placements), and a
+> read-only migration loader accepts a `umbraflow-authoring/v1` file once,
+> upgrading it to v2 on save. That migration is precisely the deferred
+> best-effort capability, now un-deferred. Every other S0 clause remains in
+> force — above all the runtime manifest schema `umbraflow-annotations/v1`
+> (§1.3), which does not change.
+
 ### 1.3 Generated runtime manifest
 
 The workbench compiles the authoring document into exact schema

@@ -35,6 +35,24 @@ namespace uf::annotation
         }
 
         [[nodiscard]]
+        auto importedSource(
+            SourceId id,
+            ProjectFingerprint fingerprint
+        ) -> AuthoringSource
+        {
+            auto result = AuthoringSource::create(
+                AuthoringSourceSpec{
+                    .id          = id,
+                    .contentHash = contentHash(k_sourceHash),
+                    .fingerprint = fingerprint,
+                    .provenance  = ImportedSourceProvenance{},
+                }
+            );
+            REQUIRE(result.has_value());
+            return *std::move(result);
+        }
+
+        [[nodiscard]]
         auto authoringDocument() -> AuthoringDocument
         {
             auto const fingerprint = test::fingerprint(8, 6, 96, 96);
@@ -120,7 +138,7 @@ namespace uf::annotation
     {
         auto const encoded = serializeAuthoringDocument(authoringDocument());
         auto const expected = std::string{
-            "schema = \"umbraflow-authoring/v1\"\n"
+            "schema = \"umbraflow-authoring/v2\"\n"
             "project_id = \"personal.test\"\n"
             "base_resolution = [8, 6]\n"
             "base_dpi = [96, 96]\n"
@@ -157,13 +175,17 @@ namespace uf::annotation
             "search_roi = [3, 2, 4, 3]\n"
             "min_similarity_bp = 9000\n"
             "default_click = [1, 0]\n"
-            "page_ids = [\"00000000-0000-0000-0000-000000000101\"]\n"
             "\n"
             "[[page]]\n"
             "id = \"00000000-0000-0000-0000-000000000101\"\n"
             "name = \"home\"\n"
             "required = [\"00000000-0000-0000-0000-000000000001\"]\n"
             "forbidden = []\n"
+            "\n"
+            "[[placement]]\n"
+            "page_id = \"00000000-0000-0000-0000-000000000101\"\n"
+            "element_id = \"00000000-0000-0000-0000-000000000002\"\n"
+            "search_roi = [3, 2, 4, 3]\n"
             "\n"
             "[[regression]]\n"
             "id = \"00000000-0000-0000-0000-000000000301\"\n"
@@ -190,8 +212,8 @@ namespace uf::annotation
         invalid.emplace_back(
             replaceOnce(
                 canonical,
-                "umbraflow-authoring/v1",
-                "umbraflow-authoring/v2"
+                "umbraflow-authoring/v2",
+                "umbraflow-authoring/v3"
             )
         );
         invalid.emplace_back(
@@ -285,6 +307,262 @@ namespace uf::annotation
             REQUIRE(p_resolved != nullptr);
             CHECK(p_resolved->pageId == test::pageId(k_pageId));
             CHECK(serializeAuthoringDocument(*parsed) == encoded);
+        }
+    }
+
+    TEST_CASE("annotation authoring v1 file migrates to v2 and round-trips")
+    {
+        // A hand-written v1 byte fixture: page membership lives on the action
+        // target as page_ids, and there is no [[placement]] table. The loader
+        // reads it once and upgrades it to the v2 form of the same model.
+        auto const v1 = std::string{
+            "schema = \"umbraflow-authoring/v1\"\n"
+            "project_id = \"personal.test\"\n"
+            "base_resolution = [8, 6]\n"
+            "base_dpi = [96, 96]\n"
+            "\n"
+            "[[source]]\n"
+            "id = \"00000000-0000-0000-0000-000000000201\"\n"
+            "path = \"assets/sources/"
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.png\"\n"
+            "content_hash = \"sha256:"
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"\n"
+            "client_size = [8, 6]\n"
+            "dpi = [96, 96]\n"
+            "capture_backend = \"wgc\"\n"
+            "target_generation = 7\n"
+            "captured_at = \"2026-07-23T09:15:00+09:00\"\n"
+            "\n"
+            "[[annotation]]\n"
+            "id = \"00000000-0000-0000-0000-000000000001\"\n"
+            "name = \"home_marker\"\n"
+            "type = \"page_anchor\"\n"
+            "source_id = \"00000000-0000-0000-0000-000000000201\"\n"
+            "recognizer_kind = \"gray_template\"\n"
+            "template_rect = [1, 1, 1, 1]\n"
+            "search_roi = [0, 0, 3, 3]\n"
+            "min_similarity_bp = 9000\n"
+            "\n"
+            "[[annotation]]\n"
+            "id = \"00000000-0000-0000-0000-000000000002\"\n"
+            "name = \"daily_button\"\n"
+            "type = \"action_target\"\n"
+            "source_id = \"00000000-0000-0000-0000-000000000201\"\n"
+            "recognizer_kind = \"gray_template\"\n"
+            "template_rect = [4, 3, 2, 1]\n"
+            "search_roi = [3, 2, 4, 3]\n"
+            "min_similarity_bp = 9000\n"
+            "default_click = [1, 0]\n"
+            "page_ids = [\"00000000-0000-0000-0000-000000000101\"]\n"
+            "\n"
+            "[[page]]\n"
+            "id = \"00000000-0000-0000-0000-000000000101\"\n"
+            "name = \"home\"\n"
+            "required = [\"00000000-0000-0000-0000-000000000001\"]\n"
+            "forbidden = []\n"
+            "\n"
+            "[[regression]]\n"
+            "id = \"00000000-0000-0000-0000-000000000301\"\n"
+            "source_id = \"00000000-0000-0000-0000-000000000201\"\n"
+            "classification = \"positive\"\n"
+            "expected_outcome = \"resolved\"\n"
+            "expected_page_id = \"00000000-0000-0000-0000-000000000101\"\n"
+        };
+
+        auto const migrated = parseAuthoringDocument(v1);
+        REQUIRE(migrated.has_value());
+
+        // The upgrade is the exact v2 form of the same model the fixture builds.
+        auto const upgraded = serializeAuthoringDocument(*migrated);
+        CHECK(upgraded == serializeAuthoringDocument(authoringDocument()));
+        CHECK(upgraded.starts_with("schema = \"umbraflow-authoring/v2\""));
+        CHECK(upgraded.find("\n[[placement]]\n") != std::string::npos);
+        CHECK(upgraded.find("page_ids") == std::string::npos);
+
+        // A v2 file round-trips through the canonical self-check unchanged.
+        auto const reparsed = parseAuthoringDocument(upgraded);
+        REQUIRE(reparsed.has_value());
+        CHECK(serializeAuthoringDocument(*reparsed) == upgraded);
+    }
+
+    TEST_CASE("annotation authoring placements serialize in canonical page then element order")
+    {
+        auto const fingerprint = test::fingerprint(8, 6, 96, 96);
+        auto const sourceId    = test::sourceId(k_sourceId);
+        auto const anchorId    = test::recognizerId(k_anchorId);
+        auto const lowerId     = test::recognizerId(
+            "00000000-0000-0000-0000-000000000002"
+        );
+        auto const higherId    = test::recognizerId(
+            "00000000-0000-0000-0000-000000000003"
+        );
+        auto const pageId      = test::pageId(k_pageId);
+        auto const roi         = test::pixelRect(0, 0, 3, 3);
+        auto const templateRect = test::pixelRect(0, 0, 1, 1);
+
+        auto elements = std::vector<Element>{};
+        elements.emplace_back(
+            test::anchorElement(
+                fingerprint,
+                anchorId,
+                "home_marker",
+                sourceId,
+                templateRect,
+                roi
+            )
+        );
+        elements.emplace_back(
+            test::interactiveElement(
+                fingerprint,
+                higherId,
+                "second_button",
+                sourceId,
+                templateRect,
+                roi
+            )
+        );
+        elements.emplace_back(
+            test::interactiveElement(
+                fingerprint,
+                lowerId,
+                "first_button",
+                sourceId,
+                templateRect,
+                roi
+            )
+        );
+
+        // Supplied out of order; canonical output must sort them by element id.
+        auto placements = std::vector<AuthoringPlacement>{
+            test::placement(pageId, higherId, roi),
+            test::placement(pageId, lowerId, roi),
+        };
+
+        auto document = AuthoringDocument::create(
+            test::projectId(),
+            fingerprint,
+            {importedSource(sourceId, fingerprint)},
+            std::move(elements),
+            {test::page(pageId, "home", {anchorId})},
+            std::move(placements),
+            {}
+        );
+        REQUIRE(document.has_value());
+
+        auto const encoded  = serializeAuthoringDocument(*document);
+        auto const lowerPos = encoded.find(
+            "element_id = \"00000000-0000-0000-0000-000000000002\""
+        );
+        auto const higherPos = encoded.find(
+            "element_id = \"00000000-0000-0000-0000-000000000003\""
+        );
+        REQUIRE(lowerPos != std::string::npos);
+        REQUIRE(higherPos != std::string::npos);
+        CHECK(lowerPos < higherPos);
+
+        auto const parsed = parseAuthoringDocument(encoded);
+        REQUIRE(parsed.has_value());
+        CHECK(serializeAuthoringDocument(*parsed) == encoded);
+        CHECK(parsed->placements().size() == 2U);
+    }
+
+    TEST_CASE("annotation authoring rejects the placements model's new violations")
+    {
+        auto const fingerprint = test::fingerprint(8, 6, 96, 96);
+        auto const sourceId    = test::sourceId(k_sourceId);
+        auto const anchorId    = test::recognizerId(k_anchorId);
+        auto const regionId    = test::recognizerId(k_actionId);
+        auto const pageId      = test::pageId(k_pageId);
+        auto const roi         = test::pixelRect(0, 0, 3, 3);
+        auto const templateRect = test::pixelRect(0, 0, 1, 1);
+
+        auto const anchor = [&]
+        {
+            return test::anchorElement(
+                fingerprint,
+                anchorId,
+                "home_marker",
+                sourceId,
+                templateRect,
+                roi
+            );
+        };
+        auto const region = [&]
+        {
+            return test::interactiveElement(
+                fingerprint,
+                regionId,
+                "daily_button",
+                sourceId,
+                templateRect,
+                roi
+            );
+        };
+
+        SUBCASE("a placement may not reference a page anchor")
+        {
+            auto elements = std::vector<Element>{};
+            elements.emplace_back(anchor());
+            elements.emplace_back(region());
+            auto document = AuthoringDocument::create(
+                test::projectId(),
+                fingerprint,
+                {importedSource(sourceId, fingerprint)},
+                std::move(elements),
+                {test::page(pageId, "home", {anchorId})},
+                {
+                    test::placement(pageId, anchorId, roi),
+                    test::placement(pageId, regionId, roi),
+                },
+                {}
+            );
+            REQUIRE_FALSE(document.has_value());
+            CHECK(document.error().message().contains("is a page anchor"));
+        }
+
+        SUBCASE("an element may not be a signature member and a placement on one page")
+        {
+            // A page whose signature names the interactive element itself.
+            auto elements = std::vector<Element>{};
+            elements.emplace_back(anchor());
+            elements.emplace_back(region());
+            auto document = AuthoringDocument::create(
+                test::projectId(),
+                fingerprint,
+                {importedSource(sourceId, fingerprint)},
+                std::move(elements),
+                {test::page(pageId, "home", {anchorId, regionId})},
+                {test::placement(pageId, regionId, roi)},
+                {}
+            );
+            REQUIRE_FALSE(document.has_value());
+            CHECK(
+                document.error().message().contains(
+                    "both a signature member and a placement"
+                )
+            );
+        }
+
+        SUBCASE("every interactive element must be placed somewhere")
+        {
+            auto elements = std::vector<Element>{};
+            elements.emplace_back(anchor());
+            elements.emplace_back(region());
+            auto document = AuthoringDocument::create(
+                test::projectId(),
+                fingerprint,
+                {importedSource(sourceId, fingerprint)},
+                std::move(elements),
+                {test::page(pageId, "home", {anchorId})},
+                {},
+                {}
+            );
+            REQUIRE_FALSE(document.has_value());
+            CHECK(
+                document.error().message().contains(
+                    "must be placed on at least one page"
+                )
+            );
         }
     }
 }
