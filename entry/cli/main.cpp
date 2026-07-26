@@ -37,25 +37,25 @@ namespace uf::cli
                 return exitCodeForError(report.error(), runCancellationRequested());
             }
 
-            if (!report->m_actionDelivered)
+            if (!report->actionDelivered)
             {
                 std::cerr << std::format(
                     "run: action absent on resolved page "
                     "(page=\"{}\" action=\"{}\") trace=\"{}\"\n",
-                    report->m_pageName,
-                    report->m_actionName,
-                    report->m_tracePath
+                    report->pageName,
+                    report->actionName,
+                    report->tracePath
                 );
                 return ExitCode::ActionAbsent;
             }
 
             std::cout << std::format(
                 "run: page=\"{}\" action=\"{}\" click=({:.1f}, {:.1f}) trace=\"{}\"\n",
-                report->m_pageName,
-                report->m_actionName,
-                report->m_clickClientX,
-                report->m_clickClientY,
-                report->m_tracePath
+                report->pageName,
+                report->actionName,
+                report->clickClientX,
+                report->clickClientY,
+                report->tracePath
             );
             return ExitCode::Success;
         }

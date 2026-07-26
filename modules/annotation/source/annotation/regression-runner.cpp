@@ -31,7 +31,7 @@ namespace uf::annotation
             PageRecognitionAttempt const& attempt
         ) noexcept -> bool
         {
-            auto const* p_outcome = std::get_if<PageOutcome>(&attempt.m_result);
+            auto const* p_outcome = std::get_if<PageOutcome>(&attempt.result);
             if (p_outcome == nullptr)
             {
                 return false;
@@ -40,7 +40,7 @@ namespace uf::annotation
             if (auto const* p_expected = std::get_if<ResolvedRegression>(&expectation))
             {
                 auto const* p_actual = std::get_if<ResolvedPage>(p_outcome);
-                return p_actual != nullptr && p_actual->pageId() == p_expected->m_pageId;
+                return p_actual != nullptr && p_actual->pageId() == p_expected->pageId;
             }
             if (std::holds_alternative<UnknownRegression>(expectation))
             {
@@ -56,13 +56,13 @@ namespace uf::annotation
         [[nodiscard]]
         auto isSuiteInterruption(PageRecognitionAttempt const& attempt) noexcept -> bool
         {
-            auto const* p_stop = std::get_if<PageRecognitionStop>(&attempt.m_result);
+            auto const* p_stop = std::get_if<PageRecognitionStop>(&attempt.result);
             if (p_stop == nullptr)
             {
                 return false;
             }
 
-            switch (failureResponse(searchStopKind(p_stop->m_reason)))
+            switch (failureResponse(searchStopKind(p_stop->reason)))
             {
             case FailureResponse::Abort:
             case FailureResponse::Cancelled: return true;
@@ -83,20 +83,20 @@ namespace uf::annotation
         UF_TRY_VALUE(compiled, compileAuthoringDocument(document, sourceAssets));
 
         auto encodedTemplates = std::vector<EncodedRuntimeTemplate>{};
-        encodedTemplates.reserve(compiled.m_templateAssets.size());
-        for (auto& asset : compiled.m_templateAssets)
+        encodedTemplates.reserve(compiled.templateAssets.size());
+        for (auto& asset : compiled.templateAssets)
         {
             encodedTemplates.emplace_back(
                 EncodedRuntimeTemplate{
-                    .m_hash     = asset.m_hash,
-                    .m_pngBytes = std::move(asset.m_pngBytes),
+                    .hash     = asset.hash,
+                    .pngBytes = std::move(asset.pngBytes),
                 }
             );
         }
         UF_TRY_VALUE(
             runtime,
             RecognitionRuntime::create(
-                std::move(compiled.m_runtimeManifest),
+                std::move(compiled.runtimeManifest),
                 std::move(encodedTemplates)
             )
         );
@@ -112,20 +112,20 @@ namespace uf::annotation
             auto const asset = std::ranges::find(
                 sourceAssets,
                 regression.sourceId(),
-                &AuthoringSourceAsset::m_id
+                &AuthoringSourceAsset::id
             );
             UF_CHECK(asset != sourceAssets.end());
             UF_TRY_VALUE_CONTEXT(
                 decoded,
-                image::decodePng(asset->m_pngBytes, p_source->relativePath()),
+                image::decodePng(asset->pngBytes, p_source->relativePath()),
                 std::format("decoding regression source {}", p_source->relativePath())
             );
             UF_TRY_VALUE_CONTEXT(
                 bgra,
-                image::rgba8ToBgra8(std::move(decoded.m_pixels)),
+                image::rgba8ToBgra8(std::move(decoded.pixels)),
                 std::format("converting regression source {}", p_source->relativePath())
             );
-            auto const width = checkedCast<std::size_t>(decoded.m_width);
+            auto const width = checkedCast<std::size_t>(decoded.width);
             UF_CHECK(width.has_value());
             auto const stride = checkedMultiply(*width, std::size_t{4});
             UF_CHECK(stride.has_value());
@@ -133,10 +133,10 @@ namespace uf::annotation
                 transform,
                 CoordinateTransform::create(
                     Point<DesktopSpace>{0.0F, 0.0F},
-                    static_cast<float>(decoded.m_width),
-                    static_cast<float>(decoded.m_height),
-                    decoded.m_width,
-                    decoded.m_height
+                    static_cast<float>(decoded.width),
+                    static_cast<float>(decoded.height),
+                    decoded.width,
+                    decoded.height
                 )
             );
             auto const nextIndex = checkedAdd(index, std::size_t{1});
@@ -151,7 +151,7 @@ namespace uf::annotation
                 )
             )
             {
-                generation = p_wgc->m_targetGeneration;
+                generation = p_wgc->targetGeneration;
             }
             auto const pixels = std::shared_ptr<FrameBuffer const>{
                 std::make_shared<FrameBuffer>(std::move(bgra))
@@ -163,8 +163,8 @@ namespace uf::annotation
                     SessionId{1},
                     generation,
                     MonotonicInstant::fromTimePoint(MonotonicInstant::TimePoint{}),
-                    decoded.m_width,
-                    decoded.m_height,
+                    decoded.width,
+                    decoded.height,
                     *stride,
                     PixelFormat::Bgra8,
                     pixels,
@@ -187,12 +187,12 @@ namespace uf::annotation
             suiteInterrupted   = isSuiteInterruption(attempt);
             reports.emplace_back(
                 RegressionCaseReport{
-                    .m_id                 = regression.id(),
-                    .m_sourceId           = regression.sourceId(),
-                    .m_classification     = regression.classification(),
-                    .m_expectation        = regression.expectation(),
-                    .m_attempt            = std::move(attempt),
-                    .m_matchesExpectation = matches,
+                    .id                 = regression.id(),
+                    .sourceId           = regression.sourceId(),
+                    .classification     = regression.classification(),
+                    .expectation        = regression.expectation(),
+                    .attempt            = std::move(attempt),
+                    .matchesExpectation = matches,
                 }
             );
             if (suiteInterrupted)
@@ -206,8 +206,8 @@ namespace uf::annotation
             && reports.size() == document.regressions().size()
         );
         return RegressionSuiteReport{
-            .m_cases             = std::move(reports),
-            .m_completedAllCases = completedAllCases,
+            .cases             = std::move(reports),
+            .completedAllCases = completedAllCases,
         };
     }
 }

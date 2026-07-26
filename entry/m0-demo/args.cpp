@@ -175,23 +175,23 @@ namespace uf::m0_demo
             if (flag == "--pid")
             {
                 UF_TRY_VALUE(parsed, parseInteger<uint32>(value, flag));
-                selector.m_process = parsed;
+                selector.process = parsed;
                 return ok();
             }
             if (flag == "--hwnd")
             {
                 UF_TRY_VALUE(parsed, parseWindowHandle(value, flag));
-                selector.m_windowHandle = parsed;
+                selector.windowHandle = parsed;
                 return ok();
             }
             if (flag == "--class")
             {
-                selector.m_windowClass = value;
+                selector.windowClass = value;
                 return ok();
             }
             if (flag == "--title")
             {
-                selector.m_title = value;
+                selector.title = value;
                 return ok();
             }
 
@@ -561,21 +561,21 @@ namespace uf::m0_demo
         UF_TRY_VALUE(requiredResetRoi, require(resetRoi, "--reset-roi"));
 
         return Args{
-            .m_selector          = std::move(selector),
-            .m_homeTemplate      = std::move(requiredHomeTemplate),
-            .m_homeRoi           = requiredHomeRoi,
-            .m_resultTemplate    = std::move(requiredResultTemplate),
-            .m_resultRoi         = requiredResultRoi,
-            .m_resetTemplate     = std::move(requiredResetTemplate),
-            .m_resetRoi          = requiredResetRoi,
-            .m_threshold         = requiredThreshold,
-            .m_mode              = mode,
-            .m_loops             = loops,
-            .m_maxActionFrameAge = maxActionFrameAge,
-            .m_stallTimeout      = stallTimeout,
-            .m_clickDelay        = clickDelay,
-            .m_seed              = seed,
-            .m_log               = std::move(log),
+            .selector          = std::move(selector),
+            .homeTemplate      = std::move(requiredHomeTemplate),
+            .homeRoi           = requiredHomeRoi,
+            .resultTemplate    = std::move(requiredResultTemplate),
+            .resultRoi         = requiredResultRoi,
+            .resetTemplate     = std::move(requiredResetTemplate),
+            .resetRoi          = requiredResetRoi,
+            .threshold         = requiredThreshold,
+            .mode              = mode,
+            .loops             = loops,
+            .maxActionFrameAge = maxActionFrameAge,
+            .stallTimeout      = stallTimeout,
+            .clickDelay        = clickDelay,
+            .seed              = seed,
+            .log               = std::move(log),
         };
     }
 
@@ -640,11 +640,11 @@ namespace uf::m0_demo
         }
 
         return CaptureArgs{
-            .m_selector = std::move(selector),
-            .m_output   = std::move(requiredOutput),
-            .m_frames   = frames,
-            .m_interval = interval,
-            .m_log      = std::move(log),
+            .selector = std::move(selector),
+            .output   = std::move(requiredOutput),
+            .frames   = frames,
+            .interval = interval,
+            .log      = std::move(log),
         };
     }
 
@@ -720,11 +720,11 @@ namespace uf::m0_demo
         }
 
         return InputAgentArgs{
-            .m_windowHandle    = requiredWindowHandle,
-            .m_queue           = std::move(requiredQueue),
-            .m_results         = std::move(requiredResults),
-            .m_outputDirectory = std::move(requiredOutputDirectory),
-            .m_idleTimeout     = idleTimeout,
+            .windowHandle    = requiredWindowHandle,
+            .queue           = std::move(requiredQueue),
+            .results         = std::move(requiredResults),
+            .outputDirectory = std::move(requiredOutputDirectory),
+            .idleTimeout     = idleTimeout,
         };
     }
 

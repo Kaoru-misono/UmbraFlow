@@ -23,21 +23,21 @@ namespace uf::annotation
 {
     struct EncodedRuntimeTemplate final
     {
-        ContentHash            m_hash;
-        std::vector<std::byte> m_pngBytes{};
+        ContentHash            hash;
+        std::vector<std::byte> pngBytes{};
     };
 
     struct RecognitionPolicy final
     {
-        uint64                          m_maximumPixelComparisons{};
-        std::optional<MonotonicInstant> m_deadline{};
-        std::stop_token                 m_cancellation{};
+        uint64                          maximumPixelComparisons{};
+        std::optional<MonotonicInstant> deadline{};
+        std::stop_token                 cancellation{};
     };
 
     struct PageRecognitionStop final
     {
-        RecognizerId        m_recognizerId;
-        SadSearchStopReason m_reason{};
+        RecognizerId        recognizerId;
+        SadSearchStopReason reason{};
     };
 
     using PageAttemptResult = std::variant<PageOutcome, PageRecognitionStop>;
@@ -45,10 +45,10 @@ namespace uf::annotation
     struct PageRecognitionAttempt final
     {
         // A control stop is a failed attempt, never a completed PageOutcome.
-        PageAttemptResult m_result;
+        PageAttemptResult result;
 
-        std::vector<AnchorEvidence> m_completedAnchorEvidence{};
-        uint64                      m_completedPixelComparisons{};
+        std::vector<AnchorEvidence> completedAnchorEvidence{};
+        uint64                      completedPixelComparisons{};
     };
 
     using ActionAttemptResult = std::variant<AnchorEvidence, PageRecognitionStop>;
@@ -56,19 +56,19 @@ namespace uf::annotation
     struct ActionTargetAttempt final
     {
         // A control stop is a failed attempt, never a completed evaluation.
-        ActionAttemptResult m_result;
-        uint64              m_completedPixelComparisons{};
+        ActionAttemptResult result;
+        uint64              completedPixelComparisons{};
     };
 
     class RecognitionRuntime final
     {
         struct GrayTemplate final
         {
-            ContentHash m_hash;
+            ContentHash hash;
 
-            uint32                 m_width{};
-            uint32                 m_height{};
-            std::vector<std::byte> m_pixels{};
+            uint32                 width{};
+            uint32                 height{};
+            std::vector<std::byte> pixels{};
         };
 
         RuntimeManifest           m_manifest;

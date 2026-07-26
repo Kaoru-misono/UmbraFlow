@@ -45,24 +45,24 @@ namespace uf::annotation
 
         struct SourceFixture final
         {
-            AuthoringSource      m_source;
-            AuthoringSourceAsset m_asset;
+            AuthoringSource      source;
+            AuthoringSourceAsset asset;
         };
 
         struct RegressionFixture final
         {
-            AuthoringDocument                 m_document;
-            std::vector<AuthoringSourceAsset> m_assets{};
+            AuthoringDocument                 document;
+            std::vector<AuthoringSourceAsset> assets{};
 
-            PageId m_pageA;
-            PageId m_pageB;
+            PageId pageA;
+            PageId pageB;
         };
 
         struct RegressionFixtureOptions final
         {
-            bool m_mismatchedResolvedExpectation{};
-            bool m_resolvedOnly{};
-            bool m_duplicateResolvedCase{};
+            bool mismatchedResolvedExpectation{};
+            bool resolvedOnly{};
+            bool duplicateResolvedCase{};
         };
 
         [[nodiscard]]
@@ -93,18 +93,18 @@ namespace uf::annotation
             auto const sourceId = test::sourceId(id);
             auto source = AuthoringSource::create(
                 AuthoringSourceSpec{
-                    .m_id          = sourceId,
-                    .m_contentHash = *hash,
-                    .m_fingerprint = fingerprint,
-                    .m_provenance  = ImportedSourceProvenance{},
+                    .id          = sourceId,
+                    .contentHash = *hash,
+                    .fingerprint = fingerprint,
+                    .provenance  = ImportedSourceProvenance{},
                 }
             );
             REQUIRE(source.has_value());
             return SourceFixture{
-                .m_source = *std::move(source),
-                .m_asset = AuthoringSourceAsset{
-                    .m_id       = sourceId,
-                    .m_pngBytes = *std::move(encoded),
+                .source = *std::move(source),
+                .asset = AuthoringSourceAsset{
+                    .id       = sourceId,
+                    .pngBytes = *std::move(encoded),
                 },
             };
         }
@@ -139,45 +139,45 @@ namespace uf::annotation
             auto const pageA   = test::pageId(k_pageAId);
             auto const pageB   = test::pageId(k_pageBId);
             auto const resolvedExpectation = (
-                options.m_mismatchedResolvedExpectation ? pageA : pageB
+                options.mismatchedResolvedExpectation ? pageA : pageB
             );
 
             auto regressions = std::vector<RegressionCase>{};
             regressions.emplace_back(
                 RegressionSpec{
-                    .m_id             = test::regressionId(k_resolvedCaseId),
-                    .m_sourceId       = resolvedSource.m_source.id(),
-                    .m_classification = RegressionClassification::Positive,
-                    .m_expectation    = ResolvedRegression{resolvedExpectation},
+                    .id             = test::regressionId(k_resolvedCaseId),
+                    .sourceId       = resolvedSource.source.id(),
+                    .classification = RegressionClassification::Positive,
+                    .expectation    = ResolvedRegression{resolvedExpectation},
                 }
             );
-            if (!options.m_resolvedOnly)
+            if (!options.resolvedOnly)
             {
                 regressions.emplace_back(
                     RegressionSpec{
-                        .m_id             = test::regressionId(k_unknownCaseId),
-                        .m_sourceId       = unknownSource.m_source.id(),
-                        .m_classification = RegressionClassification::Negative,
-                        .m_expectation    = UnknownRegression{},
+                        .id             = test::regressionId(k_unknownCaseId),
+                        .sourceId       = unknownSource.source.id(),
+                        .classification = RegressionClassification::Negative,
+                        .expectation    = UnknownRegression{},
                     }
                 );
                 regressions.emplace_back(
                     RegressionSpec{
-                        .m_id             = test::regressionId(k_ambiguousCaseId),
-                        .m_sourceId       = ambiguousSource.m_source.id(),
-                        .m_classification = RegressionClassification::Confusable,
-                        .m_expectation    = AmbiguousRegression{},
+                        .id             = test::regressionId(k_ambiguousCaseId),
+                        .sourceId       = ambiguousSource.source.id(),
+                        .classification = RegressionClassification::Confusable,
+                        .expectation    = AmbiguousRegression{},
                     }
                 );
             }
-            if (options.m_duplicateResolvedCase)
+            if (options.duplicateResolvedCase)
             {
                 regressions.emplace_back(
                     RegressionSpec{
-                        .m_id             = test::regressionId(k_duplicateCaseId),
-                        .m_sourceId       = resolvedSource.m_source.id(),
-                        .m_classification = RegressionClassification::Positive,
-                        .m_expectation    = ResolvedRegression{pageB},
+                        .id             = test::regressionId(k_duplicateCaseId),
+                        .sourceId       = resolvedSource.source.id(),
+                        .classification = RegressionClassification::Positive,
+                        .expectation    = ResolvedRegression{pageB},
                     }
                 );
             }
@@ -186,14 +186,14 @@ namespace uf::annotation
                 test::projectId("personal.regression_runner"),
                 fingerprint,
                 {
-                    templateSource.m_source,
-                    resolvedSource.m_source,
-                    unknownSource.m_source,
-                    ambiguousSource.m_source,
+                    templateSource.source,
+                    resolvedSource.source,
+                    unknownSource.source,
+                    ambiguousSource.source,
                 },
                 {
                     AuthoringRecognizerSpec{
-                        .m_definition = test::recognizer(
+                        .definition = test::recognizer(
                             fingerprint,
                             anchorA,
                             "anchor_a",
@@ -204,10 +204,10 @@ namespace uf::annotation
                             std::nullopt,
                             test::threshold(10'000)
                         ),
-                        .m_sourceId = templateSource.m_source.id(),
+                        .sourceId = templateSource.source.id(),
                     },
                     AuthoringRecognizerSpec{
-                        .m_definition = test::recognizer(
+                        .definition = test::recognizer(
                             fingerprint,
                             anchorB,
                             "anchor_b",
@@ -218,7 +218,7 @@ namespace uf::annotation
                             std::nullopt,
                             test::threshold(10'000)
                         ),
-                        .m_sourceId = templateSource.m_source.id(),
+                        .sourceId = templateSource.source.id(),
                     },
                 },
                 {
@@ -229,15 +229,15 @@ namespace uf::annotation
             );
             REQUIRE(document.has_value());
             return RegressionFixture{
-                .m_document = *std::move(document),
-                .m_assets = {
-                    std::move(ambiguousSource.m_asset),
-                    std::move(unknownSource.m_asset),
-                    std::move(resolvedSource.m_asset),
-                    std::move(templateSource.m_asset),
+                .document = *std::move(document),
+                .assets = {
+                    std::move(ambiguousSource.asset),
+                    std::move(unknownSource.asset),
+                    std::move(resolvedSource.asset),
+                    std::move(templateSource.asset),
                 },
-                .m_pageA = pageA,
-                .m_pageB = pageB,
+                .pageA = pageA,
+                .pageB = pageB,
             };
         }
     }
@@ -246,35 +246,35 @@ namespace uf::annotation
     {
         auto const fixture = regressionFixture();
         auto const report = runAuthoringRegressions(
-            fixture.m_document,
-            fixture.m_assets,
-            RecognitionPolicy{.m_maximumPixelComparisons = 100}
+            fixture.document,
+            fixture.assets,
+            RecognitionPolicy{.maximumPixelComparisons = 100}
         );
         REQUIRE(report.has_value());
-        REQUIRE(report->m_completedAllCases);
-        REQUIRE(report->m_cases.size() == 3U);
+        REQUIRE(report->completedAllCases);
+        REQUIRE(report->cases.size() == 3U);
 
-        auto const& resolved  = report->m_cases[0];
-        auto const& unknown   = report->m_cases[1];
-        auto const& ambiguous = report->m_cases[2];
-        CHECK(resolved.m_classification == RegressionClassification::Positive);
-        CHECK(unknown.m_classification == RegressionClassification::Negative);
-        CHECK(ambiguous.m_classification == RegressionClassification::Confusable);
-        CHECK(resolved.m_matchesExpectation);
-        CHECK(unknown.m_matchesExpectation);
-        CHECK(ambiguous.m_matchesExpectation);
-        CHECK(resolved.m_attempt.m_completedPixelComparisons == 3);
-        CHECK(unknown.m_attempt.m_completedPixelComparisons == 6);
-        CHECK(ambiguous.m_attempt.m_completedPixelComparisons == 5);
+        auto const& resolved  = report->cases[0];
+        auto const& unknown   = report->cases[1];
+        auto const& ambiguous = report->cases[2];
+        CHECK(resolved.classification == RegressionClassification::Positive);
+        CHECK(unknown.classification == RegressionClassification::Negative);
+        CHECK(ambiguous.classification == RegressionClassification::Confusable);
+        CHECK(resolved.matchesExpectation);
+        CHECK(unknown.matchesExpectation);
+        CHECK(ambiguous.matchesExpectation);
+        CHECK(resolved.attempt.completedPixelComparisons == 3);
+        CHECK(unknown.attempt.completedPixelComparisons == 6);
+        CHECK(ambiguous.attempt.completedPixelComparisons == 5);
 
         auto const* p_resolvedOutcome = std::get_if<PageOutcome>(
-            &resolved.m_attempt.m_result
+            &resolved.attempt.result
         );
         auto const* p_unknownOutcome = std::get_if<PageOutcome>(
-            &unknown.m_attempt.m_result
+            &unknown.attempt.result
         );
         auto const* p_ambiguousOutcome = std::get_if<PageOutcome>(
-            &ambiguous.m_attempt.m_result
+            &ambiguous.attempt.result
         );
         REQUIRE(p_resolvedOutcome != nullptr);
         REQUIRE(p_unknownOutcome != nullptr);
@@ -282,95 +282,95 @@ namespace uf::annotation
         REQUIRE(std::holds_alternative<ResolvedPage>(*p_resolvedOutcome));
         REQUIRE(std::holds_alternative<UnknownPage>(*p_unknownOutcome));
         REQUIRE(std::holds_alternative<AmbiguousPages>(*p_ambiguousOutcome));
-        CHECK(std::get<ResolvedPage>(*p_resolvedOutcome).pageId() == fixture.m_pageB);
+        CHECK(std::get<ResolvedPage>(*p_resolvedOutcome).pageId() == fixture.pageB);
         auto const candidates = std::get<AmbiguousPages>(
             *p_ambiguousOutcome
         ).evidence().candidatePageIds();
         REQUIRE(candidates.size() == 2U);
-        CHECK(candidates[0] == fixture.m_pageA);
-        CHECK(candidates[1] == fixture.m_pageB);
+        CHECK(candidates[0] == fixture.pageA);
+        CHECK(candidates[1] == fixture.pageB);
     }
 
     TEST_CASE("authoring regression mismatch does not rewrite its classification")
     {
         auto const fixture = regressionFixture(
             RegressionFixtureOptions{
-                .m_mismatchedResolvedExpectation = true,
+                .mismatchedResolvedExpectation = true,
             }
         );
         auto const report = runAuthoringRegressions(
-            fixture.m_document,
-            fixture.m_assets,
-            RecognitionPolicy{.m_maximumPixelComparisons = 100}
+            fixture.document,
+            fixture.assets,
+            RecognitionPolicy{.maximumPixelComparisons = 100}
         );
         REQUIRE(report.has_value());
-        REQUIRE(report->m_cases.size() == 3U);
-        CHECK_FALSE(report->m_cases.front().m_matchesExpectation);
+        REQUIRE(report->cases.size() == 3U);
+        CHECK_FALSE(report->cases.front().matchesExpectation);
         CHECK(
-            report->m_cases.front().m_classification
+            report->cases.front().classification
             == RegressionClassification::Positive
         );
-        CHECK(report->m_cases[1].m_matchesExpectation);
-        CHECK(report->m_cases[2].m_matchesExpectation);
+        CHECK(report->cases[1].matchesExpectation);
+        CHECK(report->cases[2].matchesExpectation);
     }
 
     TEST_CASE("authoring regression interruptions mark incomplete and skip later cases")
     {
         auto const singleFixture = regressionFixture(
-            RegressionFixtureOptions{.m_resolvedOnly = true}
+            RegressionFixtureOptions{.resolvedOnly = true}
         );
         auto const multipleFixture = regressionFixture();
         auto cancellation = std::stop_source{};
         REQUIRE(cancellation.request_stop());
         struct InterruptionCase final
         {
-            RecognitionPolicy   m_policy{};
-            SadSearchStopReason m_reason{};
+            RecognitionPolicy   policy{};
+            SadSearchStopReason reason{};
         };
         auto const cases = std::array{
             InterruptionCase{
-                .m_policy = RecognitionPolicy{
-                    .m_maximumPixelComparisons = 100,
-                    .m_cancellation            = cancellation.get_token(),
+                .policy = RecognitionPolicy{
+                    .maximumPixelComparisons = 100,
+                    .cancellation            = cancellation.get_token(),
                 },
-                .m_reason = SadSearchStopReason::Cancelled,
+                .reason = SadSearchStopReason::Cancelled,
             },
             InterruptionCase{
-                .m_policy = RecognitionPolicy{
-                    .m_maximumPixelComparisons = 100,
-                    .m_deadline = MonotonicInstant::fromTimePoint(
+                .policy = RecognitionPolicy{
+                    .maximumPixelComparisons = 100,
+                    .deadline = MonotonicInstant::fromTimePoint(
                         MonotonicInstant::TimePoint{}
                     ),
                 },
-                .m_reason = SadSearchStopReason::TimedOut,
+                .reason = SadSearchStopReason::TimedOut,
             },
         };
 
         for (auto const& entry : cases)
         {
             auto const singleReport = runAuthoringRegressions(
-                singleFixture.m_document,
-                singleFixture.m_assets,
-                entry.m_policy
+                singleFixture.document,
+                singleFixture.assets,
+                entry.policy
             );
             REQUIRE(singleReport.has_value());
-            CHECK_FALSE(singleReport->m_completedAllCases);
-            REQUIRE(singleReport->m_cases.size() == 1U);
-            CHECK_FALSE(singleReport->m_cases.front().m_matchesExpectation);
+            CHECK_FALSE(singleReport->completedAllCases);
+            REQUIRE(singleReport->cases.size() == 1U);
+            CHECK_FALSE(singleReport->cases.front().matchesExpectation);
             auto const* p_stop = std::get_if<PageRecognitionStop>(
-                &singleReport->m_cases.front().m_attempt.m_result
+                &singleReport->cases.front().attempt.result
             );
             REQUIRE(p_stop != nullptr);
-            CHECK(p_stop->m_reason == entry.m_reason);
+            CHECK(p_stop->reason == entry.reason);
 
             auto const multipleReport = runAuthoringRegressions(
-                multipleFixture.m_document,
-                multipleFixture.m_assets,
-                entry.m_policy
+                multipleFixture.document,
+                multipleFixture.assets,
+                entry.policy
             );
             REQUIRE(multipleReport.has_value());
-            CHECK_FALSE(multipleReport->m_completedAllCases);
-            REQUIRE(multipleReport->m_cases.size() == 1U);
+            CHECK_FALSE(multipleReport->completedAllCases);
+            REQUIRE(multipleReport->cases.size() == 1U);
         }
     }
 
@@ -378,51 +378,51 @@ namespace uf::annotation
     {
         auto const fixture = regressionFixture();
         auto const report = runAuthoringRegressions(
-            fixture.m_document,
-            fixture.m_assets,
-            RecognitionPolicy{.m_maximumPixelComparisons = 2}
+            fixture.document,
+            fixture.assets,
+            RecognitionPolicy{.maximumPixelComparisons = 2}
         );
         REQUIRE(report.has_value());
-        REQUIRE(report->m_completedAllCases);
-        REQUIRE(report->m_cases.size() == 3U);
-        for (auto const& result : report->m_cases)
+        REQUIRE(report->completedAllCases);
+        REQUIRE(report->cases.size() == 3U);
+        for (auto const& result : report->cases)
         {
-            CHECK_FALSE(result.m_matchesExpectation);
+            CHECK_FALSE(result.matchesExpectation);
             auto const* p_stop = std::get_if<PageRecognitionStop>(
-                &result.m_attempt.m_result
+                &result.attempt.result
             );
             REQUIRE(p_stop != nullptr);
-            CHECK(p_stop->m_reason == SadSearchStopReason::ComparisonBudgetExhausted);
-            CHECK(result.m_attempt.m_completedPixelComparisons == 2);
+            CHECK(p_stop->reason == SadSearchStopReason::ComparisonBudgetExhausted);
+            CHECK(result.attempt.completedPixelComparisons == 2);
         }
     }
 
     TEST_CASE("authoring regressions may independently reuse one source")
     {
         auto const fixture = regressionFixture(
-            RegressionFixtureOptions{.m_duplicateResolvedCase = true}
+            RegressionFixtureOptions{.duplicateResolvedCase = true}
         );
         auto const report = runAuthoringRegressions(
-            fixture.m_document,
-            fixture.m_assets,
-            RecognitionPolicy{.m_maximumPixelComparisons = 100}
+            fixture.document,
+            fixture.assets,
+            RecognitionPolicy{.maximumPixelComparisons = 100}
         );
         REQUIRE(report.has_value());
-        REQUIRE(report->m_completedAllCases);
-        REQUIRE(report->m_cases.size() == 4U);
-        auto const& first = report->m_cases.front();
-        auto const& last  = report->m_cases.back();
-        CHECK(first.m_sourceId == last.m_sourceId);
-        CHECK(first.m_id != last.m_id);
-        CHECK(first.m_matchesExpectation);
-        CHECK(last.m_matchesExpectation);
-        auto const* p_first = std::get_if<PageOutcome>(&first.m_attempt.m_result);
-        auto const* p_last  = std::get_if<PageOutcome>(&last.m_attempt.m_result);
+        REQUIRE(report->completedAllCases);
+        REQUIRE(report->cases.size() == 4U);
+        auto const& first = report->cases.front();
+        auto const& last  = report->cases.back();
+        CHECK(first.sourceId == last.sourceId);
+        CHECK(first.id != last.id);
+        CHECK(first.matchesExpectation);
+        CHECK(last.matchesExpectation);
+        auto const* p_first = std::get_if<PageOutcome>(&first.attempt.result);
+        auto const* p_last  = std::get_if<PageOutcome>(&last.attempt.result);
         REQUIRE(p_first != nullptr);
         REQUIRE(p_last != nullptr);
         REQUIRE(std::holds_alternative<ResolvedPage>(*p_first));
         REQUIRE(std::holds_alternative<ResolvedPage>(*p_last));
-        CHECK(std::get<ResolvedPage>(*p_first).pageId() == fixture.m_pageB);
-        CHECK(std::get<ResolvedPage>(*p_last).pageId() == fixture.m_pageB);
+        CHECK(std::get<ResolvedPage>(*p_first).pageId() == fixture.pageB);
+        CHECK(std::get<ResolvedPage>(*p_last).pageId() == fixture.pageB);
     }
 }

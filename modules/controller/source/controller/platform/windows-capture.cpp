@@ -147,15 +147,15 @@ namespace uf
 
         struct D3d11Objects final
         {
-            D3d11DeviceComPtr  m_device{};
-            D3d11ContextComPtr m_context{};
+            D3d11DeviceComPtr  device{};
+            D3d11ContextComPtr context{};
         };
 
         struct D3dDevice final
         {
-            D3d11DeviceComPtr  m_device{};
-            D3d11ContextComPtr m_context{};
-            Direct3DDevice     m_runtimeDevice{};
+            D3d11DeviceComPtr  device{};
+            D3d11ContextComPtr context{};
+            Direct3DDevice     runtimeDevice{};
         };
 
         [[nodiscard]]
@@ -234,7 +234,7 @@ namespace uf
                     "ID3D11Device as IDXGIDevice",
                     [&native]
                     {
-                        return native.m_device.as<IDXGIDevice>();
+                        return native.device.as<IDXGIDevice>();
                     }
                 )
             );
@@ -275,8 +275,8 @@ namespace uf
             }
 
             return D3dDevice{
-                std::move(native.m_device),
-                std::move(native.m_context),
+                std::move(native.device),
+                std::move(native.context),
                 std::move(runtimeDevice)
             };
         }
@@ -344,9 +344,9 @@ namespace uf
 
         struct SurfaceReadback final
         {
-            uint32                 m_sourceWidth{};
-            uint32                 m_sourceHeight{};
-            std::vector<std::byte> m_pixels{};
+            uint32                 sourceWidth{};
+            uint32                 sourceHeight{};
+            std::vector<std::byte> pixels{};
         };
 
         [[nodiscard]]
@@ -412,12 +412,12 @@ namespace uf
             );
 
             auto const sourceBox = D3D11_BOX{
-                .left = crop.offsetX(),
-                .top = crop.offsetY(),
-                .front = 0,
-                .right = crop.right(),
+                .left   = crop.offsetX(),
+                .top    = crop.offsetY(),
+                .front  = 0,
+                .right  = crop.right(),
                 .bottom = crop.bottom(),
-                .back = 1,
+                .back   = 1,
             };
             // SAFETY: crop validation proves sourceBox is inside texture, and staging is
             // client-sized with the same format, so the copy cannot exceed either resource.
@@ -626,8 +626,8 @@ namespace uf
 
         struct CapturedArrival final
         {
-            CaptureFrame     m_frame;
-            MonotonicInstant m_arrivedAt;
+            CaptureFrame     frame;
+            MonotonicInstant arrivedAt;
         };
 
         struct FrameSlot final
@@ -635,12 +635,12 @@ namespace uf
             // The FrameArrived callback and capture consumer share this state. Every
             // m_latest access is serialized by m_mutex; m_arrived only publishes changes
             // made while that mutex is held.
-            std::mutex                     m_mutex{};
-            std::condition_variable        m_arrived{};
-            std::optional<CapturedArrival> m_latest{};
-            bool                           m_acceptingFrames{true};
-            std::atomic_bool               m_itemClosed{false};
-            std::atomic<HRESULT> m_callbackFailure{S_OK};
+            std::mutex                     mutex{};
+            std::condition_variable        arrived{};
+            std::optional<CapturedArrival> latest{};
+            bool                           acceptingFrames{true};
+            std::atomic_bool               itemClosed{false};
+            std::atomic<HRESULT> callbackFailure{S_OK};
         };
 
         auto recordFrameCallbackFailure(
@@ -650,20 +650,20 @@ namespace uf
         {
             try
             {
-                auto lock = std::lock_guard{p_slot->m_mutex};
-                p_slot->m_callbackFailure.store(
+                auto lock = std::lock_guard{p_slot->mutex};
+                p_slot->callbackFailure.store(
                     failure,
                     std::memory_order_release
                 );
             }
             catch (...)
             {
-                p_slot->m_callbackFailure.store(
+                p_slot->callbackFailure.store(
                     failure,
                     std::memory_order_release
                 );
             }
-            p_slot->m_arrived.notify_all();
+            p_slot->arrived.notify_all();
         }
 
         class WindowInstanceMarker final
@@ -830,8 +830,8 @@ namespace uf
         [[nodiscard]]
         auto clearLatestFrame(std::shared_ptr<FrameSlot> const& p_slot) -> Status
         {
-            auto lock = std::lock_guard{p_slot->m_mutex};
-            if (!p_slot->m_latest)
+            auto lock = std::lock_guard{p_slot->mutex};
+            if (!p_slot->latest)
             {
                 return ok();
             }
@@ -841,11 +841,11 @@ namespace uf
                     "Direct3D11CaptureFrame::Close",
                     [&p_slot]
                     {
-                        p_slot->m_latest->m_frame.Close();
+                        p_slot->latest->frame.Close();
                     }
                 )
             );
-            p_slot->m_latest.reset();
+            p_slot->latest.reset();
             return ok();
         }
     }
@@ -910,9 +910,9 @@ namespace uf
             controller_detail::CaptureGeometryState geometry,
             CaptureHygiene hygiene
         ) noexcept
-            : m_device{std::move(d3d.m_device)}
-            , m_context{std::move(d3d.m_context)}
-            , m_runtimeDevice{std::move(d3d.m_runtimeDevice)}
+            : m_device{std::move(d3d.device)}
+            , m_context{std::move(d3d.context)}
+            , m_runtimeDevice{std::move(d3d.runtimeDevice)}
             , m_framePool{std::move(framePool)}
             , m_session{std::move(session)}
             , m_item{std::move(item)}
@@ -944,19 +944,19 @@ namespace uf
             MonotonicInstant::Duration timeout
         ) -> Result<CapturedArrival>
         {
-            auto lock = std::unique_lock{m_frameSlot->m_mutex};
+            auto lock = std::unique_lock{m_frameSlot->mutex};
             static_cast<void>(
-                m_frameSlot->m_arrived.wait_for(
+                m_frameSlot->arrived.wait_for(
                     lock,
                     timeout,
                     [this]
                     {
-                        return m_frameSlot->m_latest.has_value()
-                            || m_frameSlot->m_itemClosed.load(
+                        return m_frameSlot->latest.has_value()
+                            || m_frameSlot->itemClosed.load(
                                 std::memory_order_acquire
                             )
                             || FAILED(
-                                m_frameSlot->m_callbackFailure.load(
+                                m_frameSlot->callbackFailure.load(
                                     std::memory_order_acquire
                                 )
                             );
@@ -964,14 +964,14 @@ namespace uf
                 )
             );
 
-            if (m_frameSlot->m_itemClosed.load(std::memory_order_acquire))
+            if (m_frameSlot->itemClosed.load(std::memory_order_acquire))
             {
                 return captureUnavailable(
                     "capture item was closed; rebuild the session from a freshly resolved target"
                 );
             }
 
-            auto const callbackFailure = m_frameSlot->m_callbackFailure.load(
+            auto const callbackFailure = m_frameSlot->callbackFailure.load(
                 std::memory_order_acquire
             );
             if (FAILED(callbackFailure))
@@ -982,10 +982,10 @@ namespace uf
                 );
             }
 
-            if (m_frameSlot->m_latest)
+            if (m_frameSlot->latest)
             {
-                auto arrival = std::move(*m_frameSlot->m_latest);
-                m_frameSlot->m_latest.reset();
+                auto arrival = std::move(*m_frameSlot->latest);
+                m_frameSlot->latest.reset();
                 return arrival;
             }
 
@@ -1005,8 +1005,8 @@ namespace uf
         {
             m_closed = true;
             {
-                auto frameLock = std::lock_guard{m_frameSlot->m_mutex};
-                m_frameSlot->m_acceptingFrames = false;
+                auto frameLock = std::lock_guard{m_frameSlot->mutex};
+                m_frameSlot->acceptingFrames = false;
             }
             auto result = ok();
             auto retainFirstError = [&result](Status next) -> void
@@ -1074,7 +1074,7 @@ namespace uf
         [[nodiscard]]
         auto validateTargetInstanceUnlocked() -> Status
         {
-            if (m_frameSlot->m_itemClosed.load(std::memory_order_acquire))
+            if (m_frameSlot->itemClosed.load(std::memory_order_acquire))
             {
                 return captureUnavailable(
                     "capture item was closed; rebuild the session from a freshly resolved target"
@@ -1097,7 +1097,7 @@ namespace uf
 
             auto const nativeWindow = m_windowMarker.window();
             UF_TRY_VALUE(origin, clientOriginOnDesktop(nativeWindow));
-            if (m_frameSlot->m_itemClosed.load(std::memory_order_acquire))
+            if (m_frameSlot->itemClosed.load(std::memory_order_acquire))
             {
                 return captureUnavailable(
                     "capture item closed while refreshing client position; rebuild the capture session"
@@ -1241,20 +1241,20 @@ namespace uf
                         // Update the wait predicate while holding the same mutex used
                         // by waitForFrame, so notification cannot be lost between its
                         // predicate check and transition to the waiting state.
-                        auto lock = std::lock_guard{p_slot->m_mutex};
-                        p_slot->m_itemClosed.store(
+                        auto lock = std::lock_guard{p_slot->mutex};
+                        p_slot->itemClosed.store(
                             true,
                             std::memory_order_release
                         );
                     }
                     catch (...)
                     {
-                        p_slot->m_itemClosed.store(
+                        p_slot->itemClosed.store(
                             true,
                             std::memory_order_release
                         );
                     }
-                    p_slot->m_arrived.notify_all();
+                    p_slot->arrived.notify_all();
                 }
             };
             UF_TRY_VALUE(
@@ -1282,7 +1282,7 @@ namespace uf
 
             if (
                 !windowMarker.matches()
-                || frameSlot->m_itemClosed.load(std::memory_order_acquire)
+                || frameSlot->itemClosed.load(std::memory_order_acquire)
             )
             {
                 return captureUnavailable(
@@ -1355,7 +1355,7 @@ namespace uf
                         // non-null; Clang cannot model the generated ABI storage.
                         // NOLINTNEXTLINE(clang-analyzer-core.CallAndMessage)
                         return framePoolStatics.CreateFreeThreaded(
-                            d3d.m_runtimeDevice,
+                            d3d.runtimeDevice,
                             k_capturePixelFormat,
                             k_framePoolBufferCount,
                             poolSize
@@ -1430,20 +1430,20 @@ namespace uf
                         }
 
                         {
-                            auto lock = std::unique_lock{p_slot->m_mutex};
-                            if (!p_slot->m_acceptingFrames)
+                            auto lock = std::unique_lock{p_slot->mutex};
+                            if (!p_slot->acceptingFrames)
                             {
                                 lock.unlock();
                                 closeIgnoringErrors(frame);
                                 return;
                             }
                             auto const arrivedAt = MonotonicInstant::now();
-                            p_slot->m_latest = CapturedArrival{
+                            p_slot->latest = CapturedArrival{
                                 std::move(frame),
                                 arrivedAt
                             };
                         }
-                        p_slot->m_arrived.notify_one();
+                        p_slot->arrived.notify_one();
                     }
                     catch (winrt::hresult_error const& error)
                     {
@@ -1497,7 +1497,7 @@ namespace uf
             );
             if (
                 !windowMarker.matches()
-                || frameSlot->m_itemClosed.load(std::memory_order_acquire)
+                || frameSlot->itemClosed.load(std::memory_order_acquire)
             )
             {
                 return captureUnavailable(
@@ -1535,10 +1535,10 @@ namespace uf
                 options,
                 geometry,
                 CaptureHygiene{
-                    .m_osBuild               = osBuild,
-                    .m_cursorCaptureDisabled = true,
-                    .m_borderlessSupported   = hasBorderlessSupport,
-                    .m_borderRequired        = borderRequired,
+                    .osBuild               = osBuild,
+                    .cursorCaptureDisabled = true,
+                    .borderlessSupported   = hasBorderlessSupport,
+                    .borderRequired        = borderRequired,
                 }
             );
             setupCleanup.release();
@@ -1570,7 +1570,7 @@ namespace uf
                 arrival,
                 waitForFrame(m_options.captureStallTimeout())
             );
-            auto frame = std::move(arrival.m_frame);
+            auto frame = std::move(arrival.frame);
             auto frameClose = scopeExit(
                 [&frame]() noexcept
                 {
@@ -1578,7 +1578,7 @@ namespace uf
                 }
             );
 
-            m_stall.onFrameArrived(arrival.m_arrivedAt);
+            m_stall.onFrameArrived(arrival.arrivedAt);
             UF_TRY(m_stall.check(MonotonicInstant::now()));
 
             UF_TRY_VALUE(
@@ -1627,8 +1627,8 @@ namespace uf
             UF_TRY(
                 m_geometry.observeSurfaceSize(
                     confirmedContentSize,
-                    surface.m_sourceWidth,
-                    surface.m_sourceHeight
+                    surface.sourceWidth,
+                    surface.sourceHeight
                 )
             );
 
@@ -1675,13 +1675,13 @@ namespace uf
             );
             UF_TRY_VALUE(id, m_frameIds.nextId());
             auto pixels = std::make_shared<FrameBuffer const>(
-                std::move(surface.m_pixels)
+                std::move(surface.pixels)
             );
             return Frame::create(
                 id,
                 m_sessionId,
                 m_targetGeneration,
-                arrival.m_arrivedAt,
+                arrival.arrivedAt,
                 width,
                 height,
                 *stride,

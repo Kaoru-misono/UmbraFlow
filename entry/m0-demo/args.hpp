@@ -32,58 +32,58 @@ namespace uf::m0_demo
 
     struct SelectorArgs final
     {
-        std::optional<uint32>      m_process{};
-        std::optional<intptr>      m_windowHandle{};
-        std::optional<std::string> m_windowClass{};
-        std::optional<std::string> m_title{};
+        std::optional<uint32>      process{};
+        std::optional<intptr>      windowHandle{};
+        std::optional<std::string> windowClass{};
+        std::optional<std::string> title{};
 
         auto operator==(SelectorArgs const&) const -> bool = default;
     };
 
     struct Args final
     {
-        SelectorArgs m_selector{};
+        SelectorArgs selector{};
 
-        std::filesystem::path m_homeTemplate{};
-        Rect<FrameSpace>      m_homeRoi;
-        std::filesystem::path m_resultTemplate{};
-        Rect<FrameSpace>      m_resultRoi;
-        std::filesystem::path m_resetTemplate{};
-        Rect<FrameSpace>      m_resetRoi;
+        std::filesystem::path homeTemplate{};
+        Rect<FrameSpace>      homeRoi;
+        std::filesystem::path resultTemplate{};
+        Rect<FrameSpace>      resultRoi;
+        std::filesystem::path resetTemplate{};
+        Rect<FrameSpace>      resetRoi;
 
-        uint64                     m_threshold{};
-        Mode                       m_mode{};
-        uint32                     m_loops{};
-        MonotonicInstant::Duration m_maxActionFrameAge{};
-        MonotonicInstant::Duration m_stallTimeout{};
-        std::optional<ClickDelay>  m_clickDelay{};
-        uint64                     m_seed{};
+        uint64                     threshold{};
+        Mode                       mode{};
+        uint32                     loops{};
+        MonotonicInstant::Duration maxActionFrameAge{};
+        MonotonicInstant::Duration stallTimeout{};
+        std::optional<ClickDelay>  clickDelay{};
+        uint64                     seed{};
 
-        std::optional<std::filesystem::path> m_log{};
+        std::optional<std::filesystem::path> log{};
 
         auto operator==(Args const&) const -> bool = default;
     };
 
     struct CaptureArgs final
     {
-        SelectorArgs m_selector{};
+        SelectorArgs selector{};
 
-        std::filesystem::path      m_output{};
-        uint32                     m_frames{};
-        MonotonicInstant::Duration m_interval{};
+        std::filesystem::path      output{};
+        uint32                     frames{};
+        MonotonicInstant::Duration interval{};
 
-        std::optional<std::filesystem::path> m_log{};
+        std::optional<std::filesystem::path> log{};
 
         auto operator==(CaptureArgs const&) const -> bool = default;
     };
 
     struct InputAgentArgs final
     {
-        intptr                     m_windowHandle{};
-        std::filesystem::path      m_queue{};
-        std::filesystem::path      m_results{};
-        std::filesystem::path      m_outputDirectory{};
-        MonotonicInstant::Duration m_idleTimeout{};
+        intptr                     windowHandle{};
+        std::filesystem::path      queue{};
+        std::filesystem::path      results{};
+        std::filesystem::path      outputDirectory{};
+        MonotonicInstant::Duration idleTimeout{};
 
         auto operator==(InputAgentArgs const&) const -> bool = default;
     };

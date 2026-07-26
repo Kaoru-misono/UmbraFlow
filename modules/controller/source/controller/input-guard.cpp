@@ -15,11 +15,11 @@ namespace uf
     {
         m_records.emplace_back(
             AuditRecord{
-                .m_target  = static_cast<uintptr>(windowHandle.value()),
-                .m_message = message,
-                .m_wParam  = wParam,
-                .m_lParam  = lParam,
-                .m_at      = MonotonicInstant::now(),
+                .target  = static_cast<uintptr>(windowHandle.value()),
+                .message = message,
+                .wParam  = wParam,
+                .lParam  = lParam,
+                .at      = MonotonicInstant::now(),
             }
         );
     }

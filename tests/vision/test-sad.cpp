@@ -325,10 +325,10 @@ namespace uf
         );
         REQUIRE(zeroBudget.has_value());
         CHECK(
-            std::get<SadSearchStopReason>(zeroBudget->m_outcome)
+            std::get<SadSearchStopReason>(zeroBudget->outcome)
             == SadSearchStopReason::ComparisonBudgetExhausted
         );
-        CHECK(zeroBudget->m_completedPixelComparisons == 0);
+        CHECK(zeroBudget->completedPixelComparisons == 0);
         CHECK(pollCount == 0);
 
         auto const oneComparison = matchTemplateSad(
@@ -340,10 +340,10 @@ namespace uf
         );
         REQUIRE(oneComparison.has_value());
         CHECK(
-            std::get<SadSearchStopReason>(oneComparison->m_outcome)
+            std::get<SadSearchStopReason>(oneComparison->outcome)
             == SadSearchStopReason::ComparisonBudgetExhausted
         );
-        CHECK(oneComparison->m_completedPixelComparisons == 1);
+        CHECK(oneComparison->completedPixelComparisons == 1);
         CHECK(pollCount == 1);
 
         auto const exactBudget = matchTemplateSad(
@@ -355,10 +355,10 @@ namespace uf
         );
         REQUIRE(exactBudget.has_value());
         CHECK(
-            std::get<std::optional<SadMatch>>(exactBudget->m_outcome)
+            std::get<std::optional<SadMatch>>(exactBudget->outcome)
             == std::optional{SadMatch{1, 0, 254}}
         );
-        CHECK(exactBudget->m_completedPixelComparisons == 2);
+        CHECK(exactBudget->completedPixelComparisons == 2);
     }
 
     TEST_CASE("bounded exact match reports every comparison before early return")
@@ -390,10 +390,10 @@ namespace uf
         );
         REQUIRE(result.has_value());
         CHECK(
-            std::get<std::optional<SadMatch>>(result->m_outcome)
+            std::get<std::optional<SadMatch>>(result->outcome)
             == std::optional{SadMatch{1, 0, 0}}
         );
-        CHECK(result->m_completedPixelComparisons == 2);
+        CHECK(result->completedPixelComparisons == 2);
         CHECK(pollCount == 1);
     }
 
@@ -401,8 +401,8 @@ namespace uf
     {
         struct InterruptionCase final
         {
-            SadSearchControl    m_control{};
-            SadSearchStopReason m_expected{};
+            SadSearchControl    control{};
+            SadSearchStopReason expected{};
         };
 
         auto const data = std::vector<std::byte>{asByte(0)};
@@ -421,7 +421,7 @@ namespace uf
         for (auto const& testCase : cases)
         {
             auto const poll = SadSearchPoll{
-                [control = testCase.m_control]() noexcept -> SadSearchControl
+                [control = testCase.control]() noexcept -> SadSearchControl
                 {
                     return control;
                 }
@@ -435,10 +435,10 @@ namespace uf
             );
             REQUIRE(result.has_value());
             CHECK(
-                std::get<SadSearchStopReason>(result->m_outcome)
-                == testCase.m_expected
+                std::get<SadSearchStopReason>(result->outcome)
+                == testCase.expected
             );
-            CHECK(result->m_completedPixelComparisons == 0);
+            CHECK(result->completedPixelComparisons == 0);
         }
     }
 
@@ -484,11 +484,11 @@ namespace uf
 
         REQUIRE(result.has_value());
         CHECK(
-            std::get<SadSearchStopReason>(result->m_outcome)
+            std::get<SadSearchStopReason>(result->outcome)
             == SadSearchStopReason::Cancelled
         );
         CHECK(
-            result->m_completedPixelComparisons
+            result->completedPixelComparisons
             == k_sadSearchPollIntervalComparisons
         );
         CHECK(pollCount == 2);
@@ -805,10 +805,10 @@ namespace uf
     {
         struct InvalidCase final
         {
-            std::size_t m_length{};
-            uint32 m_width{};
-            uint32 m_height{};
-            std::size_t m_stride{};
+            std::size_t length{};
+            uint32 width{};
+            uint32 height{};
+            std::size_t stride{};
         };
 
         auto const cases = std::array{
@@ -819,12 +819,12 @@ namespace uf
         };
         for (auto const& testCase : cases)
         {
-            auto const data = std::vector<std::byte>(testCase.m_length);
+            auto const data = std::vector<std::byte>(testCase.length);
             auto const result = GrayImage::create(
                 std::span<std::byte const>{data},
-                testCase.m_width,
-                testCase.m_height,
-                testCase.m_stride
+                testCase.width,
+                testCase.height,
+                testCase.stride
             );
             REQUIRE_FALSE(result.has_value());
             requireErrorKind(result.error(), AutomationErrorKind::InternalInvariant);
@@ -835,8 +835,8 @@ namespace uf
     {
         struct ConversionCase final
         {
-            std::array<std::byte, 4> m_bgra{};
-            uint8 m_expected{};
+            std::array<std::byte, 4> bgra{};
+            uint8 expected{};
         };
 
         auto const cases = std::array{
@@ -849,10 +849,10 @@ namespace uf
         };
         for (auto const& testCase : cases)
         {
-            auto const result = bgra8ToGray8(testCase.m_bgra, 1, 1, 4);
+            auto const result = bgra8ToGray8(testCase.bgra, 1, 1, 4);
             REQUIRE(result.has_value());
             REQUIRE(result->size() == 1);
-            CHECK(std::to_integer<uint8>(result->front()) == testCase.m_expected);
+            CHECK(std::to_integer<uint8>(result->front()) == testCase.expected);
         }
     }
 
@@ -906,10 +906,10 @@ namespace uf
     {
         struct InvalidCase final
         {
-            std::size_t m_length{};
-            uint32 m_width{};
-            uint32 m_height{};
-            std::size_t m_stride{};
+            std::size_t length{};
+            uint32 width{};
+            uint32 height{};
+            std::size_t stride{};
         };
 
         auto const cases = std::array{
@@ -920,12 +920,12 @@ namespace uf
         };
         for (auto const& testCase : cases)
         {
-            auto const data = std::vector<std::byte>(testCase.m_length);
+            auto const data = std::vector<std::byte>(testCase.length);
             auto const result = bgra8ToGray8(
                 data,
-                testCase.m_width,
-                testCase.m_height,
-                testCase.m_stride
+                testCase.width,
+                testCase.height,
+                testCase.stride
             );
             REQUIRE_FALSE(result.has_value());
             requireErrorKind(result.error(), AutomationErrorKind::InternalInvariant);

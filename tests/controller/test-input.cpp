@@ -101,8 +101,8 @@ namespace uf
     {
         struct EmptySize final
         {
-            uint32 m_width{};
-            uint32 m_height{};
+            uint32 width{};
+            uint32 height{};
         };
         for (auto const size : std::array{
             EmptySize{0, 10},
@@ -114,8 +114,8 @@ namespace uf
                 WindowHandle{0x10},
                 SessionId{1},
                 TargetGeneration{},
-                size.m_width,
-                size.m_height
+                size.width,
+                size.height
             );
             REQUIRE_FALSE(result.has_value());
             CHECK(automationKind(result.error()) == AutomationErrorKind::TargetUnavailable);
@@ -154,8 +154,8 @@ namespace uf
                 [](ReleaseOutcome const& outcome)
                 {
                     return (
-                        !outcome.m_result.has_value()
-                        && automationKind(outcome.m_result.error())
+                        !outcome.result.has_value()
+                        && automationKind(outcome.result.error())
                             == AutomationErrorKind::ControllerDisconnected
                     );
                 }
@@ -211,9 +211,9 @@ namespace uf
 
         REQUIRE(outcomes.size() == 1U);
         CHECK(audit.empty());
-        REQUIRE_FALSE(outcomes[0].m_result.has_value());
+        REQUIRE_FALSE(outcomes[0].result.has_value());
         CHECK(
-            automationKind(outcomes[0].m_result.error())
+            automationKind(outcomes[0].result.error())
             == AutomationErrorKind::ActionRejected
         );
         CHECK(held.empty());

@@ -78,8 +78,8 @@ namespace uf::image
 
         struct EncodedPng final
         {
-            std::vector<std::byte> m_bytes{};
-            bool                   m_callbackFailed{};
+            std::vector<std::byte> bytes{};
+            bool                   callbackFailed{};
         };
 
         auto appendEncodedPng(
@@ -97,13 +97,13 @@ namespace uf::image
             // callback context. stb retains neither the context nor the data after
             // this call, and no exception is allowed to cross the C callback boundary.
             auto& encoded = *static_cast<EncodedPng*>(p_context);
-            if (encoded.m_callbackFailed)
+            if (encoded.callbackFailed)
             {
                 return;
             }
             if (p_data == nullptr || size <= 0)
             {
-                encoded.m_callbackFailed = true;
+                encoded.callbackFailed = true;
                 return;
             }
 
@@ -111,19 +111,19 @@ namespace uf::image
             auto finalSize = std::optional<std::size_t>{};
             if (byteCount)
             {
-                finalSize = checkedAdd(encoded.m_bytes.size(), *byteCount);
+                finalSize = checkedAdd(encoded.bytes.size(), *byteCount);
             }
             if (!byteCount || !finalSize)
             {
-                encoded.m_callbackFailed = true;
+                encoded.callbackFailed = true;
                 return;
             }
 
             try
             {
-                auto const offset = encoded.m_bytes.size();
-                encoded.m_bytes.resize(*finalSize);
-                auto destination = std::span<std::byte>{encoded.m_bytes}.subspan(
+                auto const offset = encoded.bytes.size();
+                encoded.bytes.resize(*finalSize);
+                auto destination = std::span<std::byte>{encoded.bytes}.subspan(
                     offset,
                     *byteCount
                 );
@@ -144,7 +144,7 @@ namespace uf::image
             }
             catch (...)
             {
-                encoded.m_callbackFailed = true;
+                encoded.callbackFailed = true;
             }
         }
 
@@ -337,8 +337,8 @@ namespace uf::image
         );
         if (
             encodedOk == 0
-            || encoded.m_callbackFailed
-            || encoded.m_bytes.empty()
+            || encoded.callbackFailed
+            || encoded.bytes.empty()
         )
         {
             return fail(
@@ -350,7 +350,7 @@ namespace uf::image
             );
         }
 
-        return std::move(encoded.m_bytes);
+        return std::move(encoded.bytes);
     }
 
     auto writeRgbaPng(

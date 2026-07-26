@@ -16,25 +16,25 @@ namespace uf::m0_demo
 {
     struct LogLine final
     {
-        uint64                m_elapsedNanoseconds{};
-        std::optional<uint32> m_loopIndex{};
-        std::string           m_phase;
-        std::string           m_event;
-        std::optional<uint64> m_frameId{};
-        std::optional<uint64> m_targetGeneration{};
-        std::optional<uint64> m_confidence{};
-        std::optional<bool>   m_leaseOk{};
-        std::string           m_outcome{"info"};
-        std::string           m_detail{};
+        uint64                elapsedNanoseconds{};
+        std::optional<uint32> loopIndex{};
+        std::string           phase;
+        std::string           event;
+        std::optional<uint64> frameId{};
+        std::optional<uint64> targetGeneration{};
+        std::optional<uint64> confidence{};
+        std::optional<bool>   leaseOk{};
+        std::string           outcome{"info"};
+        std::string           detail{};
 
         LogLine(std::string phase, std::string event);
 
-        [[nodiscard]] auto loopIndex(uint32 loopIndex) && -> LogLine;
-        [[nodiscard]] auto frame(Frame const& frame) && -> LogLine;
-        [[nodiscard]] auto confidence(uint64 confidence) && -> LogLine;
-        [[nodiscard]] auto leaseOk(bool leaseOk) && -> LogLine;
-        [[nodiscard]] auto outcome(std::string outcome) && -> LogLine;
-        [[nodiscard]] auto detail(std::string detail) && -> LogLine;
+        [[nodiscard]] auto withLoopIndex(uint32 loopIndexValue) && -> LogLine;
+        [[nodiscard]] auto withFrame(Frame const& frame) && -> LogLine;
+        [[nodiscard]] auto withConfidence(uint64 confidence) && -> LogLine;
+        [[nodiscard]] auto withLeaseOk(bool leaseOk) && -> LogLine;
+        [[nodiscard]] auto withOutcome(std::string outcome) && -> LogLine;
+        [[nodiscard]] auto withDetail(std::string detail) && -> LogLine;
     };
 
     [[nodiscard]] auto serializeLine(LogLine const& line) -> std::string;

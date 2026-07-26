@@ -164,18 +164,18 @@ namespace uf::m0_demo
             &*capture
         );
         REQUIRE(captureCommand != nullptr);
-        CHECK(captureCommand->m_output == std::filesystem::path{"shots/one.png"});
+        CHECK(captureCommand->output == std::filesystem::path{"shots/one.png"});
 
         auto const click = parsedClick(
             R"({"op":"click","x":12.5,"y":4e1,"out_before":"before.png",)"
             R"("out_after":"after.png","settle_ms":250})"
         );
-        CHECK(click.m_x == 12.5F);
-        CHECK(click.m_y == 40.0F);
-        CHECK(click.m_outputBefore == std::filesystem::path{"before.png"});
-        CHECK(click.m_outputAfter == std::filesystem::path{"after.png"});
+        CHECK(click.x == 12.5F);
+        CHECK(click.y == 40.0F);
+        CHECK(click.outputBefore == std::filesystem::path{"before.png"});
+        CHECK(click.outputAfter == std::filesystem::path{"after.png"});
         CHECK(
-            click.m_settle
+            click.settle
             == std::chrono::duration_cast<MonotonicInstant::Duration>(
                 std::chrono::milliseconds{250}
             )
@@ -184,7 +184,7 @@ namespace uf::m0_demo
         auto const defaultSettle = parsedClick(
             R"({"op":"click","x":1,"y":2,"out_before":"before.png","out_after":"after.png"})"
         );
-        CHECK(defaultSettle.m_settle == k_defaultInputAgentSettle);
+        CHECK(defaultSettle.settle == k_defaultInputAgentSettle);
 
         auto const quit = parseInputAgentCommand(
             "  { \"op\" : \"quit\" }  "
@@ -225,7 +225,7 @@ namespace uf::m0_demo
         auto const boundary = parsedClick(
             R"({"op":"click","x":1,"y":2,"out_before":"a.png","out_after":"b.png","settle_ms":5000})"
         );
-        CHECK(boundary.m_settle == k_maximumInputAgentSettle);
+        CHECK(boundary.settle == k_maximumInputAgentSettle);
 
         auto const result = parseInputAgentCommand(
             R"({"op":"click","x":1,"y":2,"out_before":"a.png","out_after":"b.png","settle_ms":5001})"
@@ -542,7 +542,7 @@ namespace uf::m0_demo
             validateInputAgentClick(
                 target,
                 lease,
-                Point<ClientSpace>{valid.m_x, valid.m_y},
+                Point<ClientSpace>{valid.x, valid.y},
                 now
             )
         );
@@ -559,7 +559,7 @@ namespace uf::m0_demo
             auto const result = validateInputAgentClick(
                 target,
                 lease,
-                Point<ClientSpace>{click.m_x, click.m_y},
+                Point<ClientSpace>{click.x, click.y},
                 now
             );
 

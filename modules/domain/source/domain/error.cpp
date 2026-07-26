@@ -33,9 +33,9 @@ namespace uf
             {
                 for (auto const& entry : enumEntries<AutomationErrorKind>())
                 {
-                    if (automationErrorDetailValue(entry.m_value) == value)
+                    if (automationErrorDetailValue(entry.value) == value)
                     {
-                        return std::string{entry.m_name};
+                        return std::string{entry.name};
                     }
                 }
 
@@ -117,9 +117,9 @@ namespace uf
 
         for (auto const& entry : enumEntries<AutomationErrorKind>())
         {
-            if (automationErrorDetailValue(entry.m_value) == detailCode.value())
+            if (automationErrorDetailValue(entry.value) == detailCode.value())
             {
-                return entry.m_value;
+                return entry.value;
             }
         }
 

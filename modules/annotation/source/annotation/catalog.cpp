@@ -363,14 +363,14 @@ namespace uf::annotation
     }
 
     RecognizerDefinition::RecognizerDefinition(RecognizerSpec spec) noexcept
-        : m_id{spec.m_id}
-        , m_name{std::move(spec.m_name)}
-        , m_annotationType{spec.m_annotationType}
-        , m_templateRect{spec.m_templateRect}
-        , m_searchRoi{spec.m_searchRoi}
-        , m_threshold{spec.m_threshold}
-        , m_defaultClick{spec.m_defaultClick}
-        , m_allowedPageIds{std::move(spec.m_allowedPageIds)}
+        : m_id{spec.id}
+        , m_name{std::move(spec.name)}
+        , m_annotationType{spec.annotationType}
+        , m_templateRect{spec.templateRect}
+        , m_searchRoi{spec.searchRoi}
+        , m_threshold{spec.threshold}
+        , m_defaultClick{spec.defaultClick}
+        , m_allowedPageIds{std::move(spec.allowedPageIds)}
     {
     }
 
@@ -380,12 +380,12 @@ namespace uf::annotation
     ) -> Result<RecognizerDefinition>
     {
         auto const templateWithinProject = (
-            spec.m_templateRect.right() <= fingerprint.width()
-            && spec.m_templateRect.bottom() <= fingerprint.height()
+            spec.templateRect.right() <= fingerprint.width()
+            && spec.templateRect.bottom() <= fingerprint.height()
         );
         auto const searchWithinProject = (
-            spec.m_searchRoi.right() <= fingerprint.width()
-            && spec.m_searchRoi.bottom() <= fingerprint.height()
+            spec.searchRoi.right() <= fingerprint.width()
+            && spec.searchRoi.bottom() <= fingerprint.height()
         );
         if (!templateWithinProject || !searchWithinProject)
         {
@@ -396,8 +396,8 @@ namespace uf::annotation
         }
 
         if (
-            spec.m_templateRect.width() > spec.m_searchRoi.width()
-            || spec.m_templateRect.height() > spec.m_searchRoi.height()
+            spec.templateRect.width() > spec.searchRoi.width()
+            || spec.templateRect.height() > spec.searchRoi.height()
         )
         {
             return fail(
@@ -407,15 +407,15 @@ namespace uf::annotation
         }
 
         UF_TRY(
-            spec.m_threshold.maximumSad(
-                spec.m_templateRect.width(),
-                spec.m_templateRect.height()
+            spec.threshold.maximumSad(
+                spec.templateRect.width(),
+                spec.templateRect.height()
             )
         );
 
         if (
-            spec.m_annotationType != AnnotationType::ActionTarget
-            && spec.m_defaultClick.has_value()
+            spec.annotationType != AnnotationType::ActionTarget
+            && spec.defaultClick.has_value()
         )
         {
             return fail(
@@ -425,10 +425,10 @@ namespace uf::annotation
         }
 
         if (
-            spec.m_defaultClick.has_value()
+            spec.defaultClick.has_value()
             && (
-                spec.m_defaultClick->x() >= spec.m_templateRect.width()
-                || spec.m_defaultClick->y() >= spec.m_templateRect.height()
+                spec.defaultClick->x() >= spec.templateRect.width()
+                || spec.defaultClick->y() >= spec.templateRect.height()
             )
         )
         {
@@ -439,8 +439,8 @@ namespace uf::annotation
         }
 
         if (
-            spec.m_annotationType == AnnotationType::PageAnchor
-            && !spec.m_allowedPageIds.empty()
+            spec.annotationType == AnnotationType::PageAnchor
+            && !spec.allowedPageIds.empty()
         )
         {
             return fail(
@@ -450,8 +450,8 @@ namespace uf::annotation
         }
 
         if (
-            spec.m_annotationType == AnnotationType::ActionTarget
-            && spec.m_allowedPageIds.empty()
+            spec.annotationType == AnnotationType::ActionTarget
+            && spec.allowedPageIds.empty()
         )
         {
             return fail(
@@ -461,8 +461,8 @@ namespace uf::annotation
         }
 
         auto normalizedSpec = spec;
-        std::ranges::sort(normalizedSpec.m_allowedPageIds, lessId<PageId>);
-        if (hasDuplicateIds<PageId>(normalizedSpec.m_allowedPageIds))
+        std::ranges::sort(normalizedSpec.allowedPageIds, lessId<PageId>);
+        if (hasDuplicateIds<PageId>(normalizedSpec.allowedPageIds))
         {
             return fail(
                 AutomationErrorKind::InvalidResource,
@@ -495,10 +495,10 @@ namespace uf::annotation
     }
 
     PageSignature::PageSignature(PageSpec spec) noexcept
-        : m_id{spec.m_id}
-        , m_name{std::move(spec.m_name)}
-        , m_required{std::move(spec.m_required)}
-        , m_forbidden{std::move(spec.m_forbidden)}
+        : m_id{spec.id}
+        , m_name{std::move(spec.name)}
+        , m_required{std::move(spec.required)}
+        , m_forbidden{std::move(spec.forbidden)}
     {
     }
 
@@ -506,8 +506,8 @@ namespace uf::annotation
     {
         auto normalizedSpec = spec;
         if (
-            normalizedSpec.m_required.empty()
-            && normalizedSpec.m_forbidden.empty()
+            normalizedSpec.required.empty()
+            && normalizedSpec.forbidden.empty()
         )
         {
             return fail(
@@ -516,11 +516,11 @@ namespace uf::annotation
             );
         }
 
-        std::ranges::sort(normalizedSpec.m_required, lessId<RecognizerId>);
-        std::ranges::sort(normalizedSpec.m_forbidden, lessId<RecognizerId>);
+        std::ranges::sort(normalizedSpec.required, lessId<RecognizerId>);
+        std::ranges::sort(normalizedSpec.forbidden, lessId<RecognizerId>);
         if (
-            hasDuplicateIds<RecognizerId>(normalizedSpec.m_required)
-            || hasDuplicateIds<RecognizerId>(normalizedSpec.m_forbidden)
+            hasDuplicateIds<RecognizerId>(normalizedSpec.required)
+            || hasDuplicateIds<RecognizerId>(normalizedSpec.forbidden)
         )
         {
             return fail(
@@ -529,9 +529,9 @@ namespace uf::annotation
             );
         }
 
-        for (auto const id : normalizedSpec.m_required)
+        for (auto const id : normalizedSpec.required)
         {
-            if (containsId<RecognizerId>(normalizedSpec.m_forbidden, id))
+            if (containsId<RecognizerId>(normalizedSpec.forbidden, id))
             {
                 return fail(
                     AutomationErrorKind::InvalidResource,

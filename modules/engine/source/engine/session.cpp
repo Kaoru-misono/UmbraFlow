@@ -39,10 +39,10 @@ namespace uf::engine
         ) -> TraceEvent
         {
             return TraceEvent{
-                .m_kind             = kind,
-                .m_frameId          = identity.frameId(),
-                .m_sessionId        = identity.sessionId(),
-                .m_targetGeneration = identity.targetGeneration(),
+                .kind             = kind,
+                .frameId          = identity.frameId(),
+                .sessionId        = identity.sessionId(),
+                .targetGeneration = identity.targetGeneration(),
             };
         }
 
@@ -194,15 +194,15 @@ namespace uf::engine
 
     auto EngineSession::catalog() const noexcept -> annotation::RecognitionCatalog const&
     {
-        return m_loadedRuntime.m_runtime.manifest().catalog();
+        return m_loadedRuntime.runtime.manifest().catalog();
     }
 
     auto EngineSession::makeRecognitionPolicy() const -> annotation::RecognitionPolicy
     {
         return annotation::RecognitionPolicy{
-            .m_maximumPixelComparisons = m_config.m_maximumPixelComparisons,
-            .m_deadline                = MonotonicInstant::now().checkedAdd(m_config.m_recognitionTimeout),
-            .m_cancellation            = m_config.m_cancellation,
+            .maximumPixelComparisons = m_config.maximumPixelComparisons,
+            .deadline                = MonotonicInstant::now().checkedAdd(m_config.recognitionTimeout),
+            .cancellation            = m_config.cancellation,
         };
     }
 
@@ -238,7 +238,7 @@ namespace uf::engine
             std::move(traceSink),
             std::move(config),
         };
-        UF_TRY(session.emit(TraceEvent{.m_kind = TraceEventKind::SessionStarted}));
+        UF_TRY(session.emit(TraceEvent{.kind = TraceEventKind::SessionStarted}));
         return session;
     }
 
@@ -246,7 +246,7 @@ namespace uf::engine
     {
         // An external stop requested before observation aborts the capture before
         // any frame is taken, so a cancelled run stops promptly at the loop head.
-        if (m_config.m_cancellation.stop_requested())
+        if (m_config.cancellation.stop_requested())
         {
             return fail(
                 AutomationErrorKind::Cancelled,
@@ -259,7 +259,7 @@ namespace uf::engine
 
         UF_TRY_VALUE(
             lease,
-            ObservationLease::forFrame(frame, m_config.m_maxActionFrameAge)
+            ObservationLease::forFrame(frame, m_config.maxActionFrameAge)
         );
         auto const identity = annotation::FrameIdentity::fromFrame(frame);
 
@@ -273,40 +273,40 @@ namespace uf::engine
     ) -> Result<annotation::PageOutcome>
     {
         auto const identity = annotation::FrameIdentity::fromFrame(frame);
-        auto attempt = m_loadedRuntime.m_runtime.evaluatePage(
+        auto attempt = m_loadedRuntime.runtime.evaluatePage(
             frame,
-            m_config.m_liveFingerprint,
+            m_config.liveFingerprint,
             makeRecognitionPolicy()
         );
         if (!attempt)
         {
-            auto event        = identityEvent(TraceEventKind::Failure, identity);
-            event.m_errorKind = automationErrorKind(attempt.error());
-            event.m_message   = std::string{attempt.error().message()};
+            auto event      = identityEvent(TraceEventKind::Failure, identity);
+            event.errorKind = automationErrorKind(attempt.error());
+            event.message   = std::string{attempt.error().message()};
             UF_TRY(emit(event));
             return std::unexpected{std::move(attempt).error()};
         }
 
         if (
             auto const* p_stop = std::get_if<annotation::PageRecognitionStop>(
-                &attempt->m_result
+                &attempt->result
             )
         )
         {
             auto event = identityEvent(TraceEventKind::RecognitionStopped, identity);
-            event.m_recognizerId = p_stop->m_recognizerId;
-            event.m_stopReason   = p_stop->m_reason;
+            event.recognizerId = p_stop->recognizerId;
+            event.stopReason   = p_stop->reason;
             UF_TRY(emit(event));
             return fail(
-                annotation::searchStopKind(p_stop->m_reason),
+                annotation::searchStopKind(p_stop->reason),
                 std::format(
                     "page recognition stopped: {}",
-                    annotation::searchStopDescription(p_stop->m_reason)
+                    annotation::searchStopDescription(p_stop->reason)
                 )
             );
         }
 
-        auto outcome = std::get<annotation::PageOutcome>(std::move(attempt->m_result));
+        auto outcome = std::get<annotation::PageOutcome>(std::move(attempt->result));
         auto kind   = TraceEventKind::PageUnknown;
         auto pageId = std::optional<annotation::PageId>{};
         if (auto const* p_resolved = std::get_if<annotation::ResolvedPage>(&outcome))
@@ -319,8 +319,8 @@ namespace uf::engine
             kind = TraceEventKind::PageAmbiguous;
         }
 
-        auto event     = identityEvent(kind, identity);
-        event.m_pageId = pageId;
+        auto event   = identityEvent(kind, identity);
+        event.pageId = pageId;
         UF_TRY(emit(event));
         return outcome;
     }
@@ -331,48 +331,48 @@ namespace uf::engine
     ) -> Result<std::optional<ActionFound>>
     {
         auto const identity = annotation::FrameIdentity::fromFrame(frame);
-        auto attempt = m_loadedRuntime.m_runtime.evaluateActionTarget(
+        auto attempt = m_loadedRuntime.runtime.evaluateActionTarget(
             frame,
-            m_config.m_liveFingerprint,
+            m_config.liveFingerprint,
             recognizerId,
             makeRecognitionPolicy()
         );
         if (!attempt)
         {
-            auto event           = identityEvent(TraceEventKind::Failure, identity);
-            event.m_errorKind    = automationErrorKind(attempt.error());
-            event.m_recognizerId = recognizerId;
-            event.m_message      = std::string{attempt.error().message()};
+            auto event         = identityEvent(TraceEventKind::Failure, identity);
+            event.errorKind    = automationErrorKind(attempt.error());
+            event.recognizerId = recognizerId;
+            event.message      = std::string{attempt.error().message()};
             UF_TRY(emit(event));
             return std::unexpected{std::move(attempt).error()};
         }
 
         if (
             auto const* p_stop = std::get_if<annotation::PageRecognitionStop>(
-                &attempt->m_result
+                &attempt->result
             )
         )
         {
             auto event = identityEvent(TraceEventKind::RecognitionStopped, identity);
-            event.m_recognizerId = p_stop->m_recognizerId;
-            event.m_stopReason   = p_stop->m_reason;
+            event.recognizerId = p_stop->recognizerId;
+            event.stopReason   = p_stop->reason;
             UF_TRY(emit(event));
             return fail(
-                annotation::searchStopKind(p_stop->m_reason),
+                annotation::searchStopKind(p_stop->reason),
                 std::format(
                     "action target search stopped: {}",
-                    annotation::searchStopDescription(p_stop->m_reason)
+                    annotation::searchStopDescription(p_stop->reason)
                 )
             );
         }
 
-        auto const& evidence = std::get<annotation::AnchorEvidence>(attempt->m_result);
+        auto const& evidence = std::get<annotation::AnchorEvidence>(attempt->result);
         if (!evidence.hit())
         {
-            auto event           = identityEvent(TraceEventKind::ActionAbsent, identity);
-            event.m_recognizerId = recognizerId;
-            event.m_sadScore     = evidence.sadScore();
-            event.m_maximumSad   = evidence.maximumSad();
+            auto event         = identityEvent(TraceEventKind::ActionAbsent, identity);
+            event.recognizerId = recognizerId;
+            event.sadScore     = evidence.sadScore();
+            event.maximumSad   = evidence.maximumSad();
             UF_TRY(emit(event));
             return std::optional<ActionFound>{std::nullopt};
         }
@@ -408,11 +408,11 @@ namespace uf::engine
             )
         );
 
-        auto event           = identityEvent(TraceEventKind::ActionFound, identity);
-        event.m_recognizerId = recognizerId;
-        event.m_sadScore     = evidence.sadScore();
-        event.m_maximumSad   = evidence.maximumSad();
-        event.m_matchedRect  = *matchedRect;
+        auto event         = identityEvent(TraceEventKind::ActionFound, identity);
+        event.recognizerId = recognizerId;
+        event.sadScore     = evidence.sadScore();
+        event.maximumSad   = evidence.maximumSad();
+        event.matchedRect  = *matchedRect;
         UF_TRY(emit(event));
 
         return std::optional<ActionFound>{
@@ -430,7 +430,7 @@ namespace uf::engine
         // other outcome: fail closed before authorization and any sink call so a
         // cancelled run never posts input. This reads only session state, not the
         // observation, so it may run ahead of the foreign-observation guard below.
-        if (m_config.m_cancellation.stop_requested())
+        if (m_config.cancellation.stop_requested())
         {
             return fail(
                 AutomationErrorKind::Cancelled,
@@ -460,11 +460,11 @@ namespace uf::engine
 
         auto const identity = observation.m_frameIdentity;
         auto const delivery = annotation::ActionDeliveryState{
-            .m_liveFingerprint  = m_config.m_liveFingerprint,
-            .m_sessionId        = identity.sessionId(),
-            .m_targetGeneration = identity.targetGeneration(),
-            .m_frameId          = identity.frameId(),
-            .m_now              = MonotonicInstant::now(),
+            .liveFingerprint  = m_config.liveFingerprint,
+            .sessionId        = identity.sessionId(),
+            .targetGeneration = identity.targetGeneration(),
+            .frameId          = identity.frameId(),
+            .now              = MonotonicInstant::now(),
         };
         auto authorized = annotation::authorizeCoordinateAction(
             catalog(),
@@ -475,10 +475,10 @@ namespace uf::engine
         );
         if (!authorized)
         {
-            auto event           = identityEvent(TraceEventKind::ActionRejected, identity);
-            event.m_errorKind    = automationErrorKind(authorized.error());
-            event.m_recognizerId = action.actionDetection().recognizerId();
-            event.m_message      = std::string{authorized.error().message()};
+            auto event         = identityEvent(TraceEventKind::ActionRejected, identity);
+            event.errorKind    = automationErrorKind(authorized.error());
+            event.recognizerId = action.actionDetection().recognizerId();
+            event.message      = std::string{authorized.error().message()};
             UF_TRY(emit(event));
             return std::unexpected{std::move(authorized).error()};
         }
@@ -495,10 +495,10 @@ namespace uf::engine
         auto revalidation = m_frameSource->validateTargetInstance();
         if (!revalidation)
         {
-            auto event           = identityEvent(TraceEventKind::ActionRejected, identity);
-            event.m_errorKind    = automationErrorKind(revalidation.error());
-            event.m_recognizerId = action.actionDetection().recognizerId();
-            event.m_message      = std::string{revalidation.error().message()};
+            auto event         = identityEvent(TraceEventKind::ActionRejected, identity);
+            event.errorKind    = automationErrorKind(revalidation.error());
+            event.recognizerId = action.actionDetection().recognizerId();
+            event.message      = std::string{revalidation.error().message()};
             UF_TRY(emit(event));
             return std::unexpected{std::move(revalidation).error()};
         }
@@ -513,15 +513,15 @@ namespace uf::engine
         // surviving alias finds the handle already dead and cannot double-deliver.
         observation.m_invalidated = true;
 
-        auto clickEvent          = identityEvent(TraceEventKind::ClickDelivered, identity);
-        clickEvent.m_clickClient = clientPoint;
+        auto clickEvent        = identityEvent(TraceEventKind::ClickDelivered, identity);
+        clickEvent.clickClient = clientPoint;
         UF_TRY(emit(clickEvent));
 
         UF_TRY(emit(identityEvent(TraceEventKind::ObservationInvalidated, identity)));
 
         return ActReceipt{
-            .m_frameId    = identity.frameId(),
-            .m_clickPoint = clientPoint,
+            .frameId    = identity.frameId(),
+            .clickPoint = clientPoint,
         };
     }
 
@@ -564,7 +564,7 @@ namespace uf::engine
                 );
             }
 
-            if (m_config.m_cancellation.stop_requested())
+            if (m_config.cancellation.stop_requested())
             {
                 return fail(
                     AutomationErrorKind::Cancelled,
@@ -572,7 +572,7 @@ namespace uf::engine
                 );
             }
 
-            pollSleep(pollInterval, *deadline, m_config.m_cancellation);
+            pollSleep(pollInterval, *deadline, m_config.cancellation);
         }
     }
 

@@ -10,8 +10,8 @@ TEST_CASE("cursor capture gate tracks Windows 10 build 19041")
 {
     struct Case final
     {
-        uf::uint32 m_build{};
-        bool m_supported{};
+        uf::uint32 build{};
+        bool supported{};
     };
 
     for (
@@ -22,11 +22,11 @@ TEST_CASE("cursor capture gate tracks Windows 10 build 19041")
         }
     )
     {
-        CAPTURE(testCase.m_build);
-        CAPTURE(testCase.m_supported);
+        CAPTURE(testCase.build);
+        CAPTURE(testCase.supported);
         CHECK(
-            uf::controller_detail::cursorCaptureSupported(testCase.m_build)
-            == testCase.m_supported
+            uf::controller_detail::cursorCaptureSupported(testCase.build)
+            == testCase.supported
         );
     }
 }
@@ -35,8 +35,8 @@ TEST_CASE("borderless gate tracks build 20348")
 {
     struct Case final
     {
-        uf::uint32 m_build{};
-        bool m_supported{};
+        uf::uint32 build{};
+        bool supported{};
     };
 
     for (
@@ -47,11 +47,11 @@ TEST_CASE("borderless gate tracks build 20348")
         }
     )
     {
-        CAPTURE(testCase.m_build);
-        CAPTURE(testCase.m_supported);
+        CAPTURE(testCase.build);
+        CAPTURE(testCase.supported);
         CHECK(
-            uf::controller_detail::borderlessSupported(testCase.m_build)
-            == testCase.m_supported
+            uf::controller_detail::borderlessSupported(testCase.build)
+            == testCase.supported
         );
     }
 }

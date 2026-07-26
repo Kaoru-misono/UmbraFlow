@@ -272,8 +272,8 @@ namespace uf::annotation
                 );
                 UF_TRY_VALUE(capturedAt, reader.takeStringField("captured_at"));
                 provenance = WgcSourceProvenance{
-                    .m_targetGeneration = TargetGeneration::fromValue(generation),
-                    .m_capturedAt       = std::move(capturedAt),
+                    .targetGeneration = TargetGeneration::fromValue(generation),
+                    .capturedAt       = std::move(capturedAt),
                 };
             }
             else if (backend != "imported")
@@ -284,10 +284,10 @@ namespace uf::annotation
             }
             return AuthoringSource::create(
                 AuthoringSourceSpec{
-                    .m_id          = id,
-                    .m_contentHash = contentHash,
-                    .m_fingerprint = fingerprint,
-                    .m_provenance  = std::move(provenance),
+                    .id          = id,
+                    .contentHash = contentHash,
+                    .fingerprint = fingerprint,
+                    .provenance  = std::move(provenance),
                 }
             );
         }
@@ -393,21 +393,21 @@ namespace uf::annotation
                 RecognizerDefinition::create(
                     fingerprint,
                     RecognizerSpec{
-                        .m_id             = id,
-                        .m_name           = std::move(name),
-                        .m_annotationType = *annotationType,
-                        .m_templateRect   = templateRect,
-                        .m_searchRoi      = searchRoi,
-                        .m_threshold      = threshold,
-                        .m_defaultClick   = defaultClick,
-                        .m_allowedPageIds = std::move(pageIds),
+                        .id             = id,
+                        .name           = std::move(name),
+                        .annotationType = *annotationType,
+                        .templateRect   = templateRect,
+                        .searchRoi      = searchRoi,
+                        .threshold      = threshold,
+                        .defaultClick   = defaultClick,
+                        .allowedPageIds = std::move(pageIds),
                     }
                 )
             );
             return AuthoringRecognizerSpec{
-                .m_definition = std::move(definition),
-                .m_sourceId   = sourceId,
-                .m_shared     = shared,
+                .definition = std::move(definition),
+                .sourceId   = sourceId,
+                .shared     = shared,
             };
         }
 
@@ -438,10 +438,10 @@ namespace uf::annotation
             );
             return PageSignature::create(
                 PageSpec{
-                    .m_id        = id,
-                    .m_name      = std::move(name),
-                    .m_required  = std::move(required),
-                    .m_forbidden = std::move(forbidden),
+                    .id        = id,
+                    .name      = std::move(name),
+                    .required  = std::move(required),
+                    .forbidden = std::move(forbidden),
                 }
             );
         }
@@ -512,10 +512,10 @@ namespace uf::annotation
             }
             return RegressionCase{
                 RegressionSpec{
-                    .m_id             = id,
-                    .m_sourceId       = sourceId,
-                    .m_classification = classification,
-                    .m_expectation    = expectation,
+                    .id             = id,
+                    .sourceId       = sourceId,
+                    .classification = classification,
+                    .expectation    = expectation,
                 }
             };
         }
@@ -571,11 +571,11 @@ namespace uf::annotation
     }
 
     AuthoringSource::AuthoringSource(AuthoringSourceSpec const& spec)
-        : m_id{spec.m_id}
-        , m_contentHash{spec.m_contentHash}
+        : m_id{spec.id}
+        , m_contentHash{spec.contentHash}
         , m_relativePath{sourcePath(m_contentHash)}
-        , m_fingerprint{spec.m_fingerprint}
-        , m_provenance{spec.m_provenance}
+        , m_fingerprint{spec.fingerprint}
+        , m_provenance{spec.provenance}
     {
     }
 
@@ -584,11 +584,11 @@ namespace uf::annotation
     ) -> Result<AuthoringSource>
     {
         auto const* p_wgc = std::get_if<WgcSourceProvenance>(
-            &spec.m_provenance
+            &spec.provenance
         );
         if (
             p_wgc != nullptr
-            && !isCanonicalRfc3339(p_wgc->m_capturedAt)
+            && !isCanonicalRfc3339(p_wgc->capturedAt)
         )
         {
             return invalidAuthoring(
@@ -614,10 +614,10 @@ namespace uf::annotation
     }
 
     RegressionCase::RegressionCase(RegressionSpec const& spec)
-        : m_id{spec.m_id}
-        , m_sourceId{spec.m_sourceId}
-        , m_classification{spec.m_classification}
-        , m_expectation{spec.m_expectation}
+        : m_id{spec.id}
+        , m_sourceId{spec.sourceId}
+        , m_classification{spec.classification}
+        , m_expectation{spec.expectation}
     {
     }
 
@@ -703,7 +703,7 @@ namespace uf::annotation
             {},
             [](AuthoringRecognizerSpec const& recognizer) -> ResourceId
             {
-                return recognizer.m_definition.id().value();
+                return recognizer.definition.id().value();
             }
         );
         auto definitions       = std::vector<RecognizerDefinition>{};
@@ -712,21 +712,21 @@ namespace uf::annotation
         recognizerSources.reserve(recognizers.size());
         for (auto& recognizer : recognizers)
         {
-            if (findSource(recognizer.m_sourceId) == nullptr)
+            if (findSource(recognizer.sourceId) == nullptr)
             {
                 return invalidAuthoring(
                     "authoring annotation references an unknown source"
                 );
             }
-            auto const recognizerId = recognizer.m_definition.id();
+            auto const recognizerId = recognizer.definition.id();
             recognizerSources.emplace_back(
                 AuthoringRecognizerSource{
-                    .m_recognizerId = recognizerId,
-                    .m_sourceId     = recognizer.m_sourceId,
-                    .m_shared       = recognizer.m_shared,
+                    .recognizerId = recognizerId,
+                    .sourceId     = recognizer.sourceId,
+                    .shared       = recognizer.shared,
                 }
             );
-            definitions.emplace_back(std::move(recognizer.m_definition));
+            definitions.emplace_back(std::move(recognizer.definition));
         }
 
         std::ranges::sort(
@@ -771,7 +771,7 @@ namespace uf::annotation
             );
             if (
                 p_resolved != nullptr
-                && catalog.findPage(p_resolved->m_pageId) == nullptr
+                && catalog.findPage(p_resolved->pageId) == nullptr
             )
             {
                 return invalidAuthoring(
@@ -891,12 +891,12 @@ namespace uf::annotation
             {
                 detail::appendStringField(output, "capture_backend", "wgc");
                 output += "target_generation = ";
-                output += std::to_string(p_wgc->m_targetGeneration.value());
+                output += std::to_string(p_wgc->targetGeneration.value());
                 output.push_back('\n');
                 detail::appendStringField(
                     output,
                     "captured_at",
-                    p_wgc->m_capturedAt
+                    p_wgc->capturedAt
                 );
             }
             else
@@ -920,7 +920,7 @@ namespace uf::annotation
             auto const& recognizer   = checkedAt(recognizers, index);
             auto const& relationship = checkedAt(recognizerSources, index);
             UF_CHECK_MSG(
-                relationship.m_recognizerId == recognizer.id(),
+                relationship.recognizerId == recognizer.id(),
                 "authoring recognizer source order is inconsistent"
             );
             output += "\n[[annotation]]\n";
@@ -938,7 +938,7 @@ namespace uf::annotation
             detail::appendStringField(
                 output,
                 "source_id",
-                resourceIdText(relationship.m_sourceId)
+                resourceIdText(relationship.sourceId)
             );
             detail::appendStringField(
                 output,
@@ -965,7 +965,7 @@ namespace uf::annotation
             }
             // Written only when set, so a project that marks nothing reusable
             // serializes exactly as it did before the field existed.
-            if (relationship.m_shared)
+            if (relationship.shared)
             {
                 detail::appendBoolField(output, "shared", true);
             }
@@ -1016,7 +1016,7 @@ namespace uf::annotation
                 detail::appendStringField(
                     output,
                     "expected_page_id",
-                    resourceIdText(p_resolved->m_pageId)
+                    resourceIdText(p_resolved->pageId)
                 );
             }
             else if (

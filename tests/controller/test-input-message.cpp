@@ -93,8 +93,8 @@ namespace uf
     {
         struct InvalidPixel final
         {
-            int32 m_x{};
-            int32 m_y{};
+            int32 x{};
+            int32 y{};
         };
 
         for (auto const testCase : std::array{
@@ -104,7 +104,7 @@ namespace uf
             InvalidPixel{0, 32'768},
         })
         {
-            auto const result = ClientPixel::create(testCase.m_x, testCase.m_y);
+            auto const result = ClientPixel::create(testCase.x, testCase.y);
             REQUIRE_FALSE(result.has_value());
             CHECK(automationKind(result.error()) == AutomationErrorKind::ActionRejected);
         }
@@ -118,17 +118,17 @@ namespace uf
             0x1EU,
             controller_detail::KeyTransition::Down
         );
-        CHECK(down.m_message == controller_detail::k_wmKeyDown);
-        CHECK(down.m_wParam == 0x41U);
-        CHECK(down.m_lParam == intptr{0x001E'0001});
+        CHECK(down.message == controller_detail::k_wmKeyDown);
+        CHECK(down.wParam == 0x41U);
+        CHECK(down.lParam == intptr{0x001E'0001});
 
         auto const up = controller_detail::keySpec(
             key,
             0x1EU,
             controller_detail::KeyTransition::Up
         );
-        CHECK(up.m_message == controller_detail::k_wmKeyUp);
-        CHECK(up.m_lParam == intptr{0xC01E'0001});
+        CHECK(up.message == controller_detail::k_wmKeyUp);
+        CHECK(up.lParam == intptr{0xC01E'0001});
     }
 
     TEST_CASE("numpad Enter preserves its extended bit across down and up")
@@ -149,8 +149,8 @@ namespace uf
             0x1CU,
             controller_detail::KeyTransition::Up
         );
-        CHECK(down.m_lParam == intptr{0x011C'0001});
-        CHECK(up.m_lParam == intptr{0xC11C'0001});
+        CHECK(down.lParam == intptr{0x011C'0001});
+        CHECK(up.lParam == intptr{0xC11C'0001});
     }
 
     TEST_CASE("pointer specs set the button mask only while down")
@@ -161,9 +161,9 @@ namespace uf
                 controller_detail::PointerMessage::Move,
                 clientPixel
             ) == controller_detail::PostSpec{
-                .m_message = controller_detail::k_wmMouseMove,
-                .m_wParam  = 0,
-                .m_lParam = 0x00C8'0064,
+                .message = controller_detail::k_wmMouseMove,
+                .wParam  = 0,
+                .lParam = 0x00C8'0064,
             }
         );
         CHECK(
@@ -171,9 +171,9 @@ namespace uf
                 controller_detail::PointerMessage::MoveWithLeftButton,
                 clientPixel
             ) == controller_detail::PostSpec{
-                .m_message = controller_detail::k_wmMouseMove,
-                .m_wParam  = controller_detail::k_leftButtonMask,
-                .m_lParam = 0x00C8'0064,
+                .message = controller_detail::k_wmMouseMove,
+                .wParam  = controller_detail::k_leftButtonMask,
+                .lParam = 0x00C8'0064,
             }
         );
         CHECK(
@@ -181,9 +181,9 @@ namespace uf
                 controller_detail::PointerMessage::LeftDown,
                 clientPixel
             ) == controller_detail::PostSpec{
-                .m_message = controller_detail::k_wmLeftButtonDown,
-                .m_wParam  = controller_detail::k_leftButtonMask,
-                .m_lParam = 0x00C8'0064,
+                .message = controller_detail::k_wmLeftButtonDown,
+                .wParam  = controller_detail::k_leftButtonMask,
+                .lParam = 0x00C8'0064,
             }
         );
         CHECK(
@@ -191,9 +191,9 @@ namespace uf
                 controller_detail::PointerMessage::LeftUp,
                 clientPixel
             ) == controller_detail::PostSpec{
-                .m_message = controller_detail::k_wmLeftButtonUp,
-                .m_wParam  = 0,
-                .m_lParam = 0x00C8'0064,
+                .message = controller_detail::k_wmLeftButtonUp,
+                .wParam  = 0,
+                .lParam = 0x00C8'0064,
             }
         );
     }
@@ -202,17 +202,17 @@ namespace uf
     {
         CHECK(
             controller_detail::charSpec(0x0041U) == controller_detail::PostSpec{
-                .m_message = controller_detail::k_wmChar,
-                .m_wParam  = 0x41U,
-                .m_lParam  = 1,
+                .message = controller_detail::k_wmChar,
+                .wParam  = 0x41U,
+                .lParam  = 1,
             }
         );
         CHECK(
             controller_detail::unicharSpec(U'\U0001F600')
             == controller_detail::PostSpec{
-                .m_message = controller_detail::k_wmUnichar,
-                .m_wParam = 0x0001'F600U,
-                .m_lParam = 1,
+                .message = controller_detail::k_wmUnichar,
+                .wParam = 0x0001'F600U,
+                .lParam = 1,
             }
         );
     }
@@ -278,9 +278,9 @@ namespace uf
         REQUIRE_FALSE(result.has_value());
         CHECK(automationKind(result.error()) == AutomationErrorKind::ControllerDisconnected);
         REQUIRE(audit.size() == 1U);
-        CHECK(audit.records()[0].m_message == controller_detail::k_wmChar);
-        CHECK(audit.records()[0].m_wParam == 0x41U);
-        CHECK(audit.records()[0].m_target == uintptr{0xDEAD'BEEF});
+        CHECK(audit.records()[0].message == controller_detail::k_wmChar);
+        CHECK(audit.records()[0].wParam == 0x41U);
+        CHECK(audit.records()[0].target == uintptr{0xDEAD'BEEF});
     }
 
     TEST_CASE("null and broadcast delivery targets fail closed without posting")

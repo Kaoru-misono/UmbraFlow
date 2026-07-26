@@ -43,8 +43,8 @@ TEST_CASE("audit log appends one record per delivery")
     );
 
     REQUIRE(log.size() == 2U);
-    CHECK(log.records()[0].m_target == 0x1234U);
-    CHECK(log.records()[0].m_message == 0x0201U);
-    CHECK(log.records()[0].m_wParam == 0x0001U);
-    CHECK(log.records()[1].m_message == 0x0202U);
+    CHECK(log.records()[0].target == 0x1234U);
+    CHECK(log.records()[0].message == 0x0201U);
+    CHECK(log.records()[0].wParam == 0x0001U);
+    CHECK(log.records()[1].message == 0x0202U);
 }

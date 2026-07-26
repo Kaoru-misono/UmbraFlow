@@ -124,9 +124,9 @@ namespace uf::m0_demo
         UF_TRY(
             log.write(
                 LogLine{"action", "click_delay"}
-                    .loopIndex(loopIndex)
-                    .outcome(completed ? "ok" : "interrupted")
-                    .detail(
+                    .withLoopIndex(loopIndex)
+                    .withOutcome(completed ? "ok" : "interrupted")
+                    .withDetail(
                         std::format(
                             "paused {}ms before {} click (range {}-{}ms)",
                             pauseMilliseconds,

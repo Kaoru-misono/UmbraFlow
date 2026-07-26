@@ -49,15 +49,15 @@ namespace uf::m0_demo
     ) noexcept -> GuardCheck
     {
         return GuardCheck{
-            .m_baselineBackgroundOk = (
-                !policy.m_compareForeground
-                || (baseline.m_foreground != 0 && baseline.m_foreground != targetWindow)
+            .baselineBackgroundOk = (
+                !policy.compareForeground
+                || (baseline.foreground != 0 && baseline.foreground != targetWindow)
             ),
-            .m_foregroundOk = (
-                !policy.m_compareForeground
-                || baseline.m_foreground == observed.m_foreground
+            .foregroundOk = (
+                !policy.compareForeground
+                || baseline.foreground == observed.foreground
             ),
-            .m_cursorOk = !policy.m_compareCursor || baseline.m_cursor == observed.m_cursor,
+            .cursorOk = !policy.compareCursor || baseline.cursor == observed.cursor,
         };
     }
 

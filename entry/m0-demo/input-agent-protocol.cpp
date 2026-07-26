@@ -65,13 +65,13 @@ namespace uf::m0_demo
         struct ParsedCommandFields final
         {
             using Duration = MonotonicInstant::Duration;
-            std::optional<std::string> m_operation{};
-            std::optional<std::string> m_output{};
-            std::optional<float>       m_x{};
-            std::optional<float>       m_y{};
-            std::optional<std::string> m_outputBefore{};
-            std::optional<std::string> m_outputAfter{};
-            std::optional<Duration>    m_settle{};
+            std::optional<std::string> operation{};
+            std::optional<std::string> output{};
+            std::optional<float>       x{};
+            std::optional<float>       y{};
+            std::optional<std::string> outputBefore{};
+            std::optional<std::string> outputAfter{};
+            std::optional<Duration>    settle{};
         };
 
         class CommandParser final
@@ -451,37 +451,37 @@ namespace uf::m0_demo
                 if (field == "op")
                 {
                     UF_TRY_VALUE(value, parseString());
-                    return setOnce(fields.m_operation, std::move(value), field);
+                    return setOnce(fields.operation, std::move(value), field);
                 }
                 if (field == "out")
                 {
                     UF_TRY_VALUE(value, parseString());
-                    return setOnce(fields.m_output, std::move(value), field);
+                    return setOnce(fields.output, std::move(value), field);
                 }
                 if (field == "x")
                 {
                     UF_TRY_VALUE(value, parseCoordinate(field));
-                    return setOnce(fields.m_x, value, field);
+                    return setOnce(fields.x, value, field);
                 }
                 if (field == "y")
                 {
                     UF_TRY_VALUE(value, parseCoordinate(field));
-                    return setOnce(fields.m_y, value, field);
+                    return setOnce(fields.y, value, field);
                 }
                 if (field == "out_before")
                 {
                     UF_TRY_VALUE(value, parseString());
-                    return setOnce(fields.m_outputBefore, std::move(value), field);
+                    return setOnce(fields.outputBefore, std::move(value), field);
                 }
                 if (field == "out_after")
                 {
                     UF_TRY_VALUE(value, parseString());
-                    return setOnce(fields.m_outputAfter, std::move(value), field);
+                    return setOnce(fields.outputAfter, std::move(value), field);
                 }
                 if (field == "settle_ms")
                 {
                     UF_TRY_VALUE(value, parseSettle());
-                    return setOnce(fields.m_settle, value, field);
+                    return setOnce(fields.settle, value, field);
                 }
                 return invalidCommand(
                     std::format(
@@ -582,40 +582,40 @@ namespace uf::m0_demo
             ParsedCommandFields fields
         ) -> Result<InputAgentCommand>
         {
-            if (!fields.m_operation)
+            if (!fields.operation)
             {
                 return invalidCommand("input-agent command is missing field op");
             }
 
-            if (*fields.m_operation == "capture")
+            if (*fields.operation == "capture")
             {
                 if (
-                    fields.m_x
-                    || fields.m_y
-                    || fields.m_outputBefore
-                    || fields.m_outputAfter
-                    || fields.m_settle
+                    fields.x
+                    || fields.y
+                    || fields.outputBefore
+                    || fields.outputAfter
+                    || fields.settle
                 )
                 {
                     return invalidCommand(
                         "input-agent capture command contains click-only fields"
                     );
                 }
-                UF_TRY_VALUE(output, requirePath(std::move(fields.m_output), "out"));
+                UF_TRY_VALUE(output, requirePath(std::move(fields.output), "out"));
                 return InputAgentCaptureCommand{
-                    .m_output = std::move(output),
+                    .output = std::move(output),
                 };
             }
 
-            if (*fields.m_operation == "click")
+            if (*fields.operation == "click")
             {
-                if (fields.m_output)
+                if (fields.output)
                 {
                     return invalidCommand(
                         "input-agent click command contains capture-only field out"
                     );
                 }
-                if (!fields.m_x || !fields.m_y)
+                if (!fields.x || !fields.y)
                 {
                     return invalidCommand(
                         "input-agent click command requires x and y fields"
@@ -623,32 +623,32 @@ namespace uf::m0_demo
                 }
                 UF_TRY_VALUE(
                     outputBefore,
-                    requirePath(std::move(fields.m_outputBefore), "out_before")
+                    requirePath(std::move(fields.outputBefore), "out_before")
                 );
                 UF_TRY_VALUE(
                     outputAfter,
-                    requirePath(std::move(fields.m_outputAfter), "out_after")
+                    requirePath(std::move(fields.outputAfter), "out_after")
                 );
                 return InputAgentClickCommand{
-                    .m_x            = *fields.m_x,
-                    .m_y            = *fields.m_y,
-                    .m_outputBefore = std::move(outputBefore),
-                    .m_outputAfter  = std::move(outputAfter),
-                    .m_settle = fields.m_settle.value_or(
+                    .x            = *fields.x,
+                    .y            = *fields.y,
+                    .outputBefore = std::move(outputBefore),
+                    .outputAfter  = std::move(outputAfter),
+                    .settle = fields.settle.value_or(
                         k_defaultInputAgentSettle
                     ),
                 };
             }
 
-            if (*fields.m_operation == "quit")
+            if (*fields.operation == "quit")
             {
                 if (
-                    fields.m_output
-                    || fields.m_x
-                    || fields.m_y
-                    || fields.m_outputBefore
-                    || fields.m_outputAfter
-                    || fields.m_settle
+                    fields.output
+                    || fields.x
+                    || fields.y
+                    || fields.outputBefore
+                    || fields.outputAfter
+                    || fields.settle
                 )
                 {
                     return invalidCommand(
@@ -661,7 +661,7 @@ namespace uf::m0_demo
             return invalidCommand(
                 std::format(
                     "input-agent command has unrecognized op \"{}\"",
-                    *fields.m_operation
+                    *fields.operation
                 )
             );
         }

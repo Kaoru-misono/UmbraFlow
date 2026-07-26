@@ -20,11 +20,11 @@ namespace uf
     {
         struct Payload final
         {
-            std::error_code          m_detailCode{};
-            std::error_code          m_nativeCode{};
-            std::string              m_message{};
-            std::source_location     m_location{};
-            std::vector<std::string> m_context{};
+            std::error_code          detailCode{};
+            std::error_code          nativeCode{};
+            std::string              message{};
+            std::source_location     location{};
+            std::vector<std::string> context{};
         };
 
         std::unique_ptr<Payload> m_payload;

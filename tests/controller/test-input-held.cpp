@@ -152,7 +152,7 @@ namespace uf
                 outcomes,
                 [](ReleaseOutcome const& outcome)
                 {
-                    return outcome.m_result.has_value();
+                    return outcome.result.has_value();
                 }
             )
         );
@@ -210,7 +210,7 @@ namespace uf
                 outcomes,
                 [](ReleaseOutcome const& outcome)
                 {
-                    return !outcome.m_result.has_value();
+                    return !outcome.result.has_value();
                 }
             )
         );
@@ -249,9 +249,9 @@ namespace uf
         );
         CHECK(postCount == 0);
         REQUIRE(outcomes.size() == 1U);
-        REQUIRE_FALSE(outcomes[0].m_result.has_value());
+        REQUIRE_FALSE(outcomes[0].result.has_value());
         CHECK(
-            automationKind(outcomes[0].m_result.error())
+            automationKind(outcomes[0].result.error())
             == AutomationErrorKind::ActionRejected
         );
         CHECK(held.empty());

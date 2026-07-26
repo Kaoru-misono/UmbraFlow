@@ -277,8 +277,8 @@ namespace uf::m0_demo::platform
 
         struct RelativeFilename final
         {
-            std::wstring m_value{};
-            USHORT       m_byteLength{};
+            std::wstring value{};
+            USHORT       byteLength{};
         };
 
         [[nodiscard]]
@@ -329,8 +329,8 @@ namespace uf::m0_demo::platform
             UF_CHECK(byteLength.has_value());
 
             return RelativeFilename{
-                .m_value      = std::move(value),
-                .m_byteLength = *byteLength,
+                .value      = std::move(value),
+                .byteLength = *byteLength,
             };
         }
 
@@ -360,9 +360,9 @@ namespace uf::m0_demo::platform
         {
             UF_TRY_VALUE(name, relativeFilename(component));
             auto nativeName = UNICODE_STRING{
-                .Length = name.m_byteLength,
-                .MaximumLength = name.m_byteLength,
-                .Buffer = name.m_value.data(),
+                .Length        = name.byteLength,
+                .MaximumLength = name.byteLength,
+                .Buffer        = name.value.data(),
             };
             auto attributes = OBJECT_ATTRIBUTES{};
             InitializeObjectAttributes(
@@ -405,9 +405,9 @@ namespace uf::m0_demo::platform
 
     struct FileWriter::State final
     {
-        std::filesystem::path     m_path{};
-        std::vector<NativeHandle> m_directoryHandles{};
-        NativeHandle              m_handle{};
+        std::filesystem::path     path{};
+        std::vector<NativeHandle> directoryHandles{};
+        NativeHandle              handle{};
     };
 
     FileWriter::FileWriter(std::unique_ptr<State> p_state) noexcept
@@ -541,23 +541,23 @@ namespace uf::m0_demo::platform
         // NtCreateFile succeeds, committing its handle cannot throw or fail.
         auto p_state = std::make_unique<State>(
             State{
-                .m_path             = path,
-                .m_directoryHandles = std::move(directoryHandles),
-                .m_handle           = NativeHandle{},
+                .path             = path,
+                .directoryHandles = std::move(directoryHandles),
+                .handle           = NativeHandle{},
             }
         );
 
         auto nativeName = UNICODE_STRING{
-            .Length = filename.m_byteLength,
-            .MaximumLength = filename.m_byteLength,
-            .Buffer = filename.m_value.data(),
+            .Length        = filename.byteLength,
+            .MaximumLength = filename.byteLength,
+            .Buffer        = filename.value.data(),
         };
         auto attributes = OBJECT_ATTRIBUTES{};
         InitializeObjectAttributes(
             &attributes,
             &nativeName,
             OBJ_CASE_INSENSITIVE,
-            p_state->m_directoryHandles.back().get(),
+            p_state->directoryHandles.back().get(),
             nullptr
         );
         auto ioStatus = IO_STATUS_BLOCK{};
@@ -592,7 +592,7 @@ namespace uf::m0_demo::platform
             "NtCreateFile succeeded without returning a file handle"
         );
 
-        p_state->m_handle = std::move(handle);
+        p_state->handle = std::move(handle);
         return FileWriter{std::move(p_state)};
     }
 
@@ -632,8 +632,8 @@ namespace uf::m0_demo::platform
         return FileWriter{
             std::make_unique<State>(
                 State{
-                    .m_path   = path,
-                    .m_handle = std::move(handle),
+                    .path   = path,
+                    .handle = std::move(handle),
                 }
             )
         };
@@ -659,7 +659,7 @@ namespace uf::m0_demo::platform
             // this synchronous call. State owns a live file handle, written is
             // writable for the call, and Windows retains no supplied pointer.
             auto const succeeded = WriteFile(
-                m_state->m_handle.get(),
+                m_state->handle.get(),
                 remaining.data(),
                 *nativeSize,
                 &written,
@@ -669,7 +669,7 @@ namespace uf::m0_demo::platform
             {
                 return fileFailure(
                     "write file",
-                    m_state->m_path,
+                    m_state->path,
                     GetLastError()
                 );
             }
@@ -677,7 +677,7 @@ namespace uf::m0_demo::platform
             {
                 return fileFailure(
                     "write file",
-                    m_state->m_path,
+                    m_state->path,
                     ERROR_WRITE_FAULT
                 );
             }
@@ -693,11 +693,11 @@ namespace uf::m0_demo::platform
         UF_CHECK(m_state != nullptr);
         // SAFETY: State owns a live synchronous file handle. FlushFileBuffers
         // uses only that handle and retains no pointer or registration.
-        if (FlushFileBuffers(m_state->m_handle.get()) == FALSE)
+        if (FlushFileBuffers(m_state->handle.get()) == FALSE)
         {
             return fileFailure(
                 "durably flush file",
-                m_state->m_path,
+                m_state->path,
                 GetLastError()
             );
         }

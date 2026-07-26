@@ -73,10 +73,10 @@ namespace uf
     {
         struct Case final
         {
-            float m_originX{};
-            float m_originY{};
-            float m_width{};
-            float m_height{};
+            float originX{};
+            float originY{};
+            float width{};
+            float height{};
         };
 
         for (
@@ -88,15 +88,15 @@ namespace uf
             }
         )
         {
-            CAPTURE(testCase.m_originX);
-            CAPTURE(testCase.m_originY);
-            CAPTURE(testCase.m_width);
-            CAPTURE(testCase.m_height);
+            CAPTURE(testCase.originX);
+            CAPTURE(testCase.originY);
+            CAPTURE(testCase.width);
+            CAPTURE(testCase.height);
             auto const result = geometry(
-                testCase.m_originX,
-                testCase.m_originY,
-                testCase.m_width,
-                testCase.m_height
+                testCase.originX,
+                testCase.originY,
+                testCase.width,
+                testCase.height
             );
             REQUIRE_FALSE(result.has_value());
             CHECK(
@@ -190,8 +190,8 @@ namespace uf
             }
         )
         {
-            CAPTURE(size.m_width);
-            CAPTURE(size.m_height);
+            CAPTURE(size.width);
+            CAPTURE(size.height);
             auto state = controller_detail::CaptureGeometryState::create({800, 450});
             REQUIRE(state.has_value());
             auto const result = state->observeContentSize(size);

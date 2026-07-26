@@ -15,10 +15,10 @@ namespace uf
     )
         : Error{
             Payload{
-                .m_detailCode = detailCode,
-                .m_nativeCode = nativeCode,
-                .m_message    = std::move(message),
-                .m_location   = location,
+                .detailCode = detailCode,
+                .nativeCode = nativeCode,
+                .message    = std::move(message),
+                .location   = location,
             }
         }
     {
@@ -41,29 +41,29 @@ namespace uf
 
     auto Error::detailCode() const noexcept -> std::error_code
     {
-        return payload().m_detailCode;
+        return payload().detailCode;
     }
     auto Error::message() const noexcept -> std::string_view
     {
-        return payload().m_message;
+        return payload().message;
     }
     auto Error::nativeCode() const noexcept -> std::error_code
     {
-        return payload().m_nativeCode;
+        return payload().nativeCode;
     }
     auto Error::location() const noexcept -> std::source_location
     {
-        return payload().m_location;
+        return payload().location;
     }
     auto Error::context() const noexcept -> std::span<std::string const>
     {
-        return std::span<std::string const>{payload().m_context};
+        return std::span<std::string const>{payload().context};
     }
 
     auto Error::addContext(std::string context) -> Error&
     {
         UF_CHECK(m_payload != nullptr);
-        m_payload->m_context.emplace_back(std::move(context));
+        m_payload->context.emplace_back(std::move(context));
         return *this;
     }
 

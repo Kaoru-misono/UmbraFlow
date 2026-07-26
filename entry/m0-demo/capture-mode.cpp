@@ -54,21 +54,21 @@ namespace uf::m0_demo
             UF_TRY(
                 log.write(
                     LogLine{"setup", "dpi_declared"}
-                        .outcome("ok")
-                        .detail(std::string{enumName(dpiDeclaration).value_or("Unknown")})
+                        .withOutcome("ok")
+                        .withDetail(std::string{enumName(dpiDeclaration).value_or("Unknown")})
                 )
             );
 
             UF_TRY_VALUE(candidates, enumerateCandidates());
-            auto const selector = buildSelector(args.m_selector);
+            auto const selector = buildSelector(args.selector);
             UF_TRY_VALUE(resolved, resolveTarget(candidates, selector));
             auto const client = resolved.clientSize();
             auto const process = resolved.identity().process();
             UF_TRY(
                 log.write(
                     LogLine{"discovery", "resolved"}
-                        .outcome("ok")
-                        .detail(
+                        .withOutcome("ok")
+                        .withDetail(
                             std::format(
                                 "pid={} client={}x{}",
                                 process.value(),
@@ -91,14 +91,14 @@ namespace uf::m0_demo
             UF_TRY(
                 log.write(
                     LogLine{"setup", "session_created"}
-                        .outcome("ok")
-                        .detail(
+                        .withOutcome("ok")
+                        .withDetail(
                             std::format(
                                 "os_build={} cursor_capture_disabled={} borderless_supported={} border_required={}",
-                                hygiene.m_osBuild,
-                                hygiene.m_cursorCaptureDisabled,
-                                hygiene.m_borderlessSupported,
-                                hygiene.m_borderRequired
+                                hygiene.osBuild,
+                                hygiene.cursorCaptureDisabled,
+                                hygiene.borderlessSupported,
+                                hygiene.borderRequired
                             )
                         )
                 )
@@ -106,18 +106,18 @@ namespace uf::m0_demo
 
             auto const captureStarted = MonotonicInstant::now();
             auto captureFinished = captureStarted;
-            for (auto index = uint32{0}; index < args.m_frames; ++index)
+            for (auto index = uint32{0}; index < args.frames; ++index)
             {
                 UF_TRY_VALUE_CONTEXT(
                     frame,
                     session.capture(),
-                    std::format("capturing frame {} of {}", index + 1U, args.m_frames)
+                    std::format("capturing frame {} of {}", index + 1U, args.frames)
                 );
                 captureFinished = MonotonicInstant::now();
                 auto const output = indexedOutputPath(
-                    args.m_output,
+                    args.output,
                     index,
-                    args.m_frames
+                    args.frames
                 );
                 UF_TRY_CONTEXT(
                     writeFramePng(frame, output),
@@ -139,7 +139,7 @@ namespace uf::m0_demo
                 auto const detail = std::format(
                     "index={}/{} frame={}x{} client={}x{} delta=({},{}) capture_fps={:.2f} output={}",
                     index + 1U,
-                    args.m_frames,
+                    args.frames,
                     frame.width(),
                     frame.height(),
                     client.width(),
@@ -153,18 +153,18 @@ namespace uf::m0_demo
                 UF_TRY(
                     log.write(
                         LogLine{"capture", "frame_written"}
-                            .frame(frame)
-                            .outcome("ok")
-                            .detail(detail)
+                            .withFrame(frame)
+                            .withOutcome("ok")
+                            .withDetail(detail)
                     )
                 );
 
                 if (
-                    index + 1U < args.m_frames
-                    && args.m_interval > MonotonicInstant::Duration::zero()
+                    index + 1U < args.frames
+                    && args.interval > MonotonicInstant::Duration::zero()
                 )
                 {
-                    std::this_thread::sleep_for(args.m_interval);
+                    std::this_thread::sleep_for(args.interval);
                 }
             }
             UF_TRY(session.close());
@@ -172,40 +172,40 @@ namespace uf::m0_demo
             auto const elapsed = captureFinished.saturatingDurationSince(
                 captureStarted
             );
-            auto const fps = captureFps(args.m_frames, elapsed);
+            auto const fps = captureFps(args.frames, elapsed);
             auto const seconds = std::chrono::duration<double>{elapsed}.count();
             auto const detail = std::format(
                 "frames={} elapsed_s={:.3f} capture_fps={:.2f}",
-                args.m_frames,
+                args.frames,
                 seconds,
                 fps
             );
             std::cerr << "m0-demo capture: " << detail << '\n';
             return log.write(
                 LogLine{"run", "capture_summary"}
-                    .outcome("ok")
-                    .detail(detail)
+                    .withOutcome("ok")
+                    .withDetail(detail)
             );
         }
     }
 
     auto validateCaptureOutputPaths(CaptureArgs const& args) -> Status
     {
-        if (!args.m_log)
+        if (!args.log)
         {
             return ok();
         }
 
         UF_TRY_VALUE(
             canonicalLog,
-            canonicalizePathForComparison(*args.m_log, "capture log")
+            canonicalizePathForComparison(*args.log, "capture log")
         );
-        for (auto index = uint32{0}; index < args.m_frames; ++index)
+        for (auto index = uint32{0}; index < args.frames; ++index)
         {
             auto const output = indexedOutputPath(
-                args.m_output,
+                args.output,
                 index,
-                args.m_frames
+                args.frames
             );
             UF_TRY_VALUE(
                 canonicalOutput,
@@ -221,7 +221,7 @@ namespace uf::m0_demo
                     AutomationErrorKind::InvalidResource,
                     std::format(
                         "capture log path {} aliases output PNG path {}",
-                        args.m_log->string(),
+                        args.log->string(),
                         output.string()
                     )
                 );
@@ -236,7 +236,7 @@ namespace uf::m0_demo
     {
         UF_TRY_VALUE(args, parseCaptureArguments(raw));
         UF_TRY(validateCaptureOutputPaths(args));
-        UF_TRY_VALUE(log, JsonlLog::create(args.m_log));
+        UF_TRY_VALUE(log, JsonlLog::create(args.log));
 
         auto outcome       = runCaptureWithLog(args, log);
         auto terminalWrite = ok();
@@ -244,8 +244,8 @@ namespace uf::m0_demo
         {
             terminalWrite = log.write(
                 LogLine{"run", "fatal"}
-                    .outcome("error")
-                    .detail(formatAutomationError(outcome.error()))
+                    .withOutcome("error")
+                    .withDetail(formatAutomationError(outcome.error()))
             );
         }
         auto flush = log.flush();

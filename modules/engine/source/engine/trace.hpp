@@ -44,23 +44,23 @@ namespace uf::engine
     // carries.
     struct TraceEvent final
     {
-        TraceEventKind m_kind{};
+        TraceEventKind kind{};
 
-        std::optional<FrameId>          m_frameId{};
-        std::optional<SessionId>        m_sessionId{};
-        std::optional<TargetGeneration> m_targetGeneration{};
+        std::optional<FrameId>          frameId{};
+        std::optional<SessionId>        sessionId{};
+        std::optional<TargetGeneration> targetGeneration{};
 
-        std::optional<annotation::PageId>       m_pageId{};
-        std::optional<annotation::RecognizerId> m_recognizerId{};
+        std::optional<annotation::PageId>       pageId{};
+        std::optional<annotation::RecognizerId> recognizerId{};
 
-        std::optional<uint64>    m_sadScore{};
-        std::optional<uint64>    m_maximumSad{};
-        std::optional<PixelRect> m_matchedRect{};
+        std::optional<uint64>    sadScore{};
+        std::optional<uint64>    maximumSad{};
+        std::optional<PixelRect> matchedRect{};
 
-        std::optional<SadSearchStopReason> m_stopReason{};
-        std::optional<AutomationErrorKind> m_errorKind{};
-        std::optional<std::string>         m_message{};
-        std::optional<Point<ClientSpace>>  m_clickClient{};
+        std::optional<SadSearchStopReason> stopReason{};
+        std::optional<AutomationErrorKind> errorKind{};
+        std::optional<std::string>         message{};
+        std::optional<Point<ClientSpace>>  clickClient{};
     };
 
     // Serializes one event to a single-line JSON object. Pure and I/O-free: the

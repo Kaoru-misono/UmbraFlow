@@ -92,14 +92,14 @@ namespace uf::controller_platform
 
         struct ProcessDetails final
         {
-            std::optional<ProcessStartTime>      m_startTime{};
-            std::optional<std::filesystem::path> m_executablePath{};
+            std::optional<ProcessStartTime>      startTime{};
+            std::optional<std::filesystem::path> executablePath{};
         };
 
         struct EnumerationState final
         {
-            std::vector<WindowHandle> m_handles{};
-            bool                      m_storageFailed{};
+            std::vector<WindowHandle> handles{};
+            bool                      storageFailed{};
         };
 
         [[nodiscard]]
@@ -168,11 +168,11 @@ namespace uf::controller_platform
 
             try
             {
-                p_state->m_handles.emplace_back(fromNativeHandle(handle));
+                p_state->handles.emplace_back(fromNativeHandle(handle));
             }
             catch (...)
             {
-                p_state->m_storageFailed = true;
+                p_state->storageFailed = true;
                 return FALSE;
             }
             return TRUE;
@@ -195,7 +195,7 @@ namespace uf::controller_platform
                 enumerateWindow,
                 stateParameter
             );
-            if (state.m_storageFailed)
+            if (state.storageFailed)
             {
                 return fail(
                     AutomationErrorKind::TargetUnavailable,
@@ -210,7 +210,7 @@ namespace uf::controller_platform
                 return win32Failure("EnumWindows", error);
             }
 
-            return std::move(state.m_handles);
+            return std::move(state.handles);
         }
 
         [[nodiscard]]
@@ -357,8 +357,8 @@ namespace uf::controller_platform
             UF_TRY_VALUE(startTime, readStartTime(ownedHandle->get()));
             UF_TRY_VALUE(executablePath, readExecutablePath(ownedHandle->get()));
             return ProcessDetails{
-                .m_startTime      = startTime,
-                .m_executablePath = std::move(executablePath),
+                .startTime      = startTime,
+                .executablePath = std::move(executablePath),
             };
         }
 
@@ -523,8 +523,8 @@ namespace uf::controller_platform
             return std::optional<TargetCandidate>{std::in_place,
                 handle,
                 *process,
-                details->m_startTime,
-                std::move(details->m_executablePath),
+                details->startTime,
+                std::move(details->executablePath),
                 *std::move(windowClass),
                 *std::move(title),
                 *clientSize,

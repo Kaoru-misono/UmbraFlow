@@ -14,9 +14,9 @@ namespace uf
         requires std::is_enum_v<Enum>
     struct EnumEntry final
     {
-        Enum m_value{};
+        Enum value{};
         // Names must reference static storage; UF_REFLECT_ENUM supplies a string literal.
-        std::string_view m_name{};
+        std::string_view name{};
     };
 
     template <typename Enum>
@@ -118,7 +118,7 @@ namespace uf
 
             for (auto index = std::size_t{0}; index < entries.size(); ++index)
             {
-                if (entries[index].m_name.empty())
+                if (entries[index].name.empty())
                 {
                     return false;
                 }
@@ -126,8 +126,8 @@ namespace uf
                 for (auto previous = std::size_t{0}; previous < index; ++previous)
                 {
                     if (
-                        entries[index].m_value == entries[previous].m_value
-                        || entries[index].m_name == entries[previous].m_name
+                        entries[index].value == entries[previous].value
+                        || entries[index].name == entries[previous].name
                     )
                     {
                         return false;
@@ -156,9 +156,9 @@ namespace uf
     {
         for (auto const& entry : enumEntries<Enum>())
         {
-            if (entry.m_value == value)
+            if (entry.value == value)
             {
-                return entry.m_name;
+                return entry.name;
             }
         }
 
@@ -171,9 +171,9 @@ namespace uf
     {
         for (auto const& entry : enumEntries<Enum>())
         {
-            if (entry.m_name == name)
+            if (entry.name == name)
             {
-                return entry.m_value;
+                return entry.value;
             }
         }
 

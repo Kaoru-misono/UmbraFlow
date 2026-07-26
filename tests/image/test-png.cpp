@@ -59,9 +59,9 @@ namespace uf::image
 
         auto const decoded = loadPng(path);
         REQUIRE(decoded.has_value());
-        CHECK(decoded->m_width == 2U);
-        CHECK(decoded->m_height == 2U);
-        CHECK(decoded->m_pixels == pixels);
+        CHECK(decoded->width == 2U);
+        CHECK(decoded->height == 2U);
+        CHECK(decoded->pixels == pixels);
     }
 
     TEST_CASE("image PNG encoder is deterministic for identical RGBA input")
@@ -181,8 +181,8 @@ namespace uf::image
     {
         struct OversizedImage final
         {
-            uint32 m_width{};
-            uint32 m_height{};
+            uint32 width{};
+            uint32 height{};
         };
         for (auto const image : std::array{
             OversizedImage{4'194'304U, 1U},
@@ -192,8 +192,8 @@ namespace uf::image
         {
             auto const result = writeRgbaPng(
                 "oversized.png",
-                image.m_width,
-                image.m_height,
+                image.width,
+                image.height,
                 {}
             );
 
@@ -318,14 +318,14 @@ namespace uf::image
         };
         auto const decoded = decodePng(encoded, "rgba16.png");
         REQUIRE(decoded.has_value());
-        CHECK(decoded->m_width == 1U);
-        CHECK(decoded->m_height == 1U);
+        CHECK(decoded->width == 1U);
+        CHECK(decoded->height == 1U);
         auto const expected = std::vector{
             asByte(1),
             asByte(128),
             asByte(255),
             asByte(128),
         };
-        CHECK(decoded->m_pixels == expected);
+        CHECK(decoded->pixels == expected);
     }
 }

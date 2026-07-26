@@ -132,13 +132,13 @@ namespace uf::engine
         auto loadedHashes     = std::vector<annotation::ContentHash>{};
         for (auto const& asset : manifest.assets())
         {
-            if (std::ranges::contains(loadedHashes, asset.m_templateHash))
+            if (std::ranges::contains(loadedHashes, asset.templateHash))
             {
                 continue;
             }
-            loadedHashes.emplace_back(asset.m_templateHash);
+            loadedHashes.emplace_back(asset.templateHash);
 
-            auto const templatePath = projectRoot / asset.m_templatePath;
+            auto const templatePath = projectRoot / asset.templatePath;
             UF_TRY_VALUE(
                 templateText,
                 readCappedFile(templatePath, k_maximumTemplateFileBytes)
@@ -146,8 +146,8 @@ namespace uf::engine
             auto const view = std::as_bytes(std::span{templateText});
             encodedTemplates.emplace_back(
                 annotation::EncodedRuntimeTemplate{
-                    .m_hash     = asset.m_templateHash,
-                    .m_pngBytes = std::vector<std::byte>{view.begin(), view.end()},
+                    .hash     = asset.templateHash,
+                    .pngBytes = std::vector<std::byte>{view.begin(), view.end()},
                 }
             );
         }
@@ -159,6 +159,6 @@ namespace uf::engine
                 std::move(encodedTemplates)
             )
         );
-        return LoadedRuntime{.m_runtime = std::move(runtime)};
+        return LoadedRuntime{.runtime = std::move(runtime)};
     }
 }

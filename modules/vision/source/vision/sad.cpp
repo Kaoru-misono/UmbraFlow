@@ -212,7 +212,7 @@ namespace uf
                 continueSearch
             )
         );
-        auto const& outcome = report.m_outcome;
+        auto const& outcome = report.outcome;
         UF_CHECK(std::holds_alternative<std::optional<SadMatch>>(outcome));
         return std::get<std::optional<SadMatch>>(outcome);
     }
@@ -264,10 +264,10 @@ namespace uf
                     completedPixelComparisons,
                     poll
                 );
-                completedPixelComparisons = candidate.m_completedPixelComparisons;
+                completedPixelComparisons = candidate.completedPixelComparisons;
                 if (
                     auto const* reason = std::get_if<SadSearchStopReason>(
-                        &candidate.m_outcome
+                        &candidate.outcome
                     )
                 )
                 {
@@ -276,7 +276,7 @@ namespace uf
                         completedPixelComparisons
                     };
                 }
-                auto const score = std::get<uint64>(candidate.m_outcome);
+                auto const score = std::get<uint64>(candidate.outcome);
                 if (score < best)
                 {
                     best = score;

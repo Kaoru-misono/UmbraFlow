@@ -89,11 +89,11 @@ namespace uf::m0_demo
     TEST_CASE("m0 JSONL serialization carries every field in schema order")
     {
         auto const line = LogLine{"action", "home_click"}
-            .loopIndex(3)
-            .confidence(1200)
-            .leaseOk(true)
-            .outcome("ok")
-            .detail("clicked home");
+            .withLoopIndex(3)
+            .withConfidence(1200)
+            .withLeaseOk(true)
+            .withOutcome("ok")
+            .withDetail("clicked home");
         auto const json = serializeLine(line);
 
         CHECK(

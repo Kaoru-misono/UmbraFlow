@@ -27,11 +27,11 @@ namespace uf::cli::platform
         auto releases = releaseHeld(m_target, m_held, m_audit);
         for (auto const& release : releases)
         {
-            if (!release.m_result)
+            if (!release.result)
             {
                 error.addContext(
                     "input compensation after failed click also failed: "
-                        + std::string{release.m_result.error().message()}
+                        + std::string{release.result.error().message()}
                 );
             }
         }

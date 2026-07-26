@@ -41,11 +41,11 @@ namespace uf::annotation
 
         struct ResolutionFixture final
         {
-            RecognitionCatalog m_catalog;
-            RecognizerId m_anchorA{test::recognizerId(k_anchorAId)};
-            RecognizerId m_anchorB{test::recognizerId(k_anchorBId)};
-            PageId m_pageA{test::pageId(k_pageAId)};
-            PageId m_pageB{test::pageId(k_pageBId)};
+            RecognitionCatalog catalog;
+            RecognizerId anchorA{test::recognizerId(k_anchorAId)};
+            RecognizerId anchorB{test::recognizerId(k_anchorBId)};
+            PageId pageA{test::pageId(k_pageAId)};
+            PageId pageB{test::pageId(k_pageBId)};
         };
 
         auto resolutionFixture() -> ResolutionFixture
@@ -80,15 +80,15 @@ namespace uf::annotation
             pages.emplace_back(test::page(pageA, "page_a", {anchorA}, {anchorB}));
             pages.emplace_back(test::page(pageB, "page_b", {anchorA}));
             return ResolutionFixture{
-                .m_catalog = test::catalog(
+                .catalog = test::catalog(
                     projectFingerprint,
                     std::move(recognizers),
                     std::move(pages)
                 ),
-                .m_anchorA = anchorA,
-                .m_anchorB = anchorB,
-                .m_pageA   = pageA,
-                .m_pageB   = pageB,
+                .anchorA = anchorA,
+                .anchorB = anchorB,
+                .pageA   = pageA,
+                .pageB   = pageB,
             };
         }
 
@@ -98,8 +98,8 @@ namespace uf::annotation
             uint64 anchorBScore
         ) -> Result<PageOutcome>
         {
-            auto const* p_anchorA = fixture.m_catalog.findRecognizer(fixture.m_anchorA);
-            auto const* p_anchorB = fixture.m_catalog.findRecognizer(fixture.m_anchorB);
+            auto const* p_anchorA = fixture.catalog.findRecognizer(fixture.anchorA);
+            auto const* p_anchorB = fixture.catalog.findRecognizer(fixture.anchorB);
             REQUIRE(p_anchorA != nullptr);
             REQUIRE(p_anchorB != nullptr);
             auto const evaluations = std::array{
@@ -107,7 +107,7 @@ namespace uf::annotation
                 anchorEvaluation(*p_anchorB, anchorBScore),
             };
             return PageResolver::resolve(
-                fixture.m_catalog,
+                fixture.catalog,
                 FrameIdentity{SessionId{7}, TargetGeneration::fromValue(3), FrameId{11}},
                 evaluations
             );
@@ -127,8 +127,8 @@ namespace uf::annotation
         );
         struct BoundaryCase final
         {
-            uint64 m_score{};
-            bool m_hit{};
+            uint64 score{};
+            bool hit{};
         };
         auto const cases = std::array{
             BoundaryCase{101, true},
@@ -137,14 +137,14 @@ namespace uf::annotation
         };
         for (auto const testCase : cases)
         {
-            auto const evaluation = anchorEvaluation(anchor, testCase.m_score);
+            auto const evaluation = anchorEvaluation(anchor, testCase.score);
             auto const* p_evidence = std::get_if<AnchorEvidence>(
                 &evaluation.evaluation()
             );
             REQUIRE(p_evidence != nullptr);
             CHECK(p_evidence->maximumSad() == 102);
-            CHECK(p_evidence->hit() == testCase.m_hit);
-            CHECK(p_evidence->sadScore() == testCase.m_score);
+            CHECK(p_evidence->hit() == testCase.hit);
+            CHECK(p_evidence->sadScore() == testCase.score);
             REQUIRE(p_evidence->matchedRect().has_value());
         }
     }
@@ -164,7 +164,7 @@ namespace uf::annotation
         REQUIRE(resolved.has_value());
         REQUIRE(std::holds_alternative<ResolvedPage>(*resolved));
         auto const& page = std::get<ResolvedPage>(*resolved);
-        CHECK(page.pageId() == fixture.m_pageB);
+        CHECK(page.pageId() == fixture.pageB);
         CHECK(page.evidence().pages().size() == 2);
 
         auto const ambiguous = resolve(fixture, 0, 26);
@@ -174,19 +174,19 @@ namespace uf::annotation
             *ambiguous
         ).evidence().candidatePageIds();
         REQUIRE(candidates.size() == 2);
-        CHECK(candidates[0] == fixture.m_pageA);
-        CHECK(candidates[1] == fixture.m_pageB);
+        CHECK(candidates[0] == fixture.pageA);
+        CHECK(candidates[1] == fixture.pageB);
     }
 
     TEST_CASE("every matcher stop reason aborts complete page resolution")
     {
         auto const fixture = resolutionFixture();
-        auto const* p_anchor = fixture.m_catalog.findRecognizer(fixture.m_anchorA);
+        auto const* p_anchor = fixture.catalog.findRecognizer(fixture.anchorA);
         REQUIRE(p_anchor != nullptr);
         struct StopCase final
         {
-            SadSearchStopReason m_reason{};
-            AutomationErrorKind m_expected{};
+            SadSearchStopReason reason{};
+            AutomationErrorKind expected{};
         };
         auto const cases = std::array{
             StopCase{SadSearchStopReason::Cancelled, AutomationErrorKind::Cancelled},
@@ -198,7 +198,7 @@ namespace uf::annotation
         };
         for (auto const testCase : cases)
         {
-            auto const sadOutcome = SadSearchOutcome{testCase.m_reason};
+            auto const sadOutcome = SadSearchOutcome{testCase.reason};
             auto const evaluation = AnchorEvaluation::fromSadOutcome(
                 *p_anchor,
                 sadOutcome
@@ -206,12 +206,12 @@ namespace uf::annotation
             REQUIRE(evaluation.has_value());
             auto const evaluations = std::array{*evaluation};
             auto const result = PageResolver::resolve(
-                fixture.m_catalog,
+                fixture.catalog,
                 FrameIdentity{SessionId{7}, TargetGeneration::fromValue(3), FrameId{11}},
                 evaluations
             );
             REQUIRE_FALSE(result.has_value());
-            test::requireErrorKind(result.error(), testCase.m_expected);
+            test::requireErrorKind(result.error(), testCase.expected);
         }
     }
 }

@@ -49,8 +49,8 @@ namespace uf::m0_demo
     {
         struct DispositionCase final
         {
-            AutomationErrorKind     m_kind{};
-            ClickFailureDisposition m_disposition{};
+            AutomationErrorKind     kind{};
+            ClickFailureDisposition disposition{};
         };
 
         // The fallback is FailStep on purpose: retrying a deterministic
@@ -84,9 +84,9 @@ namespace uf::m0_demo
         };
         for (auto const& testCase : cases)
         {
-            auto const failure = fail(testCase.m_kind, "delivery failed");
+            auto const failure = fail(testCase.kind, "delivery failed");
             CHECK(
-                clickFailureDisposition(failure.error()) == testCase.m_disposition
+                clickFailureDisposition(failure.error()) == testCase.disposition
             );
         }
 
@@ -224,11 +224,11 @@ namespace uf::m0_demo
     {
         auto const transform = transform800By450();
         auto const imageTemplate = Template{
-            .m_label  = "home",
-            .m_gray   = std::vector<std::byte>(std::size_t{101} * 40U),
-            .m_width  = 101,
-            .m_height = 40,
-            .m_roi    = Rect<FrameSpace>{0.0F, 0.0F, 100.0F, 40.0F},
+            .label  = "home",
+            .gray   = std::vector<std::byte>(std::size_t{101} * 40U),
+            .width  = 101,
+            .height = 40,
+            .roi    = Rect<FrameSpace>{0.0F, 0.0F, 100.0F, 40.0F},
         };
 
         auto const result = ensureTemplateFitsRoi(transform, imageTemplate);
@@ -293,11 +293,11 @@ namespace uf::m0_demo
         auto const record = [](uintptr target, uint32 message)
         {
             return AuditRecord{
-                .m_target  = target,
-                .m_message = message,
-                .m_wParam  = 0,
-                .m_lParam  = 0,
-                .m_at      = MonotonicInstant::now(),
+                .target  = target,
+                .message = message,
+                .wParam  = 0,
+                .lParam  = 0,
+                .at      = MonotonicInstant::now(),
             };
         };
         auto constexpr target = uintptr{0x1234};
@@ -307,17 +307,17 @@ namespace uf::m0_demo
             record(target, WM_LBUTTONUP),
         };
         auto const cleanSummary = summarizeAudit(clean, target);
-        CHECK(cleanSummary.m_delivered == 3U);
+        CHECK(cleanSummary.delivered == 3U);
         CHECK(cleanSummary.isClean());
 
         auto const offTarget = std::array{
             record(target, WM_LBUTTONDOWN),
             record(0x9999, WM_LBUTTONUP),
         };
-        CHECK_FALSE(summarizeAudit(offTarget, target).m_allToTarget);
+        CHECK_FALSE(summarizeAudit(offTarget, target).allToTarget);
 
         auto const disallowed = std::array{record(target, 0x0111)};
-        CHECK_FALSE(summarizeAudit(disallowed, target).m_allAllowed);
+        CHECK_FALSE(summarizeAudit(disallowed, target).allAllowed);
 
         auto const empty = std::span<AuditRecord const>{};
         CHECK(summarizeAudit(empty, target).isClean());
@@ -327,7 +327,7 @@ namespace uf::m0_demo
     {
         auto const selector = buildSelector(
             SelectorArgs{
-                .m_process = std::numeric_limits<uint32>::max(),
+                .process = std::numeric_limits<uint32>::max(),
             }
         );
         auto const candidates = std::vector<TargetCandidate>{};
@@ -343,10 +343,10 @@ namespace uf::m0_demo
     {
         auto const selector = buildSelector(
             SelectorArgs{
-                .m_process      = 42,
-                .m_windowHandle = 0x1234,
-                .m_windowClass  = "class",
-                .m_title        = "title",
+                .process      = 42,
+                .windowHandle = 0x1234,
+                .windowClass  = "class",
+                .title        = "title",
             }
         );
         CHECK(selector.process() == std::optional{ProcessId{42}});

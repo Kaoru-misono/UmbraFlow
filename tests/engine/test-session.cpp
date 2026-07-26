@@ -72,17 +72,17 @@ namespace uf::engine
             auto const hash = anno::sha256(*encoded);
             REQUIRE(hash.has_value());
             return anno::EncodedRuntimeTemplate{
-                .m_hash     = *hash,
-                .m_pngBytes = *std::move(encoded),
+                .hash     = *hash,
+                .pngBytes = *std::move(encoded),
             };
         }
 
         struct RuntimeParts final
         {
-            LoadedRuntime            m_loaded;
-            anno::ProjectFingerprint m_fingerprint;
-            anno::RecognizerId       m_actionTarget;
-            anno::PageId             m_page;
+            LoadedRuntime            loaded;
+            anno::ProjectFingerprint fingerprint;
+            anno::RecognizerId       actionTarget;
+            anno::PageId             page;
         };
 
         // A runtime with one page (page_a, required anchor_a) and one action
@@ -106,7 +106,7 @@ namespace uf::engine
                 fingerprint,
                 {
                     anno::RuntimeRecognizerSpec{
-                        .m_definition = anno::test::recognizer(
+                        .definition = anno::test::recognizer(
                             fingerprint,
                             anchorA,
                             "anchor_a",
@@ -117,11 +117,11 @@ namespace uf::engine
                             std::nullopt,
                             anno::test::threshold(10'000)
                         ),
-                        .m_templateHash = anchorTemplate.m_hash,
-                        .m_sourceHash   = *sourceHash,
+                        .templateHash = anchorTemplate.hash,
+                        .sourceHash   = *sourceHash,
                     },
                     anno::RuntimeRecognizerSpec{
-                        .m_definition = anno::test::recognizer(
+                        .definition = anno::test::recognizer(
                             fingerprint,
                             actionT,
                             "action_target",
@@ -132,8 +132,8 @@ namespace uf::engine
                             std::nullopt,
                             anno::test::threshold(10'000)
                         ),
-                        .m_templateHash = actionTemplate.m_hash,
-                        .m_sourceHash   = *sourceHash,
+                        .templateHash = actionTemplate.hash,
+                        .sourceHash   = *sourceHash,
                     },
                 },
                 {anno::test::page(pageA, "page_a", {anchorA})}
@@ -148,10 +148,10 @@ namespace uf::engine
             );
             REQUIRE(runtime.has_value());
             return RuntimeParts{
-                .m_loaded       = LoadedRuntime{.m_runtime = *std::move(runtime)},
-                .m_fingerprint  = fingerprint,
-                .m_actionTarget = actionT,
-                .m_page         = pageA,
+                .loaded       = LoadedRuntime{.runtime = *std::move(runtime)},
+                .fingerprint  = fingerprint,
+                .actionTarget = actionT,
+                .page         = pageA,
             };
         }
 
@@ -179,7 +179,7 @@ namespace uf::engine
                 fingerprint,
                 {
                     anno::RuntimeRecognizerSpec{
-                        .m_definition = anno::test::recognizer(
+                        .definition = anno::test::recognizer(
                             fingerprint,
                             anchorA,
                             "anchor_a",
@@ -190,11 +190,11 @@ namespace uf::engine
                             std::nullopt,
                             anno::test::threshold(10'000)
                         ),
-                        .m_templateHash = anchorATemplate.m_hash,
-                        .m_sourceHash   = *sourceHash,
+                        .templateHash = anchorATemplate.hash,
+                        .sourceHash   = *sourceHash,
                     },
                     anno::RuntimeRecognizerSpec{
-                        .m_definition = anno::test::recognizer(
+                        .definition = anno::test::recognizer(
                             fingerprint,
                             anchorB,
                             "anchor_b",
@@ -205,11 +205,11 @@ namespace uf::engine
                             std::nullopt,
                             anno::test::threshold(10'000)
                         ),
-                        .m_templateHash = anchorBTemplate.m_hash,
-                        .m_sourceHash   = *sourceHash,
+                        .templateHash = anchorBTemplate.hash,
+                        .sourceHash   = *sourceHash,
                     },
                     anno::RuntimeRecognizerSpec{
-                        .m_definition = anno::test::recognizer(
+                        .definition = anno::test::recognizer(
                             fingerprint,
                             actionT,
                             "action_target",
@@ -220,8 +220,8 @@ namespace uf::engine
                             std::nullopt,
                             anno::test::threshold(10'000)
                         ),
-                        .m_templateHash = actionTemplate.m_hash,
-                        .m_sourceHash   = *sourceHash,
+                        .templateHash = actionTemplate.hash,
+                        .sourceHash   = *sourceHash,
                     },
                 },
                 {
@@ -240,10 +240,10 @@ namespace uf::engine
             );
             REQUIRE(runtime.has_value());
             return RuntimeParts{
-                .m_loaded       = LoadedRuntime{.m_runtime = *std::move(runtime)},
-                .m_fingerprint  = fingerprint,
-                .m_actionTarget = actionT,
-                .m_page         = homePage,
+                .loaded       = LoadedRuntime{.runtime = *std::move(runtime)},
+                .fingerprint  = fingerprint,
+                .actionTarget = actionT,
+                .page         = homePage,
             };
         }
 
@@ -426,7 +426,7 @@ namespace uf::engine
             [[nodiscard]] auto emit(TraceEvent const& event) -> Status override
             {
                 m_events.emplace_back(event);
-                if (event.m_kind == m_failKind)
+                if (event.kind == m_failKind)
                 {
                     return fail(
                         AutomationErrorKind::IoFailure,
@@ -442,19 +442,19 @@ namespace uf::engine
         // pointers stay valid for as long as the session member is alive.
         struct SessionUnderTest final
         {
-            Result<EngineSession> m_session;
-            FakeFrameSource*      m_source{};
-            CountingActionSink*   m_clicks{};
-            CollectingTraceSink*  m_traces{};
+            Result<EngineSession> session;
+            FakeFrameSource*      source{};
+            CountingActionSink*   clicks{};
+            CollectingTraceSink*  traces{};
         };
 
         [[nodiscard]]
         auto baseConfig(anno::ProjectFingerprint fingerprint) -> EngineSessionConfig
         {
             return EngineSessionConfig{
-                .m_liveFingerprint         = fingerprint,
-                .m_maximumPixelComparisons = 1'000,
-                .m_recognitionTimeout      = std::chrono::duration_cast<
+                .liveFingerprint         = fingerprint,
+                .maximumPixelComparisons = 1'000,
+                .recognitionTimeout      = std::chrono::duration_cast<
                     MonotonicInstant::Duration
                 >(std::chrono::seconds{5}),
             };
@@ -474,17 +474,17 @@ namespace uf::engine
             auto* const p_clicks = actionSink.get();
             auto* const p_traces = traceSink.get();
             auto session = EngineSession::create(
-                std::move(parts.m_loaded),
+                std::move(parts.loaded),
                 std::move(frameSource),
                 std::move(actionSink),
                 std::move(traceSink),
                 std::move(config)
             );
             return SessionUnderTest{
-                .m_session = std::move(session),
-                .m_source  = p_source,
-                .m_clicks  = p_clicks,
-                .m_traces  = p_traces,
+                .session = std::move(session),
+                .source  = p_source,
+                .clicks  = p_clicks,
+                .traces  = p_traces,
             };
         }
 
@@ -495,7 +495,7 @@ namespace uf::engine
             kinds.reserve(events.size());
             for (auto const& event : events)
             {
-                kinds.emplace_back(event.m_kind);
+                kinds.emplace_back(event.kind);
             }
             return kinds;
         }
@@ -510,7 +510,7 @@ namespace uf::engine
                 events,
                 [kind](TraceEvent const& event) noexcept
                 {
-                    return event.m_kind == kind;
+                    return event.kind == kind;
                 }
             );
         }
@@ -519,16 +519,16 @@ namespace uf::engine
     TEST_CASE("engine session observes resolves finds and acts into a single click")
     {
         auto parts             = singlePageRuntime();
-        auto const fingerprint = parts.m_fingerprint;
-        auto const actionT     = parts.m_actionTarget;
+        auto const fingerprint = parts.fingerprint;
+        auto const actionT     = parts.actionTarget;
         auto frames            = std::vector<Frame>{};
         frames.emplace_back(
             grayFrame(fingerprint, resolvingPixels(), FrameId{17}, MonotonicInstant::now())
         );
 
         auto under = makeSession(std::move(parts), std::move(frames), baseConfig(fingerprint));
-        REQUIRE(under.m_session.has_value());
-        auto& session = *under.m_session;
+        REQUIRE(under.session.has_value());
+        auto& session = *under.session;
 
         auto observation = session.observe();
         REQUIRE(observation.has_value());
@@ -544,15 +544,15 @@ namespace uf::engine
 
         auto receipt = session.act(std::move(*observation), resolved, **found);
         REQUIRE(receipt.has_value());
-        CHECK(under.m_clicks->clickCount() == 1);
-        CHECK(receipt->m_frameId == FrameId{17});
-        REQUIRE(under.m_clicks->lastClick().has_value());
-        CHECK(receipt->m_clickPoint == *under.m_clicks->lastClick());
+        CHECK(under.clicks->clickCount() == 1);
+        CHECK(receipt->frameId == FrameId{17});
+        REQUIRE(under.clicks->lastClick().has_value());
+        CHECK(receipt->clickPoint == *under.clicks->lastClick());
 
         // The lease reaches the delivery layer unchanged, so its D0 fence fields
         // still identify the observed frame.
-        REQUIRE(under.m_clicks->lastLease().has_value());
-        CHECK(under.m_clicks->lastLease()->frameId() == FrameId{17});
+        REQUIRE(under.clicks->lastLease().has_value());
+        CHECK(under.clicks->lastLease()->frameId() == FrameId{17});
 
         auto const expected = std::vector<TraceEventKind>{
             TraceEventKind::SessionStarted,
@@ -563,13 +563,13 @@ namespace uf::engine
             TraceEventKind::ClickDelivered,
             TraceEventKind::ObservationInvalidated,
         };
-        CHECK(kindsOf(under.m_traces->events()) == expected);
+        CHECK(kindsOf(under.traces->events()) == expected);
     }
 
     TEST_CASE("engine session fails closed when the live fingerprint does not match")
     {
         auto parts             = singlePageRuntime();
-        auto const runtimePrint = parts.m_fingerprint;
+        auto const runtimePrint = parts.fingerprint;
         auto frames            = std::vector<Frame>{};
         frames.emplace_back(
             grayFrame(runtimePrint, resolvingPixels(), FrameId{17}, MonotonicInstant::now())
@@ -579,8 +579,8 @@ namespace uf::engine
         // project the runtime was built for.
         auto const config = baseConfig(anno::test::fingerprint(3, 1, 120, 120));
         auto under        = makeSession(std::move(parts), std::move(frames), config);
-        REQUIRE(under.m_session.has_value());
-        auto& session = *under.m_session;
+        REQUIRE(under.session.has_value());
+        auto& session = *under.session;
 
         auto observation = session.observe();
         REQUIRE(observation.has_value());
@@ -590,23 +590,23 @@ namespace uf::engine
             outcome.error(),
             AutomationErrorKind::TargetCompatibilityUnverified
         );
-        CHECK(under.m_clicks->clickCount() == 0);
-        CHECK(traceContains(under.m_traces->events(), TraceEventKind::Failure));
+        CHECK(under.clicks->clickCount() == 0);
+        CHECK(traceContains(under.traces->events(), TraceEventKind::Failure));
     }
 
     TEST_CASE("engine session refuses an action the recognizer does not authorize")
     {
         auto parts             = wrongPageRuntime();
-        auto const fingerprint = parts.m_fingerprint;
-        auto const actionT     = parts.m_actionTarget;
+        auto const fingerprint = parts.fingerprint;
+        auto const actionT     = parts.actionTarget;
         auto frames            = std::vector<Frame>{};
         frames.emplace_back(
             grayFrame(fingerprint, resolvingPixels(), FrameId{17}, MonotonicInstant::now())
         );
 
         auto under = makeSession(std::move(parts), std::move(frames), baseConfig(fingerprint));
-        REQUIRE(under.m_session.has_value());
-        auto& session = *under.m_session;
+        REQUIRE(under.session.has_value());
+        auto& session = *under.session;
 
         auto observation = session.observe();
         REQUIRE(observation.has_value());
@@ -622,15 +622,15 @@ namespace uf::engine
         auto const receipt = session.act(std::move(*observation), resolved, **found);
         REQUIRE_FALSE(receipt.has_value());
         anno::test::requireErrorKind(receipt.error(), AutomationErrorKind::ActionRejected);
-        CHECK(under.m_clicks->clickCount() == 0);
-        CHECK(traceContains(under.m_traces->events(), TraceEventKind::ActionRejected));
+        CHECK(under.clicks->clickCount() == 0);
+        CHECK(traceContains(under.traces->events(), TraceEventKind::ActionRejected));
     }
 
     TEST_CASE("engine session refuses an action whose observation lease has expired")
     {
         auto parts             = singlePageRuntime();
-        auto const fingerprint = parts.m_fingerprint;
-        auto const actionT     = parts.m_actionTarget;
+        auto const fingerprint = parts.fingerprint;
+        auto const actionT     = parts.actionTarget;
         auto frames            = std::vector<Frame>{};
         // A frame captured at the clock epoch with a zero max age produces a
         // lease that is already expired by the time the action is delivered.
@@ -643,11 +643,11 @@ namespace uf::engine
             )
         );
 
-        auto config                = baseConfig(fingerprint);
-        config.m_maxActionFrameAge = MonotonicInstant::Duration::zero();
-        auto under                 = makeSession(std::move(parts), std::move(frames), config);
-        REQUIRE(under.m_session.has_value());
-        auto& session = *under.m_session;
+        auto config              = baseConfig(fingerprint);
+        config.maxActionFrameAge = MonotonicInstant::Duration::zero();
+        auto under               = makeSession(std::move(parts), std::move(frames), config);
+        REQUIRE(under.session.has_value());
+        auto& session = *under.session;
 
         auto observation = session.observe();
         REQUIRE(observation.has_value());
@@ -663,23 +663,23 @@ namespace uf::engine
         auto const receipt = session.act(std::move(*observation), resolved, **found);
         REQUIRE_FALSE(receipt.has_value());
         anno::test::requireErrorKind(receipt.error(), AutomationErrorKind::StaleObservation);
-        CHECK(under.m_clicks->clickCount() == 0);
-        CHECK(traceContains(under.m_traces->events(), TraceEventKind::ActionRejected));
+        CHECK(under.clicks->clickCount() == 0);
+        CHECK(traceContains(under.traces->events(), TraceEventKind::ActionRejected));
     }
 
     TEST_CASE("engine session rejects reuse of an invalidated observation")
     {
         auto parts             = singlePageRuntime();
-        auto const fingerprint = parts.m_fingerprint;
-        auto const actionT     = parts.m_actionTarget;
+        auto const fingerprint = parts.fingerprint;
+        auto const actionT     = parts.actionTarget;
         auto frames            = std::vector<Frame>{};
         frames.emplace_back(
             grayFrame(fingerprint, resolvingPixels(), FrameId{17}, MonotonicInstant::now())
         );
 
         auto under = makeSession(std::move(parts), std::move(frames), baseConfig(fingerprint));
-        REQUIRE(under.m_session.has_value());
-        auto& session = *under.m_session;
+        REQUIRE(under.session.has_value());
+        auto& session = *under.session;
 
         auto observation = session.observe();
         REQUIRE(observation.has_value());
@@ -692,27 +692,27 @@ namespace uf::engine
 
         auto const receipt = session.act(std::move(*observation), resolved, **found);
         REQUIRE(receipt.has_value());
-        CHECK(under.m_clicks->clickCount() == 1);
+        CHECK(under.clicks->clickCount() == 1);
 
         // The consumed observation must fail closed on any further use.
         auto const reuse = observation->resolvePage();
         REQUIRE_FALSE(reuse.has_value());
         anno::test::requireErrorKind(reuse.error(), AutomationErrorKind::StaleObservation);
-        CHECK(under.m_clicks->clickCount() == 1);
+        CHECK(under.clicks->clickCount() == 1);
     }
 
     TEST_CASE("engine session invalidates a moved-from observation")
     {
         auto parts             = singlePageRuntime();
-        auto const fingerprint = parts.m_fingerprint;
+        auto const fingerprint = parts.fingerprint;
         auto frames            = std::vector<Frame>{};
         frames.emplace_back(
             grayFrame(fingerprint, resolvingPixels(), FrameId{17}, MonotonicInstant::now())
         );
 
         auto under = makeSession(std::move(parts), std::move(frames), baseConfig(fingerprint));
-        REQUIRE(under.m_session.has_value());
-        auto& session = *under.m_session;
+        REQUIRE(under.session.has_value());
+        auto& session = *under.session;
 
         auto source = session.observe();
         REQUIRE(source.has_value());
@@ -723,21 +723,21 @@ namespace uf::engine
         auto const reuse = source->resolvePage();
         REQUIRE_FALSE(reuse.has_value());
         anno::test::requireErrorKind(reuse.error(), AutomationErrorKind::StaleObservation);
-        CHECK(under.m_clicks->clickCount() == 0);
+        CHECK(under.clicks->clickCount() == 0);
     }
 
     TEST_CASE("engine session rejects an observation vended by a different session")
     {
         auto partsA            = singlePageRuntime();
-        auto const fingerprint = partsA.m_fingerprint;
-        auto const actionT     = partsA.m_actionTarget;
+        auto const fingerprint = partsA.fingerprint;
+        auto const actionT     = partsA.actionTarget;
         auto framesA           = std::vector<Frame>{};
         framesA.emplace_back(
             grayFrame(fingerprint, resolvingPixels(), FrameId{17}, MonotonicInstant::now())
         );
         auto underA = makeSession(std::move(partsA), std::move(framesA), baseConfig(fingerprint));
-        REQUIRE(underA.m_session.has_value());
-        auto& sessionA = *underA.m_session;
+        REQUIRE(underA.session.has_value());
+        auto& sessionA = *underA.session;
 
         // A second session built over an equivalent runtime. The observation from
         // session A must never authorize a click on session B.
@@ -747,8 +747,8 @@ namespace uf::engine
             grayFrame(fingerprint, resolvingPixels(), FrameId{18}, MonotonicInstant::now())
         );
         auto underB = makeSession(std::move(partsB), std::move(framesB), baseConfig(fingerprint));
-        REQUIRE(underB.m_session.has_value());
-        auto& sessionB = *underB.m_session;
+        REQUIRE(underB.session.has_value());
+        auto& sessionB = *underB.session;
 
         auto observation = sessionA.observe();
         REQUIRE(observation.has_value());
@@ -763,14 +763,14 @@ namespace uf::engine
         auto const receipt = sessionB.act(std::move(*observation), resolved, **found);
         REQUIRE_FALSE(receipt.has_value());
         anno::test::requireErrorKind(receipt.error(), AutomationErrorKind::InternalInvariant);
-        CHECK(underB.m_clicks->clickCount() == 0);
+        CHECK(underB.clicks->clickCount() == 0);
     }
 
     TEST_CASE("engine session invalidates the handle before a failing post-click trace")
     {
         auto parts             = singlePageRuntime();
-        auto const fingerprint = parts.m_fingerprint;
-        auto const actionT     = parts.m_actionTarget;
+        auto const fingerprint = parts.fingerprint;
+        auto const actionT     = parts.actionTarget;
         auto frames            = std::vector<Frame>{};
         frames.emplace_back(
             grayFrame(fingerprint, resolvingPixels(), FrameId{17}, MonotonicInstant::now())
@@ -785,7 +785,7 @@ namespace uf::engine
         );
         auto* const p_clicks = actionSink.get();
         auto session         = EngineSession::create(
-            std::move(parts.m_loaded),
+            std::move(parts.loaded),
             std::move(frameSource),
             std::move(actionSink),
             std::move(traceSink),
@@ -823,7 +823,7 @@ namespace uf::engine
     TEST_CASE("engine session resolves an unrecognized frame to an unknown page")
     {
         auto parts             = singlePageRuntime();
-        auto const fingerprint = parts.m_fingerprint;
+        auto const fingerprint = parts.fingerprint;
         auto frames            = std::vector<Frame>{};
         // Grey-0 pixels match no page anchor, so no page signature resolves.
         frames.emplace_back(
@@ -831,8 +831,8 @@ namespace uf::engine
         );
 
         auto under = makeSession(std::move(parts), std::move(frames), baseConfig(fingerprint));
-        REQUIRE(under.m_session.has_value());
-        auto& session = *under.m_session;
+        REQUIRE(under.session.has_value());
+        auto& session = *under.session;
 
         auto observation = session.observe();
         REQUIRE(observation.has_value());
@@ -843,50 +843,50 @@ namespace uf::engine
         // there is nothing of the type act requires to feed a click.
         CHECK(std::holds_alternative<anno::UnknownPage>(*outcome));
         CHECK_FALSE(std::holds_alternative<anno::ResolvedPage>(*outcome));
-        CHECK(traceContains(under.m_traces->events(), TraceEventKind::PageUnknown));
-        CHECK(under.m_clicks->clickCount() == 0);
+        CHECK(traceContains(under.traces->events(), TraceEventKind::PageUnknown));
+        CHECK(under.clicks->clickCount() == 0);
     }
 
     TEST_CASE("engine session surfaces a recognition budget stop as a failure")
     {
         auto parts             = singlePageRuntime();
-        auto const fingerprint = parts.m_fingerprint;
-        auto const actionT     = parts.m_actionTarget;
+        auto const fingerprint = parts.fingerprint;
+        auto const actionT     = parts.actionTarget;
         auto frames            = std::vector<Frame>{};
         frames.emplace_back(
             grayFrame(fingerprint, resolvingPixels(), FrameId{17}, MonotonicInstant::now())
         );
 
-        auto config                      = baseConfig(fingerprint);
-        config.m_maximumPixelComparisons = 0;
-        auto under                       = makeSession(std::move(parts), std::move(frames), config);
-        REQUIRE(under.m_session.has_value());
-        auto& session = *under.m_session;
+        auto config                    = baseConfig(fingerprint);
+        config.maximumPixelComparisons = 0;
+        auto under                     = makeSession(std::move(parts), std::move(frames), config);
+        REQUIRE(under.session.has_value());
+        auto& session = *under.session;
 
         auto observation = session.observe();
         REQUIRE(observation.has_value());
         auto const found = observation->findAction(actionT);
         REQUIRE_FALSE(found.has_value());
         anno::test::requireErrorKind(found.error(), AutomationErrorKind::RecognitionFailed);
-        CHECK(under.m_clicks->clickCount() == 0);
-        CHECK(traceContains(under.m_traces->events(), TraceEventKind::RecognitionStopped));
+        CHECK(under.clicks->clickCount() == 0);
+        CHECK(traceContains(under.traces->events(), TraceEventKind::RecognitionStopped));
     }
 
     TEST_CASE("engine session surfaces a cancelled recognition as a cancellation")
     {
         auto parts             = singlePageRuntime();
-        auto const fingerprint = parts.m_fingerprint;
+        auto const fingerprint = parts.fingerprint;
         auto frames            = std::vector<Frame>{};
         frames.emplace_back(
             grayFrame(fingerprint, resolvingPixels(), FrameId{17}, MonotonicInstant::now())
         );
 
-        auto cancellation     = std::stop_source{};
-        auto config           = baseConfig(fingerprint);
-        config.m_cancellation = cancellation.get_token();
-        auto under            = makeSession(std::move(parts), std::move(frames), std::move(config));
-        REQUIRE(under.m_session.has_value());
-        auto& session = *under.m_session;
+        auto cancellation   = std::stop_source{};
+        auto config         = baseConfig(fingerprint);
+        config.cancellation = cancellation.get_token();
+        auto under          = makeSession(std::move(parts), std::move(frames), std::move(config));
+        REQUIRE(under.session.has_value());
+        auto& session = *under.session;
 
         // observe() now gates on cancellation, so the stop is requested only after
         // the observation exists. The recognition policy then surfaces it as
@@ -899,23 +899,23 @@ namespace uf::engine
         auto const outcome = observation->resolvePage();
         REQUIRE_FALSE(outcome.has_value());
         anno::test::requireErrorKind(outcome.error(), AutomationErrorKind::Cancelled);
-        CHECK(under.m_clicks->clickCount() == 0);
-        CHECK(traceContains(under.m_traces->events(), TraceEventKind::RecognitionStopped));
+        CHECK(under.clicks->clickCount() == 0);
+        CHECK(traceContains(under.traces->events(), TraceEventKind::RecognitionStopped));
     }
 
     TEST_CASE("engine session revalidates the target instance at the delivery edge")
     {
         auto parts             = singlePageRuntime();
-        auto const fingerprint = parts.m_fingerprint;
-        auto const actionT     = parts.m_actionTarget;
+        auto const fingerprint = parts.fingerprint;
+        auto const actionT     = parts.actionTarget;
         auto frames            = std::vector<Frame>{};
         frames.emplace_back(
             grayFrame(fingerprint, resolvingPixels(), FrameId{17}, MonotonicInstant::now())
         );
 
         auto under = makeSession(std::move(parts), std::move(frames), baseConfig(fingerprint));
-        REQUIRE(under.m_session.has_value());
-        auto& session = *under.m_session;
+        REQUIRE(under.session.has_value());
+        auto& session = *under.session;
 
         auto observation = session.observe();
         REQUIRE(observation.has_value());
@@ -930,31 +930,31 @@ namespace uf::engine
         // The bound target instance passed validation during observe but is
         // switched to fail before delivery, modeling an HWND reused between the
         // two. The delivery-edge revalidation rejects the click before the sink.
-        under.m_source->invalidateTargetInstance();
+        under.source->invalidateTargetInstance();
 
         auto const receipt = session.act(std::move(*observation), resolved, **found);
         REQUIRE_FALSE(receipt.has_value());
         anno::test::requireErrorKind(receipt.error(), AutomationErrorKind::TargetUnavailable);
-        CHECK(under.m_clicks->clickCount() == 0);
-        CHECK(traceContains(under.m_traces->events(), TraceEventKind::ActionRejected));
+        CHECK(under.clicks->clickCount() == 0);
+        CHECK(traceContains(under.traces->events(), TraceEventKind::ActionRejected));
     }
 
     TEST_CASE("engine session cancels an act requested after the observation")
     {
         auto parts             = singlePageRuntime();
-        auto const fingerprint = parts.m_fingerprint;
-        auto const actionT     = parts.m_actionTarget;
+        auto const fingerprint = parts.fingerprint;
+        auto const actionT     = parts.actionTarget;
         auto frames            = std::vector<Frame>{};
         frames.emplace_back(
             grayFrame(fingerprint, resolvingPixels(), FrameId{17}, MonotonicInstant::now())
         );
 
-        auto cancellation     = std::stop_source{};
-        auto config           = baseConfig(fingerprint);
-        config.m_cancellation = cancellation.get_token();
-        auto under            = makeSession(std::move(parts), std::move(frames), std::move(config));
-        REQUIRE(under.m_session.has_value());
-        auto& session = *under.m_session;
+        auto cancellation   = std::stop_source{};
+        auto config         = baseConfig(fingerprint);
+        config.cancellation = cancellation.get_token();
+        auto under          = makeSession(std::move(parts), std::move(frames), std::move(config));
+        REQUIRE(under.session.has_value());
+        auto& session = *under.session;
 
         auto observation = session.observe();
         REQUIRE(observation.has_value());
@@ -974,13 +974,13 @@ namespace uf::engine
         auto const receipt = session.act(std::move(*observation), resolved, **found);
         REQUIRE_FALSE(receipt.has_value());
         anno::test::requireErrorKind(receipt.error(), AutomationErrorKind::Cancelled);
-        CHECK(under.m_clicks->clickCount() == 0);
+        CHECK(under.clicks->clickCount() == 0);
     }
 
     TEST_CASE("engine session cancels an observe requested before capture")
     {
         auto parts             = singlePageRuntime();
-        auto const fingerprint = parts.m_fingerprint;
+        auto const fingerprint = parts.fingerprint;
         auto frames            = std::vector<Frame>{};
         frames.emplace_back(
             grayFrame(fingerprint, resolvingPixels(), FrameId{17}, MonotonicInstant::now())
@@ -989,23 +989,23 @@ namespace uf::engine
         auto cancellation     = std::stop_source{};
         auto const didRequest = cancellation.request_stop();
         REQUIRE(didRequest);
-        auto config           = baseConfig(fingerprint);
-        config.m_cancellation = cancellation.get_token();
-        auto under            = makeSession(std::move(parts), std::move(frames), std::move(config));
-        REQUIRE(under.m_session.has_value());
-        auto& session = *under.m_session;
+        auto config         = baseConfig(fingerprint);
+        config.cancellation = cancellation.get_token();
+        auto under          = makeSession(std::move(parts), std::move(frames), std::move(config));
+        REQUIRE(under.session.has_value());
+        auto& session = *under.session;
 
         auto const observation = session.observe();
         REQUIRE_FALSE(observation.has_value());
         anno::test::requireErrorKind(observation.error(), AutomationErrorKind::Cancelled);
-        CHECK(under.m_clicks->clickCount() == 0);
+        CHECK(under.clicks->clickCount() == 0);
     }
 
     TEST_CASE("engine session waitForPage returns promptly when cancelled mid-sleep")
     {
         auto parts             = singlePageRuntime();
-        auto const fingerprint = parts.m_fingerprint;
-        auto const pageA       = parts.m_page;
+        auto const fingerprint = parts.fingerprint;
+        auto const pageA       = parts.page;
         auto frames            = std::vector<Frame>{};
         // Grey-0 pixels never resolve pageA, so the wait loop keeps polling until
         // the timeout, the deadline, or a cancellation ends it.
@@ -1013,12 +1013,12 @@ namespace uf::engine
             grayFrame(fingerprint, unknownPixels(), FrameId{17}, MonotonicInstant::now())
         );
 
-        auto cancellation     = std::stop_source{};
-        auto config           = baseConfig(fingerprint);
-        config.m_cancellation = cancellation.get_token();
-        auto under            = makeSession(std::move(parts), std::move(frames), std::move(config));
-        REQUIRE(under.m_session.has_value());
-        auto& session = *under.m_session;
+        auto cancellation   = std::stop_source{};
+        auto config         = baseConfig(fingerprint);
+        config.cancellation = cancellation.get_token();
+        auto under          = makeSession(std::move(parts), std::move(frames), std::move(config));
+        REQUIRE(under.session.has_value());
+        auto& session = *under.session;
 
         // Request stop ~50ms into a 10s poll sleep from another thread. The
         // sliced sleep observes it within one 100ms slice, so waitForPage returns
@@ -1047,22 +1047,22 @@ namespace uf::engine
                 std::chrono::seconds{2}
             )
         );
-        CHECK(under.m_clicks->clickCount() == 0);
+        CHECK(under.clicks->clickCount() == 0);
     }
 
     TEST_CASE("engine session waitForPage times out when the page never resolves")
     {
         auto parts             = singlePageRuntime();
-        auto const fingerprint = parts.m_fingerprint;
-        auto const pageA       = parts.m_page;
+        auto const fingerprint = parts.fingerprint;
+        auto const pageA       = parts.page;
         auto frames            = std::vector<Frame>{};
         frames.emplace_back(
             grayFrame(fingerprint, unknownPixels(), FrameId{17}, MonotonicInstant::now())
         );
 
         auto under = makeSession(std::move(parts), std::move(frames), baseConfig(fingerprint));
-        REQUIRE(under.m_session.has_value());
-        auto& session = *under.m_session;
+        REQUIRE(under.session.has_value());
+        auto& session = *under.session;
 
         auto const result = session.waitForPage(
             pageA,
@@ -1071,14 +1071,14 @@ namespace uf::engine
         );
         REQUIRE_FALSE(result.has_value());
         anno::test::requireErrorKind(result.error(), AutomationErrorKind::Timeout);
-        CHECK(under.m_clicks->clickCount() == 0);
+        CHECK(under.clicks->clickCount() == 0);
     }
 
     TEST_CASE("engine session waitForPage resolves on a later frame")
     {
         auto parts             = singlePageRuntime();
-        auto const fingerprint = parts.m_fingerprint;
-        auto const pageA       = parts.m_page;
+        auto const fingerprint = parts.fingerprint;
+        auto const pageA       = parts.page;
         auto frames            = std::vector<Frame>{};
         frames.emplace_back(
             grayFrame(fingerprint, unknownPixels(), FrameId{17}, MonotonicInstant::now())
@@ -1088,8 +1088,8 @@ namespace uf::engine
         );
 
         auto under = makeSession(std::move(parts), std::move(frames), baseConfig(fingerprint));
-        REQUIRE(under.m_session.has_value());
-        auto& session = *under.m_session;
+        REQUIRE(under.session.has_value());
+        auto& session = *under.session;
 
         auto result = session.waitForPage(
             pageA,
@@ -1097,7 +1097,7 @@ namespace uf::engine
             MonotonicInstant::Duration::zero()
         );
         REQUIRE(result.has_value());
-        CHECK(result->m_page.pageId() == pageA);
-        CHECK(under.m_clicks->clickCount() == 0);
+        CHECK(result->page.pageId() == pageA);
+        CHECK(under.clicks->clickCount() == 0);
     }
 }

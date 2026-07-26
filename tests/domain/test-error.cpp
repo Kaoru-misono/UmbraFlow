@@ -10,9 +10,9 @@ TEST_CASE("all automation error kinds survive the generic result channel")
 {
     struct ErrorCase final
     {
-        uf::AutomationErrorKind m_kind{};
-        std::string_view        m_name{};
-        uf::FailureResponse     m_response{};
+        uf::AutomationErrorKind kind{};
+        std::string_view        name{};
+        uf::FailureResponse     response{};
     };
 
     auto const cases = std::array{
@@ -97,16 +97,16 @@ TEST_CASE("all automation error kinds survive the generic result channel")
     for (auto const& testCase : cases)
     {
         auto result = uf::Result<int>{
-            uf::fail(testCase.m_kind, "domain failure")
+            uf::fail(testCase.kind, "domain failure")
         };
 
         REQUIRE_FALSE(result.has_value());
         auto const kind = uf::automationErrorKind(result.error());
         REQUIRE(kind.has_value());
-        CHECK(kind == testCase.m_kind);
+        CHECK(kind == testCase.kind);
         CHECK(result.error().detailCode());
-        CHECK(result.error().detailCode().message() == testCase.m_name);
-        CHECK(uf::failureResponse(result.error()) == testCase.m_response);
+        CHECK(result.error().detailCode().message() == testCase.name);
+        CHECK(uf::failureResponse(result.error()) == testCase.response);
     }
 }
 

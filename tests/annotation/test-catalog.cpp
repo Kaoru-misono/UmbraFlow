@@ -35,21 +35,21 @@ namespace uf::annotation
         auto anchorSpec() -> RecognizerSpec
         {
             return RecognizerSpec{
-                .m_id             = test::recognizerId(k_anchorId),
-                .m_name           = test::resourceName("home_marker"),
-                .m_annotationType = AnnotationType::PageAnchor,
-                .m_templateRect   = test::pixelRect(0, 0, 2, 2),
-                .m_searchRoi      = test::pixelRect(0, 0, 4, 4),
-                .m_threshold      = test::threshold(),
-                .m_defaultClick   = std::nullopt,
-                .m_allowedPageIds = {},
+                .id             = test::recognizerId(k_anchorId),
+                .name           = test::resourceName("home_marker"),
+                .annotationType = AnnotationType::PageAnchor,
+                .templateRect   = test::pixelRect(0, 0, 2, 2),
+                .searchRoi      = test::pixelRect(0, 0, 4, 4),
+                .threshold      = test::threshold(),
+                .defaultClick   = std::nullopt,
+                .allowedPageIds = {},
             };
         }
 
         struct InvalidRecognizer final
         {
-            std::string_view m_expected{};
-            RecognizerSpec   m_spec;
+            std::string_view expected{};
+            RecognizerSpec   spec;
         };
 
         // Pins each case to the branch it targets. Asserting only the error kind
@@ -223,60 +223,60 @@ namespace uf::annotation
 
         auto invalid = std::vector<InvalidRecognizer>{};
         {
-            auto spec        = anchorSpec();
-            spec.m_searchRoi = test::pixelRect(0, 0, 8, 8);
+            auto spec      = anchorSpec();
+            spec.searchRoi = test::pixelRect(0, 0, 8, 8);
             invalid.emplace_back(
                 "recognizer template_rect and search_roi must fit the project resolution",
                 std::move(spec)
             );
         }
         {
-            auto spec           = anchorSpec();
-            spec.m_templateRect = test::pixelRect(0, 0, 4, 4);
-            spec.m_searchRoi    = test::pixelRect(0, 0, 2, 2);
+            auto spec         = anchorSpec();
+            spec.templateRect = test::pixelRect(0, 0, 4, 4);
+            spec.searchRoi    = test::pixelRect(0, 0, 2, 2);
             invalid.emplace_back(
                 "recognizer template dimensions must fit inside search_roi",
                 std::move(spec)
             );
         }
         {
-            auto spec           = anchorSpec();
-            spec.m_defaultClick = *outsideTemplate;
+            auto spec         = anchorSpec();
+            spec.defaultClick = *outsideTemplate;
             invalid.emplace_back(
                 "only action_target recognizers may define a default click",
                 std::move(spec)
             );
         }
         {
-            auto spec             = anchorSpec();
-            spec.m_annotationType = AnnotationType::ActionTarget;
-            spec.m_allowedPageIds = {pageId};
-            spec.m_defaultClick   = *outsideTemplate;
+            auto spec           = anchorSpec();
+            spec.annotationType = AnnotationType::ActionTarget;
+            spec.allowedPageIds = {pageId};
+            spec.defaultClick   = *outsideTemplate;
             invalid.emplace_back(
                 "default click must be inside the recognizer template",
                 std::move(spec)
             );
         }
         {
-            auto spec             = anchorSpec();
-            spec.m_allowedPageIds = {pageId};
+            auto spec           = anchorSpec();
+            spec.allowedPageIds = {pageId};
             invalid.emplace_back(
                 "page_anchor membership must be expressed by page signatures",
                 std::move(spec)
             );
         }
         {
-            auto spec             = anchorSpec();
-            spec.m_annotationType = AnnotationType::ActionTarget;
+            auto spec           = anchorSpec();
+            spec.annotationType = AnnotationType::ActionTarget;
             invalid.emplace_back(
                 "action_target recognizer must authorize at least one page",
                 std::move(spec)
             );
         }
         {
-            auto spec             = anchorSpec();
-            spec.m_annotationType = AnnotationType::ActionTarget;
-            spec.m_allowedPageIds = {pageId, pageId};
+            auto spec           = anchorSpec();
+            spec.annotationType = AnnotationType::ActionTarget;
+            spec.allowedPageIds = {pageId, pageId};
             invalid.emplace_back(
                 "recognizer contains duplicate allowed page IDs",
                 std::move(spec)
@@ -285,13 +285,13 @@ namespace uf::annotation
 
         for (auto const& entry : invalid)
         {
-            INFO(entry.m_expected);
+            INFO(entry.expected);
             auto const rejected = RecognizerDefinition::create(
                 projectFingerprint,
-                entry.m_spec
+                entry.spec
             );
             REQUIRE_FALSE(rejected.has_value());
-            requireRejection(rejected.error(), entry.m_expected);
+            requireRejection(rejected.error(), entry.expected);
         }
     }
 
@@ -302,10 +302,10 @@ namespace uf::annotation
 
         auto const duplicateRequired = PageSignature::create(
             PageSpec{
-                .m_id        = pageId,
-                .m_name      = test::resourceName("home"),
-                .m_required  = {anchorId, anchorId},
-                .m_forbidden = {},
+                .id        = pageId,
+                .name      = test::resourceName("home"),
+                .required  = {anchorId, anchorId},
+                .forbidden = {},
             }
         );
         REQUIRE_FALSE(duplicateRequired.has_value());
@@ -316,10 +316,10 @@ namespace uf::annotation
 
         auto const overlapping = PageSignature::create(
             PageSpec{
-                .m_id        = pageId,
-                .m_name      = test::resourceName("home"),
-                .m_required  = {anchorId},
-                .m_forbidden = {anchorId},
+                .id        = pageId,
+                .name      = test::resourceName("home"),
+                .required  = {anchorId},
+                .forbidden = {anchorId},
             }
         );
         REQUIRE_FALSE(overlapping.has_value());
@@ -333,10 +333,10 @@ namespace uf::annotation
     {
         auto const rejected = PageSignature::create(
             PageSpec{
-                .m_id        = test::pageId(k_pageId),
-                .m_name      = test::resourceName("home"),
-                .m_required  = {},
-                .m_forbidden = {},
+                .id        = test::pageId(k_pageId),
+                .name      = test::resourceName("home"),
+                .required  = {},
+                .forbidden = {},
             }
         );
 
@@ -351,10 +351,10 @@ namespace uf::annotation
     {
         auto const signature = PageSignature::create(
             PageSpec{
-                .m_id        = test::pageId(k_pageId),
-                .m_name      = test::resourceName("home"),
-                .m_required  = {},
-                .m_forbidden = {test::recognizerId(k_anchorId)},
+                .id        = test::pageId(k_pageId),
+                .name      = test::resourceName("home"),
+                .required  = {},
+                .forbidden = {test::recognizerId(k_anchorId)},
             }
         );
 

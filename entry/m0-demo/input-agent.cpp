@@ -291,8 +291,8 @@ namespace uf::m0_demo
 
         struct OutputFile final
         {
-            std::filesystem::path m_path{};
-            platform::FileWriter  m_writer;
+            std::filesystem::path path{};
+            platform::FileWriter  writer;
         };
 
         [[nodiscard]]
@@ -309,8 +309,8 @@ namespace uf::m0_demo
                 )
             );
             return OutputFile{
-                .m_path   = std::move(path),
-                .m_writer = std::move(writer),
+                .path   = std::move(path),
+                .writer = std::move(writer),
             };
         }
 
@@ -322,14 +322,14 @@ namespace uf::m0_demo
         {
             UF_TRY_VALUE(
                 encoded,
-                encodeFramePng(frame, output.m_path)
+                encodeFramePng(frame, output.path)
             );
             UF_TRY(
-                output.m_writer.write(
+                output.writer.write(
                     std::span<std::byte const>{encoded}
                 )
             );
-            UF_TRY(output.m_writer.flushDurably());
+            UF_TRY(output.writer.flushDurably());
             return ok();
         }
 
@@ -408,27 +408,27 @@ namespace uf::m0_demo
 
         struct ClickResult final
         {
-            std::optional<uint64> m_beforeFrame{};
-            std::optional<uint64> m_afterFrame{};
-            bool                  m_delivered{};
-            std::optional<Error>  m_error{};
+            std::optional<uint64> beforeFrame{};
+            std::optional<uint64> afterFrame{};
+            bool                  delivered{};
+            std::optional<Error>  error{};
         };
 
         [[nodiscard]] auto serializeClickResult(ClickResult const& result) -> std::string
         {
             auto output = std::string{"{\"op\":\"click\",\"ok\":"};
-            output += result.m_error ? "false" : "true";
+            output += result.error ? "false" : "true";
             output += ",\"before_frame_id\":";
-            appendOptionalNumber(output, result.m_beforeFrame);
+            appendOptionalNumber(output, result.beforeFrame);
             output += ",\"after_frame_id\":";
-            appendOptionalNumber(output, result.m_afterFrame);
+            appendOptionalNumber(output, result.afterFrame);
             output += ",\"delivered\":";
-            output += result.m_delivered ? "true" : "false";
+            output += result.delivered ? "true" : "false";
             output += ",\"error\":";
-            if (result.m_error)
+            if (result.error)
             {
                 output += escapeJsonString(
-                    formatAutomationError(*result.m_error)
+                    formatAutomationError(*result.error)
                 );
             }
             else
@@ -441,8 +441,8 @@ namespace uf::m0_demo
 
         struct CommandExecution final
         {
-            std::string m_resultLine{};
-            bool        m_stopAgent{};
+            std::string resultLine{};
+            bool        stopAgent{};
         };
 
         [[nodiscard]]
@@ -452,8 +452,8 @@ namespace uf::m0_demo
         ) -> CommandExecution
         {
             return CommandExecution{
-                .m_resultLine = serializeClickResult(result),
-                .m_stopAgent  = stopAgent,
+                .resultLine = serializeClickResult(result),
+                .stopAgent  = stopAgent,
             };
         }
 
@@ -518,7 +518,7 @@ namespace uf::m0_demo
         ) -> std::string
         {
             auto const validated = validateOutputPath(
-                command.m_output,
+                command.output,
                 canonicalOutputDirectory,
                 canonicalQueue,
                 canonicalResults,
@@ -553,12 +553,12 @@ namespace uf::m0_demo
         {
             for (auto const& release : releases)
             {
-                if (!release.m_result)
+                if (!release.result)
                 {
                     error.addContext(
                         "input-agent click compensation failed: "
                         + formatAutomationError(
-                            release.m_result.error()
+                            release.result.error()
                         )
                     );
                 }
@@ -580,7 +580,7 @@ namespace uf::m0_demo
         {
             auto result = ClickResult{};
             auto canonicalBefore = validateOutputPath(
-                command.m_outputBefore,
+                command.outputBefore,
                 canonicalOutputDirectory,
                 canonicalQueue,
                 canonicalResults,
@@ -588,11 +588,11 @@ namespace uf::m0_demo
             );
             if (!canonicalBefore)
             {
-                result.m_error = std::move(canonicalBefore).error();
+                result.error = std::move(canonicalBefore).error();
                 return finishClick(result);
             }
             auto canonicalAfter = validateOutputPath(
-                command.m_outputAfter,
+                command.outputAfter,
                 canonicalOutputDirectory,
                 canonicalQueue,
                 canonicalResults,
@@ -600,7 +600,7 @@ namespace uf::m0_demo
             );
             if (!canonicalAfter)
             {
-                result.m_error = std::move(canonicalAfter).error();
+                result.error = std::move(canonicalAfter).error();
                 return finishClick(result);
             }
             auto pathsAlias = canonicalPathsAlias(
@@ -609,7 +609,7 @@ namespace uf::m0_demo
             );
             if (!pathsAlias)
             {
-                result.m_error = std::move(pathsAlias).error();
+                result.error = std::move(pathsAlias).error();
                 return finishClick(result);
             }
             if (*pathsAlias)
@@ -618,17 +618,17 @@ namespace uf::m0_demo
                     AutomationErrorKind::InvalidResource,
                     "input-agent click out_before and out_after paths alias"
                 );
-                result.m_error = std::move(failure).error();
+                result.error = std::move(failure).error();
                 return finishClick(result);
             }
 
-            if (command.m_settle > k_maximumInputAgentSettle)
+            if (command.settle > k_maximumInputAgentSettle)
             {
                 auto failure = fail(
                     AutomationErrorKind::InvalidResource,
                     "input-agent click settle_ms exceeds the 5000 ms limit"
                 );
-                result.m_error = std::move(failure).error();
+                result.error = std::move(failure).error();
                 return finishClick(result);
             }
 
@@ -638,7 +638,7 @@ namespace uf::m0_demo
             );
             if (!beforeOutput)
             {
-                result.m_error = std::move(beforeOutput).error();
+                result.error = std::move(beforeOutput).error();
                 return finishClick(result);
             }
             auto afterOutput = openOutputFile(
@@ -647,7 +647,7 @@ namespace uf::m0_demo
             );
             if (!afterOutput)
             {
-                result.m_error = std::move(afterOutput).error();
+                result.error = std::move(afterOutput).error();
                 return finishClick(result);
             }
 
@@ -660,10 +660,10 @@ namespace uf::m0_demo
             auto before = session.capture();
             if (!before)
             {
-                result.m_error = std::move(before).error();
+                result.error = std::move(before).error();
                 return finishClick(result);
             }
-            result.m_beforeFrame = before->id().value();
+            result.beforeFrame = before->id().value();
 
             auto lease = ObservationLease::forFrame(
                 *before,
@@ -671,12 +671,12 @@ namespace uf::m0_demo
             );
             if (!lease)
             {
-                result.m_error = std::move(lease).error();
+                result.error = std::move(lease).error();
                 return finishClick(result);
             }
             auto const point = Point<ClientSpace>{
-                command.m_x,
-                command.m_y
+                command.x,
+                command.y
             };
             auto coordinate = validateInputAgentClick(
                 delivery,
@@ -686,26 +686,26 @@ namespace uf::m0_demo
             );
             if (!coordinate)
             {
-                result.m_error = std::move(coordinate).error();
+                result.error = std::move(coordinate).error();
                 return finishClick(result);
             }
 
             auto revalidated = resolved.revalidate();
             if (!revalidated)
             {
-                result.m_error = std::move(revalidated).error();
+                result.error = std::move(revalidated).error();
                 return finishClick(result, true);
             }
             auto unchanged = requireUnchangedTarget(*revalidated);
             if (!unchanged)
             {
-                result.m_error = std::move(unchanged).error();
+                result.error = std::move(unchanged).error();
                 return finishClick(result, true);
             }
             auto instance = session.validateTargetInstance();
             if (!instance)
             {
-                result.m_error = std::move(instance).error();
+                result.error = std::move(instance).error();
                 return finishClick(result, true);
             }
 
@@ -742,10 +742,10 @@ namespace uf::m0_demo
                 }
                 auto const releases = releaseHeld(cleanupTarget, held, audit);
                 addReleaseFailures(error, releases);
-                result.m_error = std::move(error);
+                result.error = std::move(error);
                 return finishClick(result, stopAgent);
             }
-            result.m_delivered = true;
+            result.delivered = true;
 
             // Off the observe->act path now: encode + durably write the before-frame
             // PNG. The output handle was reserved (CREATE_NEW) before capture, so the
@@ -754,21 +754,21 @@ namespace uf::m0_demo
             auto beforeWrite = writeFramePng(*before, *beforeOutput);
             if (!beforeWrite)
             {
-                result.m_error = std::move(beforeWrite).error();
+                result.error = std::move(beforeWrite).error();
                 return finishClick(result);
             }
 
-            if (command.m_settle > MonotonicInstant::Duration::zero())
+            if (command.settle > MonotonicInstant::Duration::zero())
             {
-                std::this_thread::sleep_for(command.m_settle);
+                std::this_thread::sleep_for(command.settle);
             }
             auto after = captureToOutput(session, *afterOutput);
             if (!after)
             {
-                result.m_error = std::move(after).error();
+                result.error = std::move(after).error();
                 return finishClick(result);
             }
-            result.m_afterFrame = after->id().value();
+            result.afterFrame = after->id().value();
             return finishClick(result);
         }
     }
@@ -808,18 +808,18 @@ namespace uf::m0_demo
         UF_TRY_VALUE(args, parseInputAgentArguments(raw));
         UF_TRY_VALUE(
             canonicalQueue,
-            canonicalizePathForComparison(args.m_queue, "input-agent queue")
+            canonicalizePathForComparison(args.queue, "input-agent queue")
         );
         UF_TRY_VALUE(
             canonicalResults,
             canonicalizePathForComparison(
-                args.m_results,
+                args.results,
                 "input-agent results"
             )
         );
         UF_TRY_VALUE(
             canonicalOutputDirectory,
-            canonicalizeOutputDirectory(args.m_outputDirectory)
+            canonicalizeOutputDirectory(args.outputDirectory)
         );
         UF_TRY_VALUE(
             ipcPathsAlias,
@@ -858,7 +858,7 @@ namespace uf::m0_demo
 
         UF_TRY_VALUE(candidates, enumerateCandidates());
         auto const selectorArgs = SelectorArgs{
-            .m_windowHandle = args.m_windowHandle,
+            .windowHandle = args.windowHandle,
         };
         auto const selector = buildSelector(selectorArgs);
         UF_TRY_VALUE(resolved, resolveTarget(candidates, selector));
@@ -939,8 +939,8 @@ namespace uf::m0_demo
                         canonicalQueue,
                         canonicalResults
                     );
-                    resultLine = std::move(execution.m_resultLine);
-                    stopAgent  = execution.m_stopAgent;
+                    resultLine = std::move(execution.resultLine);
+                    stopAgent  = execution.stopAgent;
                 }
                 else
                 {
@@ -962,7 +962,7 @@ namespace uf::m0_demo
             auto const now = MonotonicInstant::now();
             if (
                 now.saturatingDurationSince(lastActivity)
-                >= args.m_idleTimeout
+                >= args.idleTimeout
             )
             {
                 UF_TRY(session.close());

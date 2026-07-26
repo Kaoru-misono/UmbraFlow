@@ -81,30 +81,30 @@ namespace uf::m0_demo
     {
         auto const result = parseArguments(fullArguments());
         REQUIRE(result.has_value());
-        CHECK(result->m_selector.m_process == std::optional<uint32>{1234});
-        CHECK(result->m_homeTemplate == std::filesystem::path{"home.png"});
+        CHECK(result->selector.process == std::optional<uint32>{1234});
+        CHECK(result->homeTemplate == std::filesystem::path{"home.png"});
         auto const expectedHomeRoi = Rect<FrameSpace>{0.0F, 0.0F, 100.0F, 40.0F};
         auto const expectedResultRoi = Rect<FrameSpace>{10.0F, 20.0F, 50.0F, 50.0F};
         auto const expectedResetRoi = Rect<FrameSpace>{5.0F, 6.0F, 7.0F, 8.0F};
-        CHECK(result->m_homeRoi == expectedHomeRoi);
-        CHECK(result->m_resultRoi == expectedResultRoi);
-        CHECK(result->m_resetRoi == expectedResetRoi);
-        CHECK(result->m_threshold == 25U);
-        CHECK(result->m_mode == Mode::Guard);
-        CHECK(result->m_loops == 1U);
+        CHECK(result->homeRoi == expectedHomeRoi);
+        CHECK(result->resultRoi == expectedResultRoi);
+        CHECK(result->resetRoi == expectedResetRoi);
+        CHECK(result->threshold == 25U);
+        CHECK(result->mode == Mode::Guard);
+        CHECK(result->loops == 1U);
         CHECK(
-            result->m_maxActionFrameAge
+            result->maxActionFrameAge
             == std::chrono::duration_cast<MonotonicInstant::Duration>(
                 std::chrono::milliseconds{750}
             )
         );
         CHECK(
-            result->m_stallTimeout
+            result->stallTimeout
             == std::chrono::duration_cast<MonotonicInstant::Duration>(
                 std::chrono::milliseconds{1000}
             )
         );
-        CHECK_FALSE(result->m_log.has_value());
+        CHECK_FALSE(result->log.has_value());
     }
 
     TEST_CASE("m0 arguments override defaults and parse a hexadecimal window handle")
@@ -130,22 +130,22 @@ namespace uf::m0_demo
 
         auto const result = parseArguments(raw);
         REQUIRE(result.has_value());
-        CHECK(result->m_selector.m_windowHandle == std::optional<intptr>{0x1A2B});
-        CHECK(result->m_mode == Mode::Coexist);
-        CHECK(result->m_loops == 100U);
+        CHECK(result->selector.windowHandle == std::optional<intptr>{0x1A2B});
+        CHECK(result->mode == Mode::Coexist);
+        CHECK(result->loops == 100U);
         CHECK(
-            result->m_maxActionFrameAge
+            result->maxActionFrameAge
             == std::chrono::duration_cast<MonotonicInstant::Duration>(
                 std::chrono::milliseconds{300}
             )
         );
         CHECK(
-            result->m_stallTimeout
+            result->stallTimeout
             == std::chrono::duration_cast<MonotonicInstant::Duration>(
                 std::chrono::milliseconds{500}
             )
         );
-        CHECK(result->m_log == std::optional<std::filesystem::path>{"run.jsonl"});
+        CHECK(result->log == std::optional<std::filesystem::path>{"run.jsonl"});
     }
 
     TEST_CASE("m0 arguments reject zero loops")
@@ -163,7 +163,7 @@ namespace uf::m0_demo
         append(acceptedRaw, {"--loops", "1"});
         auto const accepted = parseArguments(acceptedRaw);
         REQUIRE(accepted.has_value());
-        CHECK(accepted->m_loops == 1U);
+        CHECK(accepted->loops == 1U);
     }
 
     TEST_CASE("m0 arguments fail closed for missing or malformed input")
@@ -219,33 +219,33 @@ namespace uf::m0_demo
         auto rangedRaw = fullArguments();
         append(rangedRaw, {"--click-delay-ms", "600-1800", "--seed", "12345"});
         auto const ranged = parseArguments(rangedRaw);
-        if (!ranged || !ranged->m_clickDelay)
+        if (!ranged || !ranged->clickDelay)
         {
             FAIL("the ranged click delay did not parse");
             return;
         }
-        CHECK(ranged->m_clickDelay->minimumMilliseconds() == 600U);
-        CHECK(ranged->m_clickDelay->maximumMilliseconds() == 1800U);
-        CHECK(ranged->m_seed == 12345U);
+        CHECK(ranged->clickDelay->minimumMilliseconds() == 600U);
+        CHECK(ranged->clickDelay->maximumMilliseconds() == 1800U);
+        CHECK(ranged->seed == 12345U);
 
         auto fixedRaw = fullArguments();
         append(fixedRaw, {"--click-delay-ms", "1000"});
         auto const fixed = parseArguments(fixedRaw);
-        if (!fixed || !fixed->m_clickDelay)
+        if (!fixed || !fixed->clickDelay)
         {
             FAIL("the fixed click delay did not parse");
             return;
         }
-        CHECK(fixed->m_clickDelay->minimumMilliseconds() == 1000U);
-        CHECK(fixed->m_clickDelay->maximumMilliseconds() == 1000U);
+        CHECK(fixed->clickDelay->minimumMilliseconds() == 1000U);
+        CHECK(fixed->clickDelay->maximumMilliseconds() == 1000U);
     }
 
     TEST_CASE("m0 click delay defaults to none and seed to the fixed constant")
     {
         auto const result = parseArguments(fullArguments());
         REQUIRE(result.has_value());
-        CHECK_FALSE(result->m_clickDelay.has_value());
-        CHECK(result->m_seed == k_defaultPacingSeed);
+        CHECK_FALSE(result->clickDelay.has_value());
+        CHECK(result->seed == k_defaultPacingSeed);
     }
 
     TEST_CASE("m0 arguments reject malformed click delay specifications")
@@ -303,11 +303,11 @@ namespace uf::m0_demo
         auto const result = parseCaptureArguments(raw);
 
         REQUIRE(result.has_value());
-        CHECK(result->m_selector.m_title == std::optional<std::string>{"Capture Target"});
-        CHECK(result->m_output == std::filesystem::path{"capture.png"});
-        CHECK(result->m_frames == k_defaultCaptureFrames);
-        CHECK(result->m_interval == k_defaultCaptureInterval);
-        CHECK_FALSE(result->m_log.has_value());
+        CHECK(result->selector.title == std::optional<std::string>{"Capture Target"});
+        CHECK(result->output == std::filesystem::path{"capture.png"});
+        CHECK(result->frames == k_defaultCaptureFrames);
+        CHECK(result->interval == k_defaultCaptureInterval);
+        CHECK_FALSE(result->log.has_value());
 
         auto const missingOutput = parseCaptureArguments(
             std::span<std::string const>{}
@@ -354,18 +354,18 @@ namespace uf::m0_demo
         auto const result = parseCaptureArguments(raw);
 
         REQUIRE(result.has_value());
-        CHECK(result->m_selector.m_process == std::optional<uint32>{20});
-        CHECK(result->m_selector.m_windowHandle == std::optional<intptr>{0x1A2B});
-        CHECK(result->m_selector.m_title == std::optional<std::string>{"new"});
-        CHECK(result->m_output == std::filesystem::path{"new.png"});
-        CHECK(result->m_frames == 3U);
+        CHECK(result->selector.process == std::optional<uint32>{20});
+        CHECK(result->selector.windowHandle == std::optional<intptr>{0x1A2B});
+        CHECK(result->selector.title == std::optional<std::string>{"new"});
+        CHECK(result->output == std::filesystem::path{"new.png"});
+        CHECK(result->frames == 3U);
         CHECK(
-            result->m_interval
+            result->interval
             == std::chrono::duration_cast<MonotonicInstant::Duration>(
                 std::chrono::milliseconds{25}
             )
         );
-        CHECK(result->m_log == std::optional<std::filesystem::path>{"capture.jsonl"});
+        CHECK(result->log == std::optional<std::filesystem::path>{"capture.jsonl"});
     }
 
     TEST_CASE("m0 capture arguments fail closed at selector and numeric bounds")
@@ -412,8 +412,8 @@ namespace uf::m0_demo
             )
         );
         REQUIRE(boundary.has_value());
-        CHECK(boundary->m_frames == std::numeric_limits<uint32>::max());
-        CHECK(boundary->m_interval == MonotonicInstant::Duration::zero());
+        CHECK(boundary->frames == std::numeric_limits<uint32>::max());
+        CHECK(boundary->interval == MonotonicInstant::Duration::zero());
     }
 
     TEST_CASE("m0 input-agent arguments require file IPC paths and apply defaults")
@@ -434,11 +434,11 @@ namespace uf::m0_demo
         );
 
         REQUIRE(result.has_value());
-        CHECK(result->m_windowHandle == intptr{0x1A2B});
-        CHECK(result->m_queue == std::filesystem::path{"commands.jsonl"});
-        CHECK(result->m_results == std::filesystem::path{"results.jsonl"});
-        CHECK(result->m_outputDirectory == std::filesystem::path{"agent-output"});
-        CHECK(result->m_idleTimeout == k_defaultInputAgentIdleTimeout);
+        CHECK(result->windowHandle == intptr{0x1A2B});
+        CHECK(result->queue == std::filesystem::path{"commands.jsonl"});
+        CHECK(result->results == std::filesystem::path{"results.jsonl"});
+        CHECK(result->outputDirectory == std::filesystem::path{"agent-output"});
+        CHECK(result->idleTimeout == k_defaultInputAgentIdleTimeout);
     }
 
     TEST_CASE("m0 input-agent arguments reject missing and invalid values")

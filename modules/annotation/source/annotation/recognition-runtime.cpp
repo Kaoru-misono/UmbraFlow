@@ -51,11 +51,11 @@ namespace uf::annotation
         ) -> std::unexpected<Error>
         {
             return fail(
-                searchStopKind(stop.m_reason),
+                searchStopKind(stop.reason),
                 std::format(
                     "page recognition {} at anchor {}",
-                    searchStopDescription(stop.m_reason),
-                    stop.m_recognizerId.value().toString()
+                    searchStopDescription(stop.reason),
+                    stop.recognizerId.value().toString()
                 )
             );
         }
@@ -65,8 +65,8 @@ namespace uf::annotation
         [[nodiscard]]
         auto makeSadSearchPoll(RecognitionPolicy const& policy) -> SadSearchPoll
         {
-            auto const cancellation = policy.m_cancellation;
-            auto const deadline     = policy.m_deadline;
+            auto const cancellation = policy.cancellation;
+            auto const deadline     = policy.deadline;
             return SadSearchPoll{
                 [cancellation, deadline]() noexcept -> SadSearchControl
                 {
@@ -155,15 +155,15 @@ namespace uf::annotation
         std::vector<EncodedRuntimeTemplate> encodedTemplates
     ) -> Result<RecognitionRuntime>
     {
-        std::ranges::sort(encodedTemplates, {}, &EncodedRuntimeTemplate::m_hash);
+        std::ranges::sort(encodedTemplates, {}, &EncodedRuntimeTemplate::hash);
         for (auto index = std::size_t{1}; index < encodedTemplates.size(); ++index)
         {
-            if (encodedTemplates[index - 1U].m_hash == encodedTemplates[index].m_hash)
+            if (encodedTemplates[index - 1U].hash == encodedTemplates[index].hash)
             {
                 return invalidRuntime(
                     std::format(
                         "duplicate encoded runtime template {}",
-                        encodedTemplates[index].m_hash.toString()
+                        encodedTemplates[index].hash.toString()
                     )
                 );
             }
@@ -173,7 +173,7 @@ namespace uf::annotation
         expectedHashes.reserve(manifest.assets().size());
         for (auto const& asset : manifest.assets())
         {
-            expectedHashes.emplace_back(asset.m_templateHash);
+            expectedHashes.emplace_back(asset.templateHash);
         }
         std::ranges::sort(expectedHashes);
         auto const uniqueEnd = std::ranges::unique(expectedHashes).begin();
@@ -195,24 +195,24 @@ namespace uf::annotation
         {
             auto& encoded       = encodedTemplates[index];
             auto const expected = expectedHashes[index];
-            if (encoded.m_hash != expected)
+            if (encoded.hash != expected)
             {
                 return invalidRuntime(
                     std::format(
                         "runtime template closure expected {} but received {}",
                         expected.toString(),
-                        encoded.m_hash.toString()
+                        encoded.hash.toString()
                     )
                 );
             }
 
-            UF_TRY_VALUE(actualHash, sha256(encoded.m_pngBytes));
-            if (actualHash != encoded.m_hash)
+            UF_TRY_VALUE(actualHash, sha256(encoded.pngBytes));
+            if (actualHash != encoded.hash)
             {
                 return invalidRuntime(
                     std::format(
                         "runtime template {} does not match its content hash",
-                        encoded.m_hash.toString()
+                        encoded.hash.toString()
                     )
                 );
             }
@@ -220,13 +220,13 @@ namespace uf::annotation
             UF_TRY_VALUE(
                 decoded,
                 image::decodePng(
-                    encoded.m_pngBytes,
-                    encoded.m_hash.toString()
+                    encoded.pngBytes,
+                    encoded.hash.toString()
                 )
             );
-            auto const width  = decoded.m_width;
-            auto const height = decoded.m_height;
-            UF_TRY_VALUE(bgra, image::rgba8ToBgra8(std::move(decoded.m_pixels)));
+            auto const width  = decoded.width;
+            auto const height = decoded.height;
+            UF_TRY_VALUE(bgra, image::rgba8ToBgra8(std::move(decoded.pixels)));
             auto const widthSize = checkedCast<std::size_t>(width);
             if (!widthSize)
             {
@@ -243,10 +243,10 @@ namespace uf::annotation
             );
             templates.emplace_back(
                 GrayTemplate{
-                    .m_hash   = encoded.m_hash,
-                    .m_width  = width,
-                    .m_height = height,
-                    .m_pixels = std::move(gray),
+                    .hash   = encoded.hash,
+                    .width  = width,
+                    .height = height,
+                    .pixels = std::move(gray),
                 }
             );
         }
@@ -259,20 +259,20 @@ namespace uf::annotation
         {
             auto const* p_asset = runtime.m_manifest.findAsset(recognizer.id());
             UF_CHECK(p_asset != nullptr);
-            auto const* p_template = runtime.findTemplate(p_asset->m_templateHash);
+            auto const* p_template = runtime.findTemplate(p_asset->templateHash);
             UF_CHECK(p_template != nullptr);
             auto const templateRect = recognizer.templateRect();
             if (
-                p_template->m_width != templateRect.width()
-                || p_template->m_height != templateRect.height()
+                p_template->width != templateRect.width()
+                || p_template->height != templateRect.height()
             )
             {
                 return invalidRuntime(
                     std::format(
                         "runtime template {} dimensions {}x{} do not match recognizer {} geometry {}x{}",
-                        p_asset->m_templateHash.toString(),
-                        p_template->m_width,
-                        p_template->m_height,
+                        p_asset->templateHash.toString(),
+                        p_template->width,
+                        p_template->height,
                         recognizer.id().value().toString(),
                         templateRect.width(),
                         templateRect.height()
@@ -291,9 +291,9 @@ namespace uf::annotation
             m_templates,
             hash,
             {},
-            &GrayTemplate::m_hash
+            &GrayTemplate::hash
         );
-        if (found == m_templates.end() || found->m_hash != hash)
+        if (found == m_templates.end() || found->hash != hash)
         {
             return nullptr;
         }
@@ -326,22 +326,22 @@ namespace uf::annotation
             auto const* p_asset      = m_manifest.findAsset(id);
             UF_CHECK(p_recognizer != nullptr);
             UF_CHECK(p_asset != nullptr);
-            auto const* p_template = findTemplate(p_asset->m_templateHash);
+            auto const* p_template = findTemplate(p_asset->templateHash);
             UF_CHECK(p_template != nullptr);
 
-            auto const templateStride = checkedCast<std::size_t>(p_template->m_width);
+            auto const templateStride = checkedCast<std::size_t>(p_template->width);
             UF_CHECK(templateStride.has_value());
             UF_TRY_VALUE(
                 templateImage,
                 GrayImage::create(
-                    p_template->m_pixels,
-                    p_template->m_width,
-                    p_template->m_height,
+                    p_template->pixels,
+                    p_template->width,
+                    p_template->height,
                     *templateStride
                 )
             );
             auto const remainingBudget = checkedSubtract(
-                policy.m_maximumPixelComparisons,
+                policy.maximumPixelComparisons,
                 completedPixelComparisons
             );
             UF_CHECK(remainingBudget.has_value());
@@ -357,24 +357,24 @@ namespace uf::annotation
             );
             auto const newCompleted = checkedAdd(
                 completedPixelComparisons,
-                sadReport.m_completedPixelComparisons
+                sadReport.completedPixelComparisons
             );
             UF_CHECK(newCompleted.has_value());
             completedPixelComparisons = *newCompleted;
 
             if (
                 auto const* p_stop = std::get_if<SadSearchStopReason>(
-                    &sadReport.m_outcome
+                    &sadReport.outcome
                 )
             )
             {
                 return PageRecognitionAttempt{
-                    .m_result = PageRecognitionStop{
-                        .m_recognizerId = id,
-                        .m_reason       = *p_stop,
+                    .result = PageRecognitionStop{
+                        .recognizerId = id,
+                        .reason       = *p_stop,
                     },
-                    .m_completedAnchorEvidence   = std::move(completedEvidence),
-                    .m_completedPixelComparisons = completedPixelComparisons,
+                    .completedAnchorEvidence   = std::move(completedEvidence),
+                    .completedPixelComparisons = completedPixelComparisons,
                 };
             }
 
@@ -382,7 +382,7 @@ namespace uf::annotation
                 evaluation,
                 AnchorEvaluation::fromSadOutcome(
                     *p_recognizer,
-                    sadReport.m_outcome
+                    sadReport.outcome
                 )
             );
             auto const* p_evidence = std::get_if<AnchorEvidence>(
@@ -402,9 +402,9 @@ namespace uf::annotation
             )
         );
         return PageRecognitionAttempt{
-            .m_result                    = std::move(pageOutcome),
-            .m_completedAnchorEvidence   = std::move(completedEvidence),
-            .m_completedPixelComparisons = completedPixelComparisons,
+            .result                    = std::move(pageOutcome),
+            .completedAnchorEvidence   = std::move(completedEvidence),
+            .completedPixelComparisons = completedPixelComparisons,
         };
     }
 
@@ -475,13 +475,13 @@ namespace uf::annotation
         UF_TRY_VALUE(attempt, evaluatePage(frame, liveFingerprint, policy));
         if (
             auto const* p_stop = std::get_if<PageRecognitionStop>(
-                &attempt.m_result
+                &attempt.result
             )
         )
         {
             return pageRecognitionFailure(*p_stop);
         }
-        return std::get<PageOutcome>(std::move(attempt.m_result));
+        return std::get<PageOutcome>(std::move(attempt.result));
     }
 
     auto RecognitionRuntime::evaluateGrayActionTarget(
@@ -492,14 +492,14 @@ namespace uf::annotation
         SadSearchPoll const& poll
     ) const -> Result<ActionTargetAttempt>
     {
-        auto const templateStride = checkedCast<std::size_t>(grayTemplate.m_width);
+        auto const templateStride = checkedCast<std::size_t>(grayTemplate.width);
         UF_CHECK(templateStride.has_value());
         UF_TRY_VALUE(
             templateImage,
             GrayImage::create(
-                grayTemplate.m_pixels,
-                grayTemplate.m_width,
-                grayTemplate.m_height,
+                grayTemplate.pixels,
+                grayTemplate.width,
+                grayTemplate.height,
                 *templateStride
             )
         );
@@ -509,37 +509,37 @@ namespace uf::annotation
                 grayFrame,
                 templateImage,
                 recognizer.searchRoi(),
-                policy.m_maximumPixelComparisons,
+                policy.maximumPixelComparisons,
                 poll
             )
         );
 
         if (
             auto const* p_stop = std::get_if<SadSearchStopReason>(
-                &sadReport.m_outcome
+                &sadReport.outcome
             )
         )
         {
             return ActionTargetAttempt{
-                .m_result = PageRecognitionStop{
-                    .m_recognizerId = recognizer.id(),
-                    .m_reason       = *p_stop,
+                .result = PageRecognitionStop{
+                    .recognizerId = recognizer.id(),
+                    .reason       = *p_stop,
                 },
-                .m_completedPixelComparisons = sadReport.m_completedPixelComparisons,
+                .completedPixelComparisons = sadReport.completedPixelComparisons,
             };
         }
 
         UF_TRY_VALUE(
             evaluation,
-            AnchorEvaluation::fromSadOutcome(recognizer, sadReport.m_outcome)
+            AnchorEvaluation::fromSadOutcome(recognizer, sadReport.outcome)
         );
         auto const* p_evidence = std::get_if<AnchorEvidence>(
             &evaluation.evaluation()
         );
         UF_CHECK(p_evidence != nullptr);
         return ActionTargetAttempt{
-            .m_result                    = *p_evidence,
-            .m_completedPixelComparisons = sadReport.m_completedPixelComparisons,
+            .result                    = *p_evidence,
+            .completedPixelComparisons = sadReport.completedPixelComparisons,
         };
     }
 
@@ -572,7 +572,7 @@ namespace uf::annotation
 
         auto const* p_asset = m_manifest.findAsset(recognizerId);
         UF_CHECK(p_asset != nullptr);
-        auto const* p_template = findTemplate(p_asset->m_templateHash);
+        auto const* p_template = findTemplate(p_asset->templateHash);
         UF_CHECK(p_template != nullptr);
 
         auto const poll = makeSadSearchPoll(policy);

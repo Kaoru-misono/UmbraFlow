@@ -160,8 +160,8 @@ namespace uf
 
         struct FrameSizeCase final
         {
-            uint32 m_width{};
-            uint32 m_height{};
+            uint32 width{};
+            uint32 height{};
         };
 
         auto const validCases = std::array{
@@ -174,12 +174,12 @@ namespace uf
                 Point<DesktopSpace>{0.0F, 0.0F},
                 1'600.0F,
                 900.0F,
-                testCase.m_width,
-                testCase.m_height
+                testCase.width,
+                testCase.height
             );
             REQUIRE(result.has_value());
-            CHECK(result->frameSize().first == testCase.m_width);
-            CHECK(result->frameSize().second == testCase.m_height);
+            CHECK(result->frameSize().first == testCase.width);
+            CHECK(result->frameSize().second == testCase.height);
         }
 
         auto const invalidCases = std::array{
@@ -192,8 +192,8 @@ namespace uf
                 Point<DesktopSpace>{0.0F, 0.0F},
                 1'600.0F,
                 900.0F,
-                testCase.m_width,
-                testCase.m_height
+                testCase.width,
+                testCase.height
             );
             REQUIRE_FALSE(result.has_value());
             requireErrorKind(result.error(), AutomationErrorKind::InternalInvariant);
@@ -241,10 +241,10 @@ namespace uf
     {
         struct InvalidCase final
         {
-            uint32 m_x{};
-            uint32 m_y{};
-            uint32 m_width{};
-            uint32 m_height{};
+            uint32 x{};
+            uint32 y{};
+            uint32 width{};
+            uint32 height{};
         };
 
         auto constexpr maximum = std::numeric_limits<uint32>::max();
@@ -275,10 +275,10 @@ namespace uf
         for (auto const& testCase : cases)
         {
             auto const result = PixelRect::create(
-                testCase.m_x,
-                testCase.m_y,
-                testCase.m_width,
-                testCase.m_height
+                testCase.x,
+                testCase.y,
+                testCase.width,
+                testCase.height
             );
             REQUIRE_FALSE(result.has_value());
             requireErrorKind(result.error(), AutomationErrorKind::InternalInvariant);

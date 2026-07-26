@@ -15,16 +15,16 @@ namespace uf::annotation
 {
     struct AuthoringSourceAsset final
     {
-        SourceId               m_id;
-        std::vector<std::byte> m_pngBytes{};
+        SourceId               id;
+        std::vector<std::byte> pngBytes{};
     };
 
     struct CompiledAuthoringProject final
     {
-        RuntimeManifest m_runtimeManifest;
-        std::string     m_runtimeManifestToml{};
+        RuntimeManifest runtimeManifest;
+        std::string     runtimeManifestToml{};
 
-        std::vector<TemplateAsset> m_templateAssets{};
+        std::vector<TemplateAsset> templateAssets{};
     };
 
     [[nodiscard]]

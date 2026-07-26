@@ -15,8 +15,8 @@ namespace uf
     {
         auto const observation = controller_platform::setPerMonitorAwareV2();
         return controller_detail::classifyDpiResult(
-            observation.m_win32Error,
-            observation.m_isPerMonitorAwareV2
+            observation.win32Error,
+            observation.isPerMonitorAwareV2
         );
     }
 }

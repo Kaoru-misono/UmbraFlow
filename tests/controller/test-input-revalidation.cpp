@@ -155,21 +155,21 @@ namespace uf
 
         struct StaleCase final
         {
-            std::string_view m_label{};
-            TargetGeneration m_generation{};
-            MonotonicInstant m_now;
+            std::string_view label{};
+            TargetGeneration generation{};
+            MonotonicInstant now;
         };
         for (auto const& testCase : std::array{
             StaleCase{"expired lease", generation, expiredNow},
             StaleCase{"generation bumped", nextGeneration(generation), captured},
         })
         {
-            INFO(testCase.m_label);
+            INFO(testCase.label);
             auto const result = controller_detail::checkPointerPreconditions(
                 lease,
                 SessionId{k_sessionValue},
-                testCase.m_generation,
-                testCase.m_now,
+                testCase.generation,
+                testCase.now,
                 Point<ClientSpace>{1.0F, 1.0F},
                 800,
                 450
@@ -186,8 +186,8 @@ namespace uf
         auto const lease = leaseAt(generation, now);
         struct InvalidPoint final
         {
-            std::string_view m_label{};
-            Point<ClientSpace> m_point;
+            std::string_view label{};
+            Point<ClientSpace> point;
         };
         for (auto const& testCase : std::array{
             InvalidPoint{"negative x", {-0.1F, 10.0F}},
@@ -204,13 +204,13 @@ namespace uf
             },
         })
         {
-            INFO(testCase.m_label);
+            INFO(testCase.label);
             auto const result = controller_detail::checkPointerPreconditions(
                 lease,
                 SessionId{k_sessionValue},
                 generation,
                 now,
-                testCase.m_point,
+                testCase.point,
                 800,
                 450
             );

@@ -151,9 +151,9 @@ namespace uf::controller_detail
     ) noexcept -> PostSpec
     {
         return PostSpec{
-            .m_message = transition == KeyTransition::Down ? k_wmKeyDown : k_wmKeyUp,
-            .m_wParam = key.virtualKey(),
-            .m_lParam = lParamFromBits(
+            .message = transition == KeyTransition::Down ? k_wmKeyDown : k_wmKeyUp,
+            .wParam = key.virtualKey(),
+            .lParam = lParamFromBits(
                 keyboardLParamBits(scanCode, key.isExtended(), transition)
             ),
         };
@@ -182,27 +182,27 @@ namespace uf::controller_detail
         }
 
         return PostSpec{
-            .m_message = messageId,
-            .m_wParam  = wParam,
-            .m_lParam  = lParamFromBits(pointerLParamBits(pixel)),
+            .message = messageId,
+            .wParam  = wParam,
+            .lParam  = lParamFromBits(pointerLParamBits(pixel)),
         };
     }
 
     auto charSpec(uint16 codeUnit) noexcept -> PostSpec
     {
         return PostSpec{
-            .m_message = k_wmChar,
-            .m_wParam  = codeUnit,
-            .m_lParam  = 1,
+            .message = k_wmChar,
+            .wParam  = codeUnit,
+            .lParam  = 1,
         };
     }
 
     auto unicharSpec(char32_t codePoint) noexcept -> PostSpec
     {
         return PostSpec{
-            .m_message = k_wmUnichar,
-            .m_wParam  = static_cast<uintptr>(codePoint),
-            .m_lParam  = 1,
+            .message = k_wmUnichar,
+            .wParam  = static_cast<uintptr>(codePoint),
+            .lParam  = 1,
         };
     }
 

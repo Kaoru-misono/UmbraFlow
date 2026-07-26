@@ -20,8 +20,8 @@ namespace uf::controller_detail
             std::string_view context
         ) -> Result<std::pair<uint32, uint32>>
         {
-            auto const width = checkedCast<uint32>(size.m_width);
-            auto const height = checkedCast<uint32>(size.m_height);
+            auto const width = checkedCast<uint32>(size.width);
+            auto const height = checkedCast<uint32>(size.height);
             if (!width || !height)
             {
                 return fail(
@@ -29,8 +29,8 @@ namespace uf::controller_detail
                     std::format(
                         "{} has invalid signed dimensions {}x{}",
                         context,
-                        size.m_width,
-                        size.m_height
+                        size.width,
+                        size.height
                     )
                 );
             }

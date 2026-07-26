@@ -44,12 +44,12 @@ namespace uf::annotation
             auto const pageId      = test::pageId(k_pageId);
             auto source = AuthoringSource::create(
                 AuthoringSourceSpec{
-                    .m_id          = sourceId,
-                    .m_contentHash = contentHash(k_sourceHash),
-                    .m_fingerprint = fingerprint,
-                    .m_provenance  = WgcSourceProvenance{
-                        .m_targetGeneration = TargetGeneration::fromValue(7),
-                        .m_capturedAt       = "2026-07-23T09:15:00+09:00",
+                    .id          = sourceId,
+                    .contentHash = contentHash(k_sourceHash),
+                    .fingerprint = fingerprint,
+                    .provenance  = WgcSourceProvenance{
+                        .targetGeneration = TargetGeneration::fromValue(7),
+                        .capturedAt       = "2026-07-23T09:15:00+09:00",
                     },
                 }
             );
@@ -58,10 +58,10 @@ namespace uf::annotation
             REQUIRE(click.has_value());
             auto regression = RegressionCase{
                 RegressionSpec{
-                    .m_id             = test::regressionId(k_regressionId),
-                    .m_sourceId       = sourceId,
-                    .m_classification = RegressionClassification::Positive,
-                    .m_expectation    = ResolvedRegression{pageId},
+                    .id             = test::regressionId(k_regressionId),
+                    .sourceId       = sourceId,
+                    .classification = RegressionClassification::Positive,
+                    .expectation    = ResolvedRegression{pageId},
                 }
             };
 
@@ -71,7 +71,7 @@ namespace uf::annotation
                 {*source},
                 {
                     AuthoringRecognizerSpec{
-                        .m_definition = test::recognizer(
+                        .definition = test::recognizer(
                             fingerprint,
                             actionId,
                             "daily_button",
@@ -81,10 +81,10 @@ namespace uf::annotation
                             {pageId},
                             *click
                         ),
-                        .m_sourceId = sourceId,
+                        .sourceId = sourceId,
                     },
                     AuthoringRecognizerSpec{
-                        .m_definition = test::recognizer(
+                        .definition = test::recognizer(
                             fingerprint,
                             anchorId,
                             "home_marker",
@@ -92,7 +92,7 @@ namespace uf::annotation
                             test::pixelRect(1, 1, 1, 1),
                             test::pixelRect(0, 0, 3, 3)
                         ),
-                        .m_sourceId = sourceId,
+                        .sourceId = sourceId,
                     },
                 },
                 {test::page(pageId, "home", {anchorId})},
@@ -248,21 +248,21 @@ namespace uf::annotation
     {
         struct ClassificationCase final
         {
-            RegressionClassification  m_classification{};
-            std::string_view          m_text{};
+            RegressionClassification  classification{};
+            std::string_view          text{};
         };
         constexpr auto cases = std::array{
             ClassificationCase{
-                .m_classification = RegressionClassification::Positive,
-                .m_text           = "positive",
+                .classification = RegressionClassification::Positive,
+                .text           = "positive",
             },
             ClassificationCase{
-                .m_classification = RegressionClassification::Negative,
-                .m_text           = "negative",
+                .classification = RegressionClassification::Negative,
+                .text           = "negative",
             },
             ClassificationCase{
-                .m_classification = RegressionClassification::Confusable,
-                .m_text           = "confusable",
+                .classification = RegressionClassification::Confusable,
+                .text           = "confusable",
             }
         };
 
@@ -272,18 +272,18 @@ namespace uf::annotation
             auto const encoded = replaceOnce(
                 canonical,
                 "classification = \"positive\"",
-                std::string{"classification = \""} + std::string{entry.m_text} + '"'
+                std::string{"classification = \""} + std::string{entry.text} + '"'
             );
             auto const parsed = parseAuthoringDocument(encoded);
             REQUIRE(parsed.has_value());
             REQUIRE(parsed->regressions().size() == 1U);
             auto const& regression = parsed->regressions().front();
-            CHECK(regression.classification() == entry.m_classification);
+            CHECK(regression.classification() == entry.classification);
             auto const* p_resolved = std::get_if<ResolvedRegression>(
                 &regression.expectation()
             );
             REQUIRE(p_resolved != nullptr);
-            CHECK(p_resolved->m_pageId == test::pageId(k_pageId));
+            CHECK(p_resolved->pageId == test::pageId(k_pageId));
             CHECK(serializeAuthoringDocument(*parsed) == encoded);
         }
     }

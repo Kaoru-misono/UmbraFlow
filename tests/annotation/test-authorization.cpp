@@ -45,12 +45,12 @@ namespace uf::annotation
 
         struct AuthorizationFixture final
         {
-            ProjectFingerprint m_fingerprint{test::fingerprint()};
-            RecognitionCatalog m_catalog;
-            RecognizerId m_actionId{test::recognizerId(k_actionId)};
-            Frame            m_frame;
-            ResolvedPage     m_resolvedPage;
-            ObservationLease m_lease;
+            ProjectFingerprint fingerprint{test::fingerprint()};
+            RecognitionCatalog catalog;
+            RecognizerId actionId{test::recognizerId(k_actionId)};
+            Frame            frame;
+            ResolvedPage     resolvedPage;
+            ObservationLease lease;
         };
 
         auto authorizationFixture() -> AuthorizationFixture
@@ -118,12 +118,12 @@ namespace uf::annotation
             );
             REQUIRE(lease.has_value());
             return AuthorizationFixture{
-                .m_fingerprint  = projectFingerprint,
-                .m_catalog      = std::move(catalog),
-                .m_actionId     = actionId,
-                .m_frame        = std::move(frame),
-                .m_resolvedPage = std::get<ResolvedPage>(std::move(*outcome)),
-                .m_lease        = *lease,
+                .fingerprint  = projectFingerprint,
+                .catalog      = std::move(catalog),
+                .actionId     = actionId,
+                .frame        = std::move(frame),
+                .resolvedPage = std::get<ResolvedPage>(std::move(*outcome)),
+                .lease        = *lease,
             };
         }
 
@@ -136,8 +136,8 @@ namespace uf::annotation
             auto parsedLabel = Label::create(std::move(label));
             REQUIRE(parsedLabel.has_value());
             return Detection{
-                fixture.m_frame.sessionId(),
-                fixture.m_frame.targetGeneration(),
+                fixture.frame.sessionId(),
+                fixture.frame.targetGeneration(),
                 frameId,
                 *std::move(parsedLabel),
                 Rect<FrameSpace>{1.0F, 1.0F, 1.0F, 1.0F},
@@ -151,11 +151,11 @@ namespace uf::annotation
         ) -> ActionDeliveryState
         {
             return ActionDeliveryState{
-                .m_liveFingerprint  = liveFingerprint,
-                .m_sessionId        = fixture.m_frame.sessionId(),
-                .m_targetGeneration = fixture.m_frame.targetGeneration(),
-                .m_frameId          = fixture.m_frame.id(),
-                .m_now              = test::instantAt(MonotonicInstant::Duration{105}),
+                .liveFingerprint  = liveFingerprint,
+                .sessionId        = fixture.frame.sessionId(),
+                .targetGeneration = fixture.frame.targetGeneration(),
+                .frameId          = fixture.frame.id(),
+                .now              = test::instantAt(MonotonicInstant::Duration{105}),
             };
         }
     }
@@ -164,27 +164,27 @@ namespace uf::annotation
     {
         auto const fixture = authorizationFixture();
         auto const actionDetection = ActionDetection::create(
-            fixture.m_catalog,
-            fixture.m_actionId,
-            detection(fixture, fixture.m_frame.id())
+            fixture.catalog,
+            fixture.actionId,
+            detection(fixture, fixture.frame.id())
         );
         REQUIRE(actionDetection.has_value());
 
         auto const authorized = authorizeCoordinateAction(
-            fixture.m_catalog,
-            fixture.m_resolvedPage,
+            fixture.catalog,
+            fixture.resolvedPage,
             *actionDetection,
-            fixture.m_lease,
-            delivery(fixture, fixture.m_fingerprint)
+            fixture.lease,
+            delivery(fixture, fixture.fingerprint)
         );
         CHECK(authorized.has_value());
 
         auto const incompatibleFingerprint = test::fingerprint(5, 4);
         auto const incompatible = authorizeCoordinateAction(
-            fixture.m_catalog,
-            fixture.m_resolvedPage,
+            fixture.catalog,
+            fixture.resolvedPage,
             *actionDetection,
-            fixture.m_lease,
+            fixture.lease,
             delivery(fixture, incompatibleFingerprint)
         );
         REQUIRE_FALSE(incompatible.has_value());
@@ -194,17 +194,17 @@ namespace uf::annotation
         );
 
         auto const staleDetection = ActionDetection::create(
-            fixture.m_catalog,
-            fixture.m_actionId,
+            fixture.catalog,
+            fixture.actionId,
             detection(fixture, FrameId{12})
         );
         REQUIRE(staleDetection.has_value());
         auto const stale = authorizeCoordinateAction(
-            fixture.m_catalog,
-            fixture.m_resolvedPage,
+            fixture.catalog,
+            fixture.resolvedPage,
             *staleDetection,
-            fixture.m_lease,
-            delivery(fixture, fixture.m_fingerprint)
+            fixture.lease,
+            delivery(fixture, fixture.fingerprint)
         );
         REQUIRE_FALSE(stale.has_value());
         test::requireErrorKind(
@@ -217,9 +217,9 @@ namespace uf::annotation
     {
         auto const fixture = authorizationFixture();
         auto const mismatched = ActionDetection::create(
-            fixture.m_catalog,
-            fixture.m_actionId,
-            detection(fixture, fixture.m_frame.id(), "other_button")
+            fixture.catalog,
+            fixture.actionId,
+            detection(fixture, fixture.frame.id(), "other_button")
         );
         REQUIRE_FALSE(mismatched.has_value());
         requireActionRejected(
@@ -228,9 +228,9 @@ namespace uf::annotation
         );
 
         auto const anchorBound = ActionDetection::create(
-            fixture.m_catalog,
+            fixture.catalog,
             test::recognizerId(k_anchorId),
-            detection(fixture, fixture.m_frame.id(), "home_marker")
+            detection(fixture, fixture.frame.id(), "home_marker")
         );
         REQUIRE_FALSE(anchorBound.has_value());
         requireActionRejected(
@@ -351,11 +351,11 @@ namespace uf::annotation
             *actionDetection,
             *lease,
             ActionDeliveryState{
-                .m_liveFingerprint  = projectFingerprint,
-                .m_sessionId        = frame.sessionId(),
-                .m_targetGeneration = frame.targetGeneration(),
-                .m_frameId          = frame.id(),
-                .m_now              = test::instantAt(MonotonicInstant::Duration{105}),
+                .liveFingerprint  = projectFingerprint,
+                .sessionId        = frame.sessionId(),
+                .targetGeneration = frame.targetGeneration(),
+                .frameId          = frame.id(),
+                .now              = test::instantAt(MonotonicInstant::Duration{105}),
             }
         );
         REQUIRE_FALSE(unauthorized.has_value());
@@ -369,9 +369,9 @@ namespace uf::annotation
     {
         auto const fixture = authorizationFixture();
         auto const actionDetection = ActionDetection::create(
-            fixture.m_catalog,
-            fixture.m_actionId,
-            detection(fixture, fixture.m_frame.id())
+            fixture.catalog,
+            fixture.actionId,
+            detection(fixture, fixture.frame.id())
         );
         REQUIRE(actionDetection.has_value());
 
@@ -380,7 +380,7 @@ namespace uf::annotation
         auto anchorOnly     = std::vector<RecognizerDefinition>{};
         anchorOnly.emplace_back(
             test::recognizer(
-                fixture.m_fingerprint,
+                fixture.fingerprint,
                 anchorId,
                 "home_marker",
                 AnnotationType::PageAnchor,
@@ -391,16 +391,16 @@ namespace uf::annotation
 
         // Same project identity, but the action recognizer is gone.
         auto const withoutAction = test::catalog(
-            fixture.m_fingerprint,
+            fixture.fingerprint,
             anchorOnly,
             {test::page(pageId, "home", {anchorId})}
         );
         auto const absent = authorizeCoordinateAction(
             withoutAction,
-            fixture.m_resolvedPage,
+            fixture.resolvedPage,
             *actionDetection,
-            fixture.m_lease,
-            delivery(fixture, fixture.m_fingerprint)
+            fixture.lease,
+            delivery(fixture, fixture.fingerprint)
         );
         REQUIRE_FALSE(absent.has_value());
         requireActionRejected(
@@ -411,17 +411,17 @@ namespace uf::annotation
         // Structurally identical catalog under a different project identity.
         auto foreign = RecognitionCatalog::create(
             test::projectId("personal.other"),
-            fixture.m_fingerprint,
+            fixture.fingerprint,
             std::move(anchorOnly),
             {test::page(pageId, "home", {anchorId})}
         );
         REQUIRE(foreign.has_value());
         auto const mismatchedProject = authorizeCoordinateAction(
             *foreign,
-            fixture.m_resolvedPage,
+            fixture.resolvedPage,
             *actionDetection,
-            fixture.m_lease,
-            delivery(fixture, fixture.m_fingerprint)
+            fixture.lease,
+            delivery(fixture, fixture.fingerprint)
         );
         REQUIRE_FALSE(mismatchedProject.has_value());
         requireActionRejected(

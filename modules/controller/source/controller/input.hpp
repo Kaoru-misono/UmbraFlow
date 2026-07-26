@@ -160,18 +160,18 @@ namespace uf
 
     struct ReleaseOutcome final
     {
-        HeldInput m_input;
-        Status    m_result{};
+        HeldInput input;
+        Status    result{};
     };
 
     struct AuditRecord final
     {
-        uintptr m_target{};
-        uint32  m_message{};
-        uintptr m_wParam{};
-        intptr  m_lParam{};
+        uintptr target{};
+        uint32  message{};
+        uintptr wParam{};
+        intptr  lParam{};
 
-        MonotonicInstant m_at;
+        MonotonicInstant at;
     };
 
     class AuditLog final
@@ -200,9 +200,9 @@ namespace uf
     {
         struct DeliveryIdentity final
         {
-            uintptr          m_window{};
-            SessionId        m_sessionId;
-            TargetGeneration m_generation{};
+            uintptr          window{};
+            SessionId        sessionId;
+            TargetGeneration generation{};
 
             auto operator==(DeliveryIdentity const&) const -> bool = default;
         };

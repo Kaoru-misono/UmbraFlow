@@ -55,8 +55,8 @@ namespace uf::engine
 
         struct ProjectFixture final
         {
-            anno::AuthoringDocument    m_document;
-            anno::AuthoringSourceAsset m_sourceAsset;
+            anno::AuthoringDocument    document;
+            anno::AuthoringSourceAsset sourceAsset;
         };
 
         // A three-by-two RGBA source whose top-left pixel is RGB(1, 2, 3). The
@@ -90,10 +90,10 @@ namespace uf::engine
 
             auto source = anno::AuthoringSource::create(
                 anno::AuthoringSourceSpec{
-                    .m_id          = sourceId,
-                    .m_contentHash = *sourceHash,
-                    .m_fingerprint = fingerprint,
-                    .m_provenance  = anno::ImportedSourceProvenance{},
+                    .id          = sourceId,
+                    .contentHash = *sourceHash,
+                    .fingerprint = fingerprint,
+                    .provenance  = anno::ImportedSourceProvenance{},
                 }
             );
             REQUIRE(source.has_value());
@@ -108,7 +108,7 @@ namespace uf::engine
                 {*source},
                 {
                     anno::AuthoringRecognizerSpec{
-                        .m_definition = anno::test::recognizer(
+                        .definition = anno::test::recognizer(
                             fingerprint,
                             anchorId,
                             "home_marker",
@@ -116,10 +116,10 @@ namespace uf::engine
                             anno::test::pixelRect(0, 0, 1, 1),
                             anno::test::pixelRect(0, 0, 3, 2)
                         ),
-                        .m_sourceId = sourceId,
+                        .sourceId = sourceId,
                     },
                     anno::AuthoringRecognizerSpec{
-                        .m_definition = anno::test::recognizer(
+                        .definition = anno::test::recognizer(
                             fingerprint,
                             actionId,
                             "daily_button",
@@ -129,7 +129,7 @@ namespace uf::engine
                             {pageId},
                             *click
                         ),
-                        .m_sourceId = sourceId,
+                        .sourceId = sourceId,
                     },
                 },
                 {anno::test::page(pageId, "home", {anchorId})},
@@ -137,10 +137,10 @@ namespace uf::engine
             );
             REQUIRE(document.has_value());
             return ProjectFixture{
-                .m_document    = *std::move(document),
-                .m_sourceAsset = anno::AuthoringSourceAsset{
-                    .m_id       = sourceId,
-                    .m_pngBytes = std::move(pngBytes),
+                .document    = *std::move(document),
+                .sourceAsset = anno::AuthoringSourceAsset{
+                    .id       = sourceId,
+                    .pngBytes = std::move(pngBytes),
                 },
             };
         }
@@ -228,11 +228,11 @@ namespace uf::engine
         {
             writeText(
                 root / "generated" / "annotations.runtime.toml",
-                compiled.m_runtimeManifestToml
+                compiled.runtimeManifestToml
             );
-            for (auto const& asset : compiled.m_templateAssets)
+            for (auto const& asset : compiled.templateAssets)
             {
-                writeFile(root / asset.m_relativePath, asset.m_pngBytes);
+                writeFile(root / asset.relativePath, asset.pngBytes);
             }
         }
 
@@ -289,8 +289,8 @@ namespace uf::engine
     {
         auto const temp     = TemporaryDir{"round-trip"};
         auto const fixture  = projectFixture();
-        auto const assets   = std::span{&fixture.m_sourceAsset, std::size_t{1}};
-        auto const compiled = anno::compileAuthoringDocument(fixture.m_document, assets);
+        auto const assets   = std::span{&fixture.sourceAsset, std::size_t{1}};
+        auto const compiled = anno::compileAuthoringDocument(fixture.document, assets);
         REQUIRE(compiled.has_value());
         writeProject(temp.path(), *compiled);
 
@@ -299,10 +299,10 @@ namespace uf::engine
 
         auto const fingerprint = anno::test::fingerprint(3, 2, 96, 96);
         auto const frame       = matchingFrame(fingerprint);
-        auto const outcome     = loaded->m_runtime.recognizePage(
+        auto const outcome     = loaded->runtime.recognizePage(
             frame,
             fingerprint,
-            anno::RecognitionPolicy{.m_maximumPixelComparisons = 100}
+            anno::RecognitionPolicy{.maximumPixelComparisons = 100}
         );
         REQUIRE(outcome.has_value());
         REQUIRE(std::holds_alternative<anno::ResolvedPage>(*outcome));
@@ -331,13 +331,13 @@ namespace uf::engine
     {
         auto const temp     = TemporaryDir{"missing-template"};
         auto const fixture  = projectFixture();
-        auto const assets   = std::span{&fixture.m_sourceAsset, std::size_t{1}};
-        auto const compiled = anno::compileAuthoringDocument(fixture.m_document, assets);
+        auto const assets   = std::span{&fixture.sourceAsset, std::size_t{1}};
+        auto const compiled = anno::compileAuthoringDocument(fixture.document, assets);
         REQUIRE(compiled.has_value());
         // Write only the manifest, leaving every referenced template absent.
         writeText(
             temp.path() / "generated" / "annotations.runtime.toml",
-            compiled->m_runtimeManifestToml
+            compiled->runtimeManifestToml
         );
 
         auto const loaded = loadRuntimeProject(temp.path());
@@ -352,17 +352,17 @@ namespace uf::engine
     {
         auto const temp     = TemporaryDir{"tampered-template"};
         auto const fixture  = projectFixture();
-        auto const assets   = std::span{&fixture.m_sourceAsset, std::size_t{1}};
-        auto const compiled = anno::compileAuthoringDocument(fixture.m_document, assets);
+        auto const assets   = std::span{&fixture.sourceAsset, std::size_t{1}};
+        auto const compiled = anno::compileAuthoringDocument(fixture.document, assets);
         REQUIRE(compiled.has_value());
         writeProject(temp.path(), *compiled);
 
-        REQUIRE_FALSE(compiled->m_templateAssets.empty());
-        auto const& tampered = compiled->m_templateAssets.front();
-        auto bytes           = tampered.m_pngBytes;
+        REQUIRE_FALSE(compiled->templateAssets.empty());
+        auto const& tampered = compiled->templateAssets.front();
+        auto bytes           = tampered.pngBytes;
         REQUIRE_FALSE(bytes.empty());
         bytes.back() ^= std::byte{0x01};
-        writeFile(temp.path() / tampered.m_relativePath, bytes);
+        writeFile(temp.path() / tampered.relativePath, bytes);
 
         auto const loaded = loadRuntimeProject(temp.path());
         REQUIRE_FALSE(loaded.has_value());

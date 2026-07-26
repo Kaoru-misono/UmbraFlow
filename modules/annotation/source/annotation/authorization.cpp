@@ -79,7 +79,7 @@ namespace uf::annotation
         ActionDeliveryState delivery
     ) -> Status
     {
-        if (delivery.m_liveFingerprint != catalog.fingerprint())
+        if (delivery.liveFingerprint != catalog.fingerprint())
         {
             return fail(
                 AutomationErrorKind::TargetCompatibilityUnverified,
@@ -125,9 +125,9 @@ namespace uf::annotation
         auto const resolvedIdentity = pageEvidence.frameIdentity();
         auto const detectionIdentity = identityOf(actionDetection.detection());
         auto const deliveryIdentity = FrameIdentity{
-            delivery.m_sessionId,
-            delivery.m_targetGeneration,
-            delivery.m_frameId
+            delivery.sessionId,
+            delivery.targetGeneration,
+            delivery.frameId
         };
         if (
             resolvedIdentity != detectionIdentity
@@ -141,10 +141,10 @@ namespace uf::annotation
         }
 
         return lease.validate(
-            delivery.m_sessionId,
-            delivery.m_targetGeneration,
-            delivery.m_frameId,
-            delivery.m_now
+            delivery.sessionId,
+            delivery.targetGeneration,
+            delivery.frameId,
+            delivery.now
         );
     }
 }

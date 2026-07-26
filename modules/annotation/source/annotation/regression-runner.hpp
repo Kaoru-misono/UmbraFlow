@@ -12,18 +12,18 @@ namespace uf::annotation
 {
     struct RegressionCaseReport final
     {
-        RegressionId             m_id;
-        SourceId                 m_sourceId;
-        RegressionClassification m_classification{};
-        RegressionExpectation    m_expectation;
-        PageRecognitionAttempt   m_attempt;
-        bool                     m_matchesExpectation{};
+        RegressionId             id;
+        SourceId                 sourceId;
+        RegressionClassification classification{};
+        RegressionExpectation    expectation;
+        PageRecognitionAttempt   attempt;
+        bool                     matchesExpectation{};
     };
 
     struct RegressionSuiteReport final
     {
-        std::vector<RegressionCaseReport> m_cases{};
-        bool                              m_completedAllCases{};
+        std::vector<RegressionCaseReport> cases{};
+        bool                              completedAllCases{};
     };
 
     // Compilation, closure validation, runtime construction, and decoding one

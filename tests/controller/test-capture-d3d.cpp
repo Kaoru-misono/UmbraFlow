@@ -69,8 +69,8 @@ namespace uf
     {
         struct Case final
         {
-            std::size_t m_sourceLength{};
-            std::size_t m_rowPitch{};
+            std::size_t sourceLength{};
+            std::size_t rowPitch{};
         };
 
         for (
@@ -80,12 +80,12 @@ namespace uf
             }
         )
         {
-            CAPTURE(testCase.m_sourceLength);
-            CAPTURE(testCase.m_rowPitch);
-            auto const source = std::vector<std::byte>(testCase.m_sourceLength);
+            CAPTURE(testCase.sourceLength);
+            CAPTURE(testCase.rowPitch);
+            auto const source = std::vector<std::byte>(testCase.sourceLength);
             auto const result = controller_detail::readbackBgra8(
                 source,
-                testCase.m_rowPitch,
+                testCase.rowPitch,
                 2,
                 2
             );
@@ -136,9 +136,9 @@ namespace uf
     {
         struct Case final
         {
-            int32 m_extendedWidth{};
-            int32 m_extendedHeight{};
-            bool m_accepted{};
+            int32 extendedWidth{};
+            int32 extendedHeight{};
+            bool accepted{};
         };
 
         for (
@@ -151,16 +151,16 @@ namespace uf
             }
         )
         {
-            CAPTURE(testCase.m_extendedWidth);
-            CAPTURE(testCase.m_extendedHeight);
+            CAPTURE(testCase.extendedWidth);
+            CAPTURE(testCase.extendedHeight);
             auto const result = controller_detail::ClientCropRect::create(
                 {800, 450},
-                {testCase.m_extendedWidth, testCase.m_extendedHeight},
+                {testCase.extendedWidth, testCase.extendedHeight},
                 {0, 0},
                 {800, 450}
             );
 
-            if (testCase.m_accepted)
+            if (testCase.accepted)
             {
                 REQUIRE(result.has_value());
                 CHECK(result->right() == 800);
@@ -180,9 +180,9 @@ namespace uf
     {
         struct Case final
         {
-            uint32 m_clientWidth{};
-            uint32 m_clientHeight{};
-            bool m_accepted{};
+            uint32 clientWidth{};
+            uint32 clientHeight{};
+            bool accepted{};
         };
 
         for (
@@ -193,16 +193,16 @@ namespace uf
             }
         )
         {
-            CAPTURE(testCase.m_clientWidth);
-            CAPTURE(testCase.m_clientHeight);
+            CAPTURE(testCase.clientWidth);
+            CAPTURE(testCase.clientHeight);
             auto const result = controller_detail::ClientCropRect::create(
                 {800, 450},
                 {800, 450},
                 {2, 45},
-                {testCase.m_clientWidth, testCase.m_clientHeight}
+                {testCase.clientWidth, testCase.clientHeight}
             );
 
-            if (testCase.m_accepted)
+            if (testCase.accepted)
             {
                 REQUIRE(result.has_value());
                 CHECK(result->right() == 800);
@@ -222,14 +222,14 @@ namespace uf
     {
         struct Case final
         {
-            uint32 m_frameWidth{};
-            uint32 m_frameHeight{};
-            int32 m_extendedWidth{};
-            int32 m_extendedHeight{};
-            int32 m_offsetX{};
-            int32 m_offsetY{};
-            uint32 m_clientWidth{};
-            uint32 m_clientHeight{};
+            uint32 frameWidth{};
+            uint32 frameHeight{};
+            int32 extendedWidth{};
+            int32 extendedHeight{};
+            int32 offsetX{};
+            int32 offsetY{};
+            uint32 clientWidth{};
+            uint32 clientHeight{};
         };
 
         for (
@@ -245,19 +245,19 @@ namespace uf
             }
         )
         {
-            CAPTURE(testCase.m_frameWidth);
-            CAPTURE(testCase.m_frameHeight);
-            CAPTURE(testCase.m_extendedWidth);
-            CAPTURE(testCase.m_extendedHeight);
-            CAPTURE(testCase.m_offsetX);
-            CAPTURE(testCase.m_offsetY);
-            CAPTURE(testCase.m_clientWidth);
-            CAPTURE(testCase.m_clientHeight);
+            CAPTURE(testCase.frameWidth);
+            CAPTURE(testCase.frameHeight);
+            CAPTURE(testCase.extendedWidth);
+            CAPTURE(testCase.extendedHeight);
+            CAPTURE(testCase.offsetX);
+            CAPTURE(testCase.offsetY);
+            CAPTURE(testCase.clientWidth);
+            CAPTURE(testCase.clientHeight);
             auto const result = controller_detail::ClientCropRect::create(
-                {testCase.m_frameWidth, testCase.m_frameHeight},
-                {testCase.m_extendedWidth, testCase.m_extendedHeight},
-                {testCase.m_offsetX, testCase.m_offsetY},
-                {testCase.m_clientWidth, testCase.m_clientHeight}
+                {testCase.frameWidth, testCase.frameHeight},
+                {testCase.extendedWidth, testCase.extendedHeight},
+                {testCase.offsetX, testCase.offsetY},
+                {testCase.clientWidth, testCase.clientHeight}
             );
             REQUIRE_FALSE(result.has_value());
             CHECK(
@@ -279,9 +279,9 @@ namespace uf
 
         struct Case final
         {
-            uint32 m_sourceWidth{};
-            uint32 m_sourceHeight{};
-            bool m_accepted{};
+            uint32 sourceWidth{};
+            uint32 sourceHeight{};
+            bool accepted{};
         };
 
         for (
@@ -292,14 +292,14 @@ namespace uf
             }
         )
         {
-            CAPTURE(testCase.m_sourceWidth);
-            CAPTURE(testCase.m_sourceHeight);
+            CAPTURE(testCase.sourceWidth);
+            CAPTURE(testCase.sourceHeight);
             auto const result = crop->ensureWithinSource(
-                testCase.m_sourceWidth,
-                testCase.m_sourceHeight
+                testCase.sourceWidth,
+                testCase.sourceHeight
             );
 
-            if (testCase.m_accepted)
+            if (testCase.accepted)
             {
                 CHECK(result.has_value());
                 continue;
@@ -317,10 +317,10 @@ namespace uf
     {
         struct Case final
         {
-            std::size_t m_sourceLength{};
-            std::size_t m_rowPitch{};
-            uint32 m_width{};
-            uint32 m_height{};
+            std::size_t sourceLength{};
+            std::size_t rowPitch{};
+            uint32 width{};
+            uint32 height{};
         };
 
         for (
@@ -332,16 +332,16 @@ namespace uf
             }
         )
         {
-            CAPTURE(testCase.m_sourceLength);
-            CAPTURE(testCase.m_rowPitch);
-            CAPTURE(testCase.m_width);
-            CAPTURE(testCase.m_height);
-            auto const source = std::vector<std::byte>(testCase.m_sourceLength);
+            CAPTURE(testCase.sourceLength);
+            CAPTURE(testCase.rowPitch);
+            CAPTURE(testCase.width);
+            CAPTURE(testCase.height);
+            auto const source = std::vector<std::byte>(testCase.sourceLength);
             auto const result = controller_detail::readbackBgra8(
                 source,
-                testCase.m_rowPitch,
-                testCase.m_width,
-                testCase.m_height
+                testCase.rowPitch,
+                testCase.width,
+                testCase.height
             );
             REQUIRE_FALSE(result.has_value());
             CHECK(

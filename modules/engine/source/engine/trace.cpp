@@ -163,70 +163,70 @@ namespace uf::engine
         auto builder = TraceLineBuilder{};
 
         builder.addString("schema", k_traceSchema);
-        builder.addString("kind", traceEventKindName(event.m_kind));
+        builder.addString("kind", traceEventKindName(event.kind));
 
-        if (event.m_frameId.has_value())
+        if (event.frameId.has_value())
         {
-            builder.addLiteral("frameId", std::format("{}", event.m_frameId->value()));
+            builder.addLiteral("frameId", std::format("{}", event.frameId->value()));
         }
 
-        if (event.m_sessionId.has_value())
+        if (event.sessionId.has_value())
         {
-            builder.addLiteral("sessionId", std::format("{}", event.m_sessionId->value()));
+            builder.addLiteral("sessionId", std::format("{}", event.sessionId->value()));
         }
 
-        if (event.m_targetGeneration.has_value())
+        if (event.targetGeneration.has_value())
         {
             builder.addLiteral(
                 "targetGeneration",
-                std::format("{}", event.m_targetGeneration->value())
+                std::format("{}", event.targetGeneration->value())
             );
         }
 
-        if (event.m_pageId.has_value())
+        if (event.pageId.has_value())
         {
-            builder.addString("pageId", event.m_pageId->value().toString());
+            builder.addString("pageId", event.pageId->value().toString());
         }
 
-        if (event.m_recognizerId.has_value())
+        if (event.recognizerId.has_value())
         {
-            builder.addString("recognizerId", event.m_recognizerId->value().toString());
+            builder.addString("recognizerId", event.recognizerId->value().toString());
         }
 
-        if (event.m_sadScore.has_value())
+        if (event.sadScore.has_value())
         {
-            builder.addLiteral("sadScore", std::format("{}", *event.m_sadScore));
+            builder.addLiteral("sadScore", std::format("{}", *event.sadScore));
         }
 
-        if (event.m_maximumSad.has_value())
+        if (event.maximumSad.has_value())
         {
-            builder.addLiteral("maximumSad", std::format("{}", *event.m_maximumSad));
+            builder.addLiteral("maximumSad", std::format("{}", *event.maximumSad));
         }
 
-        if (event.m_matchedRect.has_value())
+        if (event.matchedRect.has_value())
         {
-            builder.addLiteral("matchedRect", serializePixelRect(*event.m_matchedRect));
+            builder.addLiteral("matchedRect", serializePixelRect(*event.matchedRect));
         }
 
-        if (event.m_stopReason.has_value())
+        if (event.stopReason.has_value())
         {
-            builder.addString("stopReason", stopReasonName(*event.m_stopReason));
+            builder.addString("stopReason", stopReasonName(*event.stopReason));
         }
 
-        if (event.m_errorKind.has_value())
+        if (event.errorKind.has_value())
         {
-            builder.addString("errorKind", errorKindName(*event.m_errorKind));
+            builder.addString("errorKind", errorKindName(*event.errorKind));
         }
 
-        if (event.m_message.has_value())
+        if (event.message.has_value())
         {
-            builder.addString("message", *event.m_message);
+            builder.addString("message", *event.message);
         }
 
-        if (event.m_clickClient.has_value())
+        if (event.clickClient.has_value())
         {
-            builder.addLiteral("clickClientX", std::format("{}", event.m_clickClient->x()));
-            builder.addLiteral("clickClientY", std::format("{}", event.m_clickClient->y()));
+            builder.addLiteral("clickClientX", std::format("{}", event.clickClient->x()));
+            builder.addLiteral("clickClientY", std::format("{}", event.clickClient->y()));
         }
 
         return builder.finish();

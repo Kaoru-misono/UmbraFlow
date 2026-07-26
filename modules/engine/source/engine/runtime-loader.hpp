@@ -20,7 +20,7 @@ namespace uf::engine
     // ever exists once loadRuntimeProject has established its invariant.
     struct LoadedRuntime final
     {
-        annotation::RecognitionRuntime m_runtime;
+        annotation::RecognitionRuntime runtime;
     };
 
     // Reads a published annotation project from disk and builds its recognition

@@ -51,7 +51,7 @@ namespace uf::annotation
                 fingerprint,
                 {
                     RuntimeRecognizerSpec{
-                        .m_definition = test::recognizer(
+                        .definition = test::recognizer(
                             fingerprint,
                             actionId,
                             "daily_button",
@@ -61,11 +61,11 @@ namespace uf::annotation
                             {pageId},
                             *click
                         ),
-                        .m_templateHash = contentHash(k_actionHash),
-                        .m_sourceHash   = contentHash(k_sourceHash),
+                        .templateHash = contentHash(k_actionHash),
+                        .sourceHash   = contentHash(k_sourceHash),
                     },
                     RuntimeRecognizerSpec{
-                        .m_definition = test::recognizer(
+                        .definition = test::recognizer(
                             fingerprint,
                             anchorId,
                             "home_marker",
@@ -73,8 +73,8 @@ namespace uf::annotation
                             test::pixelRect(1, 1, 1, 1),
                             test::pixelRect(0, 0, 3, 3)
                         ),
-                        .m_templateHash = contentHash(k_anchorHash),
-                        .m_sourceHash   = contentHash(k_sourceHash),
+                        .templateHash = contentHash(k_anchorHash),
+                        .sourceHash   = contentHash(k_sourceHash),
                     },
                 },
                 {test::page(pageId, "home", {anchorId})}
@@ -150,7 +150,7 @@ namespace uf::annotation
         CHECK(parsed->catalog().pages().size() == 1U);
         auto const* p_asset = parsed->findAsset(test::recognizerId(k_anchorId));
         REQUIRE(p_asset != nullptr);
-        CHECK(p_asset->m_templateHash == contentHash(k_anchorHash));
+        CHECK(p_asset->templateHash == contentHash(k_anchorHash));
     }
 
     TEST_CASE("annotation runtime manifest preserves canonical TOML string escapes")

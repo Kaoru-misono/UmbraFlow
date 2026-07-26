@@ -15,8 +15,8 @@ namespace uf::m0_demo
     {
         struct IntegrityCase final
         {
-            uint32 m_rid{};
-            std::string_view m_label{};
+            uint32 rid{};
+            std::string_view label{};
         };
 
         auto const cases = std::array{
@@ -30,7 +30,7 @@ namespace uf::m0_demo
         };
         for (auto const& testCase : cases)
         {
-            CHECK(IntegrityLevel::fromRid(testCase.m_rid).label() == testCase.m_label);
+            CHECK(IntegrityLevel::fromRid(testCase.rid).label() == testCase.label);
         }
     }
 
@@ -49,7 +49,7 @@ namespace uf::m0_demo
                 targetWindow,
                 baseline,
                 movedCursor
-            ).m_cursorOk
+            ).cursorOk
         );
         CHECK_FALSE(
             checkGuard(
@@ -57,7 +57,7 @@ namespace uf::m0_demo
                 targetWindow,
                 baseline,
                 changedForeground
-            ).m_foregroundOk
+            ).foregroundOk
         );
     }
 
@@ -74,7 +74,7 @@ namespace uf::m0_demo
                 baseline,
                 baseline
             );
-            CHECK_FALSE(check.m_baselineBackgroundOk);
+            CHECK_FALSE(check.baselineBackgroundOk);
             CHECK_FALSE(check.passed());
         }
     }
@@ -87,8 +87,8 @@ namespace uf::m0_demo
         auto const check = checkGuard(policy, 0x10, baseline, different);
 
         CHECK(check.passed());
-        CHECK(check.m_baselineBackgroundOk);
-        CHECK(check.m_foregroundOk);
-        CHECK(check.m_cursorOk);
+        CHECK(check.baselineBackgroundOk);
+        CHECK(check.foregroundOk);
+        CHECK(check.cursorOk);
     }
 }

@@ -45,11 +45,11 @@ namespace uf::cli
         std::filesystem::remove(path);
 
         auto const first = engine::TraceEvent{
-            .m_kind = engine::TraceEventKind::SessionStarted,
+            .kind = engine::TraceEventKind::SessionStarted,
         };
         auto const second = engine::TraceEvent{
-            .m_kind    = engine::TraceEventKind::Failure,
-            .m_message = std::string{"boom"},
+            .kind    = engine::TraceEventKind::Failure,
+            .message = std::string{"boom"},
         };
 
         {

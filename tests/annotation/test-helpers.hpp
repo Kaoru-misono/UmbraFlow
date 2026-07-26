@@ -109,14 +109,14 @@ namespace uf::annotation::test
         auto result = RecognizerDefinition::create(
             projectFingerprint,
             RecognizerSpec{
-                .m_id             = id,
-                .m_name           = resourceName(std::move(name)),
-                .m_annotationType = annotationType,
-                .m_templateRect   = templateRect,
-                .m_searchRoi      = searchRoi,
-                .m_threshold      = similarityThreshold,
-                .m_defaultClick   = defaultClick,
-                .m_allowedPageIds = std::move(allowedPageIds),
+                .id             = id,
+                .name           = resourceName(std::move(name)),
+                .annotationType = annotationType,
+                .templateRect   = templateRect,
+                .searchRoi      = searchRoi,
+                .threshold      = similarityThreshold,
+                .defaultClick   = defaultClick,
+                .allowedPageIds = std::move(allowedPageIds),
             }
         );
         REQUIRE(result.has_value());
@@ -132,10 +132,10 @@ namespace uf::annotation::test
     {
         auto result = PageSignature::create(
             PageSpec{
-                .m_id        = id,
-                .m_name      = resourceName(std::move(name)),
-                .m_required  = std::move(required),
-                .m_forbidden = std::move(forbidden),
+                .id        = id,
+                .name      = resourceName(std::move(name)),
+                .required  = std::move(required),
+                .forbidden = std::move(forbidden),
             }
         );
         REQUIRE(result.has_value());

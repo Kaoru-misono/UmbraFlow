@@ -176,21 +176,21 @@ namespace uf::annotation
                 RecognizerDefinition::create(
                     fingerprint,
                     RecognizerSpec{
-                        .m_id             = id,
-                        .m_name           = std::move(name),
-                        .m_annotationType = *annotationType,
-                        .m_templateRect   = templateRect,
-                        .m_searchRoi      = searchRoi,
-                        .m_threshold      = threshold,
-                        .m_defaultClick   = defaultClick,
-                        .m_allowedPageIds = std::move(allowedPageIds),
+                        .id             = id,
+                        .name           = std::move(name),
+                        .annotationType = *annotationType,
+                        .templateRect   = templateRect,
+                        .searchRoi      = searchRoi,
+                        .threshold      = threshold,
+                        .defaultClick   = defaultClick,
+                        .allowedPageIds = std::move(allowedPageIds),
                     }
                 )
             );
             return RuntimeRecognizerSpec{
-                .m_definition   = std::move(definition),
-                .m_templateHash = templateHash,
-                .m_sourceHash   = sourceHash,
+                .definition   = std::move(definition),
+                .templateHash = templateHash,
+                .sourceHash   = sourceHash,
             };
         }
 
@@ -216,10 +216,10 @@ namespace uf::annotation
             UF_TRY_VALUE(forbidden, parseRecognizerIds(forbiddenText));
             return PageSignature::create(
                 PageSpec{
-                    .m_id        = id,
-                    .m_name      = std::move(name),
-                    .m_required  = std::move(required),
-                    .m_forbidden = std::move(forbidden),
+                    .id        = id,
+                    .name      = std::move(name),
+                    .required  = std::move(required),
+                    .forbidden = std::move(forbidden),
                 }
             );
         }
@@ -257,7 +257,7 @@ namespace uf::annotation
             {},
             [](RuntimeRecognizerSpec const& recognizer) -> ResourceId
             {
-                return recognizer.m_definition.id().value();
+                return recognizer.definition.id().value();
             }
         );
 
@@ -267,16 +267,16 @@ namespace uf::annotation
         assets.reserve(recognizers.size());
         for (auto& recognizer : recognizers)
         {
-            auto const id = recognizer.m_definition.id();
+            auto const id = recognizer.definition.id();
             assets.emplace_back(
                 RuntimeRecognizerAsset{
-                    .m_id           = id,
-                    .m_templateHash = recognizer.m_templateHash,
-                    .m_sourceHash   = recognizer.m_sourceHash,
-                    .m_templatePath = templatePath(recognizer.m_templateHash),
+                    .id           = id,
+                    .templateHash = recognizer.templateHash,
+                    .sourceHash   = recognizer.sourceHash,
+                    .templatePath = templatePath(recognizer.templateHash),
                 }
             );
-            definitions.emplace_back(std::move(recognizer.m_definition));
+            definitions.emplace_back(std::move(recognizer.definition));
         }
 
         UF_TRY_VALUE(
@@ -318,7 +318,7 @@ namespace uf::annotation
         auto const found = std::ranges::find(
             m_assets,
             id,
-            &RuntimeRecognizerAsset::m_id
+            &RuntimeRecognizerAsset::id
         );
         return found == m_assets.end() ? nullptr : &*found;
     }
@@ -366,16 +366,16 @@ namespace uf::annotation
                 detail::annotationTypeText(recognizer.annotationType())
             );
             detail::appendStringField(output, "kind", "gray_template");
-            detail::appendStringField(output, "template", p_asset->m_templatePath);
+            detail::appendStringField(output, "template", p_asset->templatePath);
             detail::appendStringField(
                 output,
                 "template_hash",
-                p_asset->m_templateHash.toString()
+                p_asset->templateHash.toString()
             );
             detail::appendStringField(
                 output,
                 "source_hash",
-                p_asset->m_sourceHash.toString()
+                p_asset->sourceHash.toString()
             );
             detail::appendRectField(output, "template_rect", recognizer.templateRect());
             detail::appendRectField(output, "search_roi", recognizer.searchRoi());

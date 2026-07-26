@@ -45,11 +45,11 @@ namespace uf::annotation
 
     struct ActionDeliveryState final
     {
-        ProjectFingerprint m_liveFingerprint;
-        SessionId          m_sessionId;
-        TargetGeneration   m_targetGeneration{};
-        FrameId            m_frameId;
-        MonotonicInstant   m_now;
+        ProjectFingerprint liveFingerprint;
+        SessionId          sessionId;
+        TargetGeneration   targetGeneration{};
+        FrameId            frameId;
+        MonotonicInstant   now;
     };
 
     [[nodiscard]]

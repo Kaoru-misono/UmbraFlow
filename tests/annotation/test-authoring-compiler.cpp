@@ -41,14 +41,14 @@ namespace uf::annotation
 
         struct CompilerFixture final
         {
-            AuthoringDocument    m_document;
-            AuthoringSourceAsset m_sourceAsset;
+            AuthoringDocument    document;
+            AuthoringSourceAsset sourceAsset;
         };
 
         struct CompilationWorkFixture final
         {
-            AuthoringDocument                 m_document;
-            std::vector<AuthoringSourceAsset> m_sourceAssets{};
+            AuthoringDocument                 document;
+            std::vector<AuthoringSourceAsset> sourceAssets{};
         };
 
         [[nodiscard]]
@@ -102,10 +102,10 @@ namespace uf::annotation
             REQUIRE(sourceHash.has_value());
             auto source = AuthoringSource::create(
                 AuthoringSourceSpec{
-                    .m_id          = sourceId,
-                    .m_contentHash = *sourceHash,
-                    .m_fingerprint = fingerprint,
-                    .m_provenance  = ImportedSourceProvenance{},
+                    .id          = sourceId,
+                    .contentHash = *sourceHash,
+                    .fingerprint = fingerprint,
+                    .provenance  = ImportedSourceProvenance{},
                 }
             );
             REQUIRE(source.has_value());
@@ -120,7 +120,7 @@ namespace uf::annotation
                 {*source},
                 {
                     AuthoringRecognizerSpec{
-                        .m_definition = test::recognizer(
+                        .definition = test::recognizer(
                             fingerprint,
                             anchorId,
                             "home_marker",
@@ -128,10 +128,10 @@ namespace uf::annotation
                             test::pixelRect(0, 0, 1, 1),
                             test::pixelRect(0, 0, 3, 2)
                         ),
-                        .m_sourceId = sourceId,
+                        .sourceId = sourceId,
                     },
                     AuthoringRecognizerSpec{
-                        .m_definition = test::recognizer(
+                        .definition = test::recognizer(
                             fingerprint,
                             actionId,
                             "daily_button",
@@ -141,7 +141,7 @@ namespace uf::annotation
                             {pageId},
                             *click
                         ),
-                        .m_sourceId = sourceId,
+                        .sourceId = sourceId,
                     },
                 },
                 {test::page(pageId, "home", {anchorId})},
@@ -149,10 +149,10 @@ namespace uf::annotation
             );
             REQUIRE(document.has_value());
             return CompilerFixture{
-                .m_document    = *std::move(document),
-                .m_sourceAsset = AuthoringSourceAsset{
-                    .m_id       = sourceId,
-                    .m_pngBytes = std::move(pngBytes),
+                .document    = *std::move(document),
+                .sourceAsset = AuthoringSourceAsset{
+                    .id       = sourceId,
+                    .pngBytes = std::move(pngBytes),
                 },
             };
         }
@@ -171,10 +171,10 @@ namespace uf::annotation
             REQUIRE(sourceHash.has_value());
             auto source = AuthoringSource::create(
                 AuthoringSourceSpec{
-                    .m_id          = sourceId,
-                    .m_contentHash = *sourceHash,
-                    .m_fingerprint = fingerprint,
-                    .m_provenance  = ImportedSourceProvenance{},
+                    .id          = sourceId,
+                    .contentHash = *sourceHash,
+                    .fingerprint = fingerprint,
+                    .provenance  = ImportedSourceProvenance{},
                 }
             );
             REQUIRE(source.has_value());
@@ -195,7 +195,7 @@ namespace uf::annotation
                 recognizerIds.emplace_back(recognizerId);
                 recognizers.emplace_back(
                     AuthoringRecognizerSpec{
-                        .m_definition = test::recognizer(
+                        .definition = test::recognizer(
                             fingerprint,
                             recognizerId,
                             std::format("work_item_{}", index),
@@ -203,7 +203,7 @@ namespace uf::annotation
                             checkedAt(templateRects, index),
                             searchRoi
                         ),
-                        .m_sourceId = sourceId,
+                        .sourceId = sourceId,
                     }
                 );
             }
@@ -224,10 +224,10 @@ namespace uf::annotation
             );
             REQUIRE(document.has_value());
             return CompilerFixture{
-                .m_document    = *std::move(document),
-                .m_sourceAsset = AuthoringSourceAsset{
-                    .m_id       = sourceId,
-                    .m_pngBytes = sourceBytes,
+                .document    = *std::move(document),
+                .sourceAsset = AuthoringSourceAsset{
+                    .id       = sourceId,
+                    .pngBytes = sourceBytes,
                 },
             };
         }
@@ -258,10 +258,10 @@ namespace uf::annotation
                 );
                 auto source = AuthoringSource::create(
                     AuthoringSourceSpec{
-                        .m_id          = sourceId,
-                        .m_contentHash = *sourceHash,
-                        .m_fingerprint = fingerprint,
-                        .m_provenance  = ImportedSourceProvenance{},
+                        .id          = sourceId,
+                        .contentHash = *sourceHash,
+                        .fingerprint = fingerprint,
+                        .provenance  = ImportedSourceProvenance{},
                     }
                 );
                 REQUIRE(source.has_value());
@@ -269,8 +269,8 @@ namespace uf::annotation
                 sourceIds.emplace_back(sourceId);
                 sourceAssets.emplace_back(
                     AuthoringSourceAsset{
-                        .m_id       = sourceId,
-                        .m_pngBytes = sourceBytes,
+                        .id       = sourceId,
+                        .pngBytes = sourceBytes,
                     }
                 );
             }
@@ -288,7 +288,7 @@ namespace uf::annotation
                 );
                 recognizers.emplace_back(
                     AuthoringRecognizerSpec{
-                        .m_definition = test::recognizer(
+                        .definition = test::recognizer(
                             fingerprint,
                             recognizerId,
                             std::format("boundary_item_{}", index),
@@ -296,7 +296,7 @@ namespace uf::annotation
                             checkedAt(templateRects, index),
                             searchRoi
                         ),
-                        .m_sourceId = sourceIds.front(),
+                        .sourceId = sourceIds.front(),
                     }
                 );
             }
@@ -311,8 +311,8 @@ namespace uf::annotation
             );
             REQUIRE(document.has_value());
             return CompilationWorkFixture{
-                .m_document     = *std::move(document),
-                .m_sourceAssets = std::move(sourceAssets),
+                .document     = *std::move(document),
+                .sourceAssets = std::move(sourceAssets),
             };
         }
     }
@@ -320,39 +320,39 @@ namespace uf::annotation
     TEST_CASE("annotation authoring compilation is deterministic and runtime-complete")
     {
         auto const fixture       = compilerFixture();
-        auto const authoringToml = serializeAuthoringDocument(fixture.m_document);
+        auto const authoringToml = serializeAuthoringDocument(fixture.document);
         CHECK(authoringToml.find("capture_backend = \"imported\"") != std::string::npos);
         CHECK(authoringToml.find("target_generation") == std::string::npos);
         auto const reopened = parseAuthoringDocument(authoringToml);
         REQUIRE(reopened.has_value());
 
-        auto const assets = std::span{&fixture.m_sourceAsset, std::size_t{1}};
-        auto const first  = compileAuthoringDocument(fixture.m_document, assets);
+        auto const assets = std::span{&fixture.sourceAsset, std::size_t{1}};
+        auto const first  = compileAuthoringDocument(fixture.document, assets);
         auto const second = compileAuthoringDocument(*reopened, assets);
         REQUIRE(first.has_value());
         REQUIRE(second.has_value());
-        CHECK(first->m_runtimeManifestToml == second->m_runtimeManifestToml);
-        CHECK(first->m_templateAssets.size() == 2U);
-        CHECK(second->m_templateAssets.size() == 2U);
-        for (auto index = std::size_t{0}; index < first->m_templateAssets.size(); ++index)
+        CHECK(first->runtimeManifestToml == second->runtimeManifestToml);
+        CHECK(first->templateAssets.size() == 2U);
+        CHECK(second->templateAssets.size() == 2U);
+        for (auto index = std::size_t{0}; index < first->templateAssets.size(); ++index)
         {
             CHECK(
-                checkedAt(first->m_templateAssets, index).m_hash
-                == checkedAt(second->m_templateAssets, index).m_hash
+                checkedAt(first->templateAssets, index).hash
+                == checkedAt(second->templateAssets, index).hash
             );
             CHECK(
-                checkedAt(first->m_templateAssets, index).m_pngBytes
-                == checkedAt(second->m_templateAssets, index).m_pngBytes
+                checkedAt(first->templateAssets, index).pngBytes
+                == checkedAt(second->templateAssets, index).pngBytes
             );
         }
 
-        auto const parsed = parseRuntimeManifest(first->m_runtimeManifestToml);
+        auto const parsed = parseRuntimeManifest(first->runtimeManifestToml);
         REQUIRE(parsed.has_value());
         CHECK(parsed->catalog().recognizers().size() == 2U);
         CHECK(parsed->catalog().pages().size() == 1U);
         for (auto const& asset : parsed->assets())
         {
-            CHECK(asset.m_sourceHash == fixture.m_document.sources().front().contentHash());
+            CHECK(asset.sourceHash == fixture.document.sources().front().contentHash());
         }
     }
 
@@ -363,7 +363,7 @@ namespace uf::annotation
         auto const secondHash = sha256(secondPng);
         REQUIRE(secondHash.has_value());
 
-        auto authoringToml = serializeAuthoringDocument(fixture.m_document);
+        auto authoringToml = serializeAuthoringDocument(fixture.document);
 
         auto const annotationPosition = authoringToml.find("\n[[annotation]]");
         REQUIRE(annotationPosition != std::string::npos);
@@ -397,35 +397,35 @@ namespace uf::annotation
 
         auto const document = parseAuthoringDocument(authoringToml);
         REQUIRE(document.has_value());
-        auto const firstHash = sha256(fixture.m_sourceAsset.m_pngBytes);
+        auto const firstHash = sha256(fixture.sourceAsset.pngBytes);
         REQUIRE(firstHash.has_value());
         auto const assets = std::array{
             AuthoringSourceAsset{
-                .m_id       = test::sourceId(k_secondSourceId),
-                .m_pngBytes = std::move(secondPng),
+                .id       = test::sourceId(k_secondSourceId),
+                .pngBytes = std::move(secondPng),
             },
-            fixture.m_sourceAsset,
+            fixture.sourceAsset,
         };
         auto const compiled = compileAuthoringDocument(*document, assets);
         REQUIRE(compiled.has_value());
 
-        auto const* p_anchor = compiled->m_runtimeManifest.findAsset(
+        auto const* p_anchor = compiled->runtimeManifest.findAsset(
             test::recognizerId(k_anchorId)
         );
-        auto const* p_action = compiled->m_runtimeManifest.findAsset(
+        auto const* p_action = compiled->runtimeManifest.findAsset(
             test::recognizerId(k_actionId)
         );
         REQUIRE(p_anchor != nullptr);
         REQUIRE(p_action != nullptr);
-        CHECK(p_anchor->m_sourceHash == *firstHash);
-        CHECK(p_action->m_sourceHash == *secondHash);
-        CHECK(p_anchor->m_templateHash != p_action->m_templateHash);
+        CHECK(p_anchor->sourceHash == *firstHash);
+        CHECK(p_action->sourceHash == *secondHash);
+        CHECK(p_anchor->templateHash != p_action->templateHash);
     }
 
     TEST_CASE("annotation authoring compilation deduplicates identical template crops")
     {
         auto const fixture = compilerFixture();
-        auto authoringToml = serializeAuthoringDocument(fixture.m_document);
+        auto authoringToml = serializeAuthoringDocument(fixture.document);
 
         auto const rectPosition = authoringToml.find("template_rect = [1, 0, 2, 2]");
         REQUIRE(rectPosition != std::string::npos);
@@ -444,14 +444,14 @@ namespace uf::annotation
 
         auto const document = parseAuthoringDocument(authoringToml);
         REQUIRE(document.has_value());
-        auto const assets   = std::span{&fixture.m_sourceAsset, std::size_t{1}};
+        auto const assets   = std::span{&fixture.sourceAsset, std::size_t{1}};
         auto const compiled = compileAuthoringDocument(*document, assets);
         REQUIRE(compiled.has_value());
-        REQUIRE(compiled->m_runtimeManifest.assets().size() == 2U);
-        CHECK(compiled->m_templateAssets.size() == 1U);
+        REQUIRE(compiled->runtimeManifest.assets().size() == 2U);
+        CHECK(compiled->templateAssets.size() == 1U);
         CHECK(
-            compiled->m_runtimeManifest.assets().front().m_templateHash
-            == compiled->m_runtimeManifest.assets().back().m_templateHash
+            compiled->runtimeManifest.assets().front().templateHash
+            == compiled->runtimeManifest.assets().back().templateHash
         );
     }
 
@@ -462,8 +462,8 @@ namespace uf::annotation
         );
 
         auto const result = compileAuthoringDocument(
-            fixture.m_document,
-            fixture.m_sourceAssets
+            fixture.document,
+            fixture.sourceAssets
         );
         REQUIRE_FALSE(result.has_value());
         test::requireErrorKind(
@@ -483,8 +483,8 @@ namespace uf::annotation
         );
 
         auto const rejected = compileAuthoringDocument(
-            fixture.m_document,
-            fixture.m_sourceAssets
+            fixture.document,
+            fixture.sourceAssets
         );
         REQUIRE_FALSE(rejected.has_value());
         test::requireErrorKind(
@@ -511,9 +511,9 @@ namespace uf::annotation
         );
 
         auto const result = compileAuthoringDocument(
-            fixture.m_document,
+            fixture.document,
             std::span{
-                &fixture.m_sourceAsset,
+                &fixture.sourceAsset,
                 std::size_t{1}
             }
         );
@@ -531,18 +531,18 @@ namespace uf::annotation
     TEST_CASE("annotation authoring compilation rejects missing or tampered source closure")
     {
         auto const fixture = compilerFixture();
-        auto const missing = compileAuthoringDocument(fixture.m_document, {});
+        auto const missing = compileAuthoringDocument(fixture.document, {});
         REQUIRE_FALSE(missing.has_value());
         test::requireErrorKind(
             missing.error(),
             AutomationErrorKind::InvalidResource
         );
 
-        auto tamperedAsset = fixture.m_sourceAsset;
-        REQUIRE_FALSE(tamperedAsset.m_pngBytes.empty());
-        tamperedAsset.m_pngBytes.front() ^= std::byte{0x01};
+        auto tamperedAsset = fixture.sourceAsset;
+        REQUIRE_FALSE(tamperedAsset.pngBytes.empty());
+        tamperedAsset.pngBytes.front() ^= std::byte{0x01};
         auto const tampered = compileAuthoringDocument(
-            fixture.m_document,
+            fixture.document,
             std::span{&tamperedAsset, std::size_t{1}}
         );
         REQUIRE_FALSE(tampered.has_value());
@@ -556,17 +556,17 @@ namespace uf::annotation
     {
         auto fixture = compilerFixture();
 
-        fixture.m_sourceAsset.m_pngBytes = encodedSource(2, 2);
+        fixture.sourceAsset.pngBytes = encodedSource(2, 2);
 
-        auto const replacementHash = sha256(fixture.m_sourceAsset.m_pngBytes);
+        auto const replacementHash = sha256(fixture.sourceAsset.pngBytes);
         REQUIRE(replacementHash.has_value());
         auto const fingerprint = test::fingerprint(3, 2, 96, 96);
         auto replacementSource = AuthoringSource::create(
             AuthoringSourceSpec{
-                .m_id          = fixture.m_sourceAsset.m_id,
-                .m_contentHash = *replacementHash,
-                .m_fingerprint = fingerprint,
-                .m_provenance  = ImportedSourceProvenance{},
+                .id          = fixture.sourceAsset.id,
+                .contentHash = *replacementHash,
+                .fingerprint = fingerprint,
+                .provenance  = ImportedSourceProvenance{},
             }
         );
         REQUIRE(replacementSource.has_value());
@@ -578,7 +578,7 @@ namespace uf::annotation
             {*replacementSource},
             {
                 AuthoringRecognizerSpec{
-                    .m_definition = test::recognizer(
+                    .definition = test::recognizer(
                         fingerprint,
                         anchorId,
                         "home_marker",
@@ -586,7 +586,7 @@ namespace uf::annotation
                         test::pixelRect(0, 0, 1, 1),
                         test::pixelRect(0, 0, 3, 2)
                     ),
-                    .m_sourceId = fixture.m_sourceAsset.m_id,
+                    .sourceId = fixture.sourceAsset.id,
                 },
             },
             {test::page(pageId, "home", {anchorId})},
@@ -596,7 +596,7 @@ namespace uf::annotation
 
         auto const incompatible = compileAuthoringDocument(
             *replacementDocument,
-            std::span{&fixture.m_sourceAsset, std::size_t{1}}
+            std::span{&fixture.sourceAsset, std::size_t{1}}
         );
         REQUIRE_FALSE(incompatible.has_value());
         test::requireErrorKind(

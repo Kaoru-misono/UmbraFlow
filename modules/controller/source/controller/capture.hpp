@@ -105,10 +105,10 @@ namespace uf
     // OS-build-dependent cursor and border state recorded when a session is created.
     struct CaptureHygiene final
     {
-        uint32 m_osBuild{};
-        bool   m_cursorCaptureDisabled{};
-        bool   m_borderlessSupported{};
-        bool   m_borderRequired{};
+        uint32 osBuild{};
+        bool   cursorCaptureDisabled{};
+        bool   borderlessSupported{};
+        bool   borderRequired{};
 
         auto operator==(CaptureHygiene const&) const -> bool = default;
     };

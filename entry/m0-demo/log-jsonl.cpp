@@ -82,25 +82,25 @@ namespace uf::m0_demo
         auto serializeLineUnchecked(LogLine const& line) -> std::string
         {
             auto output = std::string{"{\"elapsed_ns\":"};
-            output += std::to_string(line.m_elapsedNanoseconds);
+            output += std::to_string(line.elapsedNanoseconds);
             output += ",\"loop_idx\":";
-            appendOptionalNumber(output, line.m_loopIndex);
+            appendOptionalNumber(output, line.loopIndex);
             output += ",\"phase\":";
-            output += escapeJsonString(line.m_phase);
+            output += escapeJsonString(line.phase);
             output += ",\"event\":";
-            output += escapeJsonString(line.m_event);
+            output += escapeJsonString(line.event);
             output += ",\"frame_id\":";
-            appendOptionalNumber(output, line.m_frameId);
+            appendOptionalNumber(output, line.frameId);
             output += ",\"target_generation\":";
-            appendOptionalNumber(output, line.m_targetGeneration);
+            appendOptionalNumber(output, line.targetGeneration);
             output += ",\"confidence\":";
-            appendOptionalNumber(output, line.m_confidence);
+            appendOptionalNumber(output, line.confidence);
             output += ",\"lease_ok\":";
-            appendOptionalBoolean(output, line.m_leaseOk);
+            appendOptionalBoolean(output, line.leaseOk);
             output += ",\"outcome\":";
-            output += escapeJsonString(line.m_outcome);
+            output += escapeJsonString(line.outcome);
             output += ",\"detail\":";
-            output += escapeJsonString(line.m_detail);
+            output += escapeJsonString(line.detail);
             output += '}';
             return output;
         }
@@ -216,45 +216,45 @@ namespace uf::m0_demo
     }
 
     LogLine::LogLine(std::string phase, std::string event)
-        : m_phase{std::move(phase)}
-        , m_event{std::move(event)}
+        : phase{std::move(phase)}
+        , event{std::move(event)}
     {
     }
 
-    auto LogLine::loopIndex(uint32 loopIndex) && -> LogLine
+    auto LogLine::withLoopIndex(uint32 loopIndexValue) && -> LogLine
     {
-        m_loopIndex = loopIndex;
+        loopIndex = loopIndexValue;
         return std::move(*this);
     }
 
-    auto LogLine::frame(Frame const& frameValue) && -> LogLine
+    auto LogLine::withFrame(Frame const& frameValue) && -> LogLine
     {
-        m_frameId          = frameValue.id().value();
-        m_targetGeneration = frameValue.targetGeneration().value();
+        frameId          = frameValue.id().value();
+        targetGeneration = frameValue.targetGeneration().value();
         return std::move(*this);
     }
 
-    auto LogLine::confidence(uint64 confidenceValue) && -> LogLine
+    auto LogLine::withConfidence(uint64 confidenceValue) && -> LogLine
     {
-        m_confidence = confidenceValue;
+        confidence = confidenceValue;
         return std::move(*this);
     }
 
-    auto LogLine::leaseOk(bool leaseOkValue) && -> LogLine
+    auto LogLine::withLeaseOk(bool leaseOkValue) && -> LogLine
     {
-        m_leaseOk = leaseOkValue;
+        leaseOk = leaseOkValue;
         return std::move(*this);
     }
 
-    auto LogLine::outcome(std::string outcomeValue) && -> LogLine
+    auto LogLine::withOutcome(std::string outcomeValue) && -> LogLine
     {
-        m_outcome = std::move(outcomeValue);
+        outcome = std::move(outcomeValue);
         return std::move(*this);
     }
 
-    auto LogLine::detail(std::string detailValue) && -> LogLine
+    auto LogLine::withDetail(std::string detailValue) && -> LogLine
     {
-        m_detail = std::move(detailValue);
+        detail = std::move(detailValue);
         return std::move(*this);
     }
 
@@ -348,7 +348,7 @@ namespace uf::m0_demo
 
     auto JsonlLog::write(LogLine line) -> Status
     {
-        line.m_elapsedNanoseconds = elapsedNanosecondsSince(
+        line.elapsedNanoseconds = elapsedNanosecondsSince(
             MonotonicInstant::now(),
             m_origin
         );

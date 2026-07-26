@@ -27,15 +27,15 @@ namespace uf::cli
     // maps that to the dedicated absent exit code.
     struct RunReport final
     {
-        bool m_actionDelivered{};
+        bool actionDelivered{};
 
-        std::string m_pageName{};
-        std::string m_actionName{};
+        std::string pageName{};
+        std::string actionName{};
 
-        float m_clickClientX{};
-        float m_clickClientY{};
+        float clickClientX{};
+        float clickClientY{};
 
-        std::string m_tracePath{};
+        std::string tracePath{};
     };
 
     // Runs the hardcoded smoke flow: bind the target, wait for the page, find

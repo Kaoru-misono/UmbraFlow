@@ -31,14 +31,14 @@ namespace uf::annotation
 
         struct RecognizerWork final
         {
-            SourceId    m_sourceId;
-            std::size_t m_recognizerIndex{};
+            SourceId    sourceId;
+            std::size_t recognizerIndex{};
         };
 
         struct TemplateTaskKey final
         {
-            SourceId  m_sourceId;
-            PixelRect m_templateRect;
+            SourceId  sourceId;
+            PixelRect templateRect;
         };
 
         struct TemplateTaskLess final
@@ -49,23 +49,23 @@ namespace uf::annotation
                 TemplateTaskKey const& right
             ) const noexcept -> bool
             {
-                if (left.m_sourceId != right.m_sourceId)
+                if (left.sourceId != right.sourceId)
                 {
-                    return left.m_sourceId.value() < right.m_sourceId.value();
+                    return left.sourceId.value() < right.sourceId.value();
                 }
 
                 return (
                     std::tuple{
-                        left.m_templateRect.x(),
-                        left.m_templateRect.y(),
-                        left.m_templateRect.width(),
-                        left.m_templateRect.height()
+                        left.templateRect.x(),
+                        left.templateRect.y(),
+                        left.templateRect.width(),
+                        left.templateRect.height()
                     }
                     < std::tuple{
-                        right.m_templateRect.x(),
-                        right.m_templateRect.y(),
-                        right.m_templateRect.width(),
-                        right.m_templateRect.height()
+                        right.templateRect.x(),
+                        right.templateRect.y(),
+                        right.templateRect.width(),
+                        right.templateRect.height()
                     }
                 );
             }
@@ -126,12 +126,12 @@ namespace uf::annotation
             {
                 auto const templateRect = checkedAt(
                     recognizers,
-                    work.m_recognizerIndex
+                    work.recognizerIndex
                 ).templateRect();
                 auto const insertion = templateTasks.emplace(
                     TemplateTaskKey{
-                        .m_sourceId     = work.m_sourceId,
-                        .m_templateRect = templateRect,
+                        .sourceId     = work.sourceId,
+                        .templateRect = templateRect,
                     }
                 );
                 if (!insertion.second)
@@ -195,7 +195,7 @@ namespace uf::annotation
             {},
             [&sourceAssets](std::size_t index) -> ResourceId
             {
-                return checkedAt(sourceAssets, index).m_id.value();
+                return checkedAt(sourceAssets, index).id.value();
             }
         );
         for (auto index = std::size_t{0}; index < sources.size(); ++index)
@@ -203,7 +203,7 @@ namespace uf::annotation
             auto const& source    = checkedAt(sources, index);
             auto const assetIndex = checkedAt(assetOrder, index);
             auto const& asset     = checkedAt(sourceAssets, assetIndex);
-            if (asset.m_id != source.id())
+            if (asset.id != source.id())
             {
                 return invalidCompilation(
                     "authoring compilation requires one distinct matching asset per source"
@@ -224,13 +224,13 @@ namespace uf::annotation
             auto const& recognizer   = checkedAt(recognizers, index);
             auto const& relationship = checkedAt(recognizerSources, index);
             UF_CHECK_MSG(
-                relationship.m_recognizerId == recognizer.id(),
+                relationship.recognizerId == recognizer.id(),
                 "authoring recognizer source order is inconsistent"
             );
             recognizerWork.emplace_back(
                 RecognizerWork{
-                    .m_sourceId        = relationship.m_sourceId,
-                    .m_recognizerIndex = index,
+                    .sourceId        = relationship.sourceId,
+                    .recognizerIndex = index,
                 }
             );
         }
@@ -238,11 +238,11 @@ namespace uf::annotation
             recognizerWork,
             [](RecognizerWork const& left, RecognizerWork const& right) noexcept
             {
-                if (left.m_sourceId != right.m_sourceId)
+                if (left.sourceId != right.sourceId)
                 {
-                    return left.m_sourceId.value() < right.m_sourceId.value();
+                    return left.sourceId.value() < right.sourceId.value();
                 }
-                return left.m_recognizerIndex < right.m_recognizerIndex;
+                return left.recognizerIndex < right.recognizerIndex;
             }
         );
         UF_TRY_VALUE(
@@ -262,7 +262,7 @@ namespace uf::annotation
             auto const& source      = checkedAt(sources, sourceIndex);
             auto const assetIndex   = checkedAt(assetOrder, sourceIndex);
             auto const& sourceAsset = checkedAt(sourceAssets, assetIndex);
-            if (sourceAsset.m_pngBytes.size() > image::k_maximumPngFileBytes)
+            if (sourceAsset.pngBytes.size() > image::k_maximumPngFileBytes)
             {
                 return invalidCompilation(
                     std::format(
@@ -273,7 +273,7 @@ namespace uf::annotation
             }
             UF_TRY_VALUE_CONTEXT(
                 actualHash,
-                sha256(sourceAsset.m_pngBytes),
+                sha256(sourceAsset.pngBytes),
                 std::format("hashing authoring source {}", source.relativePath())
             );
             if (actualHash != source.contentHash())
@@ -288,30 +288,30 @@ namespace uf::annotation
             UF_TRY_VALUE_CONTEXT(
                 decoded,
                 image::decodePng(
-                    sourceAsset.m_pngBytes,
+                    sourceAsset.pngBytes,
                     source.relativePath()
                 ),
                 std::format("decoding authoring source {}", source.relativePath())
             );
             auto const fingerprint = source.fingerprint();
             if (
-                decoded.m_width != fingerprint.width()
-                || decoded.m_height != fingerprint.height()
+                decoded.width != fingerprint.width()
+                || decoded.height != fingerprint.height()
             )
             {
                 return invalidCompilation(
                     std::format(
                         "authoring source {} decoded as {}x{}, expected {}x{}",
                         source.relativePath(),
-                        decoded.m_width,
-                        decoded.m_height,
+                        decoded.width,
+                        decoded.height,
                         fingerprint.width(),
                         fingerprint.height()
                     )
                 );
             }
             auto const stride = checkedMultiply(
-                static_cast<std::size_t>(decoded.m_width),
+                static_cast<std::size_t>(decoded.width),
                 k_rgbaBytesPerPixel
             );
             if (!stride)
@@ -322,57 +322,57 @@ namespace uf::annotation
             }
             UF_TRY_VALUE_CONTEXT(
                 bgraPixels,
-                image::rgba8ToBgra8(std::move(decoded.m_pixels)),
+                image::rgba8ToBgra8(std::move(decoded.pixels)),
                 std::format("converting authoring source {}", source.relativePath())
             );
             while (
                 taskIterator != templateTasks.end()
-                && taskIterator->m_sourceId == source.id()
+                && taskIterator->sourceId == source.id()
             )
             {
                 UF_TRY_VALUE_CONTEXT(
                     generated,
                     generateTemplateAsset(
                         bgraPixels,
-                        decoded.m_width,
-                        decoded.m_height,
+                        decoded.width,
+                        decoded.height,
                         *stride,
-                        taskIterator->m_templateRect
+                        taskIterator->templateRect
                     ),
                     std::format(
                         "generating template [{}, {}, {}, {}] from source {}",
-                        taskIterator->m_templateRect.x(),
-                        taskIterator->m_templateRect.y(),
-                        taskIterator->m_templateRect.width(),
-                        taskIterator->m_templateRect.height(),
+                        taskIterator->templateRect.x(),
+                        taskIterator->templateRect.y(),
+                        taskIterator->templateRect.width(),
+                        taskIterator->templateRect.height(),
                         source.relativePath()
                     )
                 );
-                if (generated.m_pngBytes.size() > image::k_maximumPngFileBytes)
+                if (generated.pngBytes.size() > image::k_maximumPngFileBytes)
                 {
                     return invalidCompilation(
                         std::format(
                             "generated template [{}, {}, {}, {}] from source {} exceeds the PNG byte quota",
-                            taskIterator->m_templateRect.x(),
-                            taskIterator->m_templateRect.y(),
-                            taskIterator->m_templateRect.width(),
-                            taskIterator->m_templateRect.height(),
+                            taskIterator->templateRect.x(),
+                            taskIterator->templateRect.y(),
+                            taskIterator->templateRect.width(),
+                            taskIterator->templateRect.height(),
                             source.relativePath()
                         )
                     );
                 }
 
-                auto const generatedHash = generated.m_hash;
+                auto const generatedHash = generated.hash;
                 auto const existing      = std::ranges::find(
                     templateAssets,
                     generatedHash,
-                    &TemplateAsset::m_hash
+                    &TemplateAsset::hash
                 );
                 if (existing == templateAssets.end())
                 {
                     auto const nextTotal = checkedAdd(
                         compiledTemplateBytes,
-                        generated.m_pngBytes.size()
+                        generated.pngBytes.size()
                     );
                     if (
                         !nextTotal
@@ -386,7 +386,7 @@ namespace uf::annotation
                     compiledTemplateBytes = *nextTotal;
                     templateAssets.emplace_back(std::move(generated));
                 }
-                else if (existing->m_pngBytes != generated.m_pngBytes)
+                else if (existing->pngBytes != generated.pngBytes)
                 {
                     return invalidCompilation(
                         "distinct template bytes produced the same content hash"
@@ -412,35 +412,35 @@ namespace uf::annotation
         {
             auto const& recognizer = checkedAt(
                 recognizers,
-                work.m_recognizerIndex
+                work.recognizerIndex
             );
             auto const generated = generatedTaskHashes.find(
                 TemplateTaskKey{
-                    .m_sourceId     = work.m_sourceId,
-                    .m_templateRect = recognizer.templateRect(),
+                    .sourceId     = work.sourceId,
+                    .templateRect = recognizer.templateRect(),
                 }
             );
             UF_CHECK_MSG(
                 generated != generatedTaskHashes.end(),
                 "authoring recognizer template task was not generated"
             );
-            auto const* p_source = document.findSource(work.m_sourceId);
+            auto const* p_source = document.findSource(work.sourceId);
             UF_CHECK_MSG(
                 p_source != nullptr,
                 "authoring recognizer source closure references an unknown source"
             );
             runtimeRecognizers.emplace_back(
                 RuntimeRecognizerSpec{
-                    .m_definition   = recognizer,
-                    .m_templateHash = generated->second,
-                    .m_sourceHash   = p_source->contentHash(),
+                    .definition   = recognizer,
+                    .templateHash = generated->second,
+                    .sourceHash   = p_source->contentHash(),
                 }
             );
         }
         std::ranges::sort(
             templateAssets,
             {},
-            &TemplateAsset::m_relativePath
+            &TemplateAsset::relativePath
         );
 
         auto pages = std::vector<PageSignature>{
@@ -459,9 +459,9 @@ namespace uf::annotation
         );
         auto runtimeManifestToml = serializeRuntimeManifest(runtimeManifest);
         return CompiledAuthoringProject{
-            .m_runtimeManifest     = std::move(runtimeManifest),
-            .m_runtimeManifestToml = std::move(runtimeManifestToml),
-            .m_templateAssets      = std::move(templateAssets),
+            .runtimeManifest     = std::move(runtimeManifest),
+            .runtimeManifestToml = std::move(runtimeManifestToml),
+            .templateAssets      = std::move(templateAssets),
         };
     }
 }

@@ -33,8 +33,8 @@ namespace uf::annotation
 
     struct WgcSourceProvenance final
     {
-        TargetGeneration m_targetGeneration{};
-        std::string      m_capturedAt{};
+        TargetGeneration targetGeneration{};
+        std::string      capturedAt{};
 
         auto operator==(WgcSourceProvenance const&) const -> bool = default;
     };
@@ -51,10 +51,10 @@ namespace uf::annotation
 
     struct AuthoringSourceSpec final
     {
-        SourceId           m_id;
-        ContentHash        m_contentHash;
-        ProjectFingerprint m_fingerprint;
-        SourceProvenance   m_provenance{};
+        SourceId           id;
+        ContentHash        contentHash;
+        ProjectFingerprint fingerprint;
+        SourceProvenance   provenance{};
     };
 
     class AuthoringSource final
@@ -95,16 +95,16 @@ namespace uf::annotation
     // the region, never where the author got them.
     struct AuthoringRecognizerSpec final
     {
-        RecognizerDefinition m_definition;
-        SourceId             m_sourceId;
-        bool                 m_shared{};
+        RecognizerDefinition definition;
+        SourceId             sourceId;
+        bool                 shared{};
     };
 
     struct AuthoringRecognizerSource final
     {
-        RecognizerId m_recognizerId;
-        SourceId     m_sourceId;
-        bool         m_shared{};
+        RecognizerId recognizerId;
+        SourceId     sourceId;
+        bool         shared{};
     };
 
     enum class RegressionClassification : uint8
@@ -116,7 +116,7 @@ namespace uf::annotation
 
     struct ResolvedRegression final
     {
-        PageId m_pageId;
+        PageId pageId;
 
         auto operator==(ResolvedRegression const&) const -> bool = default;
     };
@@ -139,10 +139,10 @@ namespace uf::annotation
 
     struct RegressionSpec final
     {
-        RegressionId             m_id;
-        SourceId                 m_sourceId;
-        RegressionClassification m_classification{};
-        RegressionExpectation    m_expectation;
+        RegressionId             id;
+        SourceId                 sourceId;
+        RegressionClassification classification{};
+        RegressionExpectation    expectation;
     };
 
     class RegressionCase final

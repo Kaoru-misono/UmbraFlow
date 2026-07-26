@@ -16,12 +16,12 @@ namespace uf::annotation
 {
     struct TemplateAsset final
     {
-        ContentHash m_hash;
-        std::string m_relativePath{};
+        ContentHash hash;
+        std::string relativePath{};
 
-        std::vector<std::byte> m_pngBytes{};
-        uint32                 m_width{};
-        uint32                 m_height{};
+        std::vector<std::byte> pngBytes{};
+        uint32                 width{};
+        uint32                 height{};
     };
 
     [[nodiscard]]

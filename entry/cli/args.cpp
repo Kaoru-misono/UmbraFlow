@@ -237,16 +237,16 @@ namespace uf::cli
         UF_TRY_VALUE(requiredAction, require(std::move(action), "--action"));
 
         return RunArgs{
-            .m_project            = std::move(requiredProject),
-            .m_selector           = std::move(requiredSelector),
-            .m_page               = std::move(requiredPage),
-            .m_action             = std::move(requiredAction),
-            .m_timeout            = timeout,
-            .m_pollInterval       = pollInterval,
-            .m_budget             = budget,
-            .m_recognitionTimeout = recognitionTimeout,
-            .m_maxFrameAge        = maxFrameAge,
-            .m_trace              = std::move(trace),
+            .project            = std::move(requiredProject),
+            .selector           = std::move(requiredSelector),
+            .page               = std::move(requiredPage),
+            .action             = std::move(requiredAction),
+            .timeout            = timeout,
+            .pollInterval       = pollInterval,
+            .budget             = budget,
+            .recognitionTimeout = recognitionTimeout,
+            .maxFrameAge        = maxFrameAge,
+            .trace              = std::move(trace),
         };
     }
 

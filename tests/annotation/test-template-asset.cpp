@@ -40,39 +40,39 @@ namespace uf::annotation
         auto const second = generateTemplateAsset(source, 3, 2, 16, rect);
         REQUIRE(first.has_value());
         REQUIRE(second.has_value());
-        CHECK(first->m_pngBytes == second->m_pngBytes);
-        CHECK(first->m_hash == second->m_hash);
-        CHECK(first->m_relativePath == second->m_relativePath);
-        CHECK(first->m_width == 2U);
-        CHECK(first->m_height == 2U);
+        CHECK(first->pngBytes == second->pngBytes);
+        CHECK(first->hash == second->hash);
+        CHECK(first->relativePath == second->relativePath);
+        CHECK(first->width == 2U);
+        CHECK(first->height == 2U);
         CHECK(
-            first->m_hash.toString()
+            first->hash.toString()
             == "sha256:a95f5febce25a81632baccd921ab260e"
                "2d02127776c2649201ac6e5380cc3fec"
         );
 
-        auto const recomputed = sha256(first->m_pngBytes);
+        auto const recomputed = sha256(first->pngBytes);
         REQUIRE(recomputed.has_value());
-        CHECK(*recomputed == first->m_hash);
+        CHECK(*recomputed == first->hash);
         CHECK(
-            first->m_relativePath
-            == "assets/templates/" + first->m_hash.hex() + ".png"
+            first->relativePath
+            == "assets/templates/" + first->hash.hex() + ".png"
         );
 
         auto const decoded = image::decodePng(
-            first->m_pngBytes,
-            first->m_relativePath
+            first->pngBytes,
+            first->relativePath
         );
         REQUIRE(decoded.has_value());
-        CHECK(decoded->m_width == 2U);
-        CHECK(decoded->m_height == 2U);
+        CHECK(decoded->width == 2U);
+        CHECK(decoded->height == 2U);
         auto const expected = std::vector<std::byte>{
             asByte(6), asByte(5), asByte(4), asByte(255),
             asByte(9), asByte(8), asByte(7), asByte(255),
             asByte(15), asByte(14), asByte(13), asByte(255),
             asByte(18), asByte(17), asByte(16), asByte(255),
         };
-        CHECK(decoded->m_pixels == expected);
+        CHECK(decoded->pixels == expected);
     }
 
     TEST_CASE("annotation template generation rejects crops outside source geometry")

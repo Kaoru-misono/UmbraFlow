@@ -66,13 +66,13 @@ namespace uf
 
     struct SadSearchReport final
     {
-        SadSearchOutcome m_outcome{};
+        SadSearchOutcome outcome{};
 
         // Counts comparisons actually executed across every candidate, including
         // the comparisons that trigger pruning or an exact-match return. A budget
         // or poll stop excludes the comparison that was not executed. Valid for
         // every outcome and starts at zero for each matcher call.
-        uint64 m_completedPixelComparisons{};
+        uint64 completedPixelComparisons{};
     };
 
     class GrayImage;
@@ -104,8 +104,8 @@ namespace uf
 
         struct CandidateReport final
         {
-            CandidateOutcome m_outcome{};
-            uint64           m_completedPixelComparisons{};
+            CandidateOutcome outcome{};
+            uint64           completedPixelComparisons{};
         };
 
         friend auto matchTemplateSad(

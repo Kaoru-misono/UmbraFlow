@@ -33,13 +33,13 @@ namespace uf::engine
     // construction site; every other field carries a safe in-class default.
     struct EngineSessionConfig final
     {
-        annotation::ProjectFingerprint m_liveFingerprint;
+        annotation::ProjectFingerprint liveFingerprint;
 
-        uint64                     m_maximumPixelComparisons{};
-        MonotonicInstant::Duration m_recognitionTimeout{};
-        MonotonicInstant::Duration m_maxActionFrameAge{k_defaultMaxActionFrameAge};
+        uint64                     maximumPixelComparisons{};
+        MonotonicInstant::Duration recognitionTimeout{};
+        MonotonicInstant::Duration maxActionFrameAge{k_defaultMaxActionFrameAge};
 
-        std::stop_token m_cancellation{};
+        std::stop_token cancellation{};
     };
 
     // The result of a successful action-target search on one observation: the raw
@@ -120,16 +120,16 @@ namespace uf::engine
     // the client-space point posted to the sink.
     struct ActReceipt final
     {
-        FrameId            m_frameId;
-        Point<ClientSpace> m_clickPoint;
+        FrameId            frameId;
+        Point<ClientSpace> clickPoint;
     };
 
     // The paired product of waitForPage: the observation that resolved the page
     // and the resolved page itself, so the caller never re-evaluates the frame.
     struct PageWait final
     {
-        Observation              m_observation;
-        annotation::ResolvedPage m_page;
+        Observation              observation;
+        annotation::ResolvedPage page;
     };
 
     class EngineSession final

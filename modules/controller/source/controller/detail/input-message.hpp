@@ -35,9 +35,9 @@ namespace uf::controller_detail
 
     struct PostSpec final
     {
-        uint32  m_message{};
-        uintptr m_wParam{};
-        intptr  m_lParam{};
+        uint32  message{};
+        uintptr wParam{};
+        intptr  lParam{};
 
         auto operator==(PostSpec const&) const -> bool = default;
     };

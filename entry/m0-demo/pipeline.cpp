@@ -147,7 +147,7 @@ namespace uf::m0_demo
         ) -> Result<SadSearchOutcome>
         {
             auto const transform = frame.transform();
-            UF_TRY_VALUE(roi, transform.frameRectToPixelRect(imageTemplate.m_roi));
+            UF_TRY_VALUE(roi, transform.frameRectToPixelRect(imageTemplate.roi));
             auto const pixels = frame.pixels();
             UF_TRY_VALUE(
                 roiBgra,
@@ -199,7 +199,7 @@ namespace uf::m0_demo
                 )
             );
 
-            auto const templateWidth = checkedCast<std::size_t>(imageTemplate.m_width);
+            auto const templateWidth = checkedCast<std::size_t>(imageTemplate.width);
             if (!templateWidth)
             {
                 return fail(
@@ -210,9 +210,9 @@ namespace uf::m0_demo
             UF_TRY_VALUE(
                 templateImage,
                 GrayImage::create(
-                    imageTemplate.m_gray,
-                    imageTemplate.m_width,
-                    imageTemplate.m_height,
+                    imageTemplate.gray,
+                    imageTemplate.width,
+                    imageTemplate.height,
                     *templateWidth
                 )
             );
@@ -244,7 +244,7 @@ namespace uf::m0_demo
                     poll
                 )
             );
-            auto const& outcome = report.m_outcome;
+            auto const& outcome = report.outcome;
             if (std::holds_alternative<SadSearchStopReason>(outcome))
             {
                 return SadSearchOutcome{
@@ -290,9 +290,9 @@ namespace uf::m0_demo
         {
             return log.write(
                 LogLine{std::string{phase}, "timeout"}
-                    .loopIndex(loopIndex)
-                    .outcome("timeout")
-                    .detail(
+                    .withLoopIndex(loopIndex)
+                    .withOutcome("timeout")
+                    .withDetail(
                         std::format(
                             "{} did not appear within the transition timeout",
                             label
@@ -327,9 +327,9 @@ namespace uf::m0_demo
                 UF_TRY(
                     log.write(
                         LogLine{std::string{phase}, "comparison_budget_exhausted"}
-                            .loopIndex(loopIndex)
-                            .outcome("failed")
-                            .detail(
+                            .withLoopIndex(loopIndex)
+                            .withOutcome("failed")
+                            .withDetail(
                                 std::format(
                                     "{} exceeded the {} pixel-comparison search budget",
                                     label,
@@ -374,9 +374,9 @@ namespace uf::m0_demo
                 UF_TRY(
                     log.write(
                         LogLine{std::string{phase}, "capture_stalled"}
-                            .loopIndex(loopIndex)
-                            .outcome("stalled")
-                            .detail(
+                            .withLoopIndex(loopIndex)
+                            .withOutcome("stalled")
+                            .withDetail(
                                 std::format(
                                     "{}: {}",
                                     label,
@@ -415,7 +415,7 @@ namespace uf::m0_demo
                     transform = frame->transform();
                     break;
                 }
-                if (timedOut(started, config.m_transitionTimeout))
+                if (timedOut(started, config.transitionTimeout))
                 {
                     return fail(
                         AutomationErrorKind::CaptureStalled,
@@ -424,14 +424,14 @@ namespace uf::m0_demo
                 }
             }
 
-            UF_TRY(ensureTemplateFitsRoi(*transform, templates.m_home));
-            UF_TRY(ensureTemplateFitsRoi(*transform, templates.m_result));
-            UF_TRY(ensureTemplateFitsRoi(*transform, templates.m_reset));
+            UF_TRY(ensureTemplateFitsRoi(*transform, templates.home));
+            UF_TRY(ensureTemplateFitsRoi(*transform, templates.result));
+            UF_TRY(ensureTemplateFitsRoi(*transform, templates.reset));
             auto const [frameWidth, frameHeight] = transform->frameSize();
             return log.write(
                 LogLine{"setup", "roi_validated"}
-                    .outcome("ok")
-                    .detail(
+                    .withOutcome("ok")
+                    .withDetail(
                         std::format(
                             "three ROIs fit the {}x{} frame",
                             frameWidth,
@@ -451,7 +451,7 @@ namespace uf::m0_demo
             JsonlLog& log
         ) -> Result<ClickStatus>
         {
-            auto const label = std::string_view{imageTemplate.m_label};
+            auto const label = std::string_view{imageTemplate.label};
             UF_TRY_VALUE(
                 pace,
                 pacer.pauseBeforeClick(label, loopIndex, log)
@@ -475,7 +475,7 @@ namespace uf::m0_demo
                 );
                 if (!captured)
                 {
-                    if (timedOut(started, config.m_transitionTimeout))
+                    if (timedOut(started, config.transitionTimeout))
                     {
                         UF_TRY(logTimeout(log, "action", label, loopIndex));
                         return ClickStatus{StepStatus::TimedOut};
@@ -489,7 +489,7 @@ namespace uf::m0_demo
                         *captured,
                         imageTemplate,
                         started,
-                        config.m_transitionTimeout
+                        config.transitionTimeout
                     )
                 );
                 UF_TRY_VALUE(
@@ -502,23 +502,23 @@ namespace uf::m0_demo
                 }
                 auto const matched = acceptMatch(
                     std::get<std::optional<SadMatch>>(raw),
-                    imageTemplate.m_width,
-                    imageTemplate.m_height,
-                    config.m_threshold
+                    imageTemplate.width,
+                    imageTemplate.height,
+                    config.threshold
                 );
                 if (matched)
                 {
                     auto const center = hitCenterFrame(
                         *matched,
-                        imageTemplate.m_width,
-                        imageTemplate.m_height
+                        imageTemplate.width,
+                        imageTemplate.height
                     );
                     auto const point = captured->transform().frameToClient(center);
                     UF_TRY_VALUE(
                         lease,
                         ObservationLease::forFrame(
                             *captured,
-                            config.m_maxActionFrameAge
+                            config.maxActionFrameAge
                         )
                     );
                     UF_TRY(machine.ensureTargetUnchanged());
@@ -535,12 +535,12 @@ namespace uf::m0_demo
                         UF_TRY(
                             log.write(
                                 LogLine{"action", "click"}
-                                    .loopIndex(loopIndex)
-                                    .frame(*captured)
-                                    .confidence(matched->score())
-                                    .leaseOk(true)
-                                    .outcome("ok")
-                                    .detail(
+                                    .withLoopIndex(loopIndex)
+                                    .withFrame(*captured)
+                                    .withConfidence(matched->score())
+                                    .withLeaseOk(true)
+                                    .withOutcome("ok")
+                                    .withDetail(
                                         std::format(
                                             "clicked {} at client ({:.1f}, {:.1f})",
                                             label,
@@ -560,12 +560,12 @@ namespace uf::m0_demo
                         UF_TRY(
                             log.write(
                                 LogLine{"action", "click_retry"}
-                                    .loopIndex(loopIndex)
-                                    .frame(*captured)
-                                    .confidence(matched->score())
-                                    .leaseOk(false)
-                                    .outcome("retry")
-                                    .detail(std::format("{}: {}", label, errorText))
+                                    .withLoopIndex(loopIndex)
+                                    .withFrame(*captured)
+                                    .withConfidence(matched->score())
+                                    .withLeaseOk(false)
+                                    .withOutcome("retry")
+                                    .withDetail(std::format("{}: {}", label, errorText))
                             )
                         );
                         break;
@@ -573,12 +573,12 @@ namespace uf::m0_demo
                         UF_TRY(
                             log.write(
                                 LogLine{"action", "click_error"}
-                                    .loopIndex(loopIndex)
-                                    .frame(*captured)
-                                    .confidence(matched->score())
-                                    .leaseOk(false)
-                                    .outcome("error")
-                                    .detail(std::format("{}: {}", label, errorText))
+                                    .withLoopIndex(loopIndex)
+                                    .withFrame(*captured)
+                                    .withConfidence(matched->score())
+                                    .withLeaseOk(false)
+                                    .withOutcome("error")
+                                    .withDetail(std::format("{}: {}", label, errorText))
                             )
                         );
                         return ClickStatus{StepStatus::Failed};
@@ -586,19 +586,19 @@ namespace uf::m0_demo
                         UF_TRY(
                             log.write(
                                 LogLine{"action", "click_error"}
-                                    .loopIndex(loopIndex)
-                                    .frame(*captured)
-                                    .confidence(matched->score())
-                                    .leaseOk(false)
-                                    .outcome("error")
-                                    .detail(std::format("{}: {}", label, errorText))
+                                    .withLoopIndex(loopIndex)
+                                    .withFrame(*captured)
+                                    .withConfidence(matched->score())
+                                    .withLeaseOk(false)
+                                    .withOutcome("error")
+                                    .withDetail(std::format("{}: {}", label, errorText))
                             )
                         );
                         return std::unexpected{std::move(delivered).error()};
                     }
                 }
 
-                if (timedOut(started, config.m_transitionTimeout))
+                if (timedOut(started, config.transitionTimeout))
                 {
                     UF_TRY(logTimeout(log, "action", label, loopIndex));
                     return ClickStatus{StepStatus::TimedOut};
@@ -616,7 +616,7 @@ namespace uf::m0_demo
             JsonlLog& log
         ) -> Result<StepStatus>
         {
-            auto const label = std::string_view{imageTemplate.m_label};
+            auto const label = std::string_view{imageTemplate.label};
             auto const started = MonotonicInstant::now();
             while (true)
             {
@@ -631,7 +631,7 @@ namespace uf::m0_demo
                 );
                 if (!captured)
                 {
-                    if (timedOut(started, config.m_transitionTimeout))
+                    if (timedOut(started, config.transitionTimeout))
                     {
                         UF_TRY(logTimeout(log, "recognize", label, loopIndex));
                         return StepStatus::TimedOut;
@@ -644,10 +644,10 @@ namespace uf::m0_demo
                     UF_TRY(
                         log.write(
                             LogLine{"recognize", "pre_action_frame_discarded"}
-                                .loopIndex(loopIndex)
-                                .frame(*captured)
-                                .outcome("stale")
-                                .detail(
+                                .withLoopIndex(loopIndex)
+                                .withFrame(*captured)
+                                .withOutcome("stale")
+                                .withDetail(
                                     std::format(
                                         "{}: frame arrived before click completed",
                                         label
@@ -655,7 +655,7 @@ namespace uf::m0_demo
                                 )
                         )
                     );
-                    if (timedOut(started, config.m_transitionTimeout))
+                    if (timedOut(started, config.transitionTimeout))
                     {
                         UF_TRY(logTimeout(log, "recognize", label, loopIndex));
                         return StepStatus::TimedOut;
@@ -669,7 +669,7 @@ namespace uf::m0_demo
                         *captured,
                         imageTemplate,
                         started,
-                        config.m_transitionTimeout
+                        config.transitionTimeout
                     )
                 );
                 UF_TRY_VALUE(
@@ -682,26 +682,26 @@ namespace uf::m0_demo
                 }
                 auto const matched = acceptMatch(
                     std::get<std::optional<SadMatch>>(raw),
-                    imageTemplate.m_width,
-                    imageTemplate.m_height,
-                    config.m_threshold
+                    imageTemplate.width,
+                    imageTemplate.height,
+                    config.threshold
                 );
                 if (matched)
                 {
                     UF_TRY(
                         log.write(
                             LogLine{"recognize", "present"}
-                                .loopIndex(loopIndex)
-                                .frame(*captured)
-                                .confidence(matched->score())
-                                .outcome("ok")
-                                .detail(std::format("{} present", label))
+                                .withLoopIndex(loopIndex)
+                                .withFrame(*captured)
+                                .withConfidence(matched->score())
+                                .withOutcome("ok")
+                                .withDetail(std::format("{} present", label))
                         )
                     );
                     return StepStatus::Done;
                 }
 
-                if (timedOut(started, config.m_transitionTimeout))
+                if (timedOut(started, config.transitionTimeout))
                 {
                     UF_TRY(logTimeout(log, "recognize", label, loopIndex));
                     return StepStatus::TimedOut;
@@ -723,7 +723,7 @@ namespace uf::m0_demo
                 clickedHome,
                 clickWhenPresent(
                     machine,
-                    templates.m_home,
+                    templates.home,
                     config,
                     loopIndex,
                     pacer,
@@ -740,7 +740,7 @@ namespace uf::m0_demo
                 resultShown,
                 waitUntilPresent(
                     machine,
-                    templates.m_result,
+                    templates.result,
                     homeClickedAt,
                     config,
                     loopIndex,
@@ -756,7 +756,7 @@ namespace uf::m0_demo
                 clickedReset,
                 clickWhenPresent(
                     machine,
-                    templates.m_reset,
+                    templates.reset,
                     config,
                     loopIndex,
                     pacer,
@@ -770,7 +770,7 @@ namespace uf::m0_demo
             auto const resetClickedAt = std::get<MonotonicInstant>(clickedReset);
             return waitUntilPresent(
                 machine,
-                templates.m_home,
+                templates.home,
                 resetClickedAt,
                 config,
                 loopIndex,
@@ -788,43 +788,43 @@ namespace uf::m0_demo
             JsonlLog& log
         ) -> Result<LoopStatus>
         {
-            UF_TRY(log.write(LogLine{"loop", "start"}.loopIndex(loopIndex)));
-            UF_TRY_VALUE(baseline, observeGuard(config.m_guardPolicy));
+            UF_TRY(log.write(LogLine{"loop", "start"}.withLoopIndex(loopIndex)));
+            UF_TRY_VALUE(baseline, observeGuard(config.guardPolicy));
             auto const targetWindow = machine.m_target.windowHandle().value();
             UF_TRY(
                 log.write(
                     LogLine{"guard", "baseline"}
-                        .loopIndex(loopIndex)
-                        .detail(
+                        .withLoopIndex(loopIndex)
+                        .withDetail(
                             std::format(
                                 "target_hwnd={:#x} foreground={:#x} cursor=({}, {})",
                                 static_cast<uintptr>(targetWindow),
-                                static_cast<uintptr>(baseline.m_foreground),
-                                baseline.m_cursor.first,
-                                baseline.m_cursor.second
+                                static_cast<uintptr>(baseline.foreground),
+                                baseline.cursor.first,
+                                baseline.cursor.second
                             )
                         )
                 )
             );
 
             auto const baselineCheck = checkGuard(
-                config.m_guardPolicy,
+                config.guardPolicy,
                 targetWindow,
                 baseline,
                 baseline
             );
-            if (!baselineCheck.m_baselineBackgroundOk)
+            if (!baselineCheck.baselineBackgroundOk)
             {
                 UF_TRY(
                     log.write(
                         LogLine{"guard", "precondition"}
-                            .loopIndex(loopIndex)
-                            .outcome("violation")
-                            .detail(
+                            .withLoopIndex(loopIndex)
+                            .withOutcome("violation")
+                            .withDetail(
                                 std::format(
                                     "target_hwnd={:#x} baseline_foreground={:#x}; guard mode requires a non-target foreground window",
                                     static_cast<uintptr>(targetWindow),
-                                    static_cast<uintptr>(baseline.m_foreground)
+                                    static_cast<uintptr>(baseline.foreground)
                                 )
                             )
                     )
@@ -832,8 +832,8 @@ namespace uf::m0_demo
                 UF_TRY(
                     log.write(
                         LogLine{"loop", "end"}
-                            .loopIndex(loopIndex)
-                            .outcome("guard_violation")
+                            .withLoopIndex(loopIndex)
+                            .withOutcome("guard_violation")
                     )
                 );
                 return LoopStatus::GuardViolation;
@@ -855,9 +855,9 @@ namespace uf::m0_demo
                 return LoopStatus::Stopped;
             }
 
-            UF_TRY_VALUE(observed, observeGuard(config.m_guardPolicy));
+            UF_TRY_VALUE(observed, observeGuard(config.guardPolicy));
             auto const check = checkGuard(
-                config.m_guardPolicy,
+                config.guardPolicy,
                 targetWindow,
                 baseline,
                 observed
@@ -865,21 +865,21 @@ namespace uf::m0_demo
             UF_TRY(
                 log.write(
                     LogLine{"guard", "check"}
-                        .loopIndex(loopIndex)
-                        .outcome(check.passed() ? "ok" : "violation")
-                        .detail(
+                        .withLoopIndex(loopIndex)
+                        .withOutcome(check.passed() ? "ok" : "violation")
+                        .withDetail(
                             std::format(
                                 "target_hwnd={:#x} baseline_foreground={:#x} observed_foreground={:#x} baseline_cursor=({}, {}) observed_cursor=({}, {}) baseline_background_ok={} foreground_ok={} cursor_ok={}",
                                 static_cast<uintptr>(targetWindow),
-                                static_cast<uintptr>(baseline.m_foreground),
-                                static_cast<uintptr>(observed.m_foreground),
-                                baseline.m_cursor.first,
-                                baseline.m_cursor.second,
-                                observed.m_cursor.first,
-                                observed.m_cursor.second,
-                                check.m_baselineBackgroundOk,
-                                check.m_foregroundOk,
-                                check.m_cursorOk
+                                static_cast<uintptr>(baseline.foreground),
+                                static_cast<uintptr>(observed.foreground),
+                                baseline.cursor.first,
+                                baseline.cursor.second,
+                                observed.cursor.first,
+                                observed.cursor.second,
+                                check.baselineBackgroundOk,
+                                check.foregroundOk,
+                                check.cursorOk
                             )
                         )
                 )
@@ -900,8 +900,8 @@ namespace uf::m0_demo
             UF_TRY(
                 log.write(
                     LogLine{"loop", "end"}
-                        .loopIndex(loopIndex)
-                        .outcome(std::string{outcome})
+                        .withLoopIndex(loopIndex)
+                        .withOutcome(std::string{outcome})
                 )
             );
             return status;
@@ -916,13 +916,13 @@ namespace uf::m0_demo
         ) -> Result<RunSummary>
         {
             UF_TRY(setupValidateRois(machine, templates, config, log));
-            auto pacer           = ClickPacer{config.m_clickDelay, config.m_seed};
+            auto pacer           = ClickPacer{config.clickDelay, config.seed};
             auto attempted       = uint32{0};
             auto succeeded       = uint32{0};
             auto guardViolations = uint32{0};
             auto stopped         = false;
 
-            for (auto loopIndex = uint32{0}; loopIndex < config.m_loops; ++loopIndex)
+            for (auto loopIndex = uint32{0}; loopIndex < config.loops; ++loopIndex)
             {
                 if (stopRequested())
                 {
@@ -964,11 +964,11 @@ namespace uf::m0_demo
             }
 
             return RunSummary{
-                .m_attempted       = attempted,
-                .m_succeeded       = succeeded,
-                .m_guardViolations = guardViolations,
-                .m_stopped         = stopped,
-                .m_auditClean      = false,
+                .attempted       = attempted,
+                .succeeded       = succeeded,
+                .guardViolations = guardViolations,
+                .stopped         = stopped,
+                .auditClean      = false,
             };
         }
 
@@ -1035,31 +1035,31 @@ namespace uf::m0_demo
                             result,
                             log.write(
                                 LogLine{"shutdown", "release_held"}
-                                    .outcome("ok")
-                                    .detail("no held inputs")
+                                    .withOutcome("ok")
+                                    .withDetail("no held inputs")
                             )
                         );
                     }
                     for (auto const& release : releases)
                     {
-                        auto const succeeded = release.m_result.has_value();
+                        auto const succeeded = release.result.has_value();
                         if (!succeeded)
                         {
                             retainFirstError(
                                 result,
-                                Status{std::unexpected{release.m_result.error().clone()}}
+                                Status{std::unexpected{release.result.error().clone()}}
                             );
                         }
                         auto const releaseResult = succeeded
                             ? std::string{"Ok"}
-                            : formatAutomationError(release.m_result.error());
+                            : formatAutomationError(release.result.error());
                         retainFirstError(
                             result,
                             log.write(
                                 LogLine{"shutdown", "release_held"}
-                                    .outcome(succeeded ? "ok" : "error")
-                                    .detail(
-                                        describeHeldInput(release.m_input)
+                                    .withOutcome(succeeded ? "ok" : "error")
+                                    .withDetail(
+                                        describeHeldInput(release.input)
                                         + ": "
                                         + releaseResult
                                     )
@@ -1076,8 +1076,8 @@ namespace uf::m0_demo
                         result,
                         log.write(
                             LogLine{"shutdown", "session_closed"}
-                                .outcome(succeeded ? "ok" : "error")
-                                .detail(
+                                .withOutcome(succeeded ? "ok" : "error")
+                                .withDetail(
                                     succeeded
                                         ? std::string{}
                                         : formatAutomationError(result.error())
@@ -1094,18 +1094,18 @@ namespace uf::m0_demo
                     );
                     if (outcome)
                     {
-                        outcome->m_auditClean = audit.isClean();
+                        outcome->auditClean = audit.isClean();
                     }
 
                     auto result = log.write(
                         LogLine{"audit", "summary"}
-                            .outcome(audit.isClean() ? "ok" : "violation")
-                            .detail(
+                            .withOutcome(audit.isClean() ? "ok" : "violation")
+                            .withDetail(
                                 std::format(
                                     "delivered={} all_to_target={} all_allowed={}",
-                                    audit.m_delivered,
-                                    audit.m_allToTarget,
-                                    audit.m_allAllowed
+                                    audit.delivered,
+                                    audit.allToTarget,
+                                    audit.allAllowed
                                 )
                             )
                     );
@@ -1115,15 +1115,15 @@ namespace uf::m0_demo
                             result,
                             log.write(
                                 LogLine{"run", "summary"}
-                                    .outcome(outcome->passed() ? "ok" : "partial")
-                                    .detail(
+                                    .withOutcome(outcome->passed() ? "ok" : "partial")
+                                    .withDetail(
                                         std::format(
                                             "attempted={} succeeded={} guard_violations={} stopped={} audit_clean={}",
-                                            outcome->m_attempted,
-                                            outcome->m_succeeded,
-                                            outcome->m_guardViolations,
-                                            outcome->m_stopped,
-                                            outcome->m_auditClean
+                                            outcome->attempted,
+                                            outcome->succeeded,
+                                            outcome->guardViolations,
+                                            outcome->stopped,
+                                            outcome->auditClean
                                         )
                                     )
                             )
@@ -1142,10 +1142,10 @@ namespace uf::m0_demo
     auto RunSummary::passed() const noexcept -> bool
     {
         return (
-            !m_stopped
-            && m_auditClean
-            && m_guardViolations == 0U
-            && m_succeeded == m_attempted
+            !stopped
+            && auditClean
+            && guardViolations == 0U
+            && succeeded == attempted
         );
     }
 
@@ -1156,7 +1156,7 @@ namespace uf::m0_demo
     ) -> Result<Template>
     {
         UF_TRY_VALUE(decoded, image::loadPng(path));
-        if (decoded.m_width == 0U || decoded.m_height == 0U)
+        if (decoded.width == 0U || decoded.height == 0U)
         {
             return fail(
                 AutomationErrorKind::InvalidResource,
@@ -1164,8 +1164,8 @@ namespace uf::m0_demo
             );
         }
 
-        UF_TRY_VALUE(bgra, image::rgba8ToBgra8(std::move(decoded.m_pixels)));
-        auto const width = checkedCast<std::size_t>(decoded.m_width);
+        UF_TRY_VALUE(bgra, image::rgba8ToBgra8(std::move(decoded.pixels)));
+        auto const width = checkedCast<std::size_t>(decoded.width);
         if (!width)
         {
             return fail(
@@ -1184,8 +1184,8 @@ namespace uf::m0_demo
 
         auto gray = bgra8ToGray8(
             bgra,
-            decoded.m_width,
-            decoded.m_height,
+            decoded.width,
+            decoded.height,
             *rowBytes
         );
         if (!gray)
@@ -1200,11 +1200,11 @@ namespace uf::m0_demo
             );
         }
         return Template{
-            .m_label  = std::move(label),
-            .m_gray   = *std::move(gray),
-            .m_width  = decoded.m_width,
-            .m_height = decoded.m_height,
-            .m_roi    = roi,
+            .label  = std::move(label),
+            .gray   = *std::move(gray),
+            .width  = decoded.width,
+            .height = decoded.height,
+            .roi    = roi,
         };
     }
 
@@ -1312,21 +1312,21 @@ namespace uf::m0_demo
     {
         UF_TRY_VALUE(
             pixelRoi,
-            ensureRoiInFrame(transform, imageTemplate.m_label, imageTemplate.m_roi)
+            ensureRoiInFrame(transform, imageTemplate.label, imageTemplate.roi)
         );
         if (
-            imageTemplate.m_width > pixelRoi.width()
-            || imageTemplate.m_height > pixelRoi.height()
+            imageTemplate.width > pixelRoi.width()
+            || imageTemplate.height > pixelRoi.height()
         )
         {
             return fail(
                 AutomationErrorKind::InvalidResource,
                 std::format(
                     "{} template {}x{} does not fit --{}-roi pixel extent {}x{}",
-                    imageTemplate.m_label,
-                    imageTemplate.m_width,
-                    imageTemplate.m_height,
-                    imageTemplate.m_label,
+                    imageTemplate.label,
+                    imageTemplate.width,
+                    imageTemplate.height,
+                    imageTemplate.label,
                     pixelRoi.width(),
                     pixelRoi.height()
                 )
@@ -1375,19 +1375,19 @@ namespace uf::m0_demo
     ) noexcept -> AuditSummary
     {
         return AuditSummary{
-            .m_delivered = records.size(),
-            .m_allToTarget = std::ranges::all_of(
+            .delivered = records.size(),
+            .allToTarget = std::ranges::all_of(
                 records,
                 [target](AuditRecord const& record) noexcept
                 {
-                    return record.m_target == target;
+                    return record.target == target;
                 }
             ),
-            .m_allAllowed = std::ranges::all_of(
+            .allAllowed = std::ranges::all_of(
                 records,
                 [](AuditRecord const& record) noexcept
                 {
-                    return platform::isAllowedBackgroundMessage(record.m_message);
+                    return platform::isAllowedBackgroundMessage(record.message);
                 }
             ),
         };

@@ -23,11 +23,11 @@ namespace uf::m0_demo
         ) -> CaptureArgs
         {
             return CaptureArgs{
-                .m_selector = {},
-                .m_output   = std::move(output),
-                .m_frames   = frames,
-                .m_interval = k_defaultCaptureInterval,
-                .m_log      = std::move(log),
+                .selector = {},
+                .output   = std::move(output),
+                .frames   = frames,
+                .interval = k_defaultCaptureInterval,
+                .log      = std::move(log),
             };
         }
     }

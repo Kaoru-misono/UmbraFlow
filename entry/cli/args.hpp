@@ -47,18 +47,18 @@ namespace uf::cli
     // above so the composition never observes an unset field.
     struct RunArgs final
     {
-        std::filesystem::path m_project{};
-        std::string           m_selector{};
-        std::string           m_page{};
-        std::string           m_action{};
+        std::filesystem::path project{};
+        std::string           selector{};
+        std::string           page{};
+        std::string           action{};
 
-        MonotonicInstant::Duration m_timeout{k_defaultRunTimeout};
-        MonotonicInstant::Duration m_pollInterval{k_defaultRunPollInterval};
-        uint64                     m_budget{k_defaultPixelComparisonBudget};
-        MonotonicInstant::Duration m_recognitionTimeout{k_defaultRunRecognitionTimeout};
-        MonotonicInstant::Duration m_maxFrameAge{k_defaultRunMaxFrameAge};
+        MonotonicInstant::Duration timeout{k_defaultRunTimeout};
+        MonotonicInstant::Duration pollInterval{k_defaultRunPollInterval};
+        uint64                     budget{k_defaultPixelComparisonBudget};
+        MonotonicInstant::Duration recognitionTimeout{k_defaultRunRecognitionTimeout};
+        MonotonicInstant::Duration maxFrameAge{k_defaultRunMaxFrameAge};
 
-        std::filesystem::path m_trace{k_defaultTracePath};
+        std::filesystem::path trace{k_defaultTracePath};
 
         auto operator==(RunArgs const&) const -> bool = default;
     };

@@ -52,7 +52,7 @@ namespace uf::controller_platform
                 AutomationErrorKind::ControllerDisconnected,
                 std::format(
                     "refusing to post input message {:#06x} to non-window target {:#x}",
-                    spec.m_message,
+                    spec.message,
                     static_cast<uintptr>(windowHandle.value())
                 )
             );
@@ -61,18 +61,18 @@ namespace uf::controller_platform
         controller_detail::AuditLogAccess::record(
             audit,
             windowHandle,
-            spec.m_message,
-            spec.m_wParam,
-            spec.m_lParam
+            spec.message,
+            spec.wParam,
+            spec.lParam
         );
 
         // SAFETY: PostMessageW only enqueues the plain integer message values for the
         // opaque HWND. It dereferences no caller memory and retains no caller-owned state.
         auto const posted = PostMessageW(
             nativeHandle,
-            spec.m_message,
-            spec.m_wParam,
-            spec.m_lParam
+            spec.message,
+            spec.wParam,
+            spec.lParam
         );
         if (posted != FALSE)
         {
@@ -86,7 +86,7 @@ namespace uf::controller_platform
             AutomationErrorKind::ControllerDisconnected,
             std::format(
                 "PostMessageW failed for message {:#06x} to window {:#x}: win32 error {}",
-                spec.m_message,
+                spec.message,
                 static_cast<uintptr>(windowHandle.value()),
                 error
             )

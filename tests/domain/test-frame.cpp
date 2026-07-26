@@ -125,10 +125,10 @@ namespace uf
     {
         struct InvalidCase final
         {
-            uint32 m_width{};
-            uint32 m_height{};
-            std::size_t m_stride{};
-            std::size_t m_length{};
+            uint32 width{};
+            uint32 height{};
+            std::size_t stride{};
+            std::size_t length{};
         };
 
         auto const cases = std::array{
@@ -138,10 +138,10 @@ namespace uf
         for (auto const& testCase : cases)
         {
             auto const result = makeFrame(
-                testCase.m_width,
-                testCase.m_height,
-                testCase.m_stride,
-                testCase.m_length
+                testCase.width,
+                testCase.height,
+                testCase.stride,
+                testCase.length
             );
             REQUIRE_FALSE(result.has_value());
             requireInternalInvariant(result.error());
@@ -192,8 +192,8 @@ namespace uf
     {
         struct MismatchCase final
         {
-            uint32 m_width{};
-            uint32 m_height{};
+            uint32 width{};
+            uint32 height{};
         };
 
         auto const cases = std::array{
@@ -206,8 +206,8 @@ namespace uf
                 Point<DesktopSpace>{0.0F, 0.0F},
                 4.0F,
                 2.0F,
-                testCase.m_width,
-                testCase.m_height
+                testCase.width,
+                testCase.height
             );
             REQUIRE(transform.has_value());
 

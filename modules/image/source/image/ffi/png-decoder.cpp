@@ -86,9 +86,9 @@ namespace uf::image
 
         struct PngMetadata final
         {
-            uint32 m_width{};
-            uint32 m_height{};
-            uint8  m_bitDepth{};
+            uint32 width{};
+            uint32 height{};
+            uint8  bitDepth{};
         };
 
         constexpr auto k_pngSignature = std::array{
@@ -210,9 +210,9 @@ namespace uf::image
                     }
 
                     metadata = PngMetadata{
-                        .m_width  = readBigEndianU32(encoded, offset + 8U),
-                        .m_height = readBigEndianU32(encoded, offset + 12U),
-                        .m_bitDepth = std::to_integer<uint8>(encoded[offset + 16U]),
+                        .width  = readBigEndianU32(encoded, offset + 8U),
+                        .height = readBigEndianU32(encoded, offset + 12U),
+                        .bitDepth = std::to_integer<uint8>(encoded[offset + 16U]),
                     };
                     firstChunk = false;
                 }
@@ -289,7 +289,7 @@ namespace uf::image
             );
         }
 
-        if (metadata.m_width == 0U || metadata.m_height == 0U)
+        if (metadata.width == 0U || metadata.height == 0U)
         {
             return invalidResource(
                 std::format(
@@ -300,23 +300,23 @@ namespace uf::image
         }
 
         if (
-            metadata.m_width > k_maximumPngDimension
-            || metadata.m_height > k_maximumPngDimension
+            metadata.width > k_maximumPngDimension
+            || metadata.height > k_maximumPngDimension
         )
         {
             return invalidResource(
                 std::format(
                     "template {} is oversized: {}x{} exceeds {} pixels per axis",
                     resourceName,
-                    metadata.m_width,
-                    metadata.m_height,
+                    metadata.width,
+                    metadata.height,
                     k_maximumPngDimension
                 )
             );
         }
 
-        auto const widthSize = checkedCast<std::size_t>(metadata.m_width);
-        auto const heightSize = checkedCast<std::size_t>(metadata.m_height);
+        auto const widthSize = checkedCast<std::size_t>(metadata.width);
+        auto const heightSize = checkedCast<std::size_t>(metadata.height);
         if (!widthSize || !heightSize)
         {
             return invalidResource(
@@ -330,8 +330,8 @@ namespace uf::image
                 std::format(
                     "template {} is oversized: {}x{} exceeds the pixel quota",
                     resourceName,
-                    metadata.m_width,
-                    metadata.m_height
+                    metadata.width,
+                    metadata.height
                 )
             );
         }
@@ -344,8 +344,8 @@ namespace uf::image
             );
         }
 
-        auto const expectedWidth = checkedCast<int>(metadata.m_width);
-        auto const expectedHeight = checkedCast<int>(metadata.m_height);
+        auto const expectedWidth = checkedCast<int>(metadata.width);
+        auto const expectedHeight = checkedCast<int>(metadata.height);
         if (!expectedWidth || !expectedHeight)
         {
             return invalidResource(
@@ -362,7 +362,7 @@ namespace uf::image
         // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast)
         auto const* encodedBytes = reinterpret_cast<stbi_uc const*>(encoded.data());
         auto pixels = std::vector<std::byte>(*decodedBytes);
-        if (metadata.m_bitDepth == 16U)
+        if (metadata.bitDepth == 16U)
         {
             // SAFETY: stb returns a unique RGBA16 allocation or null. The
             // custom-deleter owner takes it immediately and releases it once.
@@ -471,9 +471,9 @@ namespace uf::image
 #endif
         }
         return RgbaImage{
-            .m_width  = metadata.m_width,
-            .m_height = metadata.m_height,
-            .m_pixels = std::move(pixels),
+            .width  = metadata.width,
+            .height = metadata.height,
+            .pixels = std::move(pixels),
         };
     }
 

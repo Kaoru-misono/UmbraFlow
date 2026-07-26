@@ -27,21 +27,21 @@ namespace uf::m0_demo
     auto buildSelector(SelectorArgs const& selector) -> TargetSelector
     {
         auto built = TargetSelector{};
-        if (selector.m_process)
+        if (selector.process)
         {
-            built = built.withProcess(ProcessId{*selector.m_process});
+            built = built.withProcess(ProcessId{*selector.process});
         }
-        if (selector.m_windowHandle)
+        if (selector.windowHandle)
         {
-            built = built.withWindowHandle(WindowHandle{*selector.m_windowHandle});
+            built = built.withWindowHandle(WindowHandle{*selector.windowHandle});
         }
-        if (selector.m_windowClass)
+        if (selector.windowClass)
         {
-            built = built.withWindowClass(*selector.m_windowClass);
+            built = built.withWindowClass(*selector.windowClass);
         }
-        if (selector.m_title)
+        if (selector.title)
         {
-            built = built.withTitle(*selector.m_title);
+            built = built.withTitle(*selector.title);
         }
         return built;
     }

@@ -32,14 +32,14 @@ namespace uf::cli
         // Load the project and resolve the page and action names before touching
         // the desktop, so a bad project or unknown name fails fast without binding
         // any target.
-        UF_TRY_VALUE(loaded, engine::loadRuntimeProject(args.m_project));
+        UF_TRY_VALUE(loaded, engine::loadRuntimeProject(args.project));
         UF_TRY_VALUE(
             pageId,
-            resolvePageName(loaded.m_runtime.manifest().catalog(), args.m_page)
+            resolvePageName(loaded.runtime.manifest().catalog(), args.page)
         );
         UF_TRY_VALUE(
             actionId,
-            resolveActionName(loaded.m_runtime.manifest().catalog(), args.m_action)
+            resolveActionName(loaded.runtime.manifest().catalog(), args.action)
         );
 
         // 1. Declare per-monitor DPI awareness through the controller.
@@ -50,7 +50,7 @@ namespace uf::cli
 
         // 3. Enumerate, pick by selector substring, and resolve the target.
         UF_TRY_VALUE(candidates, enumerateCandidates());
-        UF_TRY_VALUE(chosen, selectCandidate(candidates, args.m_selector));
+        UF_TRY_VALUE(chosen, selectCandidate(candidates, args.selector));
         auto const selector = TargetSelector{}.withWindowHandle(chosen.handle());
         UF_TRY_VALUE(resolved, resolveTarget(candidates, selector));
 
@@ -105,7 +105,7 @@ namespace uf::cli
         );
 
         // 7. Wire the adapters over the resolved capabilities.
-        UF_TRY_VALUE(traceSink, FileTraceSink::create(args.m_trace));
+        UF_TRY_VALUE(traceSink, FileTraceSink::create(args.trace));
         auto frameSource = std::make_unique<platform::WgcFrameSource>(
             std::move(session)
         );
@@ -113,11 +113,11 @@ namespace uf::cli
 
         // 8. Build the session and drive the smoke flow.
         auto config = engine::EngineSessionConfig{
-            .m_liveFingerprint         = liveFingerprint,
-            .m_maximumPixelComparisons = args.m_budget,
-            .m_recognitionTimeout      = args.m_recognitionTimeout,
-            .m_maxActionFrameAge       = args.m_maxFrameAge,
-            .m_cancellation            = cancellation.token(),
+            .liveFingerprint         = liveFingerprint,
+            .maximumPixelComparisons = args.budget,
+            .recognitionTimeout      = args.recognitionTimeout,
+            .maxActionFrameAge       = args.maxFrameAge,
+            .cancellation            = cancellation.token(),
         };
         UF_TRY_VALUE(
             engineSession,
@@ -132,32 +132,32 @@ namespace uf::cli
 
         UF_TRY_VALUE(
             pageWait,
-            engineSession.waitForPage(pageId, args.m_timeout, args.m_pollInterval)
+            engineSession.waitForPage(pageId, args.timeout, args.pollInterval)
         );
-        UF_TRY_VALUE(maybeAction, pageWait.m_observation.findAction(actionId));
+        UF_TRY_VALUE(maybeAction, pageWait.observation.findAction(actionId));
 
         auto report = RunReport{
-            .m_pageName   = args.m_page,
-            .m_actionName = args.m_action,
-            .m_tracePath  = args.m_trace.string(),
+            .pageName   = args.page,
+            .actionName = args.action,
+            .tracePath  = args.trace.string(),
         };
         if (!maybeAction)
         {
-            report.m_actionDelivered = false;
+            report.actionDelivered = false;
             return report;
         }
 
         UF_TRY_VALUE(
             receipt,
             engineSession.act(
-                std::move(pageWait.m_observation),
-                pageWait.m_page,
+                std::move(pageWait.observation),
+                pageWait.page,
                 *maybeAction
             )
         );
-        report.m_actionDelivered = true;
-        report.m_clickClientX    = receipt.m_clickPoint.x();
-        report.m_clickClientY    = receipt.m_clickPoint.y();
+        report.actionDelivered = true;
+        report.clickClientX    = receipt.clickPoint.x();
+        report.clickClientY    = receipt.clickPoint.y();
         return report;
     }
 

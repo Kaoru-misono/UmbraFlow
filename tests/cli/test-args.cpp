@@ -72,38 +72,38 @@ namespace uf::cli
 
         auto const result = parse(raw);
         REQUIRE(result.has_value());
-        CHECK(result->m_project == "proj");
-        CHECK(result->m_selector == "Game Window");
-        CHECK(result->m_page == "home");
-        CHECK(result->m_action == "start");
-        CHECK(result->m_timeout == asDuration(std::chrono::seconds{10}));
-        CHECK(result->m_pollInterval == asDuration(std::chrono::milliseconds{100}));
-        CHECK(result->m_budget == uint64{500});
+        CHECK(result->project == "proj");
+        CHECK(result->selector == "Game Window");
+        CHECK(result->page == "home");
+        CHECK(result->action == "start");
+        CHECK(result->timeout == asDuration(std::chrono::seconds{10}));
+        CHECK(result->pollInterval == asDuration(std::chrono::milliseconds{100}));
+        CHECK(result->budget == uint64{500});
         CHECK(
-            result->m_recognitionTimeout == asDuration(std::chrono::milliseconds{1500})
+            result->recognitionTimeout == asDuration(std::chrono::milliseconds{1500})
         );
-        CHECK(result->m_maxFrameAge == asDuration(std::chrono::milliseconds{600}));
-        CHECK(result->m_trace == "out.jsonl");
+        CHECK(result->maxFrameAge == asDuration(std::chrono::milliseconds{600}));
+        CHECK(result->trace == "out.jsonl");
     }
 
     TEST_CASE("parseRunArguments applies defaults for omitted optional flags")
     {
         auto const result = parse(minimalArgs());
         REQUIRE(result.has_value());
-        CHECK(result->m_timeout == k_defaultRunTimeout);
-        CHECK(result->m_pollInterval == k_defaultRunPollInterval);
-        CHECK(result->m_budget == k_defaultPixelComparisonBudget);
-        CHECK(result->m_recognitionTimeout == k_defaultRunRecognitionTimeout);
-        CHECK(result->m_maxFrameAge == k_defaultRunMaxFrameAge);
-        CHECK(result->m_trace == k_defaultTracePath);
+        CHECK(result->timeout == k_defaultRunTimeout);
+        CHECK(result->pollInterval == k_defaultRunPollInterval);
+        CHECK(result->budget == k_defaultPixelComparisonBudget);
+        CHECK(result->recognitionTimeout == k_defaultRunRecognitionTimeout);
+        CHECK(result->maxFrameAge == k_defaultRunMaxFrameAge);
+        CHECK(result->trace == k_defaultTracePath);
     }
 
     TEST_CASE("parseRunArguments reports each missing required flag")
     {
         struct Case final
         {
-            std::string_view m_omitted;
-            std::string_view m_expected;
+            std::string_view omitted;
+            std::string_view expected;
         };
 
         auto const cases = std::vector<Case>{
@@ -119,7 +119,7 @@ namespace uf::cli
             auto const full = minimalArgs();
             for (auto index = std::size_t{0}; index < full.size(); index += 2U)
             {
-                if (full[index] == testCase.m_omitted)
+                if (full[index] == testCase.omitted)
                 {
                     continue;
                 }
@@ -130,7 +130,7 @@ namespace uf::cli
             auto const result = parse(raw);
             REQUIRE_FALSE(result.has_value());
             CHECK(automationErrorKind(result.error()) == AutomationErrorKind::InvalidResource);
-            CHECK(result.error().message() == testCase.m_expected);
+            CHECK(result.error().message() == testCase.expected);
         }
     }
 
@@ -204,8 +204,8 @@ namespace uf::cli
     {
         struct Case final
         {
-            std::string_view           m_value;
-            MonotonicInstant::Duration m_expected;
+            std::string_view           value;
+            MonotonicInstant::Duration expected;
         };
 
         auto const cases = std::vector<Case>{
@@ -217,11 +217,11 @@ namespace uf::cli
         {
             auto raw = minimalArgs();
             raw.emplace_back("--poll");
-            raw.emplace_back(testCase.m_value);
+            raw.emplace_back(testCase.value);
 
             auto const result = parse(raw);
             REQUIRE(result.has_value());
-            CHECK(result->m_pollInterval == testCase.m_expected);
+            CHECK(result->pollInterval == testCase.expected);
         }
     }
 

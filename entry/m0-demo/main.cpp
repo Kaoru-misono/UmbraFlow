@@ -45,8 +45,8 @@ namespace uf::m0_demo
             {
                 return log.write(
                     LogLine{"setup", "integrity"}
-                        .outcome("ok")
-                        .detail(
+                        .withOutcome("ok")
+                        .withDetail(
                             std::format(
                                 "{} rid={:#x} level={}",
                                 role,
@@ -58,8 +58,8 @@ namespace uf::m0_demo
             }
             return log.write(
                 LogLine{"setup", "integrity"}
-                    .outcome("unknown")
-                    .detail(
+                    .withOutcome("unknown")
+                    .withDetail(
                         std::format(
                             "{} integrity unreadable (access denied?)",
                             role
@@ -78,8 +78,8 @@ namespace uf::m0_demo
             UF_TRY(
                 log.write(
                     LogLine{"setup", "dpi_declared"}
-                        .outcome("ok")
-                        .detail(std::string{enumName(dpiDeclaration).value_or("Unknown")})
+                        .withOutcome("ok")
+                        .withDetail(std::string{enumName(dpiDeclaration).value_or("Unknown")})
                 )
             );
 
@@ -96,7 +96,7 @@ namespace uf::m0_demo
             );
 
             UF_TRY_VALUE(candidates, enumerateCandidates());
-            auto const selector = buildSelector(args.m_selector);
+            auto const selector = buildSelector(args.selector);
             UF_TRY_VALUE(resolved, resolveTarget(candidates, selector));
             auto const windowHandle = resolved.windowHandle();
             auto const generation = resolved.currentGeneration();
@@ -105,7 +105,7 @@ namespace uf::m0_demo
             auto const sessionId = SessionId{1};
             UF_TRY_VALUE(
                 options,
-                WgcCaptureOptions::create(args.m_stallTimeout, false)
+                WgcCaptureOptions::create(args.stallTimeout, false)
             );
             UF_TRY_VALUE(
                 session,
@@ -118,8 +118,8 @@ namespace uf::m0_demo
             UF_TRY(
                 log.write(
                     LogLine{"discovery", "resolved"}
-                        .outcome("ok")
-                        .detail(
+                        .withOutcome("ok")
+                        .withDetail(
                             std::format(
                                 "pid={} client={}x{}",
                                 process.value(),
@@ -141,40 +141,40 @@ namespace uf::m0_demo
             UF_TRY_VALUE(
                 homeTemplate,
                 loadTemplate(
-                    args.m_homeTemplate,
+                    args.homeTemplate,
                     "home",
-                    args.m_homeRoi
+                    args.homeRoi
                 )
             );
             UF_TRY_VALUE(
                 resultTemplate,
                 loadTemplate(
-                    args.m_resultTemplate,
+                    args.resultTemplate,
                     "result",
-                    args.m_resultRoi
+                    args.resultRoi
                 )
             );
             UF_TRY_VALUE(
                 resetTemplate,
                 loadTemplate(
-                    args.m_resetTemplate,
+                    args.resetTemplate,
                     "reset",
-                    args.m_resetRoi
+                    args.resetRoi
                 )
             );
             auto const templates = Templates{
-                .m_home   = std::move(homeTemplate),
-                .m_result = std::move(resultTemplate),
-                .m_reset  = std::move(resetTemplate),
+                .home   = std::move(homeTemplate),
+                .result = std::move(resultTemplate),
+                .reset  = std::move(resetTemplate),
             };
             auto const config = LoopConfig{
-                .m_loops             = args.m_loops,
-                .m_threshold         = args.m_threshold,
-                .m_maxActionFrameAge = args.m_maxActionFrameAge,
-                .m_transitionTimeout = k_defaultTransitionTimeout,
-                .m_guardPolicy       = GuardPolicy::forMode(args.m_mode),
-                .m_clickDelay        = args.m_clickDelay,
-                .m_seed              = args.m_seed,
+                .loops             = args.loops,
+                .threshold         = args.threshold,
+                .maxActionFrameAge = args.maxActionFrameAge,
+                .transitionTimeout = k_defaultTransitionTimeout,
+                .guardPolicy       = GuardPolicy::forMode(args.mode),
+                .clickDelay        = args.clickDelay,
+                .seed              = args.seed,
             };
 
             UF_TRY_VALUE(
@@ -191,13 +191,13 @@ namespace uf::m0_demo
             UF_TRY(
                 log.write(
                     LogLine{"setup", "session_created"}
-                        .outcome("ok")
-                        .detail(
+                        .withOutcome("ok")
+                        .withDetail(
                             std::format(
                                 "os_build={} cursor_capture_disabled={} border_required={}",
-                                hygiene.m_osBuild,
-                                hygiene.m_cursorCaptureDisabled,
-                                hygiene.m_borderRequired
+                                hygiene.osBuild,
+                                hygiene.cursorCaptureDisabled,
+                                hygiene.borderRequired
                             )
                         )
                 )
@@ -226,7 +226,7 @@ namespace uf::m0_demo
         ) -> Result<RunSummary>
         {
             UF_TRY_VALUE(args, parseArguments(raw));
-            UF_TRY_VALUE(log, JsonlLog::create(args.m_log));
+            UF_TRY_VALUE(log, JsonlLog::create(args.log));
 
             auto outcome       = runWithLog(args, log);
             auto terminalWrite = ok();
@@ -234,8 +234,8 @@ namespace uf::m0_demo
             {
                 terminalWrite = log.write(
                     LogLine{"run", "fatal"}
-                        .outcome("error")
-                        .detail(formatAutomationError(outcome.error()))
+                        .withOutcome("error")
+                        .withDetail(formatAutomationError(outcome.error()))
                 );
             }
             auto flush = log.flush();
@@ -327,10 +327,10 @@ auto main(int argumentCount, char const* const* p_arguments) -> int
 
         std::cerr << std::format(
             "m0-demo: attempted={} succeeded={} guard_violations={} stopped={} passed={}\n",
-            outcome->m_attempted,
-            outcome->m_succeeded,
-            outcome->m_guardViolations,
-            outcome->m_stopped,
+            outcome->attempted,
+            outcome->succeeded,
+            outcome->guardViolations,
+            outcome->stopped,
             outcome->passed()
         );
         return outcome->passed() ? EXIT_SUCCESS : EXIT_FAILURE;

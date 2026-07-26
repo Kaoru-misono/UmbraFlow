@@ -147,7 +147,7 @@ namespace uf::m0_demo::platform
         auto const foreground = std::bit_cast<intptr>(foregroundWindow);
 
         auto cursor = std::pair<int32, int32>{0, 0};
-        if (policy.m_compareCursor)
+        if (policy.compareCursor)
         {
             auto point = POINT{};
             // SAFETY: point is a live writable out-parameter for the duration of
