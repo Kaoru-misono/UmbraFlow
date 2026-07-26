@@ -32,7 +32,13 @@ review unnoticed. Budget attention accordingly.
 ## Naming
 
 - Locals and functions: `camelCase`.
-- Data members: `m_camelCase`.
+- Public data members — the members of a `struct` body, which are public by
+  default and which this project uses for aggregates — are plain `camelCase`
+  with no prefix.
+- Private data members — the members of a `class` body — are `m_camelCase`. A
+  member left private under an explicit `private:` in a `struct`, or made public
+  under `public:` in a `class`, follows its actual access: `m_` when private,
+  no prefix when public.
 - Pointer and smart-pointer parameters: `p_camelCase`.
 - Types: `PascalCase`; interfaces: `IPascalCase`.
 - Avoid non-local state. Named value constants with static storage duration use
@@ -206,6 +212,7 @@ enum class ConnectionState : uint8
   the formatter; leaving the padding is an acceptable outcome.
 
 ```cpp
+// A class: its data members are private, so they keep the m_ prefix.
 class SourceRecord final
 {
     SourceId    m_id;
@@ -226,11 +233,12 @@ class SourceRecord final
 m_id          = id;
 m_contentHash = contentHash;
 
+// A Spec aggregate: its members are public, so they carry no prefix.
 auto source = AuthoringSourceSpec{
-    .m_id          = id,
-    .m_contentHash = contentHash,
-    .m_fingerprint = fingerprint,
-    .m_provenance  = provenance,
+    .id          = id,
+    .contentHash = contentHash,
+    .fingerprint = fingerprint,
+    .provenance  = provenance,
 };
 ```
 
@@ -269,8 +277,8 @@ auto createRecord(
 auto result = createRecord(
     projectId,
     RecordOptions{
-        .m_name    = name,
-        .m_enabled = true,
+        .name    = name,
+        .enabled = true,
     }
 );
 
@@ -491,7 +499,7 @@ discipline of every construction site.
 auto Widget::create(WidgetSpec const& spec) -> Result<Widget>
 {
     auto normalizedSpec = spec;
-    std::ranges::sort(normalizedSpec.m_ids);
+    std::ranges::sort(normalizedSpec.ids);
 
     UF_TRY(validate(normalizedSpec));
     return Widget{std::move(normalizedSpec)};
@@ -501,8 +509,8 @@ auto Widget::create(WidgetSpec const& spec) -> Result<Widget>
 ```cpp
 struct ParseOutcome
 {
-    Record      m_record;
-    std::size_t m_consumed{};
+    Record      record;
+    std::size_t consumed{};
 };
 
 [[nodiscard]]

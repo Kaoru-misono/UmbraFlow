@@ -32,14 +32,26 @@ NAMESPACE_DECLARATION = re.compile(
     r"^(?:inline +)?namespace"
     r"(?: +[A-Za-z_][A-Za-z0-9_]*(?:::[A-Za-z_][A-Za-z0-9_]*)*)? *\{? *$"
 )
+# Member identifiers are matched by shape, not by the ``m_`` prefix: public
+# ``struct`` members carry no prefix while private ``class`` members keep it, and
+# both are data members the alignment rule governs.  What keeps this from
+# swallowing arbitrary locals is the surrounding context, not the name: a member
+# candidate is only accepted when the enclosing scope is a class or struct body
+# (``eligible_class_body``), whereas locals live in ``other`` function-body
+# scopes.  The keyword guard below removes the remaining non-member declarations
+# that can also sit directly in a class body once the prefix no longer filters
+# them out (friend declarations, nested forward declarations, typedefs).
 MEMBER_DECLARATION = re.compile(
     r"^(?P<indent> *)"
     r"(?P<declarator>\S(?:.*\S)?)"
     r"(?P<gap> +)"
-    r"(?P<name>m_[A-Za-z_][A-Za-z0-9_]*)"
+    r"(?P<name>[A-Za-z_][A-Za-z0-9_]*)"
     r"(?P<tail> *(?:\{[^{}]*\})? *; *)$"
 )
-DESIGNATED_LEFT_HAND_SIDE = re.compile(r"\.m_[A-Za-z_][A-Za-z0-9_]*")
+NON_MEMBER_DECLARATOR_KEYWORDS = frozenset(
+    {"friend", "typedef", "using", "template", "class", "struct", "union", "enum", "namespace"}
+)
+DESIGNATED_LEFT_HAND_SIDE = re.compile(r"\.[A-Za-z_][A-Za-z0-9_]*")
 AUTO_INITIALIZER_LEFT_HAND_SIDE = re.compile(r"auto +[A-Za-z_][A-Za-z0-9_]*")
 ASSIGNMENT_LEFT_HAND_SIDE = re.compile(
     r"[A-Za-z_][A-Za-z0-9_]*"
@@ -216,6 +228,12 @@ def member_candidate(
 
     declarator = match.group("declarator")
     if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_:<>]*(?: +[A-Za-z_][A-Za-z0-9_:<>]*)*", declarator):
+        return None
+
+    # A real data member's type is a type name.  A non-member declaration that
+    # can also appear directly in a class body (friend, forward declaration,
+    # typedef) is led by one of these keywords and is not aligned as a member.
+    if any(token in NON_MEMBER_DECLARATOR_KEYWORDS for token in declarator.split()):
         return None
 
     return Candidate(
