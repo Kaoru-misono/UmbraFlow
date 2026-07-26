@@ -1,0 +1,1019 @@
+{
+ "module": "controller",
+ "title": "modules/controller — Windows 桌面能力适配层",
+ "summary": "modules/controller 把窗口枚举、目标解析与代际、WGC 屏幕捕获、严格后台输入投递、进程 DPI 前提这五组 Win32/COM/D3D11 能力，收敛成 core 的 Result/Status 与 domain 的 Frame/坐标值。它是产品与 Windows 之间唯一的平台边界：所有 HWND、COM、驱动生命周期集中在 platform/ 目录，向上只暴露值与结构化错误。公开类型在 uf，纯逻辑在 uf::controller_detail，Win32 桥在 uf::controller_platform。",
+ "notOwned": [
+  "不识别页面、不解释 Detection、不授权动作——这些属于 annotation 与 engine。",
+  "不决定标题模糊匹配、隐藏窗口取舍或歧义展示策略；只提供精确 selector 与必须唯一的解析。",
+  "不分配产品级 SessionId，不管理取消/重试/trace/Luau 生命周期。",
+  "不校验 ProjectFingerprint，不在 TargetIdentity/DeliveryTarget 里携带 DPI 或 compatibility proof。",
+  "不提供前台激活、全局输入或移动真实光标的降级路径；目标不接受 PostMessageW 时直接失败。",
+  "不抽象第二个平台，故意保持 Windows-only；跨平台端口在 engine 一侧。"
+ ],
+ "dependsOn": [
+  "core",
+  "domain"
+ ],
+ "readingOrder": [
+  {
+   "path": "modules/controller/manifest.txt",
+   "why": "确认模块被限制为 Windows、公开依赖只有 core/domain，Win32/D3D/WinRT 为 private。"
+  },
+  {
+   "path": "modules/controller/source/controller/discovery.hpp",
+   "why": "先看强类型值 WindowHandle/ProcessId/Dpi 与 TargetCandidate，其他头文件都建立在这些值之上。"
+  },
+  {
+   "path": "modules/controller/source/controller/target.hpp",
+   "why": "理解 selector 唯一解析、ResolvedTarget 的代际与连续性——捕获与投递的 identity 来源。"
+  },
+  {
+   "path": "modules/controller/source/controller/capture.hpp",
+   "why": "看 WgcCaptureSession 如何把一个窗口包装成裁到 client area 的 BGRA8 Frame。"
+  },
+  {
+   "path": "modules/controller/source/controller/input.hpp",
+   "why": "看严格后台输入的 DeliveryTarget、lease fence、HeldInputs 与 AuditLog。"
+  },
+  {
+   "path": "modules/controller/source/controller/platform/windows-controller.hpp",
+   "why": "最后看纯逻辑与 Win32 之间的桥面，理解哪些操作被隔离在 platform 边界。"
+  }
+ ],
+ "classes": [
+  {
+   "name": "uf::controller-value-types",
+   "kind": "functions",
+   "file": "modules/controller/source/controller/discovery.hpp",
+   "line": 25,
+   "responsibility": "把易失的 Win32 标量包成强类型值，让窗口/进程/DPI 事实不会互相误用，也不会被当成裸整数运算。",
+   "members": [
+    {
+     "sig": "using WindowHandle = StrongValue<WindowHandleTag, intptr>",
+     "note": "pointer-width、非 owning 的 opaque 窗口 token，公开面不暴露 HWND。"
+    },
+    {
+     "sig": "using ProcessId = StrongId<ProcessIdTag, uint32>",
+     "note": "进程 PID。"
+    },
+    {
+     "sig": "using ProcessStartTime = StrongValue<ProcessStartTimeTag, uint64>",
+     "note": "进程启动时间，用于排除 PID 复用。"
+    },
+    {
+     "sig": "using Dpi = StrongValue<DpiTag, uint32>",
+     "note": "每窗口 DPI，来自 GetDpiForWindow。"
+    }
+   ]
+  },
+  {
+   "name": "uf::ClientSize",
+   "kind": "class",
+   "file": "modules/controller/source/controller/discovery.hpp",
+   "line": 33,
+   "responsibility": "以无符号宽高承载 client area 像素尺寸，作为 candidate、identity 与 delivery target 之间可比较的尺寸不变量。",
+   "members": [
+    {
+     "sig": "constexpr ClientSize(uint32 width, uint32 height)",
+     "note": "直接构造，无失败路径。"
+    },
+    {
+     "sig": "auto operator<=>(ClientSize const&) const = default",
+     "note": "支持相等与排序，identity 比较用它判尺寸是否改变。"
+    },
+    {
+     "sig": "width() / height() -> uint32",
+     "note": "取像素宽高。"
+    }
+   ]
+  },
+  {
+   "name": "uf::TargetCandidate",
+   "kind": "class",
+   "file": "modules/controller/source/controller/discovery.hpp",
+   "line": 51,
+   "responsibility": "一次枚举快照，把某个顶层窗口的必需事实与 best-effort 元数据收敛成不可变值；它不是持续有效的窗口借用，其 optional 元数据缺失不等于 identity 已确认。",
+   "members": [
+    {
+     "sig": "handle() -> WindowHandle",
+     "note": "窗口 token。"
+    },
+    {
+     "sig": "process() -> ProcessId",
+     "note": "所属 PID。"
+    },
+    {
+     "sig": "processStartTime() -> std::optional<ProcessStartTime>",
+     "note": "缺失表示 OpenProcess 被拒或进程退出，不能证明实例。"
+    },
+    {
+     "sig": "executablePath() -> std::optional<path> const&",
+     "note": "best-effort 可执行路径。"
+    },
+    {
+     "sig": "windowClass() / title() -> std::string const&",
+     "note": "窗口类名与标题，供精确匹配。"
+    },
+    {
+     "sig": "clientSize() -> ClientSize / dpi() -> Dpi",
+     "note": "client 尺寸与 DPI，构造 live fingerprint 用。"
+    },
+    {
+     "sig": "isVisible() / isIconic() -> bool",
+     "note": "可见与最小化状态，供上层策略而非 controller 解析。"
+    }
+   ],
+   "lifetime": "值语义，是查询时刻的快照；不随窗口后续变化更新。",
+   "related": [
+    "uf::TargetSelector",
+    "uf::ResolvedTarget"
+   ]
+  },
+  {
+   "name": "uf::controller-discovery",
+   "kind": "functions",
+   "file": "modules/controller/source/controller/discovery.hpp",
+   "line": 96,
+   "responsibility": "发现入口：同步枚举所有顶层窗口并把每个 handle 的 live Win32 查询收敛为 candidate；必需事实查询失败返回 TargetUnavailable，best-effort 元数据失败只降级为空。",
+   "members": [
+    {
+     "sig": "enumerateCandidates() -> Result<std::vector<TargetCandidate>>",
+     "note": "EnumWindows 快照，真实路径在 platform/windows-discovery.cpp。"
+    }
+   ]
+  },
+  {
+   "name": "uf::TargetSelector",
+   "kind": "class",
+   "file": "modules/controller/source/controller/target.hpp",
+   "line": 17,
+   "responsibility": "以精确、区分大小写的字段承载目标选择条件；只表达精确匹配语义，把模糊匹配与歧义展示留给上层。",
+   "members": [
+    {
+     "sig": "withProcess/withWindowHandle/withWindowClass/withTitle() -> TargetSelector",
+     "note": "不可变 with 风格，返回新值。"
+    },
+    {
+     "sig": "matches(TargetCandidate const&) -> bool",
+     "note": "对单个候选做精确、区分大小写筛选。"
+    },
+    {
+     "sig": "process()/windowHandle()/windowClass()/title()",
+     "note": "读回各筛选字段。"
+    }
+   ],
+   "related": [
+    "uf::TargetCandidate",
+    "uf::ResolvedTarget"
+   ]
+  },
+  {
+   "name": "uf::TargetIdentity",
+   "kind": "class",
+   "file": "modules/controller/source/controller/target.hpp",
+   "line": 50,
+   "responsibility": "锁定一次已解析目标的身份四元组 {HWND, PID, 启动时间?, ClientSize}；revalidate 比较的就是它，故意不含 DPI。",
+   "members": [
+    {
+     "sig": "constexpr TargetIdentity(handle, process, processStartTime, clientSize)",
+     "note": "值构造，全字段常量可比较。"
+    },
+    {
+     "sig": "handle()/process()/processStartTime()/clientSize()",
+     "note": "读回身份字段。"
+    },
+    {
+     "sig": "auto operator==(TargetIdentity const&) const = default",
+     "note": "身份相等比较，continuity 判定基础。"
+    }
+   ],
+   "related": [
+    "uf::ResolvedTarget",
+    "uf::ClientSize"
+   ]
+  },
+  {
+   "name": "uf::RevalidateOutcome",
+   "kind": "enum",
+   "file": "modules/controller/source/controller/target.hpp",
+   "line": 84,
+   "responsibility": "表达一次 revalidate 后目标连续性的四种结局，供调用者按上下文决定是否继续或重新解析。",
+   "members": [
+    {
+     "sig": "Unchanged",
+     "note": "PID+启动时间+HWND+尺寸全同。"
+    },
+    {
+     "sig": "GenerationBumped",
+     "note": "进程实例不同或 HWND/尺寸改变，代际前进一次。"
+    },
+    {
+     "sig": "InstanceUnconfirmed",
+     "note": "缺启动时间无法排除 PID 复用，锁存需重新解析。"
+    },
+    {
+     "sig": "Lost",
+     "note": "窗口消失，锁存需重新解析。"
+    }
+   ]
+  },
+  {
+   "name": "uf::ResolvedTarget",
+   "kind": "class",
+   "file": "modules/controller/source/controller/target.hpp",
+   "line": 95,
+   "responsibility": "在多次 revalidate/re-resolve 中守住『每次连续性断裂只产生一个代际边界』的不变量；Lost/InstanceUnconfirmed 一旦锁存不再反复推进 generation，必须显式 reResolve 恢复。",
+   "members": [
+    {
+     "sig": "revalidate() -> Result<RevalidateOutcome>",
+     "note": "重读 live identity 后交给 applyRevalidation 分类。"
+    },
+    {
+     "sig": "applyRevalidation(std::optional<TargetIdentity> observed) -> Result<RevalidateOutcome>",
+     "note": "纯比较逻辑，决定 Unchanged/Bump/Unconfirmed/Lost。"
+    },
+    {
+     "sig": "reResolve(candidates, selector) -> Status",
+     "note": "用新候选恢复；对仍 confirmed 的目标会先推进一次 generation。"
+    },
+    {
+     "sig": "requiresReresolution() -> bool",
+     "note": "是否已锁存失效。"
+    },
+    {
+     "sig": "currentGeneration() -> TargetGeneration",
+     "note": "当前代际，初始为零、单调不回绕。"
+    },
+    {
+     "sig": "windowHandle()/clientSize()/identity()",
+     "note": "读回当前身份视图。"
+    }
+   ],
+   "lifetime": "值持有当前 identity 与 continuity；多次 Win32 读取不是原子快照，等值 HWND 回收竞态是已登记开放项。构造仅由 friend resolveTarget 完成。",
+   "related": [
+    "uf::TargetIdentity",
+    "uf::TargetGeneration",
+    "uf::controller_detail::compareProcessInstance"
+   ]
+  },
+  {
+   "name": "uf::controller-target-resolution",
+   "kind": "functions",
+   "file": "modules/controller/source/controller/target.hpp",
+   "line": 45,
+   "responsibility": "把候选集合按 selector 收敛成唯一解析或结构化失败；解析从不『挑第一个看起来合适的窗口』。",
+   "members": [
+    {
+     "sig": "matchingCandidates(span<TargetCandidate const>, TargetSelector const&) -> std::vector<TargetCandidate>",
+     "note": "纯筛选，不要求唯一。"
+    },
+    {
+     "sig": "resolveTarget(candidates, selector) -> Result<ResolvedTarget>",
+     "note": "要求恰好一个匹配；零/多匹配返回 TargetUnavailable，PID 与 HWND 冲突单独报错。"
+    },
+    {
+     "sig": "errorOnLost(RevalidateOutcome) -> Result<RevalidateOutcome>",
+     "note": "只把 Lost 转成 ControllerDisconnected，其他结局透传。"
+    }
+   ],
+   "related": [
+    "uf::ResolvedTarget",
+    "uf::TargetSelector"
+   ]
+  },
+  {
+   "name": "uf::WgcCaptureOptions",
+   "kind": "class",
+   "file": "modules/controller/source/controller/capture.hpp",
+   "line": 23,
+   "responsibility": "承载捕获旋钮（stall timeout 与 borderless 请求）。requireBorderless 目前恒失败，因为还没有 caller-owned 的 borderless access grant 路径，是 fail-closed 占位。",
+   "members": [
+    {
+     "sig": "static create(Duration captureStallTimeout, bool requireBorderless) -> Result<WgcCaptureOptions>",
+     "note": "校验后的构造入口。"
+    },
+    {
+     "sig": "captureStallTimeout() -> MonotonicInstant::Duration",
+     "note": "帧到达超时，默认 1s。"
+    },
+    {
+     "sig": "requireBorderless() -> bool",
+     "note": "borderless 需求开关，当前只能为默认 false。"
+    }
+   ],
+   "related": [
+    "uf::WgcCaptureSession",
+    "uf::controller_detail::StallTracker"
+   ]
+  },
+  {
+   "name": "uf::ClientGeometry",
+   "kind": "class",
+   "file": "modules/controller/source/controller/capture.hpp",
+   "line": 64,
+   "responsibility": "由目标 owner 提供的物理 desktop-space client 原点与正的 client 尺寸；是 Client↔Frame 坐标变换与整数裁剪的来源。",
+   "members": [
+    {
+     "sig": "static create(Point<DesktopSpace> origin, float width, float height) -> Result<ClientGeometry>",
+     "note": "要求正 extent。"
+    },
+    {
+     "sig": "origin() -> Point<DesktopSpace>",
+     "note": "physical desktop-space client 原点。"
+    },
+    {
+     "sig": "transformFor(uint32 frameWidth, uint32 frameHeight) -> Result<CoordinateTransform>",
+     "note": "按帧尺寸算出 Client↔Frame 变换。"
+    }
+   ],
+   "related": [
+    "uf::CoordinateTransform",
+    "uf::controller_detail::clientIntegerExtent"
+   ]
+  },
+  {
+   "name": "uf::CaptureHygiene",
+   "kind": "struct",
+   "file": "modules/controller/source/controller/capture.hpp",
+   "line": 106,
+   "responsibility": "记录 session 创建时的 OS-build 相关能力事实，供上层如实登记捕获环境而不改变行为。",
+   "members": [
+    {
+     "sig": "uint32 osBuild",
+     "note": "创建时 OS build。"
+    },
+    {
+     "sig": "bool cursorCaptureDisabled",
+     "note": "cursor 是否已禁用（build>=19041 才可关）。"
+    },
+    {
+     "sig": "bool borderlessSupported / bool borderRequired",
+     "note": "borderless 支持与是否仍需 border。"
+    }
+   ]
+  },
+  {
+   "name": "uf::WgcCaptureSession",
+   "kind": "class",
+   "file": "modules/controller/source/controller/capture.hpp",
+   "line": 119,
+   "responsibility": "把一个已绑定窗口包装成 free-threaded WGC 会话，返回裁到 client area 的 BGRA8 Frame。守住 fail-closed：ContentSize 改变、item closed、marker 不符、stale arrival 都永久锁存失效，必须以新 generation 重建而非原地改写。",
+   "members": [
+    {
+     "sig": "static create(WindowHandle, SessionId, TargetGeneration, ClientGeometry, WgcCaptureOptions = {}) -> Result<WgcCaptureSession>",
+     "note": "固定 session/generation，建 marker、D3D device、frame pool 并 StartCapture。"
+    },
+    {
+     "sig": "capture() -> Result<Frame>",
+     "note": "在 operation mutex 下等帧→校验 ContentSize/surface→按 crop 回读 BGRA8→分配单调 FrameId。"
+    },
+    {
+     "sig": "validateTargetInstance() -> Status",
+     "note": "单独检查 item-closed 与 WindowInstanceMarker，供 engine 在 observe/delivery 边缘调用。"
+    },
+    {
+     "sig": "close() -> Status",
+     "note": "与 capture 共用 mutex；先停收帧再拆 callback/pool/property。"
+    },
+    {
+     "sig": "hygiene() -> CaptureHygiene",
+     "note": "创建时能力事实。"
+    },
+    {
+     "sig": "sessionId() / targetGeneration()",
+     "note": "读回固定的 session 与代际。"
+    }
+   ],
+   "lifetime": "不可复制，std::unique_ptr<Impl> 独占 COM/frame pool/D3D/marker；async callback 只按值持 shared FrameSlot，不持 session 借用或裸 this。返回的 Frame 共享 immutable pixel buffer，可安全越过下一次 capture。close() 无法中断已持 mutex 的 capture 等待，是已知边界。",
+   "related": [
+    "uf::Frame",
+    "uf::CoordinateTransform",
+    "uf::controller_detail::CaptureGeometryState",
+    "uf::controller_detail::ClientCropRect",
+    "uf::controller_detail::FrameIdCounter"
+   ]
+  },
+  {
+   "name": "uf::ClientPixel",
+   "kind": "class",
+   "file": "modules/controller/source/controller/input.hpp",
+   "line": 41,
+   "responsibility": "承载已校验、可编码为非负 signed-16-bit 的整数 client 坐标；浮点 client 坐标经 floor 后落到它，作为 lParam 编码的确定输入。",
+   "members": [
+    {
+     "sig": "static create(int32 x, int32 y) -> Result<ClientPixel>",
+     "note": "校验落在 signed-16-bit 且非负。"
+    },
+    {
+     "sig": "x() / y() -> int32",
+     "note": "读回整数坐标。"
+    },
+    {
+     "sig": "auto operator<=>(ClientPixel const&) const = default",
+     "note": "可比较，held pointer 用它去重。"
+    }
+   ]
+  },
+  {
+   "name": "uf::KeyInput",
+   "kind": "class",
+   "file": "modules/controller/source/controller/input.hpp",
+   "line": 62,
+   "responsibility": "承载 virtual key 与 extended-key 位，是键盘消息与 held key 集合的稳定 key；extended 位决定 lParam bit24。",
+   "members": [
+    {
+     "sig": "explicit KeyInput(uint16 virtualKey)",
+     "note": "按 isExtendedKey 推断 extended 位。"
+    },
+    {
+     "sig": "static constexpr numpadEnter() -> KeyInput",
+     "note": "显式构造 extended 的小键盘 Enter。"
+    },
+    {
+     "sig": "virtualKey() -> uint16 / isExtended() -> bool",
+     "note": "读回 VK 与 extended 位。"
+    },
+    {
+     "sig": "auto operator<=>(KeyInput const&) const = default",
+     "note": "作为 std::set<KeyInput> 的有序键。"
+    }
+   ]
+  },
+  {
+   "name": "uf::PointerButton",
+   "kind": "enum",
+   "file": "modules/controller/source/controller/input.hpp",
+   "line": 88,
+   "responsibility": "限定当前支持的指针按钮集合；有意只有左键，符合严格后台的最小注入面。",
+   "members": [
+    {
+     "sig": "Left",
+     "note": "唯一支持的左键。"
+    }
+   ]
+  },
+  {
+   "name": "uf::HeldPointerInput",
+   "kind": "class",
+   "file": "modules/controller/source/controller/input.hpp",
+   "line": 93,
+   "responsibility": "记录一个被按下但未释放的指针（按钮+像素），是 HeldInput variant 的指针分支。",
+   "members": [
+    {
+     "sig": "constexpr HeldPointerInput(PointerButton button, ClientPixel pixel)",
+     "note": "值构造。"
+    },
+    {
+     "sig": "button() -> PointerButton / pixel() -> ClientPixel",
+     "note": "读回按钮与像素。"
+    }
+   ],
+   "related": [
+    "uf::ClientPixel",
+    "uf::PointerButton"
+   ]
+  },
+  {
+   "name": "uf::DeliveryTarget",
+   "kind": "class",
+   "file": "modules/controller/source/controller/input.hpp",
+   "line": 114,
+   "responsibility": "把 {WindowHandle, SessionId, TargetGeneration, 非空 ClientSize} 固定为一个投递 capability。它不拥有窗口、不自动跟随 ResolvedTarget；generation/session 改变时应创建新值。",
+   "members": [
+    {
+     "sig": "static create(WindowHandle, SessionId, TargetGeneration, uint32 clientWidth, uint32 clientHeight) -> Result<DeliveryTarget>",
+     "note": "校验非空 client 尺寸。"
+    },
+    {
+     "sig": "windowHandle() / sessionId() / generation()",
+     "note": "读回投递身份，用于 lease fence 比较。"
+    },
+    {
+     "sig": "clientWidth() / clientHeight() -> uint32",
+     "note": "半开 client bounds 校验用。"
+    }
+   ],
+   "related": [
+    "uf::HeldInputs",
+    "uf::ObservationLease",
+    "uf::TargetGeneration"
+   ]
+  },
+  {
+   "name": "uf::ReleaseOutcome",
+   "kind": "struct",
+   "file": "modules/controller/source/controller/input.hpp",
+   "line": 161,
+   "responsibility": "记录 releaseHeld 里某个被释放输入及其 best-effort Up 投递结果，让调用者看到每项成败而不吞掉失败。",
+   "members": [
+    {
+     "sig": "HeldInput input",
+     "note": "被释放的 key 或 pointer。"
+    },
+    {
+     "sig": "Status result",
+     "note": "该项 Up 投递的结果。"
+    }
+   ]
+  },
+  {
+   "name": "uf::AuditRecord",
+   "kind": "struct",
+   "file": "modules/controller/source/controller/input.hpp",
+   "line": 167,
+   "responsibility": "一次『尝试投递』的诊断证据：目标、消息、wParam/lParam 与 monotonic 时刻；表示尝试而非成功，PostMessageW 成功也只表示已入队。",
+   "members": [
+    {
+     "sig": "uintptr target / uint32 message",
+     "note": "目标 HWND 数值与 Win32 消息。"
+    },
+    {
+     "sig": "uintptr wParam / intptr lParam",
+     "note": "投递参数原样记录。"
+    },
+    {
+     "sig": "MonotonicInstant at",
+     "note": "尝试时刻，保持单调顺序。"
+    }
+   ]
+  },
+  {
+   "name": "uf::AuditLog",
+   "kind": "class",
+   "file": "modules/controller/source/controller/input.hpp",
+   "line": 177,
+   "responsibility": "caller-owned 的输入尝试审计流，按尝试顺序与 monotonic 时间戳追加；null/broadcast 因未尝试而不留记录。它是诊断证据不是成功确认。",
+   "members": [
+    {
+     "sig": "records() -> std::span<AuditRecord const>",
+     "note": "借用内部 vector 的 span，下一次 audited delivery 可能扩容并使其失效。"
+    },
+    {
+     "sig": "size() / empty()",
+     "note": "记录条数与是否为空。"
+    },
+    {
+     "sig": "record(...)  [private, via AuditLogAccess]",
+     "note": "写入只经 detail 友元访问，公开面只读。"
+    }
+   ],
+   "lifetime": "调用者拥有，controller 不藏全局状态；records() 返回的 span 只在下一次 append 前有效。",
+   "related": [
+    "uf::AuditRecord",
+    "uf::controller_detail::input-message"
+   ]
+  },
+  {
+   "name": "uf::HeldInputs",
+   "kind": "class",
+   "file": "modules/controller/source/controller/input.hpp",
+   "line": 199,
+   "responsibility": "caller-owned 的按下状态，绑定 {HWND, SessionId, TargetGeneration}。守住『本进程不会把旧 held capability 带到新目标』：identity 不符时完全不投递，releaseAll 总是先清空内存再 best-effort 投 Up。",
+   "members": [
+    {
+     "sig": "empty() / size() -> ...",
+     "note": "当前 held 数量。"
+    },
+    {
+     "sig": "holdsKey(KeyInput) / holdsPointer(PointerButton) -> bool",
+     "note": "查询是否持有某键/指针。"
+    },
+    {
+     "sig": "bind / onKeyDown / onKeyUp / onPointerDown / onPointerUp  [private, via HeldInputsAccess]",
+     "note": "状态迁移经 detail 友元暴露给 input 层与测试。"
+    },
+    {
+     "sig": "releaseAll(target, postUp)  [private] -> std::vector<ReleaseOutcome>",
+     "note": "先清空再按 key 后 pointer 的稳定顺序投 Up。"
+    }
+   ],
+   "lifetime": "调用者拥有；清空优先意味着失败的 Up 没有内建重试状态，retry 语义须由上层显式承担。",
+   "related": [
+    "uf::DeliveryTarget",
+    "uf::ReleaseOutcome",
+    "uf::KeyInput",
+    "uf::HeldPointerInput"
+   ]
+  },
+  {
+   "name": "uf::controller-input-delivery",
+   "kind": "functions",
+   "file": "modules/controller/source/controller/input.hpp",
+   "line": 257,
+   "responsibility": "严格后台输入的公开入口：只通过目标窗口消息投递鼠标/键盘/文本，投递前重验 lease 或 action generation、client bounds、held binding 与窗口存活，失败即失败、无前台化降级。",
+   "members": [
+    {
+     "sig": "movePointer/click/pointerDown/pointerUp(target, ObservationLease lease, Point<ClientSpace>, held, audit) -> Status",
+     "note": "坐标动作，走完整 pointer lease fence；click 依次 move/down/up，down 成 up 败时保留 held 供补偿。"
+    },
+    {
+     "sig": "longPress(target, lease, point, hold, held, audit, refreshTarget) -> Status",
+     "note": "down 后等待，再经调用者 refresh callback 要求 HWND/session/generation 未变才投 up。"
+    },
+    {
+     "sig": "keyPress/keyDown/keyUp(target, TargetGeneration actionGeneration, KeyInput, held, audit) -> Status",
+     "note": "键盘只比较 action generation，不接受 lease。"
+    },
+    {
+     "sig": "inputText(target, gen, std::string_view, held, audit) -> Status",
+     "note": "严格解码 UTF-8，再按 UTF-16 code unit 发 WM_CHAR。"
+    },
+    {
+     "sig": "inputUnichar(target, gen, char32_t, held, audit) -> Status",
+     "note": "只接受 Unicode scalar 并发 WM_UNICHAR。"
+    },
+    {
+     "sig": "releaseHeld(target, held, audit) -> std::vector<ReleaseOutcome>",
+     "note": "对 held 逐项 best-effort 投 Up，identity 不符则零投递。"
+    }
+   ],
+   "related": [
+    "uf::DeliveryTarget",
+    "uf::HeldInputs",
+    "uf::AuditLog",
+    "uf::ObservationLease",
+    "uf::controller_detail::checkPointerPreconditions"
+   ]
+  },
+  {
+   "name": "uf::DpiDeclaration",
+   "kind": "enum",
+   "file": "modules/controller/source/controller/dpi.hpp",
+   "line": 10,
+   "responsibility": "表达 PER_MONITOR_AWARE_V2 进程前提是本次刚声明还是先前已声明；其他情况一律 fail-closed 不进入此 enum。",
+   "members": [
+    {
+     "sig": "Declared",
+     "note": "setter 成功且实际 context 已是 V2。"
+    },
+    {
+     "sig": "AlreadyDeclared",
+     "note": "access denied 但实际 context 已是 V2。"
+    }
+   ]
+  },
+  {
+   "name": "uf::controller-dpi",
+   "kind": "functions",
+   "file": "modules/controller/source/controller/dpi.hpp",
+   "line": 16,
+   "responsibility": "在任何依赖物理像素的窗口查询之前建立并验证进程 DPI 前提；只建立进程坐标前提，不做项目级 DPI fingerprint 校验。",
+   "members": [
+    {
+     "sig": "ensurePerMonitorAwareV2() -> Result<DpiDeclaration>",
+     "note": "SetProcessDpiAwarenessContext 后用当前 thread context 验证；context 错或其他 Win32 error 都 InternalInvariant fail-closed。"
+    }
+   ],
+   "related": [
+    "uf::DpiDeclaration",
+    "uf::controller_detail::classifyDpiResult"
+   ]
+  },
+  {
+   "name": "uf::controller_detail::FrameIdCounter",
+   "kind": "class",
+   "file": "modules/controller/source/controller/detail/capture-wgc.hpp",
+   "line": 21,
+   "responsibility": "在一个 session 内分配单调、不可回绕的 FrameId；回绕被拒绝，旧凭证不会因整数溢出重新有效。",
+   "members": [
+    {
+     "sig": "constexpr explicit FrameIdCounter(uint64 next = 0)",
+     "note": "从指定初值起。"
+    },
+    {
+     "sig": "nextId() -> Result<FrameId>",
+     "note": "递增并返回，溢出返回失败。"
+    }
+   ],
+   "related": [
+    "uf::FrameId",
+    "uf::WgcCaptureSession"
+   ]
+  },
+  {
+   "name": "uf::controller_detail::CaptureGeometryState",
+   "kind": "class",
+   "file": "modules/controller/source/controller/detail/capture-wgc.hpp",
+   "line": 36,
+   "responsibility": "把捕获几何的『尺寸一旦改变即永久锁存失效』做成可离线测试的纯状态；锁存后即使尺寸恢复也必须重建 session，防止复用旧 transform/crop。",
+   "members": [
+    {
+     "sig": "static create(CaptureSize initialSize) -> Result<CaptureGeometryState>",
+     "note": "以创建时尺寸为期望值。"
+    },
+    {
+     "sig": "ensureActive() -> Status",
+     "note": "已锁存失效则失败。"
+    },
+    {
+     "sig": "observeContentSize(CaptureSize) -> Result<std::pair<uint32,uint32>>",
+     "note": "要求每帧 ContentSize 与期望完全相同，否则锁存。"
+    },
+    {
+     "sig": "observeSurfaceSize(confirmed, surfaceW, surfaceH) -> Status",
+     "note": "D3D surface size 还须与已确认 size 相同。"
+    }
+   ],
+   "related": [
+    "uf::WgcCaptureSession"
+   ]
+  },
+  {
+   "name": "uf::controller_detail::StallTracker",
+   "kind": "class",
+   "file": "modules/controller/source/controller/detail/capture-stall.hpp",
+   "line": 9,
+   "responsibility": "以帧到达时间（而非像素变化或消费时间）判断新鲜度；一帧即使已在 slot 中，消费时超过 timeout 仍判 stalled。",
+   "members": [
+    {
+     "sig": "constexpr StallTracker(Duration timeout, MonotonicInstant startedAt)",
+     "note": "以起始时刻为首个 arrival。"
+    },
+    {
+     "sig": "onFrameArrived(MonotonicInstant now)",
+     "note": "刷新最近到达时刻。"
+    },
+    {
+     "sig": "check(MonotonicInstant now) -> Status",
+     "note": "now 与 lastArrival 之差超 timeout 则 CaptureStalled。"
+    }
+   ],
+   "related": [
+    "uf::WgcCaptureOptions"
+   ]
+  },
+  {
+   "name": "uf::controller_detail::ClientCropRect",
+   "kind": "class",
+   "file": "modules/controller/source/controller/detail/capture-d3d.hpp",
+   "line": 16,
+   "responsibility": "计算 full-window WGC 帧内的 client 子矩形；extended extent 必须来自 DWMWA_EXTENDED_FRAME_BOUNDS 而非 GetWindowRect，以免把 WGC 不含的隐形 resize border 算进 crop。",
+   "members": [
+    {
+     "sig": "static create(frame, extended, offset, client) -> Result<ClientCropRect>",
+     "note": "由帧/扩展 bounds/偏移/client 尺寸算出，含 overflow/zero 拒绝。"
+    },
+    {
+     "sig": "offsetX()/offsetY()/width()/height()/right()/bottom()",
+     "note": "裁剪矩形各边。"
+    },
+    {
+     "sig": "ensureWithinSource(sourceW, sourceH) -> Status",
+     "note": "确保矩形落在源帧内。"
+    }
+   ],
+   "related": [
+    "uf::controller_detail::readbackBgra8",
+    "uf::WgcCaptureSession"
+   ]
+  },
+  {
+   "name": "uf::controller_detail::capture-os-build",
+   "kind": "functions",
+   "file": "modules/controller/source/controller/detail/capture-os-build.hpp",
+   "line": 10,
+   "responsibility": "把 WGC 能力阈值做成纯常量判定，供 session 决定能否关 cursor capture、是否支持 borderless。",
+   "members": [
+    {
+     "sig": "cursorCaptureSupported(uint32 build) -> bool",
+     "note": "build>=19041 才能关 cursor capture。"
+    },
+    {
+     "sig": "borderlessSupported(uint32 build) -> bool",
+     "note": "build>=20348 才支持 borderless。"
+    },
+    {
+     "sig": "k_cursorCaptureMinBuild / k_borderlessMinBuild",
+     "note": "两个 build 阈值常量。"
+    }
+   ]
+  },
+  {
+   "name": "uf::controller_detail::input-message",
+   "kind": "functions",
+   "file": "modules/controller/source/controller/detail/input-message.hpp",
+   "line": 45,
+   "responsibility": "把每个输入动作确定性地编码为 PostSpec（仅限白名单消息），并在唯一系统调用点尝试投递；bit layout 与消息集合都是显式规则，无隐式 rounding。",
+   "members": [
+    {
+     "sig": "struct PostSpec { uint32 message; uintptr wParam; intptr lParam; }",
+     "note": "一条待投递消息的确定编码（line 36）。"
+    },
+    {
+     "sig": "keyboardLParamBits(scanCode, extended, KeyTransition) / pointerLParamBits(ClientPixel)",
+     "note": "键盘/指针 lParam 位布局。"
+    },
+    {
+     "sig": "enum class KeyTransition { Down, Up } / enum class PointerMessage { Move, MoveWithLeftButton, LeftDown, LeftUp }",
+     "note": "键盘按下/抬起与四种指针消息类别，喂给 keySpec/pointerSpec 决定 message 与 lParam。"
+    },
+    {
+     "sig": "keySpec/pointerSpec/charSpec/unicharSpec(...) -> PostSpec",
+     "note": "分别构造键/指针/WM_CHAR/WM_UNICHAR 规格。"
+    },
+    {
+     "sig": "utf16CodeUnits(std::string_view) -> Result<std::vector<uint16>>",
+     "note": "严格 UTF-8→UTF-16 解码。"
+    },
+    {
+     "sig": "scanCodeFor(uint16 virtualKey) -> uint8",
+     "note": "VK→scan code；返回零是待加固的扩展点。"
+    },
+    {
+     "sig": "deliver(WindowHandle, PostSpec, AuditLog&) -> Status",
+     "note": "先审计再投递，桥到 platform postInputMessage。"
+    }
+   ],
+   "related": [
+    "uf::AuditLog",
+    "uf::controller_platform"
+   ]
+  },
+  {
+   "name": "uf::controller_detail::input-revalidation",
+   "kind": "functions",
+   "file": "modules/controller/source/controller/detail/input-revalidation.hpp",
+   "line": 11,
+   "responsibility": "把投递前的 fence 做成可离线测试的纯检查，钉住确定的拒绝顺序；单独调用时 IsWindow 只能证明数值当前是窗口，完整 frame-ID fencing 在 annotation 层。",
+   "members": [
+    {
+     "sig": "checkPointerPreconditions(lease, currentSession, currentGeneration, now, point, clientW, clientH) -> Result<ClientPixel>",
+     "note": "依次校验 lease session→未过期→generation→有限且半开 bounds→floor 成 ClientPixel。"
+    },
+    {
+     "sig": "checkKeyboardPreconditions(actionGeneration, currentGeneration) -> Status",
+     "note": "键盘只比较 generation。"
+    },
+    {
+     "sig": "windowIsAlive(WindowHandle) / ensureWindowAlive(WindowHandle)",
+     "note": "IsWindow 存活检查。"
+    },
+    {
+     "sig": "ensureSameDeliveryIdentity(original, refreshed) -> Status",
+     "note": "longPress 补投前比较 HWND/session/generation，client geometry 变化不影响。"
+    }
+   ],
+   "related": [
+    "uf::ObservationLease",
+    "uf::DeliveryTarget",
+    "uf::ClientPixel"
+   ]
+  },
+  {
+   "name": "uf::controller_detail::target-logic",
+   "kind": "functions",
+   "file": "modules/controller/source/controller/detail/target-logic.hpp",
+   "line": 19,
+   "responsibility": "把进程实例比较做成纯逻辑，供 ResolvedTarget 区分 Same/Different/Unconfirmed；缺任一侧启动时间即 Unconfirmed，无法排除 PID 复用。",
+   "members": [
+    {
+     "sig": "enum class ProcessInstanceMatch { Same, Different, Unconfirmed }",
+     "note": "三种进程实例判定（line 11）。"
+    },
+    {
+     "sig": "compareProcessInstance(trackedProcess, trackedStart, observedProcess, observedStart) -> ProcessInstanceMatch",
+     "note": "PID 不同即 Different；PID 同但缺启动时间即 Unconfirmed。"
+    }
+   ],
+   "related": [
+    "uf::ResolvedTarget"
+   ]
+  },
+  {
+   "name": "uf::controller_detail::dpi-classification",
+   "kind": "functions",
+   "file": "modules/controller/source/controller/detail/dpi-classification.hpp",
+   "line": 20,
+   "responsibility": "把 SetProcessDpiAwarenessContext 的 Win32 观测分类成 Declared/AlreadyDeclared 或 fail-closed，做成不依赖 OS 的纯判定。",
+   "members": [
+    {
+     "sig": "classifyDpiResult(std::optional<uint32> win32Error, bool isPerMonitorAwareV2) -> Result<DpiDeclaration>",
+     "note": "只有 access denied 且实际已是 V2 才 AlreadyDeclared。"
+    },
+    {
+     "sig": "win32Code(uint32 hresult) -> uint32",
+     "note": "取 HRESULT 低 16 位。"
+    },
+    {
+     "sig": "k_accessDeniedError = 5",
+     "note": "ERROR_ACCESS_DENIED。"
+    }
+   ],
+   "related": [
+    "uf::DpiDeclaration"
+   ]
+  },
+  {
+   "name": "uf::controller_detail::discovery-logic",
+   "kind": "functions",
+   "file": "modules/controller/source/controller/detail/discovery-logic.hpp",
+   "line": 12,
+   "responsibility": "枚举阶段用到的可移植纯 helper：FILETIME 拼接与 loss-tolerant 的 UTF-16 转换，让 discovery 的边界规则可离线测试。",
+   "members": [
+    {
+     "sig": "fileTimeToTicks(uint32 high, uint32 low) -> uint64",
+     "note": "把 FILETIME 高低位拼成启动时间 ticks。"
+    },
+    {
+     "sig": "utf16BufferToString(span<char16_t const>, int32 length) -> std::string",
+     "note": "容错解码窗口标题/类名。"
+    },
+    {
+     "sig": "utf16BufferToPath(span<char16_t const>, int32 length) -> std::filesystem::path",
+     "note": "容错解码可执行路径。"
+    }
+   ]
+  },
+  {
+   "name": "uf::controller_platform",
+   "kind": "functions",
+   "file": "modules/controller/source/controller/platform/windows-controller.hpp",
+   "line": 29,
+   "responsibility": "纯逻辑与 Win32/COM/D3D 之间唯一的桥面：把 EnumWindows、进程查询、DPI setter、scan code 与 PostMessageW 隔离在 platform 边界，每处危险操作有 // SAFETY 注释并在边界内转成 value/RAII/Result。公开 header 不暴露 HWND/HANDLE/COM。",
+   "members": [
+    {
+     "sig": "struct DpiSetObservation { std::optional<uint32> win32Error; bool isPerMonitorAwareV2; }",
+     "note": "DPI setter 的可分类观测（line 23）。"
+    },
+    {
+     "sig": "enumerateCandidates() -> Result<std::vector<TargetCandidate>>",
+     "note": "真实 EnumWindows 枚举实现。"
+    },
+    {
+     "sig": "windowClientSize/windowIsAlive/windowProcess/processStartTime(...)",
+     "note": "live identity 的各次 Win32 查询（非原子）。"
+    },
+    {
+     "sig": "setPerMonitorAwareV2() -> DpiSetObservation",
+     "note": "调用 SetProcessDpiAwarenessContext 并回读实际 context。"
+    },
+    {
+     "sig": "scanCodeFor(uint16 virtualKey) -> uint8",
+     "note": "MapVirtualKey 取 scan code。"
+    },
+    {
+     "sig": "postInputMessage(WindowHandle, PostSpec, AuditLog&) -> Status",
+     "note": "唯一注入点：先拒 null/broadcast，再审计后 PostMessageW。"
+    }
+   ],
+   "lifetime": "唯一 FFI/platform 边界，本模块没有单独 ffi/ 目录；Win32 与 COM 的 FFI 责任由 platform/ 完整承担。",
+   "related": [
+    "uf::controller_detail::input-message",
+    "uf::AuditLog"
+   ]
+  }
+ ],
+ "flows": [
+  {
+   "title": "一次 observe：WgcCaptureSession 产出一帧 Frame",
+   "steps": [
+    {
+     "text": "调用者以 ResolvedTarget 的 HWND/session/generation 和 ClientGeometry 创建 session，建立 WindowInstanceMarker、D3D device、两缓冲 free-threaded frame pool 并 StartCapture。",
+     "file": "modules/controller/source/controller/platform/windows-capture.cpp"
+    },
+    {
+     "text": "frame-arrived callback 只按值持 shared FrameSlot，用 mutex 把最新 CapturedArrival 覆盖进 m_latest，并以 MonotonicInstant::now() 记 host 到达时间。"
+    },
+    {
+     "text": "capture() 在 operation mutex 下 waitForFrame，等到最新帧、item closed、callback failure 或 stall timeout。",
+     "file": "modules/controller/source/controller/capture.hpp",
+     "line": 143
+    },
+    {
+     "text": "StallTracker 按到达时间判鲜度，CaptureGeometryState.observeContentSize/observeSurfaceSize 要求尺寸与创建时完全一致，否则永久锁存失效。"
+    },
+    {
+     "text": "按 ClientCropRect 只回读 client 子矩形到 staging texture，readbackBgra8 去掉 row-pitch padding 得到紧密 BGRA8。"
+    },
+    {
+     "text": "再验 marker、重读 client origin 算出新 CoordinateTransform，分配单调 FrameId，把 immutable pixel buffer + session/generation + transform 装进 Frame 返回。"
+    }
+   ]
+  },
+  {
+   "title": "一次 act：click 把左键点击投递到目标窗口",
+   "steps": [
+    {
+     "text": "调用者以 DeliveryTarget、ObservationLease 和 Point<ClientSpace> 调 click。",
+     "file": "modules/controller/source/controller/input.hpp",
+     "line": 266
+    },
+    {
+     "text": "checkPointerPreconditions 依次校验 lease.session==target.session、未过期、lease.generation==target.generation、坐标有限且落在半开 client bounds、可编码为非负 int16，最后 floor 成 ClientPixel。",
+     "file": "modules/controller/source/controller/detail/input-revalidation.hpp",
+     "line": 11
+    },
+    {
+     "text": "确认 HeldInputs 未绑定到其他 delivery identity，且 IsWindow 仍为真，才进入消息边界。"
+    },
+    {
+     "text": "依次投递 WM_MOUSEMOVE、WM_LBUTTONDOWN、WM_LBUTTONUP；down 成而 up 败时有意保留 held 状态供调用者补偿。"
+    },
+    {
+     "text": "每次投递经 controller_detail::deliver 先写 AuditLog 再由 platform postInputMessage 调 PostMessageW；null/broadcast 因未尝试而不留审计。",
+     "file": "modules/controller/source/controller/platform/windows-input.cpp"
+    }
+   ]
+  }
+ ]
+}

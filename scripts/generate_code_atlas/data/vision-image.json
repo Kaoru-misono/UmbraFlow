@@ -1,0 +1,397 @@
+{
+ "module": "vision-image",
+ "title": "modules/vision + modules/image — 视觉与图像",
+ "summary": "两个平台无关的小型模块，编辑器、预览与运行时都会用到但彼此不依赖。vision 提供确定性的像素识别：BGRA8→Gray8 转换与有界、可取消、可记账的 SAD 模板搜索。image 提供有资源上限的 PNG 编解码与像素布局转换（RGBA/BGRA 互换、带 stride 裁剪），并把 stb 的 C API 封闭在 ffi/ 边界内。二者向下只依赖 core 与 domain。",
+ "notOwned": [
+  "不发现窗口、不抓帧、不持有 OS handle、不发送输入；这些属于 controller 与 entry adapter。",
+  "不定义相似度阈值、page signature、anchor 或动作授权；这些属于 annotation。",
+  "不计算 ContentHash、不派生 template 路径、不校验 asset closure；image 只保证编码 bytes，身份含义由 annotation 决定。",
+  "不做原子发布；writeRgbaPng 只是直接 open/write/flush/close，commit point 与回滚纪律在 workbench project-persistence。",
+  "不做缩放、resampling、颜色/HSV recognizer、OCR 或多尺度搜索。",
+  "不实现 strict-background input；只保证交出 completed evidence 或显式 stop，由上层守住后台投递前置条件。"
+ ],
+ "dependsOn": [
+  "core",
+  "domain"
+ ],
+ "readingOrder": [
+  {
+   "path": "modules/vision/source/vision/sad.hpp",
+   "why": "vision 的全部公开面：Gray8 view、SAD 搜索结果与三种 stop/poll 控制类型都在这里。"
+  },
+  {
+   "path": "modules/vision/source/vision/sad.cpp",
+   "why": "确认 gray 权重、candidate 遍历、row pruning、budget/poll 检查顺序等确定性行为。"
+  },
+  {
+   "path": "modules/image/source/image/png.hpp",
+   "why": "image 的 PNG API 与三个资源 quota 常量。"
+  },
+  {
+   "path": "modules/image/source/image/pixels.hpp",
+   "why": "RGBA/BGRA 布局互换与带 stride 裁剪，是连接 image 与 vision 的桥。"
+  }
+ ],
+ "classes": [
+  {
+   "name": "uf::SadSearchControl",
+   "kind": "enum",
+   "file": "modules/vision/source/vision/sad.hpp",
+   "line": 18,
+   "responsibility": "poll 回调对 matcher 的即时指令，是 matcher 每次询问是否继续时读取的返回值。",
+   "members": [
+    {
+     "sig": "Continue",
+     "note": "继续搜索。"
+    },
+    {
+     "sig": "Cancelled",
+     "note": "调用方请求取消。"
+    },
+    {
+     "sig": "TimedOut",
+     "note": "已过 deadline。"
+    }
+   ],
+   "related": [
+    "uf::SadSearchPoll",
+    "uf::SadSearchStopReason"
+   ]
+  },
+  {
+   "name": "uf::SadSearchStopReason",
+   "kind": "enum",
+   "file": "modules/vision/source/vision/sad.hpp",
+   "line": 25,
+   "responsibility": "matcher 对外保存的“未完成”原因。与 miss 严格区分：三种 stop 都表示没有遍历完所有必要候选，因此既不能证明存在也不能证明不存在 match。",
+   "members": [
+    {
+     "sig": "Cancelled",
+     "note": "poll 报告取消而停止。"
+    },
+    {
+     "sig": "TimedOut",
+     "note": "poll 报告超时而停止。"
+    },
+    {
+     "sig": "ComparisonBudgetExhausted",
+     "note": "达到 maximumPixelComparisons 上限而停止。"
+    }
+   ],
+   "related": [
+    "uf::SadSearchControl",
+    "uf::SadSearchOutcome"
+   ]
+  },
+  {
+   "name": "uf::SadSearchPoll",
+   "kind": "alias",
+   "file": "modules/vision/source/vision/sad.hpp",
+   "line": 35,
+   "responsibility": "有界搜索的合作式取消/超时钩子，让上层把 stop token 与 deadline 折进一个可调用对象。",
+   "members": [
+    {
+     "sig": "using SadSearchPoll = std::function<SadSearchControl()>",
+     "note": "无参、返回 SadSearchControl 的可调用对象。"
+    }
+   ],
+   "lifetime": "同步调用，matcher 绝不 retain 该 callback；由调用方在搜索期间保持存活。",
+   "related": [
+    "uf::SadSearchControl"
+   ]
+  },
+  {
+   "name": "uf::SadMatch",
+   "kind": "class",
+   "file": "modules/vision/source/vision/sad.hpp",
+   "line": 37,
+   "responsibility": "一次完成搜索找到的最佳模板位置与其 SAD 分数。vision 本身不含阈值，分数含义纯粹由数值决定。",
+   "members": [
+    {
+     "sig": "SadMatch(uint32 x, uint32 y, uint64 score) noexcept",
+     "note": "构造，保存坐标与分数。"
+    },
+    {
+     "sig": "x() / y() -> uint32",
+     "note": "haystack 内的匹配左上角坐标。"
+    },
+    {
+     "sig": "score() -> uint64",
+     "note": "绝对差之和，越小越好，0 表示逐像素完全相同。"
+    },
+    {
+     "sig": "operator==(SadMatch const&) -> bool = default",
+     "note": "逐成员相等，供测试使用。"
+    }
+   ],
+   "related": [
+    "uf::SadSearchOutcome",
+    "uf::SadSearchReport"
+   ]
+  },
+  {
+   "name": "uf::SadSearchOutcome",
+   "kind": "alias",
+   "file": "modules/vision/source/vision/sad.hpp",
+   "line": 62,
+   "responsibility": "从 kernel 层就把“完成搜索的结果”与“未完成的 stop”分成 variant 的两个 alternative，从根上阻止把 stop 折叠成 hit=false 的信息丢失。",
+   "members": [
+    {
+     "sig": "std::variant<std::optional<SadMatch>, SadSearchStopReason>",
+     "note": "optional 为空表示完成但无合法候选，不是 stop。"
+    }
+   ],
+   "related": [
+    "uf::SadMatch",
+    "uf::SadSearchStopReason",
+    "uf::SadSearchReport"
+   ]
+  },
+  {
+   "name": "uf::SadSearchReport",
+   "kind": "struct",
+   "file": "modules/vision/source/vision/sad.hpp",
+   "line": 67,
+   "responsibility": "有界搜索的完整回执：结果（match / 空 / stop）加上精确的已执行比较数，让上层能记账消耗的 comparison budget。",
+   "members": [
+    {
+     "sig": "SadSearchOutcome outcome",
+     "note": "match、无候选或 stop。"
+    },
+    {
+     "sig": "uint64 completedPixelComparisons",
+     "note": "实际执行的比较数，含触发 pruning 或 exact-match 的那次，不含被 budget/poll 拦下的下一次。"
+    }
+   ],
+   "related": [
+    "uf::SadSearchOutcome",
+    "uf::SadMatch",
+    "uf::SadSearchStopReason"
+   ]
+  },
+  {
+   "name": "uf::GrayImage",
+   "kind": "class",
+   "file": "modules/vision/source/vision/sad.hpp",
+   "line": 98,
+   "responsibility": "只读 Gray8 像素 view。存在的意义是让 matcher 收到已验证 geometry 的紧密/带 stride 灰度数据，而不必知道它来自 PNG、WGC 还是 fixture。",
+   "members": [
+    {
+     "sig": "static create(std::span<std::byte const> data, uint32 width, uint32 height, std::size_t stride) -> Result<GrayImage>",
+     "note": "唯一构造入口；复用 domain 的 validateBufferGeometry 拒绝零尺寸/短 stride/溢出。"
+    },
+    {
+     "sig": "width() / height() -> uint32",
+     "note": "view 的像素尺寸。"
+    },
+    {
+     "sig": "stride() -> std::size_t",
+     "note": "每行字节跨度，可含 padding。"
+    }
+   ],
+   "lifetime": "不拥有像素，只存 span 与 geometry；backing storage 必须活过该 view 及所有使用它的同步 matcher 调用。",
+   "related": [
+    "uf::matchTemplateSad",
+    "uf::bgra8ToGray8",
+    "uf::PixelRect"
+   ]
+  },
+  {
+   "name": "uf::matchTemplateSad",
+   "kind": "functions",
+   "file": "modules/vision/source/vision/sad.hpp",
+   "line": 80,
+   "responsibility": "在 ROI 内以 row-major 顺序做 SAD 模板搜索的核心 kernel；确定性 tie（保留最早位置）、行内 pruning、exact-zero 提前返回，并把 budget 与 poll 都放在“下一次比较之前”检查。",
+   "members": [
+    {
+     "sig": "matchTemplateSad(GrayImage const& haystack, GrayImage const& templateImage, PixelRect roi) -> Result<std::optional<SadMatch>>",
+     "note": "无界 overload，内部用最大 uint64 budget 与永远 Continue 的 poll。"
+    },
+    {
+     "sig": "matchTemplateSad(..., uint64 maximumPixelComparisons, SadSearchPoll const& poll) -> Result<SadSearchReport>",
+     "note": "有界 overload，Runtime/Preview/m0-demo 都用它；先 budget 检查、再在 0,4096,8192... 处 poll。"
+    }
+   ],
+   "lifetime": "同步完成；不 retain haystack、template 或 poll，任何 borrow 只在调用期间有效。",
+   "related": [
+    "uf::GrayImage",
+    "uf::SadSearchReport",
+    "uf::SadSearchOutcome",
+    "uf::SadMatch",
+    "uf::SadSearchPoll",
+    "uf::PixelRect"
+   ]
+  },
+  {
+   "name": "uf::bgra8ToGray8",
+   "kind": "functions",
+   "file": "modules/vision/source/vision/sad.hpp",
+   "line": 169,
+   "responsibility": "把带 stride 的 BGRA8 帧确定性转成紧密 Gray8。用固定整数权重 (77R+150G+29B)>>8，忽略 alpha 与行 padding，固定截断行为，不依赖平台浮点。",
+   "members": [
+    {
+     "sig": "bgra8ToGray8(std::span<std::byte const> bgra, uint32 width, uint32 height, std::size_t stride) -> Result<std::vector<std::byte>>",
+     "note": "校验每行 >= width*4 bytes，返回恰好 width*height 的 owning vector。"
+    }
+   ],
+   "related": [
+    "uf::GrayImage",
+    "uf::image::pixels"
+   ]
+  },
+  {
+   "name": "uf::hashedGray",
+   "kind": "functions",
+   "file": "modules/vision/source/vision/synthetic.hpp",
+   "line": 8,
+   "responsibility": "确定性合成 fixture 用的伪随机 Gray8 生成器，由 seed/x/y 经固定整数 multiply/xor 产出一个 uint8。仅供测试，不是 PNG hash 或内容身份算法。",
+   "members": [
+    {
+     "sig": "hashedGray(uint32 seed, uint32 x, uint32 y) noexcept -> uint8",
+     "note": "当前唯一调用者是 tests/vision/test-sad.cpp。"
+    }
+   ]
+  },
+  {
+   "name": "uf::image::RgbaImage",
+   "kind": "struct",
+   "file": "modules/image/source/image/png.hpp",
+   "line": 18,
+   "responsibility": "解码/编码 API 交换的自有 RGBA8 图像。由 decoder 返回时 pixels 总是 width*height*4 的紧密 RGBA8，PNG 原始 color type 不泄漏给调用者。",
+   "members": [
+    {
+     "sig": "uint32 width / uint32 height",
+     "note": "像素尺寸。"
+    },
+    {
+     "sig": "std::vector<std::byte> pixels",
+     "note": "owning 的紧密 RGBA8 bytes。"
+    }
+   ],
+   "related": [
+    "uf::image::png",
+    "uf::image::pixels"
+   ]
+  },
+  {
+   "name": "uf::image::png",
+   "kind": "functions",
+   "file": "modules/image/source/image/png.hpp",
+   "line": 25,
+   "responsibility": "有资源上限、fail-closed 的 PNG 编解码入口。在把受界 span 交给封闭在 ffi/ 的 stb 之前先做 quota 与结构预检；用冻结的 stb 全局配置保证相同 RGBA input 收敛到同一 canonical bytes（内容寻址契约的一部分）。",
+   "members": [
+    {
+     "sig": "constexpr k_maximumPngDimension = 8192",
+     "note": "每轴尺寸上限。"
+    },
+    {
+     "sig": "constexpr k_maximumPngPixels = 8192*8192",
+     "note": "总像素上限。"
+    },
+    {
+     "sig": "constexpr k_maximumPngFileBytes = 64*1024*1024",
+     "note": "decode/load 的 encoded 输入上限 (64 MiB)。"
+    },
+    {
+     "sig": "decodePng(std::span<std::byte const> encoded, std::string_view resourceName) -> Result<RgbaImage>",
+     "note": "验 signature/IHDR/chunk 后解码，强制 RGBA8；16-bit 按 round-to-nearest 降到 8-bit。"
+    },
+    {
+     "sig": "loadPng(std::filesystem::path const& path) -> Result<RgbaImage>",
+     "note": "file_size 做 64 MiB preflight 后读入并 decodePng，失败返回 InvalidResource。"
+    },
+    {
+     "sig": "encodeRgbaPng(std::string_view resourceName, uint32 width, uint32 height, std::span<std::byte const> pixels) -> Result<std::vector<std::byte>>",
+     "note": "拒绝非紧密/超 quota 输入，用冻结的 stb 配置产 canonical PNG bytes。"
+    },
+    {
+     "sig": "writeRgbaPng(std::filesystem::path const& path, uint32 width, uint32 height, std::span<std::byte const> pixels) -> Status",
+     "note": "复用 encodeRgbaPng 后 open/write/flush/close；I/O 失败保留 error_code，编码失败 ExternalFailure。"
+    }
+   ],
+   "related": [
+    "uf::image::RgbaImage",
+    "uf::image::pixels"
+   ]
+  },
+  {
+   "name": "uf::image::pixels",
+   "kind": "functions",
+   "file": "modules/image/source/image/pixels.hpp",
+   "line": 13,
+   "responsibility": "显式、确定性的像素布局操作：RGBA8/BGRA8 互换与从带 stride 的 BGRA8 source 裁出紧密矩形。是 image 与 vision 灰度核之间的桥接步骤。",
+   "members": [
+    {
+     "sig": "rgba8ToBgra8(std::vector<std::byte> rgba) -> Result<std::vector<std::byte>>",
+     "note": "按值接收并原地交换每像素 red/blue；byte 数非 4 的倍数返回 InvalidResource。"
+    },
+    {
+     "sig": "bgra8ToRgba8(std::vector<std::byte> bgra) -> Result<std::vector<std::byte>>",
+     "note": "反向通道交换，green/alpha 不变。"
+    },
+    {
+     "sig": "cropBgra8(std::span<std::byte const> source, uint32 sourceWidth, uint32 sourceHeight, std::size_t stride, PixelRect rect) -> Result<std::vector<std::byte>>",
+     "note": "校验 rect 边界与全部 checked offset，逐行复制，返回无 padding 的 rect.width*rect.height*4 owning vector。"
+    }
+   ],
+   "related": [
+    "uf::PixelRect",
+    "uf::image::RgbaImage",
+    "uf::bgra8ToGray8"
+   ]
+  }
+ ],
+ "flows": [
+  {
+   "title": "authoring 资产链（静态模板裁剪 → 内容寻址）",
+   "steps": [
+    {
+     "text": "source BGRA8 + templateRect 交给 image::cropBgra8，逐行裁出无 padding 的紧密 BGRA8 矩形。",
+     "file": "modules/image/source/image/pixels.hpp",
+     "line": 23
+    },
+    {
+     "text": "image::bgra8ToRgba8 交换 red/blue 得到紧密 RGBA8。",
+     "file": "modules/image/source/image/pixels.hpp",
+     "line": 18
+    },
+    {
+     "text": "image::encodeRgbaPng 用冻结的 stb 配置编码成 canonical PNG bytes。",
+     "file": "modules/image/source/image/png.hpp",
+     "line": 34
+    },
+    {
+     "text": "annotation 对 encoded bytes 做 SHA-256 得到内容寻址 TemplateAsset；hash 覆盖 encoded bytes 而非 decoded pixels，image 自身不算 hash。"
+    }
+   ]
+  },
+  {
+   "title": "runtime/Preview 识别链（PNG 模板 + 实时帧 → 有界 SAD）",
+   "steps": [
+    {
+     "text": "template PNG 经 image::decodePng 解成紧密 RGBA8。",
+     "file": "modules/image/source/image/png.hpp",
+     "line": 25
+    },
+    {
+     "text": "image::rgba8ToBgra8 换回 BGRA8，再 vision::bgra8ToGray8 转成紧密 Gray8 模板。",
+     "file": "modules/vision/source/vision/sad.hpp",
+     "line": 169
+    },
+    {
+     "text": "实时 Frame BGRA8 同样经 vision::bgra8ToGray8 转成 Gray8。",
+     "file": "modules/vision/source/vision/sad.hpp",
+     "line": 169
+    },
+    {
+     "text": "两个 GrayImage view 与各自的 searchRoi 交给有界 matchTemplateSad。",
+     "file": "modules/vision/source/vision/sad.hpp",
+     "line": 87
+    },
+    {
+     "text": "返回 SadSearchReport：完成则给最优 SadMatch（或空 optional），未完成则给 SadSearchStopReason——stop 不是 miss，由 annotation 分别映射到 Cancelled/Timeout/RecognitionFailed。"
+    }
+   ]
+  }
+ ]
+}

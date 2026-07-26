@@ -1,0 +1,893 @@
+{
+ "module": "core",
+ "title": "modules/core — 平台无关能力内核",
+ "summary": "core 是模块图最底部的平台无关叶节点：它只提供可移植、可审计、能消除一类无效状态的小机制（错误表示、受检运算、强类型词汇、同步访问、作用域清理等）。所有其他模块可以依赖它，它不依赖任何项目模块，出边只有 C++23 标准库。它不含产品语义，只给出无歧义的表示与检查，具体失败策略由业务 owner 模块决定。",
+ "notOwned": [
+  "不定义产品语义（frame、detection、annotation、engine session、Windows handle、Luau、GUI、具体游戏），也不决定失败该 retry、abort 还是展示。",
+  "不接触窗口、capture API 或输入投递，无法判断动作是否落到背景目标；strict-background 由 controller 与组合根执行。",
+  "不复制标准库：Result 是 std::expected 的 alias，缺席仍用 std::optional，所有权仍用标准智能指针与值类型。",
+  "不含 serialization、VFS、job system、task runtime、channel、profiling、intrusive references 或自制容器。",
+  "错误分类的产品词汇（std::error_category 与 classifier）留在 owner 模块，core 不内建产品 enum。",
+  "不依赖任何项目模块，也没有聚合 core.hpp；调用方必须精确 include 所需 facility。"
+ ],
+ "dependsOn": [],
+ "readingOrder": [
+  {
+   "path": "docs/knowledge/cn/module-core.md",
+   "why": "先建立模块职责与不该做什么的边界，再对照代码（文档可能滞后，以代码为准）。"
+  },
+  {
+   "path": "modules/core/source/core/error/error.hpp",
+   "why": "Error 是贯穿全仓的 move-only 失败表示，理解它才能读懂其他接口的返回类型。"
+  },
+  {
+   "path": "modules/core/source/core/error/result.hpp",
+   "why": "Result/Status/fail 与 UF_TRY 系列宏定义了整个仓库的错误传播语法。"
+  },
+  {
+   "path": "modules/core/source/core/error/contracts.hpp",
+   "why": "不可恢复的 programmer defect 走终止通道，与可恢复 Error 是两条正交路径。"
+  },
+  {
+   "path": "modules/core/source/core/types/strong-value.hpp",
+   "why": "StrongValue 是 StrongId、Generation 等互不混淆词汇的基座。"
+  },
+  {
+   "path": "modules/core/source/core/numeric/checked-arithmetic.hpp",
+   "why": "先证明运算有效再执行，是 core fail-closed 范式最典型的示例。"
+  }
+ ],
+ "classes": [
+  {
+   "name": "uf::Error",
+   "kind": "class",
+   "file": "modules/core/source/core/error/error.hpp",
+   "line": 19,
+   "responsibility": "承载一次可恢复失败的稳定表示。设计为一指针宽（诊断数据 out-of-line 存于堆上），让每个 Result 成功路径只付一个指针的存储成本；分配只在真正构造错误时发生。",
+   "members": [
+    {
+     "sig": "Error(std::error_code detailCode, std::string message, std::error_code nativeCode = {}, std::source_location location = current())",
+     "note": "detailCode 的 category 就是错误词汇身份，nativeCode 保留 OS/库原因。"
+    },
+    {
+     "sig": "Error(Error const&) = delete; Error(Error&&) noexcept = default",
+     "note": "唯一 owner：禁止隐式复制，只允许 noexcept move。"
+    },
+    {
+     "sig": "auto clone() const -> Error",
+     "note": "深复制整个 Payload，是唯一显式的副本入口。"
+    },
+    {
+     "sig": "auto detailCode() const noexcept -> std::error_code",
+     "note": "机器可分支的分类，不靠解析 message。"
+    },
+    {
+     "sig": "auto message() const noexcept UF_LIFETIME_BOUND -> std::string_view",
+     "note": "人类可读说明；borrow，payload 析构后失效。"
+    },
+    {
+     "sig": "auto nativeCode() const noexcept -> std::error_code",
+     "note": "独立保留的平台原生错误码及其 category。"
+    },
+    {
+     "sig": "auto context() const noexcept UF_LIFETIME_BOUND -> std::span<std::string const>",
+     "note": "按追加顺序的上下文；下一次 addContext 可能因 vector 扩容使其失效。"
+    },
+    {
+     "sig": "auto addContext(std::string context) UF_LIFETIME_BOUND -> Error&",
+     "note": "错误上穿语义层时按顺序追加上下文。"
+    }
+   ],
+   "lifetime": "move-only，唯一 owner。moved-from 对象无 payload，任何观察者与 addContext 都以 release-active UF_CHECK 检查后终止，只能析构或重新赋值。payload 在堆上地址稳定，故 message()/context() 的 view 可跨 Error move 保持有效，但受 payload 析构与 addContext 失效。",
+   "related": [
+    "uf::Result",
+    "uf::toString"
+   ]
+  },
+  {
+   "name": "uf::toString",
+   "kind": "functions",
+   "file": "modules/core/source/core/error/error.hpp",
+   "line": 82,
+   "responsibility": "最终诊断渲染器。存在的意义是把 detail/native/location/各层 context 组装成人类可读字符串，同时把日志与可观测性边界留给上层，避免同一失败在每层被重复打印。",
+   "members": [
+    {
+     "sig": "auto toString(Error const& error) -> std::string",
+     "note": "输出 detail category 名与 message、自由文本、构造位置、可选 native、再按插入顺序输出各层 context。"
+    }
+   ],
+   "related": [
+    "uf::Error"
+   ]
+  },
+  {
+   "name": "uf::Result",
+   "kind": "alias",
+   "file": "modules/core/source/core/error/result.hpp",
+   "line": 14,
+   "responsibility": "全仓统一的可恢复返回类型。直接复用 std::expected，而不是自造 sum type，让成功值与 Error 二选一存储且与标准库互通。",
+   "members": [
+    {
+     "sig": "template <typename Value> using Result = std::expected<Value, Error>",
+     "note": "成功携带 Value，失败携带 move-only Error。"
+    },
+    {
+     "sig": "using Status = Result<void>",
+     "note": "无返回值操作的成功/失败表示。"
+    }
+   ],
+   "related": [
+    "uf::Error",
+    "uf::result-propagation"
+   ]
+  },
+  {
+   "name": "uf::result-propagation",
+   "kind": "functions",
+   "file": "modules/core/source/core/error/result.hpp",
+   "line": 19,
+   "responsibility": "构造与传播 Result 的语法层。宏都按值持有结果（不绑定 auto&&）以杜绝悬空引用，并只转发原 Error，不重分类、不 clone、不 log、不捕获异常。",
+   "members": [
+    {
+     "sig": "auto fail(std::error_code detailCode, std::string message, std::error_code nativeCode = {}, ...) -> std::unexpected<Error>",
+     "note": "接受任意错误词汇表构造失败，不再增加一个更粗的通用 code。"
+    },
+    {
+     "sig": "auto ok() -> Status",
+     "note": "构造成功的 Status。"
+    },
+    {
+     "sig": "auto withContext(Result<Value> result, std::string context) -> Result<Value>",
+     "note": "仅失败分支原地追加 context 后按值返回。"
+    },
+    {
+     "sig": "UF_TRY(expression)",
+     "note": "失败时 std::move(error) 并从当前函数 return，成功不做额外工作。"
+    },
+    {
+     "sig": "UF_TRY_CONTEXT(expression, context)",
+     "note": "在上抛前先给 error 追加本层 context。"
+    },
+    {
+     "sig": "UF_TRY_VALUE(name, expression)",
+     "note": "declaration-style：成功时把 value move 进调用方作用域。"
+    },
+    {
+     "sig": "UF_TRY_VALUE_CONTEXT(name, expression, context)",
+     "note": "取值宏加失败上下文。"
+    }
+   ],
+   "related": [
+    "uf::Result",
+    "uf::Error"
+   ]
+  },
+  {
+   "name": "uf::detail::ContractKind",
+   "kind": "enum",
+   "file": "modules/core/source/core/error/contracts.hpp",
+   "line": 10,
+   "responsibility": "标记一次契约违规的类别，供终止诊断区分断言、检查与不可达路径。",
+   "members": [
+    {
+     "sig": "Assertion",
+     "note": "UF_ASSERT，仅 debug 生效。"
+    },
+    {
+     "sig": "Check",
+     "note": "UF_CHECK，release 仍生效。"
+    },
+    {
+     "sig": "Unreachable",
+     "note": "UF_UNREACHABLE，标记逻辑不可达。"
+    }
+   ],
+   "related": [
+    "uf::contracts"
+   ]
+  },
+  {
+   "name": "uf::contracts",
+   "kind": "functions",
+   "file": "modules/core/source/core/error/contracts.hpp",
+   "line": 27,
+   "responsibility": "不可恢复的 programmer defect 通道，与可恢复 Error 正交。契约失败会尝试把 kind/表达式/message/location 写到 stderr，即使诊断自身抛异常也最终 std::abort()，因为调用方不能在破坏的不变量上继续执行。",
+   "members": [
+    {
+     "sig": "UF_ASSERT(condition) / UF_ASSERT_MSG(condition, message)",
+     "note": "NDEBUG 下不求值，只保留 sizeof 级语法检查。"
+    },
+    {
+     "sig": "UF_CHECK(condition) / UF_CHECK_MSG(condition, message)",
+     "note": "release 仍调用 contractViolation。"
+    },
+    {
+     "sig": "UF_UNREACHABLE() / UF_UNREACHABLE_MSG(message)",
+     "note": "替代裸 std::unreachable，越过即终止。"
+    },
+    {
+     "sig": "detail::contractViolation(ContractKind, expression, message, source_location) noexcept -> void",
+     "note": "[[noreturn]] 实现，写诊断后 abort。"
+    }
+   ],
+   "related": [
+    "uf::detail::ContractKind"
+   ]
+  },
+  {
+   "name": "uf::Synchronized",
+   "kind": "class",
+   "file": "modules/core/source/core/concurrency/synchronized.hpp",
+   "line": 21,
+   "responsibility": "把互斥锁与被保护值绑成一个不可分离的对象，消除忘记加锁的一类错误。读写只能经 withLock，编译期还拒绝直接返回受保护存储的指针或引用。",
+   "members": [
+    {
+     "sig": "Synchronized() requires default_initializable<Value>",
+     "note": "默认 value-initialize Value。"
+    },
+    {
+     "sig": "explicit Synchronized(Value value)",
+     "note": "按值构造。"
+    },
+    {
+     "sig": "explicit Synchronized(std::in_place_t, Arguments&&...)",
+     "note": "就地 parenthesized construction。"
+    },
+    {
+     "sig": "Synchronized(Synchronized const&) = delete; Synchronized(Synchronized&&) = delete",
+     "note": "既不可复制也不可移动。"
+    },
+    {
+     "sig": "auto withLock(Function&& function) -> invoke_result_t<Function, Value&>",
+     "note": "在 lock_guard 生命周期内把 Value& 交给 callback。"
+    },
+    {
+     "sig": "auto withLock(Function&& function) const -> invoke_result_t<Function, Value const&>",
+     "note": "const overload 交出 Value const&。"
+    }
+   ],
+   "lifetime": "自身不可复制不可移动，锁与值同生共死。static_assert 拒绝 callback 直接返回 pointer/reference（k_lockResultDoesNotExposeStorage），但不能证明 callback 未把地址藏进别处；跨线程的 callback lifetime、取消与 join 仍由上层负责。"
+  },
+  {
+   "name": "uf::Continue",
+   "kind": "struct",
+   "file": "modules/core/source/core/control/control-flow.hpp",
+   "line": 10,
+   "responsibility": "表示 visitor/traversal 应继续的显式结果，拥有自己的 value 而非引用 payload，默认 std::monostate。",
+   "members": [
+    {
+     "sig": "[[no_unique_address]] Value value{}",
+     "note": "static_assert 禁止 reference payload，值必须自持。"
+    },
+    {
+     "sig": "auto operator<=>(Continue const&) const = default",
+     "note": "按 value 比较。"
+    }
+   ],
+   "related": [
+    "uf::ControlFlow"
+   ]
+  },
+  {
+   "name": "uf::Break",
+   "kind": "struct",
+   "file": "modules/core/source/core/control/control-flow.hpp",
+   "line": 20,
+   "responsibility": "表示 visitor/traversal 应提前退出的显式结果，与 Continue 对称，拥有自己的 value。",
+   "members": [
+    {
+     "sig": "[[no_unique_address]] Value value{}",
+     "note": "static_assert 禁止 reference payload。"
+    },
+    {
+     "sig": "auto operator<=>(Break const&) const = default",
+     "note": "按 value 比较。"
+    }
+   ],
+   "related": [
+    "uf::ControlFlow"
+   ]
+  },
+  {
+   "name": "uf::ControlFlow",
+   "kind": "alias",
+   "file": "modules/core/source/core/control/control-flow.hpp",
+   "line": 30,
+   "responsibility": "Continue 与 Break 的 std::variant，用 alternative 类型判断状态，表达局部提前退出。它不是 coroutine、任务取消或异常替代品。",
+   "members": [
+    {
+     "sig": "using ControlFlow = std::variant<Continue<ContinueValue>, Break<BreakValue>>",
+     "note": "两种可能结果的显式和类型。"
+    },
+    {
+     "sig": "auto isBreak(ControlFlow const& flow) noexcept -> bool",
+     "note": "按 Break alternative 判断是否退出。"
+    },
+    {
+     "sig": "auto isContinue(ControlFlow const& flow) noexcept -> bool",
+     "note": "按 Continue alternative 判断是否继续。"
+    }
+   ],
+   "related": [
+    "uf::Continue",
+    "uf::Break"
+   ]
+  },
+  {
+   "name": "uf::CheckedInteger",
+   "kind": "concept",
+   "file": "modules/core/source/core/numeric/checked-arithmetic.hpp",
+   "line": 11,
+   "responsibility": "约束哪些整型可参与数量运算：接受 integral，但排除 bool、普通 char、wchar_t 与各 Unicode character type，避免把逻辑值或 code unit 当作数量。",
+   "members": [
+    {
+     "sig": "concept CheckedInteger = integral<Value> && !bool && !char && !wchar_t && !char8_t/char16_t/char32_t",
+     "note": "受检运算与 NonZero 的公共前置约束。"
+    }
+   ],
+   "related": [
+    "uf::checked-arithmetic",
+    "uf::NonZero"
+   ]
+  },
+  {
+   "name": "uf::checked-arithmetic",
+   "kind": "functions",
+   "file": "modules/core/source/core/numeric/checked-arithmetic.hpp",
+   "line": 23,
+   "responsibility": "先证明运算有效再执行的一组整数运算。每个函数在可能产生 UB 或无符号 wrap 前先检查边界，失败返回 std::nullopt 而非回绕，把语义交给调用方。",
+   "members": [
+    {
+     "sig": "auto checkedAdd(Value left, Value right) noexcept -> std::optional<Value>",
+     "note": "溢出返回 nullopt。"
+    },
+    {
+     "sig": "auto checkedSubtract(Value left, Value right) noexcept -> std::optional<Value>",
+     "note": "下溢/上溢返回 nullopt。"
+    },
+    {
+     "sig": "auto checkedMultiply(Value left, Value right) noexcept -> std::optional<Value>",
+     "note": "先在无符号域求绝对量，能接受 min*1 又拒绝 min*-1。"
+    },
+    {
+     "sig": "auto checkedDivide(Value left, Value right) noexcept -> std::optional<Value>",
+     "note": "拒绝零除与 signed min/-1。"
+    },
+    {
+     "sig": "auto checkedRemainder(Value left, Value right) noexcept -> std::optional<Value>",
+     "note": "同样拒绝零除与 min/-1 特例。"
+    }
+   ],
+   "related": [
+    "uf::CheckedInteger"
+   ]
+  },
+  {
+   "name": "uf::checked-cast",
+   "kind": "functions",
+   "file": "modules/core/source/core/numeric/checked-cast.hpp",
+   "line": 15,
+   "responsibility": "把整数转换与浮点到整数转换分成两种语义，各自 fail-closed，失败一律 std::nullopt，由调用方决定属于哪类错误。",
+   "members": [
+    {
+     "sig": "auto checkedCast<To>(From value) noexcept -> std::optional<To>",
+     "note": "用 std::in_range 拒绝符号变化或 narrowing。"
+    },
+    {
+     "sig": "auto checkedIntegralCast<To>(From value) noexcept -> std::optional<To>",
+     "note": "先拒绝 NaN/Infinity，再用精确半开范围拒绝越界与 fractional。"
+    }
+   ],
+   "related": [
+    "uf::CheckedInteger"
+   ]
+  },
+  {
+   "name": "uf::safety-annotations",
+   "kind": "functions",
+   "file": "modules/core/source/core/safety/annotations.hpp",
+   "line": 4,
+   "responsibility": "把 Clang 的 lifetime、no-escape、unsafe-buffer 与 thread-safety attribute 包装成 UF_* 宏，让 borrow 与锁契约对分析器可见；非 Clang 编译器上宏为空，只是分析增强，不改变运行时语义。",
+   "members": [
+    {
+     "sig": "UF_LIFETIME_BOUND",
+     "note": "标注返回值/参数的 borrow 生命周期绑定。"
+    },
+    {
+     "sig": "UF_NO_ESCAPE / UF_UNSAFE_BUFFER_USAGE",
+     "note": "标注不逃逸参数与需 unsafe buffer 的接口。"
+    },
+    {
+     "sig": "UF_GUARDED_BY(capability) / UF_REQUIRES_CAPABILITY(...)",
+     "note": "thread-safety analysis：字段受某锁保护/需持有能力。"
+    },
+    {
+     "sig": "UF_ACQUIRE_CAPABILITY / UF_RELEASE_CAPABILITY / UF_EXCLUDES_CAPABILITY",
+     "note": "标注加锁、解锁与互斥关系。"
+    },
+    {
+     "sig": "UF_CAPABILITY(name) / UF_SCOPED_CAPABILITY / UF_NO_THREAD_SAFETY_ANALYSIS",
+     "note": "声明能力类型、作用域锁与豁免。"
+    }
+   ]
+  },
+  {
+   "name": "uf::checked-access",
+   "kind": "functions",
+   "file": "modules/core/source/core/safety/checked-access.hpp",
+   "line": 27,
+   "responsibility": "连续存储的受检索引，让 borrow 可见且拒绝 temporary owner。range overload 由内部 CheckedAccessRange concept 只接受 contiguous、sized、可构造 span 的 lvalue，避免返回借用后 owner 已析构。",
+   "members": [
+    {
+     "sig": "auto tryAt(std::span<Element, Extent> values, std::size_t index) noexcept -> Element*",
+     "note": "越界返回 nullptr。"
+    },
+    {
+     "sig": "auto checkedAt(std::span<Element, Extent> values, std::size_t index) noexcept -> Element&",
+     "note": "越界触发 release-active UF_CHECK。"
+    },
+    {
+     "sig": "auto tryAt(Range&& values, std::size_t index) / checkedAt(Range&& values, ...)",
+     "note": "range overload 只接受 lvalue，拒绝 temporary owner。"
+    }
+   ],
+   "lifetime": "返回值是只在本次调用上下文有效的借用，容器失效后不得保留；参数标注 UF_LIFETIME_BOUND，range overload 通过 CheckedAccessRange 拒绝 rvalue 容器。",
+   "related": [
+    "uf::contracts"
+   ]
+  },
+  {
+   "name": "uf::utf8",
+   "kind": "functions",
+   "file": "modules/core/source/core/text/utf8.hpp",
+   "line": 10,
+   "responsibility": "在字节边界做确定性的 UTF-8 验证与 scalar 编码，拒绝一切非 canonical 序列，把字节层的含混挡在业务算法之外。",
+   "members": [
+    {
+     "sig": "auto isValidUtf8(std::string_view value) noexcept -> bool",
+     "note": "接受合法 1-4 byte 编码，拒绝孤立 continuation、overlong、截断、surrogate 与超 0x10FFFF。"
+    },
+    {
+     "sig": "auto appendUtf8Scalar(std::string& output, uint32 codePoint) -> void",
+     "note": "前置条件要求 Unicode scalar；传入 surrogate 或越界会触发 UF_CHECK。"
+    }
+   ],
+   "related": [
+    "uf::text_unsafe"
+   ]
+  },
+  {
+   "name": "uf::text_unsafe",
+   "kind": "functions",
+   "file": "modules/core/source/core/text/unsafe/unicode-code-unit.hpp",
+   "line": 9,
+   "responsibility": "隔离的 code-unit 位转换。集中在 unsafe/ 边界，用 std::bit_cast 保留对象表示以避免 char signedness、narrowing 与 aliasing 含混，让普通 UTF-8 算法只消费安全的整数值。",
+   "members": [
+    {
+     "sig": "auto utf8CodeUnitValue(char codeUnit) noexcept -> uint8",
+     "note": "把 char 存储读作 8 位 code unit，无符号转换。"
+    },
+    {
+     "sig": "auto utf8CodeUnit(uint8 value) noexcept -> char",
+     "note": "把 uint8 位模式写回 char，无 narrowing。"
+    },
+    {
+     "sig": "auto utf16CodeUnitValue(char16_t codeUnit) noexcept -> uint16",
+     "note": "暴露 char16_t 的 16 位数值。"
+    }
+   ],
+   "lifetime": "位于 unsafe/ 边界，每个操作都有局部 // SAFETY: 论证 bit_cast 只复制对象表示。"
+  },
+  {
+   "name": "uf::integer",
+   "kind": "functions",
+   "file": "modules/core/source/core/types/integer.hpp",
+   "line": 7,
+   "responsibility": "固定宽度整数别名，让跨模块的宽度意图直接出现在接口签名里，而不是散落的 std::int*_t。",
+   "members": [
+    {
+     "sig": "int8 / uint8 / int16 / uint16 / int32 / uint32 / int64 / uint64",
+     "note": "固定宽度整型。"
+    },
+    {
+     "sig": "intptr / uintptr",
+     "note": "指针宽整型。"
+    },
+    {
+     "sig": "intmax / uintmax",
+     "note": "最大宽整型。"
+    }
+   ]
+  },
+  {
+   "name": "uf::StrongValue",
+   "kind": "class",
+   "file": "modules/core/source/core/types/strong-value.hpp",
+   "line": 12,
+   "responsibility": "通过不同 Tag 从同一 representation 生成互不兼容的类型，消除相同底层类型的领域值被隐式混用的一类错误。构造是 explicit 且无默认构造。",
+   "members": [
+    {
+     "sig": "using ValueType = Representation",
+     "note": "向 hash 等暴露底层表示类型。"
+    },
+    {
+     "sig": "constexpr explicit StrongValue(Representation value)",
+     "note": "explicit 构造，无默认构造，禁止相同 representation 隐式互转。"
+    },
+    {
+     "sig": "auto operator<=>(StrongValue const&) const = default",
+     "note": "按底层值排序/比较。"
+    },
+    {
+     "sig": "constexpr auto value() const& -> Representation (scalar)",
+     "note": "scalar representation 按值返回。"
+    },
+    {
+     "sig": "constexpr auto value() const& -> Representation const& (non-scalar)",
+     "note": "非 scalar 按 const& 返回。"
+    },
+    {
+     "sig": "constexpr auto value() && -> Representation",
+     "note": "rvalue 时 move 出 representation。"
+    }
+   ],
+   "related": [
+    "uf::StrongValueHash",
+    "uf::StrongId"
+   ]
+  },
+  {
+   "name": "uf::StrongValueHash",
+   "kind": "struct",
+   "file": "modules/core/source/core/types/strong-value.hpp",
+   "line": 54,
+   "responsibility": "为 StrongValue 提供显式 opt-in 的 hashing，避免所有强类型默认可 hash 而模糊设计意图。",
+   "members": [
+    {
+     "sig": "auto operator()(StrongType const& value) const noexcept -> std::size_t",
+     "note": "转调底层 representation 的 std::hash。"
+    }
+   ],
+   "related": [
+    "uf::StrongValue"
+   ]
+  },
+  {
+   "name": "uf::StrongId",
+   "kind": "alias",
+   "file": "modules/core/source/core/types/strong-id.hpp",
+   "line": 14,
+   "responsibility": "约束 representation 为 unsigned 的 StrongValue alias，用于建立 FrameId、TaskRunId 等互不混淆的标识符，不附加虚构的 ID 生命周期策略。",
+   "members": [
+    {
+     "sig": "template <typename Tag, std::unsigned_integral Representation = uint64> using StrongId = StrongValue<Tag, Representation>",
+     "note": "默认 uint64 表示。"
+    }
+   ],
+   "related": [
+    "uf::StrongValue",
+    "uf::Generation"
+   ]
+  },
+  {
+   "name": "uf::Generation",
+   "kind": "class",
+   "file": "modules/core/source/core/types/strong-id.hpp",
+   "line": 17,
+   "responsibility": "单调递增的 generation 计数，到最大值时 next() 返回 nullopt，绝不 wrap 后复用旧 generation，从而支撑 slot 复用的失效检测。",
+   "members": [
+    {
+     "sig": "static constexpr auto initial() noexcept -> Generation",
+     "note": "从 0 开始。"
+    },
+    {
+     "sig": "static constexpr auto fromValue(Representation value) noexcept -> Generation",
+     "note": "从既有值重建。"
+    },
+    {
+     "sig": "constexpr auto value() const noexcept -> Representation",
+     "note": "取当前值。"
+    },
+    {
+     "sig": "constexpr auto next() const noexcept -> std::optional<Generation>",
+     "note": "到最大值返回 nullopt，绝不回绕。"
+    }
+   ],
+   "related": [
+    "uf::StrongId"
+   ]
+  },
+  {
+   "name": "uf::NonZero",
+   "kind": "class",
+   "file": "modules/core/source/core/types/non-zero.hpp",
+   "line": 11,
+   "responsibility": "在类型层面固定非零不变量：私有构造 + create() 工厂，只在非零时返回对象，构造成功后不变量持续成立。",
+   "members": [
+    {
+     "sig": "static constexpr auto create(Value value) noexcept -> std::optional<NonZero>",
+     "note": "零值返回 nullopt，其余构造成功。"
+    },
+    {
+     "sig": "constexpr auto value() const noexcept -> Value",
+     "note": "取被保证非零的值。"
+    },
+    {
+     "sig": "auto operator<=>(NonZero const&) const = default",
+     "note": "按值比较。"
+    }
+   ],
+   "related": [
+    "uf::CheckedInteger"
+   ]
+  },
+  {
+   "name": "uf::FlagEnum",
+   "kind": "concept",
+   "file": "modules/core/source/core/types/flags.hpp",
+   "line": 11,
+   "responsibility": "约束 Flags 只接受 unsigned underlying 的 enum，避免带符号 underlying 引入未定义或意外位。",
+   "members": [
+    {
+     "sig": "concept FlagEnum = is_enum_v<Enum> && unsigned_integral<underlying_type_t<Enum>>",
+     "note": "Flags 的前置约束。"
+    }
+   ],
+   "related": [
+    "uf::Flags"
+   ]
+  },
+  {
+   "name": "uf::Flags",
+   "kind": "class",
+   "file": "modules/core/source/core/types/flags.hpp",
+   "line": 17,
+   "responsibility": "类型安全的位标志集合。没有 raw-bit constructor 或无界 complement，避免悄悄引入枚举未声明的位。",
+   "members": [
+    {
+     "sig": "using Storage = std::underlying_type_t<Enum>",
+     "note": "底层存储类型。"
+    },
+    {
+     "sig": "explicit Flags(Enum flag) / explicit Flags(Enum first, Values... rest)",
+     "note": "从一个或多个同 enum 值构造。"
+    },
+    {
+     "sig": "auto bits() const -> Storage / empty() const -> bool",
+     "note": "原始位与是否为空。"
+    },
+    {
+     "sig": "auto containsAll(Flags) const -> bool / containsAny(Flags) const -> bool",
+     "note": "子集与相交判断。"
+    },
+    {
+     "sig": "auto insert(Flags) -> void / remove(Flags) -> void",
+     "note": "原地增删位。"
+    },
+    {
+     "sig": "auto with(Flags) const -> Flags / without(Flags) const -> Flags",
+     "note": "返回副本的增删。"
+    },
+    {
+     "sig": "friend operator|(Flags, Flags) / operator&(Flags, Flags)",
+     "note": "集合并与交。"
+    }
+   ],
+   "related": [
+    "uf::FlagEnum"
+   ]
+  },
+  {
+   "name": "uf::EnumEntry",
+   "kind": "struct",
+   "file": "modules/core/source/core/types/enum-reflection.hpp",
+   "line": 15,
+   "responsibility": "一条 enum 反射记录：值到 static-storage 名称的绑定，供 EnumTraits 保存并驱动查找。",
+   "members": [
+    {
+     "sig": "Enum value{}",
+     "note": "枚举值。"
+    },
+    {
+     "sig": "std::string_view name{}",
+     "note": "必须引用 static storage；UF_REFLECT_ENUM 提供字符串字面量。"
+    }
+   ],
+   "related": [
+    "uf::EnumTraits",
+    "uf::enum-reflection"
+   ]
+  },
+  {
+   "name": "uf::EnumTraits",
+   "kind": "struct",
+   "file": "modules/core/source/core/types/enum-reflection.hpp",
+   "line": 26,
+   "responsibility": "enum 反射的 customization point：主模板未定义，由 UF_REFLECT_ENUM 生成特化并附 consteval 校验，拒绝空集合、空名称、重复 value 与重复 name。",
+   "members": [
+    {
+     "sig": "template <typename Enum> struct EnumTraits;",
+     "note": "前置声明；特化提供 static constexpr k_entries。"
+    }
+   ],
+   "related": [
+    "uf::EnumEntry",
+    "uf::ReflectedEnum"
+   ]
+  },
+  {
+   "name": "uf::ReflectedEnum",
+   "kind": "concept",
+   "file": "modules/core/source/core/types/enum-reflection.hpp",
+   "line": 98,
+   "responsibility": "约束一个 enum 已通过 EnumTraits 注册且 k_entries 是 EnumEntry array，作为反射查找函数的前置条件。",
+   "members": [
+    {
+     "sig": "concept ReflectedEnum = is_enum_v<Enum> && requires { EnumTraits<Enum>::k_entries; } && k_isEnumEntryArray<...>",
+     "note": "enumEntries/enumName/enumFromName 的约束。"
+    }
+   ],
+   "related": [
+    "uf::EnumTraits",
+    "uf::enum-reflection"
+   ]
+  },
+  {
+   "name": "uf::enum-reflection",
+   "kind": "functions",
+   "file": "modules/core/source/core/types/enum-reflection.hpp",
+   "line": 144,
+   "responsibility": "显式、编译期验证、按注册顺序线性查找的 enum 反射接口，支持 sparse enum，未知映射返回 nullopt。label 来自 C++ token，重命名 enumerator 会改变 label，故不是持久化 wire contract。",
+   "members": [
+    {
+     "sig": "auto enumEntries<Enum>() noexcept -> decltype(EnumTraits<Enum>::k_entries)",
+     "note": "取全部注册项，附 static_assert 校验。"
+    },
+    {
+     "sig": "auto enumName(Enum value) noexcept -> std::optional<std::string_view>",
+     "note": "值到名称，未知返回 nullopt。"
+    },
+    {
+     "sig": "auto enumFromName(std::string_view name) noexcept -> std::optional<Enum>",
+     "note": "名称到值，未知返回 nullopt。"
+    },
+    {
+     "sig": "UF_REFLECT_ENUM(enumType, ...)",
+     "note": "生成 EnumTraits 特化并 static_assert 校验唯一非空。"
+    }
+   ],
+   "related": [
+    "uf::EnumTraits",
+    "uf::ReflectedEnum",
+    "uf::EnumEntry"
+   ]
+  },
+  {
+   "name": "uf::MonotonicInstant",
+   "kind": "class",
+   "file": "modules/core/source/core/time/monotonic-time.hpp",
+   "line": 12,
+   "responsibility": "封装 steady_clock 的进程内单调时刻，用于 timeout、age、interval。它避免墙钟跳变，并提供构造固定 TimePoint 的确定性测试入口；不是墙钟，也不可跨进程/机器序列化。",
+   "members": [
+    {
+     "sig": "using Clock = steady_clock; using Duration; using TimePoint",
+     "note": "底层时钟与时长/时刻类型。"
+    },
+    {
+     "sig": "static auto now() noexcept -> MonotonicInstant",
+     "note": "获取进程内单调时刻。"
+    },
+    {
+     "sig": "static constexpr auto fromTimePoint(TimePoint) noexcept -> MonotonicInstant",
+     "note": "确定性测试注入点。"
+    },
+    {
+     "sig": "constexpr auto timePoint() const noexcept -> TimePoint",
+     "note": "取底层时刻。"
+    },
+    {
+     "sig": "constexpr auto checkedAdd(Duration) const noexcept -> std::optional<MonotonicInstant>",
+     "note": "用 checked integer addition 报告溢出。"
+    },
+    {
+     "sig": "constexpr auto saturatingDurationSince(MonotonicInstant earlier) const noexcept -> Duration",
+     "note": "倒序返回 zero，不可表示的正差返回 Duration::max()。"
+    }
+   ],
+   "related": [
+    "uf::checked-arithmetic"
+   ]
+  },
+  {
+   "name": "uf::ScopeExit",
+   "kind": "class",
+   "file": "modules/core/source/core/utility/scope-exit.hpp",
+   "line": 17,
+   "responsibility": "确定性的作用域清理，保证 cleanup 恰好由一个 armed owner 执行一次。move-only，move 时用 std::exchange 解除源对象；release() 可显式取消。",
+   "members": [
+    {
+     "sig": "explicit ScopeExit(Function&& function) noexcept",
+     "note": "接管 cleanup callable。"
+    },
+    {
+     "sig": "ScopeExit(ScopeExit const&) = delete",
+     "note": "禁止复制。"
+    },
+    {
+     "sig": "ScopeExit(ScopeExit&& other) noexcept",
+     "note": "move 用 std::exchange 把源置为 inactive。"
+    },
+    {
+     "sig": "~ScopeExit() noexcept",
+     "note": "仍 armed 时调用 cleanup。"
+    },
+    {
+     "sig": "auto release() noexcept -> void",
+     "note": "显式取消 cleanup。"
+    },
+    {
+     "sig": "auto scopeExit(Function&& function) -> ScopeExit<...>",
+     "note": "工厂只接受 rvalue callable，避免把外部 callable 当隐式 borrow。"
+    }
+   ],
+   "lifetime": "move-only，cleanup 责任在任意时刻只属于一个 armed 对象；ScopeExitFunction concept 要求 callable 可 noexcept move 且可 noexcept invoke。"
+  },
+  {
+   "name": "uf::Overload",
+   "kind": "struct",
+   "file": "modules/core/source/core/utility/variant-match.hpp",
+   "line": 11,
+   "responsibility": "组合多个 callable 的 operator() 以便对 variant 做穷尽匹配。只消除 visitor 样板，不引入另一套 sum type，所有 alternative 必须编译期可调用。",
+   "members": [
+    {
+     "sig": "struct Overload : Handlers...",
+     "note": "继承全部 handler 并 using 各自的 operator()，合成一个 visitor。"
+    },
+    {
+     "sig": "auto matchVariant(Variant&& variant, Handlers&&... handlers) -> decltype(auto)",
+     "note": "构造 Overload 后交给 std::visit。"
+    }
+   ]
+  },
+  {
+   "name": "uf::k_projectName",
+   "kind": "functions",
+   "file": "modules/core/source/core/project.hpp",
+   "line": 7,
+   "responsibility": "提供项目名称常量。core 只给这一项标识常量，且不存在聚合 core.hpp，调用方必须精确 include 所需 facility。",
+   "members": [
+    {
+     "sig": "inline constexpr auto k_projectName = std::string_view{\"UmbraFlow\"}",
+     "note": "项目名称字符串视图常量。"
+    }
+   ]
+  }
+ ],
+ "flows": [
+  {
+   "title": "一次可恢复错误的传播与渲染",
+   "steps": [
+    {
+     "text": "失败点用 fail(detailCode, message, nativeCode) 构造 std::unexpected<Error>，detailCode 的 category 即错误词汇身份。",
+     "file": "modules/core/source/core/error/result.hpp",
+     "line": 19
+    },
+    {
+     "text": "中间函数用 UF_TRY(expr) 或 UF_TRY_VALUE(name, expr) 按值持有结果，失败时 std::move 出 move-only Error 并立即 return。",
+     "file": "modules/core/source/core/error/result.hpp",
+     "line": 51
+    },
+    {
+     "text": "需要语义层信息时用 addContext / UF_TRY_CONTEXT 按顺序追加上下文，全程只有一个 owner，绝不 clone 或 log。",
+     "file": "modules/core/source/core/error/error.hpp",
+     "line": 79
+    },
+    {
+     "text": "到达用户/日志边界时由上层调用 toString(error)，渲染 detail category、message、location、可选 native 与各层 context。",
+     "file": "modules/core/source/core/error/error.hpp",
+     "line": 82
+    }
+   ]
+  }
+ ]
+}

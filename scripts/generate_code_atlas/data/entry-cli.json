@@ -1,0 +1,470 @@
+{
+ "module": "entry-cli",
+ "title": "entry/cli — 产品命令行与 Windows 组合根",
+ "summary": "entry/cli 是 umbra-flow 的命令行入口，也是 Windows 上把平台无关的 engine 端口接到真实捕获与后台输入的组合根。它负责参数解析、资源名称到 ID 的翻译、三个端口适配器的装配，以及把一切结构化结果收敛为稳定退出码；固定的 smoke flow 是「等一个页面、找一个 action、存在就点一次」。同目录的 entry/m0-demo 是已冻结的早期端到端捕获/后台输入验证程序，不在本图谱建模范围内。",
+ "notOwned": [
+  "不拥有识别、页面判定、动作授权或 observation 生命周期（属于 annotation 与 engine）",
+  "不拥有 Win32 窗口枚举、WGC、target generation、lease 校验或消息投递（属于 controller，CLI 只做薄适配）",
+  "不定义任务语言或通用工作流，runProduct 只是一条固定 smoke flow",
+  "不读取 authoring 文档，也不生成 manifest 或模板，只消费已发布项目",
+  "不提供前台或全局输入降级，后台投递失败即产品失败",
+  "不承担守护进程、托盘、调度或多任务生命周期，一进程一次 run"
+ ],
+ "dependsOn": [
+  "core",
+  "domain",
+  "annotation",
+  "engine",
+  "controller"
+ ],
+ "readingOrder": [
+  {
+   "path": "entry/cli/run.hpp",
+   "why": "退出码契约、RunReport 与 runProduct/error 表面，是整个模块的脊柱"
+  },
+  {
+   "path": "entry/cli/args.hpp",
+   "why": "RunArgs 值对象与所有默认值，定义了 run 的完整 CLI 表面"
+  },
+  {
+   "path": "entry/cli/main.cpp",
+   "why": "薄进程壳：如何把 argv 分发到 run 并把结果映射成退出码"
+  },
+  {
+   "path": "entry/cli/run-windows.cpp",
+   "why": "真正的 Windows 组合序列，展示三个适配器如何连到 EngineSession"
+  },
+  {
+   "path": "entry/cli/name-resolution.hpp",
+   "why": "人输入的名称到 manifest 稳定 ID 的翻译边界"
+  },
+  {
+   "path": "entry/cli/platform/controller-action-sink.hpp",
+   "why": "看一个端口适配器如何持有 controller 状态并转发 lease"
+  }
+ ],
+ "classes": [
+  {
+   "name": "uf::cli::RunArgs",
+   "kind": "struct",
+   "file": "entry/cli/args.hpp",
+   "line": 48,
+   "responsibility": "一次 run 调用的完整值对象。解析成功后不存在「未设置」的可选字段：四个必填项非空，其余字段已落到安全默认值，因此下游组合只处理类型化值而不再解析字符串。",
+   "members": [
+    {
+     "sig": "std::filesystem::path project",
+     "note": "已发布项目目录，必填"
+    },
+    {
+     "sig": "std::string selector",
+     "note": "目标窗口标题的唯一子串，必填"
+    },
+    {
+     "sig": "std::string page",
+     "note": "要等待的页面名称，必填"
+    },
+    {
+     "sig": "std::string action",
+     "note": "要点击的 action target 名称，必填"
+    },
+    {
+     "sig": "MonotonicInstant::Duration timeout",
+     "note": "waitForPage 总期限，默认 30 秒"
+    },
+    {
+     "sig": "MonotonicInstant::Duration pollInterval",
+     "note": "轮询间隔，默认 250ms，限 1-60000ms"
+    },
+    {
+     "sig": "uint64 budget",
+     "note": "单次识别像素比较上限，默认 1<<28"
+    },
+    {
+     "sig": "MonotonicInstant::Duration recognitionTimeout",
+     "note": "每次识别 deadline，默认 2000ms"
+    },
+    {
+     "sig": "MonotonicInstant::Duration maxFrameAge",
+     "note": "observation lease 可用于动作的最大帧年龄，默认 750ms"
+    },
+    {
+     "sig": "std::filesystem::path trace",
+     "note": "JSONL trace 路径，默认 umbra-flow-trace.jsonl"
+    },
+    {
+     "sig": "auto operator==(RunArgs const&) const -> bool = default",
+     "note": "值相等，供测试钉住解析结果"
+    }
+   ],
+   "related": [
+    "uf::engine::EngineSessionConfig",
+    "uf::cli::RunReport"
+   ]
+  },
+  {
+   "name": "uf::cli::run-arguments",
+   "kind": "functions",
+   "file": "entry/cli/args.hpp",
+   "line": 66,
+   "responsibility": "把原始参数字符串解析成 RunArgs，并提供 usage 文本。守住「flag 后紧跟 value」的二元组契约与整数/duration 的范围检查，任何未知 flag、缺值、非整数或越界都 fail-closed 为 InvalidResource，不依赖 locale。",
+   "members": [
+    {
+     "sig": "auto parseRunArguments(std::span<std::string const> raw) -> Result<RunArgs>",
+     "note": "十个成对 value flag 转成类型化 RunArgs"
+    },
+    {
+     "sig": "auto runUsageText() noexcept -> std::string_view",
+     "note": "run 子命令的 usage 文本"
+    }
+   ],
+   "related": [
+    "uf::cli::RunArgs"
+   ]
+  },
+  {
+   "name": "uf::cli::ExitCode",
+   "kind": "enum",
+   "file": "entry/cli/run.hpp",
+   "line": 14,
+   "responsibility": "产品 CLI 的稳定进程退出码契约，让所有路径返回强类型值而不是散落的裸数字；只有 main 在进程边界用 std::to_underlying 转成 int。",
+   "members": [
+    {
+     "sig": "Success = 0",
+     "note": "空命令帮助路径，或动作成功投递"
+    },
+    {
+     "sig": "Failure = 1",
+     "note": "unknown subcommand、参数/资源错误、unsupported host、多数运行失败或未捕获异常"
+    },
+    {
+     "sig": "TargetCompatibilityUnverified = 2",
+     "note": "目标兼容性无法确认"
+    },
+    {
+     "sig": "ActionAbsent = 3",
+     "note": "页面已解析但 action target 在该 observation 中缺席"
+    },
+    {
+     "sig": "Timeout = 4",
+     "note": "等待页面超时"
+    },
+    {
+     "sig": "Cancelled = 5",
+     "note": "Ctrl-C 取消，或失败返回时 console stop 已被请求"
+    }
+   ],
+   "related": [
+    "uf::cli::run-driver"
+   ]
+  },
+  {
+   "name": "uf::cli::RunReport",
+   "kind": "struct",
+   "file": "entry/cli/run.hpp",
+   "line": 28,
+   "responsibility": "一次 run 的产物。actionDelivered 为真时点击落地、client 坐标有意义；为假时页面已解析但 action target 缺席，调用方据此映射到专用的 absent 退出码。",
+   "members": [
+    {
+     "sig": "bool actionDelivered",
+     "note": "动作是否真的投递"
+    },
+    {
+     "sig": "std::string pageName",
+     "note": "命中的页面名"
+    },
+    {
+     "sig": "std::string actionName",
+     "note": "目标动作名"
+    },
+    {
+     "sig": "float clickClientX",
+     "note": "实际 client 空间点击 X（仅投递时有效）"
+    },
+    {
+     "sig": "float clickClientY",
+     "note": "实际 client 空间点击 Y（仅投递时有效）"
+    },
+    {
+     "sig": "std::string tracePath",
+     "note": "写入的 trace 文件路径"
+    }
+   ],
+   "related": [
+    "uf::cli::run-driver"
+   ]
+  },
+  {
+   "name": "uf::cli::run-driver",
+   "kind": "functions",
+   "file": "entry/cli/run.hpp",
+   "line": 44,
+   "responsibility": "run 路径的产品驱动与错误/退出码边界。runProduct 按 host 实现（Windows 全组合，其他 host 报 unsupported）；退出码映射先看 stopRequested，让操作者的 Ctrl-C 意图优先于阻塞步骤最终冒出的底层错误。",
+   "members": [
+    {
+     "sig": "auto runProduct(RunArgs const& args) -> Result<RunReport>",
+     "note": "运行固定 smoke flow：绑定目标、等页面、找动作、act"
+    },
+    {
+     "sig": "auto runCancellationRequested() noexcept -> bool",
+     "note": "run 期间是否收到过 Ctrl-C，退出码边界读取它"
+    },
+    {
+     "sig": "auto formatRunError(Error const& error) -> std::string",
+     "note": "组合 kind/message/context/native 类别为单行诊断"
+    },
+    {
+     "sig": "auto exitCodeForError(Error const& error, bool stopRequested) noexcept -> ExitCode",
+     "note": "把结构化错误映射到退出码，stopRequested 优先"
+    }
+   ],
+   "related": [
+    "uf::cli::RunArgs",
+    "uf::cli::RunReport",
+    "uf::cli::ExitCode",
+    "uf::Error"
+   ]
+  },
+  {
+   "name": "uf::cli::name-resolution",
+   "kind": "functions",
+   "file": "entry/cli/name-resolution.hpp",
+   "line": 14,
+   "responsibility": "资源名称边界：把人输入的 --page / --action 名称翻译成 manifest 的稳定 ID。匹配精确且区分大小写，page 只在 pages 中查、action 只在 ActionTarget recognizer 中查，未知名称 fail 时列出全部可用名称供操作者改正。",
+   "members": [
+    {
+     "sig": "auto resolvePageName(RecognitionCatalog const& catalog, std::string_view name) -> Result<PageId>",
+     "note": "页面名到 PageId"
+    },
+    {
+     "sig": "auto resolveActionName(RecognitionCatalog const& catalog, std::string_view name) -> Result<RecognizerId>",
+     "note": "动作名到 RecognizerId，page anchor 不能被当成动作"
+    }
+   ],
+   "related": [
+    "uf::annotation::RecognitionCatalog",
+    "uf::annotation::PageId",
+    "uf::annotation::RecognizerId"
+   ]
+  },
+  {
+   "name": "uf::cli::FileTraceSink",
+   "kind": "class",
+   "file": "entry/cli/file-trace-sink.hpp",
+   "line": 18,
+   "responsibility": "把 engine TraceSink 端口落到文件。每次 emit 写一条序列化 JSONL 并立即 flush，绝不跨 emit 缓存，因为 trace 证据必须能在崩溃后留存；写或 flush 失败作为 IoFailure Status 返回而不是静默丢日志。",
+   "members": [
+    {
+     "sig": "FileTraceSink(OpenTag, std::ofstream stream) noexcept",
+     "note": "私有 tag 构造，仅供 create 使用"
+    },
+    {
+     "sig": "static auto create(std::filesystem::path const& path) -> Result<std::unique_ptr<engine::TraceSink>>",
+     "note": "以 binary+trunc 打开，失败为 IoFailure"
+    },
+    {
+     "sig": "auto emit(engine::TraceEvent const& event) -> Status override",
+     "note": "写一条 JSONL、追加换行并 flush"
+    }
+   ],
+   "lifetime": "拥有 std::ofstream；以 unique_ptr<engine::TraceSink> 返回后被 move 进 EngineSession，从此由 session 拥有生命周期。",
+   "related": [
+    "uf::engine::TraceSink",
+    "uf::engine::TraceEvent"
+   ]
+  },
+  {
+   "name": "uf::cli::selectCandidate",
+   "kind": "functions",
+   "file": "entry/cli/candidate-selection.hpp",
+   "line": 19,
+   "responsibility": "从枚举出的候选中挑出标题包含 selector 子串、且可捕获（可见、未最小化）的唯一窗口。反自动化会用大量近同名隐形 decoy 窗口包围真窗口，故零个或多个匹配都 fail TargetUnavailable 而绝不按枚举顺序猜测。返回是拥有型拷贝，不别名输入 span。",
+   "members": [
+    {
+     "sig": "auto selectCandidate(std::span<TargetCandidate const> candidates, std::string_view selector) -> Result<TargetCandidate>",
+     "note": "唯一可捕获匹配才成功，否则 TargetUnavailable"
+    }
+   ],
+   "related": [
+    "uf::TargetCandidate",
+    "uf::TargetSelector"
+   ]
+  },
+  {
+   "name": "uf::cli::platform::ConsoleCancellation",
+   "kind": "class",
+   "file": "entry/cli/platform/windows-console-cancellation.hpp",
+   "line": 14,
+   "responsibility": "组合边界的取消端口：安装 Ctrl-C / Ctrl-Break console handler 并在析构时注销。OS 回调无法捕获状态，故真正的 stop_source 是 module-static、process-lifetime 的，本 RAII 类型只拥有那份 registration。",
+   "members": [
+    {
+     "sig": "static auto install() -> Result<ConsoleCancellation>",
+     "note": "注册 handler，取得供 engine 使用的 token"
+    },
+    {
+     "sig": "static auto stopRequested() noexcept -> bool",
+     "note": "是否已请求 stop；handler 注销后仍可读"
+    },
+    {
+     "sig": "auto token() const noexcept -> std::stop_token",
+     "note": "engine 用来观察取消的 stop_token"
+    },
+    {
+     "sig": "ConsoleCancellation(ConsoleCancellation&&) noexcept",
+     "note": "move-only，移动后源失活"
+    },
+    {
+     "sig": "~ConsoleCancellation()",
+     "note": "注销 handler registration"
+    }
+   ],
+   "lifetime": "move-only，RAII 管理 handler 注册；底层 stop_source 是 process-lifetime module-static 对象，一旦停止不复位，与「每进程恰好一次 run」契约一致，故退出码边界在 handler 注销后仍能读到 stop 状态。",
+   "related": [
+    "uf::cli::run-driver"
+   ]
+  },
+  {
+   "name": "uf::cli::platform::WgcFrameSource",
+   "kind": "class",
+   "file": "entry/cli/platform/wgc-frame-source.hpp",
+   "line": 16,
+   "responsibility": "把 controller 的 WgcCaptureSession 适配到 engine FrameSource 端口。capture 与 validateTargetInstance 都原样转发，不复制任何 capture 规则（frame ID、generation、content-size 失效、stall 全留给 controller），使 engine 保持平台无关。",
+   "members": [
+    {
+     "sig": "explicit WgcFrameSource(WgcCaptureSession session) noexcept",
+     "note": "按值接管 move-only 捕获会话"
+    },
+    {
+     "sig": "auto capture() -> Result<Frame> override",
+     "note": "转发 session 捕获"
+    },
+    {
+     "sig": "auto validateTargetInstance() -> Status override",
+     "note": "转发绑定目标复验"
+    }
+   ],
+   "lifetime": "按值拥有 move-only 的 WgcCaptureSession；以 unique_ptr<engine::FrameSource> move 进 EngineSession 后由 session 拥有。",
+   "related": [
+    "uf::WgcCaptureSession",
+    "uf::engine::FrameSource",
+    "uf::Frame"
+   ]
+  },
+  {
+   "name": "uf::cli::platform::ControllerActionSink",
+   "kind": "class",
+   "file": "entry/cli/platform/controller-action-sink.hpp",
+   "line": 17,
+   "responsibility": "把 controller 后台输入适配到 engine ActionSink 端口。它拥有 DeliveryTarget 及每目标的 held inputs 与 audit log，并把 ObservationLease 不变地转交 controller::click，使注入层 fence（frameId、generation、age）在投递时作为第二层再次运行。",
+   "members": [
+    {
+     "sig": "explicit ControllerActionSink(DeliveryTarget target) noexcept",
+     "note": "按值持有投递目标"
+    },
+    {
+     "sig": "auto click(Point<ClientSpace> point, ObservationLease const& lease) -> Status override",
+     "note": "把 lease 原样转交 controller::click"
+    }
+   ],
+   "lifetime": "按值拥有 DeliveryTarget，并持有拥有型 HeldInputs 与 AuditLog（不借用 runProduct 栈上临时对象）；以 unique_ptr<engine::ActionSink> move 进 EngineSession 后由 session 拥有。",
+   "related": [
+    "uf::DeliveryTarget",
+    "uf::engine::ActionSink",
+    "uf::ObservationLease"
+   ]
+  },
+  {
+   "name": "uf::cli::platform::clientOriginDesktop",
+   "kind": "functions",
+   "file": "entry/cli/platform/windows-target-geometry.hpp",
+   "line": 12,
+   "responsibility": "解析窗口 client 区在 desktop 空间的原点，供捕获会话从 resolved target 构建 ClientGeometry。这是产品在 Windows 上取得平台端口的几何策略，把 Win32 坐标细节挡在 engine 之外。",
+   "members": [
+    {
+     "sig": "auto clientOriginDesktop(WindowHandle windowHandle) -> Result<Point<DesktopSpace>>",
+     "note": "经 ClientToScreen 求 client (0,0) 的桌面原点"
+    }
+   ],
+   "related": [
+    "uf::WindowHandle",
+    "uf::Point<uf::DesktopSpace>"
+   ]
+  }
+ ],
+ "flows": [
+  {
+   "title": "命令分发与退出码映射",
+   "steps": [
+    {
+     "text": "main 把 argv 复制成拥有所有权的 vector，校验参数个数可安全转换且非零，最外层捕获所有异常，再调 dispatch",
+     "file": "entry/cli/main.cpp",
+     "line": 85
+    },
+    {
+     "text": "dispatch：空参数打印项目名与 usage 返回 Success；首参为 run 交给 dispatchRun；其他首参视为 unknown subcommand 返回 Failure",
+     "file": "entry/cli/main.cpp",
+     "line": 64
+    },
+    {
+     "text": "dispatchRun 先 parseRunArguments；失败则打印错误与 usage，并以 stopRequested=false 映射退出码（解析早于 handler 安装）",
+     "file": "entry/cli/main.cpp",
+     "line": 23
+    },
+    {
+     "text": "解析成功则 runProduct；失败时以 runCancellationRequested() 映射退出码，让 Ctrl-C 意图优先于底层错误",
+     "file": "entry/cli/main.cpp",
+     "line": 33
+    },
+    {
+     "text": "actionDelivered 为假则报 ActionAbsent(3)；为真则打印 page/action/click/trace 并返回 Success",
+     "file": "entry/cli/main.cpp",
+     "line": 40
+    }
+   ]
+  },
+  {
+   "title": "Windows 组合与一次 observe→act",
+   "steps": [
+    {
+     "text": "先离线加载项目并解析 page/action 名称到 ID，桌面副作用之前完成，坏 manifest 或未知名称在绑定任何目标前 fail-fast",
+     "file": "entry/cli/run-windows.cpp",
+     "line": 35
+    },
+    {
+     "text": "声明 per-monitor-aware V2，随后 client size/origin 与 DPI fingerprint 处于一致坐标解释下",
+     "file": "entry/cli/run-windows.cpp",
+     "line": 46
+    },
+    {
+     "text": "安装 ConsoleCancellation，取得供 engine 的 stop token",
+     "file": "entry/cli/run-windows.cpp",
+     "line": 49
+    },
+    {
+     "text": "enumerateCandidates + selectCandidate（唯一子串匹配）+ resolveTarget，取得 ClientSize/WindowHandle/Generation",
+     "file": "entry/cli/run-windows.cpp",
+     "line": 52
+    },
+    {
+     "text": "用 resolved 几何与目标 DPI 创建 live ProjectFingerprint；它必须与 manifest fingerprint 相等，否则 engine 拒绝识别与动作",
+     "file": "entry/cli/run-windows.cpp",
+     "line": 65
+    },
+    {
+     "text": "clientOriginDesktop + ClientGeometry + WgcCaptureSession，再用同一 handle/session/generation 创建 DeliveryTarget，保证捕获与投递身份同源",
+     "file": "entry/cli/run-windows.cpp",
+     "line": 76
+    },
+    {
+     "text": "创建 FileTraceSink、WgcFrameSource、ControllerActionSink，填 EngineSessionConfig，以 unique_ptr 移交三端口给 EngineSession::create",
+     "file": "entry/cli/run-windows.cpp",
+     "line": 108
+    },
+    {
+     "text": "waitForPage 得到与命中同源的 Observation，在其上 findAction；缺席返回 actionDelivered=false，存在则 act 消费 observation 并把 client 点击点写入 RunReport",
+     "file": "entry/cli/run-windows.cpp",
+     "line": 133
+    }
+   ]
+  }
+ ]
+}

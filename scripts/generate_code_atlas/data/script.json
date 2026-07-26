@@ -1,0 +1,140 @@
+{
+ "module": "script",
+ "title": "modules/script — Luau 嵌入层",
+ "summary": "modules/script 是 UmbraFlow 当前最小化的 Luau 嵌入底座，负责创建并拥有一个嵌入式 Luau lua_State，同步编译并运行内存中的 Luau 源码，把执行结果收敛成一个 double 或仓库统一的 Error。它把第三方 C API、C 分配内存和 lua_State* 全部封在 ffi/ 边界内，公开头文件不泄漏任何 Luau 类型。它目前不进入任何可执行文件，只被 test-script 实例化,因为尚未具备沙箱、取消和资源配额。",
+ "notOwned": [
+  "不拥有 observation、page resolution、recognition、action、trace 或 lease（属于 annotation/engine/controller）",
+  "不拥有 Windows capture 或 input，是跨平台模块，不承担 strict-background 投递",
+  "不提供任务文件加载、require、多文件子任务、任务队列、热加载或持久状态",
+  "不提供安全沙箱、记账 allocator、interrupt 取消、指令预算或时间预算",
+  "不保证 determinism：完整 stdlib 开放，globals 会跨 runNumber 泄漏",
+  "不保证线程安全，只保证 thread confinement——所有 VM 调用必须在 owning thread"
+ ],
+ "dependsOn": [
+  "core",
+  "domain"
+ ],
+ "readingOrder": [
+  {
+   "path": "modules/script/manifest.txt",
+   "why": "先看依赖声明：public core/domain、private Luau.VM/Luau.Compiler，确认 Luau 不进公开 ABI"
+  },
+  {
+   "path": "modules/script/source/script/engine.hpp",
+   "why": "唯一公开表面，pImpl 后的 Engine，看清工厂/执行/move-only 契约"
+  },
+  {
+   "path": "modules/script/source/script/ffi/engine.cpp",
+   "why": "所有危险操作与 SAFETY 证明集中处：VM 生命周期、compile/load/resume、scope guard"
+  }
+ ],
+ "classes": [
+  {
+   "name": "uf::script::Engine",
+   "kind": "class",
+   "file": "modules/script/source/script/engine.hpp",
+   "line": 14,
+   "responsibility": "唯一公开类型，通过 pImpl 唯一拥有一个嵌入式 Luau VM 并守住两条不变量：Luau ABI 不成为 script 的公开 ABI，且不存在没有有效 VM 的 Engine。所有失败走 Result<T> 而非泄漏 Luau 状态码。",
+   "members": [
+    {
+     "sig": "static auto create() -> Result<Engine>",
+     "note": "命名工厂：luaL_newstate + luaL_openlibs，VM 分配失败返回 InternalInvariant，故无 public 构造函数"
+    },
+    {
+     "sig": "auto runNumber(std::string_view source, std::string_view chunkName) -> Result<double>",
+     "note": "唯一执行入口：新 coroutine 上同步 compile/load/resume，返回最后一个数值结果或 0.0"
+    },
+    {
+     "sig": "Engine(Engine&&) noexcept",
+     "note": "move 转移 VM 所有权"
+    },
+    {
+     "sig": "auto operator=(Engine&&) noexcept -> Engine&",
+     "note": "move 赋值，同样转移唯一所有权"
+    },
+    {
+     "sig": "~Engine()",
+     "note": "析构经 Impl 调用 lua_close 回收整个 VM"
+    },
+    {
+     "sig": "explicit Engine(std::unique_ptr<Impl>) noexcept",
+     "note": "private 构造函数，只能由 create() 在持有有效 state 时调用"
+    }
+   ],
+   "lifetime": "通过 std::unique_ptr<Impl> 唯一拥有 lua_State；copy 在类型层不可表达，move 转移所有权。NOT thread-safe：所有调用必须在 owning thread，当前仅保证 thread confinement 而非 thread safety。source 与 chunkName 只在单次 runNumber 期间借用，不存入 Engine。",
+   "related": [
+    "uf::Result",
+    "uf::AutomationErrorKind",
+    "uf::fail",
+    "uf::scopeExit"
+   ]
+  }
+ ],
+ "flows": [
+  {
+   "title": "Engine::create() 创建 VM",
+   "steps": [
+    {
+     "text": "luaL_newstate() 分配主 lua_State",
+     "file": "modules/script/source/script/ffi/engine.cpp",
+     "line": 85
+    },
+    {
+     "text": "返回 null 时给出 AutomationErrorKind::InternalInvariant，绝不产生半初始化 Engine",
+     "file": "modules/script/source/script/ffi/engine.cpp",
+     "line": 86
+    },
+    {
+     "text": "luaL_openlibs(state) 打开完整标准库（尚未 sandbox）",
+     "file": "modules/script/source/script/ffi/engine.cpp",
+     "line": 93
+    },
+    {
+     "text": "state 交给 std::make_unique<Impl>，private 构造函数把唯一所有权移入 m_impl",
+     "file": "modules/script/source/script/ffi/engine.cpp",
+     "line": 100
+    }
+   ]
+  },
+  {
+   "title": "Engine::runNumber() 单次执行",
+   "steps": [
+    {
+     "text": "构造 lua_CompileOptions，固定 optimizationLevel=1、debugLevel=1",
+     "file": "modules/script/source/script/ffi/engine.cpp",
+     "line": 110
+    },
+    {
+     "text": "luau_compile 以 pointer+size 编译源码；null 仅表分配失败(InternalInvariant)，语法错误编码进 bytecode",
+     "file": "modules/script/source/script/ffi/engine.cpp",
+     "line": 121
+    },
+    {
+     "text": "scopeExit 保证所有返回路径 std::free() 释放 caller-owned bytecode buffer",
+     "file": "modules/script/source/script/ffi/engine.cpp",
+     "line": 134
+    },
+    {
+     "text": "记录 stackBase 后 lua_newthread 压栈新 coroutine，第二个 scope guard 总会 lua_settop 恢复主栈",
+     "file": "modules/script/source/script/ffi/engine.cpp",
+     "line": 148
+    },
+    {
+     "text": "chunkName 复制为 std::string 提供稳定 C string，luau_load 非 LUA_OK 返回 InvalidResource",
+     "file": "modules/script/source/script/ffi/engine.cpp",
+     "line": 158
+    },
+    {
+     "text": "lua_resume 同步运行；LUA_YIELD 被明确拒绝，其他非 LUA_OK 返回 InvalidResource",
+     "file": "modules/script/source/script/ffi/engine.cpp",
+     "line": 173
+    },
+    {
+     "text": "仅 LUA_OK 时读取结果：栈非空以 lua_tonumber 取最后值，栈空返回 0.0",
+     "file": "modules/script/source/script/ffi/engine.cpp",
+     "line": 189
+    }
+   ]
+  }
+ ]
+}
