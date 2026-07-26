@@ -84,16 +84,27 @@ namespace uf::annotation
         auto provenance() const noexcept UF_LIFETIME_BOUND -> SourceProvenance const&;
     };
 
+    // An authored recognizer: the definition the runtime will see, plus the two
+    // facts only authoring keeps. The screen it was drawn on is what makes its
+    // rectangles meaningful; the shared flag records that the author intends
+    // these pixels to be reused on other pages, which is a statement of intent
+    // no other field can carry -- an element marked shared before it reaches a
+    // second page is indistinguishable from an ordinary one without it.
+    //
+    // Neither reaches the runtime manifest: recognition needs the template and
+    // the region, never where the author got them.
     struct AuthoringRecognizerSpec final
     {
         RecognizerDefinition m_definition;
         SourceId             m_sourceId;
+        bool                 m_shared{};
     };
 
     struct AuthoringRecognizerSource final
     {
         RecognizerId m_recognizerId;
         SourceId     m_sourceId;
+        bool         m_shared{};
     };
 
     enum class RegressionClassification : uint8

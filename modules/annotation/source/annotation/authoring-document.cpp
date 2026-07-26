@@ -377,6 +377,17 @@ namespace uf::annotation
                 pageIds = std::move(parsed);
             }
 
+            // Absent in every project authored before regions could be marked
+            // reusable, and absent whenever false, so its absence is the default
+            // rather than an error.
+            auto shared = false;
+            UF_TRY_VALUE(hasShared, reader.nextIsField("shared"));
+            if (hasShared)
+            {
+                UF_TRY_VALUE(parsed, reader.takeBoolField("shared"));
+                shared = parsed;
+            }
+
             UF_TRY_VALUE(
                 definition,
                 RecognizerDefinition::create(
@@ -396,6 +407,7 @@ namespace uf::annotation
             return AuthoringRecognizerSpec{
                 .m_definition = std::move(definition),
                 .m_sourceId   = sourceId,
+                .m_shared     = shared,
             };
         }
 
@@ -711,6 +723,7 @@ namespace uf::annotation
                 AuthoringRecognizerSource{
                     .m_recognizerId = recognizerId,
                     .m_sourceId     = recognizer.m_sourceId,
+                    .m_shared       = recognizer.m_shared,
                 }
             );
             definitions.emplace_back(std::move(recognizer.m_definition));
@@ -949,6 +962,12 @@ namespace uf::annotation
                 output += "page_ids = ";
                 detail::appendIdArray(output, recognizer.allowedPageIds());
                 output.push_back('\n');
+            }
+            // Written only when set, so a project that marks nothing reusable
+            // serializes exactly as it did before the field existed.
+            if (relationship.m_shared)
+            {
+                detail::appendBoolField(output, "shared", true);
             }
         }
 

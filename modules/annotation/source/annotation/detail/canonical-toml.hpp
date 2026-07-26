@@ -68,6 +68,11 @@ namespace uf::annotation::detail
         [[nodiscard]]
         auto takeUnsigned64Field(std::string_view key) -> Result<uint64>;
 
+        // A TOML boolean, spelled as the bare words true or false. Only ever
+        // written when true, so a reader reaches this through nextIsField.
+        [[nodiscard]]
+        auto takeBoolField(std::string_view key) -> Result<bool>;
+
         [[nodiscard]]
         auto takeUnsigned32ArrayField(
             std::string_view key
@@ -91,6 +96,12 @@ namespace uf::annotation::detail
         std::string& output,
         std::string_view key,
         std::string_view value
+    ) -> void;
+
+    auto appendBoolField(
+        std::string& output,
+        std::string_view key,
+        bool value
     ) -> void;
 
     auto appendUnsigned32Array(

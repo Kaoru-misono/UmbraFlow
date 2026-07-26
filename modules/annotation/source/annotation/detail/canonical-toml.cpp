@@ -421,6 +421,23 @@ namespace uf::annotation::detail
         return parseUnsigned64(value);
     }
 
+    auto CanonicalTomlReader::takeBoolField(
+        std::string_view key
+    ) -> Result<bool>
+    {
+        UF_TRY_VALUE(lineText, take());
+        UF_TRY_VALUE(value, fieldValue(lineText, key));
+        if (value == "true")
+        {
+            return true;
+        }
+        if (value == "false")
+        {
+            return false;
+        }
+        return invalid(std::format("field '{}' must be true or false", key));
+    }
+
     auto CanonicalTomlReader::takeUnsigned32ArrayField(
         std::string_view key
     ) -> Result<std::vector<uint32>>
@@ -515,6 +532,18 @@ namespace uf::annotation::detail
         output += key;
         output += " = ";
         appendTomlString(output, value);
+        output.push_back('\n');
+    }
+
+    auto appendBoolField(
+        std::string& output,
+        std::string_view key,
+        bool value
+    ) -> void
+    {
+        output += key;
+        output += " = ";
+        output += value ? "true" : "false";
         output.push_back('\n');
     }
 
