@@ -7,7 +7,7 @@ of `modules/` with a `manifest.txt` becomes a CMake library target named
 ```text
 entry/${PROJECT_NAME}       -> core, engine; + controller (Windows adapters)
 entry/m0-demo (Windows)     -> controller, vision, image (frozen M0 substrate demo)
-entry/workbench (Windows)   -> annotation, engine, controller, image
+entry/workbench (Windows)   -> annotation, controller, image
 domain                -> core
 vision                -> core, domain
 image                 -> core, domain

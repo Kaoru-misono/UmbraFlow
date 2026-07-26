@@ -263,11 +263,11 @@ D3D pointer 或 ImGui widget state。
   TOML；
 - 对 panel 返回 status string、texture handle 和 transient Preview rows。
 
-`umbra-workbench` 在 `entry/CMakeLists.txt` 链接 `engine`，但当前
-`entry/workbench` 源码没有 include 或调用 `engine` symbol。与 runtime
-共享的 recognition core 是 `annotation::RecognitionRuntime`。不要因为 build
-edge 就把 engine session、lease 或 action port 引入 app state；runtime 只消费
-Workbench 最后发布的 `generated/annotations.runtime.toml` 和 template assets。
+`umbra-workbench` 不链接 `engine`。与 runtime 共享的 recognition core 是
+`annotation::RecognitionRuntime`；runtime 只消费 Workbench 最后发布的
+`generated/annotations.runtime.toml` 和 template assets，两者之间没有进程内
+接口。这条 build edge 曾经存在而无任何源码引用，已在 2026-07-26 移除——不要
+为了 engine session、lease 或 action port 把它加回来，那会跨越现有职责边界。
 
 跨边界的稳定标识是 strong `ResourceId` wrapper，跨磁盘的完整性凭据是
 `ContentHash`，跨 capture/authoring 的兼容性凭据是
@@ -277,7 +277,7 @@ Workbench 最后发布的 `generated/annotations.runtime.toml` 和 template asse
 
 ## 测试
 
-Windows 下 `tests/CMakeLists.txt` 把六个 synthetic 文件合成
+Windows 下 `tests/CMakeLists.txt` 把七个 synthetic 文件合成
 `test-workbench`，直接链接 `umbraflow_workbench_support`，从而绕过 ImGui 和
 真实 desktop：
 
@@ -300,6 +300,11 @@ Windows 下 `tests/CMakeLists.txt` 把六个 synthetic 文件合成
 - `tests/workbench/test-preview.cpp` 锁定 resolved page/anchor evidence、selected
   action evidence、zero-budget stop reason 和 absent source rejection，证明 UI
   wrapper 保留 runtime outcome。
+- `tests/workbench/test-model-check-job.cpp` 锁定承载整个 model check 的后台
+  job：恰好交付一次、错误浮出而非被吞掉、work 返回前一直 running、第二次
+  start 不打断在飞的运行、被 discard 的运行永不到达 status line、被 discard
+  的运行不阻塞下一次、析构会取消并 join worker。它用假 work 驱动
+  `startWith`，因此全部不需要真实像素扫描。
 
 `tests/workbench/test-real-regression.cpp` 是单独的 local-only `REAL` suite。
 只有 `tests/assets/real-regression` 存在时 CMake 才注册它；它遍历未提交的真实

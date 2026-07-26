@@ -311,11 +311,12 @@ The outbound edge runs from the Workbench to the reusable modules and the filesy
   TOML;
 - to the panel, it returns status strings, texture handles, and transient Preview rows.
 
-`umbra-workbench` links `engine` in `entry/CMakeLists.txt`, but the current `entry/workbench` sources
-neither include nor call any `engine` symbol. The recognition core actually shared with the runtime
-is `annotation::RecognitionRuntime`. Do not, on account of this build edge, bring an engine session,
-lease, or action port into the app state; the runtime consumes only the
-`generated/annotations.runtime.toml` and template assets that the Workbench publishes last.
+`umbra-workbench` does not link `engine`. The recognition core actually shared with the runtime is
+`annotation::RecognitionRuntime`; the runtime consumes only the
+`generated/annotations.runtime.toml` and template assets that the Workbench publishes last, and
+there is no in-process interface between the two. That build edge existed for a while with no
+source referencing it and was removed on 2026-07-26 -- do not restore it to bring an engine session,
+lease, or action port into the app state, which would cross the existing responsibility boundary.
 
 The stable identifier across boundaries is the strong `ResourceId` wrapper, the integrity credential
 across disk is `ContentHash`, the compatibility credential across capture/authoring is
@@ -325,7 +326,7 @@ evidence layout of `RecognitionRuntime` or on native platform objects.
 
 ## Tests
 
-On Windows, `tests/CMakeLists.txt` combines six synthetic files into `test-workbench` and links
+On Windows, `tests/CMakeLists.txt` combines seven synthetic files into `test-workbench` and links
 `umbraflow_workbench_support` directly, thereby bypassing ImGui and the real desktop:
 
 - `tests/workbench/test-authoring-edit.cpp` locks down the full draft round trip, validated apply, an
@@ -346,6 +347,11 @@ On Windows, `tests/CMakeLists.txt` combines six synthetic files into `test-workb
 - `tests/workbench/test-preview.cpp` locks down resolved page/anchor evidence, selected action
   evidence, the zero-budget stop reason, and absent-source rejection, proving that the UI wrapper
   preserves the runtime outcome.
+- `tests/workbench/test-model-check-job.cpp` locks down the background job that carries the whole
+  model check: delivery exactly once, an error surfacing rather than being swallowed, running until
+  the work returns, a second start leaving an in-flight run alone, a discarded run never reaching
+  the status line, a discarded run not blocking the next one, and the destructor cancelling and
+  joining its worker. It drives `startWith` with fake work, so none of it pays for a pixel sweep.
 
 `tests/workbench/test-real-regression.cpp` is a separate, local-only `REAL` suite. CMake registers it
 only when `tests/assets/real-regression` exists; it walks the uncommitted real projects, calls
