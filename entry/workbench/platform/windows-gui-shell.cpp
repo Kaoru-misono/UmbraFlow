@@ -45,6 +45,48 @@ namespace uf::workbench::platform
             L"UmbraWorkbenchWindow"
         };
         constexpr auto k_swapChainBufferCount = uint32{2};
+
+        // Where ImGui persists the docking layout. The arrangement of the panels
+        // is a per-user preference of the application rather than a property of
+        // any one annotation project, so it lives with the user's application
+        // data instead of in a project directory or in whatever working directory
+        // ImGui would otherwise default to.
+        //
+        // Yields nothing when the directory cannot be prepared. The layout is
+        // then simply not persisted: an unwritable settings file must never stop
+        // the workbench from opening.
+        [[nodiscard]]
+        auto layoutSettingsPath() -> std::optional<std::filesystem::path>
+        {
+            auto localAppData = std::array<wchar_t, MAX_PATH>{};
+            // SAFETY: GetEnvironmentVariableW writes at most the passed capacity
+            // and returns the character count; localAppData owns MAX_PATH
+            // writable units for the duration of the call and no pointer is
+            // retained.
+            auto const length = GetEnvironmentVariableW(
+                L"LOCALAPPDATA",
+                localAppData.data(),
+                static_cast<DWORD>(localAppData.size())
+            );
+            if (length == 0U || length >= localAppData.size())
+            {
+                return std::nullopt;
+            }
+
+            auto directory = std::filesystem::path{
+                std::wstring_view{localAppData.data(), length}
+            };
+            directory /= L"UmbraFlow";
+            directory /= L"workbench";
+
+            auto createError = std::error_code{};
+            std::filesystem::create_directories(directory, createError);
+            if (createError)
+            {
+                return std::nullopt;
+            }
+            return directory / L"imgui-layout.ini";
+        }
     }
 
     struct GuiShellState final
@@ -59,6 +101,13 @@ namespace uf::workbench::platform
         winrt::com_ptr<ID3D11RenderTargetView> m_renderTarget{};
 
         std::optional<uint32> m_smokeFrames{};
+
+        // Backing storage for ImGui's IniFilename, which ImGui stores as a bare
+        // pointer rather than copying. It must outlive the context and must not
+        // be written again once handed over, so it is set once during create and
+        // destroyed with this object -- after the destructor body has torn the
+        // context down. Empty when the layout is not being persisted.
+        std::string m_layoutSettingsPath{};
 
         // A queued client-area size, set from WM_SIZE and applied before the next
         // frame. Zero in either field means no resize is pending.
@@ -89,6 +138,13 @@ namespace uf::workbench::platform
             }
             if (m_imguiContext)
             {
+                // ImGui flushes settings on a timer inside NewFrame and not at
+                // shutdown, so a layout rearranged in the last few seconds before
+                // closing would otherwise be lost.
+                if (!m_layoutSettingsPath.empty())
+                {
+                    ImGui::SaveIniSettingsToDisk(m_layoutSettingsPath.c_str());
+                }
                 ImGui::DestroyContext();
             }
             if (m_window != nullptr)
@@ -358,8 +414,23 @@ namespace uf::workbench::platform
             return shellFailure("workbench GUI shell failed to create the ImGui context");
         }
         state->m_imguiContext = true;
-        // A1 keeps no persisted layout, so disable the settings file entirely.
-        ImGui::GetIO().IniFilename = nullptr;
+
+        // Persist the docking layout between launches, so the panels come back
+        // where they were left rather than floating. A smoke run is excluded: it
+        // draws a handful of frames with no layout of its own and would overwrite
+        // the arrangement the user actually made.
+        auto const settingsPath = state->m_smokeFrames.has_value()
+            ? std::nullopt
+            : layoutSettingsPath();
+        if (settingsPath.has_value())
+        {
+            state->m_layoutSettingsPath = settingsPath->string();
+            ImGui::GetIO().IniFilename  = state->m_layoutSettingsPath.c_str();
+        }
+        else
+        {
+            ImGui::GetIO().IniFilename = nullptr;
+        }
         // Enable docking so the panels can be arranged against each other; the
         // dock host is submitted each frame in drawWorkbench. The vendored ImGui
         // is the docking branch, so the flag and DockSpaceOverViewport are
