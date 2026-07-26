@@ -7,15 +7,32 @@
 
 #include <algorithm>
 #include <cstddef>
+#include <expected>
 #include <format>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <variant>
 #include <vector>
 
 namespace uf::workbench
 {
+    namespace
+    {
+        [[nodiscard]]
+        auto missingSource(annotation::SourceId id) -> std::unexpected<Error>
+        {
+            return fail(
+                AutomationErrorKind::InvalidResource,
+                std::format(
+                    "source {} is not part of this draft",
+                    id.value().toString()
+                )
+            );
+        }
+    }
+
     auto makeAuthoringDraft(
         annotation::AuthoringDocument const& document
     ) -> AuthoringDraft
@@ -67,6 +84,7 @@ namespace uf::workbench
                         definition.allowedPageIds().begin(),
                         definition.allowedPageIds().end(),
                     },
+                    .m_shared = relationship.m_shared,
                 }
             );
         }
@@ -181,6 +199,7 @@ namespace uf::workbench
                 annotation::AuthoringRecognizerSpec{
                     .m_definition = std::move(definition),
                     .m_sourceId   = recognizer.m_sourceId,
+                    .m_shared     = recognizer.m_shared,
                 }
             );
         }
@@ -226,6 +245,488 @@ namespace uf::workbench
             std::move(pages),
             std::move(regressions)
         );
+    }
+
+    auto freshAuthoringName(
+        AuthoringDraft const& draft,
+        std::string_view stem
+    ) -> std::string
+    {
+        auto const taken = [&draft](std::string_view candidate)
+        {
+            return std::ranges::contains(
+                       draft.m_recognizers,
+                       candidate,
+                       &EditableRecognizer::m_name
+                   )
+                || std::ranges::contains(
+                       draft.m_pages,
+                       candidate,
+                       &EditablePage::m_name
+                   );
+        };
+
+        auto const limit = draft.m_recognizers.size() + draft.m_pages.size() + 1U;
+        auto candidate   = std::string{};
+        for (auto index = std::size_t{1}; index <= limit; ++index)
+        {
+            candidate = std::format("{}_{}", stem, index);
+            if (!taken(candidate))
+            {
+                break;
+            }
+        }
+        return candidate;
+    }
+
+    auto createPageFromSource(
+        AuthoringDraft draft,
+        NewPageSpec const& spec
+    ) -> Result<CreatedPage>
+    {
+        if (
+            !std::ranges::contains(
+                draft.m_sources,
+                spec.m_sourceId,
+                &EditableSource::m_id
+            )
+        )
+        {
+            return missingSource(spec.m_sourceId);
+        }
+
+        auto anchorName = freshAuthoringName(draft, "anchor");
+        draft.m_recognizers.emplace_back(
+            EditableRecognizer{
+                .m_id                    = spec.m_anchorId,
+                .m_name                  = anchorName,
+                .m_annotationType        = annotation::AnnotationType::PageAnchor,
+                .m_sourceId              = spec.m_sourceId,
+                .m_templateRect          = spec.m_templateRect,
+                .m_searchRoi             = spec.m_searchRoi,
+                .m_similarityBasisPoints = spec.m_similarityBasisPoints,
+                .m_defaultClick          = {},
+                .m_allowedPageIds        = {},
+            }
+        );
+
+        auto pageName = freshAuthoringName(draft, "page");
+        draft.m_pages.emplace_back(
+            EditablePage{
+                .m_id        = spec.m_pageId,
+                .m_name      = pageName,
+                .m_required  = {spec.m_anchorId},
+                .m_forbidden = {},
+            }
+        );
+
+        // The case is what states "this screen is that page". Nothing else in the
+        // document records it: an anchor names the page it identifies, but the
+        // image the anchor happens to be drawn on is not the same claim.
+        draft.m_regressions.emplace_back(
+            EditableRegression{
+                .m_id             = spec.m_regressionId,
+                .m_sourceId       = spec.m_sourceId,
+                .m_classification = annotation::RegressionClassification::Positive,
+                .m_expectation    = annotation::ResolvedRegression{spec.m_pageId},
+            }
+        );
+
+        return CreatedPage{
+            .m_draft      = std::move(draft),
+            .m_pageName   = std::move(pageName),
+            .m_anchorName = std::move(anchorName),
+        };
+    }
+
+    auto addPageMember(
+        AuthoringDraft draft,
+        PageMemberSpec const& spec
+    ) -> Result<AddedPageMember>
+    {
+        if (
+            !std::ranges::contains(
+                draft.m_sources,
+                spec.m_sourceId,
+                &EditableSource::m_id
+            )
+        )
+        {
+            return missingSource(spec.m_sourceId);
+        }
+
+        auto const page = std::ranges::find(
+            draft.m_pages,
+            spec.m_pageId,
+            &EditablePage::m_id
+        );
+        if (page == draft.m_pages.end())
+        {
+            return fail(
+                AutomationErrorKind::InvalidResource,
+                std::format(
+                    "page {} is not part of this draft",
+                    spec.m_pageId.value().toString()
+                )
+            );
+        }
+
+        auto const isAnchor = spec.m_kind == PageMemberKind::Anchor;
+        auto name = freshAuthoringName(draft, isAnchor ? "anchor" : "region");
+        draft.m_recognizers.emplace_back(
+            EditableRecognizer{
+                .m_id   = spec.m_recognizerId,
+                .m_name = name,
+                .m_annotationType = isAnchor
+                    ? annotation::AnnotationType::PageAnchor
+                    : annotation::AnnotationType::ActionTarget,
+                .m_sourceId              = spec.m_sourceId,
+                .m_templateRect          = spec.m_templateRect,
+                .m_searchRoi             = spec.m_searchRoi,
+                .m_similarityBasisPoints = spec.m_similarityBasisPoints,
+                .m_defaultClick          = {},
+                .m_allowedPageIds        = isAnchor
+                    ? std::vector<annotation::PageId>{}
+                    : std::vector<annotation::PageId>{spec.m_pageId},
+            }
+        );
+        if (isAnchor)
+        {
+            page->m_required.emplace_back(spec.m_recognizerId);
+        }
+
+        return AddedPageMember{
+            .m_draft = std::move(draft),
+            .m_name  = std::move(name),
+        };
+    }
+
+    auto sharedRegionMembers(
+        AuthoringDraft const& draft,
+        annotation::RecognizerId id
+    ) -> std::vector<annotation::RecognizerId>
+    {
+        auto members = std::vector<annotation::RecognizerId>{};
+        auto const origin = std::ranges::find(
+            draft.m_recognizers,
+            id,
+            &EditableRecognizer::m_id
+        );
+        if (origin == draft.m_recognizers.end())
+        {
+            return members;
+        }
+        // An unmarked region is a group of one. Nothing else can be reusing its
+        // pixels, because reuse only happens through a marked element, and
+        // returning it keeps a plain template drag on the same path as a shared
+        // one.
+        if (!origin->m_shared)
+        {
+            members.emplace_back(origin->m_id);
+            return members;
+        }
+        for (auto const& recognizer : draft.m_recognizers)
+        {
+            if (
+                recognizer.m_shared
+                && recognizer.m_sourceId == origin->m_sourceId
+                && recognizer.m_templateRect == origin->m_templateRect
+                && recognizer.m_annotationType == origin->m_annotationType
+            )
+            {
+                members.emplace_back(recognizer.m_id);
+            }
+        }
+        return members;
+    }
+
+    auto setRegionShared(
+        AuthoringDraft draft,
+        annotation::RecognizerId id,
+        bool shared
+    ) -> Result<AuthoringDraft>
+    {
+        auto const target = std::ranges::find(
+            draft.m_recognizers,
+            id,
+            &EditableRecognizer::m_id
+        );
+        if (target == draft.m_recognizers.end())
+        {
+            return fail(
+                AutomationErrorKind::InvalidResource,
+                std::format(
+                    "recognizer {} is not part of this draft",
+                    id.value().toString()
+                )
+            );
+        }
+        if (target->m_annotationType != annotation::AnnotationType::ActionTarget)
+        {
+            return fail(
+                AutomationErrorKind::InvalidResource,
+                std::format(
+                    "\"{}\" is not an interactive region; only those are reused "
+                    "across pages",
+                    target->m_name
+                )
+            );
+        }
+
+        auto const members = sharedRegionMembers(draft, id);
+        if (!shared && members.size() > 1U)
+        {
+            return fail(
+                AutomationErrorKind::InvalidResource,
+                std::format(
+                    "\"{}\" is still used on {} pages; remove it from the others "
+                    "before making it page-local again",
+                    target->m_name,
+                    members.size()
+                )
+            );
+        }
+
+        for (auto const& memberId : members)
+        {
+            auto const member = std::ranges::find(
+                draft.m_recognizers,
+                memberId,
+                &EditableRecognizer::m_id
+            );
+            UF_CHECK(member != draft.m_recognizers.end());
+            member->m_shared = shared;
+        }
+        return draft;
+    }
+
+    auto shareRegionOnPage(
+        AuthoringDraft draft,
+        SharedRegionSpec const& spec
+    ) -> Result<AddedPageMember>
+    {
+        auto const origin = std::ranges::find(
+            draft.m_recognizers,
+            spec.m_shareFrom,
+            &EditableRecognizer::m_id
+        );
+        if (origin == draft.m_recognizers.end())
+        {
+            return fail(
+                AutomationErrorKind::InvalidResource,
+                std::format(
+                    "recognizer {} is not part of this draft",
+                    spec.m_shareFrom.value().toString()
+                )
+            );
+        }
+        if (origin->m_annotationType != annotation::AnnotationType::ActionTarget)
+        {
+            return fail(
+                AutomationErrorKind::InvalidResource,
+                std::format(
+                    "\"{}\" is not an interactive region; only those are shared "
+                    "across pages",
+                    origin->m_name
+                )
+            );
+        }
+        if (
+            !std::ranges::contains(draft.m_pages, spec.m_pageId, &EditablePage::m_id)
+        )
+        {
+            return fail(
+                AutomationErrorKind::InvalidResource,
+                std::format(
+                    "page {} is not part of this draft",
+                    spec.m_pageId.value().toString()
+                )
+            );
+        }
+
+        auto const alreadyThere = std::ranges::any_of(
+            draft.m_recognizers,
+            [&origin, &spec](EditableRecognizer const& recognizer)
+            {
+                return recognizer.m_sourceId == origin->m_sourceId
+                    && recognizer.m_templateRect == origin->m_templateRect
+                    && recognizer.m_annotationType == origin->m_annotationType
+                    && std::ranges::contains(
+                           recognizer.m_allowedPageIds,
+                           spec.m_pageId
+                       );
+            }
+        );
+        if (alreadyThere)
+        {
+            return fail(
+                AutomationErrorKind::InvalidResource,
+                std::format(
+                    "\"{}\" is already on that page",
+                    origin->m_name
+                )
+            );
+        }
+
+        // Everything origin is needed for happens here, before the append: a
+        // vector append may reallocate, and every iterator into it dies with the
+        // old buffer. Reuse is what being shared means, so an element that
+        // reaches a second page is marked whether or not the author ticked the
+        // box first.
+        origin->m_shared        = true;
+        auto const templateRect = origin->m_templateRect;
+        auto const sourceId     = origin->m_sourceId;
+        auto const threshold    = origin->m_similarityBasisPoints;
+        auto const defaultClick = origin->m_defaultClick;
+        auto const originName   = origin->m_name;
+
+        // Named after the element and the page it lands on, rather than the next
+        // free "region_N". The copy is that element on that page, and a generated
+        // number says neither -- which is what left a renamed element paired with
+        // a stale one the first time this existed.
+        auto const page = std::ranges::find(
+            draft.m_pages,
+            spec.m_pageId,
+            &EditablePage::m_id
+        );
+        UF_CHECK(page != draft.m_pages.end());
+        auto name = freshAuthoringName(
+            draft,
+            std::format("{}_{}", originName, page->m_name)
+        );
+        draft.m_recognizers.emplace_back(
+            EditableRecognizer{
+                .m_id                    = spec.m_recognizerId,
+                .m_name                  = name,
+                .m_annotationType        = annotation::AnnotationType::ActionTarget,
+                .m_sourceId              = sourceId,
+                .m_templateRect          = templateRect,
+                .m_searchRoi             = spec.m_searchRoi,
+                .m_similarityBasisPoints = threshold,
+                .m_defaultClick          = defaultClick,
+                .m_allowedPageIds        = {spec.m_pageId},
+                .m_shared                = true,
+            }
+        );
+
+        return AddedPageMember{
+            .m_draft = std::move(draft),
+            .m_name  = std::move(name),
+        };
+    }
+
+    auto retemplateSharedRegion(
+        AuthoringDraft draft,
+        annotation::RecognizerId id,
+        PixelRect templateRect
+    ) -> Result<RetemplatedRegion>
+    {
+        auto const members = sharedRegionMembers(draft, id);
+        if (members.empty())
+        {
+            return fail(
+                AutomationErrorKind::InvalidResource,
+                std::format(
+                    "recognizer {} is not part of this draft",
+                    id.value().toString()
+                )
+            );
+        }
+
+        for (auto const& memberId : members)
+        {
+            auto const member = std::ranges::find(
+                draft.m_recognizers,
+                memberId,
+                &EditableRecognizer::m_id
+            );
+            UF_CHECK(member != draft.m_recognizers.end());
+            if (
+                templateRect.width() > member->m_searchRoi.width()
+                || templateRect.height() > member->m_searchRoi.height()
+            )
+            {
+                return fail(
+                    AutomationErrorKind::InvalidResource,
+                    std::format(
+                        "the new template does not fit the range \"{}\" searches; "
+                        "widen that range first",
+                        member->m_name
+                    )
+                );
+            }
+        }
+
+        for (auto const& memberId : members)
+        {
+            auto const member = std::ranges::find(
+                draft.m_recognizers,
+                memberId,
+                &EditableRecognizer::m_id
+            );
+            UF_CHECK(member != draft.m_recognizers.end());
+            member->m_templateRect = templateRect;
+        }
+
+        return RetemplatedRegion{
+            .m_draft = std::move(draft),
+            // The recognizer being dragged is not something the author needs
+            // reporting back to them; the others are.
+            .m_movedMembers = members.size() - 1U,
+        };
+    }
+
+    auto claimScreenForPage(
+        AuthoringDraft draft,
+        ScreenClaimSpec const& spec
+    ) -> Result<AuthoringDraft>
+    {
+        if (
+            !std::ranges::contains(
+                draft.m_sources,
+                spec.m_sourceId,
+                &EditableSource::m_id
+            )
+        )
+        {
+            return missingSource(spec.m_sourceId);
+        }
+        if (
+            !std::ranges::contains(draft.m_pages, spec.m_pageId, &EditablePage::m_id)
+        )
+        {
+            return fail(
+                AutomationErrorKind::InvalidResource,
+                std::format(
+                    "page {} is not part of this draft",
+                    spec.m_pageId.value().toString()
+                )
+            );
+        }
+
+        auto const expectation = annotation::RegressionExpectation{
+            annotation::ResolvedRegression{spec.m_pageId},
+        };
+        auto const existing = std::ranges::find(
+            draft.m_regressions,
+            spec.m_sourceId,
+            &EditableRegression::m_sourceId
+        );
+        if (existing != draft.m_regressions.end())
+        {
+            existing->m_expectation = expectation;
+            return draft;
+        }
+
+        draft.m_regressions.emplace_back(
+            EditableRegression{
+                .m_id             = spec.m_regressionId,
+                .m_sourceId       = spec.m_sourceId,
+                .m_classification = annotation::RegressionClassification::Positive,
+                .m_expectation    = expectation,
+            }
+        );
+        return draft;
     }
 
     auto retypeRecognizer(
@@ -457,24 +958,6 @@ namespace uf::workbench
             }
         }
 
-        for (auto const& regression : draft.m_regressions)
-        {
-            auto const* p_resolved = std::get_if<annotation::ResolvedRegression>(
-                &regression.m_expectation
-            );
-            if (p_resolved != nullptr && p_resolved->m_pageId == id)
-            {
-                return fail(
-                    AutomationErrorKind::InvalidResource,
-                    std::format(
-                        "a regression case expects page \"{}\" to resolve; "
-                        "reclassify it before deleting the page",
-                        target->m_name
-                    )
-                );
-            }
-        }
-
         auto clearedAuthorizations = std::size_t{0};
         for (auto& recognizer : draft.m_recognizers)
         {
@@ -482,11 +965,27 @@ namespace uf::workbench
             std::erase(recognizer.m_allowedPageIds, id);
             clearedAuthorizations += before - recognizer.m_allowedPageIds.size();
         }
+
+        // A case expecting this page to resolve cannot be reclassified into
+        // anything the author meant, so it goes with the page rather than
+        // blocking the deletion. Every page created from a captured screen owns
+        // one, so refusing here would make such a page undeletable.
+        auto const removedRegressions = std::erase_if(
+            draft.m_regressions,
+            [id](EditableRegression const& regression)
+            {
+                auto const* p_resolved = std::get_if<annotation::ResolvedRegression>(
+                    &regression.m_expectation
+                );
+                return p_resolved != nullptr && p_resolved->m_pageId == id;
+            }
+        );
         draft.m_pages.erase(target);
 
         return DeletedEntity{
             .m_draft                 = std::move(draft),
             .m_clearedAuthorizations = clearedAuthorizations,
+            .m_removedRegressions    = removedRegressions,
         };
     }
 

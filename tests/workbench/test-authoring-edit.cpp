@@ -24,6 +24,7 @@ namespace uf::workbench
         constexpr auto k_anchorId     = "00000000-0000-0000-0000-000000000001";
         constexpr auto k_actionId     = "00000000-0000-0000-0000-000000000002";
         constexpr auto k_awayId       = "00000000-0000-0000-0000-000000000003";
+        constexpr auto k_sharedId     = "00000000-0000-0000-0000-000000000004";
         constexpr auto k_pageId       = "00000000-0000-0000-0000-000000000101";
         constexpr auto k_secondPageId = "00000000-0000-0000-0000-000000000102";
         constexpr auto k_regressionId = "00000000-0000-0000-0000-000000000301";
@@ -303,6 +304,496 @@ namespace uf::workbench
         }
     }
 
+    TEST_CASE("a fresh name avoids recognizer and page names alike")
+    {
+        // The catalog compares a page name against recognizer names too, so a
+        // fresh name checked against one kind still collides.
+        auto draft = makeAuthoringDraft(document());
+        draft.m_pages.at(0).m_name       = "thing_1";
+        draft.m_recognizers.at(0).m_name = "thing_2";
+
+        CHECK(freshAuthoringName(draft, "thing") == "thing_3");
+        CHECK(freshAuthoringName(draft, "other") == "other_1");
+    }
+
+    TEST_CASE("a page created from a screen anchors, requires, and expects it")
+    {
+        // None of the three can be authored on its own: an empty signature is
+        // rejected, and an anchor joins a page only through a signature.
+        auto const sourceId  = annotation::test::sourceId(k_sourceId);
+        auto const pageId    = annotation::test::pageId(k_secondPageId);
+        auto const anchorId  = annotation::test::recognizerId(k_awayId);
+        auto const rect      = annotation::test::pixelRect(0, 0, 2, 2);
+        auto const roi       = annotation::test::pixelRect(0, 0, 4, 4);
+
+        auto const created = createPageFromSource(
+            makeAuthoringDraft(document()),
+            NewPageSpec{
+                .m_pageId   = pageId,
+                .m_anchorId = anchorId,
+                .m_regressionId = annotation::test::regressionId(
+                    "00000000-0000-0000-0000-000000000302"
+                ),
+                .m_sourceId     = sourceId,
+                .m_templateRect = rect,
+                .m_searchRoi    = roi,
+                .m_similarityBasisPoints = 9'000U,
+            }
+        );
+        REQUIRE(created.has_value());
+
+        auto const anchor = recognizerIn(created->m_draft, anchorId);
+        CHECK(anchor.m_annotationType == annotation::AnnotationType::PageAnchor);
+        CHECK(anchor.m_sourceId == sourceId);
+        CHECK(anchor.m_allowedPageIds.empty());
+
+        auto const page = pageIn(created->m_draft, pageId);
+        CHECK(std::ranges::contains(page.m_required, anchorId));
+
+        // The regression case is the only statement that this screen is that
+        // page; the anchor's source is a different claim.
+        auto const expectation = annotation::RegressionExpectation{
+            annotation::ResolvedRegression{.m_pageId = pageId},
+        };
+        auto const recorded = std::ranges::any_of(
+            created->m_draft.m_regressions,
+            [&](EditableRegression const& regression)
+            {
+                return regression.m_sourceId == sourceId
+                    && regression.m_expectation == expectation;
+            }
+        );
+        CHECK(recorded);
+
+        // The whole edit has to be a document the catalog accepts.
+        CHECK(buildAuthoringDocument(created->m_draft).has_value());
+    }
+
+    TEST_CASE("creating a page from a screen outside the draft is refused")
+    {
+        auto const created = createPageFromSource(
+            makeAuthoringDraft(document()),
+            NewPageSpec{
+                .m_pageId   = annotation::test::pageId(k_secondPageId),
+                .m_anchorId = annotation::test::recognizerId(k_awayId),
+                .m_regressionId = annotation::test::regressionId(
+                    "00000000-0000-0000-0000-000000000302"
+                ),
+                .m_sourceId = annotation::test::sourceId(
+                    "00000000-0000-0000-0000-000000000202"
+                ),
+                .m_templateRect = annotation::test::pixelRect(0, 0, 2, 2),
+                .m_searchRoi    = annotation::test::pixelRect(0, 0, 4, 4),
+                .m_similarityBasisPoints = 9'000U,
+            }
+        );
+        CHECK_FALSE(created.has_value());
+    }
+
+    TEST_CASE("a page member is typed and linked by the group it joins")
+    {
+        auto const sourceId = annotation::test::sourceId(k_sourceId);
+        auto const pageId   = annotation::test::pageId(k_pageId);
+        auto const newId    = annotation::test::recognizerId(k_awayId);
+
+        auto const spec = [&](PageMemberKind kind)
+        {
+            return PageMemberSpec{
+                .m_recognizerId = newId,
+                .m_pageId       = pageId,
+                .m_sourceId     = sourceId,
+                .m_templateRect = annotation::test::pixelRect(0, 0, 2, 2),
+                .m_searchRoi    = annotation::test::pixelRect(0, 0, 4, 4),
+                .m_similarityBasisPoints = 9'000U,
+                .m_kind                  = kind,
+            };
+        };
+
+        SUBCASE("an anchor enters the page signature and authorizes nothing")
+        {
+            auto const added = addPageMember(
+                makeAuthoringDraft(document()),
+                spec(PageMemberKind::Anchor)
+            );
+            REQUIRE(added.has_value());
+
+            auto const recognizer = recognizerIn(added->m_draft, newId);
+            CHECK(
+                recognizer.m_annotationType
+                == annotation::AnnotationType::PageAnchor
+            );
+            CHECK(recognizer.m_allowedPageIds.empty());
+            CHECK(
+                std::ranges::contains(
+                    pageIn(added->m_draft, pageId).m_required,
+                    newId
+                )
+            );
+            CHECK(buildAuthoringDocument(added->m_draft).has_value());
+        }
+
+        SUBCASE("an action target is authorized and holds no signature role")
+        {
+            auto const added = addPageMember(
+                makeAuthoringDraft(document()),
+                spec(PageMemberKind::ActionTarget)
+            );
+            REQUIRE(added.has_value());
+
+            auto const recognizer = recognizerIn(added->m_draft, newId);
+            CHECK(
+                recognizer.m_annotationType
+                == annotation::AnnotationType::ActionTarget
+            );
+            CHECK(std::ranges::contains(recognizer.m_allowedPageIds, pageId));
+            CHECK_FALSE(
+                std::ranges::contains(
+                    pageIn(added->m_draft, pageId).m_required,
+                    newId
+                )
+            );
+            CHECK(buildAuthoringDocument(added->m_draft).has_value());
+        }
+    }
+
+    TEST_CASE("sharing a region reuses its template with a range of its own")
+    {
+        auto const actionId = annotation::test::recognizerId(k_actionId);
+        auto const newId    = annotation::test::recognizerId(k_sharedId);
+        auto const pageId   = annotation::test::pageId(k_secondPageId);
+        auto const roi      = annotation::test::pixelRect(2, 2, 6, 6);
+
+        auto draft = makeAuthoringDraft(twoPageDocument());
+        // twoPageDocument has no action target, so give it the one being shared.
+        draft.m_recognizers.emplace_back(
+            EditableRecognizer{
+                .m_id             = actionId,
+                .m_name           = "back",
+                .m_annotationType = annotation::AnnotationType::ActionTarget,
+                .m_sourceId       = annotation::test::sourceId(k_sourceId),
+                .m_templateRect   = annotation::test::pixelRect(4, 4, 2, 2),
+                .m_searchRoi      = annotation::test::pixelRect(3, 3, 4, 4),
+                .m_similarityBasisPoints = 9'000U,
+                .m_defaultClick   = {},
+                .m_allowedPageIds = {annotation::test::pageId(k_pageId)},
+            }
+        );
+
+        auto const shared = shareRegionOnPage(
+            std::move(draft),
+            SharedRegionSpec{
+                .m_recognizerId = newId,
+                .m_shareFrom    = actionId,
+                .m_pageId       = pageId,
+                .m_searchRoi    = roi,
+            }
+        );
+        REQUIRE(shared.has_value());
+
+        auto const origin = recognizerIn(shared->m_draft, actionId);
+        auto const copy   = recognizerIn(shared->m_draft, newId);
+        CHECK(copy.m_sourceId == origin.m_sourceId);
+        CHECK(copy.m_templateRect == origin.m_templateRect);
+        CHECK(copy.m_searchRoi == roi);
+        CHECK(copy.m_allowedPageIds == std::vector{pageId});
+        CHECK(buildAuthoringDocument(shared->m_draft).has_value());
+
+        // Same pixels from the same screen is what makes them one element.
+        CHECK(sharedRegionMembers(shared->m_draft, actionId).size() == 2U);
+    }
+
+    TEST_CASE("sharing a region onto a page that already has it is refused")
+    {
+        auto const actionId = annotation::test::recognizerId(k_actionId);
+        auto const pageId   = annotation::test::pageId(k_pageId);
+
+        auto const shared = shareRegionOnPage(
+            makeAuthoringDraft(document()),
+            SharedRegionSpec{
+                .m_recognizerId = annotation::test::recognizerId(k_awayId),
+                .m_shareFrom    = actionId,
+                .m_pageId       = pageId,
+                .m_searchRoi    = annotation::test::pixelRect(0, 0, 8, 8),
+            }
+        );
+        CHECK_FALSE(shared.has_value());
+    }
+
+    TEST_CASE("sharing a page anchor is refused")
+    {
+        auto const shared = shareRegionOnPage(
+            makeAuthoringDraft(document()),
+            SharedRegionSpec{
+                .m_recognizerId = annotation::test::recognizerId(k_awayId),
+                .m_shareFrom    = annotation::test::recognizerId(k_anchorId),
+                .m_pageId       = annotation::test::pageId(k_pageId),
+                .m_searchRoi    = annotation::test::pixelRect(0, 0, 8, 8),
+            }
+        );
+        CHECK_FALSE(shared.has_value());
+    }
+
+    TEST_CASE("marking a region reusable survives a document round trip")
+    {
+        // The mark is intent, stated before any second page exists, so it has to
+        // be stored: nothing else in the document distinguishes a region the
+        // author means to reuse from one they do not.
+        auto const actionId = annotation::test::recognizerId(k_actionId);
+
+        auto const marked = setRegionShared(
+            makeAuthoringDraft(document()),
+            actionId,
+            true
+        );
+        REQUIRE(marked.has_value());
+        CHECK(recognizerIn(*marked, actionId).m_shared);
+
+        auto const rebuilt = buildAuthoringDocument(*marked);
+        REQUIRE(rebuilt.has_value());
+        CHECK(recognizerIn(makeAuthoringDraft(*rebuilt), actionId).m_shared);
+    }
+
+    TEST_CASE("only an interactive region can be marked reusable")
+    {
+        // A mark identifies a page through its signature, where reuse means
+        // something else entirely.
+        auto const marked = setRegionShared(
+            makeAuthoringDraft(document()),
+            annotation::test::recognizerId(k_anchorId),
+            true
+        );
+        CHECK_FALSE(marked.has_value());
+    }
+
+    TEST_CASE("unmarking a region still on several pages is refused")
+    {
+        auto const actionId = annotation::test::recognizerId(k_actionId);
+        auto const pageId   = annotation::test::pageId(k_secondPageId);
+
+        auto draft = makeAuthoringDraft(twoPageDocument());
+        draft.m_recognizers.emplace_back(
+            EditableRecognizer{
+                .m_id             = actionId,
+                .m_name           = "back",
+                .m_annotationType = annotation::AnnotationType::ActionTarget,
+                .m_sourceId       = annotation::test::sourceId(k_sourceId),
+                .m_templateRect   = annotation::test::pixelRect(4, 4, 2, 2),
+                .m_searchRoi      = annotation::test::pixelRect(3, 3, 4, 4),
+                .m_similarityBasisPoints = 9'000U,
+                .m_defaultClick   = {},
+                .m_allowedPageIds = {annotation::test::pageId(k_pageId)},
+                .m_shared         = true,
+            }
+        );
+        auto shared = shareRegionOnPage(
+            std::move(draft),
+            SharedRegionSpec{
+                .m_recognizerId = annotation::test::recognizerId(k_sharedId),
+                .m_shareFrom    = actionId,
+                .m_pageId       = pageId,
+                .m_searchRoi    = annotation::test::pixelRect(2, 2, 6, 6),
+            }
+        );
+        REQUIRE(shared.has_value());
+
+        auto const unmarked = setRegionShared(
+            std::move(shared->m_draft),
+            actionId,
+            false
+        );
+        CHECK_FALSE(unmarked.has_value());
+    }
+
+    TEST_CASE("a shared copy is named for the element and the page it lands on")
+    {
+        // A generated "region_N" says neither, which is what left a renamed
+        // element paired with a stale copy the first time this existed.
+        auto const actionId = annotation::test::recognizerId(k_actionId);
+
+        auto draft = makeAuthoringDraft(twoPageDocument());
+        draft.m_recognizers.emplace_back(
+            EditableRecognizer{
+                .m_id             = actionId,
+                .m_name           = "menu",
+                .m_annotationType = annotation::AnnotationType::ActionTarget,
+                .m_sourceId       = annotation::test::sourceId(k_sourceId),
+                .m_templateRect   = annotation::test::pixelRect(4, 4, 2, 2),
+                .m_searchRoi      = annotation::test::pixelRect(3, 3, 4, 4),
+                .m_similarityBasisPoints = 9'000U,
+                .m_defaultClick   = {},
+                .m_allowedPageIds = {annotation::test::pageId(k_pageId)},
+                .m_shared         = true,
+            }
+        );
+
+        auto const shared = shareRegionOnPage(
+            std::move(draft),
+            SharedRegionSpec{
+                .m_recognizerId = annotation::test::recognizerId(k_sharedId),
+                .m_shareFrom    = actionId,
+                .m_pageId       = annotation::test::pageId(k_secondPageId),
+                .m_searchRoi    = annotation::test::pixelRect(2, 2, 6, 6),
+            }
+        );
+        REQUIRE(shared.has_value());
+        CHECK(shared->m_name == "menu_battle_1");
+    }
+
+    TEST_CASE("moving a shared template moves every member of the element")
+    {
+        // Drawing the element once is only worth anything if correcting it
+        // corrects it everywhere.
+        auto const actionId = annotation::test::recognizerId(k_actionId);
+        auto const newId    = annotation::test::recognizerId(k_awayId);
+        auto const moved    = annotation::test::pixelRect(3, 3, 2, 2);
+
+        auto draft = makeAuthoringDraft(document());
+        // Both marked: grouping is a statement the author made, not a
+        // coincidence of two rectangles landing on the same pixels.
+        for (auto& recognizer : draft.m_recognizers)
+        {
+            if (recognizer.m_id == actionId)
+            {
+                recognizer.m_shared = true;
+            }
+        }
+        draft.m_recognizers.emplace_back(
+            EditableRecognizer{
+                .m_id             = newId,
+                .m_name           = "back_2",
+                .m_annotationType = annotation::AnnotationType::ActionTarget,
+                .m_sourceId       = annotation::test::sourceId(k_sourceId),
+                .m_templateRect   = annotation::test::pixelRect(4, 4, 2, 2),
+                .m_searchRoi      = annotation::test::pixelRect(0, 0, 8, 8),
+                .m_similarityBasisPoints = 9'000U,
+                .m_defaultClick   = {},
+                .m_allowedPageIds = {annotation::test::pageId(k_pageId)},
+                .m_shared         = true,
+            }
+        );
+
+        auto const retemplated = retemplateSharedRegion(
+            std::move(draft),
+            actionId,
+            moved
+        );
+        REQUIRE(retemplated.has_value());
+        CHECK(retemplated->m_movedMembers == 1U);
+        CHECK(recognizerIn(retemplated->m_draft, actionId).m_templateRect == moved);
+        CHECK(recognizerIn(retemplated->m_draft, newId).m_templateRect == moved);
+    }
+
+    TEST_CASE("a shared template that outgrows a member's range is refused")
+    {
+        // Widening a range the author drew would enlarge both the search cost and
+        // the surface for a false match, so the author is told which one to fix.
+        auto const actionId = annotation::test::recognizerId(k_actionId);
+        auto const newId    = annotation::test::recognizerId(k_awayId);
+
+        auto draft = makeAuthoringDraft(document());
+        for (auto& recognizer : draft.m_recognizers)
+        {
+            if (recognizer.m_id == actionId)
+            {
+                recognizer.m_shared = true;
+            }
+        }
+        draft.m_recognizers.emplace_back(
+            EditableRecognizer{
+                .m_id             = newId,
+                .m_name           = "back_2",
+                .m_annotationType = annotation::AnnotationType::ActionTarget,
+                .m_sourceId       = annotation::test::sourceId(k_sourceId),
+                .m_templateRect   = annotation::test::pixelRect(4, 4, 2, 2),
+                .m_searchRoi      = annotation::test::pixelRect(4, 4, 3, 3),
+                .m_similarityBasisPoints = 9'000U,
+                .m_defaultClick   = {},
+                .m_allowedPageIds = {annotation::test::pageId(k_pageId)},
+                .m_shared         = true,
+            }
+        );
+
+        auto const retemplated = retemplateSharedRegion(
+            std::move(draft),
+            actionId,
+            annotation::test::pixelRect(0, 0, 5, 5)
+        );
+        CHECK_FALSE(retemplated.has_value());
+    }
+
+    TEST_CASE("recording a screen rewrites its case rather than adding a second")
+    {
+        // A screen resolves to exactly one page, so a second case for the same
+        // screen would be a contradiction the document has no way to settle.
+        auto const sourceId = annotation::test::sourceId(k_sourceId);
+        auto const pageId   = annotation::test::pageId(k_pageId);
+
+        auto draft = makeAuthoringDraft(document());
+        REQUIRE(draft.m_regressions.size() == 1U);
+        draft.m_regressions.at(0).m_expectation = annotation::UnknownRegression{};
+
+        auto const claimed = claimScreenForPage(
+            std::move(draft),
+            ScreenClaimSpec{
+                .m_regressionId = annotation::test::regressionId(
+                    "00000000-0000-0000-0000-000000000303"
+                ),
+                .m_sourceId = sourceId,
+                .m_pageId   = pageId,
+            }
+        );
+        REQUIRE(claimed.has_value());
+        REQUIRE(claimed->m_regressions.size() == 1U);
+        CHECK(
+            claimed->m_regressions.at(0).m_expectation
+            == annotation::RegressionExpectation{
+                annotation::ResolvedRegression{.m_pageId = pageId},
+            }
+        );
+        CHECK(buildAuthoringDocument(*claimed).has_value());
+    }
+
+    TEST_CASE("recording a screen with no case yet adds one")
+    {
+        auto const sourceId = annotation::test::sourceId(k_sourceId);
+        auto const pageId   = annotation::test::pageId(k_pageId);
+
+        auto draft = makeAuthoringDraft(document());
+        draft.m_regressions.clear();
+
+        auto const claimed = claimScreenForPage(
+            std::move(draft),
+            ScreenClaimSpec{
+                .m_regressionId = annotation::test::regressionId(
+                    "00000000-0000-0000-0000-000000000303"
+                ),
+                .m_sourceId = sourceId,
+                .m_pageId   = pageId,
+            }
+        );
+        REQUIRE(claimed.has_value());
+        REQUIRE(claimed->m_regressions.size() == 1U);
+        CHECK(claimed->m_regressions.at(0).m_sourceId == sourceId);
+        CHECK(buildAuthoringDocument(*claimed).has_value());
+    }
+
+    TEST_CASE("adding a member to a page outside the draft is refused")
+    {
+        auto const added = addPageMember(
+            makeAuthoringDraft(document()),
+            PageMemberSpec{
+                .m_recognizerId = annotation::test::recognizerId(k_awayId),
+                .m_pageId       = annotation::test::pageId(k_secondPageId),
+                .m_sourceId     = annotation::test::sourceId(k_sourceId),
+                .m_templateRect = annotation::test::pixelRect(0, 0, 2, 2),
+                .m_searchRoi    = annotation::test::pixelRect(0, 0, 4, 4),
+                .m_similarityBasisPoints = 9'000U,
+                .m_kind                  = PageMemberKind::Anchor,
+            }
+        );
+        CHECK_FALSE(added.has_value());
+    }
+
     TEST_CASE("becoming an action target authorizes a page in the same edit")
     {
         // A page anchor cannot authorize a page and an action target must, so
@@ -545,10 +1036,12 @@ namespace uf::workbench
         REQUIRE_FALSE(deleted.has_value());
     }
 
-    TEST_CASE("deleting a page a regression expects to resolve is refused")
+    TEST_CASE("deleting a page removes the regressions expecting it to resolve")
     {
-        // The recorded expectation is the point of the case, so rewriting it
-        // silently would destroy what the case was written to pin.
+        // The expectation names a page that no longer exists, so it cannot be
+        // reclassified into anything the author meant. Every page authored from
+        // a captured screen owns one, so refusing here would make such a page
+        // undeletable.
         auto const pageId = annotation::test::pageId(k_pageId);
 
         auto draft = makeAuthoringDraft(document());
@@ -563,7 +1056,10 @@ namespace uf::workbench
         };
 
         auto const deleted = deletePage(std::move(draft), pageId);
-        REQUIRE_FALSE(deleted.has_value());
+        REQUIRE(deleted.has_value());
+        CHECK(deleted->m_removedRegressions == 1U);
+        CHECK(deleted->m_draft.m_regressions.empty());
+        CHECK(deleted->m_draft.m_pages.empty());
     }
 
     TEST_CASE("deleting a source removes the regression cases recorded on it")
