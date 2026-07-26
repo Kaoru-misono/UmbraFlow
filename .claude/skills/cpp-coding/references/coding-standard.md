@@ -123,6 +123,34 @@ using MaybeOffset = std::optional<TemplateOffset>;
 using FrameRef = std::shared_ptr<Frame const>;
 ```
 
+## Type placement
+
+The alias question extends to types: a name must earn the scope it is declared
+in. One question decides where a header-level type belongs: does anything name
+it other than through one class's operations?
+
+- A type that exists only as a parameter or result of one class's operations —
+  a spec consumed by one `place` call, a result only that class returns, the
+  callable protocol only its worker runs — is declared inside that class.
+  Callers then write `EditPage::NewRegionSpec{...}`, which names the owner at
+  the point of use, and the name is unreachable without naming the class.
+- A type with more than one unrelated consumer, or with an identity of its own
+  (an entity class, a handle, a value that crosses layers), stays at namespace
+  scope. Nesting it inside one consumer would misfile it.
+- The vocabulary of a free-function layer stays at namespace scope: a free
+  function cannot own a nested type, and moving its specs into an incidental
+  class would invent an owner that does not exist.
+- Dependency direction wins over conceptual ownership. A shared key or row type
+  nests in the lowest type that needs it, and higher layers re-expose it as a
+  member alias (`using MemberId = PageView::MemberId;`) rather than reversing
+  an include edge to reach the "nicer" owner.
+
+The cost is real and accepted: a nested type cannot be forward-declared, so
+anyone who names it includes the full header. That is acceptable precisely
+because a single-owner type's callers already include that header to call the
+operation; if that stops being true, the type has grown a second consumer and
+belongs at namespace scope again.
+
 ## Namespaces
 
 - Nest every file-local anonymous namespace inside the narrowest owning `uf`

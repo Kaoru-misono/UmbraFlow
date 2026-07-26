@@ -97,6 +97,9 @@ so verify each one deliberately:
   alignment recognizer skips
 - Each new alias classified by external reachability, and justified under that
   category
+- Each new header-level type placed by ownership: nested in its class when
+  nothing names it except that class's operations, at namespace scope when it
+  has independent consumers or belongs to a free-function layer
 - Every member without an in-class initializer supplied explicitly at each
   aggregate construction site, with no invented sentinel
 - Ownership transfer and borrow lifetime explicit in every changed API
