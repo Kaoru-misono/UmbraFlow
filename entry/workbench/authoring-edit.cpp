@@ -51,10 +51,9 @@ namespace uf::workbench
             );
         }
 
-        // The draft stays v1-shaped in this phase: each EditableRecognizer keeps
-        // its own allowedPageIds so panels, EditPage, and page-view need no
-        // change. Here that membership is derived from the document's placements
-        // rather than from an inverted field on the element.
+        // v2 native: elements and placements map straight across, one to one, with
+        // no inversion. Element search regions stay on the element; page
+        // membership stays on the placements below.
         auto recognizers = std::vector<EditableRecognizer>{};
         recognizers.reserve(document.elements().size());
         for (auto const& element : document.elements())
@@ -75,15 +74,6 @@ namespace uf::workbench
                 }
             }
 
-            auto allowedPageIds = std::vector<annotation::PageId>{};
-            for (auto const& placement : document.placements())
-            {
-                if (placement.elementId == element.id())
-                {
-                    allowedPageIds.emplace_back(placement.pageId);
-                }
-            }
-
             recognizers.emplace_back(
                 EditableRecognizer{
                     .id                    = element.id(),
@@ -94,8 +84,20 @@ namespace uf::workbench
                     .searchRoi             = element.searchRoi(),
                     .similarityBasisPoints = element.threshold().basisPoints(),
                     .defaultClick          = defaultClick,
-                    .allowedPageIds        = std::move(allowedPageIds),
                     .shared                = element.shared(),
+                }
+            );
+        }
+
+        auto placements = std::vector<EditablePlacement>{};
+        placements.reserve(document.placements().size());
+        for (auto const& placement : document.placements())
+        {
+            placements.emplace_back(
+                EditablePlacement{
+                    .pageId    = placement.pageId,
+                    .elementId = placement.elementId,
+                    .searchRoi = placement.searchRoi,
                 }
             );
         }
@@ -133,6 +135,7 @@ namespace uf::workbench
             .fingerprint = document.catalog().fingerprint(),
             .sources     = std::move(sources),
             .recognizers = std::move(recognizers),
+            .placements  = std::move(placements),
             .pages       = std::move(pages),
             .regressions = std::move(regressions),
         };
@@ -160,12 +163,10 @@ namespace uf::workbench
             sources.emplace_back(std::move(validated));
         }
 
-        // Invert the draft's per-recognizer allowedPageIds back into page-side
-        // placements. An anchor with a stray authorization becomes a placement
-        // that references it, which the document rejects -- the same failure the
-        // v1 catalog produced for a page anchor carrying allowed_page_ids.
-        auto elements   = std::vector<annotation::Element>{};
-        auto placements = std::vector<annotation::AuthoringPlacement>{};
+        // v2 native: elements and placements map straight across with no
+        // inversion. A placement that references an anchor, or an interactive
+        // element with none, is rejected by the document's own closure checks.
+        auto elements = std::vector<annotation::Element>{};
         elements.reserve(draft.recognizers.size());
         for (auto const& recognizer : draft.recognizers)
         {
@@ -225,17 +226,20 @@ namespace uf::workbench
                     }
                 )
             );
-            for (auto const pageId : recognizer.allowedPageIds)
-            {
-                placements.emplace_back(
-                    annotation::AuthoringPlacement{
-                        .pageId    = pageId,
-                        .elementId = recognizer.id,
-                        .searchRoi = recognizer.searchRoi,
-                    }
-                );
-            }
             elements.emplace_back(std::move(element));
+        }
+
+        auto placements = std::vector<annotation::AuthoringPlacement>{};
+        placements.reserve(draft.placements.size());
+        for (auto const& placement : draft.placements)
+        {
+            placements.emplace_back(
+                annotation::AuthoringPlacement{
+                    .pageId    = placement.pageId,
+                    .elementId = placement.elementId,
+                    .searchRoi = placement.searchRoi,
+                }
+            );
         }
 
         auto pages = std::vector<annotation::PageSignature>{};
@@ -341,7 +345,6 @@ namespace uf::workbench
                 .searchRoi             = spec.searchRoi,
                 .similarityBasisPoints = spec.similarityBasisPoints,
                 .defaultClick          = {},
-                .allowedPageIds        = {},
             }
         );
 
@@ -420,14 +423,23 @@ namespace uf::workbench
                 .searchRoi             = spec.searchRoi,
                 .similarityBasisPoints = spec.similarityBasisPoints,
                 .defaultClick          = {},
-                .allowedPageIds        = isAnchor
-                    ? std::vector<annotation::PageId>{}
-                    : std::vector<annotation::PageId>{spec.pageId},
             }
         );
+        // An anchor joins the page's signature; an interactive region joins it
+        // through a placement carrying this page's own search region.
         if (isAnchor)
         {
             page->required.emplace_back(spec.recognizerId);
+        }
+        else
+        {
+            draft.placements.emplace_back(
+                EditablePlacement{
+                    .pageId    = spec.pageId,
+                    .elementId = spec.recognizerId,
+                    .searchRoi = spec.searchRoi,
+                }
+            );
         }
 
         return AddedPageMember{
@@ -436,43 +448,23 @@ namespace uf::workbench
         };
     }
 
-    auto sharedRegionMembers(
+    auto pagesPlacedOn(
         AuthoringDraft const& draft,
         annotation::RecognizerId id
-    ) -> std::vector<annotation::RecognizerId>
+    ) -> std::vector<annotation::PageId>
     {
-        auto members = std::vector<annotation::RecognizerId>{};
-        auto const origin = std::ranges::find(
-            draft.recognizers,
-            id,
-            &EditableRecognizer::id
-        );
-        if (origin == draft.recognizers.end())
-        {
-            return members;
-        }
-        // An unmarked region is a group of one. Nothing else can be reusing its
-        // pixels, because reuse only happens through a marked element, and
-        // returning it keeps a plain template drag on the same path as a shared
-        // one.
-        if (!origin->shared)
-        {
-            members.emplace_back(origin->id);
-            return members;
-        }
-        for (auto const& recognizer : draft.recognizers)
+        auto pages = std::vector<annotation::PageId>{};
+        for (auto const& placement : draft.placements)
         {
             if (
-                recognizer.shared
-                && recognizer.sourceId == origin->sourceId
-                && recognizer.templateRect == origin->templateRect
-                && recognizer.annotationType == origin->annotationType
+                placement.elementId == id
+                && !std::ranges::contains(pages, placement.pageId)
             )
             {
-                members.emplace_back(recognizer.id);
+                pages.emplace_back(placement.pageId);
             }
         }
-        return members;
+        return pages;
     }
 
     auto setRegionShared(
@@ -508,41 +500,21 @@ namespace uf::workbench
             );
         }
 
-        auto const members = sharedRegionMembers(draft, id);
-        if (!shared && members.size() > 1U)
-        {
-            return fail(
-                AutomationErrorKind::InvalidResource,
-                std::format(
-                    "\"{}\" is still used on {} pages; remove it from the others "
-                    "before making it page-local again",
-                    target->name,
-                    members.size()
-                )
-            );
-        }
-
-        for (auto const& memberId : members)
-        {
-            auto const member = std::ranges::find(
-                draft.recognizers,
-                memberId,
-                &EditableRecognizer::id
-            );
-            UF_CHECK(member != draft.recognizers.end());
-            member->shared = shared;
-        }
+        // v2: the mark is pure intent and never touches page membership, so a
+        // region placed on several pages can be unmarked freely -- there are no
+        // copies to keep linked, only one element placed N times.
+        target->shared = shared;
         return draft;
     }
 
     auto shareRegionOnPage(
         AuthoringDraft draft,
         SharedRegionSpec const& spec
-    ) -> Result<AddedPageMember>
+    ) -> Result<SharedRegionPlacement>
     {
         auto const origin = std::ranges::find(
             draft.recognizers,
-            spec.shareFrom,
+            spec.elementId,
             &EditableRecognizer::id
         );
         if (origin == draft.recognizers.end())
@@ -551,7 +523,7 @@ namespace uf::workbench
                 AutomationErrorKind::InvalidResource,
                 std::format(
                     "recognizer {} is not part of this draft",
-                    spec.shareFrom.value().toString()
+                    spec.elementId.value().toString()
                 )
             );
         }
@@ -580,16 +552,11 @@ namespace uf::workbench
         }
 
         auto const alreadyThere = std::ranges::any_of(
-            draft.recognizers,
-            [&origin, &spec](EditableRecognizer const& recognizer)
+            draft.placements,
+            [&spec](EditablePlacement const& placement)
             {
-                return recognizer.sourceId == origin->sourceId
-                    && recognizer.templateRect == origin->templateRect
-                    && recognizer.annotationType == origin->annotationType
-                    && std::ranges::contains(
-                           recognizer.allowedPageIds,
-                           spec.pageId
-                       );
+                return placement.elementId == spec.elementId
+                    && placement.pageId == spec.pageId;
             }
         );
         if (alreadyThere)
@@ -603,61 +570,38 @@ namespace uf::workbench
             );
         }
 
-        // Everything origin is needed for happens here, before the append: a
-        // vector append may reallocate, and every iterator into it dies with the
-        // old buffer. Reuse is what being shared means, so an element that
-        // reaches a second page is marked whether or not the author ticked the
-        // box first.
-        origin->shared        = true;
-        auto const templateRect = origin->templateRect;
-        auto const sourceId     = origin->sourceId;
-        auto const threshold    = origin->similarityBasisPoints;
-        auto const defaultClick = origin->defaultClick;
-        auto const originName   = origin->name;
-
-        // Named after the element and the page it lands on, rather than the next
-        // free "region_N". The copy is that element on that page, and a generated
-        // number says neither -- which is what left a renamed element paired with
-        // a stale one the first time this existed.
-        auto const page = std::ranges::find(
-            draft.pages,
-            spec.pageId,
-            &EditablePage::id
-        );
-        UF_CHECK(page != draft.pages.end());
-        auto name = freshAuthoringName(
-            draft,
-            std::format("{}_{}", originName, page->name)
-        );
-        draft.recognizers.emplace_back(
-            EditableRecognizer{
-                .id                    = spec.recognizerId,
-                .name                  = name,
-                .annotationType        = annotation::AnnotationType::ActionTarget,
-                .sourceId              = sourceId,
-                .templateRect          = templateRect,
-                .searchRoi             = spec.searchRoi,
-                .similarityBasisPoints = threshold,
-                .defaultClick          = defaultClick,
-                .allowedPageIds        = {spec.pageId},
-                .shared                = true,
+        // One element, placed again. No recognizer copy is minted -- a later
+        // template edit touches this element once and every placement sees it.
+        // Reaching a second page is what being shared means, so the element is
+        // marked whether or not the author ticked the box first.
+        origin->shared = true;
+        auto name      = origin->name;
+        draft.placements.emplace_back(
+            EditablePlacement{
+                .pageId    = spec.pageId,
+                .elementId = spec.elementId,
+                .searchRoi = spec.searchRoi,
             }
         );
 
-        return AddedPageMember{
+        return SharedRegionPlacement{
             .draft = std::move(draft),
             .name  = std::move(name),
         };
     }
 
-    auto retemplateSharedRegion(
+    auto setElementTemplateRect(
         AuthoringDraft draft,
         annotation::RecognizerId id,
         PixelRect templateRect
     ) -> Result<RetemplatedRegion>
     {
-        auto const members = sharedRegionMembers(draft, id);
-        if (members.empty())
+        auto const target = std::ranges::find(
+            draft.recognizers,
+            id,
+            &EditableRecognizer::id
+        );
+        if (target == draft.recognizers.end())
         {
             return fail(
                 AutomationErrorKind::InvalidResource,
@@ -667,47 +611,51 @@ namespace uf::workbench
                 )
             );
         }
-
-        for (auto const& memberId : members)
+        if (
+            templateRect.width() > target->searchRoi.width()
+            || templateRect.height() > target->searchRoi.height()
+        )
         {
-            auto const member = std::ranges::find(
-                draft.recognizers,
-                memberId,
-                &EditableRecognizer::id
+            return fail(
+                AutomationErrorKind::InvalidResource,
+                std::format(
+                    "the new template does not fit the range \"{}\" searches; "
+                    "widen that range first",
+                    target->name
+                )
             );
-            UF_CHECK(member != draft.recognizers.end());
+        }
+
+        // Every placement of this element keeps its own per-page search region,
+        // so the moved template must still fit each one.
+        auto placedOn = std::size_t{0};
+        for (auto const& placement : draft.placements)
+        {
+            if (placement.elementId != id)
+            {
+                continue;
+            }
+            ++placedOn;
             if (
-                templateRect.width() > member->searchRoi.width()
-                || templateRect.height() > member->searchRoi.height()
+                templateRect.width() > placement.searchRoi.width()
+                || templateRect.height() > placement.searchRoi.height()
             )
             {
                 return fail(
                     AutomationErrorKind::InvalidResource,
                     std::format(
-                        "the new template does not fit the range \"{}\" searches; "
-                        "widen that range first",
-                        member->name
+                        "the new template does not fit the range \"{}\" searches "
+                        "on one of its pages; widen that range first",
+                        target->name
                     )
                 );
             }
         }
 
-        for (auto const& memberId : members)
-        {
-            auto const member = std::ranges::find(
-                draft.recognizers,
-                memberId,
-                &EditableRecognizer::id
-            );
-            UF_CHECK(member != draft.recognizers.end());
-            member->templateRect = templateRect;
-        }
-
+        target->templateRect = templateRect;
         return RetemplatedRegion{
-            .draft = std::move(draft),
-            // The recognizer being dragged is not something the author needs
-            // reporting back to them; the others are.
-            .movedMembers = members.size() - 1U,
+            .draft           = std::move(draft),
+            .otherPlacements = placedOn,
         };
     }
 
@@ -840,42 +788,78 @@ namespace uf::workbench
             }
         }
 
+        auto const wasAnchor = (
+            target->annotationType == annotation::AnnotationType::PageAnchor
+        );
         auto authorizedPage        = std::optional<annotation::PageId>{};
         auto clearedAuthorizations = std::size_t{0};
         auto clearedClick          = false;
         if (type == annotation::AnnotationType::ActionTarget)
         {
-            // An action target must authorize at least one page. Authorize
-            // exactly one rather than every page: an action target is acted on
-            // only where it is authorized, so widening that reach stays the
-            // author's explicit decision.
-            if (target->allowedPageIds.empty())
+            // The closure rule: an interactive element must be placed on at least
+            // one page. An element already placed (an info region keeps its
+            // placements across the change) needs nothing; otherwise it is placed
+            // on the page it is already on -- a page it anchored, or the project's
+            // first page when it was an anchor with only a forbidden role.
+            auto const alreadyPlaced = std::ranges::any_of(
+                draft.placements,
+                [id](EditablePlacement const& placement)
+                {
+                    return placement.elementId == id;
+                }
+            );
+            if (!alreadyPlaced)
             {
-                if (draft.pages.empty())
+                auto candidate = std::optional<annotation::PageId>{};
+                if (!anchoredPages.empty())
+                {
+                    candidate = anchoredPages.front();
+                }
+                else if (wasAnchor && !draft.pages.empty())
+                {
+                    candidate = draft.pages.front().id;
+                }
+                if (!candidate.has_value())
                 {
                     return fail(
                         AutomationErrorKind::InvalidResource,
-                        "an action target must authorize at least one page and "
-                        "this project has none; add a page first"
+                        std::format(
+                            "\"{}\" is on no page; an interactive region must be "
+                            "placed on at least one, so add it to a page before "
+                            "making it interactive",
+                            target->name
+                        )
                     );
                 }
-                authorizedPage = anchoredPages.empty()
-                    ? draft.pages.front().id
-                    : anchoredPages.front();
-                target->allowedPageIds.emplace_back(*authorizedPage);
+                draft.placements.emplace_back(
+                    EditablePlacement{
+                        .pageId    = *candidate,
+                        .elementId = id,
+                        .searchRoi = target->searchRoi,
+                    }
+                );
+                authorizedPage = candidate;
             }
         }
         else
         {
-            // Only an action target may carry a default click.
+            // Only an interactive element may carry a default click.
             clearedClick = target->defaultClick.has_value();
             target->defaultClick.reset();
             if (type == annotation::AnnotationType::PageAnchor)
             {
-                // A page anchor's membership is its signature role, never an
-                // authorization it holds itself.
-                clearedAuthorizations = target->allowedPageIds.size();
-                target->allowedPageIds.clear();
+                // An anchor joins a page through its signature and cannot be
+                // placed, so every placement of it is withdrawn. An info region
+                // is placeable, so its placements are kept.
+                auto const before = draft.placements.size();
+                std::erase_if(
+                    draft.placements,
+                    [id](EditablePlacement const& placement)
+                    {
+                        return placement.elementId == id;
+                    }
+                );
+                clearedAuthorizations = before - draft.placements.size();
             }
         }
         target->annotationType = type;
@@ -943,6 +927,15 @@ namespace uf::workbench
                 before - (page.required.size() + page.forbidden.size())
             );
         }
+        // The element's own placements go with it: they name a page for a
+        // recognizer that no longer exists.
+        std::erase_if(
+            draft.placements,
+            [id](EditablePlacement const& placement)
+            {
+                return placement.elementId == id;
+            }
+        );
         draft.recognizers.erase(target);
 
         return DeletedEntity{
@@ -972,20 +965,42 @@ namespace uf::workbench
             );
         }
 
+        // An interactive element placed only on this page would be left placed
+        // nowhere, which the closure rule forbids; that is a choice between
+        // deleting it and re-placing it that only the author can make. An info
+        // region may be left unplaced, so its placement does not block deletion.
         for (auto const& recognizer : draft.recognizers)
         {
-            auto const onlyAuthorization = (
-                recognizer.annotationType == annotation::AnnotationType::ActionTarget
-                && recognizer.allowedPageIds.size() == 1U
-                && std::ranges::contains(recognizer.allowedPageIds, id)
+            if (
+                recognizer.annotationType
+                != annotation::AnnotationType::ActionTarget
+            )
+            {
+                continue;
+            }
+            auto const onThisPage = std::ranges::any_of(
+                draft.placements,
+                [&recognizer, id](EditablePlacement const& placement)
+                {
+                    return placement.elementId == recognizer.id
+                        && placement.pageId == id;
+                }
             );
-            if (onlyAuthorization)
+            auto const onOtherPage = std::ranges::any_of(
+                draft.placements,
+                [&recognizer, id](EditablePlacement const& placement)
+                {
+                    return placement.elementId == recognizer.id
+                        && placement.pageId != id;
+                }
+            );
+            if (onThisPage && !onOtherPage)
             {
                 return fail(
                     AutomationErrorKind::InvalidResource,
                     std::format(
-                        "page \"{}\" is the only page action target \"{}\" is "
-                        "authorized on; authorize it elsewhere or delete it first",
+                        "page \"{}\" is the only page interactive region \"{}\" is "
+                        "placed on; place it elsewhere or delete it first",
                         target->name,
                         recognizer.name
                     )
@@ -993,13 +1008,17 @@ namespace uf::workbench
             }
         }
 
-        auto clearedAuthorizations = std::size_t{0};
-        for (auto& recognizer : draft.recognizers)
-        {
-            auto const before = recognizer.allowedPageIds.size();
-            std::erase(recognizer.allowedPageIds, id);
-            clearedAuthorizations += before - recognizer.allowedPageIds.size();
-        }
+        auto const placementsBefore = draft.placements.size();
+        std::erase_if(
+            draft.placements,
+            [id](EditablePlacement const& placement)
+            {
+                return placement.pageId == id;
+            }
+        );
+        auto const clearedAuthorizations = (
+            placementsBefore - draft.placements.size()
+        );
 
         // A case expecting this page to resolve cannot be reclassified into
         // anything the author meant, so it goes with the page rather than

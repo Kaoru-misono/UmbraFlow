@@ -53,19 +53,17 @@ namespace uf::workbench
                 fingerprint,
                 {*source},
                 {
-                    annotation::AuthoringRecognizerSpec{
-                        .definition = annotation::test::recognizer(
-                            fingerprint,
-                            anchorId,
-                            "home_marker",
-                            annotation::AnnotationType::PageAnchor,
-                            annotation::test::pixelRect(0, 0, 2, 2),
-                            annotation::test::pixelRect(0, 0, 4, 4)
-                        ),
-                        .sourceId = sourceId,
-                    },
+                    annotation::test::anchorElement(
+                        fingerprint,
+                        anchorId,
+                        "home_marker",
+                        sourceId,
+                        annotation::test::pixelRect(0, 0, 2, 2),
+                        annotation::test::pixelRect(0, 0, 4, 4)
+                    ),
                 },
                 {annotation::test::page(pageId, "home", {anchorId})},
+                {},
                 {}
             );
             REQUIRE(created.has_value());

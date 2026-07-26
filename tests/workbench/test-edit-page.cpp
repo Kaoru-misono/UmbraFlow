@@ -70,44 +70,41 @@ namespace uf::workbench
                 fingerprint,
                 {*source},
                 {
-                    annotation::AuthoringRecognizerSpec{
-                        .definition = annotation::test::recognizer(
-                            fingerprint,
-                            anchorId,
-                            "home_marker",
-                            annotation::AnnotationType::PageAnchor,
-                            annotation::test::pixelRect(0, 0, 2, 2),
-                            annotation::test::pixelRect(0, 0, 4, 4)
-                        ),
-                        .sourceId = sourceId,
-                    },
-                    annotation::AuthoringRecognizerSpec{
-                        .definition = annotation::test::recognizer(
-                            fingerprint,
-                            awayId,
-                            "away_marker",
-                            annotation::AnnotationType::PageAnchor,
-                            annotation::test::pixelRect(0, 0, 2, 2),
-                            annotation::test::pixelRect(0, 0, 4, 4)
-                        ),
-                        .sourceId = sourceId,
-                    },
-                    annotation::AuthoringRecognizerSpec{
-                        .definition = annotation::test::recognizer(
-                            fingerprint,
-                            regionId,
-                            "daily_button",
-                            annotation::AnnotationType::ActionTarget,
-                            annotation::test::pixelRect(4, 4, 2, 2),
-                            annotation::test::pixelRect(3, 3, 4, 4),
-                            {homePage}
-                        ),
-                        .sourceId = sourceId,
-                    },
+                    annotation::test::anchorElement(
+                        fingerprint,
+                        anchorId,
+                        "home_marker",
+                        sourceId,
+                        annotation::test::pixelRect(0, 0, 2, 2),
+                        annotation::test::pixelRect(0, 0, 4, 4)
+                    ),
+                    annotation::test::anchorElement(
+                        fingerprint,
+                        awayId,
+                        "away_marker",
+                        sourceId,
+                        annotation::test::pixelRect(0, 0, 2, 2),
+                        annotation::test::pixelRect(0, 0, 4, 4)
+                    ),
+                    annotation::test::interactiveElement(
+                        fingerprint,
+                        regionId,
+                        "daily_button",
+                        sourceId,
+                        annotation::test::pixelRect(4, 4, 2, 2),
+                        annotation::test::pixelRect(3, 3, 4, 4)
+                    ),
                 },
                 {
                     annotation::test::page(homePage, "home", {anchorId}),
                     annotation::test::page(awayPage, "away", {awayId}),
+                },
+                {
+                    annotation::test::placement(
+                        homePage,
+                        regionId,
+                        annotation::test::pixelRect(3, 3, 4, 4)
+                    ),
                 },
                 {
                     annotation::RegressionCase{
@@ -332,7 +329,7 @@ namespace uf::workbench
         CHECK(*classification == annotation::RegressionClassification::Negative);
     }
 
-    TEST_CASE("setTemplateRect carries every shared member of the element")
+    TEST_CASE("setTemplateRect moves the one element on every page it is placed")
     {
         auto state = appState();
         auto ui    = PanelUiState{};
@@ -343,9 +340,8 @@ namespace uf::workbench
         auto page = EditPage::open(state, annotation::test::pageId(k_homePage));
         REQUIRE(page.has_value());
 
-        // Mark the region reusable and place it on a second page, so a template
-        // correction has more than one member to carry.
-        REQUIRE(page->region(regionId)->setShared(true).has_value());
+        // Place the region on a second page, so a template correction has more
+        // than one placement to be seen by.
         REQUIRE(page->region(regionId)->shareToPage(awayPage).has_value());
         REQUIRE(page->region(regionId)->pagesPlacedOn().size() == 2U);
 
@@ -353,16 +349,13 @@ namespace uf::workbench
         std::move(*page).commit(ui, "moved the template");
         applyPendingEdit(state, ui);
 
-        // Both the origin and the copy share the corrected pixels.
-        auto moved = std::size_t{0};
-        for (auto const& recognizer : state.document().catalog().recognizers())
-        {
-            if (recognizer.templateRect() == newRect)
-            {
-                ++moved;
-            }
-        }
-        CHECK(moved == 2U);
+        // One element, one template, corrected once -- yet placed on both pages,
+        // so its runtime membership still names both.
+        auto const* recognizer =
+            state.document().catalog().findRecognizer(regionId);
+        REQUIRE(recognizer != nullptr);
+        CHECK(recognizer->templateRect() == newRect);
+        CHECK(recognizer->allowedPageIds().size() == 2U);
     }
 
     TEST_CASE("a page view assembles the authored data and ids")
@@ -393,6 +386,40 @@ namespace uf::workbench
         REQUIRE(views.size() == 2U);
         CHECK(views.front().name == "home");
         CHECK(views.back().name == "away");
+    }
+
+    TEST_CASE("a region retyped to info stays visible on its page")
+    {
+        // The bug this pins: the retype kept the data but no view rendered a
+        // placed info element, leaving the entity reachable only through undo.
+        // Reachability is a property of the VIEW, so the assertion is on the
+        // view, not on the draft.
+        auto const state    = appState();
+        auto const regionId = annotation::test::recognizerId(k_regionId);
+
+        auto retyped = retypeRecognizer(
+            state.draft(),
+            regionId,
+            annotation::AnnotationType::InfoRegion
+        );
+        REQUIRE(retyped.has_value());
+
+        auto const view = PageView::of(
+            retyped->draft,
+            annotation::test::pageId(k_homePage)
+        );
+        REQUIRE(view.has_value());
+
+        auto const inInfos = std::ranges::any_of(
+            view->infos,
+            [&](PageView::RegionRow const& row) { return row.id == regionId; }
+        );
+        auto const inRegions = std::ranges::any_of(
+            view->regions,
+            [&](PageView::RegionRow const& row) { return row.id == regionId; }
+        );
+        CHECK(inInfos);
+        CHECK_FALSE(inRegions);
     }
 
     TEST_CASE("createFrom builds a page around a screen and its first anchor")

@@ -44,10 +44,10 @@ namespace uf::workbench
             bool        shared{};
         };
 
-        // One interactive region's authored data as it sits on a page. The
-        // search ROI is this page's own: under the v1 copy model each page's
-        // placement is a separate recognizer carrying its own region, so the
-        // value is already per-page correct.
+        // One placeable element's authored data as it sits on a page. The search
+        // ROI is this page's own: under v2 it is the placement's per-page region.
+        // Both interactive and info elements use this row; an info element carries
+        // no click offset.
         struct RegionRow final
         {
             MemberId                              id;
@@ -65,6 +65,12 @@ namespace uf::workbench
         std::vector<AnchorRow> identifiedBy{};
         std::vector<AnchorRow> mustNotShow{};
         std::vector<RegionRow> regions{};
+
+        // Info elements placed on this page. Kept apart from interactive regions
+        // so the pages panel can label them, but drawn the same way -- so nothing
+        // placeable is ever invisible, which is what left a retyped Info region
+        // reachable only through undo.
+        std::vector<RegionRow> infos{};
 
         // Builds the snapshot for one page of a draft. A page absent from the
         // draft yields nothing, because there is no authored data to draw.

@@ -359,7 +359,7 @@ namespace uf::workbench
                 ImGui::Bullet();
             }
 
-            auto const memberCount = sharedRegionMembers(state.draft(), id).size();
+            auto const memberCount = pagesPlacedOn(state.draft(), id).size();
             auto const label       = memberCount > 1U
                 ? std::format(
                     "{}  (on {} pages)",
@@ -654,7 +654,7 @@ namespace uf::workbench
                     {
                         continue;
                     }
-                    auto const pages = sharedRegionMembers(
+                    auto const pages = pagesPlacedOn(
                         state.draft(),
                         recognizer.id()
                     ).size();
@@ -863,6 +863,25 @@ namespace uf::workbench
                         droppedOnPage = pageId;
                     }
                     ImGui::EndDragDropTarget();
+                }
+
+                // Info elements placed on this page. Drawn like interactive
+                // regions so nothing placeable is invisible -- a retyped Info
+                // region used to vanish from the tree and be reachable only by
+                // undo.
+                if (view.has_value() && !view->infos.empty())
+                {
+                    ImGui::SeparatorText("Info regions");
+                    for (auto const& row : view->infos)
+                    {
+                        if (
+                            auto const* p_recognizer =
+                                catalog.findRecognizer(row.id)
+                        )
+                        {
+                            drawPageMemberRow(state, ui, *p_recognizer, sample);
+                        }
+                    }
                 }
 
                 // A forbidden anchor is an exclusivity rule between two pages
@@ -1244,8 +1263,8 @@ namespace uf::workbench
                 return;
             }
 
-            auto const members = sharedRegionMembers(state.draft(), definition.id());
-            if (members.size() <= 1U)
+            auto const pages = pagesPlacedOn(state.draft(), definition.id());
+            if (pages.size() <= 1U)
             {
                 return;
             }
@@ -1254,7 +1273,7 @@ namespace uf::workbench
             ImGui::TextWrapped(
                 "Drawn once, used on %zu pages. Moving the template box moves it "
                 "on all of them; each page keeps its own search range.",
-                members.size()
+                pages.size()
             );
 
             // The canvas dims a template box it will not let the author drag.
@@ -1352,24 +1371,91 @@ namespace uf::workbench
                 ImGui::BeginDisabled(isAnchor);
                 if (ImGui::Checkbox(page.name().value().c_str(), &member))
                 {
-                    auto draft       = state.draft();
-                    auto* recognizer = findEditableRecognizer(draft, recognizerId);
-                    if (recognizer != nullptr)
+                    if (member)
                     {
-                        std::erase(recognizer->allowedPageIds, pageId);
-                        if (member)
+                        // Authorize through EditPage::placeExisting, which seeds
+                        // the placement's per-page search region from the
+                        // element's own.
+                        auto opened = EditPage::open(state, pageId);
+                        if (!opened)
                         {
-                            recognizer->allowedPageIds.emplace_back(pageId);
+                            ui.statusLine = std::format(
+                                "place rejected: {}",
+                                toString(opened.error())
+                            );
                         }
-                        requestEdit(
-                            ui,
-                            std::move(draft),
-                            std::format(
-                                "{} page \"{}\"",
-                                member ? "authorized" : "withdrew authorization on",
-                                page.name().value()
-                            )
+                        else if (
+                            auto const status = opened->placeExisting(recognizerId);
+                            !status
+                        )
+                        {
+                            ui.statusLine = std::format(
+                                "place rejected: {}",
+                                toString(status.error())
+                            );
+                        }
+                        else
+                        {
+                            std::move(*opened).commit(
+                                ui,
+                                std::format(
+                                    "placed \"{}\" on page \"{}\"",
+                                    definition.name().value(),
+                                    page.name().value()
+                                )
+                            );
+                        }
+                    }
+                    else
+                    {
+                        // Withdraw. The interactive-only region handle cannot
+                        // serve the info row this checkbox also governs, so the
+                        // placement is removed directly -- but with the same
+                        // closure guard removeFromThisPage applies: an interactive
+                        // element's last placement is refused, naming deletion,
+                        // rather than silently deleted as the v1 copy model did.
+                        auto draft            = state.draft();
+                        auto const interactive = (
+                            definition.annotationType()
+                            == annotation::AnnotationType::ActionTarget
                         );
+                        auto const onOtherPage = std::ranges::any_of(
+                            draft.placements,
+                            [&](EditablePlacement const& placement)
+                            {
+                                return placement.elementId == recognizerId
+                                    && placement.pageId != pageId;
+                            }
+                        );
+                        if (interactive && !onOtherPage)
+                        {
+                            ui.statusLine = std::format(
+                                "\"{}\" is only on this page; an interactive region "
+                                "must stay on at least one, so delete it instead of "
+                                "removing it here",
+                                definition.name().value()
+                            );
+                        }
+                        else
+                        {
+                            std::erase_if(
+                                draft.placements,
+                                [&](EditablePlacement const& placement)
+                                {
+                                    return placement.elementId == recognizerId
+                                        && placement.pageId == pageId;
+                                }
+                            );
+                            requestEdit(
+                                ui,
+                                std::move(draft),
+                                std::format(
+                                    "removed \"{}\" from page \"{}\"",
+                                    definition.name().value(),
+                                    page.name().value()
+                                )
+                            );
+                        }
                     }
                 }
                 ImGui::EndDisabled();

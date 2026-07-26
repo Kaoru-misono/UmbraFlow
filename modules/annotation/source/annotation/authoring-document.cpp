@@ -295,125 +295,6 @@ namespace uf::annotation
         }
 
         [[nodiscard]]
-        auto parseRecognizer(
-            detail::CanonicalTomlReader& reader,
-            ProjectFingerprint fingerprint
-        ) -> Result<AuthoringRecognizerSpec>
-        {
-            UF_TRY_VALUE(idText, reader.takeStringField("id"));
-            UF_TRY_VALUE(id, parseId<RecognizerId>(idText));
-            UF_TRY_VALUE(nameText, reader.takeStringField("name"));
-            UF_TRY_VALUE(name, ResourceName::create(std::move(nameText)));
-            UF_TRY_VALUE(typeText, reader.takeStringField("type"));
-            auto const annotationType = detail::annotationTypeFromText(typeText);
-            if (!annotationType)
-            {
-                return invalidAuthoring(
-                    std::format("unknown authoring annotation type '{}'", typeText)
-                );
-            }
-            UF_TRY_VALUE(sourceIdText, reader.takeStringField("source_id"));
-            UF_TRY_VALUE(sourceId, parseId<SourceId>(sourceIdText));
-            UF_TRY_VALUE(kind, reader.takeStringField("recognizer_kind"));
-            if (kind != "gray_template")
-            {
-                return invalidAuthoring(
-                    "authoring P0 recognizer kind must be gray_template"
-                );
-            }
-            UF_TRY_VALUE(
-                templateRect,
-                detail::parsePixelRectField(reader, "template_rect")
-            );
-            UF_TRY_VALUE(
-                searchRoi,
-                detail::parsePixelRectField(reader, "search_roi")
-            );
-            UF_TRY_VALUE(
-                thresholdValue,
-                reader.takeUnsigned32Field("min_similarity_bp")
-            );
-            UF_TRY_VALUE(
-                threshold,
-                SimilarityThreshold::create(thresholdValue)
-            );
-
-            auto defaultClick = std::optional<TemplateOffset>{};
-            UF_TRY_VALUE(
-                hasDefaultClick,
-                reader.nextIsField("default_click")
-            );
-            if (hasDefaultClick)
-            {
-                UF_TRY_VALUE(
-                    values,
-                    reader.takeUnsigned32ArrayField("default_click")
-                );
-                if (values.size() != 2U)
-                {
-                    return invalidAuthoring(
-                        "authoring default_click must have two integers"
-                    );
-                }
-                UF_TRY_VALUE(
-                    offset,
-                    TemplateOffset::create(
-                        checkedAt(values, 0),
-                        checkedAt(values, 1),
-                        templateRect.width(),
-                        templateRect.height()
-                    )
-                );
-                defaultClick = offset;
-            }
-
-            auto pageIds = std::vector<PageId>{};
-            UF_TRY_VALUE(hasPageIds, reader.nextIsField("page_ids"));
-            if (hasPageIds)
-            {
-                UF_TRY_VALUE(
-                    encoded,
-                    reader.takeStringArrayField("page_ids")
-                );
-                UF_TRY_VALUE(parsed, parseIds<PageId>(encoded));
-                pageIds = std::move(parsed);
-            }
-
-            // Absent in every project authored before regions could be marked
-            // reusable, and absent whenever false, so its absence is the default
-            // rather than an error.
-            auto shared = false;
-            UF_TRY_VALUE(hasShared, reader.nextIsField("shared"));
-            if (hasShared)
-            {
-                UF_TRY_VALUE(parsed, reader.takeBoolField("shared"));
-                shared = parsed;
-            }
-
-            UF_TRY_VALUE(
-                definition,
-                RecognizerDefinition::create(
-                    fingerprint,
-                    RecognizerSpec{
-                        .id             = id,
-                        .name           = std::move(name),
-                        .annotationType = *annotationType,
-                        .templateRect   = templateRect,
-                        .searchRoi      = searchRoi,
-                        .threshold      = threshold,
-                        .defaultClick   = defaultClick,
-                        .allowedPageIds = std::move(pageIds),
-                    }
-                )
-            );
-            return AuthoringRecognizerSpec{
-                .definition = std::move(definition),
-                .sourceId   = sourceId,
-                .shared     = shared,
-            };
-        }
-
-        [[nodiscard]]
         auto parsePage(
             detail::CanonicalTomlReader& reader
         ) -> Result<PageSignature>
@@ -595,6 +476,15 @@ namespace uf::annotation
         // inverted from the placements that reference it. This is the single
         // inversion the design asks for; every catalog() reader downstream gets
         // its page membership from here rather than joining placements itself.
+        //
+        // PERMANENT BRIDGE -- do not "clean this up". The placements-to-
+        // allowed_page_ids inversion and the derived catalog() read model are the
+        // load-bearing translation from the v2 authoring model to the FROZEN
+        // runtime manifest schema (umbraflow-annotations/v1), whose recognizer
+        // shape carries membership inverted on the recognizer. While that runtime
+        // contract stands, this inversion must stay exactly here; deleting it
+        // would either break the runtime manifest or scatter the join back across
+        // every consumer, which is the state this design set out to remove.
         [[nodiscard]]
         auto deriveModel(
             ProjectId projectId,
@@ -1279,76 +1169,6 @@ namespace uf::annotation
         return document;
     }
 
-    auto AuthoringDocument::create(
-        ProjectId projectId,
-        ProjectFingerprint fingerprint,
-        std::vector<AuthoringSource> sources,
-        std::vector<AuthoringRecognizerSpec> recognizers,
-        std::vector<PageSignature> pages,
-        std::vector<RegressionCase> regressions
-    ) -> Result<AuthoringDocument>
-    {
-        auto elements   = std::vector<Element>{};
-        auto placements = std::vector<AuthoringPlacement>{};
-        elements.reserve(recognizers.size());
-        for (auto const& recognizer : recognizers)
-        {
-            auto const& definition = recognizer.definition;
-            auto kind = ElementKind{AnchorElement{}};
-            switch (definition.annotationType())
-            {
-            case AnnotationType::PageAnchor:
-                kind = AnchorElement{};
-                break;
-            case AnnotationType::ActionTarget:
-                kind = InteractiveElement{.clickOffset = definition.defaultClick()};
-                break;
-            case AnnotationType::InfoRegion:
-                kind = InfoElement{};
-                break;
-            }
-            UF_TRY_VALUE(
-                element,
-                Element::create(
-                    fingerprint,
-                    Element::Spec{
-                        .id           = definition.id(),
-                        .name         = definition.name(),
-                        .sourceId     = recognizer.sourceId,
-                        .templateRect = definition.templateRect(),
-                        .searchRoi    = definition.searchRoi(),
-                        .threshold    = definition.threshold(),
-                        .kind         = std::move(kind),
-                        .shared       = recognizer.shared,
-                    }
-                )
-            );
-            // Derived exactly as the v1 file migration derives placements: one
-            // per authorized page, each searching where the recognizer did.
-            for (auto const pageId : definition.allowedPageIds())
-            {
-                placements.emplace_back(
-                    AuthoringPlacement{
-                        .pageId    = pageId,
-                        .elementId = definition.id(),
-                        .searchRoi = definition.searchRoi(),
-                    }
-                );
-            }
-            elements.emplace_back(std::move(element));
-        }
-
-        return create(
-            std::move(projectId),
-            fingerprint,
-            std::move(sources),
-            std::move(elements),
-            std::move(pages),
-            std::move(placements),
-            std::move(regressions)
-        );
-    }
-
     auto AuthoringDocument::catalog() const noexcept -> RecognitionCatalog const&
     {
         return m_catalog;
@@ -1592,106 +1412,6 @@ namespace uf::annotation
         return output;
     }
 
-    namespace
-    {
-        // The retained v1 read path. A v1 file carries page membership on each
-        // annotation as page_ids and has no [[placement]] table; membership is
-        // derived by the compatibility create() overload exactly as it derives
-        // it in memory. It deliberately BYPASSES the canonical round-trip
-        // self-check: a v1 file re-serializes as v2, so serialize != input by
-        // design. v1 files are read once and upgraded; no v1 serializer exists.
-        [[nodiscard]]
-        auto migrateAuthoringDocumentV1(
-            detail::CanonicalTomlReader& reader,
-            ProjectId projectId,
-            ProjectFingerprint fingerprint
-        ) -> Result<AuthoringDocument>
-        {
-            auto sources     = std::vector<AuthoringSource>{};
-            auto recognizers = std::vector<AuthoringRecognizerSpec>{};
-            auto pages       = std::vector<PageSignature>{};
-            auto regressions = std::vector<RegressionCase>{};
-            auto section     = uint8{0};
-            while (!reader.eof())
-            {
-                UF_TRY(reader.expect(""));
-                auto const headerLine = reader.line();
-                UF_TRY_VALUE(header, reader.take());
-                auto rank = uint8{0};
-                if (header == "[[source]]")
-                {
-                    rank = 1;
-                    if (sources.size() >= k_maximumAuthoringResources)
-                    {
-                        return invalidAuthoring("authoring source quota exceeded");
-                    }
-                    UF_TRY_VALUE(source, parseSource(reader));
-                    sources.emplace_back(std::move(source));
-                }
-                else if (header == "[[annotation]]")
-                {
-                    rank = 2;
-                    if (recognizers.size() >= k_maximumAuthoringResources)
-                    {
-                        return invalidAuthoring("authoring annotation quota exceeded");
-                    }
-                    UF_TRY_VALUE(
-                        recognizer,
-                        parseRecognizer(reader, fingerprint)
-                    );
-                    recognizers.emplace_back(std::move(recognizer));
-                }
-                else if (header == "[[page]]")
-                {
-                    rank = 3;
-                    if (pages.size() >= k_maximumAuthoringResources)
-                    {
-                        return invalidAuthoring("authoring page quota exceeded");
-                    }
-                    UF_TRY_VALUE(page, parsePage(reader));
-                    pages.emplace_back(std::move(page));
-                }
-                else if (header == "[[regression]]")
-                {
-                    rank = 4;
-                    if (regressions.size() >= k_maximumAuthoringResources)
-                    {
-                        return invalidAuthoring("authoring regression quota exceeded");
-                    }
-                    UF_TRY_VALUE(regression, parseRegression(reader));
-                    regressions.emplace_back(regression);
-                }
-                else
-                {
-                    return invalidAuthoring(
-                        std::format(
-                            "authoring v1 document line {} has unknown table header '{}'",
-                            headerLine,
-                            header
-                        )
-                    );
-                }
-                if (rank < section)
-                {
-                    return invalidAuthoring(
-                        "authoring v1 source, annotation, page, and regression tables are out of order"
-                    );
-                }
-                section = rank;
-            }
-
-            // No self-check: the upgrade to v2 changes the bytes by design.
-            return AuthoringDocument::create(
-                std::move(projectId),
-                fingerprint,
-                std::move(sources),
-                std::move(recognizers),
-                std::move(pages),
-                std::move(regressions)
-            );
-        }
-    }
-
     auto parseAuthoringDocument(
         std::string_view canonicalToml
     ) -> Result<AuthoringDocument>
@@ -1711,9 +1431,7 @@ namespace uf::annotation
             std::string{canonicalToml}
         };
         UF_TRY_VALUE(schema, reader.takeStringField("schema"));
-        auto const isV2 = (schema == k_authoringDocumentSchema);
-        auto const isV1 = (schema == k_authoringDocumentSchemaV1);
-        if (!isV2 && !isV1)
+        if (schema != k_authoringDocumentSchema)
         {
             return invalidAuthoring(
                 std::format("unsupported authoring document schema '{}'", schema)
@@ -1725,15 +1443,6 @@ namespace uf::annotation
             fingerprint,
             parseFingerprint(reader, "base_resolution", "base_dpi")
         );
-
-        if (isV1)
-        {
-            return migrateAuthoringDocumentV1(
-                reader,
-                std::move(projectId),
-                fingerprint
-            );
-        }
 
         auto sources     = std::vector<AuthoringSource>{};
         auto elements    = std::vector<Element>{};

@@ -61,32 +61,32 @@ namespace uf::workbench
                 fingerprint,
                 {*source},
                 {
-                    annotation::AuthoringRecognizerSpec{
-                        .definition = annotation::test::recognizer(
-                            fingerprint,
-                            anchorId,
-                            "home_marker",
-                            annotation::AnnotationType::PageAnchor,
-                            annotation::test::pixelRect(0, 0, 2, 2),
-                            annotation::test::pixelRect(0, 0, 4, 4)
-                        ),
-                        .sourceId = sourceId,
-                    },
-                    annotation::AuthoringRecognizerSpec{
-                        .definition = annotation::test::recognizer(
-                            fingerprint,
-                            actionId,
-                            "daily_button",
-                            annotation::AnnotationType::ActionTarget,
-                            annotation::test::pixelRect(4, 4, 2, 2),
-                            annotation::test::pixelRect(3, 3, 4, 4),
-                            {pageId},
-                            *click
-                        ),
-                        .sourceId = sourceId,
-                    },
+                    annotation::test::anchorElement(
+                        fingerprint,
+                        anchorId,
+                        "home_marker",
+                        sourceId,
+                        annotation::test::pixelRect(0, 0, 2, 2),
+                        annotation::test::pixelRect(0, 0, 4, 4)
+                    ),
+                    annotation::test::interactiveElement(
+                        fingerprint,
+                        actionId,
+                        "daily_button",
+                        sourceId,
+                        annotation::test::pixelRect(4, 4, 2, 2),
+                        annotation::test::pixelRect(3, 3, 4, 4),
+                        *click
+                    ),
                 },
                 {annotation::test::page(pageId, "home", {anchorId})},
+                {
+                    annotation::test::placement(
+                        pageId,
+                        actionId,
+                        annotation::test::pixelRect(3, 3, 4, 4)
+                    ),
+                },
                 {
                     annotation::RegressionCase{
                         annotation::RegressionSpec{
@@ -143,28 +143,22 @@ namespace uf::workbench
                 fingerprint,
                 {*source},
                 {
-                    annotation::AuthoringRecognizerSpec{
-                        .definition = annotation::test::recognizer(
-                            fingerprint,
-                            anchorId,
-                            "home_marker",
-                            annotation::AnnotationType::PageAnchor,
-                            annotation::test::pixelRect(0, 0, 2, 2),
-                            annotation::test::pixelRect(0, 0, 4, 4)
-                        ),
-                        .sourceId = sourceId,
-                    },
-                    annotation::AuthoringRecognizerSpec{
-                        .definition = annotation::test::recognizer(
-                            fingerprint,
-                            awayId,
-                            "away_marker",
-                            annotation::AnnotationType::PageAnchor,
-                            annotation::test::pixelRect(4, 4, 2, 2),
-                            annotation::test::pixelRect(3, 3, 4, 4)
-                        ),
-                        .sourceId = sourceId,
-                    },
+                    annotation::test::anchorElement(
+                        fingerprint,
+                        anchorId,
+                        "home_marker",
+                        sourceId,
+                        annotation::test::pixelRect(0, 0, 2, 2),
+                        annotation::test::pixelRect(0, 0, 4, 4)
+                    ),
+                    annotation::test::anchorElement(
+                        fingerprint,
+                        awayId,
+                        "away_marker",
+                        sourceId,
+                        annotation::test::pixelRect(4, 4, 2, 2),
+                        annotation::test::pixelRect(3, 3, 4, 4)
+                    ),
                 },
                 {
                     annotation::test::page(
@@ -174,6 +168,7 @@ namespace uf::workbench
                         {awayId}
                     ),
                 },
+                {},
                 {
                     annotation::RegressionCase{
                         annotation::RegressionSpec{
@@ -223,28 +218,22 @@ namespace uf::workbench
                 fingerprint,
                 {*source},
                 {
-                    annotation::AuthoringRecognizerSpec{
-                        .definition = annotation::test::recognizer(
-                            fingerprint,
-                            anchorId,
-                            "home_marker",
-                            annotation::AnnotationType::PageAnchor,
-                            annotation::test::pixelRect(0, 0, 2, 2),
-                            annotation::test::pixelRect(0, 0, 4, 4)
-                        ),
-                        .sourceId = sourceId,
-                    },
-                    annotation::AuthoringRecognizerSpec{
-                        .definition = annotation::test::recognizer(
-                            fingerprint,
-                            awayId,
-                            "battle_marker",
-                            annotation::AnnotationType::PageAnchor,
-                            annotation::test::pixelRect(4, 4, 2, 2),
-                            annotation::test::pixelRect(3, 3, 4, 4)
-                        ),
-                        .sourceId = sourceId,
-                    },
+                    annotation::test::anchorElement(
+                        fingerprint,
+                        anchorId,
+                        "home_marker",
+                        sourceId,
+                        annotation::test::pixelRect(0, 0, 2, 2),
+                        annotation::test::pixelRect(0, 0, 4, 4)
+                    ),
+                    annotation::test::anchorElement(
+                        fingerprint,
+                        awayId,
+                        "battle_marker",
+                        sourceId,
+                        annotation::test::pixelRect(4, 4, 2, 2),
+                        annotation::test::pixelRect(3, 3, 4, 4)
+                    ),
                 },
                 {
                     annotation::test::page(homeId, "home", {anchorId}),
@@ -255,6 +244,7 @@ namespace uf::workbench
                         {anchorId}
                     ),
                 },
+                {},
                 {}
             );
             REQUIRE(created.has_value());
@@ -345,7 +335,8 @@ namespace uf::workbench
         auto const anchor = recognizerIn(created->draft, anchorId);
         CHECK(anchor.annotationType == annotation::AnnotationType::PageAnchor);
         CHECK(anchor.sourceId == sourceId);
-        CHECK(anchor.allowedPageIds.empty());
+        // An anchor joins a page through its signature, never a placement.
+        CHECK(pagesPlacedOn(created->draft, anchorId).empty());
 
         auto const page = pageIn(created->draft, pageId);
         CHECK(std::ranges::contains(page.required, anchorId));
@@ -422,7 +413,7 @@ namespace uf::workbench
                 recognizer.annotationType
                 == annotation::AnnotationType::PageAnchor
             );
-            CHECK(recognizer.allowedPageIds.empty());
+            CHECK(pagesPlacedOn(added->draft, newId).empty());
             CHECK(
                 std::ranges::contains(
                     pageIn(added->draft, pageId).required,
@@ -445,7 +436,7 @@ namespace uf::workbench
                 recognizer.annotationType
                 == annotation::AnnotationType::ActionTarget
             );
-            CHECK(std::ranges::contains(recognizer.allowedPageIds, pageId));
+            CHECK(std::ranges::contains(pagesPlacedOn(added->draft, newId), pageId));
             CHECK_FALSE(
                 std::ranges::contains(
                     pageIn(added->draft, pageId).required,
@@ -456,15 +447,15 @@ namespace uf::workbench
         }
     }
 
-    TEST_CASE("sharing a region reuses its template with a range of its own")
+    TEST_CASE("sharing a region places the same element with a range of its own")
     {
         auto const actionId = annotation::test::recognizerId(k_actionId);
-        auto const newId    = annotation::test::recognizerId(k_sharedId);
         auto const pageId   = annotation::test::pageId(k_secondPageId);
         auto const roi      = annotation::test::pixelRect(2, 2, 6, 6);
 
         auto draft = makeAuthoringDraft(twoPageDocument());
-        // twoPageDocument has no action target, so give it the one being shared.
+        // twoPageDocument has no action target, so give it the one being shared,
+        // placed on the home page.
         draft.recognizers.emplace_back(
             EditableRecognizer{
                 .id             = actionId,
@@ -475,31 +466,41 @@ namespace uf::workbench
                 .searchRoi      = annotation::test::pixelRect(3, 3, 4, 4),
                 .similarityBasisPoints = 9'000U,
                 .defaultClick   = {},
-                .allowedPageIds = {annotation::test::pageId(k_pageId)},
+            }
+        );
+        draft.placements.emplace_back(
+            EditablePlacement{
+                .pageId    = annotation::test::pageId(k_pageId),
+                .elementId = actionId,
+                .searchRoi = annotation::test::pixelRect(3, 3, 4, 4),
             }
         );
 
         auto const shared = shareRegionOnPage(
             std::move(draft),
             SharedRegionSpec{
-                .recognizerId = newId,
-                .shareFrom    = actionId,
-                .pageId       = pageId,
-                .searchRoi    = roi,
+                .elementId = actionId,
+                .pageId    = pageId,
+                .searchRoi = roi,
             }
         );
         REQUIRE(shared.has_value());
 
-        auto const origin = recognizerIn(shared->draft, actionId);
-        auto const copy   = recognizerIn(shared->draft, newId);
-        CHECK(copy.sourceId == origin.sourceId);
-        CHECK(copy.templateRect == origin.templateRect);
-        CHECK(copy.searchRoi == roi);
-        CHECK(copy.allowedPageIds == std::vector{pageId});
+        // No copy is minted: the same element gains a second placement carrying
+        // its own search region.
+        CHECK(pagesPlacedOn(shared->draft, actionId).size() == 2U);
+        auto const placed = std::ranges::find_if(
+            shared->draft.placements,
+            [&](EditablePlacement const& placement)
+            {
+                return placement.elementId == actionId
+                    && placement.pageId == pageId;
+            }
+        );
+        REQUIRE(placed != shared->draft.placements.end());
+        CHECK(placed->searchRoi == roi);
+        CHECK(recognizerIn(shared->draft, actionId).shared);
         CHECK(buildAuthoringDocument(shared->draft).has_value());
-
-        // Same pixels from the same screen is what makes them one element.
-        CHECK(sharedRegionMembers(shared->draft, actionId).size() == 2U);
     }
 
     TEST_CASE("sharing a region onto a page that already has it is refused")
@@ -510,10 +511,9 @@ namespace uf::workbench
         auto const shared = shareRegionOnPage(
             makeAuthoringDraft(document()),
             SharedRegionSpec{
-                .recognizerId = annotation::test::recognizerId(k_awayId),
-                .shareFrom    = actionId,
-                .pageId       = pageId,
-                .searchRoi    = annotation::test::pixelRect(0, 0, 8, 8),
+                .elementId = actionId,
+                .pageId    = pageId,
+                .searchRoi = annotation::test::pixelRect(0, 0, 8, 8),
             }
         );
         CHECK_FALSE(shared.has_value());
@@ -524,10 +524,9 @@ namespace uf::workbench
         auto const shared = shareRegionOnPage(
             makeAuthoringDraft(document()),
             SharedRegionSpec{
-                .recognizerId = annotation::test::recognizerId(k_awayId),
-                .shareFrom    = annotation::test::recognizerId(k_anchorId),
-                .pageId       = annotation::test::pageId(k_pageId),
-                .searchRoi    = annotation::test::pixelRect(0, 0, 8, 8),
+                .elementId = annotation::test::recognizerId(k_anchorId),
+                .pageId    = annotation::test::pageId(k_pageId),
+                .searchRoi = annotation::test::pixelRect(0, 0, 8, 8),
             }
         );
         CHECK_FALSE(shared.has_value());
@@ -565,155 +564,80 @@ namespace uf::workbench
         CHECK_FALSE(marked.has_value());
     }
 
-    TEST_CASE("unmarking a region still on several pages is refused")
+    TEST_CASE("unmarking a region placed on several pages is now allowed")
     {
-        auto const actionId = annotation::test::recognizerId(k_actionId);
-        auto const pageId   = annotation::test::pageId(k_secondPageId);
-
-        auto draft = makeAuthoringDraft(twoPageDocument());
-        draft.recognizers.emplace_back(
-            EditableRecognizer{
-                .id             = actionId,
-                .name           = "back",
-                .annotationType = annotation::AnnotationType::ActionTarget,
-                .sourceId       = annotation::test::sourceId(k_sourceId),
-                .templateRect   = annotation::test::pixelRect(4, 4, 2, 2),
-                .searchRoi      = annotation::test::pixelRect(3, 3, 4, 4),
-                .similarityBasisPoints = 9'000U,
-                .defaultClick   = {},
-                .allowedPageIds = {annotation::test::pageId(k_pageId)},
-                .shared         = true,
-            }
-        );
-        auto shared = shareRegionOnPage(
-            std::move(draft),
-            SharedRegionSpec{
-                .recognizerId = annotation::test::recognizerId(k_sharedId),
-                .shareFrom    = actionId,
-                .pageId       = pageId,
-                .searchRoi    = annotation::test::pixelRect(2, 2, 6, 6),
-            }
-        );
-        REQUIRE(shared.has_value());
-
-        auto const unmarked = setRegionShared(
-            std::move(shared->draft),
-            actionId,
-            false
-        );
-        CHECK_FALSE(unmarked.has_value());
-    }
-
-    TEST_CASE("a shared copy is named for the element and the page it lands on")
-    {
-        // A generated "region_N" says neither, which is what left a renamed
-        // element paired with a stale copy the first time this existed.
+        // Under v2 the shared mark is pure intent and groups nothing, so it can
+        // be taken off freely -- there are no copies to leave orphaned, only one
+        // element placed on N pages.
         auto const actionId = annotation::test::recognizerId(k_actionId);
 
-        auto draft = makeAuthoringDraft(twoPageDocument());
-        draft.recognizers.emplace_back(
-            EditableRecognizer{
-                .id             = actionId,
-                .name           = "menu",
-                .annotationType = annotation::AnnotationType::ActionTarget,
-                .sourceId       = annotation::test::sourceId(k_sourceId),
-                .templateRect   = annotation::test::pixelRect(4, 4, 2, 2),
-                .searchRoi      = annotation::test::pixelRect(3, 3, 4, 4),
-                .similarityBasisPoints = 9'000U,
-                .defaultClick   = {},
-                .allowedPageIds = {annotation::test::pageId(k_pageId)},
-                .shared         = true,
+        auto draft = makeAuthoringDraft(document());
+        draft.placements.emplace_back(
+            EditablePlacement{
+                .pageId    = annotation::test::pageId(k_secondPageId),
+                .elementId = actionId,
+                .searchRoi = annotation::test::pixelRect(3, 3, 4, 4),
             }
         );
+        draft.pages.emplace_back(
+            EditablePage{
+                .id        = annotation::test::pageId(k_secondPageId),
+                .name      = "battle",
+                .required  = {},
+                .forbidden = {annotation::test::recognizerId(k_anchorId)},
+            }
+        );
+        REQUIRE(pagesPlacedOn(draft, actionId).size() == 2U);
 
-        auto const shared = shareRegionOnPage(
-            std::move(draft),
-            SharedRegionSpec{
-                .recognizerId = annotation::test::recognizerId(k_sharedId),
-                .shareFrom    = actionId,
-                .pageId       = annotation::test::pageId(k_secondPageId),
-                .searchRoi    = annotation::test::pixelRect(2, 2, 6, 6),
-            }
-        );
-        REQUIRE(shared.has_value());
-        CHECK(shared->name == "menu_battle_1");
+        auto const unmarked = setRegionShared(std::move(draft), actionId, false);
+        REQUIRE(unmarked.has_value());
+        CHECK_FALSE(recognizerIn(*unmarked, actionId).shared);
     }
 
-    TEST_CASE("moving a shared template moves every member of the element")
+    TEST_CASE("moving an element's template moves it on every page it is placed")
     {
         // Drawing the element once is only worth anything if correcting it
-        // corrects it everywhere.
+        // corrects it everywhere; under v2 that is one element and two placements.
         auto const actionId = annotation::test::recognizerId(k_actionId);
-        auto const newId    = annotation::test::recognizerId(k_awayId);
         auto const moved    = annotation::test::pixelRect(3, 3, 2, 2);
 
         auto draft = makeAuthoringDraft(document());
-        // Both marked: grouping is a statement the author made, not a
-        // coincidence of two rectangles landing on the same pixels.
-        for (auto& recognizer : draft.recognizers)
-        {
-            if (recognizer.id == actionId)
-            {
-                recognizer.shared = true;
-            }
-        }
-        draft.recognizers.emplace_back(
-            EditableRecognizer{
-                .id             = newId,
-                .name           = "back_2",
-                .annotationType = annotation::AnnotationType::ActionTarget,
-                .sourceId       = annotation::test::sourceId(k_sourceId),
-                .templateRect   = annotation::test::pixelRect(4, 4, 2, 2),
-                .searchRoi      = annotation::test::pixelRect(0, 0, 8, 8),
-                .similarityBasisPoints = 9'000U,
-                .defaultClick   = {},
-                .allowedPageIds = {annotation::test::pageId(k_pageId)},
-                .shared         = true,
+        draft.placements.emplace_back(
+            EditablePlacement{
+                .pageId    = annotation::test::pageId(k_secondPageId),
+                .elementId = actionId,
+                .searchRoi = annotation::test::pixelRect(0, 0, 8, 8),
             }
         );
 
-        auto const retemplated = retemplateSharedRegion(
+        auto const retemplated = setElementTemplateRect(
             std::move(draft),
             actionId,
             moved
         );
         REQUIRE(retemplated.has_value());
-        CHECK(retemplated->movedMembers == 1U);
+        CHECK(retemplated->otherPlacements == 2U);
         CHECK(recognizerIn(retemplated->draft, actionId).templateRect == moved);
-        CHECK(recognizerIn(retemplated->draft, newId).templateRect == moved);
+        // Both placements still reference the one, corrected element.
+        CHECK(pagesPlacedOn(retemplated->draft, actionId).size() == 2U);
     }
 
-    TEST_CASE("a shared template that outgrows a member's range is refused")
+    TEST_CASE("a template that outgrows a placement's range is refused")
     {
         // Widening a range the author drew would enlarge both the search cost and
-        // the surface for a false match, so the author is told which one to fix.
+        // the surface for a false match, so the author is told to fix it.
         auto const actionId = annotation::test::recognizerId(k_actionId);
-        auto const newId    = annotation::test::recognizerId(k_awayId);
 
         auto draft = makeAuthoringDraft(document());
-        for (auto& recognizer : draft.recognizers)
-        {
-            if (recognizer.id == actionId)
-            {
-                recognizer.shared = true;
-            }
-        }
-        draft.recognizers.emplace_back(
-            EditableRecognizer{
-                .id             = newId,
-                .name           = "back_2",
-                .annotationType = annotation::AnnotationType::ActionTarget,
-                .sourceId       = annotation::test::sourceId(k_sourceId),
-                .templateRect   = annotation::test::pixelRect(4, 4, 2, 2),
-                .searchRoi      = annotation::test::pixelRect(4, 4, 3, 3),
-                .similarityBasisPoints = 9'000U,
-                .defaultClick   = {},
-                .allowedPageIds = {annotation::test::pageId(k_pageId)},
-                .shared         = true,
+        draft.placements.emplace_back(
+            EditablePlacement{
+                .pageId    = annotation::test::pageId(k_secondPageId),
+                .elementId = actionId,
+                .searchRoi = annotation::test::pixelRect(4, 4, 3, 3),
             }
         );
 
-        auto const retemplated = retemplateSharedRegion(
+        auto const retemplated = setElementTemplateRect(
             std::move(draft),
             actionId,
             annotation::test::pixelRect(0, 0, 5, 5)
@@ -812,8 +736,9 @@ namespace uf::workbench
 
         auto const changed = recognizerIn(retyped->draft, awayId);
         CHECK(changed.annotationType == annotation::AnnotationType::ActionTarget);
-        REQUIRE(changed.allowedPageIds.size() == 1U);
-        CHECK(changed.allowedPageIds.front() == pageId);
+        auto const placed = pagesPlacedOn(retyped->draft, awayId);
+        REQUIRE(placed.size() == 1U);
+        CHECK(placed.front() == pageId);
 
         // Only a page anchor may hold a signature role, so the recognizer is
         // withdrawn from the page it was forbidden on.
@@ -847,9 +772,9 @@ namespace uf::workbench
         REQUIRE(retyped->authorizedPage.has_value());
         CHECK(*retyped->authorizedPage == battleId);
 
-        auto const changed = recognizerIn(retyped->draft, awayId);
-        REQUIRE(changed.allowedPageIds.size() == 1U);
-        CHECK(changed.allowedPageIds.front() == battleId);
+        auto const placed = pagesPlacedOn(retyped->draft, awayId);
+        REQUIRE(placed.size() == 1U);
+        CHECK(placed.front() == battleId);
 
         CHECK(buildAuthoringDocument(retyped->draft).has_value());
     }
@@ -868,7 +793,7 @@ namespace uf::workbench
 
         auto const changed = recognizerIn(retyped->draft, actionId);
         CHECK(changed.annotationType == annotation::AnnotationType::PageAnchor);
-        CHECK(changed.allowedPageIds.empty());
+        CHECK(pagesPlacedOn(retyped->draft, actionId).empty());
         CHECK_FALSE(changed.defaultClick.has_value());
 
         // The conversion is lossy in both fields, so both are reported.
@@ -894,8 +819,9 @@ namespace uf::workbench
 
         auto const changed = recognizerIn(retyped->draft, actionId);
         CHECK(changed.annotationType == annotation::AnnotationType::InfoRegion);
-        REQUIRE(changed.allowedPageIds.size() == 1U);
-        CHECK(changed.allowedPageIds.front() == pageId);
+        auto const placed = pagesPlacedOn(retyped->draft, actionId);
+        REQUIRE(placed.size() == 1U);
+        CHECK(placed.front() == pageId);
         CHECK_FALSE(changed.defaultClick.has_value());
         CHECK(retyped->clearedAuthorizations == 0U);
         CHECK(retyped->clearedClick);
@@ -924,10 +850,7 @@ namespace uf::workbench
         // A freshly captured project: recognizers but no page yet.
         auto draft = makeAuthoringDraft(document());
         draft.pages.clear();
-        for (auto& recognizer : draft.recognizers)
-        {
-            recognizer.allowedPageIds.clear();
-        }
+        draft.placements.clear();
 
         auto const retyped = retypeRecognizer(
             std::move(draft),
@@ -997,13 +920,15 @@ namespace uf::workbench
         auto const battleId = annotation::test::pageId(k_secondPageId);
 
         auto widened = makeAuthoringDraft(document());
-        auto const spot = std::ranges::find(
-            widened.recognizers,
-            actionId,
-            &EditableRecognizer::id
+        // Place the action target on the second page too, so deleting the first
+        // leaves it placed and may proceed.
+        widened.placements.emplace_back(
+            EditablePlacement{
+                .pageId    = battleId,
+                .elementId = actionId,
+                .searchRoi = annotation::test::pixelRect(3, 3, 4, 4),
+            }
         );
-        REQUIRE(spot != widened.recognizers.end());
-        spot->allowedPageIds.emplace_back(battleId);
         // Two pages may not carry the same signature, so the second page forbids
         // the anchor the first requires.
         widened.pages.emplace_back(
@@ -1015,7 +940,7 @@ namespace uf::workbench
             }
         );
         // The document's regression expects the page under test to resolve, which
-        // is refused on its own; this case is about the authorizations.
+        // is refused on its own; this case is about the placements.
         REQUIRE(widened.regressions.size() == 1U);
         widened.regressions.at(0).expectation = annotation::UnknownRegression{};
 
@@ -1023,9 +948,7 @@ namespace uf::workbench
         REQUIRE(deleted.has_value());
         CHECK(deleted->clearedAuthorizations == 1U);
         CHECK(deleted->draft.pages.size() == 1U);
-        CHECK(
-            recognizerIn(deleted->draft, actionId).allowedPageIds.size() == 1U
-        );
+        CHECK(pagesPlacedOn(deleted->draft, actionId).size() == 1U);
     }
 
     TEST_CASE("deleting an action target's only authorized page is refused")
@@ -1045,9 +968,9 @@ namespace uf::workbench
         auto const pageId = annotation::test::pageId(k_pageId);
 
         auto draft = makeAuthoringDraft(document());
+        draft.placements.clear();
         for (auto& recognizer : draft.recognizers)
         {
-            recognizer.allowedPageIds.clear();
             recognizer.annotationType = annotation::AnnotationType::PageAnchor;
         }
         REQUIRE(draft.regressions.size() == 1U);
@@ -1068,6 +991,7 @@ namespace uf::workbench
 
         auto draft = makeAuthoringDraft(document());
         draft.recognizers.clear();
+        draft.placements.clear();
         draft.pages.clear();
         REQUIRE(draft.regressions.size() == 1U);
 

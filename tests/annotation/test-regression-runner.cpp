@@ -192,39 +192,30 @@ namespace uf::annotation
                     ambiguousSource.source,
                 },
                 {
-                    AuthoringRecognizerSpec{
-                        .definition = test::recognizer(
-                            fingerprint,
-                            anchorA,
-                            "anchor_a",
-                            AnnotationType::PageAnchor,
-                            test::pixelRect(0, 0, 1, 1),
-                            test::pixelRect(0, 0, 3, 1),
-                            {},
-                            std::nullopt,
-                            test::threshold(10'000)
-                        ),
-                        .sourceId = templateSource.source.id(),
-                    },
-                    AuthoringRecognizerSpec{
-                        .definition = test::recognizer(
-                            fingerprint,
-                            anchorB,
-                            "anchor_b",
-                            AnnotationType::PageAnchor,
-                            test::pixelRect(1, 0, 1, 1),
-                            test::pixelRect(0, 0, 3, 1),
-                            {},
-                            std::nullopt,
-                            test::threshold(10'000)
-                        ),
-                        .sourceId = templateSource.source.id(),
-                    },
+                    test::anchorElement(
+                        fingerprint,
+                        anchorA,
+                        "anchor_a",
+                        templateSource.source.id(),
+                        test::pixelRect(0, 0, 1, 1),
+                        test::pixelRect(0, 0, 3, 1),
+                        test::threshold(10'000)
+                    ),
+                    test::anchorElement(
+                        fingerprint,
+                        anchorB,
+                        "anchor_b",
+                        templateSource.source.id(),
+                        test::pixelRect(1, 0, 1, 1),
+                        test::pixelRect(0, 0, 3, 1),
+                        test::threshold(10'000)
+                    ),
                 },
                 {
                     test::page(pageA, "page_a", {anchorA}, {anchorB}),
                     test::page(pageB, "page_b", {anchorA}),
                 },
+                {},
                 std::move(regressions)
             );
             REQUIRE(document.has_value());

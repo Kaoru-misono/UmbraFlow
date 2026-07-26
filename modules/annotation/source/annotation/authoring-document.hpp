@@ -18,17 +18,13 @@
 
 namespace uf::annotation
 {
-    // The schema the GUI now writes. Bumped from v1 when page membership moved
-    // off the recognizer (allowed_page_ids) and onto page-side placements; the
-    // v1 identifier below is still read once and upgraded by the migration path.
+    // The schema the GUI reads and writes. Bumped from v1 when page membership
+    // moved off the recognizer (allowed_page_ids) and onto page-side placements.
+    // The v1 read path has been retired: the sole real project migrated to v2 on
+    // disk, so an old schema string now fails with the ordinary unsupported-schema
+    // error rather than upgrading.
     inline constexpr auto k_authoringDocumentSchema = std::string_view{
         "umbraflow-authoring/v2"
-    };
-
-    // The previous schema. Retained for the read-only migration loader only; no
-    // v1 serializer exists, so a v1 file is upgraded to v2 on its first save.
-    inline constexpr auto k_authoringDocumentSchemaV1 = std::string_view{
-        "umbraflow-authoring/v1"
     };
 
     namespace detail
@@ -196,23 +192,6 @@ namespace uf::annotation
         auto operator==(AuthoringPlacement const&) const -> bool = default;
     };
 
-    // An authored recognizer: the definition the runtime will see, plus the two
-    // facts only authoring keeps. The screen it was drawn on is what makes its
-    // rectangles meaningful; the shared flag records that the author intends
-    // these pixels to be reused on other pages, which is a statement of intent
-    // no other field can carry -- an element marked shared before it reaches a
-    // second page is indistinguishable from an ordinary one without it.
-    //
-    // Neither reaches the runtime manifest: recognition needs the template and
-    // the region, never where the author got them. Retained as the v1-shaped
-    // input to the compatibility create() overload below.
-    struct AuthoringRecognizerSpec final
-    {
-        RecognizerDefinition definition;
-        SourceId             sourceId;
-        bool                 shared{};
-    };
-
     struct AuthoringRecognizerSource final
     {
         RecognizerId recognizerId;
@@ -316,20 +295,6 @@ namespace uf::annotation
             std::vector<Element> elements,
             std::vector<PageSignature> pages,
             std::vector<AuthoringPlacement> placements,
-            std::vector<RegressionCase> regressions
-        ) -> Result<AuthoringDocument>;
-
-        // The v1-shaped compatibility path: a recognizer still carries its own
-        // allowed_page_ids, and placements are derived from them exactly as the
-        // migration loader derives them from a v1 file. Retained so existing
-        // callers and fixtures need not spell placements by hand.
-        [[nodiscard]]
-        static auto create(
-            ProjectId projectId,
-            ProjectFingerprint fingerprint,
-            std::vector<AuthoringSource> sources,
-            std::vector<AuthoringRecognizerSpec> recognizers,
-            std::vector<PageSignature> pages,
             std::vector<RegressionCase> regressions
         ) -> Result<AuthoringDocument>;
 

@@ -112,17 +112,41 @@ namespace uf::workbench
             }
         }
 
+        // Both interactive and info elements join a page through a placement,
+        // which carries this page's own search region. Iterating recognizers
+        // keeps the rows in a stable order and pulls the per-page ROI from the
+        // matching placement.
         auto regions = std::vector<PageView::RegionRow>{};
+        auto infos   = std::vector<PageView::RegionRow>{};
         for (auto const& recognizer : draft.recognizers)
         {
-            auto const placedHere = (
-                recognizer.annotationType
-                    == annotation::AnnotationType::ActionTarget
-                && std::ranges::contains(recognizer.allowedPageIds, id)
+            auto const placement = std::ranges::find_if(
+                draft.placements,
+                [&recognizer, id](EditablePlacement const& candidate)
+                {
+                    return candidate.pageId == id
+                        && candidate.elementId == recognizer.id;
+                }
             );
-            if (placedHere)
+            if (placement == draft.placements.end())
             {
-                regions.emplace_back(regionRow(recognizer));
+                continue;
+            }
+            auto row = regionRow(recognizer);
+            row.searchRoiOnThisPage = placement->searchRoi;
+            if (
+                recognizer.annotationType
+                == annotation::AnnotationType::ActionTarget
+            )
+            {
+                regions.emplace_back(std::move(row));
+            }
+            else if (
+                recognizer.annotationType
+                == annotation::AnnotationType::InfoRegion
+            )
+            {
+                infos.emplace_back(std::move(row));
             }
         }
 
@@ -133,6 +157,7 @@ namespace uf::workbench
             .identifiedBy  = std::move(identifiedBy),
             .mustNotShow   = std::move(mustNotShow),
             .regions       = std::move(regions),
+            .infos         = std::move(infos),
         };
     }
 

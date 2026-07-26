@@ -107,32 +107,32 @@ namespace uf::engine
                 fingerprint,
                 {*source},
                 {
-                    anno::AuthoringRecognizerSpec{
-                        .definition = anno::test::recognizer(
-                            fingerprint,
-                            anchorId,
-                            "home_marker",
-                            anno::AnnotationType::PageAnchor,
-                            anno::test::pixelRect(0, 0, 1, 1),
-                            anno::test::pixelRect(0, 0, 3, 2)
-                        ),
-                        .sourceId = sourceId,
-                    },
-                    anno::AuthoringRecognizerSpec{
-                        .definition = anno::test::recognizer(
-                            fingerprint,
-                            actionId,
-                            "daily_button",
-                            anno::AnnotationType::ActionTarget,
-                            anno::test::pixelRect(1, 0, 2, 2),
-                            anno::test::pixelRect(0, 0, 3, 2),
-                            {pageId},
-                            *click
-                        ),
-                        .sourceId = sourceId,
-                    },
+                    anno::test::anchorElement(
+                        fingerprint,
+                        anchorId,
+                        "home_marker",
+                        sourceId,
+                        anno::test::pixelRect(0, 0, 1, 1),
+                        anno::test::pixelRect(0, 0, 3, 2)
+                    ),
+                    anno::test::interactiveElement(
+                        fingerprint,
+                        actionId,
+                        "daily_button",
+                        sourceId,
+                        anno::test::pixelRect(1, 0, 2, 2),
+                        anno::test::pixelRect(0, 0, 3, 2),
+                        *click
+                    ),
                 },
                 {anno::test::page(pageId, "home", {anchorId})},
+                {
+                    anno::test::placement(
+                        pageId,
+                        actionId,
+                        anno::test::pixelRect(0, 0, 3, 2)
+                    ),
+                },
                 {}
             );
             REQUIRE(document.has_value());

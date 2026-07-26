@@ -83,37 +83,36 @@ namespace uf::annotation
                 }
             };
 
+            auto elements = std::vector<Element>{};
+            elements.emplace_back(
+                test::interactiveElement(
+                    fingerprint,
+                    actionId,
+                    "daily_button",
+                    sourceId,
+                    test::pixelRect(4, 3, 2, 1),
+                    test::pixelRect(3, 2, 4, 3),
+                    *click
+                )
+            );
+            elements.emplace_back(
+                test::anchorElement(
+                    fingerprint,
+                    anchorId,
+                    "home_marker",
+                    sourceId,
+                    test::pixelRect(1, 1, 1, 1),
+                    test::pixelRect(0, 0, 3, 3)
+                )
+            );
+
             auto result = AuthoringDocument::create(
                 test::projectId(),
                 fingerprint,
                 {*source},
-                {
-                    AuthoringRecognizerSpec{
-                        .definition = test::recognizer(
-                            fingerprint,
-                            actionId,
-                            "daily_button",
-                            AnnotationType::ActionTarget,
-                            test::pixelRect(4, 3, 2, 1),
-                            test::pixelRect(3, 2, 4, 3),
-                            {pageId},
-                            *click
-                        ),
-                        .sourceId = sourceId,
-                    },
-                    AuthoringRecognizerSpec{
-                        .definition = test::recognizer(
-                            fingerprint,
-                            anchorId,
-                            "home_marker",
-                            AnnotationType::PageAnchor,
-                            test::pixelRect(1, 1, 1, 1),
-                            test::pixelRect(0, 0, 3, 3)
-                        ),
-                        .sourceId = sourceId,
-                    },
-                },
+                std::move(elements),
                 {test::page(pageId, "home", {anchorId})},
+                {test::placement(pageId, actionId, test::pixelRect(3, 2, 4, 3))},
                 {regression}
             );
             REQUIRE(result.has_value());
@@ -310,79 +309,20 @@ namespace uf::annotation
         }
     }
 
-    TEST_CASE("annotation authoring v1 file migrates to v2 and round-trips")
+    TEST_CASE("annotation authoring reader rejects a retired v1 schema string")
     {
-        // A hand-written v1 byte fixture: page membership lives on the action
-        // target as page_ids, and there is no [[placement]] table. The loader
-        // reads it once and upgrades it to the v2 form of the same model.
-        auto const v1 = std::string{
-            "schema = \"umbraflow-authoring/v1\"\n"
-            "project_id = \"personal.test\"\n"
-            "base_resolution = [8, 6]\n"
-            "base_dpi = [96, 96]\n"
-            "\n"
-            "[[source]]\n"
-            "id = \"00000000-0000-0000-0000-000000000201\"\n"
-            "path = \"assets/sources/"
-            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.png\"\n"
-            "content_hash = \"sha256:"
-            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"\n"
-            "client_size = [8, 6]\n"
-            "dpi = [96, 96]\n"
-            "capture_backend = \"wgc\"\n"
-            "target_generation = 7\n"
-            "captured_at = \"2026-07-23T09:15:00+09:00\"\n"
-            "\n"
-            "[[annotation]]\n"
-            "id = \"00000000-0000-0000-0000-000000000001\"\n"
-            "name = \"home_marker\"\n"
-            "type = \"page_anchor\"\n"
-            "source_id = \"00000000-0000-0000-0000-000000000201\"\n"
-            "recognizer_kind = \"gray_template\"\n"
-            "template_rect = [1, 1, 1, 1]\n"
-            "search_roi = [0, 0, 3, 3]\n"
-            "min_similarity_bp = 9000\n"
-            "\n"
-            "[[annotation]]\n"
-            "id = \"00000000-0000-0000-0000-000000000002\"\n"
-            "name = \"daily_button\"\n"
-            "type = \"action_target\"\n"
-            "source_id = \"00000000-0000-0000-0000-000000000201\"\n"
-            "recognizer_kind = \"gray_template\"\n"
-            "template_rect = [4, 3, 2, 1]\n"
-            "search_roi = [3, 2, 4, 3]\n"
-            "min_similarity_bp = 9000\n"
-            "default_click = [1, 0]\n"
-            "page_ids = [\"00000000-0000-0000-0000-000000000101\"]\n"
-            "\n"
-            "[[page]]\n"
-            "id = \"00000000-0000-0000-0000-000000000101\"\n"
-            "name = \"home\"\n"
-            "required = [\"00000000-0000-0000-0000-000000000001\"]\n"
-            "forbidden = []\n"
-            "\n"
-            "[[regression]]\n"
-            "id = \"00000000-0000-0000-0000-000000000301\"\n"
-            "source_id = \"00000000-0000-0000-0000-000000000201\"\n"
-            "classification = \"positive\"\n"
-            "expected_outcome = \"resolved\"\n"
-            "expected_page_id = \"00000000-0000-0000-0000-000000000101\"\n"
-        };
-
-        auto const migrated = parseAuthoringDocument(v1);
-        REQUIRE(migrated.has_value());
-
-        // The upgrade is the exact v2 form of the same model the fixture builds.
-        auto const upgraded = serializeAuthoringDocument(*migrated);
-        CHECK(upgraded == serializeAuthoringDocument(authoringDocument()));
-        CHECK(upgraded.starts_with("schema = \"umbraflow-authoring/v2\""));
-        CHECK(upgraded.find("\n[[placement]]\n") != std::string::npos);
-        CHECK(upgraded.find("page_ids") == std::string::npos);
-
-        // A v2 file round-trips through the canonical self-check unchanged.
-        auto const reparsed = parseAuthoringDocument(upgraded);
-        REQUIRE(reparsed.has_value());
-        CHECK(serializeAuthoringDocument(*reparsed) == upgraded);
+        // The v1 read path is gone: the only real project migrated to v2 on disk,
+        // so an old schema string now fails as an ordinary unsupported schema
+        // rather than upgrading.
+        auto const canonical = serializeAuthoringDocument(authoringDocument());
+        auto const drifted   = replaceOnce(
+            canonical,
+            "umbraflow-authoring/v2",
+            "umbraflow-authoring/v1"
+        );
+        auto const rejected = parseAuthoringDocument(drifted);
+        REQUIRE_FALSE(rejected.has_value());
+        CHECK(rejected.error().message().contains("unsupported"));
     }
 
     TEST_CASE("annotation authoring placements serialize in canonical page then element order")

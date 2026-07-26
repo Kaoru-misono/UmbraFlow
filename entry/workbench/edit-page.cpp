@@ -360,25 +360,42 @@ namespace uf::workbench
 
     auto EditPage::placeExisting(MemberId member) -> Status
     {
-        auto draft   = m_draft;
-        auto* target = findEditableRecognizer(draft, member);
+        auto draft         = m_draft;
+        auto const* target = findEditableRecognizer(draft, member);
         if (target == nullptr)
         {
             return missingMember(member);
         }
-        if (target->annotationType != annotation::AnnotationType::ActionTarget)
+        if (target->annotationType == annotation::AnnotationType::PageAnchor)
         {
             return fail(
                 AutomationErrorKind::InvalidResource,
                 std::format(
-                    "\"{}\" is not an interactive region",
+                    "\"{}\" is a page anchor and joins a page through its "
+                    "signature, not a placement",
                     target->name
                 )
             );
         }
-        if (!std::ranges::contains(target->allowedPageIds, m_id))
+        // The placement seeds its per-page search region from the element's own,
+        // the same region a fresh placement of it would start with.
+        auto const seedRoi = target->searchRoi;
+        auto const already = std::ranges::any_of(
+            draft.placements,
+            [member, this](EditablePlacement const& placement)
+            {
+                return placement.elementId == member && placement.pageId == m_id;
+            }
+        );
+        if (!already)
         {
-            target->allowedPageIds.emplace_back(m_id);
+            draft.placements.emplace_back(
+                EditablePlacement{
+                    .pageId    = m_id,
+                    .elementId = member,
+                    .searchRoi = seedRoi,
+                }
+            );
         }
         m_draft = std::move(draft);
         return ok();
@@ -395,23 +412,23 @@ namespace uf::workbench
             );
         }
 
-        auto const roi   = origin->searchRoi;
-        auto const newId = annotation::RecognizerId{mintResourceId()};
+        auto const roi = origin->searchRoi;
         UF_TRY_VALUE(
             shared,
             shareRegionOnPage(
                 m_draft,
                 SharedRegionSpec{
-                    .recognizerId = newId,
-                    .shareFrom    = from,
-                    .pageId       = m_id,
-                    .searchRoi    = roi,
+                    .elementId = from,
+                    .pageId    = m_id,
+                    .searchRoi = roi,
                 }
             )
         );
         m_draft = std::move(shared.draft);
+        // The same element is now placed here; there is no copy to select, so the
+        // element itself is what the caller selects.
         return EditPage::SharedRegionScore{
-            .id   = newId,
+            .id   = from,
             .name = std::move(shared.name),
         };
     }
@@ -590,29 +607,7 @@ namespace uf::workbench
 
     auto InteractiveRegion::pagesPlacedOn() const -> std::vector<annotation::PageId>
     {
-        auto const& draft   = m_page.draftView();
-        auto const members  = sharedRegionMembers(draft, m_id);
-        auto pages          = std::vector<annotation::PageId>{};
-        for (auto const& memberId : members)
-        {
-            auto const found = std::ranges::find(
-                draft.recognizers,
-                memberId,
-                &EditableRecognizer::id
-            );
-            if (found == draft.recognizers.end())
-            {
-                continue;
-            }
-            for (auto const& page : found->allowedPageIds)
-            {
-                if (!std::ranges::contains(pages, page))
-                {
-                    pages.emplace_back(page);
-                }
-            }
-        }
-        return pages;
+        return uf::workbench::pagesPlacedOn(m_page.draftView(), m_id);
     }
 
     auto InteractiveRegion::rename(std::string name) -> Status
@@ -673,7 +668,7 @@ namespace uf::workbench
     {
         UF_TRY_VALUE(
             retemplated,
-            retemplateSharedRegion(m_page.draftCopy(), m_id, templateRect)
+            setElementTemplateRect(m_page.draftCopy(), m_id, templateRect)
         );
         m_page.replaceDraft(std::move(retemplated.draft));
         return ok();
@@ -699,78 +694,75 @@ namespace uf::workbench
             return missingMember(m_id);
         }
 
-        auto const roi   = origin->searchRoi;
-        auto const newId = annotation::RecognizerId{mintResourceId()};
+        auto const roi = origin->searchRoi;
         UF_TRY_VALUE(
             shared,
             shareRegionOnPage(
                 m_page.draftCopy(),
                 SharedRegionSpec{
-                    .recognizerId = newId,
-                    .shareFrom    = m_id,
-                    .pageId       = page,
-                    .searchRoi    = roi,
+                    .elementId = m_id,
+                    .pageId    = page,
+                    .searchRoi = roi,
                 }
             )
         );
         m_page.replaceDraft(std::move(shared.draft));
         return EditPage::SharedRegionScore{
-            .id   = newId,
+            .id   = m_id,
             .name = std::move(shared.name),
         };
     }
 
     auto InteractiveRegion::removeFromThisPage() -> Status
     {
-        auto draft   = m_page.draftCopy();
-        auto* target = findEditableRecognizer(draft, m_id);
+        auto draft         = m_page.draftCopy();
+        auto const* target = findEditableRecognizer(draft, m_id);
         if (target == nullptr)
         {
             return missingMember(m_id);
         }
 
-        // The v1 copy model gives this page its own recognizer, so a placement
-        // that names only this page has no reason to survive its withdrawal; the
-        // recognizer is removed outright. A recognizer authorized on other pages
-        // as well simply loses this one.
-        if (target->allowedPageIds.size() <= 1U)
+        auto const pages  = uf::workbench::pagesPlacedOn(draft, m_id);
+        auto const onThis = std::ranges::contains(pages, m_page.pageId());
+        if (!onThis)
         {
-            UF_TRY_VALUE(deleted, deleteRecognizer(std::move(draft), m_id));
-            m_page.replaceDraft(std::move(deleted.draft));
+            m_page.replaceDraft(std::move(draft));
             return ok();
         }
-        std::erase(target->allowedPageIds, m_page.pageId());
+        // Withdrawing an interactive element's last placement would leave it
+        // placed nowhere, which the closure rule forbids. This is the point the
+        // v1 copy model silently deleted the recognizer; under v2 the element is
+        // one thing on N pages, so the author is told to delete it instead.
+        if (pages.size() <= 1U)
+        {
+            return fail(
+                AutomationErrorKind::InvalidResource,
+                std::format(
+                    "\"{}\" is only on this page; an interactive region must stay "
+                    "on at least one, so delete it instead of removing it here",
+                    target->name
+                )
+            );
+        }
+        std::erase_if(
+            draft.placements,
+            [this](EditablePlacement const& placement)
+            {
+                return placement.elementId == m_id
+                    && placement.pageId == m_page.pageId();
+            }
+        );
         m_page.replaceDraft(std::move(draft));
         return ok();
     }
 
     auto InteractiveRegion::deleteEverywhere() -> Result<DeletedEntity>
     {
-        auto draft         = m_page.draftCopy();
-        auto const members = sharedRegionMembers(draft, m_id);
-        if (members.empty())
-        {
-            return missingMember(m_id);
-        }
-
-        auto withdrawnRoles        = std::size_t{0};
-        auto clearedAuthorizations = std::size_t{0};
-        auto removedRegressions    = std::size_t{0};
-        for (auto const& memberId : members)
-        {
-            UF_TRY_VALUE(deleted, deleteRecognizer(std::move(draft), memberId));
-            withdrawnRoles        += deleted.withdrawnRoles;
-            clearedAuthorizations += deleted.clearedAuthorizations;
-            removedRegressions    += deleted.removedRegressions;
-            draft = std::move(deleted.draft);
-        }
-        m_page.replaceDraft(draft);
-        return DeletedEntity{
-            .draft                 = std::move(draft),
-            .withdrawnRoles        = withdrawnRoles,
-            .clearedAuthorizations = clearedAuthorizations,
-            .removedRegressions    = removedRegressions,
-        };
+        // One element, deleted once: deleteRecognizer withdraws it from every
+        // signature and removes all its placements.
+        UF_TRY_VALUE(deleted, deleteRecognizer(m_page.draftCopy(), m_id));
+        m_page.replaceDraft(deleted.draft);
+        return deleted;
     }
 
     PageAnchor::PageAnchor(
@@ -861,7 +853,7 @@ namespace uf::workbench
     {
         UF_TRY_VALUE(
             retemplated,
-            retemplateSharedRegion(m_page.draftCopy(), m_id, templateRect)
+            setElementTemplateRect(m_page.draftCopy(), m_id, templateRect)
         );
         m_page.replaceDraft(std::move(retemplated.draft));
         return ok();
@@ -879,30 +871,10 @@ namespace uf::workbench
 
     auto PageAnchor::deleteEverywhere() -> Result<DeletedEntity>
     {
-        auto draft         = m_page.draftCopy();
-        auto const members = sharedRegionMembers(draft, m_id);
-        if (members.empty())
-        {
-            return missingMember(m_id);
-        }
-
-        auto withdrawnRoles        = std::size_t{0};
-        auto clearedAuthorizations = std::size_t{0};
-        auto removedRegressions    = std::size_t{0};
-        for (auto const& memberId : members)
-        {
-            UF_TRY_VALUE(deleted, deleteRecognizer(std::move(draft), memberId));
-            withdrawnRoles        += deleted.withdrawnRoles;
-            clearedAuthorizations += deleted.clearedAuthorizations;
-            removedRegressions    += deleted.removedRegressions;
-            draft = std::move(deleted.draft);
-        }
-        m_page.replaceDraft(draft);
-        return DeletedEntity{
-            .draft                 = std::move(draft),
-            .withdrawnRoles        = withdrawnRoles,
-            .clearedAuthorizations = clearedAuthorizations,
-            .removedRegressions    = removedRegressions,
-        };
+        // One anchor, deleted once: deleteRecognizer withdraws it from every
+        // signature it names.
+        UF_TRY_VALUE(deleted, deleteRecognizer(m_page.draftCopy(), m_id));
+        m_page.replaceDraft(deleted.draft);
+        return deleted;
     }
 }

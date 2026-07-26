@@ -163,19 +163,17 @@ namespace uf::workbench
                 fingerprint,
                 {*source},
                 {
-                    annotation::AuthoringRecognizerSpec{
-                        .definition = annotation::test::recognizer(
-                            fingerprint,
-                            anchorId,
-                            "home_marker",
-                            annotation::AnnotationType::PageAnchor,
-                            annotation::test::pixelRect(0, 0, 1, 1),
-                            annotation::test::pixelRect(0, 0, 2, 2)
-                        ),
-                        .sourceId = sourceId,
-                    },
+                    annotation::test::anchorElement(
+                        fingerprint,
+                        anchorId,
+                        "home_marker",
+                        sourceId,
+                        annotation::test::pixelRect(0, 0, 1, 1),
+                        annotation::test::pixelRect(0, 0, 2, 2)
+                    ),
                 },
                 {annotation::test::page(pageId, "home", {anchorId})},
+                {},
                 {}
             );
             REQUIRE(document.has_value());
@@ -229,28 +227,22 @@ namespace uf::workbench
                 fingerprint,
                 {*firstSource, *secondSource},
                 {
-                    annotation::AuthoringRecognizerSpec{
-                        .definition = annotation::test::recognizer(
-                            fingerprint,
-                            firstAnchorId,
-                            "first_marker",
-                            annotation::AnnotationType::PageAnchor,
-                            annotation::test::pixelRect(0, 0, 1, 1),
-                            annotation::test::pixelRect(0, 0, 2, 2)
-                        ),
-                        .sourceId = firstSourceId,
-                    },
-                    annotation::AuthoringRecognizerSpec{
-                        .definition = annotation::test::recognizer(
-                            fingerprint,
-                            secondAnchorId,
-                            "second_marker",
-                            annotation::AnnotationType::PageAnchor,
-                            annotation::test::pixelRect(0, 0, 1, 1),
-                            annotation::test::pixelRect(0, 0, 2, 2)
-                        ),
-                        .sourceId = secondSourceId,
-                    },
+                    annotation::test::anchorElement(
+                        fingerprint,
+                        firstAnchorId,
+                        "first_marker",
+                        firstSourceId,
+                        annotation::test::pixelRect(0, 0, 1, 1),
+                        annotation::test::pixelRect(0, 0, 2, 2)
+                    ),
+                    annotation::test::anchorElement(
+                        fingerprint,
+                        secondAnchorId,
+                        "second_marker",
+                        secondSourceId,
+                        annotation::test::pixelRect(0, 0, 1, 1),
+                        annotation::test::pixelRect(0, 0, 2, 2)
+                    ),
                 },
                 {
                     annotation::test::page(
@@ -259,6 +251,7 @@ namespace uf::workbench
                         {firstAnchorId, secondAnchorId}
                     ),
                 },
+                {},
                 {}
             );
             REQUIRE(document.has_value());

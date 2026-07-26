@@ -87,31 +87,31 @@ namespace uf::workbench
                 fingerprint,
                 {*source},
                 {
-                    annotation::AuthoringRecognizerSpec{
-                        .definition = annotation::test::recognizer(
-                            fingerprint,
-                            anchorId,
-                            "anchor",
-                            annotation::AnnotationType::PageAnchor,
-                            annotation::test::pixelRect(0, 0, 1, 1),
-                            annotation::test::pixelRect(0, 0, 3, 1)
-                        ),
-                        .sourceId = sourceId,
-                    },
-                    annotation::AuthoringRecognizerSpec{
-                        .definition = annotation::test::recognizer(
-                            fingerprint,
-                            actionId,
-                            "action",
-                            annotation::AnnotationType::ActionTarget,
-                            annotation::test::pixelRect(1, 0, 1, 1),
-                            annotation::test::pixelRect(0, 0, 3, 1),
-                            {pageId}
-                        ),
-                        .sourceId = sourceId,
-                    },
+                    annotation::test::anchorElement(
+                        fingerprint,
+                        anchorId,
+                        "anchor",
+                        sourceId,
+                        annotation::test::pixelRect(0, 0, 1, 1),
+                        annotation::test::pixelRect(0, 0, 3, 1)
+                    ),
+                    annotation::test::interactiveElement(
+                        fingerprint,
+                        actionId,
+                        "action",
+                        sourceId,
+                        annotation::test::pixelRect(1, 0, 1, 1),
+                        annotation::test::pixelRect(0, 0, 3, 1)
+                    ),
                 },
                 {annotation::test::page(pageId, "home", {anchorId})},
+                {
+                    annotation::test::placement(
+                        pageId,
+                        actionId,
+                        annotation::test::pixelRect(0, 0, 3, 1)
+                    ),
+                },
                 {}
             );
             REQUIRE(document.has_value());
@@ -322,33 +322,28 @@ namespace uf::workbench
                     sourceFrom(otherId, fingerprint, lightPng),
                 },
                 {
-                    annotation::AuthoringRecognizerSpec{
-                        .definition = annotation::test::recognizer(
-                            fingerprint,
-                            anchorId,
-                            "dark_mark",
-                            annotation::AnnotationType::PageAnchor,
-                            annotation::test::pixelRect(0, 0, 1, 1),
-                            annotation::test::pixelRect(0, 0, 1, 1)
-                        ),
-                        .sourceId = sourceId,
-                    },
-                    annotation::AuthoringRecognizerSpec{
-                        .definition = annotation::test::recognizer(
-                            fingerprint,
-                            otherAnchor,
-                            "light_mark",
-                            annotation::AnnotationType::PageAnchor,
-                            annotation::test::pixelRect(0, 0, 1, 1),
-                            annotation::test::pixelRect(0, 0, 1, 1)
-                        ),
-                        .sourceId = otherId,
-                    },
+                    annotation::test::anchorElement(
+                        fingerprint,
+                        anchorId,
+                        "dark_mark",
+                        sourceId,
+                        annotation::test::pixelRect(0, 0, 1, 1),
+                        annotation::test::pixelRect(0, 0, 1, 1)
+                    ),
+                    annotation::test::anchorElement(
+                        fingerprint,
+                        otherAnchor,
+                        "light_mark",
+                        otherId,
+                        annotation::test::pixelRect(0, 0, 1, 1),
+                        annotation::test::pixelRect(0, 0, 1, 1)
+                    ),
                 },
                 {
                     annotation::test::page(pageId, "dark", {anchorId}),
                     annotation::test::page(otherPageId, "light", {otherAnchor}),
                 },
+                {},
                 std::move(regressions)
             );
             REQUIRE(document.has_value());
@@ -494,7 +489,15 @@ namespace uf::workbench
                 .searchRoi      = annotation::test::pixelRect(0, 0, 1, 1),
                 .similarityBasisPoints = 9'000U,
                 .defaultClick   = {},
-                .allowedPageIds = {lightPage},
+            }
+        );
+        // The element's template was cut from the dark screen but it is placed on
+        // the light page, which is the false-green case under test.
+        draft.placements.emplace_back(
+            EditablePlacement{
+                .pageId    = lightPage,
+                .elementId = sharedId,
+                .searchRoi = annotation::test::pixelRect(0, 0, 1, 1),
             }
         );
         auto const document = buildAuthoringDocument(draft);

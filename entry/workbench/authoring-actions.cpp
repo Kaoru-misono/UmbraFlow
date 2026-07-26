@@ -360,14 +360,12 @@ namespace uf::workbench
         }
 
         auto const targetScreen = claimedScreen(state, pageId);
-        auto const newId        = annotation::RecognizerId{mintResourceId()};
         auto shared             = shareRegionOnPage(
             state.draft(),
             SharedRegionSpec{
-                .recognizerId = newId,
-                .shareFrom    = shareFrom,
-                .pageId       = pageId,
-                .searchRoi    = origin->searchRoi,
+                .elementId = shareFrom,
+                .pageId    = pageId,
+                .searchRoi = origin->searchRoi,
             }
         );
         if (!shared)
@@ -379,9 +377,9 @@ namespace uf::workbench
             return;
         }
 
-        // Measured against the element being copied rather than the copy, which
-        // does not exist until this edit lands. Both carry the same template and
-        // the same region, so the score is the one the copy will have.
+        // The new placement searches the region the element already uses, so
+        // scoring the element against the target screen is scoring the placement
+        // the drop just created.
         auto verdict = std::string{};
         if (targetScreen.has_value())
         {
@@ -417,13 +415,12 @@ namespace uf::workbench
             ui,
             std::move(shared->draft),
             std::format(
-                "\"{}\" added to page \"{}\" as \"{}\"{}",
-                origin->name,
-                pageName(state, pageId),
+                "\"{}\" placed on page \"{}\"{}",
                 shared->name,
+                pageName(state, pageId),
                 verdict
             ),
-            newId,
+            shareFrom,
             targetScreen
         );
     }
@@ -478,10 +475,10 @@ namespace uf::workbench
 
         if (isTemplate)
         {
-            // A shared element is drawn once, so correcting its template has
-            // to correct it on every page it appears on. Each page keeps its
-            // own detection range.
-            auto retemplated = retemplateSharedRegion(
+            // An element is one thing placed on N pages, so correcting its
+            // template corrects it everywhere at once. Each placement keeps its
+            // own detection range, which the moved template must still fit.
+            auto retemplated = setElementTemplateRect(
                 state.draft(),
                 recognizerId,
                 editedRect
@@ -496,12 +493,11 @@ namespace uf::workbench
             else
             {
                 auto description = std::format("template rect set to {}", geometry);
-                if (retemplated->movedMembers > 0U)
+                if (retemplated->otherPlacements > 1U)
                 {
                     description += std::format(
-                        "; moved it on {} other {}",
-                        retemplated->movedMembers,
-                        retemplated->movedMembers == 1U ? "page" : "pages"
+                        "; searched on {} pages, all updated",
+                        retemplated->otherPlacements
                     );
                 }
                 requestEdit(

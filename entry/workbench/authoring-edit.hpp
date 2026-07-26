@@ -32,21 +32,36 @@ namespace uf::workbench
 
     struct EditableRecognizer final
     {
-        annotation::RecognizerId              id;
-        std::string                           name{};
-        annotation::AnnotationType            annotationType{};
-        annotation::SourceId                  sourceId;
-        PixelRect                             templateRect;
+        annotation::RecognizerId   id;
+        std::string                name{};
+        annotation::AnnotationType annotationType{};
+        annotation::SourceId       sourceId;
+        PixelRect                  templateRect;
+
+        // The element's authoring-time default search region. Under the v2 model
+        // page membership lives on placements, so this is the seed a fresh
+        // placement copies; each placement then carries its own per-page ROI.
         PixelRect                             searchRoi;
         uint32                                similarityBasisPoints{};
         std::optional<EditableTemplateOffset> defaultClick{};
-        std::vector<annotation::PageId>       allowedPageIds{};
 
         // The author marked these pixels as reusable on other pages. Intent
         // rather than fact: it is set before any second page exists, which is
         // the whole point -- it is what puts the element somewhere the author
-        // can reach it from the page they want to put it on.
+        // can reach it from the page they want to put it on. Under v2 it no
+        // longer groups copies; one element is placed on N pages natively.
         bool shared{};
+    };
+
+    // One interactive or info element placed on one page, with where the runtime
+    // should look for it there. The direct draft-side twin of
+    // annotation::AuthoringPlacement: makeAuthoringDraft and buildAuthoringDocument
+    // map it across with no inversion.
+    struct EditablePlacement final
+    {
+        annotation::PageId       pageId;
+        annotation::RecognizerId elementId;
+        PixelRect                searchRoi;
     };
 
     struct EditablePage final
@@ -71,6 +86,7 @@ namespace uf::workbench
         annotation::ProjectFingerprint  fingerprint;
         std::vector<EditableSource>     sources{};
         std::vector<EditableRecognizer> recognizers{};
+        std::vector<EditablePlacement>  placements{};
         std::vector<EditablePage>       pages{};
         std::vector<EditableRegression> regressions{};
     };
@@ -167,33 +183,24 @@ namespace uf::workbench
         PageMemberSpec const& spec
     ) -> Result<AddedPageMember>;
 
-    // Every copy of one shared element. Two recognizers are the same element when
-    // the author marked them reusable and they were cut from the same pixels for
-    // the same purpose: same source image, same template rectangle, same
-    // annotation type. The mark is what makes this a statement rather than a
-    // coincidence -- without it a page anchor covering the same pixels as a
-    // region would be dragged along by an edit to either.
-    //
-    // A region nobody marked is a group of one, so a plain template drag and a
-    // shared one take the same path.
-    //
-    // The members stay ordinary recognizers: each is authorized on its own page
-    // and carries its own search region, so the runtime and the generated
-    // manifest never learn that a group exists.
+    // The pages one element is placed on, in placement order, without repeats.
+    // Under v2 an element is one thing placed on N pages, so this is simply the
+    // pages its placements name; an anchor, which joins pages through its
+    // signature rather than a placement, yields none.
     [[nodiscard]]
-    auto sharedRegionMembers(
+    auto pagesPlacedOn(
         AuthoringDraft const& draft,
         annotation::RecognizerId id
-    ) -> std::vector<annotation::RecognizerId>;
+    ) -> std::vector<annotation::PageId>;
 
     // Marks an interactive region as reusable on other pages, or takes the mark
-    // off. Marking is what puts it somewhere the author can reach from the page
-    // they want to put it on, before any second page exists -- so it is intent,
-    // and intent has to be stored.
+    // off. Marking is what puts it in the Shared regions palette, where the
+    // author can reach it from the page they want to put it on, before any second
+    // page exists -- so it is intent, and intent has to be stored.
     //
-    // Fails for anything that is not an interactive region, and refuses to unmark
-    // an element still on more than one page: that is a choice between removing
-    // the copies and keeping them linked, and only the author can make it.
+    // Under v2 the mark no longer groups copies -- one element is placed on N
+    // pages natively -- so it is pure intent and toggling it never touches page
+    // membership. Fails only for anything that is not an interactive region.
     [[nodiscard]]
     auto setRegionShared(
         AuthoringDraft draft,
@@ -203,43 +210,48 @@ namespace uf::workbench
 
     struct SharedRegionSpec final
     {
-        annotation::RecognizerId recognizerId;
-        annotation::RecognizerId shareFrom;
+        annotation::RecognizerId elementId;
         annotation::PageId       pageId;
         PixelRect                searchRoi;
     };
 
-    // Reuses one interactive region template on another page: a second
-    // recognizer with the same source and template rectangle, its own search
-    // region, and an authorization on that page alone. Sharing is restricted to
-    // interactive regions; a page anchor joins a page through its signature,
-    // where reuse means something different and is left to the advanced
-    // controls.
+    struct SharedRegionPlacement final
+    {
+        AuthoringDraft draft;
+        std::string    name{};
+    };
+
+    // Places one interactive element on another page: a new placement of the SAME
+    // element, carrying its own search region, seeded by the caller from the
+    // origin placement. No recognizer copy is minted -- the element is one thing
+    // placed on N pages, so a later template edit touches it once and every
+    // placement sees it. The element is marked reusable, since reaching a second
+    // page is what being shared means.
     //
-    // Fails when the region or the page is not in the draft, when the region is
-    // not an interactive region, or when that page already has this element.
+    // Fails when the element or the page is not in the draft, when the element is
+    // not an interactive region, or when that page already places it.
     [[nodiscard]]
     auto shareRegionOnPage(
         AuthoringDraft draft,
         SharedRegionSpec const& spec
-    ) -> Result<AddedPageMember>;
+    ) -> Result<SharedRegionPlacement>;
 
     struct RetemplatedRegion final
     {
         AuthoringDraft draft;
-        std::size_t    movedMembers{};
+        std::size_t    otherPlacements{};
     };
 
-    // Moves a recognizer's template rectangle, carrying every other member of its
-    // shared element with it -- the whole point of drawing the element once is
-    // that correcting it corrects it everywhere. Each member keeps its own search
-    // region.
+    // Moves one element's template rectangle. Because an element is a single
+    // thing placed on N pages, correcting its pixels corrects it on every page at
+    // once; there are no copies to carry. Each placement keeps its own search
+    // region, so the moved template must still fit them all.
     //
-    // Fails when a member search region could not contain the moved template,
-    // naming that member: silently widening a range the author drew would enlarge
-    // both the search cost and the surface for a false match.
+    // Fails when the element's own search region or any placement's search region
+    // could not contain the moved template: silently widening a range the author
+    // drew would enlarge both the search cost and the surface for a false match.
     [[nodiscard]]
-    auto retemplateSharedRegion(
+    auto setElementTemplateRect(
         AuthoringDraft draft,
         annotation::RecognizerId id,
         PixelRect templateRect
