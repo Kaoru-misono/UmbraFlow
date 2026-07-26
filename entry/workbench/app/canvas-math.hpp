@@ -103,4 +103,14 @@ namespace uf::workbench
         uint32 sourceWidth,
         uint32 sourceHeight
     ) -> Result<PixelRect>;
+
+    // Where a source-pixel rectangle's top-left corner lands on screen under the
+    // current view. The rectangle's size on screen is its source size scaled by
+    // the view, so an origin is all a caller needs to place it.
+    [[nodiscard]]
+    auto rectScreenOrigin(
+        CanvasView view,
+        CanvasPoint canvasOrigin,
+        PixelRect const& rect
+    ) -> CanvasPoint;
 }

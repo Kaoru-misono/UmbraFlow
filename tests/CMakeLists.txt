@@ -164,8 +164,11 @@ if(TARGET ${PROJECT_NAME}_workbench_support)
     cpp_add_test(
         NAME test-workbench
         SOURCES
+            workbench/test-authoring-actions.cpp
             workbench/test-authoring-edit.cpp
             workbench/test-canvas-math.cpp
+            workbench/test-model-check-job.cpp
+            workbench/test-model-check-view.cpp
             workbench/test-preview.cpp
             workbench/test-project-persistence.cpp
             workbench/test-source-ingestion.cpp

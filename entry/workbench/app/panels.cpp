@@ -3,6 +3,9 @@
 #include "canvas-math.hpp"
 #include "workbench-app.hpp"
 
+#include "authoring-actions.hpp"
+#include "model-check-view.hpp"
+#include "panel-state.hpp"
 #include "preview.hpp"
 #include "project-persistence.hpp"
 #include "source-ingestion.hpp"
@@ -11,6 +14,7 @@
 #include <annotation/catalog.hpp>
 #include <annotation/recognition-runtime.hpp>
 
+#include <core/error/contracts.hpp>
 #include <core/error/error.hpp>
 #include <core/error/result.hpp>
 #include <core/time/monotonic-time.hpp>
@@ -39,18 +43,26 @@ namespace uf::workbench
         constexpr auto k_templateColor = IM_COL32(96, 220, 120, 255);
         constexpr auto k_searchRoiColor = IM_COL32(96, 168, 255, 255);
         constexpr auto k_gripColor      = IM_COL32(240, 240, 240, 255);
+
+        // A template box belonging to another screen: dimmed, so it reads as
+        // context rather than as something to drag.
+        constexpr auto k_foreignTemplateColor = IM_COL32(96, 220, 120, 110);
+
+        auto const k_passColor = ImVec4{0.38F, 0.86F, 0.47F, 1.0F};
+        auto const k_failColor = ImVec4{0.96F, 0.55F, 0.38F, 1.0F};
+
         constexpr auto k_gripRadius     = 5.0F;
         constexpr auto k_zoomWheelBase  = 1.1F;
         constexpr auto k_thresholdMax   = 10'000;
 
-        // The Preview action runs on the GUI thread, so it is bounded twice
-        // over. The comparison budget matches the 256 Mi-pixel order of
-        // magnitude the authoring compiler bounds its own work with
-        // (k_maximumCompilationPixelWork in authoring-compiler.cpp), and the
-        // deadline caps the wall-clock time a large source may spend before the
-        // next frame. Hitting either limit surfaces as a PreviewStop row.
-        constexpr auto k_previewComparisonBudget = uint64{256} * 1024U * 1024U;
-        constexpr auto k_previewDeadline         = std::chrono::seconds{2};
+        // Gates which drop targets accept a shared region being dragged.
+        constexpr auto k_sharedRegionPayload = "uf.shared-region";
+
+        // The Preview action runs on the GUI thread, so it is bounded twice over:
+        // by k_recognitionComparisonBudget in preview.hpp, and by this deadline
+        // capping the wall-clock time a large source may spend before the next
+        // frame. Hitting either limit surfaces as a PreviewStop row.
+        constexpr auto k_previewDeadline = std::chrono::seconds{2};
 
         constexpr auto k_annotationTypeItems = std::array<char const*, 3>{
             "PageAnchor",
@@ -68,11 +80,6 @@ namespace uf::workbench
             "Forbidden",
         };
 
-        [[nodiscard]]
-        auto shortId(annotation::ResourceId const& id) -> std::string
-        {
-            return id.toString().substr(0, 8);
-        }
 
         auto seedBuffer(
             std::array<char, 256>& buffer,
@@ -84,352 +91,43 @@ namespace uf::workbench
             buffer.at(count) = '\0';
         }
 
-        [[nodiscard]]
-        auto findEditableRecognizer(
-            AuthoringDraft& draft,
-            annotation::RecognizerId id
-        ) -> EditableRecognizer*
-        {
-            auto const found = std::ranges::find(
-                draft.m_recognizers,
-                id,
-                &EditableRecognizer::m_id
-            );
-            if (found == draft.m_recognizers.end())
-            {
-                return nullptr;
-            }
-            return &*found;
-        }
 
-        [[nodiscard]]
-        auto pageName(AppState const& state, annotation::PageId id) -> std::string
-        {
-            auto const* page = state.document().catalog().findPage(id);
-            if (page != nullptr)
-            {
-                return page->name().value();
-            }
-            return shortId(id.value());
-        }
 
-        // Names the type change and everything the conversion had to repair with
-        // it, so an authorization the author did not ask for and a field the
-        // conversion could not keep are both stated rather than discovered later.
-        [[nodiscard]]
-        auto retypeSummary(
-            AppState const& state,
-            RetypedRecognizer const& retyped,
-            char const* typeName
-        ) -> std::string
-        {
-            auto summary = std::format("type set to {}", typeName);
-            if (auto const page = retyped.m_authorizedPage)
-            {
-                summary += std::format(
-                    "; authorized page \"{}\"",
-                    pageName(state, *page)
-                );
-            }
-            if (retyped.m_withdrawnRoles > 0U)
-            {
-                summary += std::format(
-                    "; withdrew from {} page {}",
-                    retyped.m_withdrawnRoles,
-                    retyped.m_withdrawnRoles == 1U ? "signature" : "signatures"
-                );
-            }
-            if (retyped.m_clearedAuthorizations > 0U)
-            {
-                summary += std::format(
-                    "; cleared {} page {}",
-                    retyped.m_clearedAuthorizations,
-                    retyped.m_clearedAuthorizations == 1U
-                        ? "authorization"
-                        : "authorizations"
-                );
-            }
-            if (retyped.m_clearedClick)
-            {
-                summary += "; cleared the default click";
-            }
-            return summary;
-        }
 
-        // Queues an edited draft for the end of the frame instead of committing it
-        // where the widget was handled; see PendingEdit for why a mid-draw commit
-        // is unsafe. Every request describes its edit, because the description
-        // becomes the status line and the status line is what the operation log
-        // records; an edit that left no trace there is one nobody can reconstruct
-        // afterwards. A frame carries one request: a second would have been built
-        // against the same document as the first and would silently drop it, and
-        // only a widget deactivating in the same frame as another's click can
-        // produce one, so the first request wins and the second click is retried
-        // by the user on the next frame.
-        auto requestEdit(
-            PanelUiState& ui,
-            AuthoringDraft draft,
-            std::string description
-        ) -> void
-        {
-            if (ui.m_pendingEdit.has_value())
-            {
-                return;
-            }
-            ui.m_pendingEdit = PendingEdit{
-                .m_draft       = std::move(draft),
-                .m_description = std::move(description),
-            };
-        }
 
-        // Commits the frame's queued edit, if any, and states the outcome on the
-        // status line: the requester's description when the document changed, the
-        // build's rejection when it was refused. An edit that changes nothing
-        // leaves the line alone.
-        auto applyPendingEdit(AppState& state, PanelUiState& ui) -> void
-        {
-            if (!ui.m_pendingEdit.has_value())
-            {
-                return;
-            }
-            auto const request = *std::exchange(ui.m_pendingEdit, std::nullopt);
 
-            auto const applied = state.applyEdit(request.m_draft);
-            if (!applied)
-            {
-                ui.m_statusLine = std::format(
-                    "edit rejected: {}",
-                    toString(applied.error())
-                );
-                return;
-            }
-            if (*applied)
-            {
-                ui.m_statusLine = request.m_description;
-            }
-        }
 
-        // Every recognizer and page name in a draft. The catalog requires names to
-        // be unique across both kinds, so a fresh name has to be checked against
-        // all of them, not just its own kind.
-        [[nodiscard]]
-        auto takenNames(AuthoringDraft const& draft) -> std::vector<std::string>
-        {
-            auto names = std::vector<std::string>{};
-            names.reserve(draft.m_recognizers.size() + draft.m_pages.size());
-            for (auto const& recognizer : draft.m_recognizers)
-            {
-                names.emplace_back(recognizer.m_name);
-            }
-            for (auto const& page : draft.m_pages)
-            {
-                names.emplace_back(page.m_name);
-            }
-            return names;
-        }
 
-        // A fresh entity takes the first free "<stem>_N" instead of a fixed name
-        // that the catalog refuses the second time the button is pressed. One of
-        // the first size() + 1 candidates is always free, so the search ends.
-        [[nodiscard]]
-        auto freshName(
-            std::vector<std::string> const& taken,
-            std::string_view stem
-        ) -> std::string
-        {
-            auto candidate = std::string{};
-            for (auto index = std::size_t{1}; index <= taken.size() + 1U; ++index)
-            {
-                candidate = std::format("{}_{}", stem, index);
-                if (!std::ranges::contains(taken, candidate))
-                {
-                    break;
-                }
-            }
-            return candidate;
-        }
 
-        // Names a deletion and the neighbours it had to edit, so a withdrawal or
-        // a discarded regression case is stated rather than discovered later.
-        [[nodiscard]]
-        auto deletionSummary(
-            std::string_view what,
-            DeletedEntity const& deleted
-        ) -> std::string
-        {
-            auto summary = std::format("deleted {}", what);
-            if (deleted.m_withdrawnRoles > 0U)
-            {
-                summary += std::format(
-                    "; withdrew it from {} page {}",
-                    deleted.m_withdrawnRoles,
-                    deleted.m_withdrawnRoles == 1U ? "signature" : "signatures"
-                );
-            }
-            if (deleted.m_clearedAuthorizations > 0U)
-            {
-                summary += std::format(
-                    "; cleared it from {} recognizer {}",
-                    deleted.m_clearedAuthorizations,
-                    deleted.m_clearedAuthorizations == 1U
-                        ? "authorization"
-                        : "authorizations"
-                );
-            }
-            if (deleted.m_removedRegressions > 0U)
-            {
-                summary += std::format(
-                    "; removed {} regression {}",
-                    deleted.m_removedRegressions,
-                    deleted.m_removedRegressions == 1U ? "case" : "cases"
-                );
-            }
-            return summary;
-        }
 
-        // Queues a deletion, reporting a refusal immediately. Deletions are
-        // refused rather than cascaded when the cascade would reach something
-        // only the author can decide about.
-        auto requestDeletion(
-            PanelUiState& ui,
-            Result<DeletedEntity> deleted,
-            std::string_view what
-        ) -> void
-        {
-            if (!deleted)
-            {
-                ui.m_statusLine = std::format(
-                    "delete rejected: {}",
-                    toString(deleted.error())
-                );
-                return;
-            }
-            auto description = deletionSummary(what, *deleted);
-            requestEdit(ui, std::move(deleted->m_draft), std::move(description));
-        }
+        // The rectangles a freshly drawn recognizer starts from: a small template
+        // at the origin and a search region covering the whole frame. The author
+        // drags both to where they belong on the canvas, so the only requirement
+        // here is that they are legal for any project resolution.
 
-        // The source a recognizer was authored against, so a selection can follow
-        // the recognizer to the image its rectangles are meaningful on.
-        [[nodiscard]]
-        auto sourceOfRecognizer(
-            AppState const& state,
-            annotation::RecognizerId id
-        ) -> std::optional<annotation::SourceId>
-        {
-            for (auto const& relationship : state.document().recognizerSources())
-            {
-                if (relationship.m_recognizerId == id)
-                {
-                    return relationship.m_sourceId;
-                }
-            }
-            return std::nullopt;
-        }
 
-        [[nodiscard]]
-        auto addDefaultRecognizer(
-            AppState& state
-        ) -> Result<annotation::RecognizerId>
-        {
-            auto const source = state.selectedSourceId();
-            if (!source.has_value())
-            {
-                return fail(
-                    AutomationErrorKind::InvalidResource,
-                    "adding a recognizer requires a selected source"
-                );
-            }
 
-            auto edited        = state.draft();
-            auto const width   = edited.m_fingerprint.width();
-            auto const height  = edited.m_fingerprint.height();
-            UF_TRY_VALUE(
-                templateRect,
-                PixelRect::create(
-                    0U,
-                    0U,
-                    std::min<uint32>(16U, width),
-                    std::min<uint32>(16U, height)
-                )
-            );
-            UF_TRY_VALUE(searchRoi, PixelRect::create(0U, 0U, width, height));
 
-            auto const id = annotation::RecognizerId{mintResourceId()};
-            edited.m_recognizers.emplace_back(
-                EditableRecognizer{
-                    .m_id             = id,
-                    .m_name           = freshName(takenNames(edited), "recognizer"),
-                    .m_annotationType = annotation::AnnotationType::PageAnchor,
-                    .m_sourceId       = *source,
-                    .m_templateRect   = templateRect,
-                    .m_searchRoi      = searchRoi,
-                    .m_similarityBasisPoints = 9'000U,
-                    .m_defaultClick   = {},
-                    .m_allowedPageIds = {},
-                }
-            );
-            UF_TRY_VALUE(changed, state.applyEdit(edited));
-            static_cast<void>(changed);
-            return id;
-        }
-
-        [[nodiscard]]
-        auto addDefaultPage(AppState& state) -> Result<annotation::PageId>
-        {
-            // A page is rejected unless it names at least one required or
-            // forbidden recognizer, and only a page anchor may fill either role,
-            // so a new page is seeded with the selected page anchor as its
-            // required recognizer. Further membership is then adjusted from the
-            // properties panel. An empty page can never be committed.
-            auto const selected = state.selectedRecognizerId();
-            if (!selected.has_value())
-            {
-                return fail(
-                    AutomationErrorKind::InvalidResource,
-                    "adding a page requires a selected page anchor recognizer"
-                );
-            }
-
-            auto edited        = state.draft();
-            auto const* anchor = findEditableRecognizer(edited, *selected);
-            if (
-                anchor == nullptr
-                || anchor->m_annotationType != annotation::AnnotationType::PageAnchor
-            )
-            {
-                return fail(
-                    AutomationErrorKind::InvalidResource,
-                    "the selected recognizer is not a page anchor; "
-                    "a page must be anchored by one"
-                );
-            }
-
-            auto const id = annotation::PageId{mintResourceId()};
-            edited.m_pages.emplace_back(
-                EditablePage{
-                    .m_id        = id,
-                    .m_name      = freshName(takenNames(edited), "page"),
-                    .m_required  = {*selected},
-                    .m_forbidden = {},
-                }
-            );
-            UF_TRY_VALUE(changed, state.applyEdit(edited));
-            static_cast<void>(changed);
-            return id;
-        }
-
-        [[nodiscard]]
-        auto rectScreenOrigin(
+        // A rectangle with no grips, for a box the author cannot edit from the
+        // screen currently on display.
+        auto drawRectOutline(
+            ImDrawList& drawList,
             CanvasView view,
             CanvasPoint canvasOrigin,
-            PixelRect const& rect
-        ) -> CanvasPoint
+            PixelRect const& rect,
+            ImU32 color
+        ) -> void
         {
-            return sourceToScreen(
-                view,
-                canvasOrigin,
-                static_cast<float>(rect.x()),
-                static_cast<float>(rect.y())
+            auto const origin = rectScreenOrigin(view, canvasOrigin, rect);
+            auto const width  = static_cast<float>(rect.width()) * view.m_zoom;
+            auto const height = static_cast<float>(rect.height()) * view.m_zoom;
+            drawList.AddRect(
+                ImVec2{origin.m_x, origin.m_y},
+                ImVec2{origin.m_x + width, origin.m_y + height},
+                color,
+                0.0F,
+                0,
+                1.0F
             );
         }
 
@@ -474,28 +172,15 @@ namespace uf::workbench
             }
         }
 
-        [[nodiscard]]
-        auto previewPageKindName(PreviewPageKind kind) -> char const*
-        {
-            switch (kind)
-            {
-            case PreviewPageKind::Resolved:
-                return "Resolved";
-            case PreviewPageKind::Unknown:
-                return "Unknown";
-            case PreviewPageKind::Ambiguous:
-                return "Ambiguous";
-            }
-            return "?";
-        }
-
         auto drawSourcesPanel(
             AppState& state,
             WorkbenchServices const& services,
             PanelUiState& ui
         ) -> void
         {
-            if (!ImGui::Begin("Sources"))
+            // Named for what it holds rather than for the domain type: every row
+            // is one captured screen, and a page is authored from one of them.
+            if (!ImGui::Begin("Screens"))
             {
                 ImGui::End();
                 return;
@@ -573,12 +258,12 @@ namespace uf::workbench
             auto const selectedSource = state.selectedSourceId();
             ImGui::SameLine();
             ImGui::BeginDisabled(!selectedSource.has_value());
-            if (ImGui::Button("Delete Source") && selectedSource.has_value())
+            if (ImGui::Button("Delete Screen") && selectedSource.has_value())
             {
                 requestDeletion(
                     ui,
                     deleteSource(state.draft(), *selectedSource),
-                    "source"
+                    "screen"
                 );
             }
             ImGui::EndDisabled();
@@ -622,76 +307,133 @@ namespace uf::workbench
             ImGui::End();
         }
 
-        // The catalog's recognizers, so any of them can be selected again. Without
-        // this list a recognizer is reachable only in the moment it is created:
-        // the properties panel edits whatever is selected, and nothing else moves
-        // the selection.
-        auto drawRecognizersPanel(AppState& state, PanelUiState& ui) -> void
+
+
+
+
+
+
+
+
+        // One selectable recognizer row inside a page's group. pageScreen is the
+        // screen that page stands for, or nothing for the rows that belong to no
+        // page.
+        auto drawPageMemberRow(
+            AppState& state,
+            PanelUiState& ui,
+            annotation::RecognizerDefinition const& recognizer,
+            std::optional<annotation::SourceId> pageScreen
+        ) -> void
         {
-            if (!ImGui::Begin("Recognizers"))
-            {
-                ImGui::End();
-                return;
-            }
+            auto const id     = recognizer.id();
+            auto const idText = id.value().toString();
+            ImGui::PushID(idText.c_str());
 
-            for (auto const& recognizer : state.document().catalog().recognizers())
+            // Only an interactive region can be reused, so only those carry the
+            // box. Ticking it puts the element in Shared regions, which is where
+            // another page can take it from; the bullet keeps the other rows
+            // lined up with these.
+            auto const isRegion = (
+                recognizer.annotationType() == annotation::AnnotationType::ActionTarget
+            );
+            if (isRegion)
             {
-                auto const id       = recognizer.id();
-                auto const selected = state.selectedRecognizerId() == id;
-
-                // Scope the row by the stable id: names are unique today, but the
-                // row must keep its identity while a rename is in flight.
-                auto const idText = id.value().toString();
-                ImGui::PushID(idText.c_str());
-                auto const row = std::format(
-                    "{}  [{}]",
-                    recognizer.name().value(),
-                    k_annotationTypeItems.at(
-                        static_cast<std::size_t>(
-                            std::to_underlying(recognizer.annotationType())
-                        )
-                    )
-                );
-                if (ImGui::Selectable(row.c_str(), selected))
+                auto reusable = isRegionShared(state, id);
+                if (ImGui::Checkbox("##shared", &reusable))
                 {
-                    state.setSelectedRecognizerId(id);
-                    // The canvas draws the selected recognizer's rectangles over
-                    // the selected source, so follow the recognizer to the source
-                    // it was authored against; otherwise its rectangles would be
-                    // drawn over an unrelated image.
-                    if (auto const source = sourceOfRecognizer(state, id))
-                    {
-                        state.setSelectedSourceId(*source);
-                    }
+                    requestRegionShared(state, ui, id, reusable);
                 }
-                ImGui::PopID();
+                if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+                {
+                    ImGui::SetTooltip(
+                        "Reusable on other pages. Tick it, then drag the element "
+                        "from Shared regions onto the page it also appears on."
+                    );
+                }
+                ImGui::SameLine();
             }
-
-            if (state.document().catalog().recognizers().empty())
+            else
             {
-                ImGui::TextUnformatted(
-                    "No recognizers yet. Capture a source, then New Recognizer."
-                );
+                ImGui::Bullet();
             }
 
-            auto const selected = state.selectedRecognizerId();
-            ImGui::BeginDisabled(!selected.has_value());
-            if (ImGui::Button("Delete Recognizer") && selected.has_value())
+            auto const memberCount = sharedRegionMembers(state.draft(), id).size();
+            auto const label       = memberCount > 1U
+                ? std::format(
+                    "{}  (on {} pages)",
+                    recognizer.name().value(),
+                    memberCount
+                )
+                : recognizer.name().value();
+            // Sized to its own text rather than left to span the row. A
+            // default-sized Selectable claims the whole remaining width, so the
+            // SameLine after it starts at the right edge of the panel and
+            // everything that follows -- Remove, and the margin -- is pushed out
+            // of the clip rect and cannot be clicked.
+            if (
+                ImGui::Selectable(
+                    label.c_str(),
+                    state.selectedRecognizerId() == id,
+                    ImGuiSelectableFlags_AllowOverlap,
+                    ImVec2{ImGui::CalcTextSize(label.c_str()).x, 0.0F}
+                )
+            )
+            {
+                selectRecognizer(state, id, pageScreen);
+            }
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Remove"))
             {
                 requestDeletion(
                     ui,
-                    deleteRecognizer(state.draft(), *selected),
-                    "recognizer"
+                    deleteRecognizer(state.draft(), id),
+                    std::format("\"{}\"", recognizer.name().value())
                 );
             }
-            ImGui::EndDisabled();
 
-            ImGui::End();
+            // The margin, once a check has produced one. "here" is the score on
+            // the screen this mark was drawn on and has to stay under 100 %;
+            // "elsewhere" is the closest it comes on any other screen and has to
+            // stay above it. A mark whose two numbers sit close together is one
+            // frame of drift away from resolving the wrong page.
+            if (auto const* p_margin = findMargin(state, id))
+            {
+                ImGui::SameLine();
+                auto summary = std::format(
+                    "here {}  elsewhere {}",
+                    budgetPercentText(
+                        p_margin->m_ownSadScore,
+                        p_margin->m_maximumSad
+                    ),
+                    budgetPercentText(
+                        p_margin->m_nearestOtherSadScore,
+                        p_margin->m_maximumSad
+                    )
+                );
+                // Only shown once a live check has produced one. This is the
+                // number that moves: the stills never change, the running game
+                // does.
+                if (p_margin->m_liveSadScore.has_value())
+                {
+                    summary += std::format(
+                        "  live {}",
+                        budgetPercentText(
+                            p_margin->m_liveSadScore,
+                            p_margin->m_maximumSad
+                        )
+                    );
+                }
+                ImGui::TextDisabled("%s", summary.c_str());
+            }
+            ImGui::PopID();
         }
 
-        // The catalog's pages. Page membership is edited from the properties
-        // panel, but a page is otherwise invisible unless some recognizer happens
-        // to be selected, and there was no way to remove one at all.
+        // The workbench's navigator. A page is a screen the author captured, and
+        // everything authored on that screen hangs beneath it: the marks that
+        // identify it and the elements that may be clicked there. Both are
+        // created by the buttons in the group they belong to, so the annotation
+        // type, the signature role, and the authorization are all consequences of
+        // where the author pressed rather than fields to fill in.
         auto drawPagesPanel(AppState& state, PanelUiState& ui) -> void
         {
             if (!ImGui::Begin("Pages"))
@@ -700,79 +442,322 @@ namespace uf::workbench
                 return;
             }
 
-            for (auto const& page : state.document().catalog().pages())
+            ImGui::BeginDisabled(!state.selectedSourceId().has_value());
+            if (ImGui::Button("New Page From Selected Screen"))
             {
-                auto const idText = page.id().value().toString();
+                requestNewPage(state, ui);
+            }
+            ImGui::EndDisabled();
+            if (
+                !state.selectedSourceId().has_value()
+                && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)
+            )
+            {
+                ImGui::SetTooltip(
+                    "Capture or import a screen first, then select it in Screens"
+                );
+            }
+            ImGui::Separator();
+
+            auto const& catalog = state.document().catalog();
+
+            // Which page a shared region was dropped on this frame. The element
+            // being dragged lives on PanelUiState instead, because the frame that
+            // accepts the drop is the frame the drag source stops submitting
+            // itself.
+            auto droppedOnPage = std::optional<annotation::PageId>{};
+
+            auto shared = std::vector<annotation::RecognizerId>{};
+            for (auto const& recognizer : catalog.recognizers())
+            {
+                if (isRegionShared(state, recognizer.id()))
+                {
+                    shared.emplace_back(recognizer.id());
+                }
+            }
+            if (!shared.empty())
+            {
+                ImGui::SeparatorText("Shared regions");
+                ImGui::TextWrapped(
+                    "Drag one onto a page that also has it. It only works where "
+                    "the element looks the same; the drop says so straight away."
+                );
+                for (auto const& recognizer : catalog.recognizers())
+                {
+                    if (!std::ranges::contains(shared, recognizer.id()))
+                    {
+                        continue;
+                    }
+                    auto const pages = sharedRegionMembers(
+                        state.draft(),
+                        recognizer.id()
+                    ).size();
+                    ImGui::Bullet();
+                    ImGui::Selectable(
+                        std::format(
+                            "{}  (on {} {})",
+                            recognizer.name().value(),
+                            pages,
+                            pages == 1U ? "page" : "pages"
+                        ).c_str(),
+                        false
+                    );
+                    if (ImGui::BeginDragDropSource())
+                    {
+                        // A one-byte payload: the type string is what gates the
+                        // target, and the identity is remembered on the ui state
+                        // rather than marshalled through a byte copy of a domain
+                        // id.
+                        auto const marker = uint8{1};
+                        ImGui::SetDragDropPayload(
+                            k_sharedRegionPayload,
+                            &marker,
+                            sizeof(marker)
+                        );
+                        ui.m_draggedRegion = recognizer.id();
+                        ImGui::Text(
+                            "put \"%s\" on a page",
+                            recognizer.name().value().c_str()
+                        );
+                        ImGui::EndDragDropSource();
+                    }
+                }
+                ImGui::Separator();
+            }
+
+            if (catalog.pages().empty())
+            {
+                ImGui::TextWrapped(
+                    "No pages yet. Capture the screen you want to automate, "
+                    "select it, then press the button above."
+                );
+            }
+
+            for (auto const& page : catalog.pages())
+            {
+                auto const pageId = page.id();
+                auto const idText = pageId.value().toString();
                 ImGui::PushID(idText.c_str());
-                ImGui::Text(
-                    "%s  %zu required  %zu forbidden",
+
+                auto const open = ImGui::TreeNodeEx(
                     page.name().value().c_str(),
-                    page.required().size(),
-                    page.forbidden().size()
+                    ImGuiTreeNodeFlags_DefaultOpen
                 );
                 ImGui::SameLine();
-                if (ImGui::SmallButton("Delete"))
+                if (ImGui::SmallButton("Delete Page"))
                 {
                     requestDeletion(
                         ui,
-                        deletePage(state.draft(), page.id()),
+                        deletePage(state.draft(), pageId),
                         std::format("page \"{}\"", page.name().value())
                     );
                 }
+                if (!open)
+                {
+                    ImGui::PopID();
+                    continue;
+                }
+
+                auto const sample = pageSampleSource(state, page);
+                if (sample.has_value())
+                {
+                    if (
+                        ImGui::SmallButton(
+                            std::format(
+                                "screen {}",
+                                shortId(sample->value())
+                            ).c_str()
+                        )
+                    )
+                    {
+                        state.setSelectedSourceId(*sample);
+                    }
+                    if (auto const* p_screen = findScreenCheck(state, *sample))
+                    {
+                        ImGui::SameLine();
+                        auto const correct = (
+                            p_screen->m_outcome == ScreenCheckOutcome::Correct
+                        );
+                        ImGui::TextColored(
+                            correct ? k_passColor : k_failColor,
+                            "%s",
+                            screenCheckText(state, *p_screen).c_str()
+                        );
+                    }
+
+                    // A page authored before pages recorded their screen has
+                    // nothing for a check to measure against. One press states
+                    // it, which is also what turns the page's verdict on.
+                    if (!claimedScreen(state, pageId).has_value())
+                    {
+                        ImGui::SameLine();
+                        if (ImGui::SmallButton("Record this screen"))
+                        {
+                            requestScreenClaim(state, ui, pageId, *sample);
+                        }
+                    }
+                }
+                else
+                {
+                    ImGui::TextUnformatted("screen -");
+                }
+
+                ImGui::SeparatorText("Identified by");
+                for (auto const& recognizer : catalog.recognizers())
+                {
+                    if (std::ranges::contains(page.required(), recognizer.id()))
+                    {
+                        drawPageMemberRow(state, ui, recognizer, sample);
+                    }
+                }
+                ImGui::BeginDisabled(!sample.has_value());
+                if (ImGui::SmallButton("+ Identifying mark") && sample.has_value())
+                {
+                    requestNewPageMember(
+                        state,
+                        ui,
+                        pageId,
+                        *sample,
+                        PageMemberKind::Anchor
+                    );
+                }
+                ImGui::EndDisabled();
+
+                ImGui::SeparatorText("Interactive regions");
+                for (auto const& recognizer : catalog.recognizers())
+                {
+                    auto const authorized = (
+                        recognizer.annotationType()
+                            == annotation::AnnotationType::ActionTarget
+                        && std::ranges::contains(recognizer.allowedPageIds(), pageId)
+                    );
+                    if (authorized)
+                    {
+                        drawPageMemberRow(state, ui, recognizer, sample);
+                    }
+                }
+                ImGui::BeginDisabled(!sample.has_value());
+                if (ImGui::SmallButton("+ Interactive region") && sample.has_value())
+                {
+                    requestNewPageMember(
+                        state,
+                        ui,
+                        pageId,
+                        *sample,
+                        PageMemberKind::ActionTarget
+                    );
+                }
+                ImGui::EndDisabled();
+
+                // Where a shared element is dropped to say "this page has it
+                // too". A visible strip rather than the list above it: a drop
+                // target the author cannot see is one they have to find by
+                // waving the mouse around.
+                // Dimmed by colour rather than by the disabled flag: a disabled
+                // item is not reliably a drop target, and a target the author
+                // cannot drop onto is worse than one that looks clickable.
+                // Its click does nothing, which is what the wording says.
+                ImGui::SameLine();
+                ImGui::PushStyleColor(
+                    ImGuiCol_Text,
+                    ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled)
+                );
+                static_cast<void>(
+                    ImGui::Selectable(
+                        "  or drop a shared region here  ",
+                        false,
+                        ImGuiSelectableFlags_None,
+                        ImVec2{240.0F, 0.0F}
+                    )
+                );
+                ImGui::PopStyleColor();
+                if (ImGui::BeginDragDropTarget())
+                {
+                    auto const* p_payload = ImGui::AcceptDragDropPayload(
+                        k_sharedRegionPayload
+                    );
+                    if (p_payload != nullptr)
+                    {
+                        droppedOnPage = pageId;
+                    }
+                    ImGui::EndDragDropTarget();
+                }
+
+                // A forbidden anchor is an exclusivity rule between two pages
+                // rather than something authored on this screen, so it is only
+                // shown once one exists.
+                if (!page.forbidden().empty())
+                {
+                    ImGui::SeparatorText("Must not show");
+                    for (auto const& recognizer : catalog.recognizers())
+                    {
+                        if (std::ranges::contains(page.forbidden(), recognizer.id()))
+                        {
+                            drawPageMemberRow(state, ui, recognizer, sample);
+                        }
+                    }
+                }
+
+                ImGui::TreePop();
                 ImGui::PopID();
             }
 
-            if (state.document().catalog().pages().empty())
+            // Anything the tree above cannot reach: an info region, or a
+            // recognizer left behind by a retype or a page deletion. Without this
+            // group it would be permanently unselectable.
+            auto unassigned = std::vector<annotation::RecognizerId>{};
+            for (auto const& recognizer : catalog.recognizers())
             {
-                ImGui::TextUnformatted(
-                    "No pages yet. Select a page anchor, then New Page."
+                auto const listed = std::ranges::any_of(
+                    catalog.pages(),
+                    [&recognizer](annotation::PageSignature const& page)
+                    {
+                        return std::ranges::contains(
+                                   page.required(),
+                                   recognizer.id()
+                               )
+                            || std::ranges::contains(
+                                   page.forbidden(),
+                                   recognizer.id()
+                               );
+                    }
                 );
+                if (!listed && recognizer.allowedPageIds().empty())
+                {
+                    unassigned.emplace_back(recognizer.id());
+                }
+            }
+            if (!unassigned.empty())
+            {
+                ImGui::SeparatorText("Not on any page");
+                for (auto const& recognizer : catalog.recognizers())
+                {
+                    if (std::ranges::contains(unassigned, recognizer.id()))
+                    {
+                        // No page context, so these follow to the screen their
+                        // template was cut from.
+                        drawPageMemberRow(state, ui, recognizer, std::nullopt);
+                    }
+                }
+            }
+
+            // Acted on after every panel row has been drawn, so the edit is
+            // parked rather than committed while the tree is still reading the
+            // document it would replace.
+            if (droppedOnPage.has_value() && ui.m_draggedRegion.has_value())
+            {
+                requestSharedRegionOnPage(
+                    state,
+                    ui,
+                    *ui.m_draggedRegion,
+                    *droppedOnPage
+                );
+                ui.m_draggedRegion.reset();
             }
 
             ImGui::End();
         }
 
-        auto editSelectedRectOnRelease(
-            AppState& state,
-            PanelUiState& ui,
-            annotation::RecognizerId recognizerId,
-            PixelRect const& editedRect
-        ) -> void
-        {
-            // Committing only on release keeps a whole drag gesture to a single
-            // undo entry instead of one per moved pixel.
-            auto draft       = state.draft();
-            auto* recognizer = findEditableRecognizer(draft, recognizerId);
-            if (recognizer != nullptr)
-            {
-                auto const isTemplate = (
-                    ui.m_dragTarget == CanvasDragTarget::TemplateRect
-                );
-                if (isTemplate)
-                {
-                    recognizer->m_templateRect = editedRect;
-                }
-                else
-                {
-                    recognizer->m_searchRoi = editedRect;
-                }
-                requestEdit(
-                    ui,
-                    std::move(draft),
-                    std::format(
-                        "{} set to {},{} {}x{}",
-                        isTemplate ? "template rect" : "search roi",
-                        editedRect.x(),
-                        editedRect.y(),
-                        editedRect.width(),
-                        editedRect.height()
-                    )
-                );
-            }
-            ui.m_dragTarget = CanvasDragTarget::None;
-            ui.m_dragGrip.reset();
-            ui.m_dragStartRect.reset();
-        }
 
         auto handleRectEditing(
             AppState& state,
@@ -783,7 +768,8 @@ namespace uf::workbench
             annotation::RecognizerDefinition const& definition,
             uint32 sourceWidth,
             uint32 sourceHeight,
-            bool hovered
+            bool hovered,
+            bool templateEditable
         ) -> void
         {
             auto const recognizerId = definition.id();
@@ -797,18 +783,20 @@ namespace uf::workbench
                 && ImGui::IsMouseClicked(ImGuiMouseButton_Left)
             )
             {
-                auto const templateOrigin = rectScreenOrigin(
-                    view,
-                    canvasOrigin,
-                    templateRect
-                );
-                auto const templateGrip = hitTestGrip(
-                    templateOrigin,
-                    static_cast<float>(templateRect.width()) * view.m_zoom,
-                    static_cast<float>(templateRect.height()) * view.m_zoom,
-                    CanvasPoint{mouse.x, mouse.y},
-                    k_gripRadius
-                );
+                // A template box drawn over a screen it was not cut from is a
+                // shared element being edited from another page. Dragging it here
+                // would recut the template from its own screen at coordinates
+                // picked on this one, which is silently wrong, so only the search
+                // region responds.
+                auto const templateGrip = templateEditable
+                    ? hitTestGrip(
+                        rectScreenOrigin(view, canvasOrigin, templateRect),
+                        static_cast<float>(templateRect.width()) * view.m_zoom,
+                        static_cast<float>(templateRect.height()) * view.m_zoom,
+                        CanvasPoint{mouse.x, mouse.y},
+                        k_gripRadius
+                    )
+                    : std::nullopt;
                 if (templateGrip.has_value())
                 {
                     ui.m_dragTarget    = CanvasDragTarget::TemplateRect;
@@ -897,13 +885,29 @@ namespace uf::workbench
                 previewRoi,
                 k_searchRoiColor
             );
-            drawRectWithGrips(
-                drawList,
-                view,
-                canvasOrigin,
-                previewTemplate,
-                k_templateColor
-            );
+            if (templateEditable)
+            {
+                drawRectWithGrips(
+                    drawList,
+                    view,
+                    canvasOrigin,
+                    previewTemplate,
+                    k_templateColor
+                );
+            }
+            else
+            {
+                // Shown without grips and in outline only: it says where the
+                // template sits on the screen it was cut from, which is a
+                // different image from the one underneath it.
+                drawRectOutline(
+                    drawList,
+                    view,
+                    canvasOrigin,
+                    previewTemplate,
+                    k_foreignTemplateColor
+                );
+            }
         }
 
         auto drawCanvasPanel(
@@ -1017,6 +1021,10 @@ namespace uf::workbench
                 );
                 if (definition != nullptr)
                 {
+                    // The template is only editable over the screen it was cut
+                    // from. For a shared element seen from another page they are
+                    // different images.
+                    auto const authoredOn = sourceOfRecognizer(state, *recognizerId);
                     handleRectEditing(
                         state,
                         ui,
@@ -1026,13 +1034,108 @@ namespace uf::workbench
                         *definition,
                         texture->m_width,
                         texture->m_height,
-                        hovered
+                        hovered,
+                        authoredOn == selectedSource
                     );
                 }
             }
 
             drawList->PopClipRect();
             ImGui::End();
+        }
+
+        // What a shared element's copy needs said about it. Putting it on another
+        // page is a drag from Shared regions in the Pages panel, not a control
+        // here: the author is choosing a page, and the pages are over there.
+        auto drawSharing(
+            AppState& state,
+            annotation::RecognizerDefinition const& definition
+        ) -> void
+        {
+            if (
+                definition.annotationType() != annotation::AnnotationType::ActionTarget
+            )
+            {
+                return;
+            }
+
+            auto const members = sharedRegionMembers(state.draft(), definition.id());
+            if (members.size() <= 1U)
+            {
+                return;
+            }
+
+            ImGui::SeparatorText("Shared across pages");
+            ImGui::TextWrapped(
+                "Drawn once, used on %zu pages. Moving the template box moves it "
+                "on all of them; each page keeps its own search range.",
+                members.size()
+            );
+
+            // The canvas dims a template box it will not let the author drag.
+            // Saying why beats leaving them to work it out from the colour.
+            auto const authoredOn = sourceOfRecognizer(state, definition.id());
+            if (authoredOn.has_value() && authoredOn != state.selectedSourceId())
+            {
+                ImGui::TextWrapped(
+                    "The template was cut from screen %s, so only the search "
+                    "range is editable here. Select this element under that "
+                    "screen's page to move the template.",
+                    shortId(authoredOn->value()).c_str()
+                );
+            }
+        }
+
+        // The recognizer's type, changed as one transaction. Nothing on the main
+        // path sets it -- a member is typed by the group it was created in -- so
+        // this exists to repair a mistake or to reach the info-region type, and
+        // it lives under Advanced with the two membership relationships.
+        auto drawTypeCombo(
+            AppState& state,
+            PanelUiState& ui,
+            annotation::RecognizerDefinition const& definition
+        ) -> void
+        {
+            auto typeIndex = static_cast<int>(
+                std::to_underlying(definition.annotationType())
+            );
+            if (
+                !ImGui::Combo(
+                    "Type",
+                    &typeIndex,
+                    k_annotationTypeItems.data(),
+                    static_cast<int>(k_annotationTypeItems.size())
+                )
+            )
+            {
+                return;
+            }
+
+            // The type and the fields the catalog ties to it have to move
+            // together, so this goes through retypeRecognizer rather than
+            // writing the field and committing.
+            auto retyped = retypeRecognizer(
+                state.draft(),
+                definition.id(),
+                static_cast<annotation::AnnotationType>(typeIndex)
+            );
+            if (!retyped)
+            {
+                ui.m_statusLine = std::format(
+                    "type change rejected: {}",
+                    toString(retyped.error())
+                );
+                return;
+            }
+
+            // Summarized against the pre-commit document so a page named in the
+            // summary is resolved before the edit lands.
+            auto const summary = retypeSummary(
+                state,
+                *retyped,
+                k_annotationTypeItems.at(static_cast<std::size_t>(typeIndex))
+            );
+            requestEdit(ui, std::move(retyped->m_draft), summary);
         }
 
         auto drawPageMembership(
@@ -1042,16 +1145,16 @@ namespace uf::workbench
         ) -> void
         {
             auto const recognizerId = definition.id();
-            // The two columns are mutually exclusive by the catalog's rules: a
-            // page anchor belongs to a page by holding a role in its signature
-            // and may authorize none, while every other type authorizes pages
-            // directly and may hold no role. Offering both for either type only
-            // produces a rejected edit, so each is disabled where it cannot
-            // apply.
+            // Two unrelated relationships, kept apart by the catalog's rules: the
+            // checkbox is permission to click this element on that page, and the
+            // combo is the part this mark plays in identifying it. A page anchor
+            // may only do the second and every other type only the first, so each
+            // is disabled where it cannot apply. Both are consequences of the
+            // page group a member was created in; editing them by hand is for
+            // sharing one element across pages and for exclusivity rules.
             auto const isAnchor = (
                 definition.annotationType() == annotation::AnnotationType::PageAnchor
             );
-            ImGui::SeparatorText("Pages");
             for (auto const& page : state.document().catalog().pages())
             {
                 auto const pageId = page.id();
@@ -1290,48 +1393,6 @@ namespace uf::workbench
                 }
             }
 
-            auto typeIndex = static_cast<int>(
-                std::to_underlying(definition->annotationType())
-            );
-            if (
-                ImGui::Combo(
-                    "Type",
-                    &typeIndex,
-                    k_annotationTypeItems.data(),
-                    static_cast<int>(k_annotationTypeItems.size())
-                )
-            )
-            {
-                // The type and the fields the catalog ties to it have to move
-                // together, so this goes through retypeRecognizer rather than
-                // writing the field and committing.
-                auto retyped = retypeRecognizer(
-                    state.draft(),
-                    *recognizerId,
-                    static_cast<annotation::AnnotationType>(typeIndex)
-                );
-                if (!retyped)
-                {
-                    ui.m_statusLine = std::format(
-                        "type change rejected: {}",
-                        toString(retyped.error())
-                    );
-                }
-                else
-                {
-                    // Summarized against the pre-commit document so a page named
-                    // in the summary is resolved before the edit lands.
-                    auto const summary = retypeSummary(
-                        state,
-                        *retyped,
-                        k_annotationTypeItems.at(
-                            static_cast<std::size_t>(typeIndex)
-                        )
-                    );
-                    requestEdit(ui, std::move(retyped->m_draft), summary);
-                }
-            }
-
             auto threshold = static_cast<int>(definition->threshold().basisPoints());
             ImGui::InputInt("Threshold (bp)", &threshold);
             if (ImGui::IsItemDeactivatedAfterEdit())
@@ -1435,7 +1496,13 @@ namespace uf::workbench
                 }
             }
 
-            drawPageMembership(state, ui, *definition);
+            drawSharing(state, *definition);
+
+            if (ImGui::CollapsingHeader("Advanced"))
+            {
+                drawTypeCombo(state, ui, *definition);
+                drawPageMembership(state, ui, *definition);
+            }
             drawRegressionClassification(state, ui);
 
             ImGui::End();
@@ -1513,7 +1580,13 @@ namespace uf::workbench
             }
         }
 
-        auto drawActionsPanel(AppState& state, PanelUiState& ui) -> void
+
+
+        auto drawActionsPanel(
+            AppState& state,
+            WorkbenchServices const& services,
+            PanelUiState& ui
+        ) -> void
         {
             if (!ImGui::Begin("Actions"))
             {
@@ -1570,7 +1643,7 @@ namespace uf::workbench
                 else
                 {
                     auto const policy = annotation::RecognitionPolicy{
-                        .m_maximumPixelComparisons = k_previewComparisonBudget,
+                        .m_maximumPixelComparisons = k_recognitionComparisonBudget,
                         .m_deadline = MonotonicInstant::now().checkedAdd(
                             k_previewDeadline
                         ),
@@ -1596,6 +1669,56 @@ namespace uf::workbench
                     }
                 }
             }
+
+            // The check every author needs and none can do by eye: a mark always
+            // matches the image it was cut from, so only its score on the other
+            // screens says whether it identifies one screen or merely exists.
+            // It runs on a worker thread; see ModelCheckJob for why.
+            auto const checking = ui.m_modelCheck.running();
+            ImGui::BeginDisabled(checking);
+            if (ImGui::Button(checking ? "Checking..." : "Check Model"))
+            {
+                startModelCheck(state, ui, {});
+            }
+
+            // The captured screens are stills and never change; only the running
+            // target drifts, with highlights, counters, and animation. Measuring
+            // against it is the one check that says whether a mark still holds on
+            // the game as it is right now.
+            auto const hasTarget = ui.m_targetTitle.at(0) != '\0';
+            ImGui::SameLine();
+            ImGui::BeginDisabled(!hasTarget);
+            if (ImGui::Button("Check Against Live Screen"))
+            {
+                // Capture stays here: it belongs to the GUI thread that owns the
+                // graphics device. Only the searching moves off it.
+                auto captured = services.m_captureFromTarget(
+                    annotation::SourceId{mintResourceId()},
+                    std::string{ui.m_targetTitle.data()}
+                );
+                if (!captured)
+                {
+                    ui.m_statusLine = std::format(
+                        "live capture failed: {}",
+                        toString(captured.error())
+                    );
+                }
+                else
+                {
+                    startModelCheck(state, ui, captured->m_asset.m_pngBytes);
+                }
+            }
+            ImGui::EndDisabled();
+            if (
+                !hasTarget
+                && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)
+            )
+            {
+                ImGui::SetTooltip(
+                    "Enter the target window title in Screens to enable this"
+                );
+            }
+            ImGui::EndDisabled();
 
             ImGui::BeginDisabled(!state.canUndo());
             if (ImGui::Button("Undo"))
@@ -1625,39 +1748,6 @@ namespace uf::workbench
             }
             ImGui::EndDisabled();
 
-            ImGui::BeginDisabled(!state.selectedSourceId().has_value());
-            if (ImGui::Button("New Recognizer"))
-            {
-                auto const created = addDefaultRecognizer(state);
-                if (!created)
-                {
-                    ui.m_statusLine = std::format(
-                        "new recognizer failed: {}",
-                        toString(created.error())
-                    );
-                }
-                else
-                {
-                    state.setSelectedRecognizerId(*created);
-                    ui.m_statusLine = std::format(
-                        "added recognizer ({} total)",
-                        state.document().catalog().recognizers().size()
-                    );
-                }
-            }
-            ImGui::EndDisabled();
-            ImGui::SameLine();
-            if (ImGui::Button("New Page"))
-            {
-                auto const created = addDefaultPage(state);
-                ui.m_statusLine = created.has_value()
-                    ? std::format(
-                        "added page ({} total)",
-                        state.document().catalog().pages().size()
-                    )
-                    : std::format("new page failed: {}", toString(created.error()));
-            }
-
             if (!ui.m_statusLine.empty())
             {
                 ImGui::TextWrapped("%s", ui.m_statusLine.c_str());
@@ -1684,8 +1774,11 @@ namespace uf::workbench
         // launches, so panels start floating.
         static_cast<void>(ImGui::DockSpaceOverViewport());
 
+        // Collect a finished check before anything draws, so its verdicts appear
+        // in the same frame the worker delivered them.
+        collectModelCheck(state, ui);
+
         drawSourcesPanel(state, services, ui);
-        drawRecognizersPanel(state, ui);
         drawPagesPanel(state, ui);
         drawCanvasPanel(state, services, ui);
         drawPropertiesPanel(state, ui);
@@ -1697,7 +1790,7 @@ namespace uf::workbench
         // applied -- undoing right after a rename has to undo that rename, not
         // race it.
         applyPendingEdit(state, ui);
-        drawActionsPanel(state, ui);
+        drawActionsPanel(state, services, ui);
 
         // Mirror each new status-line outcome to the operation log so a session's
         // actions and errors are not lost when the next action overwrites the

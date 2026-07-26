@@ -63,6 +63,7 @@ namespace uf::workbench
         std::optional<annotation::RecognizerId> m_selectedRecognizerId{};
         CanvasView                              m_canvasView{};
         std::optional<PreviewResult>            m_lastPreview{};
+        std::optional<ModelCheck>               m_lastModelCheck{};
         bool                                    m_dirty{};
 
     public:
@@ -122,6 +123,14 @@ namespace uf::workbench
         auto lastPreview() const noexcept UF_LIFETIME_BOUND
             -> std::optional<PreviewResult> const&;
 
+        // The most recent whole-model check, or nothing when none has been run
+        // since the last edit. Like the preview it describes one revision of the
+        // document, so any committed mutation clears it rather than leaving a
+        // verdict that no longer refers to what is on screen.
+        [[nodiscard]]
+        auto lastModelCheck() const noexcept UF_LIFETIME_BOUND
+            -> std::optional<ModelCheck> const&;
+
         [[nodiscard]] auto dirty() const noexcept -> bool;
 
         // Commits an edited draft through the history. Returns true when the
@@ -153,6 +162,7 @@ namespace uf::workbench
 
         auto setCanvasView(CanvasView view) noexcept -> void;
         auto setLastPreview(PreviewResult preview) -> void;
+        auto setLastModelCheck(ModelCheck check) -> void;
 
         // Records that the current document has been persisted: clears dirty
         // without touching the undo/redo history and prunes the asset cache to

@@ -139,8 +139,15 @@ if(WIN32 AND TARGET ${PROJECT_NAME}_annotation)
         workbench/app/canvas-math.hpp
         workbench/app/workbench-app.cpp
         workbench/app/workbench-app.hpp
+        workbench/authoring-actions.cpp
+        workbench/authoring-actions.hpp
         workbench/authoring-edit.cpp
         workbench/authoring-edit.hpp
+        workbench/model-check-job.cpp
+        workbench/model-check-job.hpp
+        workbench/model-check-view.cpp
+        workbench/model-check-view.hpp
+        workbench/panel-state.hpp
         workbench/platform/windows-file-publication.cpp
         workbench/platform/windows-file-publication.hpp
         workbench/preview.cpp
@@ -177,10 +184,13 @@ if(WIN32 AND TARGET ${PROJECT_NAME}_annotation)
         )
     endif()
 
-    # The GUI executable needs the engine (for backend logic) and the controller
-    # (for WGC capture ingestion). Dear ImGui and the Direct3D 11 shell live only
-    # behind this gate, so the platform-free workbench_support stays free of them.
-    if(TARGET ${PROJECT_NAME}_controller AND TARGET ${PROJECT_NAME}_engine)
+    # The GUI executable needs the controller for WGC capture ingestion. It does
+    # not need the engine: the recognition core it shares with the runtime is
+    # annotation::RecognitionRuntime, and the runtime consumes only the manifest
+    # and template assets the workbench publishes last. Dear ImGui and the
+    # Direct3D 11 shell live only behind this gate, so the platform-free
+    # workbench_support stays free of them.
+    if(TARGET ${PROJECT_NAME}_controller)
         set(IMGUI_LIBRARY imgui)
 
         # Dear ImGui ships no build system, so the core translation units and the
@@ -236,7 +246,6 @@ if(WIN32 AND TARGET ${PROJECT_NAME}_annotation)
         target_link_libraries(${WORKBENCH_EXECUTABLE}
             PRIVATE
                 ${WORKBENCH_LIBRARY}
-                ${PROJECT_NAME}_engine
                 ${PROJECT_NAME}_controller
                 ${PROJECT_NAME}_image
                 ${IMGUI_LIBRARY}

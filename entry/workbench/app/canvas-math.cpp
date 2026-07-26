@@ -203,4 +203,19 @@ namespace uf::workbench
             static_cast<uint32>(bottom - top)
         );
     }
+
+    [[nodiscard]]
+    auto rectScreenOrigin(
+        CanvasView view,
+        CanvasPoint canvasOrigin,
+        PixelRect const& rect
+    ) -> CanvasPoint
+    {
+        return sourceToScreen(
+            view,
+            canvasOrigin,
+            static_cast<float>(rect.x()),
+            static_cast<float>(rect.y())
+        );
+    }
 }

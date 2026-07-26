@@ -190,6 +190,12 @@ namespace uf::workbench
         return m_lastPreview;
     }
 
+    auto AppState::lastModelCheck() const noexcept
+        -> std::optional<ModelCheck> const&
+    {
+        return m_lastModelCheck;
+    }
+
     auto AppState::dirty() const noexcept -> bool
     {
         // Conservatively stays true after undoing back to the last saved
@@ -211,9 +217,10 @@ namespace uf::workbench
         if (changed)
         {
             m_dirty = true;
-            // The stored preview describes the pre-edit document, so a committed
-            // mutation invalidates it.
+            // The stored preview and model check describe the pre-edit document,
+            // so a committed mutation invalidates both.
             m_lastPreview.reset();
+            m_lastModelCheck.reset();
             // An edit may remove the very entity the selection names -- a
             // deletion always does -- and a selection pointing at something this
             // revision does not hold would be edited into a rejected draft.
@@ -268,9 +275,11 @@ namespace uf::workbench
             return false;
         }
         m_dirty = true;
-        // The document moved, so the stored preview no longer describes it, and
-        // the selection may now point at an entity this revision does not hold.
+        // The document moved, so the stored preview and model check no longer
+        // describe it, and the selection may now point at an entity this revision
+        // does not hold.
         m_lastPreview.reset();
+        m_lastModelCheck.reset();
         reconcileSelectionToDocument();
         return true;
     }
@@ -283,6 +292,7 @@ namespace uf::workbench
         }
         m_dirty = true;
         m_lastPreview.reset();
+        m_lastModelCheck.reset();
         reconcileSelectionToDocument();
         return true;
     }
@@ -351,6 +361,11 @@ namespace uf::workbench
     auto AppState::setLastPreview(PreviewResult preview) -> void
     {
         m_lastPreview = std::move(preview);
+    }
+
+    auto AppState::setLastModelCheck(ModelCheck check) -> void
+    {
+        m_lastModelCheck = std::move(check);
     }
 
     auto AppState::markSaved() -> void
