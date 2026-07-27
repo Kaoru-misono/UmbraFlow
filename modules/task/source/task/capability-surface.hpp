@@ -3,10 +3,12 @@
 #include <script/engine.hpp>
 
 #include <core/error/result.hpp>
+#include <core/safety/annotations.hpp>
 
 #include <annotation/catalog.hpp>
 
 #include <cstddef>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -99,5 +101,22 @@ namespace uf::task
 
         [[nodiscard]]
         auto pageCount() const noexcept -> std::size_t;
+
+        // The action-target recognizer handles this surface exposes under
+        // umbra.recognizers, in catalog order. These are exactly the names an
+        // umbra.recognizers.<name> literal may resolve against, so the pre-VM
+        // script validator (script-validator.hpp) checks every reference here
+        // rather than against the wider catalog, which also holds page anchors
+        // that never become findable handles. The returned span borrows this
+        // surface's storage and stays valid only while the surface is alive.
+        [[nodiscard]]
+        auto recognizers() const noexcept UF_LIFETIME_BOUND
+            -> std::span<RecognizerHandleSpec const>;
+
+        // The page handles this surface exposes under umbra.pages, the resolution
+        // set for every umbra.pages.<name> literal, with the same borrow contract
+        // as recognizers().
+        [[nodiscard]]
+        auto pages() const noexcept UF_LIFETIME_BOUND -> std::span<PageHandleSpec const>;
     };
 }

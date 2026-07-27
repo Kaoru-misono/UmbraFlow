@@ -6,6 +6,7 @@
 
 #include <domain/error.hpp>
 
+#include <span>
 #include <string>
 #include <unordered_set>
 #include <utility>
@@ -85,5 +86,16 @@ namespace uf::task
     auto CapabilitySurface::pageCount() const noexcept -> std::size_t
     {
         return m_pages.size();
+    }
+
+    auto CapabilitySurface::recognizers() const noexcept
+        -> std::span<RecognizerHandleSpec const>
+    {
+        return m_recognizers;
+    }
+
+    auto CapabilitySurface::pages() const noexcept -> std::span<PageHandleSpec const>
+    {
+        return m_pages;
     }
 }
