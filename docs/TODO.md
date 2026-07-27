@@ -106,12 +106,18 @@
 
 ## 2. P0-B — Luau Engine
 
-- [ ] 固定 Luau 精确版本,接入 compiler/VM 与 `IScriptRuntime` 可序列化边界。
+> **2026-07-27**:脚本层动工前 grill 已完成,A 类裁决(`umbra.*` 命名空间、
+> `modules/task` 绑定模块、userdata 句柄、任务归属项目、热加载加载边界口径等)
+> 与执行切片见 [`2026-07-27-p0b-script-layer.md`](plans/2026-07-27-p0b-script-layer.md)。
+
+- [ ] 固定 Luau 精确版本,接入 compiler/VM 与 `IScriptRuntime` 可序列化边界
+      (边界口径见 `docs/adr/0001`:P0 进程内 userdata,DTO 归未来 worker 接缝)。
       **进展**:0.730 submodule + RAII `Engine::runNumber` 已落地(2026-07-22);
       沙箱/取消/配额未做,见 `2026-07-21-p0b-luau-hardening-ledger.md`。
 - [ ] 最小 capability API 与 observe/resolve/act/wait 引擎循环;manifest 只读 recognizer/page 句柄,
       `ResolvedPage` + Detection + lease 才能授权坐标动作。
-- [ ] 每任务 VM generation、allocator 配额、interrupt 硬取消、逻辑时钟/RNG 与 generation 热加载。
+- [ ] 每任务 VM generation、allocator 配额、interrupt 硬取消、逻辑时钟/RNG 与 generation 热加载
+      (热加载 P0 只做加载边界语义,活体中途热切推 P2——2026-07-27 裁决)。
 - [ ] Fake Controller 帧序列、结构化 trace、资源快照和静态截图回归接入 CI。
 - [ ] 能力/兼容性门、项目级尺寸/DPI 指纹、P0 identity Base→Live gate、持续重校验、
       租约校验与动作后强制作废观察。

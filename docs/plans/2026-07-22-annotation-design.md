@@ -375,27 +375,31 @@ ambiguity heuristic beyond the provable exact-duplicate check.
 
 ## 4. Luau resource and action surface
 
+> Amended 2026-07-27: the capability namespace is **`umbra`** (decided in the
+> P0-B script-layer grill, see `CONTEXT.md`). This section originally spelled
+> it `bot`; the semantics are unchanged.
+
 The host creates recursively read-only tables from the validated runtime
 manifest. P0 exposes one canonical spelling only:
 
 ```lua
-local frame = bot:capture()
+local frame = umbra:capture()
 local outcome = frame:resolve_page()
 local page = outcome:resolved() -- ResolvedPage | nil; Unknown/Ambiguous already traced
 
-if page ~= nil and page:is(bot.pages.home) then
-    local target = frame:find(bot.recognizers.daily_button)
+if page ~= nil and page:is(umbra.pages.home) then
+    local target = frame:find(umbra.recognizers.daily_button)
     if target ~= nil then
-        bot:click(page, target)
+        umbra:click(page, target)
     end
 end
 ```
 
-- `bot.recognizers.<name>` contains opaque recognizer handles.
-- `bot.pages.<name>` contains opaque page handles.
-- There is no `bot.templates` alias, path constructor, string-path lookup, or
+- `umbra.recognizers.<name>` contains opaque recognizer handles.
+- `umbra.pages.<name>` contains opaque page handles.
+- There is no `umbra.templates` alias, path constructor, string-path lookup, or
   script-visible ROI/pixel data.
-- `bot:click` requires `ResolvedPage` and `Detection`; a default click is only a
+- `umbra:click` requires `ResolvedPage` and `Detection`; a default click is only a
   host-applied template-local offset on the live Detection.
 
 P0 script validation is deliberately restricted and decidable. Every resource

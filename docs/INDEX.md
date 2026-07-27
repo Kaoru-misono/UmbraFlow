@@ -22,6 +22,8 @@ Mirrored English and Chinese trees; see the [language guide](knowledge/README.md
   [Luau task-model grill decisions](plans/2026-07-21-lua-task-model-grill-decisions.md)
 - Locked S0 annotation contract:
   [P0-A Visual Annotation System & Data Model](plans/2026-07-22-annotation-design.md)
+- P0-B script-layer decisions and slicing:
+  [P0-B script layer](plans/2026-07-27-p0b-script-layer.md)
 - [Plans](plans/README.md)
 
 ## Archive
@@ -40,6 +42,8 @@ Closed reviews live under `archive/reviews/`:
 
 ## Repository guidance
 
+- [Domain glossary](../CONTEXT.md)
+- [Architecture decision records](adr/)
 - [Pitfalls](pitfalls/README.md)
 - [C++ coding skill](../.claude/skills/cpp-coding/SKILL.md)
 - [Safe C++ profile](../.claude/skills/cpp-coding/references/safety-profile.md)

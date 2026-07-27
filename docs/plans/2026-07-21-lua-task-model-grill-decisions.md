@@ -4,6 +4,13 @@
 > 决策弹药见 [`2026-07-21-lua-task-model-decision-package.md`](../archive/plans/2026-07-21-lua-task-model-decision-package.md)。
 > 议程原件见 [`2026-07-20-lua-task-model-grill.md`](../archive/plans/2026-07-20-lua-task-model-grill.md)。
 > 状态:进行中。开始于 2026-07-21。
+>
+> **2026-07-27 修订**:capability 命名空间已裁决为 **`umbra.*`**(见根目录
+> `CONTEXT.md`),本文中的 `bot.*`/`bot:` 一律读作 `umbra.*`/`umbra:`。
+> 同日的 P0-B 脚本层 grill 还落定了 D1/D4/D10 的多个「留待」项
+> (句柄=userdata、错误捕获入口、热加载 P0 范围、任务归属项目等),
+> 见 [`2026-07-27-p0b-script-layer.md`](2026-07-27-p0b-script-layer.md) 与
+> `docs/adr/0001`、`docs/adr/0002`。
 
 ---
 

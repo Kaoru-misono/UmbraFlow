@@ -174,12 +174,19 @@ C function once the first binding lands. This is the same failure class as the
    the C-boundary case from §5) wired into CI. This is the P0 "6 一票否决" gate made
    executable and regression-guarded on every Luau bump.
 5. ⬜ **OPEN.** THEN add the recognizer/page host handles and the
-   observe/act/wait engine loop.
+   observe/act/wait engine loop. *(2026-07-27: this binding layer lands in the
+   new `modules/task`, not in `modules/script` — see
+   `2026-07-27-p0b-script-layer.md`. `modules/script` stays the pure Luau
+   substrate; steps 3–4 above still live there.)*
 
 ## Open items / for the user
 - ✅ Resolved: submodule (not FetchContent), confined to `modules/script/external/luau`
   (0.730 SHA `5bc7f4b23756f69f4669b419fa9034f117ccd6fe`).
-- The recognizer/page binding, manifest schema, and ROI coordinate space remain in the
-  **deferred annotation design doc** — §6 step 5 waits on it.
+- ✅ Resolved (2026-07-23, wording stale until 2026-07-27): the annotation design
+  is no longer deferred — S0 locked in
+  [`2026-07-22-annotation-design.md`](2026-07-22-annotation-design.md)
+  (`umbraflow-annotations/v1`, page semantics, action authorization, resource
+  closure). Schema no longer blocks §6 step 5; its remaining prerequisites are
+  steps 3–4.
 - Submodule name in `.gitmodules` is still the original `external/luau` (internal id);
   the path is correct (`modules/script/external/luau`). Cosmetic; leave unless it bugs you.
