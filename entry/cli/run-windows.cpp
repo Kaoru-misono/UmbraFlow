@@ -284,10 +284,12 @@ namespace uf::cli
                 )
             );
 
-            // Stamp the task identity and script hash at load time (ADR 0002).
-            UF_TRY(writeTaskTraceRecord(args.trace, loadedTask));
-
             UF_TRY_VALUE(bound, bindTargetAndSession(args, std::move(loaded)));
+
+            // Stamp the task identity and script hash (ADR 0002) once the target
+            // is bound, matching where the smoke path opens its own trace: a run
+            // that never found its window leaves no evidence files behind.
+            UF_TRY(writeTaskTraceRecord(args.trace, loadedTask));
 
             // The context owns the session and must outlive the VM that binds it,
             // so it is declared before the Engine and destroyed after it. The one

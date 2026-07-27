@@ -113,8 +113,28 @@ namespace uf::task
             "C:/abs",
         };
 
+        // Windows reserved device basenames pass the character allowlist, so they
+        // reach the filesystem and are refused only because tasks/CON.luau does
+        // not resolve to a regular file. That is the right outcome but it rests on
+        // a platform quirk rather than on the name check, so pin it: a future
+        // resolver change that opened the path instead of stat-ing it would hand a
+        // task name a console or a null device.
+        auto const reserved = std::vector<std::string_view>{"CON", "NUL", "LPT1"};
+
         for (auto const& name : names)
         {
+            INFO("name: ", name);
+            auto const loaded = loadTask(root, name);
+            REQUIRE_FALSE(loaded.has_value());
+            CHECK(
+                automationErrorKind(loaded.error())
+                == AutomationErrorKind::InvalidResource
+            );
+        }
+
+        for (auto const& name : reserved)
+        {
+            INFO("reserved device name: ", name);
             auto const loaded = loadTask(root, name);
             REQUIRE_FALSE(loaded.has_value());
             CHECK(
