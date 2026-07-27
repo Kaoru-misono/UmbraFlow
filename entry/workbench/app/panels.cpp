@@ -73,11 +73,15 @@ namespace uf::workbench
         // a click that jitters still select.
         constexpr auto k_dragThreshold = 4.0F;
 
-        // The muted styles for a page member that is not the selection: the same
-        // hues as the strong template and search-ROI colours, dimmed so the
-        // selected element still reads as the one being edited.
-        constexpr auto k_mutedTemplateColor  = IM_COL32(96, 220, 120, 150);
-        constexpr auto k_mutedSearchRoiColor = IM_COL32(96, 168, 255, 110);
+        // A page member that is not the selection: bright L-shaped corner
+        // brackets in the template hue locate it crisply, a faint body outline
+        // keeps its extent readable, and the search region stays a faint hint --
+        // so the selected element still reads as the one being edited without
+        // the rest sinking into the screenshot.
+        constexpr auto k_memberCornerColor       = IM_COL32(96, 220, 120, 255);
+        constexpr auto k_memberOutlineColor      = IM_COL32(96, 220, 120, 70);
+        constexpr auto k_foreignCornerColor      = IM_COL32(200, 220, 200, 200);
+        constexpr auto k_mutedSearchRoiColor     = IM_COL32(96, 168, 255, 110);
 
         // The rectangle a rubber-band is dragging out, before its kind is chosen.
         constexpr auto k_rubberBandColor = IM_COL32(240, 240, 240, 220);
@@ -391,6 +395,63 @@ namespace uf::workbench
                 0,
                 1.0F
             );
+        }
+
+        // A non-selected member's template drawn as four bright L-shaped corner
+        // brackets plus a faint full outline: the corners locate it crisply over
+        // any screenshot while the body stays out of the way, where a uniformly
+        // dimmed rectangle sank into busy pixels. Arm length adapts to the box so
+        // small marks stay readable and large regions are not shouted over.
+        auto drawCornerBrackets(
+            ImDrawList& drawList,
+            CanvasView view,
+            CanvasPoint canvasOrigin,
+            PixelRect const& rect,
+            ImU32 brightColor,
+            ImU32 faintColor
+        ) -> void
+        {
+            auto const origin = rectScreenOrigin(view, canvasOrigin, rect);
+            auto const width  = static_cast<float>(rect.width()) * view.zoom;
+            auto const height = static_cast<float>(rect.height()) * view.zoom;
+            drawList.AddRect(
+                ImVec2{origin.x, origin.y},
+                ImVec2{origin.x + width, origin.y + height},
+                faintColor,
+                0.0F,
+                0,
+                1.0F
+            );
+            auto const arm = std::min(
+                12.0F,
+                0.25F * std::min(width, height)
+            );
+            if (arm < 2.0F)
+            {
+                return;
+            }
+            auto const right     = origin.x + width;
+            auto const bottom    = origin.y + height;
+            auto const thickness = 3.0F;
+            auto const corner = [&](float x, float y, float dx, float dy)
+            {
+                drawList.AddLine(
+                    ImVec2{x, y},
+                    ImVec2{x + (arm * dx), y},
+                    brightColor,
+                    thickness
+                );
+                drawList.AddLine(
+                    ImVec2{x, y},
+                    ImVec2{x, y + (arm * dy)},
+                    brightColor,
+                    thickness
+                );
+            };
+            corner(origin.x, origin.y, 1.0F, 1.0F);
+            corner(right, origin.y, -1.0F, 1.0F);
+            corner(origin.x, bottom, 1.0F, -1.0F);
+            corner(right, bottom, -1.0F, -1.0F);
         }
 
         auto drawRectWithGrips(
@@ -2278,14 +2339,15 @@ namespace uf::workbench
                     member.searchRoi,
                     k_mutedSearchRoiColor
                 );
-                drawRectOutline(
+                drawCornerBrackets(
                     *drawList,
                     view,
                     canvasOrigin,
                     member.templateRect,
                     member.templateEditable
-                        ? k_mutedTemplateColor
-                        : k_foreignTemplateColor
+                        ? k_memberCornerColor
+                        : k_foreignCornerColor,
+                    k_memberOutlineColor
                 );
             }
 
