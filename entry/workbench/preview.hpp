@@ -204,6 +204,87 @@ namespace uf::workbench
         std::optional<uint64> liveSadScore{};
     };
 
+    // How searching one element on one screen came out. Every (element, screen)
+    // pair in the grid carries one of these, so a screen a multi-placed element
+    // is not placed on is an explicit NotSearchedHere state rather than an empty
+    // hole the reader has to interpret.
+    enum class ModelCellOutcome : uint8
+    {
+        // Searched and matched: the score came in at or below the threshold.
+        Hit,
+        // Searched and did not match: the score stayed above the threshold.
+        Miss,
+        // The search hit its comparison budget or the run's deadline before it
+        // produced evidence, so no score was measured here.
+        Stopped,
+        // This screen's page does not place the element, so there is no search
+        // region for it here -- a multi-placed element off its pages, never an
+        // anchor or a single-placement element (those are searched everywhere).
+        NotSearchedHere,
+    };
+
+    // One (element, screen) observation in the marks-x-screens grid, filed under
+    // the ELEMENT id -- never a derived per-page recognizer id -- so the UI's
+    // element-keyed lookups reach it the same way the margins do. Derived from
+    // the same per-screen evaluation the margins fold in, with no second search.
+    struct ModelCheckCell final
+    {
+        annotation::RecognizerId elementId;
+        annotation::SourceId     screenId;
+        ModelCellOutcome         outcome{};
+
+        // The measured score and the threshold it was read against, present for
+        // Hit and Miss. maximumSad is the same per-element budget the margins
+        // report against, so a cell's percentage is comparable across screens.
+        std::optional<uint64> sadScore{};
+        uint64                maximumSad{};
+
+        // Whether the element is authored to match on this screen: the screen's
+        // recorded page places it (an interactive region) or names it (an
+        // anchor). This is the ground truth the colour is read against -- a hit
+        // where this is false is a misfire, a miss where it is true is a hole.
+        // Left false for a cell that was not searched or was stopped.
+        bool expectedHit{};
+
+        // Why a Stopped cell stopped -- the budget or the deadline -- for the
+        // tooltip. Empty for every other outcome.
+        std::optional<SadSearchStopReason> stopReason{};
+    };
+
+    // The colour band a cell reads in, one step removed from ImGui so the
+    // classification is a pure value the logic-layer tests can pin.
+    enum class ModelCellColor : uint8
+    {
+        // The expected outcome: a hit on a screen the element is authored to
+        // match, or a clean miss on one it is not, both with room to spare.
+        Expected,
+        // A correct-but-close margin, or a search that was stopped: worth a look
+        // even though nothing is yet wrong.
+        Thin,
+        // A wrong outcome: a hit on a foreign screen, or a miss on a screen the
+        // element's own page places it.
+        Misfire,
+        // Not searched here: dim, an explicit absence rather than a verdict.
+        NotSearched,
+    };
+
+    // The thin-margin band, as a fraction (numerator / denominator) of the
+    // threshold. A measured score whose distance from its threshold is within
+    // this fraction reads amber, because a mark that only just passes -- or only
+    // just fails -- is a frame of drift from flipping. The margin view carries no
+    // "thin" definition to inherit, so ten percent is the documented choice.
+    inline constexpr auto k_thinMarginNumerator   = uint64{10};
+    inline constexpr auto k_thinMarginDenominator = uint64{100};
+
+    // The colour a cell reads in, from its outcome, its measured margin, and
+    // whether the element is authored to match on its screen. Pure and total: it
+    // reads only the cell, so the tests hold the whole classification without a
+    // document or a GUI. Precedence is wrong-outcome (red) over stopped-or-thin
+    // (amber) over clear-and-correct (green), so a misfire never hides behind a
+    // thin band.
+    [[nodiscard]]
+    auto classifyModelCell(ModelCheckCell const& cell) noexcept -> ModelCellColor;
+
     // The running target's current screen. A live frame carries no recorded
     // expectation -- the author is looking at it -- so only how the page
     // classified is reported, with no correct-or-not verdict attached.
@@ -219,6 +300,13 @@ namespace uf::workbench
         std::vector<ScreenCheck>       screens{};
         std::vector<RecognizerMargin>  margins{};
         std::optional<LiveScreenCheck> live{};
+
+        // One cell per (element, screen) over the captured screens, filed under
+        // the element id. The full grid the margins fold away: the margins keep
+        // each mark's own score and nearest-other margin, while these preserve
+        // every per-screen outcome the run measured. The live frame contributes
+        // no cell -- it is not a project screen and has no column.
+        std::vector<ModelCheckCell> cells{};
     };
 
     // Evaluates every recognizer against every captured screen, once, and reports

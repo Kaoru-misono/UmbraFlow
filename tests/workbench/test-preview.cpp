@@ -1078,6 +1078,185 @@ namespace uf::workbench
         CHECK(*margin->ownSadScore == 0U);
     }
 
+    namespace
+    {
+        [[nodiscard]]
+        auto findCell(
+            ModelCheck const& check,
+            annotation::RecognizerId element,
+            annotation::SourceId screen
+        ) -> ModelCheckCell const*
+        {
+            auto const found = std::ranges::find_if(
+                check.cells,
+                [&](ModelCheckCell const& cell)
+                {
+                    return cell.elementId == element && cell.screenId == screen;
+                }
+            );
+            return found == check.cells.end() ? nullptr : &*found;
+        }
+
+        [[nodiscard]]
+        auto measuredCell(
+            ModelCellOutcome outcome,
+            uint64 score,
+            uint64 maximumSad,
+            bool expectedHit
+        ) -> ModelCheckCell
+        {
+            return ModelCheckCell{
+                .elementId   = annotation::test::recognizerId(k_anchorId),
+                .screenId    = annotation::test::sourceId(k_sourceId),
+                .outcome     = outcome,
+                .sadScore    = std::optional<uint64>{score},
+                .maximumSad  = maximumSad,
+                .expectedHit = expectedHit,
+            };
+        }
+    }
+
+    TEST_CASE("classifyModelCell reads outcome against authored membership")
+    {
+        // Not searched and stopped are fixed states, independent of any score.
+        CHECK(
+            classifyModelCell(
+                ModelCheckCell{
+                    .elementId = annotation::test::recognizerId(k_anchorId),
+                    .screenId  = annotation::test::sourceId(k_sourceId),
+                    .outcome   = ModelCellOutcome::NotSearchedHere,
+                }
+            )
+            == ModelCellColor::NotSearched
+        );
+        CHECK(
+            classifyModelCell(
+                ModelCheckCell{
+                    .elementId = annotation::test::recognizerId(k_anchorId),
+                    .screenId  = annotation::test::sourceId(k_sourceId),
+                    .outcome   = ModelCellOutcome::Stopped,
+                }
+            )
+            == ModelCellColor::Thin
+        );
+
+        // A hit where the mark is authored, clear of the threshold, is expected;
+        // barely under it is thin; on a screen it is not authored on it is a
+        // misfire regardless of how clean the score looks.
+        CHECK(
+            classifyModelCell(measuredCell(ModelCellOutcome::Hit, 0U, 200U, true))
+            == ModelCellColor::Expected
+        );
+        CHECK(
+            classifyModelCell(measuredCell(ModelCellOutcome::Hit, 195U, 200U, true))
+            == ModelCellColor::Thin
+        );
+        CHECK(
+            classifyModelCell(measuredCell(ModelCellOutcome::Hit, 0U, 200U, false))
+            == ModelCellColor::Misfire
+        );
+
+        // A clean miss where the mark is not authored is the expected outcome;
+        // barely over the threshold is thin; a miss where the mark IS authored is
+        // a hole in its own page.
+        CHECK(
+            classifyModelCell(measuredCell(ModelCellOutcome::Miss, 400U, 200U, false))
+            == ModelCellColor::Expected
+        );
+        CHECK(
+            classifyModelCell(measuredCell(ModelCellOutcome::Miss, 210U, 200U, false))
+            == ModelCellColor::Thin
+        );
+        CHECK(
+            classifyModelCell(measuredCell(ModelCellOutcome::Miss, 400U, 200U, true))
+            == ModelCellColor::Misfire
+        );
+    }
+
+    TEST_CASE("runModelCheck fills the grid for a mark searched on every screen")
+    {
+        // A single-placement anchor is scored on every screen, so it has a cell
+        // on each: a hit on its own page's screen and a clean miss elsewhere,
+        // and no not-searched holes.
+        auto const fixture = modelFixture(true);
+        auto const dark    = annotation::test::sourceId(k_sourceId);
+        auto const light   = annotation::test::sourceId(k_otherSourceId);
+        auto const darkId  = annotation::test::recognizerId(k_anchorId);
+
+        auto const check = runModelCheck(
+            fixture.document,
+            fixture.assets,
+            {},
+            continuingPolicy(1000)
+        );
+        REQUIRE(check.has_value());
+
+        auto const* p_own = findCell(*check, darkId, dark);
+        REQUIRE(p_own != nullptr);
+        CHECK(p_own->outcome == ModelCellOutcome::Hit);
+        CHECK(p_own->expectedHit);
+        CHECK(classifyModelCell(*p_own) == ModelCellColor::Expected);
+
+        auto const* p_elsewhere = findCell(*check, darkId, light);
+        REQUIRE(p_elsewhere != nullptr);
+        CHECK(p_elsewhere->outcome == ModelCellOutcome::Miss);
+        CHECK_FALSE(p_elsewhere->expectedHit);
+        CHECK(classifyModelCell(*p_elsewhere) == ModelCellColor::Expected);
+    }
+
+    TEST_CASE("runModelCheck marks a multi-placed element not-searched off its pages")
+    {
+        // The menu is placed on the dark and light pages and on no other, so it
+        // is a hit on both claimed screens and an explicit not-searched cell on
+        // the spare screen -- never an empty hole.
+        auto const fixture = multiPlacedFixture();
+
+        auto const check = runModelCheck(
+            fixture.document,
+            fixture.assets,
+            {},
+            continuingPolicy(1000)
+        );
+        REQUIRE(check.has_value());
+
+        auto const* p_dark = findCell(*check, fixture.menuId, fixture.darkSource);
+        REQUIRE(p_dark != nullptr);
+        CHECK(p_dark->outcome == ModelCellOutcome::Hit);
+        CHECK(p_dark->expectedHit);
+
+        auto const* p_light = findCell(*check, fixture.menuId, fixture.lightSource);
+        REQUIRE(p_light != nullptr);
+        CHECK(p_light->outcome == ModelCellOutcome::Hit);
+        CHECK(p_light->expectedHit);
+
+        auto const* p_spare = findCell(*check, fixture.menuId, fixture.spareSource);
+        REQUIRE(p_spare != nullptr);
+        CHECK(p_spare->outcome == ModelCellOutcome::NotSearchedHere);
+        CHECK(classifyModelCell(*p_spare) == ModelCellColor::NotSearched);
+    }
+
+    TEST_CASE("runModelCheck records a stopped anchor as a stopped cell")
+    {
+        // A zero comparison budget stops the page evaluation before any anchor
+        // completes, so every anchor cell is Stopped rather than a missing hole.
+        auto const fixture = modelFixture(true);
+        auto const dark    = annotation::test::sourceId(k_sourceId);
+        auto const darkId  = annotation::test::recognizerId(k_anchorId);
+
+        auto const check = runModelCheck(
+            fixture.document,
+            fixture.assets,
+            {},
+            continuingPolicy(0)
+        );
+        REQUIRE(check.has_value());
+
+        auto const* p_cell = findCell(*check, darkId, dark);
+        REQUIRE(p_cell != nullptr);
+        CHECK(p_cell->outcome == ModelCellOutcome::Stopped);
+        CHECK(classifyModelCell(*p_cell) == ModelCellColor::Thin);
+    }
+
     TEST_CASE("runPreview rejects a source that is absent from the project")
     {
         auto const fixture = previewFixture();

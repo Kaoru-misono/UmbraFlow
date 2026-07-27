@@ -21,6 +21,7 @@
 #include <algorithm>
 #include <cstddef>
 #include <format>
+#include <iterator>
 #include <limits>
 #include <memory>
 #include <optional>
@@ -506,6 +507,48 @@ namespace uf::workbench
             }
         }
 
+        // Whether an element is authored to match on a page: placed there (an
+        // interactive region), authorized there (allowedPageIds), or named by the
+        // page's signature (an anchor the page requires or forbids). This is the
+        // membership the grid's colour reads against -- a hit on a page that owns
+        // the element is expected, a hit anywhere else is a misfire -- and it is
+        // the same relation workingScreens folds into one screen, kept per page
+        // here so a multi-placed element counts as owned on every page it is on.
+        [[nodiscard]]
+        auto elementBelongsToPage(
+            annotation::AuthoringDocument const& document,
+            annotation::RecognizerId elementId,
+            annotation::PageId pageId
+        ) -> bool
+        {
+            for (auto const& placement : document.placements())
+            {
+                if (placement.elementId == elementId && placement.pageId == pageId)
+                {
+                    return true;
+                }
+            }
+            auto const* p_recognizer = document.catalog().findRecognizer(elementId);
+            if (p_recognizer == nullptr)
+            {
+                return false;
+            }
+            if (std::ranges::contains(p_recognizer->allowedPageIds(), pageId))
+            {
+                return true;
+            }
+            for (auto const& page : document.catalog().pages())
+            {
+                if (page.id() != pageId)
+                {
+                    continue;
+                }
+                return std::ranges::contains(page.required(), elementId)
+                    || std::ranges::contains(page.forbidden(), elementId);
+            }
+            return false;
+        }
+
         // One action search on one screen: the runtime recognizer to evaluate,
         // paired with the element id its evidence must be filed under. They differ
         // only for an element placed on several pages, whose per-page runtime
@@ -514,6 +557,25 @@ namespace uf::workbench
         {
             annotation::RecognizerId runtimeId;
             annotation::RecognizerId elementId;
+        };
+
+        // An action search the policy interrupted before it produced evidence,
+        // named by the element id (never the derived per-page id) and the reason.
+        // The margins fold a stopped search away as an absent row; the grid needs
+        // it as an explicit Stopped cell, so it is kept alongside the rows here.
+        struct ActionStop final
+        {
+            annotation::RecognizerId elementId;
+            SadSearchStopReason      reason{};
+        };
+
+        // Every action target's evidence on one frame, with the searches the
+        // policy stopped kept apart. The rows feed the margins exactly as before;
+        // the stops let the grid tell a stopped search from one not run here.
+        struct ActionEvaluation final
+        {
+            std::vector<PreviewAnchorRow> rows{};
+            std::vector<ActionStop>       stops{};
         };
 
         // The action searches to run on a screen whose page is pageContext, one
@@ -566,10 +628,10 @@ namespace uf::workbench
             annotation::ProjectFingerprint fingerprint,
             std::span<ActionSearch const> searches,
             annotation::RecognitionPolicy const& policy
-        ) -> Result<std::vector<PreviewAnchorRow>>
+        ) -> Result<ActionEvaluation>
         {
-            auto rows = std::vector<PreviewAnchorRow>{};
-            rows.reserve(searches.size());
+            auto evaluation = ActionEvaluation{};
+            evaluation.rows.reserve(searches.size());
             for (auto const& search : searches)
             {
                 UF_TRY_VALUE(
@@ -589,10 +651,158 @@ namespace uf::workbench
                 {
                     auto row         = toAnchorRow(*p_evidence);
                     row.recognizerId = search.elementId;
-                    rows.emplace_back(row);
+                    evaluation.rows.emplace_back(row);
+                }
+                else if (
+                    auto const* p_stop = std::get_if<annotation::PageRecognitionStop>(
+                        &attempt.result
+                    )
+                )
+                {
+                    evaluation.stops.emplace_back(
+                        ActionStop{
+                            .elementId = search.elementId,
+                            .reason    = p_stop->reason,
+                        }
+                    );
                 }
             }
-            return rows;
+            return evaluation;
+        }
+
+        // The grid cells for one screen, derived from the evaluation the margins
+        // already fold in -- the page anchor rows (and any page stop) and the
+        // action rows (and any action stop) -- so no element is searched twice.
+        //
+        // An anchor is scored on every screen by the page evaluation, so a row is
+        // its measured outcome; a missing row means the page stopped before
+        // reaching it (Stopped) or the anchor is on no page and was never scored
+        // (NotSearchedHere). A single-placement action is searched on every screen
+        // too; a multi-placed one only where its page places it, and elsewhere it
+        // is NotSearchedHere -- the explicit absence the design asks for.
+        [[nodiscard]]
+        auto deriveScreenCells(
+            annotation::AuthoringDocument const& document,
+            annotation::SourceId screenId,
+            std::optional<annotation::PageId> expectedPage,
+            std::span<annotation::RecognizerId const> anchorIds,
+            std::span<annotation::RecognizerId const> actionIds,
+            PreviewResult const& preview,
+            std::span<ActionSearch const> searches,
+            ActionEvaluation const& actionEval
+        ) -> std::vector<ModelCheckCell>
+        {
+            auto const belongs = [&](annotation::RecognizerId elementId)
+            {
+                return expectedPage.has_value()
+                    && elementBelongsToPage(document, elementId, *expectedPage);
+            };
+
+            auto cells = std::vector<ModelCheckCell>{};
+            cells.reserve(anchorIds.size() + actionIds.size());
+
+            for (auto const& anchorId : anchorIds)
+            {
+                auto const row = std::ranges::find(
+                    preview.anchorRows,
+                    anchorId,
+                    &PreviewAnchorRow::recognizerId
+                );
+                if (row != preview.anchorRows.end())
+                {
+                    cells.emplace_back(
+                        ModelCheckCell{
+                            .elementId = anchorId,
+                            .screenId  = screenId,
+                            .outcome     = row->hit
+                                ? ModelCellOutcome::Hit
+                                : ModelCellOutcome::Miss,
+                            .sadScore    = row->sadScore,
+                            .maximumSad  = row->maximumSad,
+                            .expectedHit = belongs(anchorId),
+                        }
+                    );
+                    continue;
+                }
+                // No row and the page stopped: the anchor never got its turn. No
+                // row and the page did not stop: it is on no page and was not
+                // scored here at all.
+                cells.emplace_back(
+                    ModelCheckCell{
+                        .elementId = anchorId,
+                        .screenId  = screenId,
+                        .outcome     = preview.pageStop.has_value()
+                            ? ModelCellOutcome::Stopped
+                            : ModelCellOutcome::NotSearchedHere,
+                        .expectedHit = belongs(anchorId),
+                        .stopReason  = preview.pageStop.has_value()
+                            ? std::optional<SadSearchStopReason>{
+                                preview.pageStop->reason
+                            }
+                            : std::nullopt,
+                    }
+                );
+            }
+
+            for (auto const& actionId : actionIds)
+            {
+                auto const searched = std::ranges::any_of(
+                    searches,
+                    [&](ActionSearch const& search)
+                    {
+                        return search.elementId == actionId;
+                    }
+                );
+                if (!searched)
+                {
+                    cells.emplace_back(
+                        ModelCheckCell{
+                            .elementId = actionId,
+                            .screenId  = screenId,
+                            .outcome   = ModelCellOutcome::NotSearchedHere,
+                        }
+                    );
+                    continue;
+                }
+                auto const row = std::ranges::find(
+                    actionEval.rows,
+                    actionId,
+                    &PreviewAnchorRow::recognizerId
+                );
+                if (row != actionEval.rows.end())
+                {
+                    cells.emplace_back(
+                        ModelCheckCell{
+                            .elementId = actionId,
+                            .screenId  = screenId,
+                            .outcome     = row->hit
+                                ? ModelCellOutcome::Hit
+                                : ModelCellOutcome::Miss,
+                            .sadScore    = row->sadScore,
+                            .maximumSad  = row->maximumSad,
+                            .expectedHit = belongs(actionId),
+                        }
+                    );
+                    continue;
+                }
+                auto const stop = std::ranges::find(
+                    actionEval.stops,
+                    actionId,
+                    &ActionStop::elementId
+                );
+                cells.emplace_back(
+                    ModelCheckCell{
+                        .elementId   = actionId,
+                        .screenId    = screenId,
+                        .outcome     = ModelCellOutcome::Stopped,
+                        .expectedHit = belongs(actionId),
+                        .stopReason  = stop != actionEval.stops.end()
+                            ? std::optional<SadSearchStopReason>{stop->reason}
+                            : std::nullopt,
+                    }
+                );
+            }
+            return cells;
         }
 
         // Splits what is left of the run's deadline evenly across the screens
@@ -653,6 +863,54 @@ namespace uf::workbench
             std::numeric_limits<uint64>::max()
         );
         return scaled;
+    }
+
+    auto classifyModelCell(ModelCheckCell const& cell) noexcept -> ModelCellColor
+    {
+        switch (cell.outcome)
+        {
+        case ModelCellOutcome::NotSearchedHere:
+            return ModelCellColor::NotSearched;
+        case ModelCellOutcome::Stopped:
+            return ModelCellColor::Thin;
+        case ModelCellOutcome::Hit:
+            // A hit is expected only where the element is authored to match; a
+            // hit anywhere else is the misfire the whole check exists to catch.
+            if (!cell.expectedHit)
+            {
+                return ModelCellColor::Misfire;
+            }
+            break;
+        case ModelCellOutcome::Miss:
+            // A miss where the element's own page is recorded for the screen is a
+            // hole -- a mark that should identify this screen and does not.
+            if (cell.expectedHit)
+            {
+                return ModelCellColor::Misfire;
+            }
+            break;
+        }
+
+        // The outcome is the expected one; a margin within the thin band still
+        // reads amber, because a mark that only just passed or just failed is a
+        // frame of drift from flipping. Overflow scaling the distance means the
+        // score is nowhere near the threshold, so it is not thin.
+        if (cell.sadScore.has_value() && cell.maximumSad > 0U)
+        {
+            auto const score    = *cell.sadScore;
+            auto const distance = score >= cell.maximumSad
+                ? score - cell.maximumSad
+                : cell.maximumSad - score;
+            auto const scaled = checkedMultiply(distance, k_thinMarginDenominator);
+            if (
+                scaled.has_value()
+                && *scaled <= k_thinMarginNumerator * cell.maximumSad
+            )
+            {
+                return ModelCellColor::Thin;
+            }
+        }
+        return ModelCellColor::Expected;
     }
 
     auto runPreview(
@@ -829,14 +1087,23 @@ namespace uf::workbench
         UF_TRY_VALUE(runtime, buildRuntime(document, sourceAssets));
         auto const fingerprint = document.catalog().fingerprint();
 
+        // The grid rows are the same set the margins cover: anchors, scored on
+        // every screen by the page evaluation, and action targets, searched
+        // per screen. Info regions take part in neither and get no row.
+        auto anchorIds = std::vector<annotation::RecognizerId>{};
         auto actionIds = std::vector<annotation::RecognizerId>{};
         for (auto const& recognizer : document.catalog().recognizers())
         {
-            if (
-                recognizer.annotationType() == annotation::AnnotationType::ActionTarget
-            )
+            switch (recognizer.annotationType())
             {
+            case annotation::AnnotationType::PageAnchor:
+                anchorIds.emplace_back(recognizer.id());
+                break;
+            case annotation::AnnotationType::ActionTarget:
                 actionIds.emplace_back(recognizer.id());
+                break;
+            case annotation::AnnotationType::InfoRegion:
+                break;
             }
         }
 
@@ -893,7 +1160,7 @@ namespace uf::workbench
                 expected
             );
             UF_TRY_VALUE(
-                actionRows,
+                actionEval,
                 evaluateActionsOn(
                     runtime,
                     frame,
@@ -902,10 +1169,28 @@ namespace uf::workbench
                     screenPolicy
                 )
             );
-            for (auto const& row : actionRows)
+            for (auto const& row : actionEval.rows)
             {
                 recordMargin(check.margins, working, asset.id, row);
             }
+
+            // The full grid, from the same evaluation the margins just folded
+            // in: no element is searched a second time to fill it.
+            auto screenCells = deriveScreenCells(
+                document,
+                asset.id,
+                expected,
+                anchorIds,
+                actionIds,
+                preview,
+                actionSearches,
+                actionEval
+            );
+            check.cells.insert(
+                check.cells.end(),
+                std::make_move_iterator(screenCells.begin()),
+                std::make_move_iterator(screenCells.end())
+            );
         }
 
         if (!hasLiveFrame)
@@ -944,7 +1229,7 @@ namespace uf::workbench
             livePreview.resolvedPageId
         );
         UF_TRY_VALUE(
-            liveActionRows,
+            liveActionEval,
             evaluateActionsOn(
                 runtime,
                 liveFrame,
@@ -953,7 +1238,7 @@ namespace uf::workbench
                 livePolicy
             )
         );
-        for (auto const& row : liveActionRows)
+        for (auto const& row : liveActionEval.rows)
         {
             recordLiveMargin(check.margins, row);
         }

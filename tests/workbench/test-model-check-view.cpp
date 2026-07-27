@@ -273,4 +273,41 @@ namespace uf::workbench
         // default-constructed one that would read as a verdict.
         CHECK(findScreenCheck(state, annotation::test::sourceId(k_otherId)) == nullptr);
     }
+
+    TEST_CASE("a grid cell is found by element and screen")
+    {
+        auto state = appState();
+
+        auto check = ModelCheck{};
+        check.cells.emplace_back(
+            ModelCheckCell{
+                .elementId   = annotation::test::recognizerId(k_anchorId),
+                .screenId    = annotation::test::sourceId(k_sourceId),
+                .outcome     = ModelCellOutcome::Hit,
+                .sadScore    = std::optional<uint64>{0U},
+                .maximumSad  = 200U,
+                .expectedHit = true,
+            }
+        );
+        state.setLastModelCheck(std::move(check));
+
+        auto const* p_cell = findModelCell(
+            state,
+            annotation::test::recognizerId(k_anchorId),
+            annotation::test::sourceId(k_sourceId)
+        );
+        REQUIRE(p_cell != nullptr);
+        CHECK(p_cell->outcome == ModelCellOutcome::Hit);
+
+        // A pair the last check did not cover has no cell, so the grid reads it
+        // as absent rather than as a default-constructed verdict.
+        CHECK(
+            findModelCell(
+                state,
+                annotation::test::recognizerId(k_anchorId),
+                annotation::test::sourceId(k_otherId)
+            )
+            == nullptr
+        );
+    }
 }

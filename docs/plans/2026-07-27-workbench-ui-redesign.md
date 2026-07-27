@@ -319,3 +319,62 @@ canvas surface rewritten plus context-menu / creation / retype helpers),
 - **Gates:** 4 static gates OK; x64-debug clean; `ctest -L CI` 14/14; asan
   rebuilt + `ctest -L AsanSmoke` 2/2; probe-project `--smoke 5` EXIT 0;
   x64-release workbench builds.
+
+### 2026-07-27 — U3 model-check grid (shipped)
+
+Decision 6's deferred follow-up: the worker result now carries the full
+marks×screens grid, and the Model tab renders it as a matrix beneath the two
+existing tables. Files: `preview.{hpp,cpp}` (cell model, derivation, pure
+classifier), `model-check-view.{hpp,cpp}` (`findModelCell` lookup),
+`app/panels.cpp` (`drawModelMatrix` and the cell colour/text/tooltip helpers),
+and tests `test-preview.cpp`, `test-model-check-view.cpp`.
+
+- **Cell model.** `ModelCheck` gained `std::vector<ModelCheckCell> cells`, one
+  per (element, screen) over the captured screens, filed under the ELEMENT id
+  (never the derived per-page recognizer id) so the existing element-keyed
+  lookups reach it. Each cell carries a `ModelCellOutcome` — `Hit` / `Miss`
+  (measured, with `sadScore` and `maximumSad`), `Stopped` (with the
+  `SadSearchStopReason` for the tooltip), or `NotSearchedHere` — plus
+  `expectedHit`, whether the screen's recorded page authors the element. The
+  margins and the screen verdicts are untouched; the two current tables and
+  `findMargin` / `findScreenCheck` keep working unchanged.
+- **NotSearchedHere is explicit.** A multi-placed element on a screen whose page
+  does not place it is a distinct cell state, not an empty hole. Anchors and
+  single-placement elements are searched on every screen, so they never take it.
+- **Derived without a second pass.** The cells come from exactly the per-screen
+  evaluation the margins already fold in: the page anchor rows (and any page
+  stop) for anchors, and the action rows for interactive elements. The action
+  evaluation, which previously discarded stopped searches, now returns them
+  alongside the rows (`ActionEvaluation`) so a stopped action becomes a
+  `Stopped` cell rather than a silent gap. `deriveScreenCells` reads that data;
+  no recognizer is searched twice. An anchor with no row is `Stopped` when the
+  page stopped and `NotSearchedHere` otherwise (an orphan anchor on no page).
+- **Thin-margin rule.** The margin view carried no existing "thin" definition to
+  inherit, so the documented choice is 10% of the threshold: a measured score
+  whose distance from `maximumSad` is within `maximumSad / 10` reads amber.
+  `classifyModelCell` is a pure, total function over one cell — precedence is
+  wrong-outcome (red: a hit off the element's pages, or a miss on a screen its
+  own page owns) over stopped-or-thin (amber) over clear-and-correct (green),
+  and NotSearchedHere is neutral/dim — so a misfire never hides behind a thin
+  band. `ModelCellColor` keeps the classification one step removed from ImGui.
+- **Matrix widget.** `drawModelMatrix` renders an ImGui table with the mark
+  column and the screen header frozen (`TableSetupScrollFreeze(1,1)`), bounded
+  to 260 px of scrolling height for 1080p, rows taken from the same margins the
+  tables above use (so info regions are absent here too). Each cell fills with
+  its classified colour, shows the score share, and hovers a tooltip (outcome
+  word + score vs threshold). Clicking a cell reuses `selectRecognizer` to
+  select the mark and follow to that screen, passing the screen's page as
+  context only when that page places the mark. The tab keeps its three states.
+- **Tests.** `test-preview.cpp`: `classifyModelCell` as a table of outcomes
+  (expected/thin/misfire/not-searched across hit and miss); the grid filled for
+  a mark searched on every screen (hit own, clean miss elsewhere); a
+  multi-placed element not-searched off its pages; a stopped anchor recorded as
+  a stopped cell. `test-model-check-view.cpp`: `findModelCell` by element and
+  screen, and absent for an uncovered pair. Existing margin/verdict tests pass
+  unmodified.
+- **Deferred:** the full-text evidence-table polish noted beside the grid in the
+  U3 phasing line is not part of this change. The dirty dot still over-reports
+  (accepted cpp-debt from U1).
+- **Gates:** 4 static gates OK; x64-debug clean; `ctest -L CI` 14/14; asan
+  rebuilt + `ctest -L AsanSmoke` 2/2; probe-project `--smoke 5` EXIT 0;
+  x64-release workbench builds.

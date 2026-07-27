@@ -63,6 +63,17 @@ namespace uf::workbench
         annotation::RecognizerId recognizerId
     ) -> RecognizerMargin const*;
 
+    // The last check's grid cell for one element on one screen, or nullptr when
+    // the last check did not cover the pair. Keyed by the element id, never a
+    // derived per-page id, so it matches the same element the margins do. Valid
+    // until the next check replaces the result.
+    [[nodiscard]]
+    auto findModelCell(
+        AppState const& state UF_LIFETIME_BOUND,
+        annotation::RecognizerId elementId,
+        annotation::SourceId screenId
+    ) -> ModelCheckCell const*;
+
     // Starts a check on the job's worker thread, sized so the deadline scales
     // with the work rather than with the screen count alone. liveFrameBytes is
     // empty when no frame was captured; capture stays with the caller because it

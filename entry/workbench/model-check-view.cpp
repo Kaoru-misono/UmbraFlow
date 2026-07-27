@@ -164,6 +164,27 @@ namespace uf::workbench
         return found == check->margins.end() ? nullptr : &*found;
     }
 
+    auto findModelCell(
+        AppState const& state,
+        annotation::RecognizerId elementId,
+        annotation::SourceId screenId
+    ) -> ModelCheckCell const*
+    {
+        auto const& check = state.lastModelCheck();
+        if (!check.has_value())
+        {
+            return nullptr;
+        }
+        auto const found = std::ranges::find_if(
+            check->cells,
+            [&](ModelCheckCell const& cell)
+            {
+                return cell.elementId == elementId && cell.screenId == screenId;
+            }
+        );
+        return found == check->cells.end() ? nullptr : &*found;
+    }
+
     // Hands the whole model to a worker, with a frame from the running target
     // when one was captured and an empty span when there was none. The
     // deadline is what stops a check running forever; see the constants for

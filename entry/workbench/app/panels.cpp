@@ -25,6 +25,8 @@
 
 #include <domain/space.hpp>
 
+#include <vision/sad.hpp>
+
 #include <imgui.h>
 #include <imgui_internal.h>
 
@@ -3346,9 +3348,203 @@ namespace uf::workbench
             }
         }
 
-        // The Model tab: run a whole-model check and read the two tables the data
+        // The translucent fill a grid cell reads in, blended over the table row
+        // background so the score text stays legible. Green expected, amber thin
+        // or stopped, red misfire, and a faint grey for a cell not searched here.
+        [[nodiscard]]
+        auto modelCellBg(ModelCellColor color) -> ImVec4
+        {
+            switch (color)
+            {
+            case ModelCellColor::Expected:
+                return ImVec4{0.30F, 0.72F, 0.40F, 0.35F};
+            case ModelCellColor::Thin:
+                return ImVec4{0.95F, 0.65F, 0.15F, 0.40F};
+            case ModelCellColor::Misfire:
+                return ImVec4{0.95F, 0.35F, 0.35F, 0.45F};
+            case ModelCellColor::NotSearched:
+                return ImVec4{0.50F, 0.50F, 0.50F, 0.12F};
+            }
+            UF_UNREACHABLE_MSG("unknown ModelCellColor value");
+        }
+
+        // The compact text drawn inside a grid cell: the score as a share of the
+        // budget for a measured cell, a stop marker, or a dash where the element
+        // was not searched. The colour and the tooltip carry the rest.
+        [[nodiscard]]
+        auto modelCellText(ModelCheckCell const& cell) -> std::string
+        {
+            switch (cell.outcome)
+            {
+            case ModelCellOutcome::Hit:
+            case ModelCellOutcome::Miss:
+                return budgetPercentText(cell.sadScore, cell.maximumSad);
+            case ModelCellOutcome::Stopped:
+                return "stop";
+            case ModelCellOutcome::NotSearchedHere:
+                return "-";
+            }
+            UF_UNREACHABLE_MSG("unknown ModelCellOutcome value");
+        }
+
+        // A cell's hover text: the element, the screen, the outcome word, and the
+        // score against the threshold when one was measured.
+        [[nodiscard]]
+        auto modelCellTooltip(
+            AppState const& state,
+            ModelCheckCell const& cell
+        ) -> std::string
+        {
+            auto const name   = recognizerName(state, cell.elementId);
+            auto const screen = shortId(cell.screenId.value());
+            switch (cell.outcome)
+            {
+            case ModelCellOutcome::Hit:
+                return std::format(
+                    "{} on {}: hit -- {} of budget",
+                    name,
+                    screen,
+                    budgetPercentText(cell.sadScore, cell.maximumSad)
+                );
+            case ModelCellOutcome::Miss:
+                return std::format(
+                    "{} on {}: miss -- {} of budget",
+                    name,
+                    screen,
+                    budgetPercentText(cell.sadScore, cell.maximumSad)
+                );
+            case ModelCellOutcome::Stopped:
+                return std::format(
+                    "{} on {}: stopped ({})",
+                    name,
+                    screen,
+                    cell.stopReason.has_value()
+                        ? stopReasonWord(*cell.stopReason)
+                        : "unknown"
+                );
+            case ModelCellOutcome::NotSearchedHere:
+                return std::format(
+                    "{} on {}: not searched -- this screen's page does not "
+                    "place it",
+                    name,
+                    screen
+                );
+            }
+            UF_UNREACHABLE_MSG("unknown ModelCellOutcome value");
+        }
+
+        // The marks-x-screens grid: one row per mark, one column per captured
+        // screen, in a bounded scrolling region with the mark column and the
+        // screen header frozen. A cell's colour reads its outcome against whether
+        // the mark is authored to match there; clicking one selects the mark and
+        // follows to that screen, with the screen's page as context when it places
+        // the mark. Drawn from the same margins the tables above use for rows, so
+        // an info region -- absent from the margins -- is absent here too.
+        auto drawModelMatrix(AppState& state, ModelCheck const& check) -> void
+        {
+            if (check.screens.empty() || check.margins.empty())
+            {
+                return;
+            }
+
+            ImGui::SeparatorText("Mark x screen matrix");
+            auto const columns = 1 + static_cast<int>(check.screens.size());
+            auto const matrixFlags = ImGuiTableFlags_Borders
+                | ImGuiTableFlags_RowBg
+                | ImGuiTableFlags_ScrollX
+                | ImGuiTableFlags_ScrollY
+                | ImGuiTableFlags_SizingFixedFit;
+            // A bounded height so a large model scrolls inside the drawer rather
+            // than pushing the tables above off the top on a 1080p screen.
+            auto const matrixSize = ImVec2{0.0F, 260.0F};
+            if (!ImGui::BeginTable("mark-screen-matrix", columns, matrixFlags, matrixSize))
+            {
+                return;
+            }
+
+            ImGui::TableSetupScrollFreeze(1, 1);
+            ImGui::TableSetupColumn("Mark", ImGuiTableColumnFlags_WidthFixed);
+            for (auto const& screen : check.screens)
+            {
+                ImGui::TableSetupColumn(
+                    shortId(screen.sourceId.value()).c_str(),
+                    ImGuiTableColumnFlags_WidthFixed
+                );
+            }
+            ImGui::TableHeadersRow();
+
+            auto rowIndex = 0;
+            for (auto const& margin : check.margins)
+            {
+                ImGui::TableNextRow();
+                ImGui::TableNextColumn();
+                ImGui::TextUnformatted(
+                    recognizerName(state, margin.recognizerId).c_str()
+                );
+
+                auto columnIndex = 0;
+                for (auto const& screen : check.screens)
+                {
+                    ImGui::TableNextColumn();
+                    auto const* p_cell = findModelCell(
+                        state,
+                        margin.recognizerId,
+                        screen.sourceId
+                    );
+                    if (p_cell == nullptr)
+                    {
+                        ++columnIndex;
+                        continue;
+                    }
+
+                    ImGui::TableSetBgColor(
+                        ImGuiTableBgTarget_CellBg,
+                        ImGui::GetColorU32(modelCellBg(classifyModelCell(*p_cell)))
+                    );
+                    auto const label = std::format(
+                        "{}##cell-{}-{}",
+                        modelCellText(*p_cell),
+                        rowIndex,
+                        columnIndex
+                    );
+                    if (
+                        ImGui::Selectable(
+                            label.c_str(),
+                            false,
+                            ImGuiSelectableFlags_None
+                        )
+                    )
+                    {
+                        // Follow with page context only when the screen's page
+                        // actually places the mark, so the canvas edits that
+                        // placement rather than falling back to a foreign claim.
+                        auto const pageContext = p_cell->expectedHit
+                            ? screen.expectedPageId
+                            : std::optional<annotation::PageId>{};
+                        selectRecognizer(
+                            state,
+                            margin.recognizerId,
+                            screen.sourceId,
+                            pageContext
+                        );
+                    }
+                    if (ImGui::IsItemHovered())
+                    {
+                        ImGui::SetTooltip(
+                            "%s",
+                            modelCellTooltip(state, *p_cell).c_str()
+                        );
+                    }
+                    ++columnIndex;
+                }
+                ++rowIndex;
+            }
+            ImGui::EndTable();
+        }
+
+        // The Model tab: run a whole-model check and read the tables the data
         // supports -- one screen-verdict row per captured screen, one margin row
-        // per mark. The per-cell mark-x-screen matrix is the deferred U3 follow-up.
+        // per mark, and the marks-x-screens grid (drawModelMatrix) beneath them.
         // Same three explicit states as Evidence.
         auto drawModelTab(
             AppState& state,
@@ -3503,6 +3699,8 @@ namespace uf::workbench
                 }
                 ImGui::EndTable();
             }
+
+            drawModelMatrix(state, *check);
         }
 
         // The colour a severity is drawn in, or nothing for info, which keeps the
