@@ -1,5 +1,11 @@
 # annotation Module Architecture Knowledge
 
+> **DIRTY (2026-07-26)**: This document predates authoring schema v2
+> (Element+placement replacing per-page copies, the v1 read-path sunset,
+> per-placement runtime recognizer expansion in the compiler, and the
+> deriveModel permanent bridge). Trust the code and
+> `docs/plans/2026-07-26-page-centric-authoring.md` until resynced.
+
 This document describes the S0 contract already implemented by `modules/annotation`. The complete
 design is in `docs/plans/2026-07-22-annotation-design.md`; this guide focuses on code entry points,
 processing flow, and constraints that must remain true.

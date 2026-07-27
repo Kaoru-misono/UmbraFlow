@@ -1,5 +1,10 @@
 # entry/workbench 架构知识
 
+> **DIRTY（2026-07-26）**：本文尚未反映 page-centric 重构（EditPage/PageView
+> 句柄层、authoring schema v2 的 Element+placement 模型、v1 路径退役、按
+> placement 展开的运行时清单生成）。以实际代码与
+> `docs/plans/2026-07-26-page-centric-authoring.md` 为准，待重新同步。
+
 `umbra-workbench` 是 A1 阶段的 Windows 标注工具。GUI、采集和文件发布都围绕
 `modules/annotation` 已有的编辑模型、编译器和识别接口组织，不另行定义 schema。
 它是这些模块的组合入口；业务规则仍放在 `annotation`、`image`、`controller` 或

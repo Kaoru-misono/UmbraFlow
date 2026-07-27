@@ -1,5 +1,10 @@
 # annotation 模块架构知识
 
+> **DIRTY（2026-07-26）**：本文尚未反映 authoring schema v2（Element+placement
+> 取代按页拷贝、v1 读取路径退役、编译器按 placement 展开运行时 recognizer、
+> deriveModel 永久桥）。以实际代码与
+> `docs/plans/2026-07-26-page-centric-authoring.md` 为准，待重新同步。
+
 本文说明 `modules/annotation` 已经实现的 S0 契约。完整设计见
 `docs/plans/2026-07-22-annotation-design.md`，这里主要说明代码入口、处理流程和必须
 保持的约束。

@@ -1,5 +1,10 @@
 # entry/workbench Architecture Knowledge
 
+> **DIRTY (2026-07-26)**: This document predates the page-centric refactor
+> (the EditPage/PageView handle layer, authoring schema v2's Element+placement
+> model, the v1 sunset, and per-placement runtime manifest expansion). Trust
+> the code and `docs/plans/2026-07-26-page-centric-authoring.md` until resynced.
+
 `umbra-workbench` is the A1 Windows annotation tool. Its GUI, capture, and file-publication
 capabilities are organized around the editing model, compiler, and recognition interfaces already
 provided by `modules/annotation`; it does not define another schema. It is the composition point for
