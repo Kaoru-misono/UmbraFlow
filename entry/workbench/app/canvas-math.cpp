@@ -218,4 +218,30 @@ namespace uf::workbench
             static_cast<float>(rect.y())
         );
     }
+
+    auto snappedScreenBounds(
+        CanvasView view,
+        CanvasPoint canvasOrigin,
+        PixelRect const& rect
+    ) -> ScreenPixelRect
+    {
+        auto const topLeft = sourceToScreen(
+            view,
+            canvasOrigin,
+            static_cast<float>(rect.x()),
+            static_cast<float>(rect.y())
+        );
+        auto const bottomRight = sourceToScreen(
+            view,
+            canvasOrigin,
+            static_cast<float>(rect.x() + rect.width()),
+            static_cast<float>(rect.y() + rect.height())
+        );
+        return ScreenPixelRect{
+            .left   = std::round(topLeft.x),
+            .top    = std::round(topLeft.y),
+            .right  = std::round(bottomRight.x),
+            .bottom = std::round(bottomRight.y),
+        };
+    }
 }

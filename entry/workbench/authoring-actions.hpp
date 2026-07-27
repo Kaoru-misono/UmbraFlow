@@ -54,6 +54,28 @@ namespace uf::workbench
         char const* typeName
     ) -> std::string;
 
+    // The percentage a basis-point threshold is shown as, and the basis points a
+    // shown percentage commits to. Persistence stays integer basis points (design
+    // lock OQ-1 / §1.4): the UI shows a familiar percent to two decimals while the
+    // document never sees a float. The pair round-trips -- taking an unedited
+    // value from basis points to a percent and back is the identity -- and the
+    // commit direction rounds to the nearest basis point and clamps to [0, 10000].
+    [[nodiscard]]
+    auto thresholdPercentFromBasisPoints(uint32 basisPoints) noexcept -> float;
+
+    [[nodiscard]]
+    auto thresholdBasisPointsFromPercent(float percent) noexcept -> uint32;
+
+    // Duplicates the selected element as a new one and selects the copy once the
+    // edit lands: a fresh id, a unique name derived from the original, and the
+    // same rectangles, threshold, click, kind, and placements. Reports a refusal
+    // on the status line rather than committing a rejected edit.
+    auto requestDuplicateElement(
+        AppState& state,
+        PanelUiState& ui,
+        annotation::RecognizerId id
+    ) -> void;
+
     // Parks a validated draft for this frame's single commit.
     auto requestEdit(
         PanelUiState& ui,

@@ -15,6 +15,7 @@
 #include <domain/space.hpp>
 
 #include <algorithm>
+#include <cmath>
 #include <format>
 #include <optional>
 #include <string>
@@ -46,6 +47,65 @@ namespace uf::workbench
             return nullptr;
         }
         return &*found;
+    }
+
+    namespace
+    {
+        // The inclusive basis-point ceiling a threshold may hold: 10000 is 100.00
+        // percent. The design fixes the range at [0, 10000] (§1.4).
+        constexpr auto k_thresholdMaxBasisPoints = int64{10'000};
+    }
+
+    auto thresholdPercentFromBasisPoints(uint32 basisPoints) noexcept -> float
+    {
+        return static_cast<float>(basisPoints) / 100.0F;
+    }
+
+    auto thresholdBasisPointsFromPercent(float percent) noexcept -> uint32
+    {
+        // Rounded in double so a percent that is not exactly representable in
+        // float (99.99 is not) still recovers the basis points it came from.
+        auto const scaled = std::llround(static_cast<double>(percent) * 100.0);
+        auto const clamped = std::clamp(
+            static_cast<int64>(scaled),
+            int64{0},
+            k_thresholdMaxBasisPoints
+        );
+        return static_cast<uint32>(clamped);
+    }
+
+    auto requestDuplicateElement(
+        AppState& state,
+        PanelUiState& ui,
+        annotation::RecognizerId id
+    ) -> void
+    {
+        auto const newId = annotation::RecognizerId{mintResourceId()};
+        auto duplicated  = duplicateElement(
+            state.draft(),
+            DuplicateElementSpec{
+                .sourceElementId = id,
+                .newElementId    = newId,
+            }
+        );
+        if (!duplicated)
+        {
+            ui.statusLine = std::format(
+                "duplicate failed: {}",
+                toString(duplicated.error())
+            );
+            return;
+        }
+        // The copy is authored on the same screen as the original, so the
+        // selection follows there once the edit lands rather than leaving its
+        // rectangles drawn over whatever the canvas happens to show.
+        requestEditSelecting(
+            ui,
+            std::move(duplicated->draft),
+            std::format("duplicated as \"{}\"", duplicated->name),
+            newId,
+            sourceOfRecognizer(state, id)
+        );
     }
 
     [[nodiscard]]

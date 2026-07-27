@@ -446,6 +446,107 @@ namespace uf::workbench
             );
             CHECK(buildAuthoringDocument(added->draft).has_value());
         }
+
+        SUBCASE("an info region is placed and holds no signature role")
+        {
+            auto const added = addPageMember(
+                makeAuthoringDraft(document()),
+                spec(PageMemberKind::InfoRegion)
+            );
+            REQUIRE(added.has_value());
+
+            auto const recognizer = recognizerIn(added->draft, newId);
+            CHECK(
+                recognizer.annotationType
+                == annotation::AnnotationType::InfoRegion
+            );
+            CHECK(std::ranges::contains(pagesPlacedOn(added->draft, newId), pageId));
+            CHECK_FALSE(
+                std::ranges::contains(
+                    pageIn(added->draft, pageId).required,
+                    newId
+                )
+            );
+            CHECK(buildAuthoringDocument(added->draft).has_value());
+        }
+    }
+
+    TEST_CASE("duplicating an element mints a distinct, valid copy")
+    {
+        auto const actionId = annotation::test::recognizerId(k_actionId);
+        auto const newId    = annotation::test::recognizerId(k_awayId);
+        auto const pageId   = annotation::test::pageId(k_pageId);
+
+        auto const original = recognizerIn(makeAuthoringDraft(document()), actionId);
+
+        auto const duplicated = duplicateElement(
+            makeAuthoringDraft(document()),
+            DuplicateElementSpec{
+                .sourceElementId = actionId,
+                .newElementId    = newId,
+            }
+        );
+        REQUIRE(duplicated.has_value());
+
+        // A genuinely new element: a fresh id and a distinct, unique name.
+        auto const copy = recognizerIn(duplicated->draft, newId);
+        CHECK(copy.id == newId);
+        CHECK(copy.name != original.name);
+        CHECK(copy.name == duplicated->name);
+        CHECK(copy.annotationType == original.annotationType);
+        CHECK(copy.templateRect == original.templateRect);
+        CHECK(copy.similarityBasisPoints == original.similarityBasisPoints);
+        CHECK(copy.defaultClick.has_value() == original.defaultClick.has_value());
+        if (copy.defaultClick.has_value() && original.defaultClick.has_value())
+        {
+            CHECK(copy.defaultClick->x == original.defaultClick->x);
+            CHECK(copy.defaultClick->y == original.defaultClick->y);
+        }
+
+        // The copy inherits the original's placements, so the interactive element
+        // stays valid (it must be placed on at least one page), and the original
+        // is untouched.
+        CHECK(std::ranges::contains(pagesPlacedOn(duplicated->draft, newId), pageId));
+        CHECK(recognizerIn(duplicated->draft, actionId).name == original.name);
+        CHECK(buildAuthoringDocument(duplicated->draft).has_value());
+    }
+
+    TEST_CASE("an applied duplicate is removed by one undo")
+    {
+        auto const actionId = annotation::test::recognizerId(k_actionId);
+        auto const newId    = annotation::test::recognizerId(k_awayId);
+
+        auto history = AuthoringEditHistory{document()};
+        auto const before = history.document().catalog().recognizers().size();
+
+        auto const duplicated = duplicateElement(
+            history.draft(),
+            DuplicateElementSpec{
+                .sourceElementId = actionId,
+                .newElementId    = newId,
+            }
+        );
+        REQUIRE(duplicated.has_value());
+
+        auto const applied = history.apply(duplicated->draft);
+        REQUIRE(applied.has_value());
+        CHECK(*applied);
+        CHECK(history.document().catalog().recognizers().size() == before + 1U);
+
+        REQUIRE(history.undo());
+        CHECK(history.document().catalog().recognizers().size() == before);
+    }
+
+    TEST_CASE("duplicating an element outside the draft is refused")
+    {
+        auto const duplicated = duplicateElement(
+            makeAuthoringDraft(document()),
+            DuplicateElementSpec{
+                .sourceElementId = annotation::test::recognizerId(k_sharedId),
+                .newElementId    = annotation::test::recognizerId(k_awayId),
+            }
+        );
+        CHECK_FALSE(duplicated.has_value());
     }
 
     TEST_CASE("sharing a region places the same element with a range of its own")

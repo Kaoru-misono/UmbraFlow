@@ -7,6 +7,8 @@
 
 #include <doctest/doctest.h>
 
+#include <cmath>
+
 namespace uf::workbench
 {
     namespace
@@ -153,5 +155,27 @@ namespace uf::workbench
             REQUIRE(edited.has_value());
             CHECK(*edited == rect(15, 15, 15, 15));
         }
+    }
+
+    TEST_CASE("snapped screen bounds round the mapped corners to whole pixels")
+    {
+        // A fractional zoom maps integer source pixels to fractional screen
+        // coordinates; the overlay bounds round both corners so a match box lands
+        // on device-pixel boundaries.
+        auto const view   = CanvasView{.zoom = 1.3F, .panX = 0.0F, .panY = 0.0F};
+        auto const origin = CanvasPoint{0.0F, 0.0F};
+
+        auto const bounds = snappedScreenBounds(view, origin, rect(1, 1, 2, 2));
+
+        // top-left source (1,1) -> 1.3 -> round 1; bottom-right (3,3) -> 3.9 ->
+        // round 4.
+        CHECK(bounds.left == doctest::Approx(1.0F));
+        CHECK(bounds.top == doctest::Approx(1.0F));
+        CHECK(bounds.right == doctest::Approx(4.0F));
+        CHECK(bounds.bottom == doctest::Approx(4.0F));
+
+        // Every edge is integral.
+        CHECK(bounds.left == doctest::Approx(std::round(bounds.left)));
+        CHECK(bounds.right == doctest::Approx(std::round(bounds.right)));
     }
 }

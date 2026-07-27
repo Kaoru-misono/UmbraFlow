@@ -113,4 +113,24 @@ namespace uf::workbench
         CanvasPoint canvasOrigin,
         PixelRect const& rect
     ) -> CanvasPoint;
+
+    // A screen-space rectangle whose four edges have been rounded to whole
+    // screen pixels: the device-pixel-aligned bounds a source rect maps to under
+    // the view. An evidence overlay snaps to this so a match box drawn at a
+    // fractional zoom lands on crisp integer boundaries rather than smeared
+    // across two device pixels.
+    struct ScreenPixelRect final
+    {
+        float left{};
+        float top{};
+        float right{};
+        float bottom{};
+    };
+
+    [[nodiscard]]
+    auto snappedScreenBounds(
+        CanvasView view,
+        CanvasPoint canvasOrigin,
+        PixelRect const& rect
+    ) -> ScreenPixelRect;
 }

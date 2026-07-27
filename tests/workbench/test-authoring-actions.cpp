@@ -10,6 +10,7 @@
 #include <annotation/content-hash.hpp>
 
 #include <core/error/result.hpp>
+#include <core/types/integer.hpp>
 
 #include <doctest/doctest.h>
 
@@ -98,6 +99,50 @@ namespace uf::workbench
         auto const id = annotation::test::recognizerId(k_anchorId);
         CHECK(shortId(id.value()) == "00000000");
         CHECK(shortId(id.value()).size() == 8U);
+    }
+
+    TEST_CASE("threshold basis points and the shown percent round-trip exactly")
+    {
+        // The display->commit round-trip of an unedited value is the identity for
+        // every basis point in range, including values not exactly representable
+        // in float (99.99).
+        for (auto const basisPoints : {0U, 1U, 5U, 9'000U, 9'750U, 9'999U, 10'000U})
+        {
+            auto const percent = thresholdPercentFromBasisPoints(
+                static_cast<uint32>(basisPoints)
+            );
+            CHECK(
+                thresholdBasisPointsFromPercent(percent)
+                == static_cast<uint32>(basisPoints)
+            );
+        }
+
+        // A known display value.
+        CHECK(thresholdPercentFromBasisPoints(9'000U) == doctest::Approx(90.0F));
+
+        // The commit direction clamps to [0, 10000].
+        CHECK(thresholdBasisPointsFromPercent(-5.0F) == 0U);
+        CHECK(thresholdBasisPointsFromPercent(250.0F) == 10'000U);
+
+        // And rounds to the nearest basis point.
+        CHECK(thresholdBasisPointsFromPercent(90.008F) == 9'001U);
+        CHECK(thresholdBasisPointsFromPercent(90.002F) == 9'000U);
+    }
+
+    TEST_CASE("duplicating the selected element parks a selecting edit")
+    {
+        auto state = appState();
+        auto ui    = PanelUiState{};
+
+        auto const original = state.document().catalog().recognizers().front().id();
+        requestDuplicateElement(state, ui, original);
+        applyPendingEdit(state, ui);
+
+        CHECK(state.document().catalog().recognizers().size() == 2U);
+        CHECK(ui.statusLine == "duplicated as \"home_marker_1\"");
+        // The selection followed to the copy rather than staying on the original.
+        REQUIRE(state.selectedRecognizerId().has_value());
+        CHECK(*state.selectedRecognizerId() != original);
     }
 
     TEST_CASE("a requested edit is parked, not committed")

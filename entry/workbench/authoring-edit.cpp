@@ -410,14 +410,38 @@ namespace uf::workbench
         }
 
         auto const isAnchor = spec.kind == PageMemberKind::Anchor;
-        auto name = freshAuthoringName(draft, isAnchor ? "anchor" : "region");
+        auto const type     = [kind = spec.kind]
+        {
+            switch (kind)
+            {
+            case PageMemberKind::Anchor:
+                return annotation::AnnotationType::PageAnchor;
+            case PageMemberKind::ActionTarget:
+                return annotation::AnnotationType::ActionTarget;
+            case PageMemberKind::InfoRegion:
+                return annotation::AnnotationType::InfoRegion;
+            }
+            UF_UNREACHABLE_MSG("unknown PageMemberKind value");
+        }();
+        auto const stem = [kind = spec.kind]() -> std::string_view
+        {
+            switch (kind)
+            {
+            case PageMemberKind::Anchor:
+                return "anchor";
+            case PageMemberKind::ActionTarget:
+                return "region";
+            case PageMemberKind::InfoRegion:
+                return "info";
+            }
+            UF_UNREACHABLE_MSG("unknown PageMemberKind value");
+        }();
+        auto name = freshAuthoringName(draft, stem);
         draft.recognizers.emplace_back(
             EditableRecognizer{
-                .id   = spec.recognizerId,
-                .name = name,
-                .annotationType = isAnchor
-                    ? annotation::AnnotationType::PageAnchor
-                    : annotation::AnnotationType::ActionTarget,
+                .id                    = spec.recognizerId,
+                .name                  = name,
+                .annotationType        = type,
                 .sourceId              = spec.sourceId,
                 .templateRect          = spec.templateRect,
                 .searchRoi             = spec.searchRoi,
@@ -425,8 +449,8 @@ namespace uf::workbench
                 .defaultClick          = {},
             }
         );
-        // An anchor joins the page's signature; an interactive region joins it
-        // through a placement carrying this page's own search region.
+        // An anchor joins the page's signature; an interactive or info element
+        // joins it through a placement carrying this page's own search region.
         if (isAnchor)
         {
             page->required.emplace_back(spec.recognizerId);
@@ -465,6 +489,65 @@ namespace uf::workbench
             }
         }
         return pages;
+    }
+
+    auto duplicateElement(
+        AuthoringDraft draft,
+        DuplicateElementSpec const& spec
+    ) -> Result<DuplicatedElement>
+    {
+        auto const origin = std::ranges::find(
+            draft.recognizers,
+            spec.sourceElementId,
+            &EditableRecognizer::id
+        );
+        if (origin == draft.recognizers.end())
+        {
+            return fail(
+                AutomationErrorKind::InvalidResource,
+                std::format(
+                    "recognizer {} is not part of this draft",
+                    spec.sourceElementId.value().toString()
+                )
+            );
+        }
+
+        // Derived before the copy is inserted so the new name is measured
+        // against the names already taken, the original's among them.
+        auto name = freshAuthoringName(draft, origin->name);
+        auto copy = *origin;
+        copy.id   = spec.newElementId;
+        copy.name = name;
+
+        // Mirror the original's placements onto the copy, each retargeted to the
+        // new id and keeping its own per-page search region. Collected before the
+        // recognizer is appended so a reallocation cannot invalidate the read.
+        auto placements = std::vector<EditablePlacement>{};
+        for (auto const& placement : draft.placements)
+        {
+            if (placement.elementId == spec.sourceElementId)
+            {
+                placements.emplace_back(
+                    EditablePlacement{
+                        .pageId    = placement.pageId,
+                        .elementId = spec.newElementId,
+                        .searchRoi = placement.searchRoi,
+                    }
+                );
+            }
+        }
+
+        draft.recognizers.emplace_back(std::move(copy));
+        draft.placements.insert(
+            draft.placements.end(),
+            placements.begin(),
+            placements.end()
+        );
+
+        return DuplicatedElement{
+            .draft = std::move(draft),
+            .name  = std::move(name),
+        };
     }
 
     auto setRegionShared(

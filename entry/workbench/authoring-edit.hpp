@@ -146,13 +146,15 @@ namespace uf::workbench
 
     // What a new recognizer is to the page it is being added to. An anchor is
     // evidence that the screen is that page and joins its signature; an action
-    // target is something the author may click there and is authorized on it.
-    // The two relationships are unrelated, and which one applies is the only
-    // decision the author makes when drawing a rectangle.
+    // target is something the author may click there and is authorized on it
+    // through a placement; an info region is a state region the task reads and
+    // joins the page through a placement too, but carries no click. Which one
+    // applies is the only decision the author makes when drawing a rectangle.
     enum class PageMemberKind : uint8
     {
         Anchor,
         ActionTarget,
+        InfoRegion,
     };
 
     struct PageMemberSpec final
@@ -182,6 +184,36 @@ namespace uf::workbench
         AuthoringDraft draft,
         PageMemberSpec const& spec
     ) -> Result<AddedPageMember>;
+
+    struct DuplicateElementSpec final
+    {
+        annotation::RecognizerId sourceElementId;
+        annotation::RecognizerId newElementId;
+    };
+
+    struct DuplicatedElement final
+    {
+        AuthoringDraft draft;
+        std::string    name{};
+    };
+
+    // Copies one element into an independent second element: a fresh id, a name
+    // derived from the original that stays unique, and the same template rect,
+    // search ROI, threshold, click offset, kind, and reuse mark. The copy
+    // inherits the original's placements, retargeted to the new id, so it lands
+    // on exactly the pages the original sits on. That is what keeps an action
+    // target valid -- the closure rule requires an interactive element to be
+    // placed on at least one page, so a placeless copy of one could never build
+    // -- and it matches the v2 model where an element is one thing placed on N
+    // pages: the copy is a new such thing with its own placement set. An anchor
+    // carries no placements and joins pages through a signature, so its copy is
+    // an unassigned spare the author then gives a role. Fails when the source
+    // element is not part of the draft.
+    [[nodiscard]]
+    auto duplicateElement(
+        AuthoringDraft draft,
+        DuplicateElementSpec const& spec
+    ) -> Result<DuplicatedElement>;
 
     // The pages one element is placed on, in placement order, without repeats.
     // Under v2 an element is one thing placed on N pages, so this is simply the

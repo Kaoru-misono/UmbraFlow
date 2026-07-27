@@ -144,8 +144,11 @@ namespace uf::workbench
             annotation::RegressionClassification classification
         ) -> Status;
 
-        // Region membership.
+        // Region membership. placeInfo mints an info region rather than an
+        // interactive one -- same page placement, no click offset -- so an info
+        // element can be authored directly instead of only reached by retype.
         [[nodiscard]] auto placeRegion(NewRegionSpec const& spec) -> Result<AddedRegion>;
+        [[nodiscard]] auto placeInfo(NewRegionSpec const& spec) -> Result<AddedRegion>;
         [[nodiscard]] auto placeExisting(MemberId member) -> Status;
 
         [[nodiscard]]

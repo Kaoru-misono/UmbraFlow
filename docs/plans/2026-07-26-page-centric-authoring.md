@@ -508,3 +508,47 @@ variant. The classification-enum combo stays as a secondary relabel for an
 existing case. Recording a `Resolved` case is deliberately left to the
 Pages panel, since it needs a page the Properties panel does not pick.
 
+## 2026-07-26 P0-A gap bundle (six items)
+
+Six authoring-UI gaps closed on top of the per-placement ROI / regression /
+ASan-smoke work in the same tree. Decisions worth recording:
+
+- **Canvas evidence overlay.** The canvas now draws each matched rectangle the
+  last Preview found on the shown screen (amber when the match passed its
+  threshold, red when the closest match still missed), labelled with the short
+  id. Data flow: the overlay reads `AppState::lastPreview()` — the same stored
+  result the Actions panel prints as text — so there is no second owner of the
+  evidence. `PreviewResult` gained a `sourceId`, set by `runPreview`, and the
+  overlay draws only when it equals the shown screen, so a stale preview from
+  another screen never paints boxes over unrelated pixels. Model-check margins
+  are scores, not rectangles, so the canvas evidence comes from the Preview
+  alone. Boundaries are snapped to whole screen pixels by a new pure
+  `snappedScreenBounds` in `canvas-math` (tested).
+- **Threshold in percent.** The Properties widget edits a percentage to two
+  decimals; persistence stays integer basis points. Conversion is the pure pair
+  `thresholdPercentFromBasisPoints` / `thresholdBasisPointsFromPercent` in
+  `authoring-actions` (display = bp / 100; commit = round(percent × 100) clamped
+  to [0, 10000], rounded in `double` so 99.99 survives). The display→commit
+  round-trip of an unedited value is the identity for every basis point in
+  range, pinned by a logic-layer test. No float reaches the document.
+- **Duplicate.** `duplicateElement` mints an independent second element: fresh
+  id, `freshAuthoringName(draft, original)` for a unique derived name, same
+  template/ROI/threshold/click/kind/shared. It **inherits the original's
+  placements**, retargeted to the new id — chosen over "unplaced on the current
+  page" because the closure rule requires an interactive element to be placed on
+  ≥1 page (a placeless copy of an action target could not build) and because v2
+  models an element as one thing placed on N pages, so the copy is a new such
+  thing with its own placement set. An anchor carries no placements, so its copy
+  is an unassigned spare under "Not on any page". One undo removes it.
+- **+ Info region.** `PageMemberKind` gained `InfoRegion`; `addPageMember` and a
+  new `EditPage::placeInfo` route it through the existing placement path (info
+  joins a page through a placement, no click offset). The Pages panel button sits
+  next to "+ Interactive region".
+- **Advanced removed.** The type combo moved up with the identity fields (after
+  Name) and page membership moved to an "On pages" section near the top; the
+  `CollapsingHeader("Advanced")` held only those two and is deleted.
+- **Properties pointer lifetime.** `drawPropertiesPanel` copied the selected
+  element's fields into a `SelectedElement` value snapshot at the top and no
+  longer holds a `RecognizerDefinition const*` from the live document across the
+  widgets; the sharing / type / membership helpers read the snapshot. Verified
+  under the `x64-asan` `AsanSmoke` smoke.

@@ -154,6 +154,12 @@ namespace uf::workbench
         CHECK(*preview->resolvedPageId == fixture.pageId);
         CHECK_FALSE(preview->pageStop.has_value());
 
+        // The result is tagged with the screen it was evaluated against, so the
+        // canvas overlay can tell whether its matched rectangles belong to the
+        // screen on display.
+        REQUIRE(preview->sourceId.has_value());
+        CHECK(*preview->sourceId == fixture.sourceId);
+
         REQUIRE(preview->anchorRows.size() == 1U);
         auto const& row = preview->anchorRows.front();
         CHECK(row.recognizerId == fixture.anchorId);

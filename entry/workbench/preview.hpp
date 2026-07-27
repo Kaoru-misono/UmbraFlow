@@ -59,6 +59,11 @@ namespace uf::workbench
     // recognizer is an action target that was evaluated.
     struct PreviewResult final
     {
+        // The screen this preview was evaluated against. Its matched rectangles
+        // are in that screen's pixel space, so a canvas showing another screen
+        // must not draw them; the overlay compares this against the shown source.
+        std::optional<annotation::SourceId> sourceId{};
+
         std::optional<PreviewPageKind>    pageKind{};
         std::optional<annotation::PageId> resolvedPageId{};
         std::vector<PreviewAnchorRow>     anchorRows{};

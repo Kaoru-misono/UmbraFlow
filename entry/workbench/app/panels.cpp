@@ -51,12 +51,18 @@ namespace uf::workbench
         // context rather than as something to drag.
         constexpr auto k_foreignTemplateColor = IM_COL32(96, 220, 120, 110);
 
+        // Where a preview or model-check found a template. Deliberately unlike the
+        // authored template (green) and search ROI (blue): amber when the match
+        // passed its threshold, red when the closest match still missed, so an
+        // author reads recognition evidence apart from what they drew.
+        constexpr auto k_matchHitColor  = IM_COL32(255, 196, 0, 255);
+        constexpr auto k_matchMissColor = IM_COL32(255, 96, 96, 255);
+
         auto const k_passColor = ImVec4{0.38F, 0.86F, 0.47F, 1.0F};
         auto const k_failColor = ImVec4{0.96F, 0.55F, 0.38F, 1.0F};
 
         constexpr auto k_gripRadius     = 5.0F;
         constexpr auto k_zoomWheelBase  = 1.1F;
-        constexpr auto k_thresholdMax   = 10'000;
 
         // Gates which drop targets accept a shared region being dragged.
         constexpr auto k_sharedRegionPayload = "uf.shared-region";
@@ -485,13 +491,24 @@ namespace uf::workbench
             PageMemberKind kind
         ) -> std::string
         {
+            auto const [role, what] = [kind]() -> std::pair<char const*, char const*>
+            {
+                switch (kind)
+                {
+                case PageMemberKind::Anchor:
+                    return {"a mark identifying this page", "mark"};
+                case PageMemberKind::ActionTarget:
+                    return {"an interactive region on this page", "region"};
+                case PageMemberKind::InfoRegion:
+                    return {"an info region on this page", "info region"};
+                }
+                UF_UNREACHABLE_MSG("unknown PageMemberKind value");
+            }();
             return std::format(
                 "added \"{}\" as {}; drag its box over the {}",
                 name,
-                kind == PageMemberKind::Anchor
-                    ? "a mark identifying this page"
-                    : "an interactive region on this page",
-                kind == PageMemberKind::Anchor ? "mark" : "region"
+                role,
+                what
             );
         }
 
@@ -538,9 +555,12 @@ namespace uf::workbench
             }
             else
             {
-                auto added = page->placeRegion(
-                    EditPage::NewRegionSpec{.sourceId = sourceId}
-                );
+                // Interactive and info elements share the placement path; the
+                // group whose button was pressed picks the kind, and info carries
+                // no click offset.
+                auto added = kind == PageMemberKind::ActionTarget
+                    ? page->placeRegion(EditPage::NewRegionSpec{.sourceId = sourceId})
+                    : page->placeInfo(EditPage::NewRegionSpec{.sourceId = sourceId});
                 if (!added)
                 {
                     ui.statusLine = std::format(
@@ -832,6 +852,23 @@ namespace uf::workbench
                 }
                 ImGui::EndDisabled();
 
+                // Info regions are placed through the same path with the info
+                // kind; without this button they were reachable only by drawing an
+                // interactive region and retyping it.
+                ImGui::SameLine();
+                ImGui::BeginDisabled(!sample.has_value());
+                if (ImGui::SmallButton("+ Info region") && sample.has_value())
+                {
+                    placeNewMember(
+                        state,
+                        ui,
+                        pageId,
+                        *sample,
+                        PageMemberKind::InfoRegion
+                    );
+                }
+                ImGui::EndDisabled();
+
                 // Where a shared element is dropped to say "this page has it
                 // too". A visible strip rather than the list above it: a drop
                 // target the author cannot see is one they have to find by
@@ -1117,6 +1154,82 @@ namespace uf::workbench
             }
         }
 
+        // Draws one recognizer's matched rectangle as recognition evidence: the
+        // place a template was found on the shown screen, snapped to whole screen
+        // pixels and labelled with the recognizer and whether it passed. Rows with
+        // no matched rectangle -- a search the budget stopped -- draw nothing.
+        auto drawMatchOverlay(
+            ImDrawList& drawList,
+            CanvasView view,
+            CanvasPoint canvasOrigin,
+            PreviewAnchorRow const& row
+        ) -> void
+        {
+            if (!row.matchedRect.has_value())
+            {
+                return;
+            }
+            auto const bounds = snappedScreenBounds(
+                view,
+                canvasOrigin,
+                *row.matchedRect
+            );
+            auto const color = row.hit ? k_matchHitColor : k_matchMissColor;
+            drawList.AddRect(
+                ImVec2{bounds.left, bounds.top},
+                ImVec2{bounds.right, bounds.bottom},
+                color,
+                0.0F,
+                0,
+                2.0F
+            );
+            auto const label = std::format(
+                "{} {}",
+                shortId(row.recognizerId.value()),
+                row.hit ? "hit" : "miss"
+            );
+            drawList.AddText(
+                ImVec2{bounds.left, bounds.top - ImGui::GetTextLineHeight()},
+                color,
+                label.c_str()
+            );
+        }
+
+        // Draws every matched rectangle the last preview found on the shown
+        // screen. The preview owns the evidence -- it is read through the same
+        // stored result the Actions panel shows as text -- and is drawn only when
+        // it was evaluated against the screen on display, so a stale preview from
+        // another screen never paints boxes over unrelated pixels. Model-check
+        // margins are scores rather than rectangles, so the canvas evidence comes
+        // from the preview alone.
+        auto drawEvidenceOverlay(
+            AppState const& state,
+            ImDrawList& drawList,
+            CanvasView view,
+            CanvasPoint canvasOrigin,
+            annotation::SourceId shownScreen
+        ) -> void
+        {
+            auto const& preview = state.lastPreview();
+            if (!preview.has_value() || preview->sourceId != shownScreen)
+            {
+                return;
+            }
+            for (auto const& row : preview->anchorRows)
+            {
+                drawMatchOverlay(drawList, view, canvasOrigin, row);
+            }
+            if (preview->actionEvidence.has_value())
+            {
+                drawMatchOverlay(
+                    drawList,
+                    view,
+                    canvasOrigin,
+                    *preview->actionEvidence
+                );
+            }
+        }
+
         auto drawCanvasPanel(
             AppState& state,
             WorkbenchServices const& services,
@@ -1264,26 +1377,52 @@ namespace uf::workbench
                 }
             }
 
+            // Recognition evidence on top of the authored boxes: where the last
+            // preview actually found each template on this screen.
+            drawEvidenceOverlay(
+                state,
+                *drawList,
+                view,
+                canvasOrigin,
+                *selectedSource
+            );
+
             drawList->PopClipRect();
             ImGui::End();
         }
+
+        // The selected element's fields, copied once at the top of the properties
+        // panel. The panel and its helpers read this instead of a
+        // RecognizerDefinition const* borrowed from the live document: any edit the
+        // panel parks is applied after it finishes drawing, and applying rebuilds
+        // the document, so a pointer held across the panel's widgets would be a
+        // use-after-free of the kind docs/pitfalls/workbench-authoring-ui.md
+        // records. A value snapshot cannot dangle.
+        struct SelectedElement final
+        {
+            annotation::RecognizerId              id;
+            std::string                           name{};
+            annotation::AnnotationType            type{};
+            uint32                                thresholdBasisPoints{};
+            PixelRect                             templateRect;
+            std::optional<EditableTemplateOffset> defaultClick{};
+            std::vector<annotation::PageId>       allowedPages{};
+        };
 
         // What a shared element's copy needs said about it. Putting it on another
         // page is a drag from Shared regions in the Pages panel, not a control
         // here: the author is choosing a page, and the pages are over there.
         auto drawSharing(
             AppState& state,
-            annotation::RecognizerDefinition const& definition
+            SelectedElement const& element
         ) -> void
         {
-            if (
-                definition.annotationType() != annotation::AnnotationType::ActionTarget
-            )
+            if (element.type != annotation::AnnotationType::ActionTarget)
             {
                 return;
             }
 
-            auto const pages = pagesPlacedOn(state.draft(), definition.id());
+            auto const pages = pagesPlacedOn(state.draft(), element.id);
             if (pages.size() <= 1U)
             {
                 return;
@@ -1298,7 +1437,7 @@ namespace uf::workbench
 
             // The canvas dims a template box it will not let the author drag.
             // Saying why beats leaving them to work it out from the colour.
-            auto const authoredOn = sourceOfRecognizer(state, definition.id());
+            auto const authoredOn = sourceOfRecognizer(state, element.id);
             if (authoredOn.has_value() && authoredOn != state.selectedSourceId())
             {
                 ImGui::TextWrapped(
@@ -1312,16 +1451,16 @@ namespace uf::workbench
 
         // The recognizer's type, changed as one transaction. Nothing on the main
         // path sets it -- a member is typed by the group it was created in -- so
-        // this exists to repair a mistake or to reach the info-region type, and
-        // it lives under Advanced with the two membership relationships.
+        // this exists to repair a mistake or to move an element between the kinds;
+        // it sits with the other identity fields.
         auto drawTypeCombo(
             AppState& state,
             PanelUiState& ui,
-            annotation::RecognizerDefinition const& definition
+            SelectedElement const& element
         ) -> void
         {
             auto typeIndex = static_cast<int>(
-                std::to_underlying(definition.annotationType())
+                std::to_underlying(element.type)
             );
             if (
                 !ImGui::Combo(
@@ -1340,7 +1479,7 @@ namespace uf::workbench
             // writing the field and committing.
             auto retyped = retypeRecognizer(
                 state.draft(),
-                definition.id(),
+                element.id,
                 static_cast<annotation::AnnotationType>(typeIndex)
             );
             if (!retyped)
@@ -1365,10 +1504,10 @@ namespace uf::workbench
         auto drawPageMembership(
             AppState& state,
             PanelUiState& ui,
-            annotation::RecognizerDefinition const& definition
+            SelectedElement const& element
         ) -> void
         {
-            auto const recognizerId = definition.id();
+            auto const recognizerId = element.id;
             // Two unrelated relationships, kept apart by the catalog's rules: the
             // checkbox is permission to click this element on that page, and the
             // combo is the part this mark plays in identifying it. A page anchor
@@ -1377,7 +1516,7 @@ namespace uf::workbench
             // page group a member was created in; editing them by hand is for
             // sharing one element across pages and for exclusivity rules.
             auto const isAnchor = (
-                definition.annotationType() == annotation::AnnotationType::PageAnchor
+                element.type == annotation::AnnotationType::PageAnchor
             );
             for (auto const& page : state.document().catalog().pages())
             {
@@ -1385,7 +1524,7 @@ namespace uf::workbench
                 ImGui::PushID(page.name().value().c_str());
 
                 auto member = std::ranges::contains(
-                    definition.allowedPageIds(),
+                    element.allowedPages,
                     pageId
                 );
                 ImGui::BeginDisabled(isAnchor);
@@ -1420,7 +1559,7 @@ namespace uf::workbench
                                 ui,
                                 std::format(
                                     "placed \"{}\" on page \"{}\"",
-                                    definition.name().value(),
+                                    element.name,
                                     page.name().value()
                                 )
                             );
@@ -1436,7 +1575,7 @@ namespace uf::workbench
                         // rather than silently deleted as the v1 copy model did.
                         auto draft            = state.draft();
                         auto const interactive = (
-                            definition.annotationType()
+                            element.type
                             == annotation::AnnotationType::ActionTarget
                         );
                         auto const onOtherPage = std::ranges::any_of(
@@ -1453,7 +1592,7 @@ namespace uf::workbench
                                 "\"{}\" is only on this page; an interactive region "
                                 "must stay on at least one, so delete it instead of "
                                 "removing it here",
-                                definition.name().value()
+                                element.name
                             );
                         }
                         else
@@ -1471,7 +1610,7 @@ namespace uf::workbench
                                 std::move(draft),
                                 std::format(
                                     "removed \"{}\" from page \"{}\"",
-                                    definition.name().value(),
+                                    element.name,
                                     page.name().value()
                                 )
                             );
@@ -1700,6 +1839,32 @@ namespace uf::workbench
                 return;
             }
 
+            // Copy every field the panel reads off the document now, before any
+            // widget below parks an edit. applyPendingEdit rebuilds the document
+            // after this panel returns, so a RecognizerDefinition const* kept
+            // across the widgets would dangle the instant one committed
+            // (docs/pitfalls/workbench-authoring-ui.md). A value snapshot cannot,
+            // and every helper below reads it rather than the live pointer.
+            auto const element = SelectedElement{
+                .id                   = *recognizerId,
+                .name                 = definition->name().value(),
+                .type                 = definition->annotationType(),
+                .thresholdBasisPoints = definition->threshold().basisPoints(),
+                .templateRect         = definition->templateRect(),
+                .defaultClick         = definition->defaultClick().has_value()
+                    ? std::optional<EditableTemplateOffset>{
+                        EditableTemplateOffset{
+                            .x = definition->defaultClick()->x(),
+                            .y = definition->defaultClick()->y(),
+                        }
+                    }
+                    : std::nullopt,
+                .allowedPages = {
+                    definition->allowedPageIds().begin(),
+                    definition->allowedPageIds().end(),
+                },
+            };
+
             // Reseed the name field from the document when the selection moves
             // to another recognizer, or when the document's name for it diverges
             // from what the buffer was seeded with (an undo, redo, or external
@@ -1707,7 +1872,7 @@ namespace uf::workbench
             // whether the field held focus on the previous frame: IsItemActive
             // read here would report the item drawn before the field, not the
             // field itself, which is only submitted below.
-            auto const currentName = definition->name().value();
+            auto const& currentName = element.name;
             if (
                 ui.nameBufferFor != *recognizerId
                 || (
@@ -1742,21 +1907,51 @@ namespace uf::workbench
                 }
             }
 
-            auto threshold = static_cast<int>(definition->threshold().basisPoints());
-            ImGui::InputInt("Threshold (bp)", &threshold);
+            // A copy of the selected element, minted as an independent second
+            // element on the same screen. One undo entry removes it.
+            if (ImGui::Button("Duplicate"))
+            {
+                requestDuplicateElement(state, ui, element.id);
+            }
+
+            // The type sits here with the other identity fields rather than under
+            // an Advanced header a real author could not find.
+            drawTypeCombo(state, ui, element);
+
+            // Page membership is promoted out of Advanced to near the top, for the
+            // same reason: it is where the author says which pages an element
+            // belongs to, and it was going unfound.
+            ImGui::SeparatorText("On pages");
+            drawPageMembership(state, ui, element);
+
+            ImGui::SeparatorText("Detection");
+
+            // Edited as a percentage to two decimals; persisted as integer basis
+            // points. The document never sees the float -- the commit rounds it to
+            // the nearest basis point (design lock OQ-1 / §1.4).
+            auto thresholdPercent = thresholdPercentFromBasisPoints(
+                element.thresholdBasisPoints
+            );
+            ImGui::InputFloat("Threshold (%)", &thresholdPercent, 0.0F, 0.0F, "%.2f");
             if (ImGui::IsItemDeactivatedAfterEdit())
             {
-                threshold  = std::clamp(threshold, 0, k_thresholdMax);
-                auto draft = state.draft();
-                auto* recognizer = findEditableRecognizer(draft, *recognizerId);
+                auto const basisPoints = thresholdBasisPointsFromPercent(
+                    thresholdPercent
+                );
+                auto draft       = state.draft();
+                auto* recognizer = findEditableRecognizer(draft, element.id);
                 if (recognizer != nullptr)
                 {
-                    recognizer->similarityBasisPoints =
-                        static_cast<uint32>(threshold);
+                    recognizer->similarityBasisPoints = basisPoints;
                     requestEdit(
                         ui,
                         std::move(draft),
-                        std::format("threshold set to {} bp", threshold)
+                        std::format(
+                            "threshold set to {:.2f}%",
+                            static_cast<double>(
+                                thresholdPercentFromBasisPoints(basisPoints)
+                            )
+                        )
                     );
                 }
             }
@@ -1765,9 +1960,9 @@ namespace uf::workbench
             // unavailable for the other types instead of committing a rejected
             // edit.
             auto const isActionTarget = (
-                definition->annotationType() == annotation::AnnotationType::ActionTarget
+                element.type == annotation::AnnotationType::ActionTarget
             );
-            auto hasClickOffset = definition->defaultClick().has_value();
+            auto hasClickOffset = element.defaultClick.has_value();
             ImGui::BeginDisabled(!isActionTarget);
             auto const clickToggled = ImGui::Checkbox(
                 "Click offset",
@@ -1786,7 +1981,7 @@ namespace uf::workbench
             if (clickToggled)
             {
                 auto draft       = state.draft();
-                auto* recognizer = findEditableRecognizer(draft, *recognizerId);
+                auto* recognizer = findEditableRecognizer(draft, element.id);
                 if (recognizer != nullptr)
                 {
                     recognizer->defaultClick = hasClickOffset
@@ -1803,11 +1998,11 @@ namespace uf::workbench
                     );
                 }
             }
-            if (auto const offset = definition->defaultClick())
+            if (auto const offset = element.defaultClick)
             {
-                auto const templateRect = definition->templateRect();
-                auto offsetX = static_cast<int>(offset->x());
-                auto offsetY = static_cast<int>(offset->y());
+                auto const templateRect = element.templateRect;
+                auto offsetX = static_cast<int>(offset->x);
+                auto offsetY = static_cast<int>(offset->y);
                 ImGui::InputInt("Offset X", &offsetX);
                 auto const editedX = ImGui::IsItemDeactivatedAfterEdit();
                 ImGui::InputInt("Offset Y", &offsetY);
@@ -1825,7 +2020,7 @@ namespace uf::workbench
                         static_cast<int>(templateRect.height()) - 1
                     );
                     auto draft       = state.draft();
-                    auto* recognizer = findEditableRecognizer(draft, *recognizerId);
+                    auto* recognizer = findEditableRecognizer(draft, element.id);
                     if (recognizer != nullptr)
                     {
                         recognizer->defaultClick = EditableTemplateOffset{
@@ -1845,13 +2040,7 @@ namespace uf::workbench
                 }
             }
 
-            drawSharing(state, *definition);
-
-            if (ImGui::CollapsingHeader("Advanced"))
-            {
-                drawTypeCombo(state, ui, *definition);
-                drawPageMembership(state, ui, *definition);
-            }
+            drawSharing(state, element);
             drawRegressionClassification(state, ui);
 
             ImGui::End();

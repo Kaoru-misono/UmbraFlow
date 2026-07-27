@@ -535,6 +535,7 @@ namespace uf::workbench
         auto const fingerprint = document.catalog().fingerprint();
         UF_TRY_VALUE(frame, previewFrame(fingerprint, selected->pngBytes));
         UF_TRY_VALUE(result, evaluatePageOn(runtime, frame, fingerprint, policy));
+        result.sourceId = selectedSourceId;
 
         if (selectedRecognizerId.has_value())
         {

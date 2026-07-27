@@ -358,6 +358,33 @@ namespace uf::workbench
         };
     }
 
+    auto EditPage::placeInfo(NewRegionSpec const& spec) -> Result<AddedRegion>
+    {
+        UF_TRY_VALUE(rects, startingRects(m_draft.fingerprint));
+
+        auto const recognizerId = annotation::RecognizerId{mintResourceId()};
+        UF_TRY_VALUE(
+            added,
+            addPageMember(
+                m_draft,
+                PageMemberSpec{
+                    .recognizerId          = recognizerId,
+                    .pageId                = m_id,
+                    .sourceId              = spec.sourceId,
+                    .templateRect          = rects.templateRect,
+                    .searchRoi             = rects.searchRoi,
+                    .similarityBasisPoints = k_startingSimilarityBasisPoints,
+                    .kind                  = PageMemberKind::InfoRegion,
+                }
+            )
+        );
+        m_draft = std::move(added.draft);
+        return AddedRegion{
+            .id   = recognizerId,
+            .name = std::move(added.name),
+        };
+    }
+
     auto EditPage::placeExisting(MemberId member) -> Status
     {
         auto draft         = m_draft;
