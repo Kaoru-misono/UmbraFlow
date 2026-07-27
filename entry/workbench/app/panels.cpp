@@ -216,7 +216,7 @@ namespace uf::workbench
                 );
                 if (ImGui::Selectable(row.c_str(), selected))
                 {
-                    state.setSelectedSourceId(id);
+                    state.select(AppState::Selection::Screen{id});
                 }
                 ImGui::PopID();
             }
@@ -353,13 +353,16 @@ namespace uf::workbench
 
 
         // One selectable recognizer row inside a page's group. pageScreen is the
-        // screen that page stands for, or nothing for the rows that belong to no
-        // page.
+        // screen that page stands for, and pageContext the page itself, or both
+        // nothing for the rows that belong to no page. The page context makes the
+        // row select Element(id, pageContext=this page) so the canvas edits this
+        // page's placement even when the shown screen's claim is ambiguous.
         auto drawPageMemberRow(
             AppState& state,
             PanelUiState& ui,
             annotation::RecognizerDefinition const& recognizer,
-            std::optional<annotation::SourceId> pageScreen
+            std::optional<annotation::SourceId> pageScreen,
+            std::optional<annotation::PageId> pageContext
         ) -> void
         {
             auto const id     = recognizer.id();
@@ -416,7 +419,7 @@ namespace uf::workbench
                 )
             )
             {
-                selectRecognizer(state, id, pageScreen);
+                selectRecognizer(state, id, pageScreen, pageContext);
             }
             ImGui::SameLine();
             if (ImGui::SmallButton("Remove"))
@@ -812,7 +815,7 @@ namespace uf::workbench
                         )
                     )
                     {
-                        state.setSelectedSourceId(*sample);
+                        state.select(AppState::Selection::Screen{*sample});
                     }
                     if (auto const* p_screen = findScreenCheck(state, *sample))
                     {
@@ -854,7 +857,13 @@ namespace uf::workbench
                                 catalog.findRecognizer(row.id)
                         )
                         {
-                            drawPageMemberRow(state, ui, *p_recognizer, sample);
+                            drawPageMemberRow(
+                                state,
+                                ui,
+                                *p_recognizer,
+                                sample,
+                                pageId
+                            );
                         }
                     }
                 }
@@ -881,7 +890,13 @@ namespace uf::workbench
                                 catalog.findRecognizer(row.id)
                         )
                         {
-                            drawPageMemberRow(state, ui, *p_recognizer, sample);
+                            drawPageMemberRow(
+                                state,
+                                ui,
+                                *p_recognizer,
+                                sample,
+                                pageId
+                            );
                         }
                     }
                 }
@@ -963,7 +978,13 @@ namespace uf::workbench
                                 catalog.findRecognizer(row.id)
                         )
                         {
-                            drawPageMemberRow(state, ui, *p_recognizer, sample);
+                            drawPageMemberRow(
+                                state,
+                                ui,
+                                *p_recognizer,
+                                sample,
+                                pageId
+                            );
                         }
                     }
                 }
@@ -981,7 +1002,13 @@ namespace uf::workbench
                                 catalog.findRecognizer(row.id)
                         )
                         {
-                            drawPageMemberRow(state, ui, *p_recognizer, sample);
+                            drawPageMemberRow(
+                                state,
+                                ui,
+                                *p_recognizer,
+                                sample,
+                                pageId
+                            );
                         }
                     }
                 }
@@ -1024,7 +1051,13 @@ namespace uf::workbench
                     {
                         // No page context, so these follow to the screen their
                         // template was cut from.
-                        drawPageMemberRow(state, ui, recognizer, std::nullopt);
+                        drawPageMemberRow(
+                            state,
+                            ui,
+                            recognizer,
+                            std::nullopt,
+                            std::nullopt
+                        );
                     }
                 }
             }
@@ -1391,14 +1424,17 @@ namespace uf::workbench
                     // from. For a shared element seen from another page they are
                     // different images.
                     auto const authoredOn = sourceOfRecognizer(state, *recognizerId);
-                    // The page that claims this screen and places this region, if
-                    // any: then the canvas draws and edits that page's own search
-                    // range, so editing it on one page does not move it on the
-                    // others. Otherwise the element's default range is shown.
+                    // The page that places this region: the one the element was
+                    // selected under when it carries a context, otherwise the one
+                    // that claims this screen. The canvas then draws and edits
+                    // that page's own search range, so editing it on one page does
+                    // not move it on the others; with no page the element's
+                    // default range is shown.
                     auto const context = placementContext(
                         state,
                         *recognizerId,
-                        *selectedSource
+                        *selectedSource,
+                        state.selection().pageContext()
                     );
                     auto const searchRoi = context.has_value()
                         ? context->searchRoi

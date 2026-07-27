@@ -15,6 +15,7 @@
 #include <filesystem>
 #include <optional>
 #include <span>
+#include <variant>
 #include <vector>
 
 namespace uf::workbench
@@ -50,6 +51,76 @@ namespace uf::workbench
     // methods and never touches the history directly.
     class AppState final
     {
+    public:
+        // A single-item, typed selection: the workbench's one source of truth
+        // for what the panels, canvas, and inspector act on, replacing the
+        // independent (selected source, selected recognizer) pair. Exactly one
+        // thing is selected, or nothing:
+        //   Screen  -- a captured screen, with no element.
+        //   Page    -- a page (no UI selects one yet; the U1b tree will).
+        //   Element -- a recognizer, carrying the screen it is shown over so the
+        //              canvas has an image to draw, and, when it was chosen from
+        //              a page's member list, the page whose per-page search
+        //              region the canvas edits in preference to the shown
+        //              screen's claim.
+        //
+        // Invariants (U1a):
+        //   * Selecting a Screen replaces the whole selection and so clears any
+        //     element: a screen and an element are never both "selected".
+        //   * An Element that names no shown screen inherits the currently shown
+        //     one when installed through select(), so following a newly created
+        //     entity leaves the shown image untouched exactly as the old paired
+        //     setters did.
+        //   * The stored preview is dropped whenever the shown screen changes and
+        //     only then, so reselecting the same screen keeps a valid preview.
+        class Selection final
+        {
+        public:
+            struct Screen final
+            {
+                annotation::SourceId sourceId;
+            };
+
+            struct Page final
+            {
+                annotation::PageId pageId;
+            };
+
+            struct Element final
+            {
+                annotation::RecognizerId            recognizerId;
+                std::optional<annotation::SourceId> shownScreen{};
+                std::optional<annotation::PageId>   pageContext{};
+            };
+
+            Selection() noexcept = default;
+            Selection(Screen screen) noexcept;
+            Selection(Page page) noexcept;
+            Selection(Element element) noexcept;
+
+            // The three alternatives, each present only for its own kind.
+            [[nodiscard]] auto asScreen() const noexcept -> std::optional<Screen>;
+            [[nodiscard]] auto asPage() const noexcept -> std::optional<Page>;
+            [[nodiscard]] auto asElement() const noexcept
+                -> std::optional<Element>;
+
+            // Derived reads shared by the migration-era accessors and the
+            // canvas. shownScreen is the Screen itself or an Element's shown
+            // screen, and a Page shows none; recognizer is an Element's id;
+            // pageContext is an Element's page, the context the canvas prefers
+            // over the shown screen's claim.
+            [[nodiscard]] auto shownScreen() const noexcept
+                -> std::optional<annotation::SourceId>;
+            [[nodiscard]] auto recognizer() const noexcept
+                -> std::optional<annotation::RecognizerId>;
+            [[nodiscard]] auto pageContext() const noexcept
+                -> std::optional<annotation::PageId>;
+
+        private:
+            std::variant<std::monostate, Screen, Page, Element> m_value{};
+        };
+
+    private:
         std::filesystem::path m_projectRoot;
         AuthoringEditHistory  m_history;
 
@@ -59,12 +130,11 @@ namespace uf::workbench
         // orphans are pruned only once a save persists the document.
         std::vector<annotation::AuthoringSourceAsset> m_sources;
 
-        std::optional<annotation::SourceId>     m_selectedSourceId{};
-        std::optional<annotation::RecognizerId> m_selectedRecognizerId{};
-        CanvasView                              m_canvasView{};
-        std::optional<PreviewResult>            m_lastPreview{};
-        std::optional<ModelCheck>               m_lastModelCheck{};
-        bool                                    m_dirty{};
+        Selection                    m_selection{};
+        CanvasView                   m_canvasView{};
+        std::optional<PreviewResult> m_lastPreview{};
+        std::optional<ModelCheck>    m_lastModelCheck{};
+        bool                         m_dirty{};
 
     public:
         AppState(
@@ -115,6 +185,12 @@ namespace uf::workbench
         auto compilerSourceAssets() const
             -> Result<std::vector<annotation::AuthoringSourceAsset>>;
 
+        // The whole typed selection, the source of truth the panels and canvas
+        // read; selectedSourceId and selectedRecognizerId below are thin derived
+        // views of it kept for the low-risk read sites.
+        [[nodiscard]]
+        auto selection() const noexcept UF_LIFETIME_BOUND -> Selection const&;
+
         [[nodiscard]]
         auto selectedSourceId() const noexcept
             -> std::optional<annotation::SourceId>;
@@ -158,13 +234,11 @@ namespace uf::workbench
         auto undo() -> bool;
         auto redo() -> bool;
 
-        auto setSelectedSourceId(
-            std::optional<annotation::SourceId> id
-        ) noexcept -> void;
-
-        auto setSelectedRecognizerId(
-            std::optional<annotation::RecognizerId> id
-        ) noexcept -> void;
+        // Installs a whole typed selection, the single write path replacing the
+        // old paired setters. An Element that names no shown screen inherits the
+        // currently shown one, and the stored preview is dropped only when the
+        // shown screen actually changes, so reselecting the same screen keeps it.
+        auto select(Selection selection) noexcept -> void;
 
         auto setCanvasView(CanvasView view) noexcept -> void;
         auto setLastPreview(PreviewResult preview) -> void;
@@ -181,9 +255,12 @@ namespace uf::workbench
         // document, run once a save has persisted that document.
         auto pruneSourceCacheToDocument() -> void;
 
-        // Clears the source or recognizer selection when undo or redo moved the
-        // document to a revision that no longer contains the selected entity, so
-        // later edits never reference a dangling id.
+        // Degrades the typed selection when undo or redo moved the document to a
+        // revision that no longer holds what it names, so later edits never
+        // reference a dangling id: a deleted element falls back to the screen it
+        // was shown over (or to nothing when that screen is gone too), a deleted
+        // screen or page falls to nothing, and a surviving element drops a shown
+        // screen or page context that vanished.
         auto reconcileSelectionToDocument() -> void;
     };
 }

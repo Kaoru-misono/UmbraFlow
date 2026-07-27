@@ -3,6 +3,7 @@
 #include "authoring-edit.hpp"
 #include "model-check-job.hpp"
 #include "app/canvas-math.hpp"
+#include "app/workbench-app.hpp"
 
 #include <annotation/catalog.hpp>
 
@@ -85,11 +86,12 @@ namespace uf::workbench
             // here -- applyPendingEdit reports its own rejection as Error.
             LogSeverity severity{LogSeverity::Info};
 
-            // Selected once the edit lands, so creating an entity can select it
+            // Installed once the edit lands, so creating an entity can select it
             // without the selection dangling at an id a rejected edit never
-            // added.
-            std::optional<annotation::RecognizerId> selectRecognizer{};
-            std::optional<annotation::SourceId>     selectSource{};
+            // added. Carries the whole typed selection: an element-selecting
+            // request names no shown screen, and AppState::select then inherits
+            // the current one, leaving the shown image where it was.
+            std::optional<AppState::Selection> selection{};
 
             // The history revision the draft was built against, when it came
             // from an EditPage. applyPendingEdit refuses the commit when this no

@@ -246,11 +246,15 @@ namespace uf::workbench
             return;
         }
         ui.pendingEdit = PanelUiState::PendingEdit{
-            .draft            = std::move(draft),
-            .description      = std::move(description),
-            .severity         = severity,
-            .selectRecognizer = recognizerId,
-            .selectSource     = sourceId,
+            .draft       = std::move(draft),
+            .description = std::move(description),
+            .severity    = severity,
+            .selection   = AppState::Selection{
+                AppState::Selection::Element{
+                    .recognizerId = recognizerId,
+                    .shownScreen  = sourceId,
+                },
+            },
         };
     }
 
@@ -303,13 +307,9 @@ namespace uf::workbench
             // marks that have since moved.
             ui.modelCheck.discard();
             ui.report(request.severity, request.description);
-            if (request.selectRecognizer.has_value())
+            if (request.selection.has_value())
             {
-                state.setSelectedRecognizerId(*request.selectRecognizer);
-            }
-            if (request.selectSource.has_value())
-            {
-                state.setSelectedSourceId(*request.selectSource);
+                state.select(*request.selection);
             }
         }
     }
@@ -381,21 +381,27 @@ namespace uf::workbench
     auto placementContext(
         AppState const& state,
         annotation::RecognizerId id,
-        annotation::SourceId shownScreen
+        annotation::SourceId shownScreen,
+        std::optional<annotation::PageId> selectionPage
     ) -> std::optional<PlacementContext>
     {
-        // The page that claims the shown screen, if any -- the inverse of
-        // claimedScreen. A screen resolves to exactly one page.
-        auto pageContext = std::optional<annotation::PageId>{};
-        for (auto const& regression : state.document().regressions())
+        // Precedence: the page the element was selected under wins; only without
+        // one does the context fall back to the page that claims the shown screen
+        // (the inverse of claimedScreen -- a screen resolves to exactly one page).
+        auto pageContext = selectionPage;
+        if (!pageContext.has_value())
         {
-            auto const* p_resolved = std::get_if<annotation::ResolvedRegression>(
-                &regression.expectation()
-            );
-            if (p_resolved != nullptr && regression.sourceId() == shownScreen)
+            for (auto const& regression : state.document().regressions())
             {
-                pageContext = p_resolved->pageId;
-                break;
+                auto const* p_resolved =
+                    std::get_if<annotation::ResolvedRegression>(
+                        &regression.expectation()
+                    );
+                if (p_resolved != nullptr && regression.sourceId() == shownScreen)
+                {
+                    pageContext = p_resolved->pageId;
+                    break;
+                }
             }
         }
         if (!pageContext.has_value())
@@ -626,17 +632,23 @@ namespace uf::workbench
     auto selectRecognizer(
         AppState& state,
         annotation::RecognizerId id,
-        std::optional<annotation::SourceId> preferredScreen
+        std::optional<annotation::SourceId> preferredScreen,
+        std::optional<annotation::PageId> pageContext
     ) -> void
     {
-        state.setSelectedRecognizerId(id);
         auto const screen = preferredScreen.has_value()
             ? preferredScreen
             : sourceOfRecognizer(state, id);
-        if (screen.has_value())
-        {
-            state.setSelectedSourceId(*screen);
-        }
+        // A nullopt shown screen makes select() inherit the currently shown one,
+        // so an element with no resolvable screen stays over the current image
+        // rather than clearing it -- as the prior two-setter form did.
+        state.select(
+            AppState::Selection::Element{
+                .recognizerId = id,
+                .shownScreen  = screen,
+                .pageContext  = pageContext,
+            }
+        );
     }
 
     auto editSelectedRectOnRelease(

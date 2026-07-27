@@ -9,10 +9,12 @@
 #include <cstddef>
 #include <format>
 #include <random>
+#include <optional>
 #include <span>
 #include <string>
 #include <string_view>
 #include <utility>
+#include <variant>
 #include <vector>
 
 namespace uf::workbench
@@ -57,6 +59,82 @@ namespace uf::workbench
         );
 
         return annotation::ResourceId::fromBytes(bytes);
+    }
+
+    AppState::Selection::Selection(Screen screen) noexcept
+        : m_value{screen}
+    {
+    }
+
+    AppState::Selection::Selection(Page page) noexcept
+        : m_value{page}
+    {
+    }
+
+    AppState::Selection::Selection(Element element) noexcept
+        : m_value{std::move(element)}
+    {
+    }
+
+    auto AppState::Selection::asScreen() const noexcept -> std::optional<Screen>
+    {
+        if (auto const* screen = std::get_if<Screen>(&m_value))
+        {
+            return *screen;
+        }
+        return std::nullopt;
+    }
+
+    auto AppState::Selection::asPage() const noexcept -> std::optional<Page>
+    {
+        if (auto const* page = std::get_if<Page>(&m_value))
+        {
+            return *page;
+        }
+        return std::nullopt;
+    }
+
+    auto AppState::Selection::asElement() const noexcept -> std::optional<Element>
+    {
+        if (auto const* element = std::get_if<Element>(&m_value))
+        {
+            return *element;
+        }
+        return std::nullopt;
+    }
+
+    auto AppState::Selection::shownScreen() const noexcept
+        -> std::optional<annotation::SourceId>
+    {
+        if (auto const* screen = std::get_if<Screen>(&m_value))
+        {
+            return screen->sourceId;
+        }
+        if (auto const* element = std::get_if<Element>(&m_value))
+        {
+            return element->shownScreen;
+        }
+        return std::nullopt;
+    }
+
+    auto AppState::Selection::recognizer() const noexcept
+        -> std::optional<annotation::RecognizerId>
+    {
+        if (auto const* element = std::get_if<Element>(&m_value))
+        {
+            return element->recognizerId;
+        }
+        return std::nullopt;
+    }
+
+    auto AppState::Selection::pageContext() const noexcept
+        -> std::optional<annotation::PageId>
+    {
+        if (auto const* element = std::get_if<Element>(&m_value))
+        {
+            return element->pageContext;
+        }
+        return std::nullopt;
     }
 
     AppState::AppState(
@@ -173,16 +251,21 @@ namespace uf::workbench
         return assets;
     }
 
+    auto AppState::selection() const noexcept -> Selection const&
+    {
+        return m_selection;
+    }
+
     auto AppState::selectedSourceId() const noexcept
         -> std::optional<annotation::SourceId>
     {
-        return m_selectedSourceId;
+        return m_selection.shownScreen();
     }
 
     auto AppState::selectedRecognizerId() const noexcept
         -> std::optional<annotation::RecognizerId>
     {
-        return m_selectedRecognizerId;
+        return m_selection.recognizer();
     }
 
     auto AppState::canvasView() const noexcept -> CanvasView
@@ -254,7 +337,7 @@ namespace uf::workbench
         UF_TRY_VALUE(changed, applyEdit(edited));
         if (changed)
         {
-            m_selectedSourceId = source.spec.id;
+            select(Selection::Screen{source.spec.id});
             // The cache is keyed by SourceId; a fresh mint never collides, but
             // guard the invariant so a repeat id replaces rather than duplicates.
             auto const cached = std::ranges::find(
@@ -306,57 +389,99 @@ namespace uf::workbench
     auto AppState::reconcileSelectionToDocument() -> void
     {
         auto const& document = m_history.document();
-        if (m_selectedRecognizerId.has_value())
-        {
-            auto const target  = *m_selectedRecognizerId;
-            auto const present = std::ranges::any_of(
-                document.catalog().recognizers(),
-                [target](annotation::RecognizerDefinition const& recognizer)
-                {
-                    return recognizer.id() == target;
-                }
-            );
-            if (!present)
-            {
-                m_selectedRecognizerId.reset();
-            }
-        }
-        if (m_selectedSourceId.has_value())
-        {
-            auto const target  = *m_selectedSourceId;
-            auto const present = std::ranges::any_of(
-                document.sources(),
-                [target](annotation::AuthoringSource const& source)
-                {
-                    return source.id() == target;
-                }
-            );
-            if (!present)
-            {
-                m_selectedSourceId.reset();
-            }
-        }
-    }
 
-    auto AppState::setSelectedSourceId(
-        std::optional<annotation::SourceId> id
-    ) noexcept -> void
-    {
-        if (m_selectedSourceId == id)
+        auto const sourcePresent = [&document](annotation::SourceId id) -> bool
         {
+            return std::ranges::any_of(
+                document.sources(),
+                [id](annotation::AuthoringSource const& source)
+                {
+                    return source.id() == id;
+                }
+            );
+        };
+        auto const recognizerPresent =
+            [&document](annotation::RecognizerId id) -> bool
+        {
+            return std::ranges::any_of(
+                document.catalog().recognizers(),
+                [id](annotation::RecognizerDefinition const& recognizer)
+                {
+                    return recognizer.id() == id;
+                }
+            );
+        };
+        auto const pagePresent = [&document](annotation::PageId id) -> bool
+        {
+            return document.catalog().findPage(id) != nullptr;
+        };
+
+        if (auto const screen = m_selection.asScreen())
+        {
+            if (!sourcePresent(screen->sourceId))
+            {
+                m_selection = Selection{};
+            }
             return;
         }
-        m_selectedSourceId = id;
-        // A preview is evaluated against the selected source, so changing the
-        // selection makes the stored preview stale.
-        m_lastPreview.reset();
+        if (auto const page = m_selection.asPage())
+        {
+            if (!pagePresent(page->pageId))
+            {
+                m_selection = Selection{};
+            }
+            return;
+        }
+        if (auto const element = m_selection.asElement())
+        {
+            // A shown screen that vanished cannot be drawn, so drop it first; a
+            // deleted element then degrades to whatever screen remains, and to
+            // nothing when none does.
+            auto shown = element->shownScreen;
+            if (shown.has_value() && !sourcePresent(*shown))
+            {
+                shown.reset();
+            }
+            if (!recognizerPresent(element->recognizerId))
+            {
+                m_selection = shown.has_value()
+                    ? Selection{Selection::Screen{*shown}}
+                    : Selection{};
+                return;
+            }
+            auto next        = *element;
+            next.shownScreen = shown;
+            if (next.pageContext.has_value() && !pagePresent(*next.pageContext))
+            {
+                next.pageContext.reset();
+            }
+            m_selection = Selection{std::move(next)};
+        }
     }
 
-    auto AppState::setSelectedRecognizerId(
-        std::optional<annotation::RecognizerId> id
-    ) noexcept -> void
+    auto AppState::select(Selection selection) noexcept -> void
     {
-        m_selectedRecognizerId = id;
+        // Inherit the currently shown screen into an element that names none, so
+        // following a freshly created entity leaves the shown image untouched --
+        // the behaviour the old setSelectedRecognizerId-without-a-source had.
+        if (
+            auto const element = selection.asElement();
+            element.has_value() && !element->shownScreen.has_value()
+        )
+        {
+            auto inherited        = *element;
+            inherited.shownScreen = m_selection.shownScreen();
+            selection             = Selection{std::move(inherited)};
+        }
+
+        auto const previousScreen = m_selection.shownScreen();
+        m_selection               = std::move(selection);
+        // A preview is evaluated against the shown screen, so it goes stale only
+        // when that screen changes; reselecting the same screen keeps it.
+        if (m_selection.shownScreen() != previousScreen)
+        {
+            m_lastPreview.reset();
+        }
     }
 
     auto AppState::setCanvasView(CanvasView view) noexcept -> void

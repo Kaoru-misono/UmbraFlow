@@ -145,3 +145,49 @@ changing the annotation module's recognition or budget semantics.
   ("… failed: …", "… rejected: …", a refusal naming a fix) is Error; a
   degraded-but-done outcome (a placement that does not match, a model check with
   wrong or deadline-stopped screens) is Warning; every other outcome is Info.
+
+### 2026-07-27 — U1a typed selection (shipped)
+
+Decision 3 only: the selection became a typed value in `AppState`; no tree,
+toolbar, or drawer (those stay U1b). Files: `app/workbench-app.{hpp,cpp}`,
+`authoring-actions.{hpp,cpp}`, `panel-state.hpp`, `app/panels.cpp`,
+`tests/workbench/test-workbench-app.cpp`, `tests/workbench/test-edit-page.cpp`.
+
+- `AppState::Selection` is a nested variant over
+  `Screen(sourceId) | Page(pageId) | Element(recognizerId, shownScreen?,
+  pageContext?) | nothing`. It replaces the `m_selectedSourceId` +
+  `m_selectedRecognizerId` pair as the single source of truth. `Page` is a new
+  capability with no UI producer yet (the U1b tree will select it).
+- Invariants chosen and documented at the type:
+  - **Selecting a Screen replaces the whole selection**, so it clears any
+    element — a screen and an element are never both selected. (This is the one
+    transition that reads differently from the old independent-axes pair, and it
+    is pinned by a test.)
+  - **An Element carries the screen it is shown over** so the canvas has an image
+    to draw. When a selecting action names no shown screen, `select()` inherits
+    the currently shown one, reproducing the old
+    `setSelectedRecognizerId`-without-a-source behaviour (follow a created entity,
+    leave the shown image where it was).
+  - **`lastPreview` is dropped iff the shown screen changes.** The old
+    `setSelectedSourceId` early-return-on-equal generalises to "reset when the
+    derived shown screen differs", which also covers the element paths exactly as
+    before (an element that follows to a new screen invalidates; reselecting the
+    same screen does not).
+  - **Reconcile degrades in place:** a deleted element falls back to the screen
+    it was shown over (or nothing when that screen is gone too), a deleted screen
+    or page falls to nothing, and a surviving element drops a shown screen or
+    page context that vanished.
+- Migration inventory: derived reads `selectedSourceId()` /
+  `selectedRecognizerId()` stayed (now computed from the typed value), plus a new
+  `selection()` accessor. WRITE sites moved to the single `select(Selection)`
+  setter: the screen rows and page-sample button in `panels.cpp`,
+  `addIngestedSource`, `applyPendingEdit`, and `selectRecognizer`.
+  `PendingEdit::selectRecognizer/selectSource` collapsed into one
+  `std::optional<AppState::Selection>`.
+- Page-context precedence: `placementContext` and the canvas gained a
+  selection-page argument that wins over the shown screen's claiming page;
+  `selectRecognizer` gained the `pageId` its page-member-row callers already
+  know, so a member row selects `Element(id, pageContext=that page)`. Intended
+  behaviour change (pinned by a test): ROI editing on an element selected under a
+  page now uses that page even when the shown screen's claim is ambiguous or
+  missing.

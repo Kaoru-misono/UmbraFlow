@@ -144,11 +144,17 @@ namespace uf::workbench
 
     // The page whose placement of an interactive region the canvas edits when
     // that region is shown over a given screen, together with that placement's
-    // per-page search ROI. It is the inverse of claimedScreen -- the page that
-    // claims the shown screen -- narrowed to the case the canvas can act on: the
+    // per-page search ROI. Narrowed to the case the canvas can act on: the
     // recognizer is an interactive region and that page places it. Empty for an
-    // unclaimed screen, an anchor, or a region not placed on the claiming page,
-    // in which case the canvas falls back to the element's own default range.
+    // anchor, or a region not placed on the resolved page, in which case the
+    // canvas falls back to the element's own default range.
+    //
+    // The page is resolved by precedence: selectionPage -- the page an element
+    // was selected under, from a page's member list -- wins outright; only
+    // without one does the context fall back to the page that claims the shown
+    // screen (the inverse of claimedScreen). This is what lets ROI editing on an
+    // element selected under a page use that page even when the shown screen's
+    // claim is missing or ambiguous.
     struct PlacementContext final
     {
         annotation::PageId page;
@@ -159,16 +165,22 @@ namespace uf::workbench
     auto placementContext(
         AppState const& state,
         annotation::RecognizerId id,
-        annotation::SourceId shownScreen
+        annotation::SourceId shownScreen,
+        std::optional<annotation::PageId> selectionPage = std::nullopt
     ) -> std::optional<PlacementContext>;
 
-    // Selects a recognizer and follows to the screen it was authored against,
-    // without which its rectangles are drawn over whatever image the canvas
-    // happens to hold.
+    // Selects a recognizer and follows to the screen it is meaningful on:
+    // preferredScreen when the caller knows it (a member picked from a page's
+    // group), otherwise the screen the template was cut from. pageContext is the
+    // page the element was selected under, if any, which the canvas then prefers
+    // when resolving the placement it edits. Without a resolvable screen the
+    // element inherits the currently shown one so its rectangles are not drawn
+    // over whatever image the canvas happens to hold.
     auto selectRecognizer(
         AppState& state,
         annotation::RecognizerId id,
-        std::optional<annotation::SourceId> preferredScreen
+        std::optional<annotation::SourceId> preferredScreen,
+        std::optional<annotation::PageId> pageContext = std::nullopt
     ) -> void;
 
     // Whether the author marked this region reusable on other pages. The flag is

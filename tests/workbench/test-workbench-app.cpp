@@ -1,5 +1,6 @@
 #include "../annotation/test-helpers.hpp"
 
+#include <authoring-edit.hpp>
 #include <app/workbench-app.hpp>
 
 #include <annotation/authoring-document.hpp>
@@ -22,6 +23,7 @@ namespace uf::workbench
     {
         constexpr auto k_sourceId = "00000000-0000-0000-0000-000000000201";
         constexpr auto k_anchorId = "00000000-0000-0000-0000-000000000001";
+        constexpr auto k_regionId = "00000000-0000-0000-0000-000000000002";
         constexpr auto k_pageId   = "00000000-0000-0000-0000-000000000101";
         constexpr auto k_importA  = "00000000-0000-0000-0000-0000000002a1";
         constexpr auto k_importB  = "00000000-0000-0000-0000-0000000002b2";
@@ -74,6 +76,78 @@ namespace uf::workbench
         auto appState() -> AppState
         {
             return AppState{std::filesystem::path{"personal.workbench"}, document(), {}};
+        }
+
+        // A project whose interactive region can be deleted without leaving the
+        // home page identifying nothing, so reconcile's element-degradation can
+        // be driven by a valid edit rather than an artificial one.
+        [[nodiscard]]
+        auto documentWithRegion() -> annotation::AuthoringDocument
+        {
+            auto const fingerprint = annotation::test::fingerprint(8, 8, 96, 96);
+            auto const sourceId    = annotation::test::sourceId(k_sourceId);
+            auto const anchorId    = annotation::test::recognizerId(k_anchorId);
+            auto const regionId    = annotation::test::recognizerId(k_regionId);
+            auto const pageId      = annotation::test::pageId(k_pageId);
+            auto const sourceHash  = annotation::sha256(
+                std::span<std::byte const>{}
+            );
+            REQUIRE(sourceHash.has_value());
+
+            auto source = annotation::AuthoringSource::create(
+                annotation::AuthoringSourceSpec{
+                    .id          = sourceId,
+                    .contentHash = *sourceHash,
+                    .fingerprint = fingerprint,
+                    .provenance  = annotation::ImportedSourceProvenance{},
+                }
+            );
+            REQUIRE(source.has_value());
+
+            auto created = annotation::AuthoringDocument::create(
+                annotation::test::projectId(),
+                fingerprint,
+                {*source},
+                {
+                    annotation::test::anchorElement(
+                        fingerprint,
+                        anchorId,
+                        "home_marker",
+                        sourceId,
+                        annotation::test::pixelRect(0, 0, 2, 2),
+                        annotation::test::pixelRect(0, 0, 4, 4)
+                    ),
+                    annotation::test::interactiveElement(
+                        fingerprint,
+                        regionId,
+                        "daily_button",
+                        sourceId,
+                        annotation::test::pixelRect(4, 4, 2, 2),
+                        annotation::test::pixelRect(3, 3, 4, 4)
+                    ),
+                },
+                {annotation::test::page(pageId, "home", {anchorId})},
+                {
+                    annotation::test::placement(
+                        pageId,
+                        regionId,
+                        annotation::test::pixelRect(3, 3, 4, 4)
+                    ),
+                },
+                {}
+            );
+            REQUIRE(created.has_value());
+            return *std::move(created);
+        }
+
+        [[nodiscard]]
+        auto regionState() -> AppState
+        {
+            return AppState{
+                std::filesystem::path{"personal.workbench"},
+                documentWithRegion(),
+                {},
+            };
         }
 
         [[nodiscard]]
@@ -217,7 +291,7 @@ namespace uf::workbench
         auto state = appState();
 
         auto const sourceId = annotation::test::sourceId(k_sourceId);
-        state.setSelectedSourceId(sourceId);
+        state.select(AppState::Selection::Screen{sourceId});
         REQUIRE(state.selectedSourceId().has_value());
         CHECK(*state.selectedSourceId() == sourceId);
 
@@ -225,6 +299,153 @@ namespace uf::workbench
         CHECK(state.canvasView().zoom == doctest::Approx(2.5F));
         CHECK(state.canvasView().panX == doctest::Approx(4.0F));
         CHECK(state.canvasView().panY == doctest::Approx(8.0F));
+    }
+
+    TEST_CASE("selecting a screen clears a previously selected element")
+    {
+        auto state          = appState();
+        auto const sourceId = annotation::test::sourceId(k_sourceId);
+        auto const anchorId = annotation::test::recognizerId(k_anchorId);
+
+        state.select(AppState::Selection::Element{
+            .recognizerId = anchorId,
+            .shownScreen  = sourceId,
+        });
+        REQUIRE(state.selectedRecognizerId().has_value());
+
+        state.select(AppState::Selection::Screen{sourceId});
+
+        // A screen and an element are never both selected: the screen replaces
+        // the whole selection.
+        CHECK_FALSE(state.selectedRecognizerId().has_value());
+        REQUIRE(state.selectedSourceId().has_value());
+        CHECK(*state.selectedSourceId() == sourceId);
+        CHECK_FALSE(state.selection().pageContext().has_value());
+    }
+
+    TEST_CASE("an element keeps its shown screen and carries a page context")
+    {
+        auto state          = appState();
+        auto const sourceId = annotation::test::sourceId(k_sourceId);
+        auto const anchorId = annotation::test::recognizerId(k_anchorId);
+        auto const pageId   = annotation::test::pageId(k_pageId);
+
+        state.select(AppState::Selection::Element{
+            .recognizerId = anchorId,
+            .shownScreen  = sourceId,
+            .pageContext  = pageId,
+        });
+
+        REQUIRE(state.selectedRecognizerId().has_value());
+        CHECK(*state.selectedRecognizerId() == anchorId);
+        REQUIRE(state.selectedSourceId().has_value());
+        CHECK(*state.selectedSourceId() == sourceId);
+        REQUIRE(state.selection().pageContext().has_value());
+        CHECK(*state.selection().pageContext() == pageId);
+    }
+
+    TEST_CASE("an element that names no screen inherits the currently shown one")
+    {
+        auto state          = appState();
+        auto const sourceId = annotation::test::sourceId(k_sourceId);
+        auto const anchorId = annotation::test::recognizerId(k_anchorId);
+
+        state.select(AppState::Selection::Screen{sourceId});
+        // No shown screen given: select inherits the one already shown, so the
+        // canvas keeps its image rather than clearing it.
+        state.select(AppState::Selection::Element{.recognizerId = anchorId});
+
+        REQUIRE(state.selectedRecognizerId().has_value());
+        CHECK(*state.selectedRecognizerId() == anchorId);
+        REQUIRE(state.selectedSourceId().has_value());
+        CHECK(*state.selectedSourceId() == sourceId);
+    }
+
+    TEST_CASE("the stored preview survives a same-screen reselection but not a change")
+    {
+        auto state          = appState();
+        auto const sourceId = annotation::test::sourceId(k_sourceId);
+        auto const anchorId = annotation::test::recognizerId(k_anchorId);
+        auto const otherId  = annotation::test::sourceId(k_importA);
+
+        state.select(AppState::Selection::Screen{sourceId});
+        state.setLastPreview(PreviewResult{});
+        REQUIRE(state.lastPreview().has_value());
+
+        // Reselecting the same screen leaves the shown screen unchanged, so the
+        // preview stays.
+        state.select(AppState::Selection::Screen{sourceId});
+        CHECK(state.lastPreview().has_value());
+
+        // Selecting an element over that same screen also leaves it shown.
+        state.select(AppState::Selection::Element{
+            .recognizerId = anchorId,
+            .shownScreen  = sourceId,
+        });
+        CHECK(state.lastPreview().has_value());
+
+        // Changing the shown screen makes the preview stale.
+        state.select(AppState::Selection::Screen{otherId});
+        CHECK_FALSE(state.lastPreview().has_value());
+    }
+
+    TEST_CASE("a deleted element degrades the selection to the screen it was shown over")
+    {
+        auto state          = regionState();
+        auto const sourceId = annotation::test::sourceId(k_sourceId);
+        auto const regionId = annotation::test::recognizerId(k_regionId);
+
+        state.select(AppState::Selection::Element{
+            .recognizerId = regionId,
+            .shownScreen  = sourceId,
+        });
+
+        // Remove the region and its placement in an otherwise valid edit; the
+        // home page still identifies itself through its anchor.
+        auto draft = state.draft();
+        std::erase_if(
+            draft.recognizers,
+            [regionId](EditableRecognizer const& recognizer)
+            {
+                return recognizer.id == regionId;
+            }
+        );
+        std::erase_if(
+            draft.placements,
+            [regionId](EditablePlacement const& placement)
+            {
+                return placement.elementId == regionId;
+            }
+        );
+        auto const applied = state.applyEdit(draft);
+        REQUIRE(applied.has_value());
+        CHECK(*applied);
+
+        // The element is gone, so the selection falls back to its screen rather
+        // than dangling at a deleted id.
+        CHECK_FALSE(state.selectedRecognizerId().has_value());
+        REQUIRE(state.selectedSourceId().has_value());
+        CHECK(*state.selectedSourceId() == sourceId);
+    }
+
+    TEST_CASE("a deleted page clears a page selection")
+    {
+        auto state        = appState();
+        auto const pageId = annotation::test::pageId(k_pageId);
+
+        state.select(AppState::Selection::Page{pageId});
+        REQUIRE(state.selection().asPage().has_value());
+
+        auto deleted = deletePage(state.draft(), pageId);
+        REQUIRE(deleted.has_value());
+        auto const applied = state.applyEdit(deleted->draft);
+        REQUIRE(applied.has_value());
+        CHECK(*applied);
+
+        // The page it named is gone, so the selection degrades to nothing.
+        CHECK_FALSE(state.selection().asPage().has_value());
+        CHECK_FALSE(state.selectedSourceId().has_value());
+        CHECK_FALSE(state.selectedRecognizerId().has_value());
     }
 
     TEST_CASE("compiler inputs after an undone import cover only document sources")

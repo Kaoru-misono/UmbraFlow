@@ -699,6 +699,35 @@ namespace uf::workbench
         CHECK_FALSE(placementContext(state, anchorId, sourceId).has_value());
     }
 
+    TEST_CASE("placementContext prefers the selection's page over the shown screen's claim")
+    {
+        auto const state    = twoPlacementState();
+        auto const sourceId = annotation::test::sourceId(k_sourceId);
+        auto const regionId = annotation::test::recognizerId(k_regionId);
+        auto const homePage = annotation::test::pageId(k_homePage);
+        auto const awayPage = annotation::test::pageId(k_awayPage);
+
+        // With no selection page, the shown screen's claim (home) resolves, as
+        // the fallback that predates the typed selection.
+        auto const fallback = placementContext(state, regionId, sourceId);
+        REQUIRE(fallback.has_value());
+        CHECK(fallback->page == homePage);
+        CHECK(fallback->searchRoi == annotation::test::pixelRect(3, 3, 4, 4));
+
+        // A selection page wins outright: an element selected under the away page
+        // edits the away placement even though the shown screen is claimed by
+        // home. This is the one behaviour U1a intentionally changes.
+        auto const chosen = placementContext(
+            state,
+            regionId,
+            sourceId,
+            awayPage
+        );
+        REQUIRE(chosen.has_value());
+        CHECK(chosen->page == awayPage);
+        CHECK(chosen->searchRoi == annotation::test::pixelRect(4, 4, 4, 4));
+    }
+
     TEST_CASE("a page-context ROI edit moves only that page's placement")
     {
         auto state = twoPlacementState();
