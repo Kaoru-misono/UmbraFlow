@@ -4,8 +4,25 @@
 
 #include <string_view>
 
+// Luau's opaque VM handle, forward-declared so this testing header never pulls
+// in the Luau C headers. Declared at global scope to match Luau's own typedef,
+// so the name resolves to the same type once <lua.h> is visible in a .cpp.
+struct lua_State;
+
 namespace uf::script::testing
 {
+    // Binds a host mark() global on `state` that bumps `*counter` on each call.
+    // Runs on the main state before luaL_sandbox (i.e. from an
+    // EngineConfig::installHostTables installer), so the global is frozen with the
+    // rest yet stays callable from the sandboxed task thread. `counter` is a
+    // non-owning observation of caller-owned state that must outlive the VM.
+    //
+    // Compose it with a capability installer to add mark() alongside host tables:
+    // it is the host-visible witness a Tier C discriminator asserts never runs
+    // after a cancelled call, proving script-level uncatchability rather than
+    // inferring it from the run's error kind.
+    auto installMarkCounter(lua_State* state, uint64* counter) -> void;
+
     // Outcome of a cancellation probe run. Unlike the Engine boundary -- which
     // reports Cancelled the instant InterruptState::broken is set, and so would
     // report Cancelled even if a swallowed break had let the script run on --

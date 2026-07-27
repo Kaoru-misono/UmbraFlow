@@ -139,9 +139,11 @@ namespace uf::script
         impl->m_state = state;
 
         luaL_openlibs(state);
-        // Phase 1 registers no host tables; modules/task supplies the umbra.*
-        // installer in phase 2.
-        installSandbox(state, {});
+        // Install the caller's host tables (empty by default) in the sandbox
+        // build order: openlibs -> register+freeze host tables -> nil the
+        // dangerous survivors -> luaL_sandbox. modules/task passes its umbra.*
+        // installer through EngineConfig::installHostTables.
+        installSandbox(state, config.installHostTables);
         // Arm hard cancellation before any task thread can run. m_control lives
         // in the heap-pinned Impl, so the userdata pointer stays valid.
         installInterrupt(state, &impl->m_control);

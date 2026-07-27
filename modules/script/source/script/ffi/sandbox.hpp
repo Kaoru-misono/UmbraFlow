@@ -2,26 +2,18 @@
 
 #include "cancellation.hpp"
 
+#include <script/engine.hpp>
+
 #include <core/error/result.hpp>
 
-#include <functional>
 #include <string_view>
 
-// Luau's opaque VM handle, forward-declared so this internal header never pulls
-// in the Luau C headers (which compile only under the pragma-wrapped includes in
-// the .cpp layer). Declared at global scope to match Luau's own typedef, so the
-// name resolves to the same type once <lua.h> is visible in a .cpp.
-struct lua_State;
+// The public script/engine.hpp forward-declares `struct lua_State;` and defines
+// HostTableInstaller; this internal header reuses both rather than redeclaring
+// them, so the seam has a single definition.
 
 namespace uf::script
 {
-    // Registers host-facing global tables on the main state just before the
-    // sandbox is frozen, and is responsible for deep-freezing whatever it
-    // registers. Engine ships no installer in phase 1; the real umbra.* tables
-    // arrive with modules/task (phase 2). A test seam supplies a synthetic table
-    // to exercise deepFreeze.
-    using HostTableInstaller = std::function<void(lua_State* state)>;
-
     // Apply the task sandbox to a freshly opened main state, in the hardening
     // ledger's order: register and deep-freeze host tables, nil the survivors
     // luaL_sandbox leaves behind (getfenv/setfenv/newproxy/coroutine/debug), nil

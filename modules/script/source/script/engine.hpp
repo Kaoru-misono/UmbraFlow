@@ -4,12 +4,27 @@
 #include <core/types/integer.hpp>
 
 #include <chrono>
+#include <functional>
 #include <memory>
 #include <stop_token>
 #include <string_view>
 
+// Luau's opaque VM handle, forward-declared so this public header never pulls in
+// the Luau C headers (they compile only behind the pragma-wrapped includes in
+// the ffi layer). Declared at global scope to match Luau's own typedef, so the
+// name resolves to the same type once <lua.h> is visible in a .cpp.
+struct lua_State;
+
 namespace uf::script
 {
+    // Registers host-facing global tables on the VM's main state just before the
+    // sandbox freezes it, and is responsible for deep-freezing whatever it
+    // registers. The script module ships no installer of its own; modules/task
+    // supplies the umbra.* capability tables through this seam. Luau types never
+    // cross this boundary: the installer receives only the opaque lua_State the
+    // ffi layer knows how to drive. An empty installer registers nothing.
+    using HostTableInstaller = std::function<void(lua_State* state)>;
+
     // Tunables for one task VM generation. Every field is live: the cancellation
     // source and the instruction/time budgets drive the interrupt callback, and
     // the memory ceiling drives the accounting allocator that backs the VM. The
@@ -37,6 +52,13 @@ namespace uf::script
         // Wall-clock ceiling measured on steady_clock by the interrupt callback
         // (later wave). Placeholder default.
         std::chrono::steady_clock::duration maxRuntime{std::chrono::minutes{30}};
+
+        // Optional host-table installer invoked once during create(), after the
+        // standard libraries open and before the sandbox freezes the globals
+        // (this is installSandbox's first step). Empty by default, which yields a
+        // bare sandboxed VM with no host capabilities. modules/task supplies the
+        // umbra.* installer here.
+        HostTableInstaller installHostTables{};
     };
 
     // Owns one embedded Luau VM (lua_State) for a single task generation: create

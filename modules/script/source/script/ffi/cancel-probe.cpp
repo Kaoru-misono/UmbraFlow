@@ -39,9 +39,9 @@ namespace uf::script::testing
         // lightuserdata pointing at the host-owned counter; each call bumps it.
         auto markCallback(lua_State* thread) -> int
         {
-            // SAFETY: upvalue 1 is the lightuserdata installed by installMark on
-            // this VM -- a pointer to the uint64 counter that probeCancellation
-            // owns on its stack and keeps alive until after the VM is closed. No
+            // SAFETY: upvalue 1 is the lightuserdata installed by
+            // installMarkCounter on this VM -- a pointer to the uint64 counter the
+            // caller owns and keeps alive until after the VM is closed. No
             // other value is ever stored there, so casting the opaque pointer
             // back to uint64* is sound. The callback runs only on the VM's owning
             // thread, so the unsynchronized bump is race-free.
@@ -50,19 +50,19 @@ namespace uf::script::testing
             *counter += 1;
             return 0;
         }
+    }
 
-        // Bind mark() as a C closure carrying `counter` as its lightuserdata
-        // upvalue. Runs on the main state before luaL_sandbox, so the global is
-        // frozen with the rest yet stays callable from the sandboxed task thread.
-        // `counter` is a non-owning observation of caller-owned state that the
-        // closure mutates through the Luau upvalue ABI, which admits only a raw
-        // pointer -- the same shape installInterrupt uses for its control block.
-        auto installMark(lua_State* state, uint64* counter) -> void
-        {
-            lua_pushlightuserdata(state, counter);
-            lua_pushcclosure(state, &markCallback, "mark", 1);
-            lua_setglobal(state, "mark");
-        }
+    // Bind mark() as a C closure carrying `counter` as its lightuserdata upvalue.
+    // Runs on the main state before luaL_sandbox, so the global is frozen with the
+    // rest yet stays callable from the sandboxed task thread. `counter` is a
+    // non-owning observation of caller-owned state that the closure mutates
+    // through the Luau upvalue ABI, which admits only a raw pointer -- the same
+    // shape installInterrupt uses for its control block.
+    auto installMarkCounter(lua_State* state, uint64* counter) -> void
+    {
+        lua_pushlightuserdata(state, counter);
+        lua_pushcclosure(state, &markCallback, "mark", 1);
+        lua_setglobal(state, "mark");
     }
 
     auto probeCancellation(
@@ -103,7 +103,7 @@ namespace uf::script::testing
             state,
             [&markCount](lua_State* s) -> void
             {
-                installMark(s, &markCount);
+                installMarkCounter(s, &markCount);
             }
         );
         installInterrupt(state, &control);
