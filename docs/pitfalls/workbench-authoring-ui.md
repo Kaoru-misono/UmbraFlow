@@ -59,6 +59,44 @@ under a debug allocator or ASan to make a regression observable. The structural
 check is a review one: any new `state.applyEdit` reachable from a panel that
 holds a pointer or span into `state.document()` is the same bug.
 
+**Implemented 2026-07-26.** The ASan smoke is now automated as two CTest tests
+under the `AsanSmoke` label (registered in `tests/CMakeLists.txt`, kept off the
+`CI` label so the normal tree is undisturbed):
+
+- `asan-smoke-fixture` — a skipped doctest case in `test-workbench`
+  (`tests/workbench/asan-smoke-fixture.cpp`) generates a valid one-source,
+  one-recognizer, one-page project into the build tree
+  (`build/x64-asan/tests/asan-smoke-project`). It is generated rather than
+  committed because the loader verifies each source PNG's SHA-256 and decoded
+  dimensions, so the fixture cannot be hand-authored, and a committed binary
+  would silently rot if the authoring TOML format changed. It does **not** rely
+  on the gitignored `tests/assets/real-regression/`.
+- `workbench-asan-smoke` — launches the real `umbra-workbench.exe` against that
+  project with `--smoke 180` (≈2 s wall, well under the 120 s timeout). ASan
+  aborts with a non-zero exit on any error, which fails the test.
+
+The `x64-asan` preset builds `umbra-workbench.exe` under MSVC ASan. Two flag
+fixes were required and live in `CMakePresets.json`: `CMAKE_CXX_FLAGS_DEBUG` is
+overridden to drop `/RTC1` (the compiler rejects `/RTC1` together with
+`/fsanitize=address`, error D8016), and the debug linker flags force
+`/INCREMENTAL:NO` (ASan is incompatible with incremental linking). The Dear
+ImGui backend library is not instrumented (it carries no safety profile), but
+every first-party panel/draw source in the executable is.
+
+Invocation:
+
+```bash
+# Windows: activate MSVC first (.claude/skills/build-project/script/windows/build-env.bat)
+cmake --preset x64-asan
+cmake --build --preset x64-asan
+ctest --test-dir build/x64-asan -L AsanSmoke --output-on-failure
+```
+
+**Pending:** a CI job that configures/builds `x64-asan` and runs
+`ctest -L AsanSmoke` is not yet wired into `.github/workflows/ci.yml` (GitHub
+Actions billing is currently blocked, and the job needs a Windows runner that
+can create the GUI window the smoke opens). Add it once billing is restored.
+
 ## Cross-field domain invariants can deadlock per-widget editing
 
 ### Symptom
