@@ -69,6 +69,17 @@
 
 ### 阶段 1 — 沙箱 + 硬取消 + veto 套件(integration-plan §6 step 3+4,同批 TDD)
 
+> **已完成(2026-07-27 夜,提交 `e4e1e23` + `29ac46b`)**。全门绿:格式/模块/
+> 安全脚本 + x64-debug 构建 + 14/14 CI。落地范围与下列清单一致,另加两处对抗
+> 审查暴露的加固:deepFreeze 连 metatable 一起冻(否则改写 `__index` 即可绕过
+> 冻结表,已用「撤掉修复→测试失败」验证可证伪),以及 `runNumberOnThread`
+> 统一按 `InterruptState::broken` 判定取消(不可 yield C 帧里的取消会以普通
+> 运行时错误浮现,否则会被误判成 Tier B 脚本错误)。取消的可捕获性边界见 §四。
+> 常数仍是占位:内存 64 MiB、指令预算 1e8 ticks、maxRuntime 30 分钟。
+> 已知残留(记账,不阻塞):500ms 计时断言在超载 CI 机上有抖动风险;
+> 200 代创建/销毁用例只断言脚本结果、未断言内存指标(memory-probe 的 residual
+> 可用于加固);host binding 内 hang 的 veto 子用例待阶段 2 有真 binding 后补。
+
 全部在 `modules/script` 内,无未决依赖,可立刻动工:
 
 - `sandbox.*`:建序 openlibs → 注册+递归 deepFreeze 宿主表 → nil 掉
@@ -113,7 +124,56 @@
 
 之后进入 B3/P0-C(整套每日、遮挡/最小化/CaptureStalled、长程),不在本文范围。
 
-## 四、遗留待定(记账,不阻塞动工)
+## 四、阶段 2 API 草图(2026-07-27 夜间定稿,待开发者复核)
+
+拼写与 S0 annotation-design §4(已修订为 `umbra`)完全一致,新增部分标注:
+
+```lua
+local frame = umbra:capture()                 -- Tier B 失败抛结构化错误
+local outcome = frame:resolve_page()          -- PageOutcome userdata
+local page = outcome:resolved()               -- ResolvedPage | nil(Unknown/Ambiguous 已入 trace)
+
+if page ~= nil and page:is(umbra.pages.main) then
+    local hit = frame:find(umbra.recognizers.battle)  -- ActionFound | nil(Tier A)
+    if hit ~= nil then
+        umbra:click(page, hit)                -- 消费 frame 的观察,之后 frame 上任何操作 = StaleObservation
+    end
+end
+
+-- 新增:证据等待(engine waitForPage 的一比一暴露;返回值携带命中该页的观察)
+local wait = umbra:wait_for_page(umbra.pages.main, { timeout_ms = 600000 })
+-- wait.page / wait.frame,超时抛 Tier B TimedOut(独立 kind)
+
+-- 新增:受控捕获(只捕 Tier B 自动化错误,脚本 bug 穿透)
+local ok, err = umbra:try(function()
+    umbra:click(page, hit)
+end)
+-- err 为 frozen table: { kind = "stale_observation", message = ..., retryable = ... }
+
+-- 阶段 3 追加:umbra:now()(单调逻辑毫秒)、umbra:random()(种子入 trace)
+```
+
+Tier 映射:`find` 未命中 → `nil`;StaleObservation / TimedOut / ActionRejected /
+RecognitionFailed → 可捕获结构化错误(retryable 默认值实现时定表);
+Cancelled / 预算耗尽 → `lua_break` 路径。
+
+> **取消可捕获性的精确边界**(2026-07-27 阶段 1 实测,勿再写成「任何捕获手段
+> 不可见」):纯 Luau 代码里的 `lua_break` 不是 Lua 错误,`pcall` 结构上无法
+> 捕获,脚本也绝不会执行到被中断点之后(有 `mark()` 判别器测试守着)。**窄例
+> 外**:中断发生在不可 yield 的宿主 C 帧内(`table.sort` 比较器、`string.gsub`
+> 回调)时,Luau 抛的是可被 `pcall` 捕获的 "break across C-call boundary" 普通
+> 错误。宿主对此的兜底是 `InterruptState::broken`:`runNumberOnThread` 一律据
+> 它判定为 `Cancelled`,VM generation 就此作废——**脚本能捕获那一次错误,但
+> 拿不回控制权,也无法让任务继续**。阶段 2 每个 host binding 必须及时返回,
+> 才能让这条窄例外始终停在 500ms 预算内。
+
+**留给开发者复核的三点**:①workbench 共享元素展开名(`back_<page>`)直接成为
+`umbra.recognizers.back_main` 这类 member key,可读性是否接受;②**不提供**
+`umbra:sleep_ms`——推荐一切等待走 `wait_for_page` 证据等待(裸 sleep 破坏
+可复现性且掩盖页面状态假设),若真实每日流程出现"必须无证据等待"的场景再议;
+③`wait_for_page` 返回 `{ page, frame }` 双字段形态是否顺手。
+
+## 五、遗留待定(记账,不阻塞动工)
 
 - 常数标定:interrupt 回调频率/指令预算、`max_runtime` 默认、allocator 配额、
   `max_action_frame_age` 生产值——保守占位,首个真实任务 + 真机 soak 标定。
