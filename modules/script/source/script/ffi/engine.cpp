@@ -1,15 +1,23 @@
 #include <script/engine.hpp>
 
-#include <core/utility/scope-exit.hpp>
+#include "allocator.hpp"
+#include "cancellation.hpp"
+#include "sandbox.hpp"
+
+#include <core/numeric/checked-cast.hpp>
+#include <core/types/integer.hpp>
 #include <domain/error.hpp>
 
+#include <chrono>
 #include <cstddef>
-#include <cstdlib>
-#include <string>
+#include <limits>
+#include <memory>
+#include <utility>
 
 // Luau's C headers are third-party and do not build clean under the project's
-// /W4 /WX profile; a module has no CMakeLists to mark them external, so wrap the
-// includes exactly as the repo's other vendored FFI does (image/ffi/png-decoder.cpp).
+// /W4 /WX profile; a manifest-driven module has no CMakeLists to mark them
+// external, so wrap the includes exactly as the repo's other vendored FFI does
+// (image/ffi/png-decoder.cpp).
 #if defined(_MSC_VER)
 #pragma warning(push, 0)
 #elif defined(__clang__)
@@ -22,7 +30,6 @@
 #endif
 #include <lua.h>
 #include <lualib.h>
-#include <luacode.h>
 #if defined(_MSC_VER)
 #pragma warning(pop)
 #elif defined(__clang__)
@@ -33,13 +40,51 @@
 
 namespace uf::script
 {
+    namespace
+    {
+        // Convert the config's 64-bit ceiling to the allocator's size_t ledger
+        // unit, clamping a value beyond the addressable range to the maximum (an
+        // effectively unlimited ceiling on this host). Zero passes through and
+        // disables the ceiling.
+        [[nodiscard]]
+        auto quotaLimit(uint64 bytes) -> std::size_t
+        {
+            return checkedCast<std::size_t>(bytes)
+                .value_or(std::numeric_limits<std::size_t>::max());
+        }
+    }
+
     class Engine::Impl final
     {
     public:
-        lua_State* m_state;
+        // Memory ledger backing the accounting allocator, filled from the config
+        // before the VM is created and read on every allocation. Declared first
+        // so it is destroyed last: ~Impl closes the state explicitly, so the
+        // frees Luau runs during teardown still see a live ledger.
+        MemoryQuota m_quota;
 
-        explicit Impl(lua_State* p_state) noexcept
-            : m_state{p_state}
+        // The owned VM handle. Left null until create() allocates it through the
+        // accounting allocator, so a construction that fails before then closes
+        // nothing.
+        lua_State* m_state{nullptr};
+
+        // Live cancellation/budget state the interrupt callback reads. Derived
+        // from the config at construction (the deadline is anchored to now())
+        // and address-stable because Impl is heap-pinned behind unique_ptr.
+        InterruptState m_control;
+
+        // Set once a task thread has been hard-cancelled (the interrupt issued
+        // lua_break): the VM generation is spent, so every later runNumber
+        // refuses with Cancelled instead of resuming an abandoned VM.
+        bool m_terminal{false};
+
+        explicit Impl(EngineConfig const& config)
+            : m_quota{.limitBytes = quotaLimit(config.memoryQuotaBytes)}
+            , m_control{
+                  .cancellation = config.cancellation,
+                  .budgetTicks  = config.interruptBudgetTicks,
+                  .deadline     = std::chrono::steady_clock::now() + config.maxRuntime,
+              }
         {
         }
 
@@ -52,23 +97,15 @@ namespace uf::script
         {
             if (m_state != nullptr)
             {
-                // SAFETY: m_state is the owning lua_State handle from luaL_newstate.
+                // SAFETY: m_state is the owning lua_State handle from
+                // createStateWithQuota; closing it here releases the whole VM.
+                // Every free runs through the accounting allocator, whose ledger
+                // m_quota is still alive (m_quota is destroyed after this body,
+                // being declared before m_state), so the frees are accounted.
                 lua_close(m_state);
             }
         }
     };
-
-    namespace
-    {
-        [[nodiscard]]
-        auto topError(lua_State* p_thread) -> std::string
-        {
-            char const* text = lua_tostring(p_thread, -1);
-            return text != nullptr
-                ? std::string{text}
-                : std::string{"(non-string error value)"};
-        }
-    }
 
     Engine::Engine(std::unique_ptr<Impl> p_impl) noexcept
         : m_impl{std::move(p_impl)}
@@ -79,25 +116,37 @@ namespace uf::script
     auto Engine::operator=(Engine&&) noexcept -> Engine& = default;
     Engine::~Engine() = default;
 
-    auto Engine::create() -> Result<Engine>
+    auto Engine::create(EngineConfig const& config) -> Result<Engine>
     {
-        // SAFETY: luaL_newstate allocates the VM and returns null on failure.
-        lua_State* state = luaL_newstate();
+        // Build Impl first so its address-stable m_quota exists before the VM:
+        // the accounting allocator needs that ledger pointer at creation time.
+        auto impl = std::make_unique<Impl>(config);
+
+        // Allocate the VM through the accounting allocator, which charges every
+        // byte against impl->m_quota and refuses growth past the configured
+        // ceiling. Returns null on host allocation failure, as luaL_newstate
+        // would.
+        lua_State* state = createStateWithQuota(&impl->m_quota);
         if (state == nullptr)
         {
             return fail(
                 AutomationErrorKind::InternalInvariant,
-                "luaL_newstate returned null"
+                "createStateWithQuota returned null"
             );
         }
+        // Hand the raw state to Impl immediately so it is closed by RAII on any
+        // later early return.
+        impl->m_state = state;
+
         luaL_openlibs(state);
-        // TODO(cpp-debt): step-2 minimal Engine — NOT sandboxed and NOT cancellable
-        // yet. Scripts run with the full stdlib on a shared global table (globals leak
-        // across runNumber calls) and an infinite loop hangs the caller. Step 3 installs
-        // luaL_sandbox + interrupt/lua_break cancellation + the dangerous-globals nil-list
-        // (getfenv/setfenv/newproxy/coroutine/debug), per
-        // docs/plans/2026-07-21-luau-integration-plan.md.
-        return Engine{std::make_unique<Impl>(state)};
+        // Phase 1 registers no host tables; modules/task supplies the umbra.*
+        // installer in phase 2.
+        installSandbox(state, {});
+        // Arm hard cancellation before any task thread can run. m_control lives
+        // in the heap-pinned Impl, so the userdata pointer stays valid.
+        installInterrupt(state, &impl->m_control);
+
+        return Engine{std::move(impl)};
     }
 
     auto Engine::runNumber(
@@ -105,89 +154,30 @@ namespace uf::script
         std::string_view chunkName
     ) -> Result<double>
     {
-        lua_State* state = m_impl->m_state;
-
-        auto options              = lua_CompileOptions{};
-        options.optimizationLevel = 1;
-        options.debugLevel        = 1;
-
-        std::size_t bytecodeSize = 0;
-        // SAFETY: luau_compile allocates the bytecode buffer with malloc; the caller
-        // owns it. The scope guard frees it on every exit path (safe after load,
-        // which copies the bytecode into the VM). A SYNTAX error does NOT return null —
-        // it is encoded as error bytecode and surfaces at luau_load below; null is
-        // returned ONLY on allocation failure, hence InternalInvariant (as with
-        // luaL_newstate returning null in create()).
-        char* bytecode = luau_compile(
-            source.data(),
-            source.size(),
-            &options,
-            &bytecodeSize
-        );
-        if (bytecode == nullptr)
+        // A hard cancel spends the whole VM generation: once a task thread has
+        // been broken, this Engine is terminal and never resumes another thread.
+        if (m_impl->m_terminal)
         {
             return fail(
-                AutomationErrorKind::InternalInvariant,
-                "luau_compile allocation failed (returned null)"
-            );
-        }
-        auto bytecodeGuard = scopeExit(
-            [bytecode]() noexcept
-            {
-                // SAFETY: pairs the malloc inside luau_compile; freeing a
-                // caller-owned C buffer at the FFI boundary is intentional here.
-                // NOLINTNEXTLINE(cppcoreguidelines-no-malloc,cppcoreguidelines-owning-memory)
-                std::free(bytecode);
-            }
-        );
-
-        // lua_newthread pushes the coroutine onto the main state's stack. A scope guard
-        // restores the stack top on EVERY exit — including a throw from the std::string
-        // allocations below — so the thread is always popped and can never accumulate
-        // across repeated runNumber calls.
-        int const stackBase = lua_gettop(state);
-        lua_State* thread = lua_newthread(state);
-        auto threadGuard = scopeExit(
-            [state, stackBase]() noexcept
-            {
-                lua_settop(state, stackBase);
-            }
-        );
-
-        auto const name = std::string{chunkName};
-        int const loadStatus = luau_load(
-            thread,
-            name.c_str(),
-            bytecode,
-            bytecodeSize,
-            0
-        );
-        if (loadStatus != LUA_OK)
-        {
-            return fail(
-                AutomationErrorKind::InvalidResource,
-                "luau_load failed: " + topError(thread)
+                AutomationErrorKind::Cancelled,
+                "engine is terminal: a prior task was hard-cancelled"
             );
         }
 
-        int const runStatus = lua_resume(thread, nullptr, 0);
-        if (runStatus == LUA_YIELD)
+        auto result = runNumberOnThread(
+            m_impl->m_state,
+            source,
+            chunkName,
+            &m_impl->m_control
+        );
+
+        // runNumberOnThread already reported the cancel; this only spends the
+        // generation, so every later call refuses without touching the VM.
+        if (m_impl->m_control.broken)
         {
-            return fail(
-                AutomationErrorKind::InvalidResource,
-                "script yielded; the step-2 Engine does not resume yields"
-            );
-        }
-        if (runStatus != LUA_OK)
-        {
-            return fail(
-                AutomationErrorKind::InvalidResource,
-                "script error: " + topError(thread)
-            );
+            m_impl->m_terminal = true;
         }
 
-        return lua_gettop(thread) >= 1
-            ? lua_tonumber(thread, -1)
-            : 0.0;
+        return result;
     }
 }
