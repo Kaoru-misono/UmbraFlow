@@ -156,6 +156,18 @@ namespace uf::workbench
         annotation::PageId pageId
     ) -> std::optional<annotation::SourceId>;
 
+    // The page whose members the canvas draws and hit-tests over a shown screen:
+    // the page an element was selected under wins outright, and only without one
+    // does it fall back to the page whose regression case resolves to the shown
+    // screen. Nothing when the screen resolves to no page and no selection page is
+    // supplied -- the canvas then has no page to draw, and draw-to-create is inert.
+    [[nodiscard]]
+    auto shownPageForScreen(
+        AppState const& state,
+        annotation::SourceId shownScreen,
+        std::optional<annotation::PageId> selectionPage = std::nullopt
+    ) -> std::optional<annotation::PageId>;
+
     // The page whose placement of an interactive region the canvas edits when
     // that region is shown over a given screen, together with that placement's
     // per-page search ROI. Narrowed to the case the canvas can act on: the

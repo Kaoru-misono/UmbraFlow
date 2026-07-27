@@ -94,6 +94,22 @@ namespace uf::workbench
         }
     }
 
+    TEST_CASE("an unclassified screen has no shown page, so draw-to-create is inert")
+    {
+        // The document records no regression case for its source, so the screen
+        // resolves to no page: the canvas has nothing to draw and, without a page
+        // to draw onto, the rubber-band never starts.
+        auto const state    = appState();
+        auto const sourceId = annotation::test::sourceId(k_sourceId);
+        auto const pageId   = annotation::test::pageId(k_pageId);
+
+        CHECK_FALSE(shownPageForScreen(state, sourceId).has_value());
+
+        // A selection page is still honoured over the same screen, which is how an
+        // element selected under a page draws that page's members regardless.
+        CHECK(shownPageForScreen(state, sourceId, pageId) == pageId);
+    }
+
     TEST_CASE("a short id is the leading eight characters")
     {
         auto const id = annotation::test::recognizerId(k_anchorId);

@@ -4,6 +4,7 @@
 #include "authoring-edit.hpp"
 #include "page-view.hpp"
 #include "panel-state.hpp"
+#include "app/canvas-math.hpp"
 #include "app/workbench-app.hpp"
 
 #include <annotation/authoring-document.hpp>
@@ -33,6 +34,11 @@ namespace uf::workbench
         // project resolution, and the annotation design's default similarity.
         constexpr auto k_startingTemplateExtent        = uint32{16};
         constexpr auto k_startingSimilarityBasisPoints = uint32{9'000};
+
+        // The smallest template a draw-to-create gesture accepts, in source
+        // pixels. A box below this in either axis is a stray click-drag rather
+        // than a mark the author meant to draw, and is refused with a message.
+        constexpr auto k_minimumDrawnTemplateExtent = uint32{2};
 
         struct StartingRects final
         {
@@ -382,6 +388,56 @@ namespace uf::workbench
         return AddedRegion{
             .id   = recognizerId,
             .name = std::move(added.name),
+        };
+    }
+
+    auto EditPage::placeDrawn(NewDrawnMemberSpec const& spec) -> Result<AddedMember>
+    {
+        if (
+            spec.templateRect.width() < k_minimumDrawnTemplateExtent
+            || spec.templateRect.height() < k_minimumDrawnTemplateExtent
+        )
+        {
+            return fail(
+                AutomationErrorKind::InvalidResource,
+                "the drawn box is too small; drag out a larger rectangle"
+            );
+        }
+
+        // The search region is derived from the drawn template rather than
+        // seeded to the whole frame: the author drew the mark where it sits, so
+        // looking for it near there is both the better first guess and a cheaper
+        // search. It always contains the template, so addPageMember accepts it.
+        UF_TRY_VALUE(
+            searchRoi,
+            searchRoiForDrawnTemplate(
+                spec.templateRect,
+                m_draft.fingerprint.width(),
+                m_draft.fingerprint.height()
+            )
+        );
+
+        auto const recognizerId = annotation::RecognizerId{mintResourceId()};
+        UF_TRY_VALUE(
+            added,
+            addPageMember(
+                m_draft,
+                PageMemberSpec{
+                    .recognizerId          = recognizerId,
+                    .pageId                = m_id,
+                    .sourceId              = spec.sourceId,
+                    .templateRect          = spec.templateRect,
+                    .searchRoi             = searchRoi,
+                    .similarityBasisPoints = k_startingSimilarityBasisPoints,
+                    .kind                  = spec.kind,
+                }
+            )
+        );
+        m_draft = std::move(added.draft);
+        return AddedMember{
+            .id   = recognizerId,
+            .name = std::move(added.name),
+            .kind = spec.kind,
         };
     }
 

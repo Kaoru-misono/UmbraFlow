@@ -8,6 +8,9 @@
 #include <doctest/doctest.h>
 
 #include <cmath>
+#include <cstddef>
+#include <optional>
+#include <vector>
 
 namespace uf::workbench
 {
@@ -177,5 +180,117 @@ namespace uf::workbench
         // Every edge is integral.
         CHECK(bounds.left == doctest::Approx(std::round(bounds.left)));
         CHECK(bounds.right == doctest::Approx(std::round(bounds.right)));
+    }
+
+    TEST_CASE("rects under a point come back smallest-area first")
+    {
+        auto const rects = std::vector<PixelRect>{
+            rect(0, 0, 10, 10),
+            rect(2, 2, 3, 3),
+        };
+
+        // The point is inside both, so both come back, the smaller (inner) first
+        // so a mark stacked on a region is reachable and cycles ahead of it.
+        auto const both = rectsUnderPoint(rects, 3.0F, 3.0F);
+        REQUIRE(both.size() == 2U);
+        CHECK(both.front() == 1U);
+        CHECK(both.back() == 0U);
+
+        // A point inside only the outer rect returns it alone.
+        auto const outer = rectsUnderPoint(rects, 8.0F, 8.0F);
+        REQUIRE(outer.size() == 1U);
+        CHECK(outer.front() == 0U);
+
+        // A point outside every rect returns nothing.
+        CHECK(rectsUnderPoint(rects, 50.0F, 50.0F).empty());
+    }
+
+    TEST_CASE("cycling advances through overlapping candidates and wraps")
+    {
+        auto const ordered = std::vector<std::size_t>{1U, 0U};
+
+        // Nothing selected among the hits: the first (smallest) is chosen.
+        CHECK(nextRectInCycle(ordered, std::nullopt) == 1U);
+
+        // A repeated click advances to the next, then wraps back to the first.
+        CHECK(nextRectInCycle(ordered, std::optional<std::size_t>{1U}) == 0U);
+        CHECK(nextRectInCycle(ordered, std::optional<std::size_t>{0U}) == 1U);
+
+        // A selection not among the hits falls to the first candidate.
+        CHECK(nextRectInCycle(ordered, std::optional<std::size_t>{7U}) == 1U);
+
+        // No candidates, nothing to select.
+        CHECK_FALSE(
+            nextRectInCycle(std::vector<std::size_t>{}, std::nullopt).has_value()
+        );
+    }
+
+    TEST_CASE("the drag threshold separates a click from a drag per axis")
+    {
+        CHECK_FALSE(exceedsDragThreshold(3.0F, 0.0F, 4.0F));
+        CHECK_FALSE(exceedsDragThreshold(4.0F, 4.0F, 4.0F));
+        CHECK(exceedsDragThreshold(5.0F, 0.0F, 4.0F));
+        CHECK(exceedsDragThreshold(0.0F, -5.0F, 4.0F));
+    }
+
+    TEST_CASE("a rubber-band rectangle floors and ceils outward and clamps")
+    {
+        auto const drawn = rubberBandRect(2.4F, 3.6F, 7.1F, 9.9F, 100, 100);
+        REQUIRE(drawn.has_value());
+        CHECK(*drawn == rect(2, 3, 6, 7));
+
+        // A press that never moved a whole pixel is no rectangle.
+        CHECK_FALSE(rubberBandRect(5.0F, 5.0F, 5.0F, 5.0F, 100, 100).has_value());
+
+        // A drag that starts outside the frame is clamped back inside it.
+        auto const clamped = rubberBandRect(-3.0F, -3.0F, 4.0F, 4.0F, 100, 100);
+        REQUIRE(clamped.has_value());
+        CHECK(*clamped == rect(0, 0, 4, 4));
+    }
+
+    TEST_CASE("a drawn template seeds a search region that contains it")
+    {
+        auto const roi = searchRoiForDrawnTemplate(rect(2, 2, 3, 3), 8, 8);
+        REQUIRE(roi.has_value());
+        // Grown by the template extent on every side, clamped to the frame.
+        CHECK(*roi == rect(0, 0, 8, 8));
+
+        auto const inner = searchRoiForDrawnTemplate(rect(4, 4, 2, 2), 100, 100);
+        REQUIRE(inner.has_value());
+        CHECK(*inner == rect(2, 2, 6, 6));
+        // The seed always encloses the template it was derived from.
+        CHECK(inner->x() <= 4U);
+        CHECK(inner->x() + inner->width() >= 6U);
+    }
+
+    TEST_CASE("fit centres the whole image at the largest zoom that fits")
+    {
+        auto const fitted = fitCanvasView(100, 50, 200.0F, 200.0F);
+        CHECK(fitted.zoom == doctest::Approx(2.0F));
+
+        // The source centre maps to the viewport centre under the fitted view.
+        auto const center = sourceToScreen(
+            fitted,
+            CanvasPoint{0.0F, 0.0F},
+            50.0F,
+            25.0F
+        );
+        CHECK(center.x == doctest::Approx(100.0F));
+        CHECK(center.y == doctest::Approx(100.0F));
+    }
+
+    TEST_CASE("a centred view holds a fixed zoom and centres the image")
+    {
+        auto const view = centeredCanvasView(1.0F, 100, 50, 200.0F, 200.0F);
+        CHECK(view.zoom == doctest::Approx(1.0F));
+
+        auto const center = sourceToScreen(
+            view,
+            CanvasPoint{0.0F, 0.0F},
+            50.0F,
+            25.0F
+        );
+        CHECK(center.x == doctest::Approx(100.0F));
+        CHECK(center.y == doctest::Approx(100.0F));
     }
 }

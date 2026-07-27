@@ -466,6 +466,32 @@ namespace uf::workbench
         return std::nullopt;
     }
 
+    auto shownPageForScreen(
+        AppState const& state,
+        annotation::SourceId shownScreen,
+        std::optional<annotation::PageId> selectionPage
+    ) -> std::optional<annotation::PageId>
+    {
+        // Precedence: the page the element was selected under wins; only without
+        // one does it fall back to the page that claims the shown screen (the
+        // inverse of claimedScreen -- a screen resolves to exactly one page).
+        if (selectionPage.has_value())
+        {
+            return selectionPage;
+        }
+        for (auto const& regression : state.document().regressions())
+        {
+            auto const* p_resolved = std::get_if<annotation::ResolvedRegression>(
+                &regression.expectation()
+            );
+            if (p_resolved != nullptr && regression.sourceId() == shownScreen)
+            {
+                return p_resolved->pageId;
+            }
+        }
+        return std::nullopt;
+    }
+
     auto placementContext(
         AppState const& state,
         annotation::RecognizerId id,
@@ -473,25 +499,11 @@ namespace uf::workbench
         std::optional<annotation::PageId> selectionPage
     ) -> std::optional<PlacementContext>
     {
-        // Precedence: the page the element was selected under wins; only without
-        // one does the context fall back to the page that claims the shown screen
-        // (the inverse of claimedScreen -- a screen resolves to exactly one page).
-        auto pageContext = selectionPage;
-        if (!pageContext.has_value())
-        {
-            for (auto const& regression : state.document().regressions())
-            {
-                auto const* p_resolved =
-                    std::get_if<annotation::ResolvedRegression>(
-                        &regression.expectation()
-                    );
-                if (p_resolved != nullptr && regression.sourceId() == shownScreen)
-                {
-                    pageContext = p_resolved->pageId;
-                    break;
-                }
-            }
-        }
+        auto const pageContext = shownPageForScreen(
+            state,
+            shownScreen,
+            selectionPage
+        );
         if (!pageContext.has_value())
         {
             return std::nullopt;

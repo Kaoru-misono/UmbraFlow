@@ -126,6 +126,30 @@ namespace uf::workbench
             SearchRoi,
         };
 
+        // The one canvas gesture in progress, the explicit state machine the
+        // canvas arbitrates every left interaction through. Exactly one is active:
+        //   Idle          -- hovering; a fresh left press is arbitrated from here.
+        //   GripEditing   -- a grip of the selected element is held; the detail
+        //                    lives in dragTarget/dragGrip/dragStartRect and the
+        //                    commit is handleRectEditing's on release. This state
+        //                    mirrors dragTarget != None.
+        //   PressPending  -- left pressed on empty canvas; below the drag
+        //                    threshold it is still undecided between a click that
+        //                    selects nothing and a rubber-band.
+        //   RubberBanding -- past the threshold on empty canvas, dragging out a
+        //                    new rectangle; the type picker opens on release.
+        // Transitions: Idle -> GripEditing on a grip hit; Idle -> PressPending on
+        // an empty press where a page context exists; PressPending -> RubberBanding
+        // past the threshold; any -> Idle on release, on Escape, or on a completed
+        // create. A click that hits a drawn rectangle selects it and stays Idle.
+        enum class CanvasGesture : uint8
+        {
+            Idle,
+            GripEditing,
+            PressPending,
+            RubberBanding,
+        };
+
         // One entry in the bounded operation-log history the Log window renders.
         // The severity is decided at the report site; the timestamp is the same
         // string the disk writer stamps, so the two stay in step.
@@ -163,6 +187,20 @@ namespace uf::workbench
         CanvasDragTarget            dragTarget{CanvasDragTarget::None};
         std::optional<RectGripKind> dragGrip{};
         std::optional<PixelRect>    dragStartRect{};
+
+        // The canvas interaction state machine and its in-progress data. The
+        // rubber-band records the source pixel its press anchored on, so the
+        // rectangle is rebuilt from that anchor to the cursor every frame rather
+        // than accumulated. pendingCreateRect is the drawn rectangle held between
+        // a rubber-band release and the type picker's choice; contextMenuTarget /
+        // contextMenuPage are the element and page a right-click opened a menu
+        // over, so the menu's actions name them after the click that placed it.
+        CanvasGesture              canvasGesture{CanvasGesture::Idle};
+        std::optional<CanvasPoint> rubberBandStartSource{};
+        std::optional<PixelRect>   pendingCreateRect{};
+
+        std::optional<annotation::RecognizerId> contextMenuTarget{};
+        std::optional<annotation::PageId>       contextMenuPage{};
 
         // The shared region being dragged onto a page, remembered from the frame
         // the drag began. It cannot be a frame-local handed from the drag source

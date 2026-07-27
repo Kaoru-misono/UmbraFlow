@@ -254,3 +254,68 @@ context-sensitive inspector, and the programmatic default dock layout
 - **Gates:** 4 static gates OK; x64-debug clean; `ctest -L CI` 14/14; asan
   rebuilt + `ctest -L AsanSmoke` 2/2 (the smoke draws every new panel under
   ASan); probe-project `--smoke 5` EXIT 0; x64-release workbench builds.
+
+### 2026-07-27 — U2 canvas interaction (shipped)
+
+Decision 9's state machine, decision 8's atomic creation, decision 10's visible
+navigation, and the canvas context menus. Files: `app/panels.cpp` (the whole
+canvas surface rewritten plus context-menu / creation / retype helpers),
+`app/canvas-math.{hpp,cpp}` (the new pure geometry), `panel-state.hpp`
+(`CanvasGesture` + its in-progress data), `edit-page.{hpp,cpp}`
+(`NewDrawnMemberSpec` / `AddedMember` / `placeDrawn`), `authoring-actions.
+{hpp,cpp}` (`shownPageForScreen`, extracted from `placementContext`), and tests
+`test-canvas-math.cpp`, `test-edit-page.cpp`, `test-authoring-actions.cpp`.
+
+- **Interaction state machine (decision 9).** `PanelUiState::CanvasGesture` is
+  the explicit mode, one active at a time: **Idle** (a fresh left press is
+  arbitrated from here), **GripEditing** (a grip of the selected element is held;
+  the detail stays in the existing `dragTarget`/`dragGrip`/`dragStartRect`, and
+  this state mirrors `dragTarget != None`), **PressPending** (left down on empty
+  canvas, undecided below the drag threshold), **RubberBanding** (past the
+  threshold, dragging a new rectangle). Transitions: Idle→GripEditing when
+  `handleRectEditing` claims a grip (unchanged); Idle stays Idle on a template hit
+  and selects it, cycling on overlap; Idle→PressPending on an empty press where a
+  shown page exists; PressPending→RubberBanding past `k_dragThreshold` (4 px),
+  else →Idle on release; RubberBanding→Idle on release (opening the type picker
+  when a rectangle was drawn); any→Idle on Escape (which also clears a grip drag).
+  Left-press arbitration order is grips → template hit (select/cycle) →
+  empty-space rubber-band; middle-drag pan and wheel zoom are untouched.
+- **Drawing (decision 9).** The canvas draws every member of the shown page —
+  `shownPageForScreen` picks the page an element is selected under, else the one
+  claiming the shown screen — in a muted style (template + this-page search ROI as
+  outlines), the selected one strong with grips via the unchanged
+  `handleRectEditing`, evidence overlay on top. Hit-testing is against template
+  rectangles only, since a whole-frame search ROI would swallow every empty press
+  and leave nothing to rubber-band on.
+- **Hit-test / cycling (pure).** `rectsUnderPoint` returns the rectangles under a
+  source point smallest-area first (a mark on a region is reachable and cycles
+  ahead of it); `nextRectInCycle` advances past the current selection among the
+  hits, wrapping, so repeated clicks on coincident rectangles cycle.
+  `exceedsDragThreshold`, `rubberBandRect`, `searchRoiForDrawnTemplate`,
+  `fitCanvasView`, and `centeredCanvasView` complete the tested pure layer.
+- **Atomic creation API (decision 8).** `EditPage::placeDrawn(NewDrawnMemberSpec
+  {sourceId, kind, templateRect})` is one transaction: it derives the initial
+  per-page search ROI from the drawn template (grown by the template's own extent
+  on every side, clamped to the frame — always containing it) rather than seeding
+  the whole frame, refuses a template below `k_minimumDrawnTemplateExtent` (2 px),
+  mints the member, and returns `AddedMember{id, name, kind}` for
+  select-after-landing. On rubber-band release a popup offers anchor / interactive
+  / info / cancel; on a screen with no page context the rubber-band never starts
+  and a one-shot Info names the fix. Refusals surface through `ui.report(Error)`.
+- **Context menus (decisions 8, 9).** Right-click on a drawn template selects it
+  and opens an element menu — Duplicate, a Retype submenu (through the shared
+  `requestRetype`, which the inspector's type combo now also calls), Remove from
+  this page (refused for an anchor and for an interactive element's last
+  placement, with the closure message), Delete everywhere — never regression
+  recording. Right-click on the background opens the screen-scoped
+  `requestScreenExpectation` recordings. Every menu action requests at most one
+  edit; selection is immediate.
+- **Visible navigation (decision 10).** A footer strip on a reserved line (so its
+  buttons never overlap the canvas surface and double-fire a press) shows the zoom
+  percent and Fit / 100% buttons over the pure `fitCanvasView` /
+  `centeredCanvasView` math; wheel and middle-drag are unchanged.
+- **Deferred:** none for U2. The dirty dot still over-reports after undo-to-saved
+  (accepted cpp-debt from U1); the marks×screens matrix stays U3.
+- **Gates:** 4 static gates OK; x64-debug clean; `ctest -L CI` 14/14; asan
+  rebuilt + `ctest -L AsanSmoke` 2/2; probe-project `--smoke 5` EXIT 0;
+  x64-release workbench builds.

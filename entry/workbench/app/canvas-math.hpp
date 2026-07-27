@@ -7,7 +7,10 @@
 
 #include <domain/space.hpp>
 
+#include <cstddef>
 #include <optional>
+#include <span>
+#include <vector>
 
 namespace uf::workbench
 {
@@ -133,4 +136,88 @@ namespace uf::workbench
         CanvasPoint canvasOrigin,
         PixelRect const& rect
     ) -> ScreenPixelRect;
+
+    // The indices of every rectangle that contains a source-space point, ordered
+    // smallest-area first so a small mark stacked on a large one is reachable and
+    // cycles ahead of it. Equal-area rectangles keep their input order. This is
+    // the canvas' click hit-test: the caller passes each drawn member's template
+    // rectangle and the source pixel under the cursor.
+    [[nodiscard]]
+    auto rectsUnderPoint(
+        std::span<PixelRect const> rects,
+        float sourceX,
+        float sourceY
+    ) -> std::vector<std::size_t>;
+
+    // The next candidate to select given the ordered hits under the cursor and
+    // the index of the currently selected rectangle. When the current selection
+    // is among the hits, the one after it wraps around; otherwise, or when
+    // nothing is selected, the first (smallest) hit. Nothing when there are no
+    // hits. This is what makes repeated clicks on overlapping rectangles cycle.
+    [[nodiscard]]
+    auto nextRectInCycle(
+        std::span<std::size_t const> ordered,
+        std::optional<std::size_t> currentIndex
+    ) -> std::optional<std::size_t>;
+
+    // Whether a press-to-drag has moved far enough on screen to be a drag rather
+    // than a click. Compared per-axis against the threshold so a mostly-vertical
+    // or mostly-horizontal drag crosses it as readily as a diagonal one.
+    [[nodiscard]]
+    auto exceedsDragThreshold(
+        float screenDeltaX,
+        float screenDeltaY,
+        float threshold
+    ) noexcept -> bool;
+
+    // The integer source rectangle a rubber-band drag between two source-space
+    // points covers, clamped inside the frame. Nothing when the two points span
+    // no whole pixel in either axis (a click, or a zero-width drag). The corners
+    // are floored and ceiled outward so a rectangle the author drags always
+    // encloses the pixels under the gesture.
+    [[nodiscard]]
+    auto rubberBandRect(
+        float sourceAx,
+        float sourceAy,
+        float sourceBx,
+        float sourceBy,
+        uint32 frameWidth,
+        uint32 frameHeight
+    ) -> std::optional<PixelRect>;
+
+    // The initial per-page search region for a freshly drawn member: its template
+    // grown by the template's own extent on every side and clamped to the frame,
+    // so the runtime first looks for the mark near where it was drawn rather than
+    // across the whole frame. Always contains the template, since it only grows
+    // outward from a template already inside the frame. Fails only if the clamped
+    // rectangle is somehow rejected by PixelRect.
+    [[nodiscard]]
+    auto searchRoiForDrawnTemplate(
+        PixelRect templateRect,
+        uint32 frameWidth,
+        uint32 frameHeight
+    ) -> Result<PixelRect>;
+
+    // Fits the whole source image inside a viewport: the largest zoom at which
+    // both dimensions fit, with the pan centring the image. The Fit button's
+    // math, kept pure so it is tested without a canvas.
+    [[nodiscard]]
+    auto fitCanvasView(
+        uint32 sourceWidth,
+        uint32 sourceHeight,
+        float viewportWidth,
+        float viewportHeight
+    ) -> CanvasView;
+
+    // The view at a fixed zoom with the source image centred in the viewport, as
+    // the 100% button produces at zoom 1. Shares the centring math with
+    // fitCanvasView.
+    [[nodiscard]]
+    auto centeredCanvasView(
+        float zoom,
+        uint32 sourceWidth,
+        uint32 sourceHeight,
+        float viewportWidth,
+        float viewportHeight
+    ) -> CanvasView;
 }

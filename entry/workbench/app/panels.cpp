@@ -66,6 +66,20 @@ namespace uf::workbench
         constexpr auto k_gripRadius     = 5.0F;
         constexpr auto k_zoomWheelBase  = 1.1F;
 
+        // How far, in screen pixels, a left press must move before it is a
+        // rubber-band rather than a click that selects. A few pixels of slack lets
+        // a click that jitters still select.
+        constexpr auto k_dragThreshold = 4.0F;
+
+        // The muted styles for a page member that is not the selection: the same
+        // hues as the strong template and search-ROI colours, dimmed so the
+        // selected element still reads as the one being edited.
+        constexpr auto k_mutedTemplateColor  = IM_COL32(96, 220, 120, 150);
+        constexpr auto k_mutedSearchRoiColor = IM_COL32(96, 168, 255, 110);
+
+        // The rectangle a rubber-band is dragging out, before its kind is chosen.
+        constexpr auto k_rubberBandColor = IM_COL32(240, 240, 240, 220);
+
         // Gates which drop targets accept a shared region being dragged.
         constexpr auto k_sharedRegionPayload = "uf.shared-region";
 
@@ -1496,6 +1510,344 @@ namespace uf::workbench
             }
         }
 
+        // One member of the shown page as the canvas draws and hit-tests it: the
+        // element's template rectangle, this page's own search region, and whether
+        // the template may be edited over the shown screen (only over the screen it
+        // was cut from). Assembled per frame from the page view.
+        struct DrawnMember final
+        {
+            annotation::RecognizerId   id;
+            PixelRect                  templateRect;
+            PixelRect                  searchRoi;
+            annotation::AnnotationType type{};
+            bool                       templateEditable{};
+        };
+
+        [[nodiscard]]
+        auto collectDrawnMembers(
+            AppState const& state,
+            annotation::PageId pageId,
+            annotation::SourceId shownScreen
+        ) -> std::vector<DrawnMember>
+        {
+            auto members = std::vector<DrawnMember>{};
+            auto const view = PageView::of(state.draft(), pageId);
+            if (!view.has_value())
+            {
+                return members;
+            }
+            auto const editable = [&](annotation::RecognizerId id) -> bool
+            {
+                auto const authored = sourceOfRecognizer(state, id);
+                return authored.has_value() && *authored == shownScreen;
+            };
+            for (auto const& row : view->identifiedBy)
+            {
+                members.emplace_back(
+                    DrawnMember{
+                        .id               = row.id,
+                        .templateRect     = row.templateRect,
+                        .searchRoi        = row.searchRoi,
+                        .type             = annotation::AnnotationType::PageAnchor,
+                        .templateEditable = editable(row.id),
+                    }
+                );
+            }
+            for (auto const& row : view->regions)
+            {
+                members.emplace_back(
+                    DrawnMember{
+                        .id               = row.id,
+                        .templateRect     = row.templateRect,
+                        .searchRoi        = row.searchRoiOnThisPage,
+                        .type             = annotation::AnnotationType::ActionTarget,
+                        .templateEditable = editable(row.id),
+                    }
+                );
+            }
+            for (auto const& row : view->infos)
+            {
+                members.emplace_back(
+                    DrawnMember{
+                        .id               = row.id,
+                        .templateRect     = row.templateRect,
+                        .searchRoi        = row.searchRoiOnThisPage,
+                        .type             = annotation::AnnotationType::InfoRegion,
+                        .templateEditable = editable(row.id),
+                    }
+                );
+            }
+            return members;
+        }
+
+        // Changes a recognizer's type as one transaction through the free-function
+        // retype path, reporting the same summary the inspector's type combo does.
+        // Shared by that combo and the canvas context menu's Retype submenu.
+        auto requestRetype(
+            AppState& state,
+            PanelUiState& ui,
+            annotation::RecognizerId id,
+            annotation::AnnotationType type,
+            char const* typeName
+        ) -> void
+        {
+            auto retyped = retypeRecognizer(state.draft(), id, type);
+            if (!retyped)
+            {
+                ui.report(
+                    LogSeverity::Error,
+                    std::format(
+                        "type change rejected: {}",
+                        toString(retyped.error())
+                    )
+                );
+                return;
+            }
+            // Summarized against the pre-commit document so a page named in the
+            // summary is resolved before the edit lands.
+            auto summary = retypeSummary(state, *retyped, typeName);
+            requestEdit(ui, std::move(retyped->draft), std::move(summary));
+        }
+
+        // Creates a member from a rubber-banded rectangle on the shown page and
+        // selects it once the commit lands. One transaction: the drawn template and
+        // its seeded search region ride in together, since the one-commit-per-frame
+        // queue rejects a create-then-retemplate pair.
+        auto createDrawnMember(
+            AppState& state,
+            PanelUiState& ui,
+            annotation::PageId pageId,
+            annotation::SourceId sourceId,
+            PageMemberKind kind,
+            PixelRect templateRect
+        ) -> void
+        {
+            auto page = EditPage::open(state, pageId);
+            if (!page)
+            {
+                ui.report(
+                    LogSeverity::Error,
+                    std::format("draw failed: {}", toString(page.error()))
+                );
+                return;
+            }
+            auto added = page->placeDrawn(
+                EditPage::NewDrawnMemberSpec{
+                    .sourceId     = sourceId,
+                    .kind         = kind,
+                    .templateRect = templateRect,
+                }
+            );
+            if (!added)
+            {
+                ui.report(
+                    LogSeverity::Error,
+                    std::format("draw failed: {}", toString(added.error()))
+                );
+                return;
+            }
+            auto const newId = added->id;
+            std::move(*page).commitSelecting(
+                ui,
+                newMemberDescription(added->name, kind),
+                newId,
+                sourceId
+            );
+        }
+
+        // Withdraws a member's placement from one page. An anchor joins its page
+        // through the signature rather than a placement, so it is refused here and
+        // deleted or re-roled instead; an interactive region's last placement is
+        // refused with the same closure message the tree and EditPage use.
+        auto removeMemberFromPage(
+            AppState& state,
+            PanelUiState& ui,
+            annotation::RecognizerId id,
+            annotation::PageId pageId,
+            annotation::AnnotationType type,
+            std::string_view name
+        ) -> void
+        {
+            if (type == annotation::AnnotationType::PageAnchor)
+            {
+                ui.report(
+                    LogSeverity::Error,
+                    std::format(
+                        "\"{}\" identifies this page through its signature; delete "
+                        "it or change its role instead of removing it here",
+                        name
+                    )
+                );
+                return;
+            }
+            auto draft             = state.draft();
+            auto const interactive = (
+                type == annotation::AnnotationType::ActionTarget
+            );
+            auto const onOtherPage = std::ranges::any_of(
+                draft.placements,
+                [&](EditablePlacement const& placement)
+                {
+                    return placement.elementId == id && placement.pageId != pageId;
+                }
+            );
+            if (interactive && !onOtherPage)
+            {
+                ui.report(
+                    LogSeverity::Error,
+                    std::format(
+                        "\"{}\" is only on this page; an interactive region must "
+                        "stay on at least one, so delete it instead of removing it "
+                        "here",
+                        name
+                    )
+                );
+                return;
+            }
+            std::erase_if(
+                draft.placements,
+                [&](EditablePlacement const& placement)
+                {
+                    return placement.elementId == id && placement.pageId == pageId;
+                }
+            );
+            requestEdit(
+                ui,
+                std::move(draft),
+                std::format(
+                    "removed \"{}\" from page \"{}\"",
+                    name,
+                    pageName(state, pageId)
+                )
+            );
+        }
+
+        // The element context menu: Select is implicit (the right-click already
+        // selected it), then Duplicate, a Retype submenu, and the two removals.
+        // Regression recording is a screen concern and is deliberately absent here.
+        auto drawCanvasElementMenu(AppState& state, PanelUiState& ui) -> void
+        {
+            if (!ImGui::BeginPopup("canvas-element-menu"))
+            {
+                return;
+            }
+            if (!ui.contextMenuTarget.has_value())
+            {
+                ImGui::EndPopup();
+                return;
+            }
+            auto const id          = *ui.contextMenuTarget;
+            auto const* definition = state.document().catalog().findRecognizer(id);
+            if (definition == nullptr)
+            {
+                ImGui::TextDisabled("(element is gone)");
+                ImGui::EndPopup();
+                return;
+            }
+            auto const name = definition->name().value();
+            auto const type = definition->annotationType();
+            ImGui::TextDisabled("%s", name.c_str());
+            ImGui::Separator();
+
+            if (ImGui::Selectable("Duplicate"))
+            {
+                requestDuplicateElement(state, ui, id);
+            }
+            if (ImGui::BeginMenu("Retype"))
+            {
+                for (
+                    auto index = std::size_t{0};
+                    index < k_annotationTypeItems.size();
+                    ++index
+                )
+                {
+                    auto const target =
+                        static_cast<annotation::AnnotationType>(index);
+                    auto const isCurrent = target == type;
+                    if (
+                        ImGui::MenuItem(
+                            k_annotationTypeItems.at(index),
+                            nullptr,
+                            isCurrent,
+                            !isCurrent
+                        )
+                    )
+                    {
+                        requestRetype(
+                            state,
+                            ui,
+                            id,
+                            target,
+                            k_annotationTypeItems.at(index)
+                        );
+                    }
+                }
+                ImGui::EndMenu();
+            }
+
+            ImGui::Separator();
+            auto const canRemove = ui.contextMenuPage.has_value()
+                && type != annotation::AnnotationType::PageAnchor;
+            ImGui::BeginDisabled(!canRemove);
+            if (ImGui::Selectable("Remove from this page") && canRemove)
+            {
+                removeMemberFromPage(
+                    state,
+                    ui,
+                    id,
+                    *ui.contextMenuPage,
+                    type,
+                    name
+                );
+            }
+            ImGui::EndDisabled();
+            if (ImGui::Selectable("Delete everywhere"))
+            {
+                requestDeletion(
+                    ui,
+                    deleteRecognizer(state.draft(), id),
+                    std::format("\"{}\"", name)
+                );
+            }
+            ImGui::EndPopup();
+        }
+
+        // The background context menu: the screen-scoped regression recordings, the
+        // same requestScreenExpectation actions the inspector offers under a screen
+        // selection.
+        auto drawCanvasBackgroundMenu(
+            AppState& state,
+            PanelUiState& ui,
+            annotation::SourceId shownScreen
+        ) -> void
+        {
+            if (!ImGui::BeginPopup("canvas-background-menu"))
+            {
+                return;
+            }
+            ImGui::TextDisabled("Record this screen as");
+            ImGui::Separator();
+            if (ImGui::Selectable("None of the pages"))
+            {
+                requestScreenExpectation(
+                    state,
+                    ui,
+                    shownScreen,
+                    PagelessExpectation::Unknown
+                );
+            }
+            if (ImGui::Selectable("Ambiguous"))
+            {
+                requestScreenExpectation(
+                    state,
+                    ui,
+                    shownScreen,
+                    PagelessExpectation::Ambiguous
+                );
+            }
+            ImGui::EndPopup();
+        }
+
         auto drawCanvasPanel(
             AppState& state,
             WorkbenchServices const& services,
@@ -1511,7 +1863,7 @@ namespace uf::workbench
             auto const selectedSource = state.selectedSourceId();
             if (!selectedSource.has_value())
             {
-                ImGui::TextUnformatted("Select a source to view it.");
+                ImGui::TextUnformatted("Select a screen or element to view it.");
                 ImGui::End();
                 return;
             }
@@ -1539,9 +1891,13 @@ namespace uf::workbench
 
             auto const cursor = ImGui::GetCursorScreenPos();
             auto const region = ImGui::GetContentRegionAvail();
+            // Reserve one line at the bottom for the navigation strip, so its
+            // buttons never overlap the canvas surface -- an overlapping button and
+            // canvas gesture would both fire on the same press.
+            auto const footer = ImGui::GetFrameHeightWithSpacing();
             auto const size   = ImVec2{
                 std::max(region.x, 64.0F),
-                std::max(region.y, 64.0F),
+                std::max(region.y - footer, 64.0F),
             };
             ImGui::InvisibleButton(
                 "canvas-surface",
@@ -1600,17 +1956,66 @@ namespace uf::workbench
                 ImVec2{bottomRight.x, bottomRight.y}
             );
 
-            if (auto const recognizerId = state.selectedRecognizerId())
+            // The page whose members the canvas shows: the one an element is
+            // selected under, else the one that claims this screen. Without it
+            // there is nothing to draw beyond the selected element and no page to
+            // draw-to-create onto.
+            auto const shownPage = shownPageForScreen(
+                state,
+                *selectedSource,
+                state.selection().pageContext()
+            );
+            auto const members = shownPage.has_value()
+                ? collectDrawnMembers(state, *shownPage, *selectedSource)
+                : std::vector<DrawnMember>{};
+            auto const selectedId = state.selectedRecognizerId();
+
+            // The template rectangles are the click targets; the search regions are
+            // drawn but not hit-tested, since a whole-frame range would swallow
+            // every empty-space press and leave nothing to rubber-band on.
+            auto templateRects = std::vector<PixelRect>{};
+            templateRects.reserve(members.size());
+            for (auto const& member : members)
             {
-                auto const* definition = state.document().catalog().findRecognizer(
-                    *recognizerId
+                templateRects.emplace_back(member.templateRect);
+            }
+
+            // Every member of the shown page in a muted style; the selected one is
+            // drawn strong, with grips, by handleRectEditing just below.
+            for (auto const& member : members)
+            {
+                if (selectedId.has_value() && *selectedId == member.id)
+                {
+                    continue;
+                }
+                drawRectOutline(
+                    *drawList,
+                    view,
+                    canvasOrigin,
+                    member.searchRoi,
+                    k_mutedSearchRoiColor
                 );
+                drawRectOutline(
+                    *drawList,
+                    view,
+                    canvasOrigin,
+                    member.templateRect,
+                    member.templateEditable
+                        ? k_mutedTemplateColor
+                        : k_foreignTemplateColor
+                );
+            }
+
+            if (selectedId.has_value())
+            {
+                auto const* definition =
+                    state.document().catalog().findRecognizer(*selectedId);
                 if (definition != nullptr)
                 {
                     // The template is only editable over the screen it was cut
                     // from. For a shared element seen from another page they are
                     // different images.
-                    auto const authoredOn = sourceOfRecognizer(state, *recognizerId);
+                    auto const authoredOn = sourceOfRecognizer(state, *selectedId);
                     // The page that places this region: the one the element was
                     // selected under when it carries a context, otherwise the one
                     // that claims this screen. The canvas then draws and edits
@@ -1619,7 +2024,7 @@ namespace uf::workbench
                     // default range is shown.
                     auto const context = placementContext(
                         state,
-                        *recognizerId,
+                        *selectedId,
                         *selectedSource,
                         state.selection().pageContext()
                     );
@@ -1646,6 +2051,186 @@ namespace uf::workbench
                 }
             }
 
+            // The gesture machine follows a grip drag handleRectEditing owns: while
+            // a grip is held it is GripEditing, and it falls back to Idle the frame
+            // the grip is let go.
+            if (ui.dragTarget != PanelUiState::CanvasDragTarget::None)
+            {
+                ui.canvasGesture = PanelUiState::CanvasGesture::GripEditing;
+            }
+            else if (ui.canvasGesture == PanelUiState::CanvasGesture::GripEditing)
+            {
+                ui.canvasGesture = PanelUiState::CanvasGesture::Idle;
+            }
+
+            auto const mouse       = ImGui::GetIO().MousePos;
+            auto const mouseSource = screenToSource(
+                view,
+                canvasOrigin,
+                mouse.x,
+                mouse.y
+            );
+
+            // Left press arbitration, only when a grip did not already claim it: a
+            // hit on a drawn template selects (cycling through an overlap), and an
+            // empty press on a page begins a rubber-band; on an unclassified screen
+            // it names the fix instead.
+            if (
+                hovered
+                && ui.canvasGesture == PanelUiState::CanvasGesture::Idle
+                && ImGui::IsMouseClicked(ImGuiMouseButton_Left)
+            )
+            {
+                auto const hits = rectsUnderPoint(
+                    templateRects,
+                    mouseSource.x,
+                    mouseSource.y
+                );
+                if (!hits.empty())
+                {
+                    auto current = std::optional<std::size_t>{};
+                    for (
+                        auto index = std::size_t{0};
+                        index < members.size();
+                        ++index
+                    )
+                    {
+                        if (
+                            selectedId.has_value()
+                            && members[index].id == *selectedId
+                        )
+                        {
+                            current = index;
+                        }
+                    }
+                    if (auto const next = nextRectInCycle(hits, current))
+                    {
+                        selectRecognizer(
+                            state,
+                            members[*next].id,
+                            *selectedSource,
+                            shownPage
+                        );
+                    }
+                }
+                else if (shownPage.has_value())
+                {
+                    ui.canvasGesture         = PanelUiState::CanvasGesture::PressPending;
+                    ui.rubberBandStartSource = mouseSource;
+                }
+                else
+                {
+                    ui.report(
+                        LogSeverity::Info,
+                        "classify this screen into a page first, then draw "
+                        "elements on it"
+                    );
+                }
+            }
+
+            // A press below the drag threshold stays undecided; past it becomes a
+            // rubber-band, and a release before then is a click that selected
+            // nothing.
+            if (ui.canvasGesture == PanelUiState::CanvasGesture::PressPending)
+            {
+                if (ImGui::IsMouseReleased(ImGuiMouseButton_Left))
+                {
+                    ui.canvasGesture = PanelUiState::CanvasGesture::Idle;
+                    ui.rubberBandStartSource.reset();
+                }
+                else
+                {
+                    auto const delta =
+                        ImGui::GetMouseDragDelta(ImGuiMouseButton_Left);
+                    if (exceedsDragThreshold(delta.x, delta.y, k_dragThreshold))
+                    {
+                        ui.canvasGesture =
+                            PanelUiState::CanvasGesture::RubberBanding;
+                    }
+                }
+            }
+
+            // The rubber-band is rebuilt from its anchor to the cursor every frame
+            // and, on release, hands the drawn rectangle to the type picker.
+            if (
+                ui.canvasGesture == PanelUiState::CanvasGesture::RubberBanding
+                && ui.rubberBandStartSource.has_value()
+            )
+            {
+                auto const rect = rubberBandRect(
+                    ui.rubberBandStartSource->x,
+                    ui.rubberBandStartSource->y,
+                    mouseSource.x,
+                    mouseSource.y,
+                    texture->width,
+                    texture->height
+                );
+                if (rect.has_value())
+                {
+                    drawRectOutline(
+                        *drawList,
+                        view,
+                        canvasOrigin,
+                        *rect,
+                        k_rubberBandColor
+                    );
+                }
+                if (ImGui::IsMouseReleased(ImGuiMouseButton_Left))
+                {
+                    if (rect.has_value())
+                    {
+                        ui.pendingCreateRect = rect;
+                        ImGui::OpenPopup("canvas-create-kind");
+                    }
+                    ui.canvasGesture = PanelUiState::CanvasGesture::Idle;
+                    ui.rubberBandStartSource.reset();
+                }
+            }
+
+            // Escape abandons any gesture in progress -- a rubber-band, or a grip
+            // drag not yet released and committed.
+            if (
+                ui.canvasGesture != PanelUiState::CanvasGesture::Idle
+                && ImGui::IsKeyPressed(ImGuiKey_Escape)
+            )
+            {
+                ui.canvasGesture = PanelUiState::CanvasGesture::Idle;
+                ui.rubberBandStartSource.reset();
+                ui.dragTarget = PanelUiState::CanvasDragTarget::None;
+                ui.dragGrip.reset();
+                ui.dragStartRect.reset();
+            }
+
+            // Right press opens a context menu: the element's when it lands on a
+            // drawn template (selecting it first), the screen's otherwise.
+            if (hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Right))
+            {
+                auto const hits = rectsUnderPoint(
+                    templateRects,
+                    mouseSource.x,
+                    mouseSource.y
+                );
+                if (!hits.empty())
+                {
+                    auto const index = hits.front();
+                    selectRecognizer(
+                        state,
+                        members[index].id,
+                        *selectedSource,
+                        shownPage
+                    );
+                    ui.contextMenuTarget = members[index].id;
+                    ui.contextMenuPage   = shownPage;
+                    ImGui::OpenPopup("canvas-element-menu");
+                }
+                else
+                {
+                    ui.contextMenuTarget.reset();
+                    ui.contextMenuPage.reset();
+                    ImGui::OpenPopup("canvas-background-menu");
+                }
+            }
+
             // Recognition evidence on top of the authored boxes: where the last
             // preview actually found each template on this screen.
             drawEvidenceOverlay(
@@ -1657,6 +2242,88 @@ namespace uf::workbench
             );
 
             drawList->PopClipRect();
+
+            // The type picker for a just-drawn rectangle. Dismissing it by clicking
+            // away drops the held rectangle so no stale draw survives to next time.
+            if (ImGui::BeginPopup("canvas-create-kind"))
+            {
+                auto const create = [&](PageMemberKind kind)
+                {
+                    if (ui.pendingCreateRect.has_value() && shownPage.has_value())
+                    {
+                        createDrawnMember(
+                            state,
+                            ui,
+                            *shownPage,
+                            *selectedSource,
+                            kind,
+                            *ui.pendingCreateRect
+                        );
+                    }
+                    ui.pendingCreateRect.reset();
+                };
+                ImGui::TextDisabled("Create here");
+                ImGui::Separator();
+                if (ImGui::Selectable("Identifying mark"))
+                {
+                    create(PageMemberKind::Anchor);
+                }
+                if (ImGui::Selectable("Interactive region"))
+                {
+                    create(PageMemberKind::ActionTarget);
+                }
+                if (ImGui::Selectable("Info region"))
+                {
+                    create(PageMemberKind::InfoRegion);
+                }
+                ImGui::Separator();
+                if (ImGui::Selectable("Cancel"))
+                {
+                    ui.pendingCreateRect.reset();
+                }
+                ImGui::EndPopup();
+            }
+            else if (ui.pendingCreateRect.has_value())
+            {
+                ui.pendingCreateRect.reset();
+            }
+
+            drawCanvasElementMenu(state, ui);
+            drawCanvasBackgroundMenu(state, ui, *selectedSource);
+
+            // The navigation strip on the reserved footer line: the zoom read-out
+            // and the Fit / 100% buttons, so wheel and middle-drag are no longer
+            // the only way to reach a fit or a reset.
+            if (ImGui::Button("Fit"))
+            {
+                state.setCanvasView(
+                    fitCanvasView(
+                        texture->width,
+                        texture->height,
+                        size.x,
+                        size.y
+                    )
+                );
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("100%"))
+            {
+                state.setCanvasView(
+                    centeredCanvasView(
+                        1.0F,
+                        texture->width,
+                        texture->height,
+                        size.x,
+                        size.y
+                    )
+                );
+            }
+            ImGui::SameLine();
+            ImGui::Text(
+                "%d%%",
+                static_cast<int>(std::lround(view.zoom * 100.0F))
+            );
+
             ImGui::End();
         }
 
@@ -1744,33 +2411,15 @@ namespace uf::workbench
             }
 
             // The type and the fields the catalog ties to it have to move
-            // together, so this goes through retypeRecognizer rather than
+            // together, so this goes through the shared retype path rather than
             // writing the field and committing.
-            auto retyped = retypeRecognizer(
-                state.draft(),
-                element.id,
-                static_cast<annotation::AnnotationType>(typeIndex)
-            );
-            if (!retyped)
-            {
-                ui.report(
-                    LogSeverity::Error,
-                    std::format(
-                        "type change rejected: {}",
-                        toString(retyped.error())
-                    )
-                );
-                return;
-            }
-
-            // Summarized against the pre-commit document so a page named in the
-            // summary is resolved before the edit lands.
-            auto const summary = retypeSummary(
+            requestRetype(
                 state,
-                *retyped,
+                ui,
+                element.id,
+                static_cast<annotation::AnnotationType>(typeIndex),
                 k_annotationTypeItems.at(static_cast<std::size_t>(typeIndex))
             );
-            requestEdit(ui, std::move(retyped->draft), summary);
         }
 
         auto drawPageMembership(

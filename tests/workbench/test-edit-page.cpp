@@ -280,6 +280,99 @@ namespace uf::workbench
         CHECK(recognizerName(state, addedId) == "anchor_1");
     }
 
+    TEST_CASE("placeDrawn creates a member from a drawn rect and selects it")
+    {
+        auto state = appState();
+        auto ui    = PanelUiState{};
+        auto const sourceId = annotation::test::sourceId(k_sourceId);
+        auto const homePage = annotation::test::pageId(k_homePage);
+        auto const drawn    = annotation::test::pixelRect(2, 2, 3, 3);
+
+        auto page = EditPage::open(state, homePage);
+        REQUIRE(page.has_value());
+        auto added = page->placeDrawn(
+            EditPage::NewDrawnMemberSpec{
+                .sourceId     = sourceId,
+                .kind         = PageMemberKind::ActionTarget,
+                .templateRect = drawn,
+            }
+        );
+        REQUIRE(added.has_value());
+        CHECK(added->kind == PageMemberKind::ActionTarget);
+        auto const newId = added->id;
+
+        std::move(*page).commitSelecting(
+            ui,
+            "drew an interactive region",
+            newId,
+            std::optional<annotation::SourceId>{sourceId}
+        );
+        // Selecting waits for the commit to land, exactly as the button paths do.
+        CHECK_FALSE(state.selectedRecognizerId().has_value());
+
+        applyPendingEdit(state, ui);
+        REQUIRE(state.selectedRecognizerId().has_value());
+        CHECK(*state.selectedRecognizerId() == newId);
+        // One transaction, one undo entry.
+        CHECK(state.canUndo());
+
+        auto const* recognizer =
+            state.document().catalog().findRecognizer(newId);
+        REQUIRE(recognizer != nullptr);
+        CHECK(recognizer->templateRect() == drawn);
+        CHECK(
+            recognizer->annotationType()
+                == annotation::AnnotationType::ActionTarget
+        );
+
+        // The placement's search region is the one seeded from the drawn
+        // template -- grown by its extent and clamped to the 8x8 frame -- not the
+        // whole frame by luck. It always encloses the template.
+        auto seeded = std::optional<PixelRect>{};
+        for (auto const& placement : state.document().placements())
+        {
+            if (placement.pageId == homePage && placement.elementId == newId)
+            {
+                seeded = placement.searchRoi;
+            }
+        }
+        REQUIRE(seeded.has_value());
+        CHECK(*seeded == annotation::test::pixelRect(0, 0, 8, 8));
+    }
+
+    TEST_CASE("placeDrawn refuses a template that is too small")
+    {
+        auto state = appState();
+        auto const sourceId = annotation::test::sourceId(k_sourceId);
+
+        auto page = EditPage::open(state, annotation::test::pageId(k_homePage));
+        REQUIRE(page.has_value());
+        auto const added = page->placeDrawn(
+            EditPage::NewDrawnMemberSpec{
+                .sourceId     = sourceId,
+                .kind         = PageMemberKind::Anchor,
+                .templateRect = annotation::test::pixelRect(0, 0, 1, 1),
+            }
+        );
+        REQUIRE_FALSE(added.has_value());
+    }
+
+    TEST_CASE("shownPageForScreen resolves the claiming page and honours a selection")
+    {
+        auto const state    = appState();
+        auto const sourceId = annotation::test::sourceId(k_sourceId);
+        auto const homePage = annotation::test::pageId(k_homePage);
+        auto const awayPage = annotation::test::pageId(k_awayPage);
+
+        // The source is recorded as the home page's example, so a screen with no
+        // selection page draws home's members.
+        CHECK(shownPageForScreen(state, sourceId) == homePage);
+
+        // A selection page wins outright, so an element selected under away draws
+        // away's members over the same screen.
+        CHECK(shownPageForScreen(state, sourceId, awayPage) == awayPage);
+    }
+
     TEST_CASE("placeExisting authorizes an existing region on this page")
     {
         auto state = appState();

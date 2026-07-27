@@ -85,6 +85,28 @@ namespace uf::workbench
             std::string name{};
         };
 
+        // A member drawn straight onto the canvas: one transaction carrying the
+        // kind the author picked, the template rectangle they dragged out, and,
+        // derived from it, the initial per-page search region. Draw-to-create
+        // cannot be a create-then-retemplate pair -- the one-commit-per-frame
+        // queue rejects the second edit -- so the drawn geometry has to ride in
+        // with the creation.
+        struct NewDrawnMemberSpec final
+        {
+            annotation::SourceId sourceId;
+            PageMemberKind       kind{};
+            PixelRect            templateRect;
+        };
+
+        // The outcome of a draw-to-create, naming the new element so the caller
+        // selects it once the commit lands, and echoing the kind it was made as.
+        struct AddedMember final
+        {
+            MemberId       id;
+            std::string    name{};
+            PageMemberKind kind{};
+        };
+
         // The outcome of placing a shared element onto a page. It names the new
         // per-page member so the caller can select it. In this phase it carries
         // no pixel score: scoring needs the source assets, which live in
@@ -149,6 +171,13 @@ namespace uf::workbench
         // element can be authored directly instead of only reached by retype.
         [[nodiscard]] auto placeRegion(NewRegionSpec const& spec) -> Result<AddedRegion>;
         [[nodiscard]] auto placeInfo(NewRegionSpec const& spec) -> Result<AddedRegion>;
+
+        // Adds a member drawn on the canvas: the anchor, interactive region, or
+        // info region the author dragged out, with a search region seeded from the
+        // drawn template. Refuses a template smaller than a minimum extent, since a
+        // box too small to see is one the author did not mean to draw.
+        [[nodiscard]] auto placeDrawn(NewDrawnMemberSpec const& spec) -> Result<AddedMember>;
+
         [[nodiscard]] auto placeExisting(MemberId member) -> Status;
 
         [[nodiscard]]

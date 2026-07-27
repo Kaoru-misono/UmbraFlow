@@ -6,7 +6,10 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstddef>
 #include <optional>
+#include <span>
+#include <vector>
 
 namespace uf::workbench
 {
@@ -243,5 +246,212 @@ namespace uf::workbench
             .right  = std::round(bottomRight.x),
             .bottom = std::round(bottomRight.y),
         };
+    }
+
+    auto rectsUnderPoint(
+        std::span<PixelRect const> rects,
+        float sourceX,
+        float sourceY
+    ) -> std::vector<std::size_t>
+    {
+        auto hits = std::vector<std::size_t>{};
+        for (auto index = std::size_t{0}; index < rects.size(); ++index)
+        {
+            auto const& rect = rects[index];
+            auto const left   = static_cast<float>(rect.x());
+            auto const top    = static_cast<float>(rect.y());
+            auto const right  = static_cast<float>(rect.x() + rect.width());
+            auto const bottom = static_cast<float>(rect.y() + rect.height());
+            if (
+                sourceX >= left
+                && sourceX <= right
+                && sourceY >= top
+                && sourceY <= bottom
+            )
+            {
+                hits.emplace_back(index);
+            }
+        }
+
+        // Smallest area first so a small mark on a large region is reachable and
+        // cycles ahead of it; stable so equal areas keep their input order and the
+        // cycle is deterministic.
+        auto const area = [&rects](std::size_t index) -> uint64
+        {
+            return static_cast<uint64>(rects[index].width())
+                * static_cast<uint64>(rects[index].height());
+        };
+        std::ranges::stable_sort(
+            hits,
+            [&area](std::size_t lhs, std::size_t rhs)
+            {
+                return area(lhs) < area(rhs);
+            }
+        );
+        return hits;
+    }
+
+    auto nextRectInCycle(
+        std::span<std::size_t const> ordered,
+        std::optional<std::size_t> currentIndex
+    ) -> std::optional<std::size_t>
+    {
+        if (ordered.empty())
+        {
+            return std::nullopt;
+        }
+        if (currentIndex.has_value())
+        {
+            auto const found = std::ranges::find(ordered, *currentIndex);
+            if (found != ordered.end())
+            {
+                auto const position = static_cast<std::size_t>(
+                    found - ordered.begin()
+                );
+                return ordered[(position + 1U) % ordered.size()];
+            }
+        }
+        return ordered.front();
+    }
+
+    auto exceedsDragThreshold(
+        float screenDeltaX,
+        float screenDeltaY,
+        float threshold
+    ) noexcept -> bool
+    {
+        return std::abs(screenDeltaX) > threshold
+            || std::abs(screenDeltaY) > threshold;
+    }
+
+    auto rubberBandRect(
+        float sourceAx,
+        float sourceAy,
+        float sourceBx,
+        float sourceBy,
+        uint32 frameWidth,
+        uint32 frameHeight
+    ) -> std::optional<PixelRect>
+    {
+        auto const extentX = static_cast<int64>(frameWidth);
+        auto const extentY = static_cast<int64>(frameHeight);
+
+        auto const left = std::clamp(
+            static_cast<int64>(std::floor(std::min(sourceAx, sourceBx))),
+            int64{0},
+            extentX
+        );
+        auto const right = std::clamp(
+            static_cast<int64>(std::ceil(std::max(sourceAx, sourceBx))),
+            int64{0},
+            extentX
+        );
+        auto const top = std::clamp(
+            static_cast<int64>(std::floor(std::min(sourceAy, sourceBy))),
+            int64{0},
+            extentY
+        );
+        auto const bottom = std::clamp(
+            static_cast<int64>(std::ceil(std::max(sourceAy, sourceBy))),
+            int64{0},
+            extentY
+        );
+
+        if (right - left < 1 || bottom - top < 1)
+        {
+            return std::nullopt;
+        }
+        auto rect = PixelRect::create(
+            static_cast<uint32>(left),
+            static_cast<uint32>(top),
+            static_cast<uint32>(right - left),
+            static_cast<uint32>(bottom - top)
+        );
+        if (!rect.has_value())
+        {
+            return std::nullopt;
+        }
+        return *rect;
+    }
+
+    auto searchRoiForDrawnTemplate(
+        PixelRect templateRect,
+        uint32 frameWidth,
+        uint32 frameHeight
+    ) -> Result<PixelRect>
+    {
+        auto const extentX = static_cast<int64>(frameWidth);
+        auto const extentY = static_cast<int64>(frameHeight);
+        auto const marginX = static_cast<int64>(templateRect.width());
+        auto const marginY = static_cast<int64>(templateRect.height());
+
+        auto const left = std::clamp(
+            static_cast<int64>(templateRect.x()) - marginX,
+            int64{0},
+            extentX
+        );
+        auto const top = std::clamp(
+            static_cast<int64>(templateRect.y()) - marginY,
+            int64{0},
+            extentY
+        );
+        auto const right = std::clamp(
+            static_cast<int64>(templateRect.x() + templateRect.width()) + marginX,
+            int64{0},
+            extentX
+        );
+        auto const bottom = std::clamp(
+            static_cast<int64>(templateRect.y() + templateRect.height()) + marginY,
+            int64{0},
+            extentY
+        );
+        return PixelRect::create(
+            static_cast<uint32>(left),
+            static_cast<uint32>(top),
+            static_cast<uint32>(right - left),
+            static_cast<uint32>(bottom - top)
+        );
+    }
+
+    auto centeredCanvasView(
+        float zoom,
+        uint32 sourceWidth,
+        uint32 sourceHeight,
+        float viewportWidth,
+        float viewportHeight
+    ) -> CanvasView
+    {
+        auto const clamped = clampZoom(zoom);
+        return CanvasView{
+            .zoom = clamped,
+            .panX = static_cast<float>(sourceWidth) / 2.0F
+                - (viewportWidth / 2.0F) / clamped,
+            .panY = static_cast<float>(sourceHeight) / 2.0F
+                - (viewportHeight / 2.0F) / clamped,
+        };
+    }
+
+    auto fitCanvasView(
+        uint32 sourceWidth,
+        uint32 sourceHeight,
+        float viewportWidth,
+        float viewportHeight
+    ) -> CanvasView
+    {
+        if (sourceWidth == 0U || sourceHeight == 0U)
+        {
+            return CanvasView{};
+        }
+        auto const zoom = std::min(
+            viewportWidth / static_cast<float>(sourceWidth),
+            viewportHeight / static_cast<float>(sourceHeight)
+        );
+        return centeredCanvasView(
+            zoom,
+            sourceWidth,
+            sourceHeight,
+            viewportWidth,
+            viewportHeight
+        );
     }
 }
