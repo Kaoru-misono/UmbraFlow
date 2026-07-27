@@ -90,9 +90,12 @@ namespace uf::workbench
         );
         if (!duplicated)
         {
-            ui.statusLine = std::format(
-                "duplicate failed: {}",
-                toString(duplicated.error())
+            ui.report(
+                LogSeverity::Error,
+                std::format(
+                    "duplicate failed: {}",
+                    toString(duplicated.error())
+                )
             );
             return;
         }
@@ -234,7 +237,8 @@ namespace uf::workbench
         AuthoringDraft draft,
         std::string description,
         annotation::RecognizerId recognizerId,
-        std::optional<annotation::SourceId> sourceId
+        std::optional<annotation::SourceId> sourceId,
+        LogSeverity severity
     ) -> void
     {
         if (ui.pendingEdit.has_value())
@@ -244,6 +248,7 @@ namespace uf::workbench
         ui.pendingEdit = PanelUiState::PendingEdit{
             .draft            = std::move(draft),
             .description      = std::move(description),
+            .severity         = severity,
             .selectRecognizer = recognizerId,
             .selectSource     = sourceId,
         };
@@ -271,18 +276,23 @@ namespace uf::workbench
             && *request.baseRevision != state.revision()
         )
         {
-            ui.statusLine =
+            ui.report(
+                LogSeverity::Error,
                 "edit rejected: the project changed while this edit was open; "
-                "reopen it and try again";
+                "reopen it and try again"
+            );
             return;
         }
 
         auto const applied = state.applyEdit(request.draft);
         if (!applied)
         {
-            ui.statusLine = std::format(
-                "edit rejected: {}",
-                toString(applied.error())
+            ui.report(
+                LogSeverity::Error,
+                std::format(
+                    "edit rejected: {}",
+                    toString(applied.error())
+                )
             );
             return;
         }
@@ -292,7 +302,7 @@ namespace uf::workbench
             // this edit just replaced, so its verdict would be attached to
             // marks that have since moved.
             ui.modelCheck.discard();
-            ui.statusLine = request.description;
+            ui.report(request.severity, request.description);
             if (request.selectRecognizer.has_value())
             {
                 state.setSelectedRecognizerId(*request.selectRecognizer);
@@ -315,9 +325,12 @@ namespace uf::workbench
     {
         if (!deleted)
         {
-            ui.statusLine = std::format(
-                "delete rejected: {}",
-                toString(deleted.error())
+            ui.report(
+                LogSeverity::Error,
+                std::format(
+                    "delete rejected: {}",
+                    toString(deleted.error())
+                )
             );
             return;
         }
@@ -443,10 +456,13 @@ namespace uf::workbench
         auto marked = setRegionShared(state.draft(), id, shared);
         if (!marked)
         {
-            ui.statusLine = std::format(
-                "{} failed: {}",
-                shared ? "sharing" : "unsharing",
-                toString(marked.error())
+            ui.report(
+                LogSeverity::Error,
+                std::format(
+                    "{} failed: {}",
+                    shared ? "sharing" : "unsharing",
+                    toString(marked.error())
+                )
             );
             return;
         }
@@ -476,9 +492,12 @@ namespace uf::workbench
         );
         if (!recorded)
         {
-            ui.statusLine = std::format(
-                "recording the screen failed: {}",
-                toString(recorded.error())
+            ui.report(
+                LogSeverity::Error,
+                std::format(
+                    "recording the screen failed: {}",
+                    toString(recorded.error())
+                )
             );
             return;
         }
@@ -506,7 +525,10 @@ namespace uf::workbench
         auto const* origin = findEditableRecognizer(draft, shareFrom);
         if (origin == nullptr)
         {
-            ui.statusLine = "that region is no longer in the project";
+            ui.report(
+                LogSeverity::Error,
+                "that region is no longer in the project"
+            );
             return;
         }
 
@@ -521,9 +543,12 @@ namespace uf::workbench
         );
         if (!shared)
         {
-            ui.statusLine = std::format(
-                "share failed: {}",
-                toString(shared.error())
+            ui.report(
+                LogSeverity::Error,
+                std::format(
+                    "share failed: {}",
+                    toString(shared.error())
+                )
             );
             return;
         }
@@ -532,6 +557,11 @@ namespace uf::workbench
         // scoring the element against the target screen is scoring the placement
         // the drop just created.
         auto verdict = std::string{};
+
+        // A placement that scores as not matching on its target screen is a
+        // done-but-degraded outcome, so its otherwise-successful message is
+        // reported at Warning rather than Info.
+        auto severity = LogSeverity::Info;
         if (targetScreen.has_value())
         {
             auto const assets = state.compilerSourceAssets();
@@ -558,6 +588,10 @@ namespace uf::workbench
                             "these pixels look different on that screen",
                             budgetPercentText(scored->sadScore, scored->maximumSad)
                         );
+                    if (!scored->hit)
+                    {
+                        severity = LogSeverity::Warning;
+                    }
                 }
             }
         }
@@ -572,7 +606,8 @@ namespace uf::workbench
                 verdict
             ),
             shareFrom,
-            targetScreen
+            targetScreen,
+            severity
         );
     }
 
@@ -637,9 +672,12 @@ namespace uf::workbench
             );
             if (!retemplated)
             {
-                ui.statusLine = std::format(
-                    "template change rejected: {}",
-                    toString(retemplated.error())
+                ui.report(
+                    LogSeverity::Error,
+                    std::format(
+                        "template change rejected: {}",
+                        toString(retemplated.error())
+                    )
                 );
             }
             else
@@ -668,9 +706,12 @@ namespace uf::workbench
             auto opened = EditPage::open(state, *pageContext);
             if (!opened)
             {
-                ui.statusLine = std::format(
-                    "search roi change rejected: {}",
-                    toString(opened.error())
+                ui.report(
+                    LogSeverity::Error,
+                    std::format(
+                        "search roi change rejected: {}",
+                        toString(opened.error())
+                    )
                 );
             }
             else if (
@@ -678,9 +719,12 @@ namespace uf::workbench
                 !region
             )
             {
-                ui.statusLine = std::format(
-                    "search roi change rejected: {}",
-                    toString(region.error())
+                ui.report(
+                    LogSeverity::Error,
+                    std::format(
+                        "search roi change rejected: {}",
+                        toString(region.error())
+                    )
                 );
             }
             else if (
@@ -688,9 +732,12 @@ namespace uf::workbench
                 !set
             )
             {
-                ui.statusLine = std::format(
-                    "search roi change rejected: {}",
-                    toString(set.error())
+                ui.report(
+                    LogSeverity::Error,
+                    std::format(
+                        "search roi change rejected: {}",
+                        toString(set.error())
+                    )
                 );
             }
             else

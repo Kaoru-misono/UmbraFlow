@@ -177,9 +177,12 @@ namespace uf::workbench
         auto const assets = state.compilerSourceAssets();
         if (!assets)
         {
-            ui.statusLine = std::format(
-                "check failed: {}",
-                toString(assets.error())
+            ui.report(
+                LogSeverity::Error,
+                std::format(
+                    "check failed: {}",
+                    toString(assets.error())
+                )
             );
             return;
         }
@@ -219,9 +222,12 @@ namespace uf::workbench
                 .deadline                = deadline,
             }
         );
-        ui.statusLine = liveFrameBytes.empty()
-            ? "checking every mark against every screen..."
-            : "checking every mark against every screen and the live one...";
+        ui.report(
+            LogSeverity::Info,
+            liveFrameBytes.empty()
+                ? "checking every mark against every screen..."
+                : "checking every mark against every screen and the live one..."
+        );
     }
 
     // Takes a finished worker's answer, if there is one, and states it. An
@@ -236,9 +242,12 @@ namespace uf::workbench
         }
         if (!*finished)
         {
-            ui.statusLine = std::format(
-                "check failed: {}",
-                toString(finished->error())
+            ui.report(
+                LogSeverity::Error,
+                std::format(
+                    "check failed: {}",
+                    toString(finished->error())
+                )
             );
             return;
         }
@@ -308,6 +317,14 @@ namespace uf::workbench
             summary += std::format("; {} have no recorded page", unclaimed);
         }
         summary += live;
-        ui.statusLine = std::move(summary);
+
+        // The check succeeded, so this is not an Error, but a screen that does
+        // not resolve as recorded or was not reached before the deadline is a
+        // degraded outcome the author must see, and is reported at Warning.
+        // Unclaimed screens are merely informational and do not raise it.
+        auto const severity = (wrong > 0 || stopped > 0)
+            ? LogSeverity::Warning
+            : LogSeverity::Info;
+        ui.report(severity, std::move(summary));
     }
 }

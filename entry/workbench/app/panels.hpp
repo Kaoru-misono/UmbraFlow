@@ -47,11 +47,16 @@ namespace uf::workbench
             )
         > captureFromTarget{};
 
-        // Appends one timestamped operation-log line. Optional: when unset the
-        // panels simply do not log. The entry point wires it to a file so a
-        // session's actions and errors survive being overwritten on the
-        // transient status line.
-        std::function<void(std::string_view)> appendLog{};
+        // Appends one operation-log entry, given its severity, the timestamp the
+        // panels already stamped the in-memory event with, and the message. The
+        // shell composes the "{timestamp}  {SEVERITY}  {message}" line via
+        // formatLogLine, so the severity word is never pre-baked into the
+        // message. Optional: when unset the panels simply do not log to disk. The
+        // entry point wires it to a file so a session's actions and errors
+        // survive being overwritten on the transient status line.
+        std::function<
+            void(LogSeverity, std::string_view, std::string_view)
+        > appendLog{};
     };
 
     // Draws the whole workbench for one frame: the sources, canvas, properties,

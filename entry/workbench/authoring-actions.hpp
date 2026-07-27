@@ -85,13 +85,15 @@ namespace uf::workbench
 
     // As requestEdit, and selects the entity once the edit lands. Selecting
     // before it lands would leave the selection pointing at an id a rejected
-    // edit never added.
+    // edit never added. The severity is the one the description is reported at
+    // once the edit commits, defaulting to Info for an ordinary success.
     auto requestEditSelecting(
         PanelUiState& ui,
         AuthoringDraft draft,
         std::string description,
         annotation::RecognizerId recognizerId,
-        std::optional<annotation::SourceId> sourceId
+        std::optional<annotation::SourceId> sourceId,
+        LogSeverity severity = LogSeverity::Info
     ) -> void;
 
     // Commits this frame's parked edit, if any. Called once per frame, after the

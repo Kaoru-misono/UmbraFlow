@@ -238,9 +238,12 @@ namespace uf::workbench
                 auto ingested = services.captureFromTarget(id, title);
                 if (!ingested)
                 {
-                    ui.statusLine = std::format(
-                        "capture failed: {}",
-                        toString(ingested.error())
+                    ui.report(
+                        LogSeverity::Error,
+                        std::format(
+                            "capture failed: {}",
+                            toString(ingested.error())
+                        )
                     );
                 }
                 else
@@ -248,9 +251,20 @@ namespace uf::workbench
                     auto const added = state.addIngestedSource(
                         std::move(*ingested)
                     );
-                    ui.statusLine = added.has_value()
-                        ? std::string{"captured source"}
-                        : std::format("capture add failed: {}", toString(added.error()));
+                    if (added.has_value())
+                    {
+                        ui.report(LogSeverity::Info, "captured source");
+                    }
+                    else
+                    {
+                        ui.report(
+                            LogSeverity::Error,
+                            std::format(
+                                "capture add failed: {}",
+                                toString(added.error())
+                            )
+                        );
+                    }
                 }
             }
             ImGui::EndDisabled();
@@ -282,9 +296,12 @@ namespace uf::workbench
                 auto picked = services.pickPngToImport();
                 if (!picked)
                 {
-                    ui.statusLine = std::format(
-                        "import dialog failed: {}",
-                        toString(picked.error())
+                    ui.report(
+                        LogSeverity::Error,
+                        std::format(
+                            "import dialog failed: {}",
+                            toString(picked.error())
+                        )
                     );
                 }
                 else if (picked->has_value())
@@ -293,9 +310,12 @@ namespace uf::workbench
                     auto ingested = importSourcePng(id, **picked);
                     if (!ingested)
                     {
-                        ui.statusLine = std::format(
-                            "import failed: {}",
-                            toString(ingested.error())
+                        ui.report(
+                            LogSeverity::Error,
+                            std::format(
+                                "import failed: {}",
+                                toString(ingested.error())
+                            )
                         );
                     }
                     else
@@ -303,12 +323,20 @@ namespace uf::workbench
                         auto const added = state.addIngestedSource(
                             std::move(*ingested)
                         );
-                        ui.statusLine = added.has_value()
-                            ? std::string{"imported source"}
-                            : std::format(
-                                "import add failed: {}",
-                                toString(added.error())
+                        if (added.has_value())
+                        {
+                            ui.report(LogSeverity::Info, "imported source");
+                        }
+                        else
+                        {
+                            ui.report(
+                                LogSeverity::Error,
+                                std::format(
+                                    "import add failed: {}",
+                                    toString(added.error())
+                                )
                             );
+                        }
                     }
                 }
             }
@@ -448,16 +476,19 @@ namespace uf::workbench
             auto const source = state.selectedSourceId();
             if (!source.has_value())
             {
-                ui.statusLine = "select a screen first";
+                ui.report(LogSeverity::Error, "select a screen first");
                 return;
             }
 
             auto page = EditPage::createFrom(state, *source);
             if (!page)
             {
-                ui.statusLine = std::format(
-                    "new page failed: {}",
-                    toString(page.error())
+                ui.report(
+                    LogSeverity::Error,
+                    std::format(
+                        "new page failed: {}",
+                        toString(page.error())
+                    )
                 );
                 return;
             }
@@ -525,9 +556,12 @@ namespace uf::workbench
             auto page = EditPage::open(state, pageId);
             if (!page)
             {
-                ui.statusLine = std::format(
-                    "add failed: {}",
-                    toString(page.error())
+                ui.report(
+                    LogSeverity::Error,
+                    std::format(
+                        "add failed: {}",
+                        toString(page.error())
+                    )
                 );
                 return;
             }
@@ -539,9 +573,12 @@ namespace uf::workbench
                 );
                 if (!added)
                 {
-                    ui.statusLine = std::format(
-                        "add failed: {}",
-                        toString(added.error())
+                    ui.report(
+                        LogSeverity::Error,
+                        std::format(
+                            "add failed: {}",
+                            toString(added.error())
+                        )
                     );
                     return;
                 }
@@ -563,9 +600,12 @@ namespace uf::workbench
                     : page->placeInfo(EditPage::NewRegionSpec{.sourceId = sourceId});
                 if (!added)
                 {
-                    ui.statusLine = std::format(
-                        "add failed: {}",
-                        toString(added.error())
+                    ui.report(
+                        LogSeverity::Error,
+                        std::format(
+                            "add failed: {}",
+                            toString(added.error())
+                        )
                     );
                     return;
                 }
@@ -591,17 +631,23 @@ namespace uf::workbench
             auto page = EditPage::open(state, pageId);
             if (!page)
             {
-                ui.statusLine = std::format(
-                    "recording the screen failed: {}",
-                    toString(page.error())
+                ui.report(
+                    LogSeverity::Error,
+                    std::format(
+                        "recording the screen failed: {}",
+                        toString(page.error())
+                    )
                 );
                 return;
             }
             if (auto const status = page->claimScreen(sourceId); !status)
             {
-                ui.statusLine = std::format(
-                    "recording the screen failed: {}",
-                    toString(status.error())
+                ui.report(
+                    LogSeverity::Error,
+                    std::format(
+                        "recording the screen failed: {}",
+                        toString(status.error())
+                    )
                 );
                 return;
             }
@@ -1484,9 +1530,12 @@ namespace uf::workbench
             );
             if (!retyped)
             {
-                ui.statusLine = std::format(
-                    "type change rejected: {}",
-                    toString(retyped.error())
+                ui.report(
+                    LogSeverity::Error,
+                    std::format(
+                        "type change rejected: {}",
+                        toString(retyped.error())
+                    )
                 );
                 return;
             }
@@ -1538,9 +1587,12 @@ namespace uf::workbench
                         auto opened = EditPage::open(state, pageId);
                         if (!opened)
                         {
-                            ui.statusLine = std::format(
-                                "place rejected: {}",
-                                toString(opened.error())
+                            ui.report(
+                                LogSeverity::Error,
+                                std::format(
+                                    "place rejected: {}",
+                                    toString(opened.error())
+                                )
                             );
                         }
                         else if (
@@ -1548,9 +1600,12 @@ namespace uf::workbench
                             !status
                         )
                         {
-                            ui.statusLine = std::format(
-                                "place rejected: {}",
-                                toString(status.error())
+                            ui.report(
+                                LogSeverity::Error,
+                                std::format(
+                                    "place rejected: {}",
+                                    toString(status.error())
+                                )
                             );
                         }
                         else
@@ -1588,11 +1643,14 @@ namespace uf::workbench
                         );
                         if (interactive && !onOtherPage)
                         {
-                            ui.statusLine = std::format(
-                                "\"{}\" is only on this page; an interactive region "
-                                "must stay on at least one, so delete it instead of "
-                                "removing it here",
-                                element.name
+                            ui.report(
+                                LogSeverity::Error,
+                                std::format(
+                                    "\"{}\" is only on this page; an interactive "
+                                    "region must stay on at least one, so delete it "
+                                    "instead of removing it here",
+                                    element.name
+                                )
                             );
                         }
                         else
@@ -2242,9 +2300,12 @@ namespace uf::workbench
                 auto const assets = state.compilerSourceAssets();
                 if (!assets)
                 {
-                    ui.statusLine = std::format(
-                        "save failed: {}",
-                        toString(assets.error())
+                    ui.report(
+                        LogSeverity::Error,
+                        std::format(
+                            "save failed: {}",
+                            toString(assets.error())
+                        )
                     );
                 }
                 else
@@ -2256,15 +2317,18 @@ namespace uf::workbench
                     );
                     if (!status)
                     {
-                        ui.statusLine = std::format(
-                            "save failed: {}",
-                            toString(status.error())
+                        ui.report(
+                            LogSeverity::Error,
+                            std::format(
+                                "save failed: {}",
+                                toString(status.error())
+                            )
                         );
                     }
                     else
                     {
                         state.markSaved();
-                        ui.statusLine = "saved and generated";
+                        ui.report(LogSeverity::Info, "saved and generated");
                     }
                 }
             }
@@ -2274,13 +2338,19 @@ namespace uf::workbench
                 auto const selectedSource = state.selectedSourceId();
                 if (!selectedSource.has_value())
                 {
-                    ui.statusLine = "preview requires a selected source";
+                    ui.report(
+                        LogSeverity::Error,
+                        "preview requires a selected source"
+                    );
                 }
                 else if (auto const assets = state.compilerSourceAssets(); !assets)
                 {
-                    ui.statusLine = std::format(
-                        "preview failed: {}",
-                        toString(assets.error())
+                    ui.report(
+                        LogSeverity::Error,
+                        std::format(
+                            "preview failed: {}",
+                            toString(assets.error())
+                        )
                     );
                 }
                 else
@@ -2300,14 +2370,20 @@ namespace uf::workbench
                     );
                     if (!preview)
                     {
-                        ui.statusLine = std::format(
-                            "preview failed: {}",
-                            toString(preview.error())
+                        ui.report(
+                            LogSeverity::Error,
+                            std::format(
+                                "preview failed: {}",
+                                toString(preview.error())
+                            )
                         );
                     }
                     else
                     {
-                        ui.statusLine = previewStatusLine(state, *preview);
+                        ui.report(
+                            LogSeverity::Info,
+                            previewStatusLine(state, *preview)
+                        );
                         state.setLastPreview(std::move(*preview));
                     }
                 }
@@ -2341,9 +2417,12 @@ namespace uf::workbench
                 );
                 if (!captured)
                 {
-                    ui.statusLine = std::format(
-                        "live capture failed: {}",
-                        toString(captured.error())
+                    ui.report(
+                        LogSeverity::Error,
+                        std::format(
+                            "live capture failed: {}",
+                            toString(captured.error())
+                        )
                     );
                 }
                 else
@@ -2368,10 +2447,13 @@ namespace uf::workbench
             {
                 if (state.undo())
                 {
-                    ui.statusLine = std::format(
-                        "undo: {} recognizers, {} pages",
-                        state.document().catalog().recognizers().size(),
-                        state.document().catalog().pages().size()
+                    ui.report(
+                        LogSeverity::Info,
+                        std::format(
+                            "undo: {} recognizers, {} pages",
+                            state.document().catalog().recognizers().size(),
+                            state.document().catalog().pages().size()
+                        )
                     );
                 }
             }
@@ -2382,10 +2464,13 @@ namespace uf::workbench
             {
                 if (state.redo())
                 {
-                    ui.statusLine = std::format(
-                        "redo: {} recognizers, {} pages",
-                        state.document().catalog().recognizers().size(),
-                        state.document().catalog().pages().size()
+                    ui.report(
+                        LogSeverity::Info,
+                        std::format(
+                            "redo: {} recognizers, {} pages",
+                            state.document().catalog().recognizers().size(),
+                            state.document().catalog().pages().size()
+                        )
                     );
                 }
             }
@@ -2400,6 +2485,85 @@ namespace uf::workbench
             {
                 drawPreviewResult(*preview);
             }
+
+            ImGui::End();
+        }
+
+        // The colour a severity is drawn in, or nothing for info, which keeps the
+        // theme's default text colour. Errors read red and warnings amber so a
+        // failure is legible at a glance in a scrolling list.
+        [[nodiscard]]
+        auto logSeverityColor(
+            LogSeverity severity
+        ) -> std::optional<ImVec4>
+        {
+            switch (severity)
+            {
+            case LogSeverity::Info:
+                return std::nullopt;
+            case LogSeverity::Warning:
+                return ImVec4{0.95F, 0.65F, 0.15F, 1.0F};
+            case LogSeverity::Error:
+                return ImVec4{0.95F, 0.35F, 0.35F, 1.0F};
+            }
+            UF_UNREACHABLE_MSG("unknown LogSeverity value");
+        }
+
+        // The operation-log window: the bounded event history newest at the
+        // bottom, each line timestamped and coloured by severity, with a button
+        // that empties the in-memory history. Its own dock window for now; the
+        // tabbed verify drawer that will host this view is U1.
+        auto drawLogPanel(PanelUiState& ui) -> void
+        {
+            if (!ImGui::Begin("Log"))
+            {
+                ImGui::End();
+                return;
+            }
+
+            if (ImGui::Button("Clear"))
+            {
+                ui.clearLog();
+            }
+            ImGui::SameLine();
+            ImGui::Text("%zu events", ui.logEvents.size());
+            ImGui::Separator();
+
+            if (
+                ImGui::BeginChild(
+                    "log-scroll",
+                    ImVec2{0.0F, 0.0F},
+                    ImGuiChildFlags_None,
+                    ImGuiWindowFlags_HorizontalScrollbar
+                )
+            )
+            {
+                for (auto const& event : ui.logEvents)
+                {
+                    ImGui::TextUnformatted(event.timestamp.c_str());
+                    ImGui::SameLine();
+
+                    auto const color = logSeverityColor(event.severity);
+                    if (color.has_value())
+                    {
+                        ImGui::PushStyleColor(ImGuiCol_Text, *color);
+                    }
+                    ImGui::TextWrapped("%s", event.message.c_str());
+                    if (color.has_value())
+                    {
+                        ImGui::PopStyleColor();
+                    }
+                }
+
+                // Follow the tail only while the view is already pinned to the
+                // bottom, so a user who scrolled up to read is left where they
+                // are.
+                if (ImGui::GetScrollY() >= ImGui::GetScrollMaxY())
+                {
+                    ImGui::SetScrollHereY(1.0F);
+                }
+            }
+            ImGui::EndChild();
 
             ImGui::End();
         }
@@ -2435,17 +2599,29 @@ namespace uf::workbench
         applyPendingEdit(state, ui);
         drawActionsPanel(state, services, ui);
 
-        // Mirror each new status-line outcome to the operation log so a session's
-        // actions and errors are not lost when the next action overwrites the
-        // transient line. Consecutive identical outcomes collapse to one entry.
-        if (
-            services.appendLog
-            && !ui.statusLine.empty()
-            && ui.statusLine != ui.lastLoggedStatus
-        )
+        // Mirror each new status-line outcome to the bounded event history and
+        // the on-disk log, so a session's actions and errors are not lost when
+        // the next action overwrites the transient line. captureLogEvent owns the
+        // consecutive-duplicate collapse and the bounding; the same timestamp
+        // stamps both the in-memory entry and the disk line.
+        auto const timestamp = formatLogTimestamp(
+            std::chrono::system_clock::now()
+        );
+        if (auto const event = ui.captureLogEvent(timestamp))
         {
-            services.appendLog(ui.statusLine);
-            ui.lastLoggedStatus = ui.statusLine;
+            if (services.appendLog)
+            {
+                services.appendLog(
+                    event->severity,
+                    event->timestamp,
+                    event->message
+                );
+            }
         }
+
+        // Drawn after the mirror so the event this frame produced is already in
+        // the history. Its own dock window for now; the tabbed verify drawer that
+        // will host it is U1.
+        drawLogPanel(ui);
     }
 }

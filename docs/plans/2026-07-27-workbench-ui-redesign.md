@@ -116,3 +116,32 @@ the screen map to stages of the loop, not to tables of the data model.
 Multi-select (the selection model stays single); a new UI framework (ImGui +
 docking is locked); OCR/info-region semantic reading (deferred by design);
 changing the annotation module's recognition or budget semantics.
+
+## Execution log
+
+### 2026-07-27 — U0 structured message log (shipped)
+
+- `LogSeverity` (Info/Warning/Error) now lives at namespace scope in
+  `panel-state.hpp`. `PanelUiState::report(severity, message)` is the single
+  reporting seam; every report site across `app/panels.cpp`,
+  `authoring-actions.cpp`, and `model-check-view.cpp` states its severity
+  explicitly rather than the shell sniffing the message text. `statusLine`
+  stays as the transient display value `report` writes.
+- `PanelUiState` gained a bounded event history (`std::deque<LogEvent>`,
+  capacity 256, oldest dropped) and `captureLogEvent`, which owns the
+  consecutive-duplicate collapse and the bounding and returns the recorded
+  event for the disk mirror. `PendingEdit` carries a `severity` so a deferred
+  edit's description reports at the right level (a shared placement that does
+  not match its screen lands as Warning).
+- The on-disk line is now `{timestamp}  {SEVERITY}  {message}`; `appendLog`
+  takes `(LogSeverity, timestamp, message)` and the shell composes the line via
+  the pure `formatLogLine` helper. The panels compute the timestamp once
+  (`formatLogTimestamp`) so the in-memory entry and the disk line share a stamp.
+- A new "Log" dock window renders the history newest-at-bottom with per-severity
+  colour (error red, warning amber, info default), a clear button that empties
+  the in-memory buffer only, and auto-scroll that yields when the user scrolls
+  up.
+- Classification rule applied at each site: a failure / refusal / rejection
+  ("… failed: …", "… rejected: …", a refusal naming a fix) is Error; a
+  degraded-but-done outcome (a placement that does not match, a model check with
+  wrong or deadline-stopped screens) is Warning; every other outcome is Info.

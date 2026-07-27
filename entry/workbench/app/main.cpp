@@ -166,7 +166,11 @@ namespace uf::workbench
                         );
                     },
                 .appendLog =
-                    [logPath](std::string_view message) -> void
+                    [logPath](
+                        LogSeverity severity,
+                        std::string_view timestamp,
+                        std::string_view message
+                    ) -> void
                     {
                         auto stream = std::ofstream{
                             logPath,
@@ -176,11 +180,8 @@ namespace uf::workbench
                         {
                             return;
                         }
-                        auto const now = std::chrono::floor<
-                            std::chrono::seconds
-                        >(std::chrono::system_clock::now());
-                        stream << std::format("{:%Y-%m-%dT%H:%M:%SZ}  ", now)
-                               << message << '\n';
+                        stream << formatLogLine(severity, timestamp, message)
+                               << '\n';
                     },
             };
             auto ui = PanelUiState{};

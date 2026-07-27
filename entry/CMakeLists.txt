@@ -151,6 +151,7 @@ if(WIN32 AND TARGET ${PROJECT_NAME}_annotation)
         workbench/model-check-view.hpp
         workbench/page-view.cpp
         workbench/page-view.hpp
+        workbench/panel-state.cpp
         workbench/panel-state.hpp
         workbench/platform/windows-file-publication.cpp
         workbench/platform/windows-file-publication.hpp
