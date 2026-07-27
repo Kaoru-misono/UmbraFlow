@@ -13,6 +13,8 @@ and [`docs/INDEX.md`](docs/INDEX.md) for project documentation.
   commits, creating worktrees, or pushing.
 - Use `build-project` for every configure, build, or test invocation.
 - Use `post-change-validation` after code changes.
+- Use `correct-doc-drift` immediately when a decision is finalized or changed,
+  and whenever a document contradicts the code or a newer document.
 
 ## Always-on C++ safety
 
