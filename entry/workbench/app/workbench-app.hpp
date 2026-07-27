@@ -134,7 +134,13 @@ namespace uf::workbench
         CanvasView                   m_canvasView{};
         std::optional<PreviewResult> m_lastPreview{};
         std::optional<ModelCheck>    m_lastModelCheck{};
-        bool                         m_dirty{};
+
+        // The edit-history position the document was last saved or loaded at.
+        // dirty() is this differing from the history's current position, so an
+        // undo back to a saved state reads clean and a redo past it reads dirty
+        // again. A fresh history sits at position 0, which this default matches,
+        // so a just-loaded project is clean.
+        uint64 m_savedPosition{};
 
         // Whether a preview / model-check result that once existed was thrown away
         // by an edit, undo, redo, or shown-screen change without a fresh result

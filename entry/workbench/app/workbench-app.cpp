@@ -315,17 +315,11 @@ namespace uf::workbench
 
     auto AppState::dirty() const noexcept -> bool
     {
-        // Conservatively stays true after undoing back to the last saved
-        // document. AuthoringEditHistory exposes no stable position or revision
-        // cursor, and its undo stack is truncated at a fixed size, so there is
-        // no cheap value to compare a saved position against; over-reporting
-        // only offers a redundant save.
-        // TODO(cpp-debt): dirty() over-reports after undo-to-saved-state —
-        // ceiling: an unnecessary save is offered; upgrade: add a monotonic
-        // revision id to AuthoringEditHistory that undo and redo restore and
-        // truncation preserves, record it on a successful save, and compute
-        // dirty() as the current revision differing from the saved one.
-        return m_dirty;
+        // The document is unsaved when its edit-history position differs from the
+        // one recorded at the last save or load. Undo and redo restore a
+        // position, so undoing back to the saved state reads clean and redoing
+        // past it reads dirty again.
+        return m_history.position() != m_savedPosition;
     }
 
     auto AppState::applyEdit(AuthoringDraft const& draft) -> Result<bool>
@@ -333,7 +327,6 @@ namespace uf::workbench
         UF_TRY_VALUE(changed, m_history.apply(draft));
         if (changed)
         {
-            m_dirty = true;
             // The stored preview and model check describe the pre-edit document,
             // so a committed mutation invalidates both and marks them stale.
             invalidatePreview();
@@ -391,7 +384,6 @@ namespace uf::workbench
         {
             return false;
         }
-        m_dirty = true;
         // The document moved, so the stored preview and model check no longer
         // describe it, and the selection may now point at an entity this revision
         // does not hold.
@@ -407,7 +399,6 @@ namespace uf::workbench
         {
             return false;
         }
-        m_dirty = true;
         invalidatePreview();
         invalidateModelCheck();
         reconcileSelectionToDocument();
@@ -532,7 +523,7 @@ namespace uf::workbench
 
     auto AppState::markSaved() -> void
     {
-        m_dirty = false;
+        m_savedPosition = m_history.position();
         pruneSourceCacheToDocument();
     }
 

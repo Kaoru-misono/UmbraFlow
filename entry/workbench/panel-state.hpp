@@ -160,6 +160,40 @@ namespace uf::workbench
             std::string message{};
         };
 
+        // Which tree row an inline rename is editing: a recognizer
+        // (element/member row) or a page (its header). Both commit through the
+        // same draft-edit path the Inspector's element rename already uses, so a
+        // duplicate name is refused by the build and surfaced through report.
+        enum class RenameKind : uint8
+        {
+            Recognizer,
+            Page,
+        };
+
+        // The one tree row being renamed inline, if any -- a page header or a
+        // member/element row, never two at once. The buffer seeds from the
+        // current name and Enter commits it; Esc or a click away cancels. Not an
+        // ImGui type, so the commit logic stays outside the drawing.
+        struct InlineRename final
+        {
+            RenameKind             kind{RenameKind::Recognizer};
+            annotation::ResourceId id;
+            std::array<char, 256>  buffer{};
+            bool                   justOpened{true};
+        };
+
+        // A delete-everywhere awaiting confirmation, named for the modal that
+        // guards it. detail is the "what will be removed" line, built at request
+        // time from the same counts the deletion produces. Cleared on confirm,
+        // cancel, or a selection change, so no confirmation outlives the element
+        // it was raised for.
+        struct PendingDelete final
+        {
+            annotation::RecognizerId id;
+            std::string              name{};
+            std::string              detail{};
+        };
+
         // How many events the in-memory history keeps. Older entries drop off the
         // front once the buffer is full; the disk log is unbounded and untouched.
         static constexpr std::size_t k_logEventCapacity{256};
@@ -183,6 +217,19 @@ namespace uf::workbench
         std::optional<ToolbarCommand> pendingToolbarCommand{};
         bool                          captureRequested{};
         bool                          importRequested{};
+
+        // A preview requested by the F5 shortcut, drained by the shell after the
+        // frame's edit commits so it runs against the same document the Evidence
+        // tab's Preview button would rather than the pre-commit one.
+        bool previewRequested{};
+
+        // The single in-progress inline tree rename and the single pending
+        // delete-everywhere confirmation. pendingDeleteJustRequested opens the
+        // confirmation modal the frame an entry point sets it.
+        std::optional<InlineRename>  inlineRename{};
+        std::optional<PendingDelete> pendingDelete{};
+
+        bool pendingDeleteJustRequested{};
 
         CanvasDragTarget            dragTarget{CanvasDragTarget::None};
         std::optional<RectGripKind> dragGrip{};

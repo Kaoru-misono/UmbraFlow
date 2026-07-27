@@ -1272,6 +1272,43 @@ namespace uf::workbench
         CHECK_FALSE(history.canRedo());
     }
 
+    TEST_CASE("authoring history position is restored by undo and redo")
+    {
+        // Unlike revision(), which only advances, position() names the document
+        // identity a save can be compared against: undo and redo restore it, so a
+        // state returned to reads the same position it was saved at.
+        auto history = AuthoringEditHistory{document()};
+        auto const loaded = history.position();
+
+        auto first = history.draft();
+        first.recognizers.at(0).name = "first_name";
+        REQUIRE(history.apply(first).has_value());
+        auto const afterFirst = history.position();
+        CHECK(afterFirst != loaded);
+
+        auto second = history.draft();
+        second.recognizers.at(0).name = "second_name";
+        REQUIRE(history.apply(second).has_value());
+        CHECK(history.position() != afterFirst);
+
+        // Undo returns to the earlier positions exactly, and redo forward to the
+        // later one -- a value the latched revision could never provide.
+        REQUIRE(history.undo());
+        CHECK(history.position() == afterFirst);
+        REQUIRE(history.undo());
+        CHECK(history.position() == loaded);
+        REQUIRE(history.redo());
+        CHECK(history.position() == afterFirst);
+
+        // A fresh edit past a restored position mints a new identity rather than
+        // reusing the abandoned redo one, so it never collides with a saved state.
+        auto branch = history.draft();
+        branch.recognizers.at(0).name = "branch_name";
+        REQUIRE(history.apply(branch).has_value());
+        CHECK(history.position() != loaded);
+        CHECK(history.position() != afterFirst);
+    }
+
     TEST_CASE("authoring history rejects invalid drafts without changing history")
     {
         auto history = AuthoringEditHistory{document()};

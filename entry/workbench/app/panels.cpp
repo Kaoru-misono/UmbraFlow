@@ -118,6 +118,241 @@ namespace uf::workbench
             buffer.at(count) = '\0';
         }
 
+        // Commits the in-progress inline tree rename through the same draft-edit
+        // path the Inspector's element rename uses: a recognizer edits its own
+        // name, a page edits its own. A duplicate or empty name is refused by the
+        // build and surfaced by applyPendingEdit exactly as any rejected edit;
+        // an unchanged name is a no-op. Clears the rename either way.
+        auto commitInlineRename(AppState& state, PanelUiState& ui) -> void
+        {
+            if (!ui.inlineRename.has_value())
+            {
+                return;
+            }
+            auto const rename  = *ui.inlineRename;
+            auto const newName = std::string{rename.buffer.data()};
+            ui.inlineRename.reset();
+
+            if (rename.kind == PanelUiState::RenameKind::Recognizer)
+            {
+                auto const id    = annotation::RecognizerId{rename.id};
+                auto draft       = state.draft();
+                auto* recognizer = findEditableRecognizer(draft, id);
+                if (recognizer == nullptr || recognizer->name == newName)
+                {
+                    return;
+                }
+                auto description = std::format(
+                    "renamed \"{}\" to \"{}\"",
+                    recognizer->name,
+                    newName
+                );
+                recognizer->name = newName;
+                requestEdit(ui, std::move(draft), std::move(description));
+                return;
+            }
+
+            auto const id   = annotation::PageId{rename.id};
+            auto draft      = state.draft();
+            auto const page = std::ranges::find(
+                draft.pages,
+                id,
+                &EditablePage::id
+            );
+            if (page == draft.pages.end() || page->name == newName)
+            {
+                return;
+            }
+            auto description = std::format(
+                "renamed page \"{}\" to \"{}\"",
+                page->name,
+                newName
+            );
+            page->name = newName;
+            requestEdit(ui, std::move(draft), std::move(description));
+        }
+
+        // Opens an inline rename over one tree row, replacing any rename already
+        // in progress so only one is ever open. The buffer seeds from the current
+        // name; the field takes keyboard focus on its first frame.
+        auto beginInlineRename(
+            PanelUiState& ui,
+            PanelUiState::RenameKind kind,
+            annotation::ResourceId id,
+            std::string const& currentName
+        ) -> void
+        {
+            auto rename = PanelUiState::InlineRename{
+                .kind = kind,
+                .id   = id,
+            };
+            seedBuffer(rename.buffer, currentName);
+            ui.inlineRename = std::move(rename);
+        }
+
+        // Draws the inline rename field for the current row and drives its
+        // lifecycle: focus on the first frame, commit on Enter, cancel on Esc or
+        // a click away (both surface as the field deactivating without an Enter).
+        auto drawInlineRenameField(AppState& state, PanelUiState& ui) -> void
+        {
+            if (!ui.inlineRename.has_value())
+            {
+                return;
+            }
+            if (ui.inlineRename->justOpened)
+            {
+                ImGui::SetKeyboardFocusHere();
+                ui.inlineRename->justOpened = false;
+            }
+            ImGui::SetNextItemWidth(180.0F);
+            auto const committed = ImGui::InputText(
+                "##inline-rename",
+                ui.inlineRename->buffer.data(),
+                ui.inlineRename->buffer.size(),
+                ImGuiInputTextFlags_EnterReturnsTrue
+                    | ImGuiInputTextFlags_AutoSelectAll
+            );
+            if (committed)
+            {
+                commitInlineRename(state, ui);
+                return;
+            }
+            if (ImGui::IsItemDeactivated())
+            {
+                ui.inlineRename.reset();
+            }
+        }
+
+        // The shared entry for every delete-everywhere surface: the tree Remove
+        // button, the canvas element menu, the Inspector button, and the Delete
+        // key. A deletion the delete path itself refuses (an anchor a page
+        // depends on) surfaces its message now rather than behind a confirmation
+        // that could not have committed; otherwise it selects the element, so the
+        // confirmation cannot outlive it, and opens the confirmation naming what
+        // the deletion withdraws.
+        auto requestDeleteEverywhere(
+            AppState& state,
+            PanelUiState& ui,
+            annotation::RecognizerId id
+        ) -> void
+        {
+            auto const* definition = state.document().catalog().findRecognizer(id);
+            if (definition == nullptr)
+            {
+                return;
+            }
+            auto const name = definition->name().value();
+
+            auto probe = deleteRecognizer(state.draft(), id);
+            if (!probe)
+            {
+                requestDeletion(ui, std::move(probe), std::format("\"{}\"", name));
+                return;
+            }
+
+            if (state.selectedRecognizerId() != id)
+            {
+                selectRecognizer(state, id, state.selectedSourceId());
+            }
+
+            auto const placements = pagesPlacedOn(state.draft(), id).size();
+            auto detail           = std::string{};
+            if (placements > 0U)
+            {
+                detail = std::format(
+                    "Removes it from {} page{}.",
+                    placements,
+                    placements == 1U ? "" : "s"
+                );
+            }
+            else if (probe->withdrawnRoles > 0U)
+            {
+                detail = std::format(
+                    "Withdraws it from {} page signature{}.",
+                    probe->withdrawnRoles,
+                    probe->withdrawnRoles == 1U ? "" : "s"
+                );
+            }
+            else
+            {
+                detail = "It is not placed on any page.";
+            }
+
+            ui.pendingDelete = PanelUiState::PendingDelete{
+                .id     = id,
+                .name   = name,
+                .detail = std::move(detail),
+            };
+            ui.pendingDeleteJustRequested = true;
+        }
+
+        // The delete-everywhere confirmation modal, opened the frame an entry
+        // point requests it. It names the element and what the deletion
+        // withdraws; Delete routes through the existing deletion path (one edit,
+        // committed by applyPendingEdit this frame), Cancel does nothing. A
+        // selection that has moved off the element abandons the confirmation, so
+        // it can never delete something other than what it was raised for.
+        auto drawDeleteConfirmPopup(AppState& state, PanelUiState& ui) -> void
+        {
+            if (
+                ui.pendingDelete.has_value()
+                && state.selectedRecognizerId() != ui.pendingDelete->id
+            )
+            {
+                ui.pendingDelete.reset();
+                ui.pendingDeleteJustRequested = false;
+            }
+            if (std::exchange(ui.pendingDeleteJustRequested, false))
+            {
+                ImGui::OpenPopup("confirm-delete-everywhere");
+            }
+
+            auto const center = ImGui::GetMainViewport()->GetCenter();
+            ImGui::SetNextWindowPos(
+                center,
+                ImGuiCond_Appearing,
+                ImVec2{0.5F, 0.5F}
+            );
+            if (
+                !ImGui::BeginPopupModal(
+                    "confirm-delete-everywhere",
+                    nullptr,
+                    ImGuiWindowFlags_AlwaysAutoResize
+                )
+            )
+            {
+                return;
+            }
+            if (!ui.pendingDelete.has_value())
+            {
+                ImGui::CloseCurrentPopup();
+                ImGui::EndPopup();
+                return;
+            }
+            auto const pending = *ui.pendingDelete;
+            ImGui::Text("Delete \"%s\" everywhere?", pending.name.c_str());
+            ImGui::TextDisabled("%s", pending.detail.c_str());
+            ImGui::TextDisabled("This can be undone.");
+            ImGui::Separator();
+            if (ImGui::Button("Delete"))
+            {
+                requestDeletion(
+                    ui,
+                    deleteRecognizer(state.draft(), pending.id),
+                    std::format("\"{}\"", pending.name)
+                );
+                ui.pendingDelete.reset();
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Cancel"))
+            {
+                ui.pendingDelete.reset();
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::EndPopup();
+        }
+
 
 
 
@@ -294,8 +529,8 @@ namespace uf::workbench
         // are queued through requestToolbarCommand and run after this frame's
         // parked edit lands, so an undo reverses the same-frame widget edit rather
         // than racing it; capture and import set flags the shell drains for the
-        // same reason. The dirty dot inherits the known cpp-debt of staying set
-        // after an undo back to the saved state, so it over-reports; accepted.
+        // same reason. The dirty dot reads the edit-history save position, so an
+        // undo back to the saved state clears it and a redo past it sets it again.
         auto drawToolbar(AppState& state, PanelUiState& ui) -> void
         {
             if (!ImGui::Begin("Toolbar"))
@@ -448,6 +683,19 @@ namespace uf::workbench
                 ImGui::Bullet();
             }
 
+            // A rename in progress over this row replaces its label with the
+            // inline field; the Selectable and buttons return until it closes.
+            if (
+                ui.inlineRename.has_value()
+                && ui.inlineRename->kind == PanelUiState::RenameKind::Recognizer
+                && ui.inlineRename->id == id.value()
+            )
+            {
+                drawInlineRenameField(state, ui);
+                ImGui::PopID();
+                return;
+            }
+
             auto const memberCount = pagesPlacedOn(state.draft(), id).size();
             auto const label       = memberCount > 1U
                 ? std::format(
@@ -472,14 +720,25 @@ namespace uf::workbench
             {
                 selectRecognizer(state, id, pageScreen, pageContext);
             }
+            // Double-click renames in place. The first click of the pair selects
+            // through the Selectable above, which is harmless; the second opens
+            // the field.
+            if (
+                ImGui::IsItemHovered()
+                && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)
+            )
+            {
+                beginInlineRename(
+                    ui,
+                    PanelUiState::RenameKind::Recognizer,
+                    id.value(),
+                    recognizer.name().value()
+                );
+            }
             ImGui::SameLine();
             if (ImGui::SmallButton("Remove"))
             {
-                requestDeletion(
-                    ui,
-                    deleteRecognizer(state.draft(), id),
-                    std::format("\"{}\"", recognizer.name().value())
-                );
+                requestDeleteEverywhere(state, ui, id);
             }
 
             // The margin, once a check has produced one. "here" is the score on
@@ -900,14 +1159,28 @@ namespace uf::workbench
 
                 auto const view = PageView::of(draft, pageId);
 
+                // A rename in progress over this page draws the inline field in
+                // place of the header; the disclosure and children return until
+                // it closes.
+                if (
+                    ui.inlineRename.has_value()
+                    && ui.inlineRename->kind == PanelUiState::RenameKind::Page
+                    && ui.inlineRename->id == pageId.value()
+                )
+                {
+                    drawInlineRenameField(state, ui);
+                    ImGui::PopID();
+                    continue;
+                }
+
                 // The header selects Page(pageId): clicking the label selects the
-                // page, clicking the arrow only toggles it open. Highlighted while
-                // that page is the selection, so the inspector's page summary and
-                // this row agree on what is chosen.
+                // page, clicking the arrow only toggles it open, and a
+                // double-click renames it. Highlighted while that page is the
+                // selection, so the inspector's page summary and this row agree on
+                // what is chosen.
                 auto const selectedPage = state.selection().asPage();
                 auto flags = ImGuiTreeNodeFlags_DefaultOpen
-                    | ImGuiTreeNodeFlags_OpenOnArrow
-                    | ImGuiTreeNodeFlags_OpenOnDoubleClick;
+                    | ImGuiTreeNodeFlags_OpenOnArrow;
                 if (selectedPage.has_value() && selectedPage->pageId == pageId)
                 {
                     flags |= ImGuiTreeNodeFlags_Selected;
@@ -919,6 +1192,18 @@ namespace uf::workbench
                 if (ImGui::IsItemClicked() && !ImGui::IsItemToggledOpen())
                 {
                     state.select(AppState::Selection::Page{pageId});
+                }
+                if (
+                    ImGui::IsItemHovered()
+                    && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)
+                )
+                {
+                    beginInlineRename(
+                        ui,
+                        PanelUiState::RenameKind::Page,
+                        pageId.value(),
+                        page.name().value()
+                    );
                 }
                 ImGui::SameLine();
                 if (ImGui::SmallButton("Delete Page"))
@@ -1805,11 +2090,7 @@ namespace uf::workbench
             ImGui::EndDisabled();
             if (ImGui::Selectable("Delete everywhere"))
             {
-                requestDeletion(
-                    ui,
-                    deleteRecognizer(state.draft(), id),
-                    std::format("\"{}\"", name)
-                );
+                requestDeleteEverywhere(state, ui, id);
             }
             ImGui::EndPopup();
         }
@@ -2839,6 +3120,14 @@ namespace uf::workbench
             {
                 requestDuplicateElement(state, ui, element.id);
             }
+            // Delete everywhere, behind the same confirmation the tree, canvas
+            // menu, and Delete key raise. A refusal (an anchor a page depends on)
+            // surfaces without a confirmation that could not have committed.
+            ImGui::SameLine();
+            if (ImGui::Button("Delete"))
+            {
+                requestDeleteEverywhere(state, ui, element.id);
+            }
 
             // The type sits here with the other identity fields rather than under
             // an Advanced header a real author could not find.
@@ -3268,6 +3557,54 @@ namespace uf::workbench
 
 
 
+        // Runs a preview against the selected screen and stores it, reporting the
+        // verdict or a refusal. Shared by the Evidence tab's Preview button and
+        // the F5 shortcut so both behave identically; the shortcut drains it after
+        // the frame's edit commits, matching the tab which is drawn post-commit,
+        // so a preview always scores the document on screen.
+        auto performPreview(AppState& state, PanelUiState& ui) -> void
+        {
+            auto const selectedSource = state.selectedSourceId();
+            if (!selectedSource.has_value())
+            {
+                ui.report(
+                    LogSeverity::Error,
+                    "preview requires a selected screen"
+                );
+                return;
+            }
+            auto const assets = state.compilerSourceAssets();
+            if (!assets)
+            {
+                ui.report(
+                    LogSeverity::Error,
+                    std::format("preview failed: {}", toString(assets.error()))
+                );
+                return;
+            }
+            auto const policy = annotation::RecognitionPolicy{
+                .maximumPixelComparisons = k_recognitionComparisonBudget,
+                .deadline                = MonotonicInstant::now().checkedAdd(k_previewDeadline),
+            };
+            auto preview = runPreview(
+                state.document(),
+                *assets,
+                *selectedSource,
+                state.selectedRecognizerId(),
+                policy
+            );
+            if (!preview)
+            {
+                ui.report(
+                    LogSeverity::Error,
+                    std::format("preview failed: {}", toString(preview.error()))
+                );
+                return;
+            }
+            ui.report(LogSeverity::Info, previewStatusLine(state, *preview));
+            state.setLastPreview(std::move(*preview));
+        }
+
         // The Evidence tab: run a preview and read its verdict. Three explicit
         // states, never a silent blank -- results when a preview is stored, a
         // "re-run" prompt when one was invalidated by an edit or a screen change,
@@ -3276,55 +3613,7 @@ namespace uf::workbench
         {
             if (ImGui::Button("Preview"))
             {
-                auto const selectedSource = state.selectedSourceId();
-                if (!selectedSource.has_value())
-                {
-                    ui.report(
-                        LogSeverity::Error,
-                        "preview requires a selected screen"
-                    );
-                }
-                else if (auto const assets = state.compilerSourceAssets(); !assets)
-                {
-                    ui.report(
-                        LogSeverity::Error,
-                        std::format("preview failed: {}", toString(assets.error()))
-                    );
-                }
-                else
-                {
-                    auto const policy = annotation::RecognitionPolicy{
-                        .maximumPixelComparisons = k_recognitionComparisonBudget,
-                        .deadline = MonotonicInstant::now().checkedAdd(
-                            k_previewDeadline
-                        ),
-                    };
-                    auto preview = runPreview(
-                        state.document(),
-                        *assets,
-                        *selectedSource,
-                        state.selectedRecognizerId(),
-                        policy
-                    );
-                    if (!preview)
-                    {
-                        ui.report(
-                            LogSeverity::Error,
-                            std::format(
-                                "preview failed: {}",
-                                toString(preview.error())
-                            )
-                        );
-                    }
-                    else
-                    {
-                        ui.report(
-                            LogSeverity::Info,
-                            previewStatusLine(state, *preview)
-                        );
-                        state.setLastPreview(std::move(*preview));
-                    }
-                }
+                performPreview(state, ui);
             }
 
             ImGui::Separator();
@@ -3872,6 +4161,59 @@ namespace uf::workbench
             ImGui::DockBuilderDockWindow("Canvas", canvas);
             ImGui::DockBuilderFinish(dockspaceId);
         }
+
+        // The global keyboard shortcuts, routed through the same deferred paths
+        // the toolbar and Evidence tab use so frame ordering is preserved: save,
+        // undo, and redo queue a toolbar command dispatched after the frame's edit
+        // commits; F5 flags a preview the shell runs post-commit; Delete opens the
+        // delete-everywhere confirmation for the selected element, or hints when
+        // nothing deletable is selected. Suppressed while a text field holds
+        // keyboard input or any popup or menu is open, so typing a name or
+        // answering a dialog never fires an action.
+        auto handleShortcuts(AppState& state, PanelUiState& ui) -> void
+        {
+            auto const& io = ImGui::GetIO();
+            if (
+                io.WantTextInput
+                || ImGui::IsPopupOpen(
+                    nullptr,
+                    ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel
+                )
+            )
+            {
+                return;
+            }
+            if (ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_S))
+            {
+                requestToolbarCommand(ui, ToolbarCommand::SaveAndGenerate);
+            }
+            if (ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_Z))
+            {
+                requestToolbarCommand(ui, ToolbarCommand::Undo);
+            }
+            if (ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_Y))
+            {
+                requestToolbarCommand(ui, ToolbarCommand::Redo);
+            }
+            if (ImGui::IsKeyPressed(ImGuiKey_F5))
+            {
+                ui.previewRequested = true;
+            }
+            if (ImGui::IsKeyPressed(ImGuiKey_Delete))
+            {
+                if (auto const selected = state.selectedRecognizerId())
+                {
+                    requestDeleteEverywhere(state, ui, *selected);
+                }
+                else
+                {
+                    ui.report(
+                        LogSeverity::Info,
+                        "select an element to delete it"
+                    );
+                }
+            }
+        }
     }
 
     auto drawWorkbench(
@@ -3906,10 +4248,21 @@ namespace uf::workbench
         // in the same frame the worker delivered them.
         collectModelCheck(state, ui);
 
+        // Global shortcuts before the panels, so a queued save/undo/redo, a
+        // flagged preview, or a delete confirmation is in hand by the time the
+        // deferred paths below run -- the same ordering the toolbar buttons rely
+        // on.
+        handleShortcuts(state, ui);
+
         drawToolbar(state, ui);
         drawProjectTree(state, ui);
         drawCanvasPanel(state, services, ui);
         drawInspector(state, ui);
+
+        // The delete-everywhere confirmation, drawn after the panels that raise
+        // it and before the commit, so a confirmed deletion is parked in time for
+        // applyPendingEdit to commit it this frame.
+        drawDeleteConfirmPopup(state, ui);
 
         // Every panel above borrows into the document while it draws, so the
         // frame's edit lands here, once they are all done with it. The deferred
@@ -3926,6 +4279,12 @@ namespace uf::workbench
         if (std::exchange(ui.importRequested, false))
         {
             performImport(state, services, ui);
+        }
+        // The F5 preview runs here, on the document the frame's edit produced,
+        // so its result is the one the Evidence tab renders just below.
+        if (std::exchange(ui.previewRequested, false))
+        {
+            performPreview(state, ui);
         }
 
         // The verify drawer is drawn after the commit so its Preview and Check

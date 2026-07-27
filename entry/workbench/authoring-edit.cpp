@@ -1277,6 +1277,11 @@ namespace uf::workbench
         return m_revision;
     }
 
+    auto AuthoringEditHistory::position() const noexcept -> uint64
+    {
+        return m_position;
+    }
+
     auto AuthoringEditHistory::apply(
         AuthoringDraft const& draft
     ) -> Result<bool>
@@ -1294,8 +1299,11 @@ namespace uf::workbench
         {
             m_undo.erase(m_undo.begin());
         }
-        m_undo.emplace_back(std::move(m_current));
-        m_current = std::move(next);
+        m_undo.emplace_back(
+            Snapshot{.document = std::move(m_current), .position = m_position}
+        );
+        m_current  = std::move(next);
+        m_position = m_nextPosition++;
         m_redo.clear();
         ++m_revision;
         return true;
@@ -1305,8 +1313,11 @@ namespace uf::workbench
     {
         if (m_undo.empty()) return false;
 
-        m_redo.emplace_back(std::move(m_current));
-        m_current = std::move(m_undo.back());
+        m_redo.emplace_back(
+            Snapshot{.document = std::move(m_current), .position = m_position}
+        );
+        m_current  = std::move(m_undo.back().document);
+        m_position = m_undo.back().position;
         m_undo.pop_back();
         ++m_revision;
         return true;
@@ -1316,8 +1327,11 @@ namespace uf::workbench
     {
         if (m_redo.empty()) return false;
 
-        m_undo.emplace_back(std::move(m_current));
-        m_current = std::move(m_redo.back());
+        m_undo.emplace_back(
+            Snapshot{.document = std::move(m_current), .position = m_position}
+        );
+        m_current  = std::move(m_redo.back().document);
+        m_position = m_redo.back().position;
         m_redo.pop_back();
         ++m_revision;
         return true;

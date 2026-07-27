@@ -378,3 +378,57 @@ and tests `test-preview.cpp`, `test-model-check-view.cpp`.
 - **Gates:** 4 static gates OK; x64-debug clean; `ctest -L CI` 14/14; asan
   rebuilt + `ctest -L AsanSmoke` 2/2; probe-project `--smoke 5` EXIT 0;
   x64-release workbench builds.
+
+### 2026-07-27 — U4 polish (shipped)
+
+Four user-approved items closing the redesign: keyboard shortcuts, the
+revision-based dirty dot, in-tree rename, and a delete-everywhere confirmation.
+Files: `app/panels.cpp` (shortcuts, rename helpers, the confirmation modal,
+`performPreview` extracted from the Evidence tab, and the entry-point rewiring),
+`panel-state.hpp` (`RenameKind`, `InlineRename`, `PendingDelete`, and the
+`previewRequested` / rename / confirmation fields), `authoring-edit.{hpp,cpp}`
+(`AuthoringEditHistory::position`), `app/workbench-app.{hpp,cpp}`
+(`m_savedPosition` replacing the latched `m_dirty`), and tests
+`test-workbench-app.cpp`, `test-authoring-edit.cpp`.
+
+- **Keyboard shortcuts.** `handleShortcuts` runs before the panels each frame:
+  Ctrl+S / Ctrl+Z / Ctrl+Y queue a `ToolbarCommand` through the same
+  `requestToolbarCommand` the toolbar buttons use (dispatched after
+  `applyPendingEdit`), F5 flags `previewRequested` that the shell drains
+  post-commit through the extracted `performPreview` (so it scores the committed
+  document, like the Evidence tab's own button), and Delete opens the
+  delete-everywhere confirmation for the selected element or leaves an Info hint
+  when nothing deletable is selected. All are suppressed while
+  `io.WantTextInput` is set (a text field, including the inline rename) or any
+  popup or menu is open (`IsPopupOpen` with the any-popup flags), so typing a
+  name or answering the confirmation never fires an action.
+- **Revision-based dirty (decision 10's inherited debt, paid).**
+  `AuthoringEditHistory` now pairs each undo/redo snapshot with a monotonic
+  *position* identity that undo and redo restore (distinct from `revision()`,
+  which only advances and still guards stale commits). `AppState` records the
+  saved position on load and in `markSaved`, and `dirty()` is the current
+  position differing from it, so undo-to-saved reads clean and redo past it
+  reads dirty again. The `TODO(cpp-debt)` in `dirty()` and the stale toolbar
+  comment are gone; no cpp-debt ledger entry existed to remove.
+- **In-tree rename.** Double-clicking a page header or a member/element row
+  opens an inline `InputText` (single `InlineRename` slot in `PanelUiState`,
+  seeded from the current name, focused on its first frame). Enter commits
+  through the same draft-edit path the Inspector's element rename uses -- a
+  duplicate or empty name is refused by the build and surfaced through
+  `applyPendingEdit`'s `report`; Esc or a click away cancels. Single-click
+  select is intact (the page node dropped `OpenOnDoubleClick` so the
+  double-click is free to rename; the arrow still toggles).
+- **Delete confirmation.** Every delete-everywhere surface -- the tree Remove
+  button, the canvas element menu, the new Inspector Delete button, and the
+  Delete key -- routes through `requestDeleteEverywhere`, which reports a delete
+  path's own refusal immediately (no pointless confirmation) and otherwise opens
+  a modal naming the element and the placements or signatures it withdraws.
+  Confirm runs the existing `requestDeletion` (committed the same frame), Cancel
+  does nothing, and a selection moving off the element abandons the pending
+  confirmation. "Remove from this page" stays unconfirmed.
+- **Deferred:** none. Rename and confirmation are ImGui-bound and kept thin over
+  the already-tested actions, so they carry no new logic tests; the
+  revision-based dirty and `position()` are covered.
+- **Gates:** 4 static gates OK; x64-debug clean; `ctest -L CI` 14/14; asan
+  rebuilt + `ctest -L AsanSmoke` 2/2; probe-project `--smoke 5` EXIT 0;
+  x64-release workbench builds.

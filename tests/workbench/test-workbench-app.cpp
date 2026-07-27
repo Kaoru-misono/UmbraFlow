@@ -256,6 +256,37 @@ namespace uf::workbench
         CHECK_FALSE(state.dirty());
     }
 
+    TEST_CASE("dirty follows the saved revision across undo and redo")
+    {
+        // The dirty dot is the edit-history position differing from the one the
+        // last save recorded, so undoing back to the saved state clears it and
+        // redoing past it sets it again -- the revision-based fix for the old
+        // latched flag that over-reported after undo-to-saved.
+        auto state = appState();
+        CHECK_FALSE(state.dirty());
+
+        auto edited = state.draft();
+        edited.recognizers.at(0).name = "renamed_marker";
+        REQUIRE(state.applyEdit(edited).has_value());
+        CHECK(state.dirty());
+
+        state.markSaved();
+        CHECK_FALSE(state.dirty());
+
+        auto again = state.draft();
+        again.recognizers.at(0).name = "renamed_again";
+        REQUIRE(state.applyEdit(again).has_value());
+        CHECK(state.dirty());
+
+        // Undo returns to the saved document, so the state reads clean again.
+        CHECK(state.undo());
+        CHECK_FALSE(state.dirty());
+
+        // Redo moves past the saved position, so it reads dirty once more.
+        CHECK(state.redo());
+        CHECK(state.dirty());
+    }
+
     TEST_CASE("an identical edit neither dirties the state nor records history")
     {
         auto state = appState();

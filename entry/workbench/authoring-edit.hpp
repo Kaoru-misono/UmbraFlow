@@ -416,9 +416,19 @@ namespace uf::workbench
 
     class AuthoringEditHistory final
     {
-        annotation::AuthoringDocument              m_current;
-        std::vector<annotation::AuthoringDocument> m_undo{};
-        std::vector<annotation::AuthoringDocument> m_redo{};
+        // One reachable document version paired with the identity of the
+        // position it sits at. Undo and redo move a whole snapshot, so restoring
+        // a version restores the position that names it -- which is what lets a
+        // saved state be recognised again after an undo returns to it.
+        struct Snapshot final
+        {
+            annotation::AuthoringDocument document;
+            uint64                        position{};
+        };
+
+        annotation::AuthoringDocument m_current;
+        std::vector<Snapshot>         m_undo{};
+        std::vector<Snapshot>         m_redo{};
 
         // A monotonic count of the versions this history has moved through. It
         // advances on every applied change and on every undo and redo, so no
@@ -429,6 +439,21 @@ namespace uf::workbench
         // replaced it. Undo does not restore the prior count: the revision is
         // the history's position in time, not the document's identity.
         uint64 m_revision{};
+
+        // The identity of the current document position, restored by undo and
+        // redo rather than advanced by them. A fresh history sits at 0 and each
+        // applied change mints the next value, so two positions name the same
+        // document state exactly when their identities match. This is the
+        // "document identity" m_revision deliberately is not: the dirty flag
+        // records it on load and save and reads dirty as the current identity
+        // differing from the saved one, so an undo back to a saved state reads
+        // clean and a redo past it reads dirty again.
+        uint64 m_position{};
+
+        // The next position identity to mint, never reused within a session, so
+        // a saved position pushed off the bounded undo stack is simply never
+        // reached again and the state stays dirty, as it must.
+        uint64 m_nextPosition{1};
 
     public:
         explicit AuthoringEditHistory(
@@ -446,6 +471,11 @@ namespace uf::workbench
         // The current position in the sequence of versions, for the stale-commit
         // guard. Advances on every applied change, undo, and redo.
         [[nodiscard]] auto revision() const noexcept -> uint64;
+
+        // The identity of the current document position, for the dirty flag.
+        // Restored by undo and redo, unlike revision(): two calls return the
+        // same value exactly when the history holds the same document state.
+        [[nodiscard]] auto position() const noexcept -> uint64;
 
         [[nodiscard]]
         auto apply(
