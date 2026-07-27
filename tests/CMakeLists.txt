@@ -174,6 +174,7 @@ if(TARGET ${PROJECT_NAME}_workbench_support)
             workbench/test-panel-state.cpp
             workbench/test-preview.cpp
             workbench/test-project-persistence.cpp
+            workbench/test-project-tree.cpp
             workbench/test-source-ingestion.cpp
             workbench/test-workbench-app.cpp
         LIBS

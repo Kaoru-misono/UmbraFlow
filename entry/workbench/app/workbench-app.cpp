@@ -285,6 +285,34 @@ namespace uf::workbench
         return m_lastModelCheck;
     }
 
+    auto AppState::previewInvalidated() const noexcept -> bool
+    {
+        return m_previewInvalidated;
+    }
+
+    auto AppState::modelCheckInvalidated() const noexcept -> bool
+    {
+        return m_modelCheckInvalidated;
+    }
+
+    auto AppState::invalidatePreview() -> void
+    {
+        if (m_lastPreview.has_value())
+        {
+            m_previewInvalidated = true;
+        }
+        m_lastPreview.reset();
+    }
+
+    auto AppState::invalidateModelCheck() -> void
+    {
+        if (m_lastModelCheck.has_value())
+        {
+            m_modelCheckInvalidated = true;
+        }
+        m_lastModelCheck.reset();
+    }
+
     auto AppState::dirty() const noexcept -> bool
     {
         // Conservatively stays true after undoing back to the last saved
@@ -307,9 +335,9 @@ namespace uf::workbench
         {
             m_dirty = true;
             // The stored preview and model check describe the pre-edit document,
-            // so a committed mutation invalidates both.
-            m_lastPreview.reset();
-            m_lastModelCheck.reset();
+            // so a committed mutation invalidates both and marks them stale.
+            invalidatePreview();
+            invalidateModelCheck();
             // An edit may remove the very entity the selection names -- a
             // deletion always does -- and a selection pointing at something this
             // revision does not hold would be edited into a rejected draft.
@@ -367,8 +395,8 @@ namespace uf::workbench
         // The document moved, so the stored preview and model check no longer
         // describe it, and the selection may now point at an entity this revision
         // does not hold.
-        m_lastPreview.reset();
-        m_lastModelCheck.reset();
+        invalidatePreview();
+        invalidateModelCheck();
         reconcileSelectionToDocument();
         return true;
     }
@@ -380,8 +408,8 @@ namespace uf::workbench
             return false;
         }
         m_dirty = true;
-        m_lastPreview.reset();
-        m_lastModelCheck.reset();
+        invalidatePreview();
+        invalidateModelCheck();
         reconcileSelectionToDocument();
         return true;
     }
@@ -477,10 +505,11 @@ namespace uf::workbench
         auto const previousScreen = m_selection.shownScreen();
         m_selection               = std::move(selection);
         // A preview is evaluated against the shown screen, so it goes stale only
-        // when that screen changes; reselecting the same screen keeps it.
+        // when that screen changes; reselecting the same screen keeps it. The
+        // model check spans every screen and so is left alone by a selection move.
         if (m_selection.shownScreen() != previousScreen)
         {
-            m_lastPreview.reset();
+            invalidatePreview();
         }
     }
 
@@ -491,12 +520,14 @@ namespace uf::workbench
 
     auto AppState::setLastPreview(PreviewResult preview) -> void
     {
-        m_lastPreview = std::move(preview);
+        m_lastPreview        = std::move(preview);
+        m_previewInvalidated = false;
     }
 
     auto AppState::setLastModelCheck(ModelCheck check) -> void
     {
-        m_lastModelCheck = std::move(check);
+        m_lastModelCheck        = std::move(check);
+        m_modelCheckInvalidated = false;
     }
 
     auto AppState::markSaved() -> void

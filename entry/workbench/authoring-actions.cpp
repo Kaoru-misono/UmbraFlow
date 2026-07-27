@@ -4,6 +4,7 @@
 #include "edit-page.hpp"
 #include "model-check-view.hpp"
 #include "preview.hpp"
+#include "project-persistence.hpp"
 #include "app/workbench-app.hpp"
 
 #include <annotation/authoring-document.hpp>
@@ -311,6 +312,93 @@ namespace uf::workbench
             {
                 state.select(*request.selection);
             }
+        }
+    }
+
+    auto requestToolbarCommand(PanelUiState& ui, ToolbarCommand command) -> void
+    {
+        if (ui.pendingToolbarCommand.has_value())
+        {
+            return;
+        }
+        ui.pendingToolbarCommand = command;
+    }
+
+    namespace
+    {
+        // Save the current document and regenerate the runtime project, reporting
+        // the outcome. Lifted verbatim from the former Actions button so the
+        // toolbar's queued command behaves identically; it runs after
+        // applyPendingEdit, so it saves the document this frame's edit produced.
+        auto saveAndGenerate(AppState& state, PanelUiState& ui) -> void
+        {
+            auto const assets = state.compilerSourceAssets();
+            if (!assets)
+            {
+                ui.report(
+                    LogSeverity::Error,
+                    std::format("save failed: {}", toString(assets.error()))
+                );
+                return;
+            }
+            auto const status = saveAndGenerateAuthoringProject(
+                state.projectRoot(),
+                state.document(),
+                *assets
+            );
+            if (!status)
+            {
+                ui.report(
+                    LogSeverity::Error,
+                    std::format("save failed: {}", toString(status.error()))
+                );
+                return;
+            }
+            state.markSaved();
+            ui.report(LogSeverity::Info, "saved and generated");
+        }
+
+        // The catalog-count line an undo or redo leaves, so the author sees what
+        // the reverted document now holds.
+        [[nodiscard]]
+        auto historyMoveLine(
+            AppState const& state,
+            std::string_view verb
+        ) -> std::string
+        {
+            return std::format(
+                "{}: {} recognizers, {} pages",
+                verb,
+                state.document().catalog().recognizers().size(),
+                state.document().catalog().pages().size()
+            );
+        }
+    }
+
+    auto dispatchToolbarCommand(AppState& state, PanelUiState& ui) -> void
+    {
+        if (!ui.pendingToolbarCommand.has_value())
+        {
+            return;
+        }
+        auto const command = *std::exchange(ui.pendingToolbarCommand, std::nullopt);
+        switch (command)
+        {
+        case ToolbarCommand::SaveAndGenerate:
+            saveAndGenerate(state, ui);
+            return;
+        case ToolbarCommand::Undo:
+            if (state.undo())
+            {
+                ui.report(LogSeverity::Info, historyMoveLine(state, "undo"));
+            }
+            return;
+        case ToolbarCommand::Redo:
+            if (state.redo())
+            {
+                ui.report(LogSeverity::Info, historyMoveLine(state, "redo"));
+            }
+            return;
         }
     }
 

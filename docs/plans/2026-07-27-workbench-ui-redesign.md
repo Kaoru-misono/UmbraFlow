@@ -191,3 +191,66 @@ toolbar, or drawer (those stay U1b). Files: `app/workbench-app.{hpp,cpp}`,
   behaviour change (pinned by a test): ROI editing on an element selected under a
   page now uses that page even when the shown screen's claim is ambiguous or
   missing.
+
+### 2026-07-27 — U1b information architecture (shipped)
+
+The rest of U1 minus the already-shipped typed selection: the unified tree,
+the top toolbar with post-commit execution, the tabbed verify drawer, the
+context-sensitive inspector, and the programmatic default dock layout
+(decisions 1, 2, 4, 5, 6 and the Layout section). Files: `app/panels.cpp`
+(the whole panel set and frame orchestration rewritten), `panel-state.hpp`
+(`ToolbarCommand`, queued command + capture/import flags), `authoring-actions.
+{hpp,cpp}` (`requestToolbarCommand` / `dispatchToolbarCommand`),
+`app/workbench-app.{hpp,cpp}` (staleness flags), new `project-tree.{hpp,cpp}`
+(pure bucket + regression-screen derivations), `entry/CMakeLists.txt` and
+`tests/CMakeLists.txt`, and tests `test-project-tree.cpp` (new),
+`test-workbench-app.cpp`, `test-authoring-actions.cpp`.
+
+- **Old window → new home inventory.** The five flat windows (Screens, Pages,
+  Canvas, Properties, Actions) plus U0's Log became: **Toolbar** (Save/Generate,
+  Undo, Redo, target title + Capture, Import, dirty dot, persistent status
+  line); **Project** (screen buckets + page tree, replacing Screens and Pages);
+  **Canvas** (unchanged, still U2's surface); **Inspector** (Properties body
+  under an Element selection, the regression section under a Screen selection,
+  a summary under a Page selection); **Verify** (bottom drawer, tabs
+  Evidence/Model/Log — Preview + verdict, the Check buttons + screen-verdict and
+  mark-margin tables, and U0's log view). The standalone Log window is gone.
+- **Screen buckets (decision 2).** `project-tree.cpp` classifies each screen
+  from its regression case: no case → *Needs classification* (the to-do, count
+  badge, always shown); `UnknownRegression` → *Expected unknown*; `Ambiguous
+  Regression` → *Expected ambiguous* (badged, hidden when empty, never a nag); a
+  resolved case → owned by its page. `regressionScreensForPage` lists every
+  screen resolving to a page, so a page nests a screen *list* (decision 1) with
+  the primary authoring sample marked and the record-screen affordance kept for
+  an inferred-only sample.
+- **Toolbar post-commit ordering.** The toolbar draws at the top but queues
+  Save/Undo/Redo through `requestToolbarCommand`; `dispatchToolbarCommand` runs
+  them after `applyPendingEdit`, and capture/import (which need the platform via
+  `WorkbenchServices`) are flagged and drained by the shell in the same slot.
+  An undo therefore reverses the same-frame widget-deactivation edit rather than
+  racing it; pinned by a test at the action layer with no ImGui.
+- **Drag-drop re-host (decision 4).** The shared-region palette moved below the
+  pages as its own group, kept separate from the *Not on any page* orphan
+  bucket. The cross-frame `ui.draggedRegion` payload, the per-page drop targets,
+  and the deferred one-commit-per-frame drop application are intact; the palette
+  drawing after its drop targets is safe because the drag payload persists across
+  frames and the identity was recorded on earlier drag frames.
+- **Staleness flags (decision 5).** `AppState` gained `m_previewInvalidated` /
+  `m_modelCheckInvalidated`, set by `invalidatePreview` / `invalidateModelCheck`
+  only when a result actually existed (edit, undo, redo, and — preview only —
+  a shown-screen change), and cleared by `setLastPreview` / `setLastModelCheck`.
+  The drawer reads result-present / flag-set / neither as results / stale /
+  empty. Pinned by tests, including that an invalidation before any result does
+  not read as stale and that a screen change stales only the preview.
+- **Default dock layout.** `buildDefaultLayout` splits the dockspace (toolbar
+  top, project left, inspector right, verify bottom, canvas centre) on the first
+  frame only when `DockBuilderGetNode` finds an empty leaf — i.e. no layout was
+  restored from the ini the shell already persists to LOCALAPPDATA. A user's
+  saved arrangement wins; the persistence-free smoke run gets the default. No new
+  ini handling was added (the shell already writes one).
+- **Deferred:** the marks×screens matrix stays U3 (decision 6); the dirty dot
+  still over-reports after undo-to-saved (accepted cpp-debt); canvas interaction
+  is U2 and untouched.
+- **Gates:** 4 static gates OK; x64-debug clean; `ctest -L CI` 14/14; asan
+  rebuilt + `ctest -L AsanSmoke` 2/2 (the smoke draws every new panel under
+  ASan); probe-project `--smoke 5` EXIT 0; x64-release workbench builds.

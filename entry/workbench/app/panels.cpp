@@ -10,6 +10,7 @@
 #include "panel-state.hpp"
 #include "preview.hpp"
 #include "project-persistence.hpp"
+#include "project-tree.hpp"
 #include "source-ingestion.hpp"
 
 #include <annotation/authoring-document.hpp>
@@ -25,6 +26,7 @@
 #include <domain/space.hpp>
 
 #include <imgui.h>
+#include <imgui_internal.h>
 
 #include <algorithm>
 #include <array>
@@ -181,91 +183,146 @@ namespace uf::workbench
             }
         }
 
-        auto drawSourcesPanel(
+        // Defined with the Log tab below; the toolbar and inspector need it above
+        // their own definitions to colour the persistent status summary.
+        [[nodiscard]]
+        auto logSeverityColor(LogSeverity severity) -> std::optional<ImVec4>;
+
+        // Adds a captured source to the project. Split out of the toolbar and run
+        // by the shell after the frame's parked edit commits: ingestion makes its
+        // own history commit, and doing it before applyPendingEdit would silently
+        // drop a draft the panels built against the pre-capture document.
+        auto performCapture(
             AppState& state,
             WorkbenchServices const& services,
             PanelUiState& ui
         ) -> void
         {
-            // Named for what it holds rather than for the domain type: every row
-            // is one captured screen, and a page is authored from one of them.
-            if (!ImGui::Begin("Screens"))
+            auto const id    = annotation::SourceId{mintResourceId()};
+            auto const title = std::string{ui.targetTitle.data()};
+            auto ingested    = services.captureFromTarget(id, title);
+            if (!ingested)
+            {
+                ui.report(
+                    LogSeverity::Error,
+                    std::format("capture failed: {}", toString(ingested.error()))
+                );
+                return;
+            }
+            auto const added = state.addIngestedSource(std::move(*ingested));
+            if (added.has_value())
+            {
+                ui.report(LogSeverity::Info, "captured source");
+            }
+            else
+            {
+                ui.report(
+                    LogSeverity::Error,
+                    std::format("capture add failed: {}", toString(added.error()))
+                );
+            }
+        }
+
+        // Opens the OS picker and imports the chosen PNG as a source, under the
+        // same post-commit ordering as performCapture. A cancelled dialog is
+        // silent.
+        auto performImport(
+            AppState& state,
+            WorkbenchServices const& services,
+            PanelUiState& ui
+        ) -> void
+        {
+            auto picked = services.pickPngToImport();
+            if (!picked)
+            {
+                ui.report(
+                    LogSeverity::Error,
+                    std::format(
+                        "import dialog failed: {}",
+                        toString(picked.error())
+                    )
+                );
+                return;
+            }
+            if (!picked->has_value())
+            {
+                return;
+            }
+            auto const id = annotation::SourceId{mintResourceId()};
+            auto ingested = importSourcePng(id, **picked);
+            if (!ingested)
+            {
+                ui.report(
+                    LogSeverity::Error,
+                    std::format("import failed: {}", toString(ingested.error()))
+                );
+                return;
+            }
+            auto const added = state.addIngestedSource(std::move(*ingested));
+            if (added.has_value())
+            {
+                ui.report(LogSeverity::Info, "imported source");
+            }
+            else
+            {
+                ui.report(
+                    LogSeverity::Error,
+                    std::format("import add failed: {}", toString(added.error()))
+                );
+            }
+        }
+
+        // The slim top toolbar: the project-level actions and the target picker,
+        // plus the one persistent status line the redesign keeps as its plain
+        // spine. Nothing here mutates the document inline. Save, undo, and redo
+        // are queued through requestToolbarCommand and run after this frame's
+        // parked edit lands, so an undo reverses the same-frame widget edit rather
+        // than racing it; capture and import set flags the shell drains for the
+        // same reason. The dirty dot inherits the known cpp-debt of staying set
+        // after an undo back to the saved state, so it over-reports; accepted.
+        auto drawToolbar(AppState& state, PanelUiState& ui) -> void
+        {
+            if (!ImGui::Begin("Toolbar"))
             {
                 ImGui::End();
                 return;
             }
 
-            for (auto const& source : state.document().sources())
+            if (ImGui::Button("Save + Generate"))
             {
-                auto const id       = source.id();
-                auto const selected = state.selectedSourceId() == id;
-
-                // Scope the row by the stable SourceId. The relative path is
-                // derived from the content hash, so two sources with identical
-                // bytes would collide on it.
-                auto const idText = id.value().toString();
-                ImGui::PushID(idText.c_str());
-                auto const provenance = std::holds_alternative<
-                    annotation::WgcSourceProvenance
-                >(source.provenance()) ? "wgc" : "imported";
-                auto const row = std::format(
-                    "{}  {}  {}",
-                    shortId(id.value()),
-                    source.contentHash().hex().substr(0, 8),
-                    provenance
-                );
-                if (ImGui::Selectable(row.c_str(), selected))
-                {
-                    state.select(AppState::Selection::Screen{id});
-                }
-                ImGui::PopID();
+                requestToolbarCommand(ui, ToolbarCommand::SaveAndGenerate);
             }
+            ImGui::SameLine();
+            ImGui::BeginDisabled(!state.canUndo());
+            if (ImGui::Button("Undo"))
+            {
+                requestToolbarCommand(ui, ToolbarCommand::Undo);
+            }
+            ImGui::EndDisabled();
+            ImGui::SameLine();
+            ImGui::BeginDisabled(!state.canRedo());
+            if (ImGui::Button("Redo"))
+            {
+                requestToolbarCommand(ui, ToolbarCommand::Redo);
+            }
+            ImGui::EndDisabled();
 
-            ImGui::Separator();
+            ImGui::SameLine();
+            ImGui::TextDisabled("|");
+            ImGui::SameLine();
 
+            ImGui::SetNextItemWidth(180.0F);
             ImGui::InputText(
-                "Target title",
+                "##target",
                 ui.targetTitle.data(),
                 ui.targetTitle.size()
             );
             auto const hasTarget = ui.targetTitle.at(0) != '\0';
-
+            ImGui::SameLine();
             ImGui::BeginDisabled(!hasTarget);
             if (ImGui::Button("Capture"))
             {
-                auto const id = annotation::SourceId{mintResourceId()};
-                auto const title = std::string{ui.targetTitle.data()};
-                auto ingested = services.captureFromTarget(id, title);
-                if (!ingested)
-                {
-                    ui.report(
-                        LogSeverity::Error,
-                        std::format(
-                            "capture failed: {}",
-                            toString(ingested.error())
-                        )
-                    );
-                }
-                else
-                {
-                    auto const added = state.addIngestedSource(
-                        std::move(*ingested)
-                    );
-                    if (added.has_value())
-                    {
-                        ui.report(LogSeverity::Info, "captured source");
-                    }
-                    else
-                    {
-                        ui.report(
-                            LogSeverity::Error,
-                            std::format(
-                                "capture add failed: {}",
-                                toString(added.error())
-                            )
-                        );
-                    }
-                }
+                ui.captureRequested = true;
             }
             ImGui::EndDisabled();
             if (
@@ -277,67 +334,45 @@ namespace uf::workbench
                     "Enter a target window title substring to enable capture"
                 );
             }
-
-            auto const selectedSource = state.selectedSourceId();
             ImGui::SameLine();
-            ImGui::BeginDisabled(!selectedSource.has_value());
-            if (ImGui::Button("Delete Screen") && selectedSource.has_value())
-            {
-                requestDeletion(
-                    ui,
-                    deleteSource(state.draft(), *selectedSource),
-                    "screen"
-                );
-            }
-            ImGui::EndDisabled();
-
             if (ImGui::Button("Import PNG..."))
             {
-                auto picked = services.pickPngToImport();
-                if (!picked)
+                ui.importRequested = true;
+            }
+
+            ImGui::SameLine();
+            ImGui::TextDisabled("|");
+            ImGui::SameLine();
+            if (state.dirty())
+            {
+                ImGui::TextColored(
+                    ImVec4{0.95F, 0.65F, 0.15F, 1.0F},
+                    "%s",
+                    "* unsaved"
+                );
+            }
+            else
+            {
+                ImGui::TextDisabled("saved");
+            }
+
+            // The persistent one-line summary: the transient status the actions
+            // used to print in their own panel, kept visible frame to frame so the
+            // last outcome is always on screen even when its panel is collapsed.
+            if (!ui.statusLine.empty())
+            {
+                ImGui::SameLine();
+                ImGui::TextDisabled("|");
+                ImGui::SameLine();
+                auto const color = logSeverityColor(ui.statusSeverity);
+                if (color.has_value())
                 {
-                    ui.report(
-                        LogSeverity::Error,
-                        std::format(
-                            "import dialog failed: {}",
-                            toString(picked.error())
-                        )
-                    );
+                    ImGui::PushStyleColor(ImGuiCol_Text, *color);
                 }
-                else if (picked->has_value())
+                ImGui::TextUnformatted(ui.statusLine.c_str());
+                if (color.has_value())
                 {
-                    auto const id = annotation::SourceId{mintResourceId()};
-                    auto ingested = importSourcePng(id, **picked);
-                    if (!ingested)
-                    {
-                        ui.report(
-                            LogSeverity::Error,
-                            std::format(
-                                "import failed: {}",
-                                toString(ingested.error())
-                            )
-                        );
-                    }
-                    else
-                    {
-                        auto const added = state.addIngestedSource(
-                            std::move(*ingested)
-                        );
-                        if (added.has_value())
-                        {
-                            ui.report(LogSeverity::Info, "imported source");
-                        }
-                        else
-                        {
-                            ui.report(
-                                LogSeverity::Error,
-                                std::format(
-                                    "import add failed: {}",
-                                    toString(added.error())
-                                )
-                            );
-                        }
-                    }
+                    ImGui::PopStyleColor();
                 }
             }
 
@@ -664,22 +699,147 @@ namespace uf::workbench
             );
         }
 
-        // The workbench's navigator. A page is a screen the author captured, and
-        // everything authored on that screen hangs beneath it: the marks that
-        // identify it and the elements that may be clicked there. Both are
-        // created by the buttons in the group they belong to, so the annotation
-        // type, the signature role, and the authorization are all consequences of
-        // where the author pressed rather than fields to fill in.
-        auto drawPagesPanel(AppState& state, PanelUiState& ui) -> void
+        // The authoring source behind a screen id, for a row that has only the id
+        // in hand (a page's regression list, a bucket). Null when the id names no
+        // source in the current document.
+        [[nodiscard]]
+        auto findSource(
+            AppState const& state UF_LIFETIME_BOUND,
+            annotation::SourceId id
+        ) -> annotation::AuthoringSource const*
         {
-            if (!ImGui::Begin("Pages"))
+            for (auto const& source : state.document().sources())
+            {
+                if (source.id() == id)
+                {
+                    return &source;
+                }
+            }
+            return nullptr;
+        }
+
+        // One captured-screen row: short id, content-hash prefix, and provenance,
+        // selected as Screen(id). Highlighted only when a Screen is the selection
+        // -- not when an element merely shows over it -- so a page's member and
+        // its sample screen do not light up together. suffix tags the row (a
+        // page's primary sample, say).
+        auto drawScreenRow(
+            AppState& state,
+            annotation::SourceId id,
+            std::string_view suffix
+        ) -> void
+        {
+            auto const* source = findSource(state, id);
+            if (source == nullptr)
+            {
+                return;
+            }
+            auto const screen   = state.selection().asScreen();
+            auto const selected = screen.has_value() && screen->sourceId == id;
+            auto const idText   = id.value().toString();
+            ImGui::PushID(idText.c_str());
+            auto const provenance = std::holds_alternative<
+                annotation::WgcSourceProvenance
+            >(source->provenance()) ? "wgc" : "imported";
+            auto const label = std::format(
+                "{}  {}  {}{}",
+                shortId(id.value()),
+                source->contentHash().hex().substr(0, 8),
+                provenance,
+                suffix
+            );
+            if (ImGui::Selectable(label.c_str(), selected))
+            {
+                state.select(AppState::Selection::Screen{id});
+            }
+            ImGui::PopID();
+        }
+
+        // One top-level screen bucket. "Needs classification" is the true to-do,
+        // shown with a count and open by default even when empty; the two
+        // expected-outcome buckets are finished work, badged with a count and
+        // hidden entirely when they hold nothing so they never read as a nag.
+        auto drawScreenBucket(
+            AppState& state,
+            char const* label,
+            ScreenBucket bucket,
+            bool isTodo
+        ) -> void
+        {
+            auto const screens = screensInBucket(state.document(), bucket);
+            if (screens.empty() && !isTodo)
+            {
+                return;
+            }
+            auto const header = std::format("{} ({})", label, screens.size());
+            auto const flags  = isTodo
+                ? ImGuiTreeNodeFlags_DefaultOpen
+                : ImGuiTreeNodeFlags_None;
+            if (ImGui::TreeNodeEx(header.c_str(), flags))
+            {
+                if (screens.empty())
+                {
+                    ImGui::TextDisabled("none");
+                }
+                for (auto const& id : screens)
+                {
+                    drawScreenRow(state, id, "");
+                }
+                ImGui::TreePop();
+            }
+        }
+
+        // The workbench's navigator, page-centric and unified. The screen buckets
+        // sit above the pages; a page nests the regression screens that resolve to
+        // it plus the marks and elements authored on it. Everything an element,
+        // page, or screen needs is reachable here, and every creation, deletion,
+        // and share the former Screens and Pages panels offered is preserved.
+        auto drawProjectTree(AppState& state, PanelUiState& ui) -> void
+        {
+            if (!ImGui::Begin("Project"))
             {
                 ImGui::End();
                 return;
             }
 
+            auto const& catalog = state.document().catalog();
+
+            if (state.document().sources().empty() && catalog.pages().empty())
+            {
+                ImGui::TextWrapped(
+                    "Empty project. Capture a running target or import a PNG from "
+                    "the toolbar to add the first screen, then classify it into a "
+                    "page here."
+                );
+                ImGui::End();
+                return;
+            }
+
+            // Screens outside any page, split three ways: the to-do, and the two
+            // deliberately pageless outcomes.
+            ImGui::SeparatorText("Screens");
+            drawScreenBucket(
+                state,
+                "Needs classification",
+                ScreenBucket::NeedsClassification,
+                true
+            );
+            drawScreenBucket(
+                state,
+                "Expected unknown",
+                ScreenBucket::ExpectedUnknown,
+                false
+            );
+            drawScreenBucket(
+                state,
+                "Expected ambiguous",
+                ScreenBucket::ExpectedAmbiguous,
+                false
+            );
+
+            ImGui::SeparatorText("Pages");
             ImGui::BeginDisabled(!state.selectedSourceId().has_value());
-            if (ImGui::Button("New Page From Selected Screen"))
+            if (ImGui::Button("+ Page from selected screen"))
             {
                 createPageFromSelectedScreen(state, ui);
             }
@@ -690,12 +850,10 @@ namespace uf::workbench
             )
             {
                 ImGui::SetTooltip(
-                    "Capture or import a screen first, then select it in Screens"
+                    "Select a screen above first, then press this to author a page "
+                    "from it"
                 );
             }
-            ImGui::Separator();
-
-            auto const& catalog = state.document().catalog();
 
             // Which page a shared region was dropped on this frame. The element
             // being dragged lives on PanelUiState instead, because the frame that
@@ -703,69 +861,11 @@ namespace uf::workbench
             // itself.
             auto droppedOnPage = std::optional<annotation::PageId>{};
 
-            auto shared = std::vector<annotation::RecognizerId>{};
-            for (auto const& recognizer : catalog.recognizers())
-            {
-                if (isRegionShared(state, recognizer.id()))
-                {
-                    shared.emplace_back(recognizer.id());
-                }
-            }
-            if (!shared.empty())
-            {
-                ImGui::SeparatorText("Shared regions");
-                ImGui::TextWrapped(
-                    "Drag one onto a page that also has it. It only works where "
-                    "the element looks the same; the drop says so straight away."
-                );
-                for (auto const& recognizer : catalog.recognizers())
-                {
-                    if (!std::ranges::contains(shared, recognizer.id()))
-                    {
-                        continue;
-                    }
-                    auto const pages = pagesPlacedOn(
-                        state.draft(),
-                        recognizer.id()
-                    ).size();
-                    ImGui::Bullet();
-                    ImGui::Selectable(
-                        std::format(
-                            "{}  (on {} {})",
-                            recognizer.name().value(),
-                            pages,
-                            pages == 1U ? "page" : "pages"
-                        ).c_str(),
-                        false
-                    );
-                    if (ImGui::BeginDragDropSource())
-                    {
-                        // A one-byte payload: the type string is what gates the
-                        // target, and the identity is remembered on the ui state
-                        // rather than marshalled through a byte copy of a domain
-                        // id.
-                        auto const marker = uint8{1};
-                        ImGui::SetDragDropPayload(
-                            k_sharedRegionPayload,
-                            &marker,
-                            sizeof(marker)
-                        );
-                        ui.draggedRegion = recognizer.id();
-                        ImGui::Text(
-                            "put \"%s\" on a page",
-                            recognizer.name().value().c_str()
-                        );
-                        ImGui::EndDragDropSource();
-                    }
-                }
-                ImGui::Separator();
-            }
-
             if (catalog.pages().empty())
             {
                 ImGui::TextWrapped(
-                    "No pages yet. Capture the screen you want to automate, "
-                    "select it, then press the button above."
+                    "No pages yet. Select a screen above, then press the button to "
+                    "author a page from it."
                 );
             }
 
@@ -784,10 +884,26 @@ namespace uf::workbench
 
                 auto const view = PageView::of(draft, pageId);
 
+                // The header selects Page(pageId): clicking the label selects the
+                // page, clicking the arrow only toggles it open. Highlighted while
+                // that page is the selection, so the inspector's page summary and
+                // this row agree on what is chosen.
+                auto const selectedPage = state.selection().asPage();
+                auto flags = ImGuiTreeNodeFlags_DefaultOpen
+                    | ImGuiTreeNodeFlags_OpenOnArrow
+                    | ImGuiTreeNodeFlags_OpenOnDoubleClick;
+                if (selectedPage.has_value() && selectedPage->pageId == pageId)
+                {
+                    flags |= ImGuiTreeNodeFlags_Selected;
+                }
                 auto const open = ImGui::TreeNodeEx(
                     page.name().value().c_str(),
-                    ImGuiTreeNodeFlags_DefaultOpen
+                    flags
                 );
+                if (ImGui::IsItemClicked() && !ImGui::IsItemToggledOpen())
+                {
+                    state.select(AppState::Selection::Page{pageId});
+                }
                 ImGui::SameLine();
                 if (ImGui::SmallButton("Delete Page"))
                 {
@@ -803,21 +919,25 @@ namespace uf::workbench
                     continue;
                 }
 
-                auto const sample = pageSampleSource(state, page);
-                if (sample.has_value())
+                // A page relates to screens through per-source regression cases,
+                // and several may resolve to it, so the screens are a list, not a
+                // single claim. The primary authoring sample is marked where it
+                // differs; its verdict, once a check has run, sits beside it.
+                auto const sample            = pageSampleSource(state, page);
+                auto const regressionScreens = regressionScreensForPage(
+                    state.document(),
+                    pageId
+                );
+                ImGui::SeparatorText("Regression screens");
+                if (regressionScreens.empty() && !sample.has_value())
                 {
-                    if (
-                        ImGui::SmallButton(
-                            std::format(
-                                "screen {}",
-                                shortId(sample->value())
-                            ).c_str()
-                        )
-                    )
-                    {
-                        state.select(AppState::Selection::Screen{*sample});
-                    }
-                    if (auto const* p_screen = findScreenCheck(state, *sample))
+                    ImGui::TextDisabled("none recorded");
+                }
+                for (auto const& screenId : regressionScreens)
+                {
+                    auto const isSample = sample.has_value() && *sample == screenId;
+                    drawScreenRow(state, screenId, isSample ? "  (sample)" : "");
+                    if (auto const* p_screen = findScreenCheck(state, screenId))
                     {
                         ImGui::SameLine();
                         auto const correct = (
@@ -829,10 +949,18 @@ namespace uf::workbench
                             screenCheckText(state, *p_screen).c_str()
                         );
                     }
+                }
 
-                    // A page authored before pages recorded their screen has
-                    // nothing for a check to measure against. One press states
-                    // it, which is also what turns the page's verdict on.
+                // A page authored before its screen was recorded has an inferred
+                // sample not in the list above -- and, until recorded, no verdict
+                // to measure against. One press states it, which is what turns the
+                // page's verdict on.
+                if (
+                    sample.has_value()
+                    && !std::ranges::contains(regressionScreens, *sample)
+                )
+                {
+                    drawScreenRow(state, *sample, "  (authoring sample)");
                     if (!claimedScreen(state, pageId).has_value())
                     {
                         ImGui::SameLine();
@@ -841,10 +969,6 @@ namespace uf::workbench
                             recordScreenForPage(state, ui, pageId, *sample);
                         }
                     }
-                }
-                else
-                {
-                    ImGui::TextUnformatted("screen -");
                 }
 
                 ImGui::SeparatorText("Identified by");
@@ -1015,6 +1139,69 @@ namespace uf::workbench
 
                 ImGui::TreePop();
                 ImGui::PopID();
+            }
+
+            // The shared-region palette: a live drag source, kept a separate
+            // group from the orphan bucket below (a tool next to a junk drawer is
+            // the merge decision 4 refuses). Drop targets are the per-page strips
+            // drawn above; the drag identity is remembered on ui.draggedRegion
+            // because the frame the drop lands on is the frame the source stops
+            // submitting itself.
+            auto shared = std::vector<annotation::RecognizerId>{};
+            for (auto const& recognizer : catalog.recognizers())
+            {
+                if (isRegionShared(state, recognizer.id()))
+                {
+                    shared.emplace_back(recognizer.id());
+                }
+            }
+            if (!shared.empty())
+            {
+                ImGui::SeparatorText("Shared regions");
+                ImGui::TextWrapped(
+                    "Drag one onto a page that also has it. It only works where "
+                    "the element looks the same; the drop says so straight away."
+                );
+                for (auto const& recognizer : catalog.recognizers())
+                {
+                    if (!std::ranges::contains(shared, recognizer.id()))
+                    {
+                        continue;
+                    }
+                    auto const pages = pagesPlacedOn(
+                        state.draft(),
+                        recognizer.id()
+                    ).size();
+                    ImGui::Bullet();
+                    ImGui::Selectable(
+                        std::format(
+                            "{}  (on {} {})",
+                            recognizer.name().value(),
+                            pages,
+                            pages == 1U ? "page" : "pages"
+                        ).c_str(),
+                        false
+                    );
+                    if (ImGui::BeginDragDropSource())
+                    {
+                        // A one-byte payload: the type string is what gates the
+                        // target, and the identity is remembered on the ui state
+                        // rather than marshalled through a byte copy of a domain
+                        // id.
+                        auto const marker = uint8{1};
+                        ImGui::SetDragDropPayload(
+                            k_sharedRegionPayload,
+                            &marker,
+                            sizeof(marker)
+                        );
+                        ui.draggedRegion = recognizer.id();
+                        ImGui::Text(
+                            "put \"%s\" on a page",
+                            recognizer.name().value().c_str()
+                        );
+                        ImGui::EndDragDropSource();
+                    }
+                }
             }
 
             // Anything the tree above cannot reach: an info region, or a
@@ -1908,28 +2095,22 @@ namespace uf::workbench
             }
         }
 
-        auto drawPropertiesPanel(AppState& state, PanelUiState& ui) -> void
+        // The element half of the Inspector: the selected recognizer's fields,
+        // unchanged from the former Properties panel. Draws no window chrome and
+        // no regression section -- the dispatcher owns the window, and regression
+        // is a screen concern shown under a screen selection.
+        auto drawElementInspector(
+            AppState& state,
+            PanelUiState& ui,
+            annotation::RecognizerId recognizerId
+        ) -> void
         {
-            if (!ImGui::Begin("Properties"))
-            {
-                ImGui::End();
-                return;
-            }
-
-            auto const recognizerId = state.selectedRecognizerId();
-            if (!recognizerId.has_value())
-            {
-                ImGui::TextUnformatted("Select a recognizer to edit it.");
-                ImGui::End();
-                return;
-            }
             auto const* definition = state.document().catalog().findRecognizer(
-                *recognizerId
+                recognizerId
             );
             if (definition == nullptr)
             {
-                ImGui::TextUnformatted("The selected recognizer is gone.");
-                ImGui::End();
+                ImGui::TextUnformatted("The selected element is gone.");
                 return;
             }
 
@@ -1940,7 +2121,7 @@ namespace uf::workbench
             // (docs/pitfalls/workbench-authoring-ui.md). A value snapshot cannot,
             // and every helper below reads it rather than the live pointer.
             auto const element = SelectedElement{
-                .id                   = *recognizerId,
+                .id                   = recognizerId,
                 .name                 = definition->name().value(),
                 .type                 = definition->annotationType(),
                 .thresholdBasisPoints = definition->threshold().basisPoints(),
@@ -1968,7 +2149,7 @@ namespace uf::workbench
             // field itself, which is only submitted below.
             auto const& currentName = element.name;
             if (
-                ui.nameBufferFor != *recognizerId
+                ui.nameBufferFor != recognizerId
                 || (
                     ui.nameSeededValue != currentName
                     && !ui.nameInputActive
@@ -1976,7 +2157,7 @@ namespace uf::workbench
             )
             {
                 seedBuffer(ui.nameBuffer, currentName);
-                ui.nameBufferFor   = *recognizerId;
+                ui.nameBufferFor   = recognizerId;
                 ui.nameSeededValue = currentName;
             }
             ImGui::InputText(
@@ -1988,7 +2169,7 @@ namespace uf::workbench
             if (ImGui::IsItemDeactivatedAfterEdit())
             {
                 auto draft       = state.draft();
-                auto* recognizer = findEditableRecognizer(draft, *recognizerId);
+                auto* recognizer = findEditableRecognizer(draft, recognizerId);
                 if (recognizer != nullptr)
                 {
                     recognizer->name = std::string{ui.nameBuffer.data()};
@@ -2135,7 +2316,124 @@ namespace uf::workbench
             }
 
             drawSharing(state, element);
+        }
+
+        // The screen half of the Inspector: what the screen is recorded as and
+        // the controls to change it. The regression section already keys off the
+        // selected source, which under a Screen selection is this screen, so it is
+        // reused as-is; deletion lives here too, where the former Screens panel
+        // put it.
+        auto drawScreenInspector(
+            AppState& state,
+            PanelUiState& ui,
+            annotation::SourceId sourceId
+        ) -> void
+        {
+            if (auto const* source = findSource(state, sourceId))
+            {
+                auto const provenance = std::holds_alternative<
+                    annotation::WgcSourceProvenance
+                >(source->provenance()) ? "wgc" : "imported";
+                ImGui::Text("Screen %s", shortId(sourceId.value()).c_str());
+                ImGui::TextDisabled(
+                    "%s  %s",
+                    source->contentHash().hex().substr(0, 8).c_str(),
+                    provenance
+                );
+            }
+
+            if (ImGui::Button("Delete Screen"))
+            {
+                requestDeletion(
+                    ui,
+                    deleteSource(state.draft(), sourceId),
+                    "screen"
+                );
+            }
+
             drawRegressionClassification(state, ui);
+        }
+
+        // The page half of the Inspector: a summary of what the page holds and a
+        // jump to its sample screen. Read-only; the page's members are authored
+        // from the tree.
+        auto drawPageInspector(AppState& state, annotation::PageId pageId) -> void
+        {
+            auto const* page = state.document().catalog().findPage(pageId);
+            if (page == nullptr)
+            {
+                ImGui::TextUnformatted("The selected page is gone.");
+                return;
+            }
+            ImGui::Text("Page \"%s\"", page->name().value().c_str());
+            ImGui::Separator();
+            if (auto const view = PageView::of(state.draft(), pageId))
+            {
+                ImGui::Text(
+                    "Identifying marks: %zu",
+                    view->identifiedBy.size()
+                );
+                ImGui::Text("Interactive regions: %zu", view->regions.size());
+                ImGui::Text("Info regions: %zu", view->infos.size());
+                ImGui::Text("Must not show: %zu", view->mustNotShow.size());
+            }
+            ImGui::Text(
+                "Regression screens: %zu",
+                regressionScreensForPage(state.document(), pageId).size()
+            );
+
+            auto const sample = pageSampleSource(state, *page);
+            if (sample.has_value())
+            {
+                if (
+                    ImGui::Button(
+                        std::format(
+                            "Show sample screen %s",
+                            shortId(sample->value())
+                        ).c_str()
+                    )
+                )
+                {
+                    state.select(AppState::Selection::Screen{*sample});
+                }
+            }
+            else
+            {
+                ImGui::TextDisabled("No sample screen recorded yet.");
+            }
+        }
+
+        // The Inspector: one window whose body follows the typed selection, so an
+        // element, a screen, and a page each show the controls that act on them
+        // and nothing shows a control for something not selected.
+        auto drawInspector(AppState& state, PanelUiState& ui) -> void
+        {
+            if (!ImGui::Begin("Inspector"))
+            {
+                ImGui::End();
+                return;
+            }
+
+            auto const& selection = state.selection();
+            if (auto const element = selection.asElement())
+            {
+                drawElementInspector(state, ui, element->recognizerId);
+            }
+            else if (auto const screen = selection.asScreen())
+            {
+                drawScreenInspector(state, ui, screen->sourceId);
+            }
+            else if (auto const page = selection.asPage())
+            {
+                drawPageInspector(state, page->pageId);
+            }
+            else
+            {
+                ImGui::TextWrapped(
+                    "Select a screen, page, or element in the project tree to "
+                    "inspect and edit it here."
+                );
+            }
 
             ImGui::End();
         }
@@ -2319,56 +2617,12 @@ namespace uf::workbench
 
 
 
-        auto drawActionsPanel(
-            AppState& state,
-            WorkbenchServices const& services,
-            PanelUiState& ui
-        ) -> void
+        // The Evidence tab: run a preview and read its verdict. Three explicit
+        // states, never a silent blank -- results when a preview is stored, a
+        // "re-run" prompt when one was invalidated by an edit or a screen change,
+        // and a first-run hint when none has been run at all.
+        auto drawEvidenceTab(AppState& state, PanelUiState& ui) -> void
         {
-            if (!ImGui::Begin("Actions"))
-            {
-                ImGui::End();
-                return;
-            }
-
-            if (ImGui::Button("Save + Generate"))
-            {
-                auto const assets = state.compilerSourceAssets();
-                if (!assets)
-                {
-                    ui.report(
-                        LogSeverity::Error,
-                        std::format(
-                            "save failed: {}",
-                            toString(assets.error())
-                        )
-                    );
-                }
-                else
-                {
-                    auto const status = saveAndGenerateAuthoringProject(
-                        state.projectRoot(),
-                        state.document(),
-                        *assets
-                    );
-                    if (!status)
-                    {
-                        ui.report(
-                            LogSeverity::Error,
-                            std::format(
-                                "save failed: {}",
-                                toString(status.error())
-                            )
-                        );
-                    }
-                    else
-                    {
-                        state.markSaved();
-                        ui.report(LogSeverity::Info, "saved and generated");
-                    }
-                }
-            }
-
             if (ImGui::Button("Preview"))
             {
                 auto const selectedSource = state.selectedSourceId();
@@ -2376,17 +2630,14 @@ namespace uf::workbench
                 {
                     ui.report(
                         LogSeverity::Error,
-                        "preview requires a selected source"
+                        "preview requires a selected screen"
                     );
                 }
                 else if (auto const assets = state.compilerSourceAssets(); !assets)
                 {
                     ui.report(
                         LogSeverity::Error,
-                        std::format(
-                            "preview failed: {}",
-                            toString(assets.error())
-                        )
+                        std::format("preview failed: {}", toString(assets.error()))
                     );
                 }
                 else
@@ -2425,28 +2676,55 @@ namespace uf::workbench
                 }
             }
 
-            // The check every author needs and none can do by eye: a mark always
-            // matches the image it was cut from, so only its score on the other
-            // screens says whether it identifies one screen or merely exists.
-            // It runs on a worker thread; see ModelCheckJob for why.
+            ImGui::Separator();
+            if (auto const& preview = state.lastPreview())
+            {
+                drawPreviewResult(*preview);
+            }
+            else if (state.previewInvalidated())
+            {
+                ImGui::TextWrapped(
+                    "The project changed since the last preview. Press Preview to "
+                    "run it again."
+                );
+            }
+            else
+            {
+                ImGui::TextWrapped(
+                    "Not run yet. Select a screen, then press Preview to see how "
+                    "the model resolves it."
+                );
+            }
+        }
+
+        // The Model tab: run a whole-model check and read the two tables the data
+        // supports -- one screen-verdict row per captured screen, one margin row
+        // per mark. The per-cell mark-x-screen matrix is the deferred U3 follow-up.
+        // Same three explicit states as Evidence.
+        auto drawModelTab(
+            AppState& state,
+            WorkbenchServices const& services,
+            PanelUiState& ui
+        ) -> void
+        {
             auto const checking = ui.modelCheck.running();
             ImGui::BeginDisabled(checking);
             if (ImGui::Button(checking ? "Checking..." : "Check Model"))
             {
                 startModelCheck(state, ui, {});
             }
+            ImGui::EndDisabled();
 
             // The captured screens are stills and never change; only the running
-            // target drifts, with highlights, counters, and animation. Measuring
-            // against it is the one check that says whether a mark still holds on
-            // the game as it is right now.
+            // target drifts, so measuring against it is the one check that says
+            // whether a mark still holds on the game as it is right now. Capture
+            // stays on the GUI thread that owns the graphics device; only the
+            // searching moves off it.
             auto const hasTarget = ui.targetTitle.at(0) != '\0';
             ImGui::SameLine();
-            ImGui::BeginDisabled(!hasTarget);
+            ImGui::BeginDisabled(checking || !hasTarget);
             if (ImGui::Button("Check Against Live Screen"))
             {
-                // Capture stays here: it belongs to the GUI thread that owns the
-                // graphics device. Only the searching moves off it.
                 auto captured = services.captureFromTarget(
                     annotation::SourceId{mintResourceId()},
                     std::string{ui.targetTitle.data()}
@@ -2473,56 +2751,109 @@ namespace uf::workbench
             )
             {
                 ImGui::SetTooltip(
-                    "Enter the target window title in Screens to enable this"
+                    "Enter the target window title in the toolbar to enable this"
                 );
             }
-            ImGui::EndDisabled();
 
-            ImGui::BeginDisabled(!state.canUndo());
-            if (ImGui::Button("Undo"))
+            ImGui::Separator();
+            auto const& check = state.lastModelCheck();
+            if (!check.has_value())
             {
-                if (state.undo())
+                if (state.modelCheckInvalidated())
                 {
-                    ui.report(
-                        LogSeverity::Info,
-                        std::format(
-                            "undo: {} recognizers, {} pages",
-                            state.document().catalog().recognizers().size(),
-                            state.document().catalog().pages().size()
-                        )
+                    ImGui::TextWrapped(
+                        "The project changed since the last check. Press Check "
+                        "Model to run it again."
                     );
                 }
-            }
-            ImGui::EndDisabled();
-            ImGui::SameLine();
-            ImGui::BeginDisabled(!state.canRedo());
-            if (ImGui::Button("Redo"))
-            {
-                if (state.redo())
+                else
                 {
-                    ui.report(
-                        LogSeverity::Info,
-                        std::format(
-                            "redo: {} recognizers, {} pages",
-                            state.document().catalog().recognizers().size(),
-                            state.document().catalog().pages().size()
-                        )
+                    ImGui::TextWrapped(
+                        "Not run yet. Press Check Model to score every mark "
+                        "against every screen."
                     );
                 }
+                return;
             }
-            ImGui::EndDisabled();
 
-            if (!ui.statusLine.empty())
+            auto const tableFlags = ImGuiTableFlags_Borders
+                | ImGuiTableFlags_RowBg
+                | ImGuiTableFlags_SizingStretchProp;
+
+            ImGui::SeparatorText("Screen verdicts");
+            if (
+                ImGui::BeginTable("screen-verdicts", 2, tableFlags)
+            )
             {
-                ImGui::TextWrapped("%s", ui.statusLine.c_str());
+                ImGui::TableSetupColumn("Screen");
+                ImGui::TableSetupColumn("Verdict");
+                ImGui::TableHeadersRow();
+                for (auto const& screen : check->screens)
+                {
+                    ImGui::TableNextRow();
+                    ImGui::TableNextColumn();
+                    ImGui::TextUnformatted(
+                        shortId(screen.sourceId.value()).c_str()
+                    );
+                    ImGui::TableNextColumn();
+                    auto const correct = (
+                        screen.outcome == ScreenCheckOutcome::Correct
+                    );
+                    ImGui::TextColored(
+                        correct ? k_passColor : k_failColor,
+                        "%s",
+                        screenCheckText(state, screen).c_str()
+                    );
+                }
+                ImGui::EndTable();
             }
 
-            if (auto const& preview = state.lastPreview())
+            // Each mark's own score ("here", which stays under 100% to match) and
+            // its closest score elsewhere (which must stay above); a live column
+            // when the check was given a running frame. The gap is the number
+            // worth watching -- a mark whose two are close is one frame of drift
+            // from resolving the wrong page.
+            ImGui::SeparatorText("Mark margins");
+            if (
+                ImGui::BeginTable("mark-margins", 4, tableFlags)
+            )
             {
-                drawPreviewResult(*preview);
+                ImGui::TableSetupColumn("Mark");
+                ImGui::TableSetupColumn("Here");
+                ImGui::TableSetupColumn("Elsewhere");
+                ImGui::TableSetupColumn("Live");
+                ImGui::TableHeadersRow();
+                for (auto const& margin : check->margins)
+                {
+                    ImGui::TableNextRow();
+                    ImGui::TableNextColumn();
+                    ImGui::TextUnformatted(
+                        recognizerName(state, margin.recognizerId).c_str()
+                    );
+                    ImGui::TableNextColumn();
+                    ImGui::TextUnformatted(
+                        budgetPercentText(
+                            margin.ownSadScore,
+                            margin.maximumSad
+                        ).c_str()
+                    );
+                    ImGui::TableNextColumn();
+                    ImGui::TextUnformatted(
+                        budgetPercentText(
+                            margin.nearestOtherSadScore,
+                            margin.maximumSad
+                        ).c_str()
+                    );
+                    ImGui::TableNextColumn();
+                    ImGui::TextUnformatted(
+                        budgetPercentText(
+                            margin.liveSadScore,
+                            margin.maximumSad
+                        ).c_str()
+                    );
+                }
+                ImGui::EndTable();
             }
-
-            ImGui::End();
         }
 
         // The colour a severity is drawn in, or nothing for info, which keeps the
@@ -2545,18 +2876,12 @@ namespace uf::workbench
             UF_UNREACHABLE_MSG("unknown LogSeverity value");
         }
 
-        // The operation-log window: the bounded event history newest at the
-        // bottom, each line timestamped and coloured by severity, with a button
-        // that empties the in-memory history. Its own dock window for now; the
-        // tabbed verify drawer that will host this view is U1.
-        auto drawLogPanel(PanelUiState& ui) -> void
+        // The Log tab: the bounded operation-log history newest at the bottom,
+        // each line timestamped and coloured by severity, with a button that
+        // empties the in-memory buffer. The body of the former standalone Log
+        // window, now one tab of the verify drawer.
+        auto drawLogTab(PanelUiState& ui) -> void
         {
-            if (!ImGui::Begin("Log"))
-            {
-                ImGui::End();
-                return;
-            }
-
             if (ImGui::Button("Clear"))
             {
                 ui.clearLog();
@@ -2600,8 +2925,105 @@ namespace uf::workbench
                 }
             }
             ImGui::EndChild();
+        }
+
+        // The bottom verify drawer: one docked window with Evidence, Model, and
+        // Log tabs. Drawn after applyPendingEdit, so its Preview and Check buttons
+        // act on the document the frame's edit produced -- the same post-commit
+        // ordering the former Actions panel relied on. When the drawer is
+        // collapsed or unfocused it is simply a docked window; the persistent
+        // one-line summary lives on the toolbar's status line, so no custom
+        // collapse is needed here.
+        auto drawVerifyDrawer(
+            AppState& state,
+            WorkbenchServices const& services,
+            PanelUiState& ui
+        ) -> void
+        {
+            if (!ImGui::Begin("Verify"))
+            {
+                ImGui::End();
+                return;
+            }
+
+            if (ImGui::BeginTabBar("verify-tabs"))
+            {
+                if (ImGui::BeginTabItem("Evidence"))
+                {
+                    drawEvidenceTab(state, ui);
+                    ImGui::EndTabItem();
+                }
+                if (ImGui::BeginTabItem("Model"))
+                {
+                    drawModelTab(state, services, ui);
+                    ImGui::EndTabItem();
+                }
+                if (ImGui::BeginTabItem("Log"))
+                {
+                    drawLogTab(ui);
+                    ImGui::EndTabItem();
+                }
+                ImGui::EndTabBar();
+            }
 
             ImGui::End();
+        }
+
+        // The programmatic default dock layout: toolbar across the top, project
+        // tree on the left, inspector on the right, verify drawer along the
+        // bottom, and the canvas filling the centre. Built only on a first run
+        // that restored no layout from the ini (the shell persists one to
+        // LOCALAPPDATA), so a user's saved arrangement always wins -- this never
+        // fights persistence, it seeds the first-ever session and the smoke run,
+        // which has ini persistence turned off.
+        auto buildDefaultLayout(
+            ImGuiID dockspaceId,
+            ImGuiViewport const& viewport
+        ) -> void
+        {
+            ImGui::DockBuilderRemoveNode(dockspaceId);
+            ImGui::DockBuilderAddNode(dockspaceId, ImGuiDockNodeFlags_DockSpace);
+            ImGui::DockBuilderSetNodeSize(dockspaceId, viewport.WorkSize);
+
+            auto center      = ImGuiID{};
+            auto const top   = ImGui::DockBuilderSplitNode(
+                dockspaceId,
+                ImGuiDir_Up,
+                0.06F,
+                nullptr,
+                &center
+            );
+            auto centerAfterLeft = ImGuiID{};
+            auto const left      = ImGui::DockBuilderSplitNode(
+                center,
+                ImGuiDir_Left,
+                0.22F,
+                nullptr,
+                &centerAfterLeft
+            );
+            auto centerAfterRight = ImGuiID{};
+            auto const right      = ImGui::DockBuilderSplitNode(
+                centerAfterLeft,
+                ImGuiDir_Right,
+                0.28F,
+                nullptr,
+                &centerAfterRight
+            );
+            auto canvas       = ImGuiID{};
+            auto const bottom = ImGui::DockBuilderSplitNode(
+                centerAfterRight,
+                ImGuiDir_Down,
+                0.30F,
+                nullptr,
+                &canvas
+            );
+
+            ImGui::DockBuilderDockWindow("Toolbar", top);
+            ImGui::DockBuilderDockWindow("Project", left);
+            ImGui::DockBuilderDockWindow("Inspector", right);
+            ImGui::DockBuilderDockWindow("Verify", bottom);
+            ImGui::DockBuilderDockWindow("Canvas", canvas);
+            ImGui::DockBuilderFinish(dockspaceId);
         }
     }
 
@@ -2611,29 +3033,58 @@ namespace uf::workbench
         PanelUiState& ui
     ) -> void
     {
-        // Host a full-viewport dock space so the four panels can be docked and
-        // resized against each other. Enabled by ImGuiConfigFlags_DockingEnable
-        // in the GUI shell; with no ini file the layout is not persisted between
-        // launches, so panels start floating.
-        static_cast<void>(ImGui::DockSpaceOverViewport());
+        // Host a full-viewport dock space so the panels can be docked and resized
+        // against each other. On the first frame with no layout restored from the
+        // ini -- a fresh install or the persistence-free smoke run leaves the
+        // dockspace a single empty leaf -- seed the redesign's default
+        // arrangement; a user's saved layout has splits or docked windows and is
+        // left untouched.
+        auto* p_viewport       = ImGui::GetMainViewport();
+        auto const dockspaceId = ImGui::DockSpaceOverViewport(0, p_viewport);
+        static auto layoutInitialized = false;
+        if (!layoutInitialized)
+        {
+            layoutInitialized = true;
+            auto const* p_node = ImGui::DockBuilderGetNode(dockspaceId);
+            if (
+                p_node == nullptr
+                || (p_node->IsLeafNode() && p_node->Windows.Size == 0)
+            )
+            {
+                buildDefaultLayout(dockspaceId, *p_viewport);
+            }
+        }
 
         // Collect a finished check before anything draws, so its verdicts appear
         // in the same frame the worker delivered them.
         collectModelCheck(state, ui);
 
-        drawSourcesPanel(state, services, ui);
-        drawPagesPanel(state, ui);
+        drawToolbar(state, ui);
+        drawProjectTree(state, ui);
         drawCanvasPanel(state, services, ui);
-        drawPropertiesPanel(state, ui);
+        drawInspector(state, ui);
 
         // Every panel above borrows into the document while it draws, so the
-        // frame's edit lands here, once they are all done with it. The actions
-        // panel follows rather than precedes it: it mutates the document itself
-        // and re-reads what it touches, so it must see the frame's edit already
-        // applied -- undoing right after a rename has to undo that rename, not
-        // race it.
+        // frame's edit lands here, once they are all done with it. The deferred
+        // toolbar command and the queued ingestion follow rather than precede it:
+        // a save or an undo must see the frame's widget-deactivation edit already
+        // applied, and ingestion commits its own history entry that would drop the
+        // parked edit if it ran first.
         applyPendingEdit(state, ui);
-        drawActionsPanel(state, services, ui);
+        dispatchToolbarCommand(state, ui);
+        if (std::exchange(ui.captureRequested, false))
+        {
+            performCapture(state, services, ui);
+        }
+        if (std::exchange(ui.importRequested, false))
+        {
+            performImport(state, services, ui);
+        }
+
+        // The verify drawer is drawn after the commit so its Preview and Check
+        // buttons act on the document the frame's edit produced -- the same
+        // post-commit ordering the former Actions panel relied on.
+        drawVerifyDrawer(state, services, ui);
 
         // Mirror each new status-line outcome to the bounded event history and
         // the on-disk log, so a session's actions and errors are not lost when
@@ -2654,10 +3105,5 @@ namespace uf::workbench
                 );
             }
         }
-
-        // Drawn after the mirror so the event this frame produced is already in
-        // the history. Its own dock window for now; the tabbed verify drawer that
-        // will host it is U1.
-        drawLogPanel(ui);
     }
 }

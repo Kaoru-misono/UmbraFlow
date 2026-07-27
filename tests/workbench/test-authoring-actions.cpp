@@ -276,6 +276,63 @@ namespace uf::workbench
         CHECK_FALSE(ui.modelCheck.takeResult().has_value());
     }
 
+    TEST_CASE("a queued toolbar command runs only after the parked edit lands")
+    {
+        auto state = appState();
+        auto ui    = PanelUiState{};
+
+        // The toolbar draws at the top of the frame, so a rename edit parked by a
+        // property widget and an undo clicked on the toolbar are both queued. The
+        // undo must reverse the rename, which means it has to run after the rename
+        // commits, not before.
+        requestEdit(ui, renamedDraft(state, "renamed"), "renamed the marker");
+        requestToolbarCommand(ui, ToolbarCommand::Undo);
+
+        // Nothing has run yet: the document still holds the original name.
+        CHECK(
+            state.document().catalog().recognizers().front().name().value()
+            == "home_marker"
+        );
+
+        applyPendingEdit(state, ui);
+        // The edit landed first.
+        CHECK(
+            state.document().catalog().recognizers().front().name().value()
+            == "renamed"
+        );
+
+        dispatchToolbarCommand(state, ui);
+        // Then the undo reversed the edit that had just landed.
+        CHECK(
+            state.document().catalog().recognizers().front().name().value()
+            == "home_marker"
+        );
+        CHECK_FALSE(ui.pendingToolbarCommand.has_value());
+    }
+
+    TEST_CASE("a second toolbar command in the same frame is dropped")
+    {
+        auto ui = PanelUiState{};
+
+        requestToolbarCommand(ui, ToolbarCommand::Undo);
+        requestToolbarCommand(ui, ToolbarCommand::Redo);
+
+        // One command per frame, like requestEdit: the first press wins and the
+        // second is retried on the next frame.
+        REQUIRE(ui.pendingToolbarCommand.has_value());
+        CHECK(*ui.pendingToolbarCommand == ToolbarCommand::Undo);
+    }
+
+    TEST_CASE("dispatching with nothing queued is a no-op")
+    {
+        auto state = appState();
+        auto ui    = PanelUiState{};
+
+        dispatchToolbarCommand(state, ui);
+        CHECK(ui.statusLine.empty());
+        CHECK_FALSE(state.canUndo());
+    }
+
     TEST_CASE("a refused deletion is reported and parks nothing")
     {
         auto ui = PanelUiState{};

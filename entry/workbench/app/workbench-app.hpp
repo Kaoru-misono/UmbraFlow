@@ -136,6 +136,15 @@ namespace uf::workbench
         std::optional<ModelCheck>    m_lastModelCheck{};
         bool                         m_dirty{};
 
+        // Whether a preview / model-check result that once existed was thrown away
+        // by an edit, undo, redo, or shown-screen change without a fresh result
+        // replacing it. The verify drawer reads these to tell "not run yet"
+        // (result absent, flag clear) from "the project changed -- re-run" (result
+        // absent, flag set). Cleared when a new result lands, so they never
+        // outlive the staleness they describe.
+        bool m_previewInvalidated{};
+        bool m_modelCheckInvalidated{};
+
     public:
         AppState(
             std::filesystem::path projectRoot,
@@ -215,6 +224,14 @@ namespace uf::workbench
 
         [[nodiscard]] auto dirty() const noexcept -> bool;
 
+        // Whether a preview / model check that had produced a result has since
+        // been invalidated with none run in its place. False both before the first
+        // result and immediately after a fresh one, so the drawer's three states
+        // (results / stale / empty) are decided by pairing this with lastPreview /
+        // lastModelCheck rather than by a silent blank.
+        [[nodiscard]] auto previewInvalidated() const noexcept -> bool;
+        [[nodiscard]] auto modelCheckInvalidated() const noexcept -> bool;
+
         // Commits an edited draft through the history. Returns true when the
         // draft differed from the current document and became a new undo entry,
         // marking the state dirty; returns false for an identical draft and
@@ -254,6 +271,13 @@ namespace uf::workbench
         // Drops cache entries whose SourceId is absent from the current
         // document, run once a save has persisted that document.
         auto pruneSourceCacheToDocument() -> void;
+
+        // Discards the stored preview / model check and records that it was
+        // invalidated, but only when one actually existed -- so the "stale" flag
+        // never fires for a result that was never produced. setLastPreview /
+        // setLastModelCheck clear the flag as they store a fresh result.
+        auto invalidatePreview() -> void;
+        auto invalidateModelCheck() -> void;
 
         // Degrades the typed selection when undo or redo moved the document to a
         // revision that no longer holds what it names, so later edits never

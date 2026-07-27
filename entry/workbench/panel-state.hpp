@@ -32,6 +32,20 @@ namespace uf::workbench
         Error,
     };
 
+    // A state-changing command the top toolbar draws but must not run inline. The
+    // toolbar is submitted at the top of the frame, before the panels' parked
+    // edit is committed, so a click here is queued on PanelUiState and dispatched
+    // after applyPendingEdit -- otherwise an undo would run before the same-frame
+    // widget-deactivation edit it is meant to reverse had landed. Capture and
+    // import are separate flags because they reach the platform through
+    // WorkbenchServices, which this layer deliberately does not name.
+    enum class ToolbarCommand : uint8
+    {
+        SaveAndGenerate,
+        Undo,
+        Redo,
+    };
+
     // The uppercase word the on-disk log line carries for a severity: INFO,
     // WARN, or ERROR. The shell composes the line, so keeping the mapping here
     // gives the writer and its tests one definition to share.
@@ -137,6 +151,14 @@ namespace uf::workbench
         std::string                             lastLoggedStatus{};
         std::deque<LogEvent>                    logEvents{};
         std::optional<PendingEdit>              pendingEdit{};
+
+        // A toolbar command clicked this frame, dispatched after the parked edit
+        // is committed; see ToolbarCommand for the ordering it protects. Capture
+        // and import reach the platform through WorkbenchServices, so they are
+        // flagged here and run by the shell rather than by the testable dispatch.
+        std::optional<ToolbarCommand> pendingToolbarCommand{};
+        bool                          captureRequested{};
+        bool                          importRequested{};
 
         CanvasDragTarget            dragTarget{CanvasDragTarget::None};
         std::optional<RectGripKind> dragGrip{};

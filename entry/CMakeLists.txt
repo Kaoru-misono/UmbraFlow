@@ -157,6 +157,8 @@ if(WIN32 AND TARGET ${PROJECT_NAME}_annotation)
         workbench/platform/windows-file-publication.hpp
         workbench/preview.cpp
         workbench/preview.hpp
+        workbench/project-tree.cpp
+        workbench/project-tree.hpp
         workbench/project-persistence.cpp
         workbench/project-persistence.hpp
         workbench/source-ingestion.cpp

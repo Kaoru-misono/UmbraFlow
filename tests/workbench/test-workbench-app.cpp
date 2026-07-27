@@ -547,4 +547,75 @@ namespace uf::workbench
 
         CHECK_FALSE(state.lastPreview().has_value());
     }
+
+    TEST_CASE("a fresh state reports neither preview nor check as stale")
+    {
+        // "Stale" describes a result that once existed and was thrown away, so a
+        // project with no result yet is empty rather than stale.
+        auto const state = appState();
+        CHECK_FALSE(state.previewInvalidated());
+        CHECK_FALSE(state.modelCheckInvalidated());
+    }
+
+    TEST_CASE("invalidating a result that never existed does not mark it stale")
+    {
+        // An edit before the first preview leaves the drawer at "not run yet",
+        // not "re-run": there was nothing to invalidate.
+        auto state = appState();
+
+        auto edited = state.draft();
+        edited.recognizers.at(0).name = "renamed_marker";
+        REQUIRE(state.applyEdit(edited).has_value());
+
+        CHECK_FALSE(state.previewInvalidated());
+        CHECK_FALSE(state.modelCheckInvalidated());
+    }
+
+    TEST_CASE("an edit marks a produced preview and check stale, and a rerun clears it")
+    {
+        auto state = appState();
+        state.setLastPreview(PreviewResult{});
+        state.setLastModelCheck(ModelCheck{});
+        REQUIRE(state.lastPreview().has_value());
+        REQUIRE(state.lastModelCheck().has_value());
+        CHECK_FALSE(state.previewInvalidated());
+        CHECK_FALSE(state.modelCheckInvalidated());
+
+        auto edited = state.draft();
+        edited.recognizers.at(0).name = "renamed_marker";
+        REQUIRE(state.applyEdit(edited).has_value());
+
+        // The results are gone and both are flagged stale.
+        CHECK_FALSE(state.lastPreview().has_value());
+        CHECK_FALSE(state.lastModelCheck().has_value());
+        CHECK(state.previewInvalidated());
+        CHECK(state.modelCheckInvalidated());
+
+        // A fresh result clears its own staleness.
+        state.setLastPreview(PreviewResult{});
+        CHECK_FALSE(state.previewInvalidated());
+        CHECK(state.modelCheckInvalidated());
+        state.setLastModelCheck(ModelCheck{});
+        CHECK_FALSE(state.modelCheckInvalidated());
+    }
+
+    TEST_CASE("changing the shown screen staleness only the preview, not the check")
+    {
+        // A preview is evaluated against one screen and a check spans them all, so
+        // a selection move invalidates the first and leaves the second.
+        auto state          = appState();
+        auto const sourceId = annotation::test::sourceId(k_sourceId);
+        auto const otherId  = annotation::test::sourceId(k_importA);
+
+        state.select(AppState::Selection::Screen{sourceId});
+        state.setLastPreview(PreviewResult{});
+        state.setLastModelCheck(ModelCheck{});
+
+        state.select(AppState::Selection::Screen{otherId});
+
+        CHECK_FALSE(state.lastPreview().has_value());
+        CHECK(state.previewInvalidated());
+        CHECK(state.lastModelCheck().has_value());
+        CHECK_FALSE(state.modelCheckInvalidated());
+    }
 }

@@ -100,6 +100,20 @@ namespace uf::workbench
     // panels that borrow into the document and before the one that mutates it.
     auto applyPendingEdit(AppState& state, PanelUiState& ui) -> void;
 
+    // Queues a toolbar command for after this frame's parked edit is committed.
+    // The toolbar draws at the top of the frame but must not run a save or an
+    // undo inline: an undo has to see the same-frame widget-deactivation edit
+    // already landed. One command per frame; a second press is dropped, matching
+    // requestEdit's one-commit-per-frame rule.
+    auto requestToolbarCommand(PanelUiState& ui, ToolbarCommand command) -> void;
+
+    // Runs the queued toolbar command, if any, and clears it. Called once per
+    // frame, immediately after applyPendingEdit, so save / undo / redo act on the
+    // document the frame's edit already produced. Save and generate reports its
+    // own outcome and marks the state saved; undo and redo report the resulting
+    // catalog counts, exactly as the former Actions buttons did.
+    auto dispatchToolbarCommand(AppState& state, PanelUiState& ui) -> void;
+
     // States what a deletion withdrew along the way, for the same reason
     // retypeSummary does.
     [[nodiscard]]
