@@ -1,6 +1,10 @@
 #include <task/task-context.hpp>
 
+#include <task/trace.hpp>
+
+#include <core/error/contracts.hpp>
 #include <core/error/result.hpp>
+#include <core/types/integer.hpp>
 
 #include <annotation/catalog.hpp>
 #include <annotation/recognition.hpp>
@@ -9,6 +13,7 @@
 
 #include <engine/session.hpp>
 
+#include <memory>
 #include <optional>
 #include <utility>
 
@@ -16,13 +21,33 @@ namespace uf::task
 {
     TaskContext::TaskContext(
         engine::EngineSession session,
-        TaskContextConfig config
+        TaskContextConfig config,
+        std::unique_ptr<TaskTraceSink> traceSink
     ) noexcept
         : m_session{std::move(session)}
         , m_config{std::move(config)}
+        , m_rng{m_config.randomSeed}
+        , m_traceSink{std::move(traceSink)}
     {
     }
 
+    // D6 known-popup sweep -- landing note (deliberately not a live hook).
+    //
+    // capture() and waitForPage() are the task-side observation-cycle boundaries,
+    // so a known-popup sweep that runs "once per observation cycle" would attach
+    // here. It is left as this note rather than a stored callback for two reasons.
+    // First, there is nothing to sweep yet: the real sweep needs the concrete
+    // per-daily popup list, which is P0-C work; a nullable no-op callback with no
+    // caller and no list would be speculative generality (an untested branch and a
+    // stored-callback lifetime surface for zero present benefit). Second, and
+    // decisively, a task-side hook is positioned wrong: the tight poll loop that
+    // re-captures while waiting for a page lives inside engine::EngineSession::
+    // waitForPage, which already calls its own sweepKnownPopups() once per inner
+    // cycle (session.cpp). A hook here would fire only at the START of a
+    // task-level wait, never on those inner polls, so it could not replicate the
+    // per-cycle sweep. The architecturally correct home for the real sweep is the
+    // engine's existing no-op seam (D6 replaces it with the bot:on registry in
+    // P1); this note records that the task side owns no part of that mechanism.
     auto TaskContext::capture() -> Result<ObservationSeq>
     {
         UF_TRY_VALUE(observation, m_session.observe());
@@ -102,6 +127,10 @@ namespace uf::task
         std::optional<MonotonicInstant::Duration> pollInterval
     ) -> Result<WaitResolved>
     {
+        // The per-poll observation cycle is inside engine::EngineSession::
+        // waitForPage, which runs its own sweepKnownPopups() each iteration; the
+        // task side adds no sweep hook here. See the note above capture() for why
+        // the D6 sweep stays on the engine seam rather than a task-side callback.
         UF_TRY_VALUE(
             wait,
             m_session.waitForPage(
@@ -153,5 +182,49 @@ namespace uf::task
     auto TaskContext::fatal() const noexcept -> bool
     {
         return m_fatal;
+    }
+
+    void TaskContext::latchTraceFailure() noexcept
+    {
+        m_traceFailed = true;
+    }
+
+    auto TaskContext::traceFailed() const noexcept -> bool
+    {
+        return m_traceFailed;
+    }
+
+    auto TaskContext::emitTrace(TaskTraceEvent const& event) -> Status
+    {
+        if (m_traceSink == nullptr)
+        {
+            return ok();
+        }
+        return m_traceSink->emit(event);
+    }
+
+    auto TaskContext::nowMillis() noexcept -> int64
+    {
+        return m_clock.readMillis();
+    }
+
+    auto TaskContext::nextRandomUnitDouble() noexcept -> double
+    {
+        return m_rng.nextUnitDouble();
+    }
+
+    auto TaskContext::nextRandomInRange(
+        int64 lowInclusive,
+        int64 highInclusive
+    ) noexcept -> int64
+    {
+        // Precondition, guaranteed by the binding that reads the script arguments:
+        // lowInclusive <= highInclusive and both within +/-2^53. Under it the span
+        // fits in uint64, the offset is far below 2^63 so the cast back to int64 is
+        // exact, and low + offset stays within [low, high] with no signed overflow.
+        UF_ASSERT(lowInclusive <= highInclusive);
+        auto const span   = static_cast<uint64>(highInclusive - lowInclusive) + uint64{1};
+        auto const offset = m_rng.boundedUint64(span);
+        return lowInclusive + static_cast<int64>(offset);
     }
 }

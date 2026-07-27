@@ -1,21 +1,13 @@
-#include "../annotation/test-helpers.hpp"
+#include "binding-fixture.hpp"
 
 #include <task/capability-surface.hpp>
 #include <task/task-context.hpp>
+#include <task/trace.hpp>
 
 #include <script/engine.hpp>
 #include <script/testing/cancel-probe.hpp>
 
-#include <annotation/catalog.hpp>
-#include <annotation/content-hash.hpp>
-#include <annotation/recognition.hpp>
-#include <annotation/recognition-runtime.hpp>
-#include <annotation/runtime-manifest.hpp>
-
 #include <core/error/result.hpp>
-#include <core/numeric/checked-arithmetic.hpp>
-#include <core/numeric/checked-cast.hpp>
-#include <core/time/monotonic-time.hpp>
 #include <core/types/integer.hpp>
 
 #include <domain/error.hpp>
@@ -23,16 +15,10 @@
 #include <domain/ids.hpp>
 #include <domain/space.hpp>
 
-#include <engine/ports.hpp>
-#include <engine/runtime-loader.hpp>
 #include <engine/session.hpp>
-
-#include <image/png.hpp>
 
 #include <doctest/doctest.h>
 
-#include <algorithm>
-#include <array>
 #include <chrono>
 #include <cstddef>
 #include <memory>
@@ -47,200 +33,6 @@ namespace uf::task
 {
     namespace
     {
-        namespace anno = annotation;
-
-        constexpr auto k_anchorId = "00000000-0000-0000-0000-000000000011";
-        constexpr auto k_actionId = "00000000-0000-0000-0000-000000000013";
-        constexpr auto k_pageId   = "00000000-0000-0000-0000-000000000111";
-
-        [[nodiscard]]
-        constexpr auto asByte(uint8 value) noexcept -> std::byte
-        {
-            return static_cast<std::byte>(value);
-        }
-
-        // A one-by-one grey RGBA template addressed by its content hash, mirroring
-        // the engine session fixtures so page and action evaluation behave exactly
-        // as they do in the real loop.
-        [[nodiscard]]
-        auto encodedTemplate(uint8 gray) -> anno::EncodedRuntimeTemplate
-        {
-            auto const rgba = std::vector<std::byte>{
-                asByte(gray),
-                asByte(gray),
-                asByte(gray),
-                asByte(255),
-            };
-            auto encoded = image::encodeRgbaPng("task-binding-template.png", 1, 1, rgba);
-            REQUIRE(encoded.has_value());
-            auto const hash = anno::sha256(*encoded);
-            REQUIRE(hash.has_value());
-            return anno::EncodedRuntimeTemplate{
-                .hash     = *hash,
-                .pngBytes = *std::move(encoded),
-            };
-        }
-
-        struct RuntimeParts final
-        {
-            engine::LoadedRuntime    loaded;
-            anno::ProjectFingerprint fingerprint;
-        };
-
-        // One page (page_a, required anchor grey 2) plus one action target
-        // (grey 5) authorized for that page. A grey [2,5,0] frame resolves page_a
-        // and the target hits at position 1; a grey [0,0,0] frame resolves nothing
-        // and the target misses.
-        [[nodiscard]]
-        auto singlePageRuntime() -> RuntimeParts
-        {
-            auto const fingerprint = anno::test::fingerprint(3, 1, 96, 96);
-            auto const anchorA     = anno::test::recognizerId(k_anchorId);
-            auto const actionT     = anno::test::recognizerId(k_actionId);
-            auto const pageA       = anno::test::pageId(k_pageId);
-            auto anchorTemplate = encodedTemplate(2);
-            auto actionTemplate = encodedTemplate(5);
-            auto const sourceBytes = std::array{asByte(42)};
-            auto const sourceHash  = anno::sha256(sourceBytes);
-            REQUIRE(sourceHash.has_value());
-
-            auto manifest = anno::RuntimeManifest::create(
-                anno::test::projectId("personal.task_binding"),
-                fingerprint,
-                {
-                    anno::RuntimeRecognizerSpec{
-                        .definition = anno::test::recognizer(
-                            fingerprint,
-                            anchorA,
-                            "anchor_a",
-                            anno::AnnotationType::PageAnchor,
-                            anno::test::pixelRect(0, 0, 1, 1),
-                            anno::test::pixelRect(0, 0, 3, 1),
-                            {},
-                            std::nullopt,
-                            anno::test::threshold(10'000)
-                        ),
-                        .templateHash = anchorTemplate.hash,
-                        .sourceHash   = *sourceHash,
-                    },
-                    anno::RuntimeRecognizerSpec{
-                        .definition = anno::test::recognizer(
-                            fingerprint,
-                            actionT,
-                            "action_target",
-                            anno::AnnotationType::ActionTarget,
-                            anno::test::pixelRect(0, 0, 1, 1),
-                            anno::test::pixelRect(0, 0, 3, 1),
-                            {pageA},
-                            std::nullopt,
-                            anno::test::threshold(10'000)
-                        ),
-                        .templateHash = actionTemplate.hash,
-                        .sourceHash   = *sourceHash,
-                    },
-                },
-                {anno::test::page(pageA, "page_a", {anchorA})}
-            );
-            REQUIRE(manifest.has_value());
-            auto templates = std::vector<anno::EncodedRuntimeTemplate>{};
-            templates.emplace_back(std::move(anchorTemplate));
-            templates.emplace_back(std::move(actionTemplate));
-            auto runtime = anno::RecognitionRuntime::create(
-                *std::move(manifest),
-                std::move(templates)
-            );
-            REQUIRE(runtime.has_value());
-            return RuntimeParts{
-                .loaded      = engine::LoadedRuntime{.runtime = *std::move(runtime)},
-                .fingerprint = fingerprint,
-            };
-        }
-
-        [[nodiscard]]
-        auto grayFrame(
-            anno::ProjectFingerprint fingerprint,
-            std::vector<std::byte> pixels,
-            FrameId frameId
-        ) -> Frame
-        {
-            auto const transform = CoordinateTransform::create(
-                Point<DesktopSpace>{0.0F, 0.0F},
-                static_cast<float>(fingerprint.width()),
-                static_cast<float>(fingerprint.height()),
-                fingerprint.width(),
-                fingerprint.height()
-            );
-            REQUIRE(transform.has_value());
-            auto const width = checkedCast<std::size_t>(fingerprint.width());
-            REQUIRE(width.has_value());
-            auto const stride = checkedMultiply(
-                width.value_or(std::size_t{0}),
-                bytesPerPixel(PixelFormat::Gray8)
-            );
-            REQUIRE(stride.has_value());
-            auto const buffer = std::shared_ptr<FrameBuffer const>{
-                std::make_shared<FrameBuffer>(std::move(pixels))
-            };
-            auto frame = Frame::create(
-                frameId,
-                SessionId{7},
-                TargetGeneration::fromValue(3),
-                MonotonicInstant::now(),
-                fingerprint.width(),
-                fingerprint.height(),
-                stride.value_or(std::size_t{0}),
-                PixelFormat::Gray8,
-                buffer,
-                *transform
-            );
-            REQUIRE(frame.has_value());
-            return *std::move(frame);
-        }
-
-        [[nodiscard]]
-        auto resolvingPixels() -> std::vector<std::byte>
-        {
-            return std::vector<std::byte>{asByte(2), asByte(5), asByte(0)};
-        }
-
-        [[nodiscard]]
-        auto unknownPixels() -> std::vector<std::byte>
-        {
-            return std::vector<std::byte>{asByte(0), asByte(0), asByte(0)};
-        }
-
-        // Replays a fixed sequence of frames, repeating the last once exhausted.
-        class FakeFrameSource final : public engine::FrameSource
-        {
-            std::vector<Frame> m_frames;
-            std::size_t        m_index{0};
-
-        public:
-            explicit FakeFrameSource(std::vector<Frame> frames) noexcept
-                : m_frames{std::move(frames)}
-            {
-            }
-
-            [[nodiscard]] auto capture() -> Result<Frame> override
-            {
-                if (m_frames.empty())
-                {
-                    return fail(
-                        AutomationErrorKind::CaptureUnavailable,
-                        "fake frame source has no frames to replay"
-                    );
-                }
-                auto const index = std::min(m_index, m_frames.size() - 1U);
-                ++m_index;
-                return m_frames[index];
-            }
-
-            [[nodiscard]] auto validateTargetInstance() -> Status override
-            {
-                return ok();
-            }
-        };
-
         // Requests a stop the first time a frame is captured, then still hands back
         // a valid frame. Wiring its stop token into both the engine session and the
         // task VM reproduces the single cancel source: once the stop is requested,
@@ -270,48 +62,38 @@ namespace uf::task
             }
         };
 
-        // Counts delivered clicks so fail-closed cases can assert none escaped.
-        class CountingActionSink final : public engine::ActionSink
+        // Fails every emit, so a test can prove a verb aborts when its HostCall
+        // event cannot be recorded rather than dropping the evidence silently.
+        class FailingTaskTraceSink final : public TaskTraceSink
         {
-            uint32 m_clickCount{0};
-
         public:
-            [[nodiscard]]
-            auto click(
-                Point<ClientSpace> /*point*/,
-                ObservationLease const& /*lease*/
-            ) -> Status override
+            [[nodiscard]] auto emit(TaskTraceEvent const& /*event*/) -> Status override
             {
-                ++m_clickCount;
-                return ok();
-            }
-
-            [[nodiscard]] auto clickCount() const noexcept -> uint32
-            {
-                return m_clickCount;
+                return fail(
+                    AutomationErrorKind::IoFailure,
+                    "task trace sink deliberately failing"
+                );
             }
         };
 
-        class DiscardingTraceSink final : public engine::TraceSink
+        // Fails only when recording a verb's failure. A sink that failed on every
+        // event would abort the first successful verb and no test could ever reach
+        // the failure path it wants to observe.
+        class FailOnFailedTraceSink final : public TaskTraceSink
         {
         public:
-            [[nodiscard]] auto emit(engine::TraceEvent const& /*event*/) -> Status override
+            [[nodiscard]] auto emit(TaskTraceEvent const& event) -> Status override
             {
+                if (event.outcome == HostCallOutcome::Failed)
+                {
+                    return fail(
+                        AutomationErrorKind::IoFailure,
+                        "task trace sink deliberately failing on a failure record"
+                    );
+                }
                 return ok();
             }
         };
-
-        [[nodiscard]]
-        auto baseConfig(anno::ProjectFingerprint fingerprint) -> engine::EngineSessionConfig
-        {
-            return engine::EngineSessionConfig{
-                .liveFingerprint         = fingerprint,
-                .maximumPixelComparisons = 1'000,
-                .recognitionTimeout      = std::chrono::duration_cast<
-                    MonotonicInstant::Duration
-                >(std::chrono::seconds{5}),
-            };
-        }
 
         // A constructed EngineSession plus the surface built from its own catalog
         // and a non-owning observer of the click sink. The surface is captured
@@ -423,6 +205,45 @@ namespace uf::task
                 .result    = std::move(result),
                 .markCount = markCount,
             };
+        }
+
+        // Builds a context seeded with `seed` and draws `count` values from its
+        // RNG, so two draws can be compared for reproducibility. The frame is never
+        // captured; only the seeded RNG is exercised.
+        [[nodiscard]]
+        auto drawContextDoubles(uint64 seed, std::size_t count) -> std::vector<double>
+        {
+            auto frames = std::vector<Frame>{};
+            frames.emplace_back(
+                grayFrame(anno::test::fingerprint(3, 1, 96, 96), resolvingPixels(), FrameId{50})
+            );
+            auto built = buildBinding(std::move(frames));
+            REQUIRE(built.session.has_value());
+            TaskContext context{
+                *std::move(built.session),
+                TaskContextConfig{.randomSeed = seed},
+            };
+
+            auto values = std::vector<double>{};
+            values.reserve(count);
+            for (std::size_t index = 0; index < count; ++index)
+            {
+                values.emplace_back(context.nextRandomUnitDouble());
+            }
+            return values;
+        }
+
+        TEST_CASE("Two contexts with the same seed draw the same random sequence")
+        {
+            // The seed is what a trace records to replay a run: two contexts given
+            // the same seed produce an identical sequence of at least a hundred
+            // numbers, and a different seed diverges.
+            auto const first  = drawContextDoubles(0x00C0'FFEE, 100);
+            auto const second = drawContextDoubles(0x00C0'FFEE, 100);
+            CHECK(first == second);
+
+            auto const other = drawContextDoubles(0x0BAD'F00D, 100);
+            CHECK(other != first);
         }
 
         TEST_CASE("umbra binding runs capture resolve find click into one delivered click")
@@ -726,6 +547,45 @@ namespace uf::task
             }
         }
 
+        TEST_CASE("A failing verb reports its own cause, not the trace sink's failure")
+        {
+            // A failing verb records its HostCall before it raises. If that record
+            // raised the sink's own IoFailure instead, an author debugging a failed
+            // click would be told the trace file was unwritable rather than why the
+            // click failed. The verb's cause wins; the lost evidence is latched on
+            // the context so the host still learns the trace is incomplete.
+            //
+            // Clicking consumes the observation, so the second click fails
+            // StaleObservation -- a Tier B failure umbra:try hands back rather than
+            // re-raising, which is what makes the substitution observable.
+            auto frames = std::vector<Frame>{};
+            frames.emplace_back(grayFrame(anno::test::fingerprint(3, 1, 96, 96), resolvingPixels(), FrameId{88}));
+            auto built = buildBinding(std::move(frames));
+            REQUIRE(built.session.has_value());
+            TaskContext context{
+                *std::move(built.session),
+                TaskContextConfig{},
+                std::make_unique<FailOnFailedTraceSink>(),
+            };
+
+            constexpr std::string_view source = R"lua(
+                local frame = umbra:capture()
+                local page = frame:resolve_page():resolved()
+                local hit = frame:find(umbra.recognizers.action_target)
+                if page == nil or hit == nil then return 0 end
+                umbra:click(page, hit)
+
+                local ok, err = umbra:try(function() umbra:click(page, hit) end)
+                if ok then return 0 end
+                if err.kind ~= 'stale_observation' then return 0 end
+                return 1
+            )lua";
+
+            CHECK(runBound(context, built, source) == doctest::Approx(1.0));
+            CHECK(context.traceFailed());
+            CHECK(built.clicks->clickCount() == 1);
+        }
+
         TEST_CASE("umbra binding reclaims the observation a dropped frame handle pinned")
         {
             auto frames = std::vector<Frame>{};
@@ -856,6 +716,167 @@ namespace uf::task
             // never a double-erase, and leaves the count at zero.
             context.release(*seq);
             CHECK(context.liveObservationCount() == 0);
+        }
+
+        TEST_CASE("umbra:now returns a non-negative, non-decreasing whole millisecond count")
+        {
+            auto frames = std::vector<Frame>{};
+            frames.emplace_back(grayFrame(anno::test::fingerprint(3, 1, 96, 96), resolvingPixels(), FrameId{60}));
+            auto built = buildBinding(std::move(frames));
+            REQUIRE(built.session.has_value());
+            TaskContext context{*std::move(built.session)};
+
+            // now() is a number, never negative, never runs backwards between two
+            // calls, and carries no fractional millisecond tail.
+            constexpr std::string_view source = R"lua(
+                local a = umbra:now()
+                local b = umbra:now()
+                if type(a) ~= 'number' or type(b) ~= 'number' then return 0 end
+                if a < 0 or b < 0 then return 0 end
+                if b < a then return 0 end
+                if a ~= math.floor(a) or b ~= math.floor(b) then return 0 end
+                return 1
+            )lua";
+
+            CHECK(runBound(context, built, source) == doctest::Approx(1.0));
+        }
+
+        TEST_CASE("umbra:random is the task's only RNG, covers its interval, and rejects empty ones")
+        {
+            auto frames = std::vector<Frame>{};
+            frames.emplace_back(grayFrame(anno::test::fingerprint(3, 1, 96, 96), resolvingPixels(), FrameId{61}));
+            auto built = buildBinding(std::move(frames));
+            REQUIRE(built.session.has_value());
+            TaskContext context{*std::move(built.session)};
+
+            // The sandbox removed the native clocks and RNG, so umbra:random is the
+            // sole source of randomness; no-argument random() is a float in [0, 1);
+            // random(1, 3) stays in the closed interval, is always integral, and
+            // over enough draws reaches both endpoints; and an empty or non-integer
+            // interval is rejected exactly as math.random would reject it.
+            constexpr std::string_view source = R"lua(
+                if os.time ~= nil or os.clock ~= nil then return 0 end
+                if math.random ~= nil or math.randomseed ~= nil then return 0 end
+
+                local f = umbra:random()
+                if type(f) ~= 'number' or f < 0 or f >= 1 then return 0 end
+
+                local lo, hi = 3, 1
+                for _ = 1, 400 do
+                    local r = umbra:random(1, 3)
+                    if type(r) ~= 'number' or r < 1 or r > 3 then return 0 end
+                    if r ~= math.floor(r) then return 0 end
+                    if r < lo then lo = r end
+                    if r > hi then hi = r end
+                end
+                if lo ~= 1 or hi ~= 3 then return 0 end
+
+                if pcall(function() return umbra:random(0) end) then return 0 end
+                if pcall(function() return umbra:random(5, 2) end) then return 0 end
+                if pcall(function() return umbra:random(1.5) end) then return 0 end
+
+                return 1
+            )lua";
+
+            CHECK(runBound(context, built, source) == doctest::Approx(1.0));
+        }
+
+        TEST_CASE("umbra binding emits a HostCall trace event at each engine-backed verb")
+        {
+            auto frames = std::vector<Frame>{};
+            frames.emplace_back(grayFrame(anno::test::fingerprint(3, 1, 96, 96), resolvingPixels(), FrameId{70}));
+            auto built = buildBinding(std::move(frames));
+            REQUIRE(built.session.has_value());
+
+            auto events = std::vector<TaskTraceEvent>{};
+            TaskContext context{
+                *std::move(built.session),
+                TaskContextConfig{},
+                std::make_unique<RecordingTaskTraceSink>(&events),
+            };
+
+            constexpr std::string_view source = R"lua(
+                local frame = umbra:capture()
+                local page = frame:resolve_page():resolved()
+                local hit = frame:find(umbra.recognizers.action_target)
+                umbra:click(page, hit)
+                return 1
+            )lua";
+
+            CHECK(runBound(context, built, source) == doctest::Approx(1.0));
+
+            // capture, resolve_page, find, click each emit exactly one HostCall in
+            // call order; the pure handle reads resolved() and is() emit nothing.
+            REQUIRE(events.size() == 4U);
+            for (auto const& event : events)
+            {
+                CHECK(event.kind == TaskTraceEventKind::HostCall);
+                CHECK(event.outcome == HostCallOutcome::Succeeded);
+            }
+            CHECK(events[0].verb == "capture");
+            CHECK(events[1].verb == "resolve_page");
+            CHECK(events[2].verb == "find");
+            CHECK(events[3].verb == "click");
+        }
+
+        TEST_CASE("umbra binding emits an Empty HostCall for a find that finds nothing")
+        {
+            auto frames = std::vector<Frame>{};
+            frames.emplace_back(grayFrame(anno::test::fingerprint(3, 1, 96, 96), unknownPixels(), FrameId{71}));
+            auto built = buildBinding(std::move(frames));
+            REQUIRE(built.session.has_value());
+
+            auto events = std::vector<TaskTraceEvent>{};
+            TaskContext context{
+                *std::move(built.session),
+                TaskContextConfig{},
+                std::make_unique<RecordingTaskTraceSink>(&events),
+            };
+
+            // The frame resolves nothing, so find completes without a match; its
+            // HostCall records Empty (Tier A) rather than Succeeded or Failed.
+            constexpr std::string_view source = R"lua(
+                local frame = umbra:capture()
+                local hit = frame:find(umbra.recognizers.action_target)
+                return (hit == nil) and 1 or 0
+            )lua";
+
+            CHECK(runBound(context, built, source) == doctest::Approx(1.0));
+
+            REQUIRE(events.size() == 2U);
+            CHECK(events[0].verb == "capture");
+            CHECK(events[0].outcome == HostCallOutcome::Succeeded);
+            CHECK(events[1].verb == "find");
+            CHECK(events[1].outcome == HostCallOutcome::Empty);
+        }
+
+        TEST_CASE("umbra binding aborts a verb as Tier B io_failure when the trace sink fails")
+        {
+            auto frames = std::vector<Frame>{};
+            frames.emplace_back(grayFrame(anno::test::fingerprint(3, 1, 96, 96), resolvingPixels(), FrameId{72}));
+            auto built = buildBinding(std::move(frames));
+            REQUIRE(built.session.has_value());
+
+            TaskContext context{
+                *std::move(built.session),
+                TaskContextConfig{},
+                std::make_unique<FailingTaskTraceSink>(),
+            };
+
+            // capture succeeds in the engine, but recording its HostCall fails;
+            // losing the trace evidence aborts the verb as a Tier B io_failure
+            // carrying the protected umbra.error metatable, rather than dropping
+            // the record silently (the engine trace's throw-instant discipline).
+            constexpr std::string_view source = R"lua(
+                local ok, err = pcall(function() return umbra:capture() end)
+                if ok then return 0 end
+                if err.kind ~= 'io_failure' then return 0 end
+                if getmetatable(err) ~= 'umbra.error' then return 0 end
+                return 1
+            )lua";
+
+            CHECK(runBound(context, built, source) == doctest::Approx(1.0));
+            CHECK(built.clicks->clickCount() == 0);
         }
     }
 }

@@ -1,5 +1,8 @@
 #pragma once
 
+#include <task/deterministic.hpp>
+#include <task/trace.hpp>
+
 #include <core/error/result.hpp>
 #include <core/time/monotonic-time.hpp>
 #include <core/types/integer.hpp>
@@ -11,6 +14,7 @@
 
 #include <chrono>
 #include <map>
+#include <memory>
 #include <optional>
 #include <stop_token>
 
@@ -23,6 +27,15 @@ namespace uf::task
     // integer would work; the alias documents that the value is an observation
     // identity and not an array index or a count.
     using ObservationSeq = uint64;
+
+    // The default seed for a task's deterministic RNG (umbra:random). A real run
+    // overrides it with a host-chosen seed recorded in the task trace (task-trace/
+    // v1), so a run can be replayed by re-supplying the same seed; this constant
+    // only gives tests and unconfigured contexts a stable, non-zero starting point.
+    // Because the sandbox removed math.random, umbra:random seeded from this value
+    // is a script's only randomness, so nothing outside the host can perturb the
+    // sequence.
+    inline constexpr auto k_defaultRandomSeed = uint64{0x9E3779B97F4A7C15};
 
     // Host-side configuration for one TaskContext: the wait budgets a script's
     // umbra:wait_for_page falls back to when it omits them, plus the single
@@ -58,6 +71,12 @@ namespace uf::task
         // daily. 0 disables the guard.
         uint64          maxLiveObservations{8};
         std::stop_token cancellation{};
+
+        // Fixed seed for this task's deterministic RNG (umbra:random). Left at the
+        // stable default here; the owning host injects a fresh per-run seed and
+        // records it in the task trace so a run reproduces on replay. See
+        // k_defaultRandomSeed.
+        uint64          randomSeed{k_defaultRandomSeed};
     };
 
     // The completed product of umbra:wait_for_page after the engine's move-only
@@ -90,14 +109,24 @@ namespace uf::task
     {
         engine::EngineSession m_session;
         TaskContextConfig     m_config;
+        DeterministicClock    m_clock{};
+        DeterministicRng      m_rng;
+        // The task-trace sink, or null when tracing is disabled. Owned here
+        // because the context is the single object every host verb already
+        // reaches, so HostCall events emit through it (emitTrace) without a
+        // second lifetime to thread; the owning host emits the surrounding
+        // TaskStarted / ResourcesValidated / TaskFinished through the same object.
+        std::unique_ptr<TaskTraceSink> m_traceSink;
         std::map<ObservationSeq, engine::Observation> m_observations{};
         ObservationSeq m_nextSeq{1};
         bool           m_fatal{false};
+        bool           m_traceFailed{false};
 
     public:
         explicit TaskContext(
             engine::EngineSession session,
-            TaskContextConfig config = {}
+            TaskContextConfig config = {},
+            std::unique_ptr<TaskTraceSink> traceSink = nullptr
         ) noexcept;
 
         TaskContext(TaskContext const&) = delete;
@@ -191,5 +220,48 @@ namespace uf::task
 
         [[nodiscard]]
         auto fatal() const noexcept -> bool;
+
+        // Latches that a task-trace event could not be recorded. A verb that is
+        // already failing cannot raise the sink's failure instead of its own --
+        // that would let a broken sink downgrade a cancellation into an error a
+        // script can catch -- so it latches here and raises its real cause. The
+        // owning host reads this after the run to report that the trace is
+        // incomplete.
+        void latchTraceFailure() noexcept;
+
+        [[nodiscard]]
+        auto traceFailed() const noexcept -> bool;
+
+        // Records one task-trace event through the sink installed at construction,
+        // or a success no-op when tracing is disabled (null sink). A sink failure
+        // returns the error so the caller can abort the operation whose evidence
+        // was lost, matching the engine's trace discipline. The observation and
+        // action verbs call this at their exit to emit HostCall; the owning host
+        // emits TaskStarted / ResourcesValidated / TaskFinished around the run.
+        [[nodiscard]]
+        auto emitTrace(TaskTraceEvent const& event) -> Status;
+
+        // The next reading of the task's logical clock, in whole milliseconds,
+        // backing umbra:now(). Monotone and non-decreasing across calls, and
+        // identical across runs of the same script: the clock is virtualized (a
+        // fixed logical tick per read, no wall clock), so reading it advances the
+        // clock -- hence non-const. See DeterministicClock for why now() is a
+        // reproducible logical ordinal and not real elapsed time.
+        [[nodiscard]]
+        auto nowMillis() noexcept -> int64;
+
+        // The next uniform double in [0, 1) from the task's seeded RNG, backing the
+        // no-argument umbra:random(). Deterministic for a given seed and draw order.
+        [[nodiscard]]
+        auto nextRandomUnitDouble() noexcept -> double;
+
+        // A uniform integer in [lowInclusive, highInclusive] from the task's seeded
+        // RNG, backing umbra:random(m) and umbra:random(m, n). The mapping is
+        // unbiased (rejection sampling in DeterministicRng). Precondition, enforced
+        // by the binding that parses the script arguments: lowInclusive <=
+        // highInclusive and both within +/-2^53, so the result is an exact integer.
+        [[nodiscard]]
+        auto nextRandomInRange(int64 lowInclusive, int64 highInclusive) noexcept
+            -> int64;
     };
 }

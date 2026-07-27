@@ -16,6 +16,7 @@
 #include <core/error/result.hpp>
 
 #include <annotation/catalog.hpp>
+#include <domain/error.hpp>
 #include <domain/ids.hpp>
 #include <domain/space.hpp>
 #include <engine/runtime-loader.hpp>
@@ -24,15 +25,14 @@
 #include <script/engine.hpp>
 
 #include <task/capability-surface.hpp>
+#include <task/file-trace-sink.hpp>
 #include <task/script-validator.hpp>
 #include <task/task-context.hpp>
 #include <task/task-loader.hpp>
+#include <task/trace.hpp>
 
 #include <cstddef>
 #include <filesystem>
-#include <format>
-#include <fstream>
-#include <ios>
 #include <memory>
 #include <string>
 #include <utility>
@@ -213,53 +213,12 @@ namespace uf::cli
             return report;
         }
 
-        // Records the task identity, script content hash, and Luau version in a
-        // companion file next to the engine trace (ADR 0002). It is a sidecar, not
-        // an engine-trace line, because the engine-trace/v1 schema is owned by
-        // modules/engine and must not carry task fields; the versioned task-trace
-        // schema is a later phase. Every field is a safe token -- the task name is
-        // the loader's [A-Za-z0-9_-] segment, the hash is hex, the version is a
-        // fixed spelling -- so the one-line object needs no JSON escaping.
-        [[nodiscard]]
-        auto writeTaskTraceRecord(
-            std::filesystem::path const& tracePath,
-            task::LoadedTask const& loadedTask
-        ) -> Status
-        {
-            auto sidecar = tracePath;
-            sidecar += ".task.json";
-
-            auto stream = std::ofstream{
-                sidecar,
-                std::ios::binary | std::ios::trunc
-            };
-            if (!stream.is_open())
-            {
-                return fail(
-                    AutomationErrorKind::IoFailure,
-                    std::format("cannot open task trace '{}'", sidecar.string())
-                );
-            }
-            stream << std::format(
-                "{{\"task\":\"{}\",\"script_hash\":\"{}\",\"luau_version\":\"{}\"}}\n",
-                loadedTask.name,
-                loadedTask.hash.hex(),
-                task::luauRuntimeVersion()
-            );
-            stream.flush();
-            if (!stream)
-            {
-                return fail(
-                    AutomationErrorKind::IoFailure,
-                    std::format("cannot write task trace '{}'", sidecar.string())
-                );
-            }
-            return ok();
-        }
-
         // The script flow: source a project-owned task by name, validate every
         // umbra reference before any VM exists, then run it on a task VM whose only
-        // capability is the umbra table bound to the engine session.
+        // capability is the umbra table bound to the engine session. The task-trace
+        // (task-trace/v1) records the run's identity, its validated resource
+        // closure, every host-API return, and how it ended; it is a separate
+        // versioned stream beside the engine trace, replacing the phase-2b sidecar.
         [[nodiscard]]
         auto runScriptFlow(
             RunArgs const& args,
@@ -270,13 +229,15 @@ namespace uf::cli
             // binding any target -- so a bad project, an unsafe or missing task
             // name, or a disallowed umbra reference fails without touching the
             // desktop, and, crucially, before any VM is created
-            // (annotation-design 4).
+            // (annotation-design 4). The validated resource report feeds the
+            // ResourcesValidated trace event.
             UF_TRY_VALUE(
                 surface,
                 task::CapabilitySurface::create(loaded.runtime.manifest().catalog())
             );
             UF_TRY_VALUE(loadedTask, task::loadTask(args.project, args.task));
-            UF_TRY(
+            UF_TRY_VALUE(
+                resourceReport,
                 task::validateScriptResources(
                     loadedTask.source,
                     loadedTask.name,
@@ -284,22 +245,65 @@ namespace uf::cli
                 )
             );
 
+            // Capture the project identity before the runtime moves into the
+            // session, so TaskStarted can record which project the task ran against.
+            auto const projectId = std::string{
+                loaded.runtime.manifest().catalog().projectId().value()
+            };
+
             UF_TRY_VALUE(bound, bindTargetAndSession(args, std::move(loaded)));
 
-            // Stamp the task identity and script hash (ADR 0002) once the target
-            // is bound, matching where the smoke path opens its own trace: a run
-            // that never found its window leaves no evidence files behind.
-            UF_TRY(writeTaskTraceRecord(args.trace, loadedTask));
+            // The task trace sits in its own versioned file beside the engine
+            // trace. Opened once the target is bound, matching where the engine
+            // trace opens: a run that never found its window leaves no evidence
+            // files behind.
+            auto taskTracePath = args.trace;
+            taskTracePath += ".task.jsonl";
+            UF_TRY_VALUE(
+                taskTraceSink,
+                task::FileTaskTraceSink::create(taskTracePath)
+            );
 
-            // The context owns the session and must outlive the VM that binds it,
-            // so it is declared before the Engine and destroyed after it. The one
-            // stop token drives both the engine (returns Cancelled) and the VM
-            // interrupt (hard-breaks the task thread), so a Ctrl-C is a single
-            // cancellation source, never two.
+            // The fixed seed the deterministic RNG draws from is recorded in the
+            // trace so a run reproduces on replay; the host uses the stable default
+            // until a per-run seed source lands.
+            auto const seed = task::k_defaultRandomSeed;
+
+            // The context owns the session and the task-trace sink, and must
+            // outlive the VM that binds it, so it is declared before the Engine and
+            // destroyed after it. The one stop token drives both the engine
+            // (returns Cancelled) and the VM interrupt (hard-breaks the task
+            // thread), so a Ctrl-C is a single cancellation source, never two.
             auto context = task::TaskContext{
                 std::move(bound.session),
-                task::TaskContextConfig{.cancellation = bound.cancellation.token()},
+                task::TaskContextConfig{
+                    .cancellation = bound.cancellation.token(),
+                    .randomSeed   = seed,
+                },
+                std::move(taskTraceSink),
             };
+
+            UF_TRY(
+                context.emitTrace(
+                    task::TaskTraceEvent{
+                        .kind        = task::TaskTraceEventKind::TaskStarted,
+                        .taskName    = loadedTask.name,
+                        .scriptHash  = loadedTask.hash.hex(),
+                        .luauVersion = task::luauRuntimeVersion(),
+                        .projectId   = projectId,
+                        .seed        = seed,
+                    }
+                )
+            );
+            UF_TRY(
+                context.emitTrace(
+                    task::TaskTraceEvent{
+                        .kind        = task::TaskTraceEventKind::ResourcesValidated,
+                        .recognizers = resourceReport.recognizers,
+                        .pages       = resourceReport.pages,
+                    }
+                )
+            );
 
             auto vmConfig = script::EngineConfig{
                 .cancellation      = bound.cancellation.token(),
@@ -311,7 +315,34 @@ namespace uf::cli
             // so it is discarded: a Tier B or Tier C failure surfaces as an error
             // here (Cancelled maps to the cancellation exit code at the boundary),
             // and a clean return means the task ran to completion.
-            UF_TRY(vm.runNumber(loadedTask.source, loadedTask.name));
+            auto runResult = vm.runNumber(loadedTask.source, loadedTask.name);
+
+            // Record how the generation ended before surfacing the outcome: a clean
+            // return is Completed, a cancellation spends the generation, and every
+            // other failure names its automation kind.
+            auto finishedEvent = task::TaskTraceEvent{
+                .kind = task::TaskTraceEventKind::TaskFinished,
+            };
+            if (runResult)
+            {
+                finishedEvent.exitReason = task::TaskExitReason::Completed;
+            }
+            else
+            {
+                auto const kind = automationErrorKind(runResult.error())
+                    .value_or(AutomationErrorKind::InternalInvariant);
+                finishedEvent.errorKind  = kind;
+                finishedEvent.exitReason = kind == AutomationErrorKind::Cancelled
+                    ? task::TaskExitReason::Cancelled
+                    : task::TaskExitReason::Failed;
+            }
+            auto finishStatus = context.emitTrace(finishedEvent);
+
+            // The run's own failure takes precedence over a trace-emit failure, so
+            // surface it first; a failed TaskFinished emit only fails the run when
+            // the run itself succeeded.
+            UF_TRY(std::move(runResult));
+            UF_TRY(std::move(finishStatus));
 
             return RunReport{
                 .scriptMode = true,

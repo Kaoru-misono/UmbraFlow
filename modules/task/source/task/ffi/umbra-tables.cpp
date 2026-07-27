@@ -1,11 +1,13 @@
 #include <task/capability-surface.hpp>
 #include <task/task-context.hpp>
+#include <task/trace.hpp>
 
 #include <core/error/error.hpp>
 #include <core/error/result.hpp>
 #include <core/numeric/checked-arithmetic.hpp>
 #include <core/numeric/checked-cast.hpp>
 #include <core/time/monotonic-time.hpp>
+#include <core/types/integer.hpp>
 
 #include <annotation/catalog.hpp>
 #include <annotation/recognition.hpp>
@@ -449,6 +451,83 @@ namespace uf::task
             );
         }
 
+        // The automation kind of an engine failure, defaulting an unclassified
+        // error to InternalInvariant. Mirrors raiseFromError's own mapping so the
+        // HostCall trace records exactly the kind the Tier ladder will raise.
+        [[nodiscard]]
+        auto kindOf(Error const& error) noexcept -> AutomationErrorKind
+        {
+            return automationErrorKind(error)
+                .value_or(AutomationErrorKind::InternalInvariant);
+        }
+
+        // Emits the HostCall trace event for a verb at its exit. A sink failure
+        // aborts the verb as a Tier B IoFailure: losing trace evidence is a hard
+        // error, not a silent drop, matching the engine's throw-instant emit
+        // discipline (D4). A null sink (tracing disabled) makes emitTrace a success
+        // no-op, so this is free when tracing is off and every existing binding
+        // path is unchanged.
+        auto traceHostCall(
+            lua_State* state,
+            TaskContext* context,
+            char const* verb,
+            HostCallOutcome outcome,
+            std::optional<AutomationErrorKind> errorKind
+        ) -> void
+        {
+            auto status = context->emitTrace(
+                TaskTraceEvent{
+                    .kind      = TaskTraceEventKind::HostCall,
+                    .verb      = std::string{verb},
+                    .outcome   = outcome,
+                    .errorKind = errorKind,
+                }
+            );
+            if (!status)
+            {
+                raiseTierB(
+                    state,
+                    AutomationErrorKind::IoFailure,
+                    std::string{status.error().message()}
+                );
+            }
+        }
+
+        // Records a failed verb and then raises that verb's own error. Emitting
+        // first and raising the sink's failure instead would report the wrong
+        // cause: a script asking why its click failed would be told the trace file
+        // was unwritable. The verb is failing either way, so its own cause wins and
+        // the sink failure is latched on the context, where the host reads it after
+        // the run rather than losing it silently.
+        //
+        // For a cancellation this also keeps the Tier C sentinel on the raise path.
+        // That is defense in depth rather than a live hole -- umbra:try re-checks
+        // the shared stop token and the VM interrupt breaks the thread anyway, so
+        // no test here can distinguish the orders. It is written this way because
+        // depending on those layers to cover a downgrade is how a later change to
+        // either one turns into a swallowed cancel. Never returns.
+        auto traceHostCallFailure(
+            lua_State* state,
+            TaskContext* context,
+            char const* verb,
+            Error const& error
+        ) -> void
+        {
+            auto status = context->emitTrace(
+                TaskTraceEvent{
+                    .kind      = TaskTraceEventKind::HostCall,
+                    .verb      = std::string{verb},
+                    .outcome   = HostCallOutcome::Failed,
+                    .errorKind = kindOf(error),
+                }
+            );
+            if (!status)
+            {
+                context->latchTraceFailure();
+            }
+            raiseFromError(state, context, error);
+        }
+
         // umbra:capture() -> frame handle. A capture failure maps through the Tier
         // ladder (Tier B, or Tier C for a cancellation).
         auto captureFn(lua_State* state) -> int
@@ -460,8 +539,15 @@ namespace uf::task
             auto result = context->capture();
             if (!result)
             {
-                raiseFromError(state, context, result.error());
+                traceHostCallFailure(state, context, "capture", result.error());
             }
+            traceHostCall(
+                state,
+                context,
+                "capture",
+                HostCallOutcome::Succeeded,
+                std::nullopt
+            );
             pushBoxed<FrameBox>(
                 state,
                 FrameBox{.seq = *result, .context = context},
@@ -481,8 +567,15 @@ namespace uf::task
             auto  result = context->resolvePage(frame->seq);
             if (!result)
             {
-                raiseFromError(state, context, result.error());
+                traceHostCallFailure(state, context, "resolve_page", result.error());
             }
+            traceHostCall(
+                state,
+                context,
+                "resolve_page",
+                HostCallOutcome::Succeeded,
+                std::nullopt
+            );
             pushBoxed<OutcomeBox>(
                 state,
                 OutcomeBox{.seq = frame->seq, .outcome = *std::move(result)},
@@ -505,15 +598,29 @@ namespace uf::task
             auto result = context->findAction(frame->seq, *recognizer);
             if (!result)
             {
-                raiseFromError(state, context, result.error());
+                traceHostCallFailure(state, context, "find", result.error());
             }
 
             auto found = *std::move(result);
             if (!found.has_value())
             {
+                traceHostCall(
+                    state,
+                    context,
+                    "find",
+                    HostCallOutcome::Empty,
+                    std::nullopt
+                );
                 lua_pushnil(state);
                 return 1;
             }
+            traceHostCall(
+                state,
+                context,
+                "find",
+                HostCallOutcome::Succeeded,
+                std::nullopt
+            );
             pushBoxed<HitBox>(
                 state,
                 HitBox{.seq = frame->seq, .action = *std::move(found)},
@@ -557,8 +664,15 @@ namespace uf::task
             auto  result = context->click(page->seq, hit->seq, page->page, hit->action);
             if (!result)
             {
-                raiseFromError(state, context, result.error());
+                traceHostCallFailure(state, context, "click", result.error());
             }
+            traceHostCall(
+                state,
+                context,
+                "click",
+                HostCallOutcome::Succeeded,
+                std::nullopt
+            );
             return 0;
         }
 
@@ -672,8 +786,15 @@ namespace uf::task
             auto result = context->waitForPage(*reference, timeout, pollInterval);
             if (!result)
             {
-                raiseFromError(state, context, result.error());
+                traceHostCallFailure(state, context, "wait_for_page", result.error());
             }
+            traceHostCall(
+                state,
+                context,
+                "wait_for_page",
+                HostCallOutcome::Succeeded,
+                std::nullopt
+            );
 
             auto wait = *std::move(result);
             lua_createtable(state, 0, 2);
@@ -757,6 +878,107 @@ namespace uf::task
             // Not a Tier B automation error: re-raise the script's own error so it
             // propagates past try unchanged.
             lua_error(state);
+        }
+
+        // umbra:now() -> number. The task's virtualized logical clock in whole
+        // milliseconds: a strictly increasing, fully reproducible ordinal, not real
+        // elapsed time (see DeterministicClock). It has no engine effect, so unlike
+        // the automation verbs it is not gated on the cancellation/fatal latch: it
+        // neither drives nor observes the session, and the armed VM interrupt
+        // already stops a cancelled generation on its own. Reading advances the
+        // logical clock, which is why nowMillis is a non-const context call.
+        auto nowFn(lua_State* state) -> int
+        {
+            auto* context = boundContext(state);
+            lua_pushnumber(state, static_cast<double>(context->nowMillis()));
+            return 1;
+        }
+
+        // The largest magnitude an umbra:random bound may take. Beyond 2^53 a Lua
+        // number (an IEEE double) can no longer represent every integer, so the
+        // value the script passed would already be rounded and a returned integer
+        // might not round-trip. Bounding here keeps every result an exact integer.
+        constexpr auto k_maxExactInteger = int64{9007199254740992};
+
+        // Reads a umbra:random bound at `index` as an integer. A non-number, a
+        // non-integral value, or one outside +/-2^53 is a Tier B InvalidResource,
+        // keeping the script-facing failure model single-shaped.
+        [[nodiscard]]
+        auto checkRandomInteger(lua_State* state, int index) -> int64
+        {
+            if (lua_type(state, index) != LUA_TNUMBER)
+            {
+                raiseTierB(
+                    state,
+                    AutomationErrorKind::InvalidResource,
+                    "umbra:random bounds must be integers"
+                );
+            }
+            double const raw   = lua_tonumber(state, index);
+            auto const   value = checkedIntegralCast<int64>(raw);
+            if (!value || *value > k_maxExactInteger || *value < -k_maxExactInteger)
+            {
+                raiseTierB(
+                    state,
+                    AutomationErrorKind::InvalidResource,
+                    "umbra:random bounds must be whole numbers within +/-2^53"
+                );
+            }
+            return *value;
+        }
+
+        // umbra:random([m [, n]]) -> number. Mirrors Lua's math.random over the
+        // host's deterministic seeded RNG: no argument yields a double in [0, 1);
+        // one argument m yields an integer in [1, m]; two arguments yield an integer
+        // in [m, n]. The arguments desugar to umbra.random(umbra, ...), so they sit
+        // at stack indices 2 and 3. A bad shape -- a non-integer bound, m < 1, or
+        // m > n -- is a Tier B InvalidResource, matching math.random's own rejection
+        // of an empty interval.
+        auto randomFn(lua_State* state) -> int
+        {
+            auto* context = boundContext(state);
+
+            bool const hasLow  = !lua_isnoneornil(state, 2);
+            bool const hasHigh = !lua_isnoneornil(state, 3);
+
+            if (!hasLow && !hasHigh)
+            {
+                lua_pushnumber(state, context->nextRandomUnitDouble());
+                return 1;
+            }
+
+            int64 const low = checkRandomInteger(state, 2);
+            if (!hasHigh)
+            {
+                if (low < 1)
+                {
+                    raiseTierB(
+                        state,
+                        AutomationErrorKind::InvalidResource,
+                        "umbra:random(m) requires m >= 1"
+                    );
+                }
+                lua_pushnumber(
+                    state,
+                    static_cast<double>(context->nextRandomInRange(int64{1}, low))
+                );
+                return 1;
+            }
+
+            int64 const high = checkRandomInteger(state, 3);
+            if (low > high)
+            {
+                raiseTierB(
+                    state,
+                    AutomationErrorKind::InvalidResource,
+                    "umbra:random(m, n) requires m <= n"
+                );
+            }
+            lua_pushnumber(
+                state,
+                static_cast<double>(context->nextRandomInRange(low, high))
+            );
+            return 1;
         }
 
         // Starts a fresh handle metatable on the stack with an empty __index method
@@ -950,6 +1172,15 @@ namespace uf::task
                     context
                 );
                 installUmbraVerb(state, umbra, "try", &tryFn, "umbra_try", context);
+                installUmbraVerb(state, umbra, "now", &nowFn, "umbra_now", context);
+                installUmbraVerb(
+                    state,
+                    umbra,
+                    "random",
+                    &randomFn,
+                    "umbra_random",
+                    context
+                );
             }
 
             freezeRecursive(state, umbra);
