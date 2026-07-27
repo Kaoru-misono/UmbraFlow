@@ -399,6 +399,42 @@ namespace uf::workbench
         );
     }
 
+    auto requestScreenExpectation(
+        AppState& state,
+        PanelUiState& ui,
+        annotation::SourceId source,
+        PagelessExpectation expectation
+    ) -> void
+    {
+        auto recorded = recordScreenExpectation(
+            state.draft(),
+            ScreenExpectationSpec{
+                .regressionId = annotation::RegressionId{mintResourceId()},
+                .sourceId     = source,
+                .expectation  = expectation,
+            }
+        );
+        if (!recorded)
+        {
+            ui.statusLine = std::format(
+                "recording the screen failed: {}",
+                toString(recorded.error())
+            );
+            return;
+        }
+        requestEdit(
+            ui,
+            *std::move(recorded),
+            std::format(
+                "screen {} recorded as {}",
+                shortId(source.value()),
+                expectation == PagelessExpectation::Unknown
+                    ? "none of the pages"
+                    : "ambiguous"
+            )
+        );
+    }
+
     auto requestSharedRegionOnPage(
         AppState& state,
         PanelUiState& ui,

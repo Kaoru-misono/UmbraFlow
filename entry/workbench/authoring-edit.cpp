@@ -712,6 +712,68 @@ namespace uf::workbench
         return draft;
     }
 
+    auto recordScreenExpectation(
+        AuthoringDraft draft,
+        ScreenExpectationSpec const& spec
+    ) -> Result<AuthoringDraft>
+    {
+        if (
+            !std::ranges::contains(
+                draft.sources,
+                spec.sourceId,
+                &EditableSource::id
+            )
+        )
+        {
+            return missingSource(spec.sourceId);
+        }
+
+        struct Recorded final
+        {
+            annotation::RegressionExpectation    expectation;
+            annotation::RegressionClassification classification{};
+        };
+        auto const recorded = [&]() -> Recorded
+        {
+            switch (spec.expectation)
+            {
+            case PagelessExpectation::Unknown:
+                return Recorded{
+                    .expectation    = annotation::UnknownRegression{},
+                    .classification = annotation::RegressionClassification::Negative,
+                };
+            case PagelessExpectation::Ambiguous:
+                return Recorded{
+                    .expectation    = annotation::AmbiguousRegression{},
+                    .classification = annotation::RegressionClassification::Confusable,
+                };
+            }
+            UF_UNREACHABLE_MSG("Unknown PagelessExpectation value");
+        }();
+
+        auto const existing = std::ranges::find(
+            draft.regressions,
+            spec.sourceId,
+            &EditableRegression::sourceId
+        );
+        if (existing != draft.regressions.end())
+        {
+            existing->classification = recorded.classification;
+            existing->expectation    = recorded.expectation;
+            return draft;
+        }
+
+        draft.regressions.emplace_back(
+            EditableRegression{
+                .id             = spec.regressionId,
+                .sourceId       = spec.sourceId,
+                .classification = recorded.classification,
+                .expectation    = recorded.expectation,
+            }
+        );
+        return draft;
+    }
+
     auto retypeRecognizer(
         AuthoringDraft draft,
         annotation::RecognizerId id,

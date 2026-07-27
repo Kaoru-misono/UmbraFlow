@@ -36,6 +36,7 @@
 #include <string>
 #include <string_view>
 #include <utility>
+#include <variant>
 #include <vector>
 
 namespace uf::workbench
@@ -1561,20 +1562,78 @@ namespace uf::workbench
         {
             ImGui::SeparatorText("Regression");
             auto const selectedSource = state.selectedSourceId();
-            auto const cases          = state.document().regressions();
-            auto const existing       = selectedSource.has_value()
-                ? std::ranges::find(
-                    cases,
-                    *selectedSource,
-                    &annotation::RegressionCase::sourceId
+            if (!selectedSource.has_value())
+            {
+                ImGui::TextUnformatted(
+                    "Select a screen to record a regression case."
+                );
+                return;
+            }
+
+            auto const cases    = state.document().regressions();
+            auto const existing = std::ranges::find(
+                cases,
+                *selectedSource,
+                &annotation::RegressionCase::sourceId
+            );
+
+            // What this screen is recorded as, if anything, so the author sees
+            // the state before changing it. Resolving to a page is authored from
+            // the Pages panel; the buttons here record the two pageless cases,
+            // which is what could not be recorded from the GUI before.
+            if (existing == cases.end())
+            {
+                ImGui::TextUnformatted("No regression case for this screen yet.");
+            }
+            else
+            {
+                auto const& expectation = existing->expectation();
+                if (
+                    auto const* p_resolved =
+                        std::get_if<annotation::ResolvedRegression>(&expectation)
                 )
-                : cases.end();
+                {
+                    ImGui::Text(
+                        "Recorded: resolves to page %s.",
+                        pageName(state, p_resolved->pageId).c_str()
+                    );
+                }
+                else if (
+                    std::holds_alternative<annotation::UnknownRegression>(
+                        expectation
+                    )
+                )
+                {
+                    ImGui::TextUnformatted("Recorded: none of the pages.");
+                }
+                else
+                {
+                    ImGui::TextUnformatted("Recorded: ambiguous.");
+                }
+            }
+
+            if (ImGui::Button("Record: none of the pages"))
+            {
+                requestScreenExpectation(
+                    state,
+                    ui,
+                    *selectedSource,
+                    PagelessExpectation::Unknown
+                );
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Record: ambiguous"))
+            {
+                requestScreenExpectation(
+                    state,
+                    ui,
+                    *selectedSource,
+                    PagelessExpectation::Ambiguous
+                );
+            }
 
             if (existing == cases.end())
             {
-                ImGui::TextUnformatted(
-                    "No regression case for the selected source."
-                );
                 return;
             }
 

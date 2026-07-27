@@ -455,3 +455,56 @@ ROI (routed through `EditPage::open` + `region(id).setSearchRoi`, whose
 handle was fixed to write the placement rather than the element field);
 without one — an unclaimed screen, an anchor, or an unplaced region — the
 edit writes the element's own default range and says so.
+
+## 2026-07-26 — Recording negative and ambiguous regression cases
+
+Until now every regression case the workbench could create was a
+`ResolvedRegression`: `createPageFromSource` and `claimScreenForPage` both
+pair `RegressionClassification::Positive` with "resolves to this page", and
+the Properties panel's Regression section could only *relabel* the
+classification enum of a case that already existed — it early-returned when
+the shown screen had none. `UnknownRegression` and `AmbiguousRegression`
+were never constructed anywhere under `entry/workbench`, so a real suite
+could not record "this screen is none of my pages" or "this screen is
+allowed to be ambiguous". That is the gap this closes.
+
+**What "negative" means here.** The runner checks the *expectation* variant
+(`matchesExpectation`): `Resolved{page}` must resolve to that page,
+`Unknown` must resolve to no page, `Ambiguous` must come back as
+`AmbiguousPages`. The `RegressionClassification` enum
+(`Positive`/`Negative`/`Confusable`) is the descriptive label paired with
+it. A negative case is therefore a screen recorded as `UnknownRegression` —
+it must resolve to none of the project's pages — carried with the `Negative`
+label; an ambiguous case is `AmbiguousRegression` carried with `Confusable`,
+mirroring how a claim pairs `Positive` with `Resolved`.
+
+**Where each variant's entry point lives.** The `Resolved` case is
+page-scoped: it names a page, so it stays on `EditPage`
+(`claimScreen`/`classifyScreen`) and is authored from the Pages panel's
+"record screen" button, unchanged. The two pageless variants name no page
+and cannot sit on an `EditPage` (which is always opened against one page),
+so they go through the free-function actions layer, respecting the split
+already adjudicated for screen-scoped-but-pageless semantics:
+
+- `recordScreenExpectation(AuthoringDraft, ScreenExpectationSpec)` in
+  `authoring-edit.cpp` is the pure draft transaction, a direct sibling of
+  `claimScreenForPage`. It takes a `PagelessExpectation` (`Unknown` or
+  `Ambiguous`), rewrites the screen's single case rather than adding a
+  second, sets the matching classification label, and fails when the screen
+  is not part of the draft.
+- `requestScreenExpectation(AppState&, PanelUiState&, SourceId,
+  PagelessExpectation)` in `authoring-actions.cpp` is the panel-facing
+  entry point: it mints the regression id, parks the validated draft on the
+  one-commit-per-frame `requestEdit` queue, and reports a refusal on the
+  status line (`screen <id> recorded as none of the pages` /
+  `... as ambiguous`).
+
+**UI.** The Properties panel's Regression section now always shows what the
+shown screen is recorded as (resolves-to-page / none-of-the-pages /
+ambiguous / nothing yet) and offers two buttons — "Record: none of the
+pages" and "Record: ambiguous" — that work whether or not a case already
+exists, so a screen with no case can be recorded straight into a pageless
+variant. The classification-enum combo stays as a secondary relabel for an
+existing case. Recording a `Resolved` case is deliberately left to the
+Pages panel, since it needs a page the Properties panel does not pick.
+

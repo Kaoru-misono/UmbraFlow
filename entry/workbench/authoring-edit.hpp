@@ -279,6 +279,37 @@ namespace uf::workbench
         ScreenClaimSpec const& spec
     ) -> Result<AuthoringDraft>;
 
+    // The two regression expectations that name no page: a screen the model must
+    // resolve to none of the project's pages, and one it is allowed to find
+    // ambiguous. A claim resolves to one page and belongs on EditPage, which is
+    // always opened against a page; these two are recorded against a screen
+    // alone, so they cannot live there and stay in this free-function layer.
+    enum class PagelessExpectation : uint8
+    {
+        Unknown,
+        Ambiguous,
+    };
+
+    struct ScreenExpectationSpec final
+    {
+        annotation::RegressionId regressionId;
+        annotation::SourceId     sourceId;
+        PagelessExpectation      expectation{};
+    };
+
+    // Records that one captured screen is expected to resolve to no page, or is
+    // allowed to be ambiguous, rewriting the screen's existing case rather than
+    // adding a second, since a screen carries exactly one case. The
+    // classification label is paired with the expectation -- Negative with
+    // Unknown, Confusable with Ambiguous -- the same way claimScreenForPage pairs
+    // Positive with a resolution. The regression id is only read when a new case
+    // is added. Fails when the screen is not part of the draft.
+    [[nodiscard]]
+    auto recordScreenExpectation(
+        AuthoringDraft draft,
+        ScreenExpectationSpec const& spec
+    ) -> Result<AuthoringDraft>;
+
     // A recognizer type change together with every repair the change carried
     // with it. The caller reports all of them: the authorization is a permission
     // the author did not ask for, and the cleared fields make the conversion

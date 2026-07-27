@@ -329,6 +329,67 @@ namespace uf::workbench
         CHECK(*classification == annotation::RegressionClassification::Negative);
     }
 
+    TEST_CASE("recording a pageless expectation commits and undo restores it")
+    {
+        // The screen starts recorded as the home page. Recording it as none of
+        // the pages must land through the one-per-frame queue, and an undo must
+        // put the resolved case back rather than leave the screen uncased.
+        auto state = appState();
+        auto ui    = PanelUiState{};
+        auto const sourceId = annotation::test::sourceId(k_sourceId);
+        auto const homePage = annotation::test::pageId(k_homePage);
+
+        auto const caseFor =
+            [&](AppState const& s)
+            -> std::optional<annotation::RegressionExpectation>
+        {
+            for (auto const& regression : s.document().regressions())
+            {
+                if (regression.sourceId() == sourceId)
+                {
+                    return regression.expectation();
+                }
+            }
+            return std::nullopt;
+        };
+
+        REQUIRE(
+            caseFor(state)
+            == annotation::RegressionExpectation{
+                annotation::ResolvedRegression{.pageId = homePage},
+            }
+        );
+
+        requestScreenExpectation(
+            state,
+            ui,
+            sourceId,
+            PagelessExpectation::Unknown
+        );
+        // Nothing moves until the frame's edit is applied.
+        REQUIRE(
+            caseFor(state)
+            == annotation::RegressionExpectation{
+                annotation::ResolvedRegression{.pageId = homePage},
+            }
+        );
+
+        applyPendingEdit(state, ui);
+        CHECK(
+            caseFor(state)
+            == annotation::RegressionExpectation{annotation::UnknownRegression{}}
+        );
+        REQUIRE(state.canUndo());
+
+        REQUIRE(state.undo());
+        CHECK(
+            caseFor(state)
+            == annotation::RegressionExpectation{
+                annotation::ResolvedRegression{.pageId = homePage},
+            }
+        );
+    }
+
     TEST_CASE("setTemplateRect moves the one element on every page it is placed")
     {
         auto state = appState();

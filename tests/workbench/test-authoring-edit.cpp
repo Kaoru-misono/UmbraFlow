@@ -10,6 +10,7 @@
 #include <doctest/doctest.h>
 
 #include <algorithm>
+#include <array>
 #include <cstddef>
 #include <span>
 #include <string>
@@ -699,6 +700,99 @@ namespace uf::workbench
         REQUIRE(claimed->regressions.size() == 1U);
         CHECK(claimed->regressions.at(0).sourceId == sourceId);
         CHECK(buildAuthoringDocument(*claimed).has_value());
+    }
+
+    TEST_CASE("recording a pageless expectation with no case yet adds one")
+    {
+        struct Row final
+        {
+            PagelessExpectation                  input{};
+            annotation::RegressionExpectation    expectation;
+            annotation::RegressionClassification classification{};
+        };
+        auto const rows = std::array<Row, 2>{
+            Row{
+                .input          = PagelessExpectation::Unknown,
+                .expectation    = annotation::UnknownRegression{},
+                .classification = annotation::RegressionClassification::Negative,
+            },
+            Row{
+                .input          = PagelessExpectation::Ambiguous,
+                .expectation    = annotation::AmbiguousRegression{},
+                .classification = annotation::RegressionClassification::Confusable,
+            },
+        };
+        auto const sourceId = annotation::test::sourceId(k_sourceId);
+
+        for (auto const& row : rows)
+        {
+            auto draft = makeAuthoringDraft(document());
+            draft.regressions.clear();
+
+            auto const recorded = recordScreenExpectation(
+                std::move(draft),
+                ScreenExpectationSpec{
+                    .regressionId = annotation::test::regressionId(
+                        "00000000-0000-0000-0000-000000000305"
+                    ),
+                    .sourceId    = sourceId,
+                    .expectation = row.input,
+                }
+            );
+            REQUIRE(recorded.has_value());
+            REQUIRE(recorded->regressions.size() == 1U);
+            CHECK(recorded->regressions.at(0).sourceId == sourceId);
+            CHECK(recorded->regressions.at(0).expectation == row.expectation);
+            CHECK(
+                recorded->regressions.at(0).classification == row.classification
+            );
+            CHECK(buildAuthoringDocument(*recorded).has_value());
+        }
+    }
+
+    TEST_CASE("recording a pageless expectation rewrites the existing case")
+    {
+        // A screen carries exactly one case, so recording it as ambiguous must
+        // overwrite the resolved case the document starts with, not add a second.
+        auto const sourceId = annotation::test::sourceId(k_sourceId);
+
+        auto draft = makeAuthoringDraft(document());
+        REQUIRE(draft.regressions.size() == 1U);
+
+        auto const recorded = recordScreenExpectation(
+            std::move(draft),
+            ScreenExpectationSpec{
+                .regressionId = annotation::test::regressionId(
+                    "00000000-0000-0000-0000-000000000305"
+                ),
+                .sourceId    = sourceId,
+                .expectation = PagelessExpectation::Ambiguous,
+            }
+        );
+        REQUIRE(recorded.has_value());
+        REQUIRE(recorded->regressions.size() == 1U);
+        CHECK(
+            recorded->regressions.at(0).expectation
+            == annotation::RegressionExpectation{annotation::AmbiguousRegression{}}
+        );
+        CHECK(buildAuthoringDocument(*recorded).has_value());
+    }
+
+    TEST_CASE("recording an expectation for a screen outside the draft is refused")
+    {
+        auto const recorded = recordScreenExpectation(
+            makeAuthoringDraft(document()),
+            ScreenExpectationSpec{
+                .regressionId = annotation::test::regressionId(
+                    "00000000-0000-0000-0000-000000000305"
+                ),
+                .sourceId    = annotation::test::sourceId(
+                    "00000000-0000-0000-0000-0000000009ff"
+                ),
+                .expectation = PagelessExpectation::Unknown,
+            }
+        );
+        CHECK_FALSE(recorded.has_value());
     }
 
     TEST_CASE("adding a member to a page outside the draft is refused")

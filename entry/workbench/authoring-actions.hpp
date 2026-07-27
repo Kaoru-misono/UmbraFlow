@@ -91,6 +91,19 @@ namespace uf::workbench
         std::string_view what
     ) -> void;
 
+    // Records a pageless regression expectation for one screen: that it must
+    // resolve to none of the project's pages, or that it is allowed to be
+    // ambiguous. A screen resolving to one page is a page-scoped act and is
+    // recorded through EditPage from the Pages panel; these two name no page, so
+    // they enter here. Parks the edit for this frame's commit, or reports why the
+    // backend refused.
+    auto requestScreenExpectation(
+        AppState& state,
+        PanelUiState& ui,
+        annotation::SourceId source,
+        PagelessExpectation expectation
+    ) -> void;
+
     // The screen a recognizer was authored against, if the document records one.
     [[nodiscard]]
     auto sourceOfRecognizer(
