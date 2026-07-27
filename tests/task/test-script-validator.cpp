@@ -157,6 +157,23 @@ namespace uf::task
             CHECK(report->pages.empty());
         }
 
+        TEST_CASE("The host clock and RNG verbs validate as ordinary verb calls")
+        {
+            auto const surface = buildSurface();
+
+            // umbra:now() and umbra:random() are umbra method calls, the approved
+            // verb form; they reference no resource, so validation passes with an
+            // empty report and the pre-VM pass never rejects them.
+            auto const report = validateScriptResources(
+                "local t = umbra:now()\nlocal r = umbra:random(1, 6)\nreturn t + r",
+                "clock-and-rng",
+                surface
+            );
+            REQUIRE(report.has_value());
+            CHECK(report->recognizers.empty());
+            CHECK(report->pages.empty());
+        }
+
         TEST_CASE("A reference to a missing recognizer is rejected by name")
         {
             auto const surface = buildSurface();
