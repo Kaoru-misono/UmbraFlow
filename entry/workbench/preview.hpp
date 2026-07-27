@@ -14,6 +14,7 @@
 #include <cstddef>
 #include <optional>
 #include <span>
+#include <string>
 #include <vector>
 
 namespace uf::workbench
@@ -71,14 +72,47 @@ namespace uf::workbench
 
         std::optional<PreviewAnchorRow> actionEvidence{};
         std::optional<PreviewStop>      actionStop{};
+
+        // Set when a selected action target could not be evaluated on this
+        // screen because the element is placed on several pages and this
+        // screen's page is not one of them (or the screen is unclaimed). The
+        // page and anchor evaluation above still ran; only the action search was
+        // skipped, and this states why in a line fit for the status bar. An
+        // action evidence is never reported alongside a skip note.
+        std::optional<std::string> actionSkipNote{};
     };
 
-    // The pixel-comparison ceiling one search may spend, shared by the preview
-    // and the whole-model check so both are bounded the same way. It matches the
-    // 256 Mi-pixel order of magnitude the authoring compiler bounds its own work
-    // with (k_maximumCompilationPixelWork in authoring-compiler.cpp). Hitting it
+    // The pixel-comparison ceiling ONE search may spend. This is the workbench's
+    // per-search budget: every preview and model-check search is bounded by this
+    // one number, so a single large ROI on a 4K project is measured against it
+    // rather than against a whole page's shared remainder. It matches the 256
+    // Mi-pixel order of magnitude the authoring compiler bounds its own work with
+    // (k_maximumCompilationPixelWork in authoring-compiler.cpp). Hitting it
     // surfaces as a stop reason rather than a miss.
+    //
+    // The annotation runtime, by contrast, shares one policy.maximumPixelComparisons
+    // across every anchor a page evaluation runs (recognition-runtime.cpp), so a
+    // page policy must carry this per-search budget scaled by the anchor count;
+    // see pagePolicyFor. The runtime's semantics are not changed here: the release
+    // cli and engine depend on them, so the scaling lives at the workbench edge.
     inline constexpr auto k_recognitionComparisonBudget = uint64{256} * 1024U * 1024U;
+
+    // Scales a per-search comparison budget to the total a page evaluation needs.
+    //
+    // evaluatePage shares its policy.maximumPixelComparisons across every anchor
+    // it searches, handing each the remainder, so a page of several anchors given
+    // only one per-search budget lets the first large search exhaust the whole
+    // total and starves the rest. Multiplying the per-search budget by the number
+    // of anchor searches restores a full per-search allowance to each. The
+    // deadline and cancellation are copied through untouched; only the comparison
+    // ceiling scales. A single action-target search keeps the per-search policy
+    // unscaled (anchorSearchCount of one). Overflow saturates rather than shrinks:
+    // starving searches is the defect this exists to remove.
+    [[nodiscard]]
+    auto pagePolicyFor(
+        annotation::RecognitionPolicy const& perSearchPolicy,
+        std::size_t anchorSearchCount
+    ) -> annotation::RecognitionPolicy;
 
     // Compiles the document with its in-memory sources, builds a recognition
     // runtime, and evaluates the page against the selected source's image. When

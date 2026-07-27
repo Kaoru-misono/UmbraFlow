@@ -8,6 +8,7 @@
 #include <annotation/content-hash.hpp>
 #include <annotation/recognition-runtime.hpp>
 
+#include <core/time/monotonic-time.hpp>
 #include <core/types/integer.hpp>
 
 #include <domain/space.hpp>
@@ -20,8 +21,10 @@
 
 #include <algorithm>
 #include <cstddef>
+#include <limits>
 #include <optional>
 #include <span>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -215,6 +218,217 @@ namespace uf::workbench
             preview->pageStop->reason
             == SadSearchStopReason::ComparisonBudgetExhausted
         );
+    }
+
+    TEST_CASE("pagePolicyFor scales the per-search budget by the anchor count")
+    {
+        // The named semantic of the workbench boundary: k_recognitionComparisonBudget
+        // is one search's ceiling, and a page of N anchors must be given N times
+        // that total, because evaluatePage shares one budget across all of them.
+        auto policy     = continuingPolicy(1000);
+        policy.deadline = MonotonicInstant::now();
+
+        CHECK(pagePolicyFor(policy, 1).maximumPixelComparisons == 1000U);
+        CHECK(pagePolicyFor(policy, 3).maximumPixelComparisons == 3000U);
+
+        // The deadline and cancellation are the wall-clock and cooperative
+        // guards; only the comparison ceiling scales.
+        CHECK(pagePolicyFor(policy, 3).deadline == policy.deadline);
+
+        // Overflow saturates rather than shrinking below the per-search intent:
+        // a smaller budget is the starvation the scaling exists to remove.
+        auto const huge = continuingPolicy(std::numeric_limits<uint64>::max());
+        CHECK(
+            pagePolicyFor(huge, 2).maximumPixelComparisons
+            == std::numeric_limits<uint64>::max()
+        );
+    }
+
+    namespace
+    {
+        constexpr auto k_lowAnchorId  = "00000000-0000-0000-0000-000000000441";
+        constexpr auto k_highAnchorId = "00000000-0000-0000-0000-000000000442";
+        constexpr auto k_screenAId    = "00000000-0000-0000-0000-000000000451";
+        constexpr auto k_screenBId    = "00000000-0000-0000-0000-000000000452";
+        constexpr auto k_starvePageId = "00000000-0000-0000-0000-000000000461";
+
+        // Eight distinct 1x1 gray pixels in a row, offset per screen so that
+        // neither anchor's template value (the first and last of screen A) ever
+        // appears within the ROI it is searched in. That forces each 1x1 search
+        // to scan its whole seven-column ROI -- one comparison per candidate,
+        // seven per anchor -- and finish as a miss, which is a completed evidence
+        // row. A perfect match would exit early and cost far fewer comparisons,
+        // hiding the very starvation under test.
+        [[nodiscard]]
+        auto grayRow(uint8 base) -> std::vector<std::byte>
+        {
+            auto pixels = std::vector<std::byte>{};
+            pixels.reserve(8U * 4U);
+            for (auto column = uint8{0}; column < 8U; ++column)
+            {
+                auto const value = static_cast<uint8>(base + column * 30U);
+                pixels.emplace_back(asByte(value));
+                pixels.emplace_back(asByte(value));
+                pixels.emplace_back(asByte(value));
+                pixels.emplace_back(asByte(255));
+            }
+            return pixels;
+        }
+
+        [[nodiscard]]
+        auto encodedWideRow(
+            std::vector<std::byte> const& rgba
+        ) -> std::vector<std::byte>
+        {
+            auto encoded = image::encodeRgbaPng("starve-source.png", 8, 1, rgba);
+            REQUIRE(encoded.has_value());
+            return *std::move(encoded);
+        }
+
+        [[nodiscard]]
+        auto wideSource(
+            annotation::SourceId id,
+            annotation::ProjectFingerprint fingerprint,
+            std::vector<std::byte> const& pngBytes
+        ) -> annotation::AuthoringSource
+        {
+            auto const hash = annotation::sha256(pngBytes);
+            REQUIRE(hash.has_value());
+            auto source = annotation::AuthoringSource::create(
+                annotation::AuthoringSourceSpec{
+                    .id          = id,
+                    .contentHash = *hash,
+                    .fingerprint = fingerprint,
+                    .provenance  = annotation::ImportedSourceProvenance{},
+                }
+            );
+            REQUIRE(source.has_value());
+            return *std::move(source);
+        }
+
+        struct StarvationFixture final
+        {
+            annotation::AuthoringDocument                 document;
+            std::vector<annotation::AuthoringSourceAsset> assets{};
+
+            annotation::SourceId screenA{annotation::test::sourceId(k_screenAId)};
+        };
+
+        // One page of two anchors, each of which costs seven comparisons to
+        // search. Under a shared page total equal to one per-search budget the
+        // second anchor starves; the workbench must scale the total by the anchor
+        // count so both complete.
+        [[nodiscard]]
+        auto starvationFixture() -> StarvationFixture
+        {
+            auto const fingerprint = annotation::test::fingerprint(8, 1, 96, 96);
+            auto const screenA     = annotation::test::sourceId(k_screenAId);
+            auto const screenB     = annotation::test::sourceId(k_screenBId);
+            auto const lowAnchor   = annotation::test::recognizerId(k_lowAnchorId);
+            auto const highAnchor  = annotation::test::recognizerId(k_highAnchorId);
+            auto const pageId      = annotation::test::pageId(k_starvePageId);
+
+            auto pngA = encodedWideRow(grayRow(10));
+            auto pngB = encodedWideRow(grayRow(15));
+
+            auto document = annotation::AuthoringDocument::create(
+                annotation::test::projectId(),
+                fingerprint,
+                {
+                    wideSource(screenA, fingerprint, pngA),
+                    wideSource(screenB, fingerprint, pngB),
+                },
+                {
+                    // Template is column 0 of screen A; searched in columns 1..7,
+                    // where its value never recurs, so the search misses after a
+                    // full seven-column scan.
+                    annotation::test::anchorElement(
+                        fingerprint,
+                        lowAnchor,
+                        "low_anchor",
+                        screenA,
+                        annotation::test::pixelRect(0, 0, 1, 1),
+                        annotation::test::pixelRect(1, 0, 7, 1)
+                    ),
+                    // Template is column 7 of screen A; searched in columns 0..6.
+                    annotation::test::anchorElement(
+                        fingerprint,
+                        highAnchor,
+                        "high_anchor",
+                        screenA,
+                        annotation::test::pixelRect(7, 0, 1, 1),
+                        annotation::test::pixelRect(0, 0, 7, 1)
+                    ),
+                },
+                {
+                    annotation::test::page(
+                        pageId,
+                        "home",
+                        {lowAnchor, highAnchor}
+                    ),
+                },
+                {},
+                {}
+            );
+            REQUIRE(document.has_value());
+
+            return StarvationFixture{
+                .document = *std::move(document),
+                .assets   = {
+                    annotation::AuthoringSourceAsset{
+                        .id       = screenA,
+                        .pngBytes = std::move(pngA),
+                    },
+                    annotation::AuthoringSourceAsset{
+                        .id       = screenB,
+                        .pngBytes = std::move(pngB),
+                    },
+                },
+            };
+        }
+    }
+
+    TEST_CASE("runPreview scales the page budget so no anchor starves")
+    {
+        // Each anchor costs seven comparisons. A per-search budget of ten leaves
+        // only three after the first anchor, so before the fix the second anchor
+        // hit the shared total and the preview returned one row and a page stop.
+        // The workbench now scales the page total to ten per anchor, so both
+        // anchors complete and both evidence rows appear.
+        auto const fixture = starvationFixture();
+
+        auto const preview = runPreview(
+            fixture.document,
+            fixture.assets,
+            fixture.screenA,
+            std::nullopt,
+            continuingPolicy(10)
+        );
+        REQUIRE(preview.has_value());
+        CHECK_FALSE(preview->pageStop.has_value());
+        CHECK(preview->anchorRows.size() == 2U);
+    }
+
+    TEST_CASE("runModelCheck scales each screen's page budget so no screen starves")
+    {
+        // The same starvation reaches the model check, whose per-screen page
+        // evaluation shares one budget across every anchor. With two anchors of
+        // seven comparisons each and a per-search budget of ten, an unscaled
+        // total would stop the second anchor and report the screen as Stopped.
+        auto const fixture = starvationFixture();
+
+        auto const check = runModelCheck(
+            fixture.document,
+            fixture.assets,
+            {},
+            continuingPolicy(10)
+        );
+        REQUIRE(check.has_value());
+        REQUIRE(check->screens.size() == 2U);
+        for (auto const& screen : check->screens)
+        {
+            CHECK(screen.outcome != ScreenCheckOutcome::Stopped);
+        }
     }
 
     namespace
@@ -597,6 +811,271 @@ namespace uf::workbench
         {
             CHECK_FALSE(margin.liveSadScore.has_value());
         }
+    }
+
+    namespace
+    {
+        constexpr auto k_spareSourceId = "00000000-0000-0000-0000-000000000403";
+        constexpr auto k_menuId        = "00000000-0000-0000-0000-000000000415";
+        constexpr auto k_darkMarkId    = "00000000-0000-0000-0000-000000000416";
+        constexpr auto k_lightMarkId   = "00000000-0000-0000-0000-000000000417";
+        constexpr auto k_darkPageId    = "00000000-0000-0000-0000-000000000423";
+        constexpr auto k_lightPageId   = "00000000-0000-0000-0000-000000000424";
+        constexpr auto k_darkRegId     = "00000000-0000-0000-0000-000000000433";
+        constexpr auto k_lightRegId    = "00000000-0000-0000-0000-000000000434";
+
+        struct MultiPlacedFixture final
+        {
+            annotation::AuthoringDocument                 document;
+            std::vector<annotation::AuthoringSourceAsset> assets{};
+
+            annotation::SourceId     darkSource{annotation::test::sourceId(k_sourceId)};
+            annotation::SourceId     lightSource{annotation::test::sourceId(k_otherSourceId)};
+            annotation::SourceId     spareSource{annotation::test::sourceId(k_spareSourceId)};
+            annotation::RecognizerId menuId{annotation::test::recognizerId(k_menuId)};
+            annotation::PageId       darkPageId{annotation::test::pageId(k_darkPageId)};
+            annotation::PageId       lightPageId{annotation::test::pageId(k_lightPageId)};
+        };
+
+        // One interactive element "menu" placed on two pages, each with its own
+        // claimed screen, plus a third screen no page claims. The menu template is
+        // pixel B, which appears at a DIFFERENT column on each claimed screen, so a
+        // per-screen search lands its box in a different place -- proof the runtime
+        // recognizer for that screen's page was the one evaluated. The element is
+        // selected in the UI by its own id, and every consumer keys evidence by
+        // that id, never the derived per-page recognizer id.
+        [[nodiscard]]
+        auto multiPlacedFixture() -> MultiPlacedFixture
+        {
+            auto const fingerprint = annotation::test::fingerprint(3, 1, 96, 96);
+            auto const a = std::vector{asByte(10), asByte(20), asByte(30), asByte(255)};
+            auto const b = std::vector{asByte(120), asByte(130), asByte(140), asByte(255)};
+            auto const c = std::vector{asByte(220), asByte(230), asByte(240), asByte(255)};
+            auto const y = std::vector{asByte(200), asByte(100), asByte(50), asByte(255)};
+            auto const row = [](
+                std::vector<std::byte> const& p0,
+                std::vector<std::byte> const& p1,
+                std::vector<std::byte> const& p2
+            ) -> std::vector<std::byte>
+            {
+                auto out = std::vector<std::byte>{};
+                out.insert(out.end(), p0.begin(), p0.end());
+                out.insert(out.end(), p1.begin(), p1.end());
+                out.insert(out.end(), p2.begin(), p2.end());
+                return out;
+            };
+
+            // dark = [A, B, C] -> menu (B) matches at col 1
+            // light = [B, C, Y] -> menu (B) matches at col 0
+            // spare = [A, A, A] -> no page claims it
+            auto darkPng  = encodedRow(row(a, b, c));
+            auto lightPng = encodedRow(row(b, c, y));
+            auto sparePng = encodedRow(row(a, a, a));
+
+            auto const darkSource  = annotation::test::sourceId(k_sourceId);
+            auto const lightSource = annotation::test::sourceId(k_otherSourceId);
+            auto const spareSource = annotation::test::sourceId(k_spareSourceId);
+            auto const menuId      = annotation::test::recognizerId(k_menuId);
+            auto const darkMarkId  = annotation::test::recognizerId(k_darkMarkId);
+            auto const lightMarkId = annotation::test::recognizerId(k_lightMarkId);
+            auto const darkPageId  = annotation::test::pageId(k_darkPageId);
+            auto const lightPageId = annotation::test::pageId(k_lightPageId);
+
+            auto document = annotation::AuthoringDocument::create(
+                annotation::test::projectId(),
+                fingerprint,
+                {
+                    sourceFrom(darkSource, fingerprint, darkPng),
+                    sourceFrom(lightSource, fingerprint, lightPng),
+                    sourceFrom(spareSource, fingerprint, sparePng),
+                },
+                {
+                    // dark_mark identifies the dark screen (A at col 0 only there).
+                    annotation::test::anchorElement(
+                        fingerprint,
+                        darkMarkId,
+                        "dark_mark",
+                        darkSource,
+                        annotation::test::pixelRect(0, 0, 1, 1),
+                        annotation::test::pixelRect(0, 0, 1, 1)
+                    ),
+                    // light_mark identifies the light screen (Y at col 2 only there).
+                    annotation::test::anchorElement(
+                        fingerprint,
+                        lightMarkId,
+                        "light_mark",
+                        lightSource,
+                        annotation::test::pixelRect(2, 0, 1, 1),
+                        annotation::test::pixelRect(2, 0, 1, 1)
+                    ),
+                    // menu: template cut from the dark screen at col 1 (pixel B).
+                    annotation::test::interactiveElement(
+                        fingerprint,
+                        menuId,
+                        "menu",
+                        darkSource,
+                        annotation::test::pixelRect(1, 0, 1, 1),
+                        annotation::test::pixelRect(0, 0, 3, 1)
+                    ),
+                },
+                {
+                    annotation::test::page(darkPageId, "dark", {darkMarkId}),
+                    annotation::test::page(lightPageId, "light", {lightMarkId}),
+                },
+                {
+                    annotation::test::placement(
+                        darkPageId,
+                        menuId,
+                        annotation::test::pixelRect(0, 0, 3, 1)
+                    ),
+                    annotation::test::placement(
+                        lightPageId,
+                        menuId,
+                        annotation::test::pixelRect(0, 0, 3, 1)
+                    ),
+                },
+                {
+                    annotation::RegressionCase{
+                        annotation::RegressionSpec{
+                            .id       = annotation::test::regressionId(k_darkRegId),
+                            .sourceId = darkSource,
+                            .classification =
+                                annotation::RegressionClassification::Positive,
+                            .expectation = annotation::ResolvedRegression{
+                                .pageId = darkPageId,
+                            },
+                        }
+                    },
+                    annotation::RegressionCase{
+                        annotation::RegressionSpec{
+                            .id       = annotation::test::regressionId(k_lightRegId),
+                            .sourceId = lightSource,
+                            .classification =
+                                annotation::RegressionClassification::Positive,
+                            .expectation = annotation::ResolvedRegression{
+                                .pageId = lightPageId,
+                            },
+                        }
+                    },
+                }
+            );
+            REQUIRE(document.has_value());
+
+            return MultiPlacedFixture{
+                .document = *std::move(document),
+                .assets   = {
+                    annotation::AuthoringSourceAsset{
+                        .id       = darkSource,
+                        .pngBytes = std::move(darkPng),
+                    },
+                    annotation::AuthoringSourceAsset{
+                        .id       = lightSource,
+                        .pngBytes = std::move(lightPng),
+                    },
+                    annotation::AuthoringSourceAsset{
+                        .id       = spareSource,
+                        .pngBytes = std::move(sparePng),
+                    },
+                },
+            };
+        }
+    }
+
+    TEST_CASE("runPreview evaluates a multi-placed action target on each claimed screen")
+    {
+        // The regression this fixes: selecting a multi-placed element and
+        // previewing used to fail the whole preview, because the element id it was
+        // selected by is absent from the runtime catalog -- the runtime carries one
+        // per-page recognizer under a derived id instead. The preview must resolve
+        // the page context of the shown screen and evaluate the recognizer for it.
+        auto const fixture = multiPlacedFixture();
+
+        auto const onDark = runPreview(
+            fixture.document,
+            fixture.assets,
+            fixture.darkSource,
+            fixture.menuId,
+            continuingPolicy(1000)
+        );
+        REQUIRE(onDark.has_value());
+        CHECK_FALSE(onDark->actionSkipNote.has_value());
+        REQUIRE(onDark->actionEvidence.has_value());
+        // Reported under the element id, never the derived per-page id.
+        CHECK(onDark->actionEvidence->recognizerId == fixture.menuId);
+        CHECK(onDark->actionEvidence->hit);
+        REQUIRE(onDark->actionEvidence->matchedRect.has_value());
+        CHECK(
+            onDark->actionEvidence->matchedRect.value()
+            == annotation::test::pixelRect(1, 0, 1, 1)
+        );
+
+        auto const onLight = runPreview(
+            fixture.document,
+            fixture.assets,
+            fixture.lightSource,
+            fixture.menuId,
+            continuingPolicy(1000)
+        );
+        REQUIRE(onLight.has_value());
+        REQUIRE(onLight->actionEvidence.has_value());
+        CHECK(onLight->actionEvidence->recognizerId == fixture.menuId);
+        CHECK(onLight->actionEvidence->hit);
+        REQUIRE(onLight->actionEvidence->matchedRect.has_value());
+        // The same element's box lands at a different column, because the light
+        // screen's own per-page recognizer searched it there.
+        CHECK(
+            onLight->actionEvidence->matchedRect.value()
+            == annotation::test::pixelRect(0, 0, 1, 1)
+        );
+    }
+
+    TEST_CASE("runPreview skips a multi-placed action target on an unclaimed screen")
+    {
+        // On a screen no page claims there is no page that places the element, so
+        // the action search is skipped with a note rather than failing. The page
+        // and anchor evaluation must survive.
+        auto const fixture = multiPlacedFixture();
+
+        auto const onSpare = runPreview(
+            fixture.document,
+            fixture.assets,
+            fixture.spareSource,
+            fixture.menuId,
+            continuingPolicy(1000)
+        );
+        REQUIRE(onSpare.has_value());
+        CHECK_FALSE(onSpare->actionEvidence.has_value());
+        REQUIRE(onSpare->actionSkipNote.has_value());
+        CHECK(onSpare->actionSkipNote->find("menu") != std::string::npos);
+        // The anchor rows are still there: only the action search was skipped.
+        CHECK_FALSE(onSpare->anchorRows.empty());
+    }
+
+    TEST_CASE("runModelCheck files a multi-placed element's margin under the element id")
+    {
+        // The model check evaluates each action target per screen through the
+        // recognizer for that screen's page, and records the score under the
+        // element id the UI keys margins by -- not the derived per-page id.
+        auto const fixture = multiPlacedFixture();
+
+        auto const check = runModelCheck(
+            fixture.document,
+            fixture.assets,
+            {},
+            continuingPolicy(1000)
+        );
+        REQUIRE(check.has_value());
+
+        auto const margin = std::ranges::find(
+            check->margins,
+            fixture.menuId,
+            &RecognizerMargin::recognizerId
+        );
+        REQUIRE(margin != check->margins.end());
+        // The template (pixel B) matches on both claimed screens, so its own
+        // score is a clean zero under the element id.
+        REQUIRE(margin->ownSadScore.has_value());
+        CHECK(*margin->ownSadScore == 0U);
     }
 
     TEST_CASE("runPreview rejects a source that is absent from the project")

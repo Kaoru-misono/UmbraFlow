@@ -2046,6 +2046,106 @@ namespace uf::workbench
             ImGui::End();
         }
 
+        // A recognizer's authored name, or a short form of its id when the
+        // document no longer holds it. Never empty: it goes straight into a
+        // status line beside the reason a search stopped.
+        [[nodiscard]]
+        auto recognizerName(
+            AppState const& state,
+            annotation::RecognizerId id
+        ) -> std::string
+        {
+            auto const* definition = state.document().catalog().findRecognizer(id);
+            if (definition == nullptr)
+            {
+                return shortId(id.value());
+            }
+            return definition->name().value();
+        }
+
+        // The one word that names why a search stopped, for a status line. The
+        // author reads "budget" or "deadline" and knows whether to shrink the
+        // search or wait longer -- the two have opposite fixes.
+        [[nodiscard]]
+        auto stopReasonWord(SadSearchStopReason reason) noexcept -> char const*
+        {
+            switch (reason)
+            {
+            case SadSearchStopReason::ComparisonBudgetExhausted:
+                return "budget";
+            case SadSearchStopReason::TimedOut:
+                return "deadline";
+            case SadSearchStopReason::Cancelled:
+                return "cancelled";
+            }
+            return "stopped";
+        }
+
+        // One concrete line stating what a finished preview produced: the page it
+        // resolved to and how many evidence boxes the canvas drew, plus any note
+        // the preview carried -- a skipped action search, or a box missing
+        // because a search stopped. Lowercase, in the style of the other action
+        // status lines.
+        [[nodiscard]]
+        auto previewStatusLine(
+            AppState const& state,
+            PreviewResult const& preview
+        ) -> std::string
+        {
+            auto message = std::string{"preview: "};
+            if (preview.pageStop.has_value())
+            {
+                message += std::format(
+                    "page search stopped at \"{}\" ({})",
+                    recognizerName(state, preview.pageStop->recognizerId),
+                    stopReasonWord(preview.pageStop->reason)
+                );
+            }
+            else if (preview.resolvedPageId.has_value())
+            {
+                message += std::format(
+                    "resolves to \"{}\"",
+                    pageName(state, *preview.resolvedPageId)
+                );
+            }
+            else if (
+                preview.pageKind == PreviewPageKind::Ambiguous
+            )
+            {
+                message += "two pages both match";
+            }
+            else
+            {
+                message += "no page resolves";
+            }
+
+            auto hits   = std::size_t{0};
+            auto misses = std::size_t{0};
+            for (auto const& row : preview.anchorRows)
+            {
+                (row.hit ? hits : misses) += 1U;
+            }
+            if (preview.actionEvidence.has_value())
+            {
+                (preview.actionEvidence->hit ? hits : misses) += 1U;
+            }
+            message += std::format("; {} hits, {} misses drawn", hits, misses);
+
+            if (preview.actionSkipNote.has_value())
+            {
+                message += std::format("; {}", *preview.actionSkipNote);
+            }
+            if (preview.actionStop.has_value())
+            {
+                message += std::format(
+                    "; action search stopped at \"{}\" ({})",
+                    recognizerName(state, preview.actionStop->recognizerId),
+                    stopReasonWord(preview.actionStop->reason)
+                );
+            }
+            return message;
+        }
+
         auto drawPreviewResult(PreviewResult const& preview) -> void
         {
             ImGui::SeparatorText("Preview");
@@ -2115,6 +2215,11 @@ namespace uf::workbench
                     shortId(preview.actionEvidence->recognizerId.value()).c_str(),
                     preview.actionEvidence->hit ? 1 : 0
                 );
+            }
+
+            if (preview.actionSkipNote.has_value())
+            {
+                ImGui::TextWrapped("%s", preview.actionSkipNote->c_str());
             }
         }
 
@@ -2202,8 +2307,8 @@ namespace uf::workbench
                     }
                     else
                     {
+                        ui.statusLine = previewStatusLine(state, *preview);
                         state.setLastPreview(std::move(*preview));
-                        ui.statusLine = "preview complete";
                     }
                 }
             }

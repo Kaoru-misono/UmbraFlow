@@ -552,3 +552,95 @@ ASan-smoke work in the same tree. Decisions worth recording:
   longer holds a `RecognizerDefinition const*` from the live document across the
   widgets; the sharing / type / membership helpers read the snapshot. Verified
   under the `x64-asan` `AsanSmoke` smoke.
+
+## 2026-07-27 — the (element, page) → runtime recognizer mapping seam
+
+The per-placement expansion above (2026-07-26 §7) made
+`compileAuthoringDocument` turn an element placed on N ≥ 2 pages into N runtime
+recognizers under **derived** ids, while the UI-facing `catalog()` keeps one
+recognizer per element under the **element** id. That split had a latent
+consequence the real machine surfaced: the workbench selects an action target
+by its element id, then handed that id straight to
+`RecognitionRuntime::evaluateActionTarget`. For a single-placed element the two
+ids coincide and it worked; for a multi-placed element the element id is absent
+from the runtime catalog, so the call failed with "recognizer … is not present
+in the runtime catalog" — and because the preview surfaced that as a whole-run
+error, `lastPreview()` stayed empty and the canvas drew **nothing**, including
+the anchor boxes that had computed fine.
+
+**The mapping is now one named seam.** The id derivation moved out of the
+compiler's anonymous namespace to a public function,
+`annotation::derivedRuntimeRecognizerId(elementId, pageId)`, declared beside
+`compileAuthoringDocument`. The compiler calls it to emit the recognizers;
+`preview.cpp` calls it to resolve an element id back to the runtime recognizer
+for a given page. Single source of truth, so the two can never drift; the
+generated manifest is byte-identical (the golden compiler test is unchanged),
+and a new compiler test pins that each emitted per-page id equals what the
+public function returns.
+
+**Preview and model check resolve the page context, then map.** A single-placed
+element (or an anchor) keeps its own id and is searched as before. A multi-placed
+element is searched only through the recognizer for the previewed screen's page —
+the page a regression case records for that screen. All evidence is filed under
+the **element** id (the row's `recognizerId` is rewritten back), so nothing above
+`preview.cpp` ever sees a derived id: the UI keys selection, rows, the canvas
+overlay, and model-check margins by element id, unchanged.
+
+**Skip semantics — the deliberate non-failure.** When the previewed screen is
+unclaimed, or its claiming page does not place the element, there is no runtime
+recognizer to evaluate (the element is neither authorized nor given a search
+region there). The preview does **not** fail: the page and anchor evaluation
+always runs, and `PreviewResult` carries a new `actionSkipNote` stating why
+(`action preview skipped: "menu" is not placed on this screen's page`, with a
+`— claim this screen to a page first` tail when the screen is unclaimed). The
+status line after a successful preview now states the outcome concretely —
+`preview: resolves to "…"; N hits, M misses drawn`, with the skip note or a
+"a search hit its budget, so a box is missing" tail appended when either applies.
+
+The model check maps the same way per screen: the recorded page is each captured
+screen's context, and the live frame uses the page it resolved to. A multi-placed
+element is evaluated only on a screen whose page places it — preserving the
+existing intent that a mark is scored only where it is authorized (a screen whose
+page does not place the element simply contributes no row for it, exactly as it
+carries no search region there); a single-placed element is still searched on
+every screen for the cross-screen misfire margin. A multi-placed element's score
+lands under the element id, so `findMargin` resolves it unchanged.
+
+## 2026-07-27 — per-search comparison budget at the workbench boundary
+
+`RecognitionRuntime::evaluatePage` spends one `policy.maximumPixelComparisons`
+across **every** anchor it searches, handing each search the remainder
+(recognition-runtime.cpp). The workbench had been passing
+`k_recognitionComparisonBudget` (256 Mi) as that whole-page total, so on the
+real 4K project the first large search ROI (~270 M comparisons) exhausted the
+entire budget and every later anchor reported a budget stop — the preview drew
+zero evidence rows (`preview: page search hit its budget; 0 hits, 0 misses`).
+The same starvation reached the model check's per-screen `evaluatePage` calls.
+Meanwhile `scoreRegionOnScreen` already treats the constant as one search's
+budget, which is why its "579% of budget" warnings measure a single search.
+
+**The module's budget semantics are unchanged** — the release cli and engine
+depend on the shared-remainder behavior, so nothing under `modules/` moved.
+`k_recognitionComparisonBudget` is now, by declaration, the ceiling for **one**
+search at the workbench edge. A new pure helper `pagePolicyFor(perSearchPolicy,
+anchorSearchCount)` scales only `maximumPixelComparisons` by the anchor count
+(checked multiply, saturating on the unreachable overflow) and copies the
+deadline and cancellation through untouched. `evaluatePageOn` — the single point
+every page evaluation passes through (preview, each captured screen, the live
+frame) — derives the count from the runtime catalog's `pageAnchorOrder().size()`
+(the same order `evaluatePage` iterates; placements never expand anchors, so the
+derived catalog's anchor count equals the runtime's) and applies the scale.
+Each `evaluateActionTarget` / `scoreRegionOnScreen` call is a single search and
+keeps the per-search budget unscaled (×1). The deadline remains the wall-clock
+guard.
+
+**Status line names the stop.** `previewStatusLine` now reports the concrete
+search and reason a `PreviewStop` carries — `preview: page search stopped at
+"menu" (budget)` / `(deadline)`, and an equivalent `action search stopped at
+"…" (…)` note — instead of a generic "hit its budget", since a budget stop and
+a deadline stop have opposite fixes (shrink the search vs. wait longer).
+
+Verified on the real project copy: `runPreview` under the GUI policy now
+produces both anchors' evidence rows with no budget stop on both screens (the
+matching anchor scores 0, the other misses by a wide margin), where before the
+first search alone consumed the whole page total.

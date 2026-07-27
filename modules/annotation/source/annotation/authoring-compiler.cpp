@@ -172,52 +172,6 @@ namespace uf::annotation
             return templateTasks;
         }
 
-        // The id for one per-placement runtime recognizer. An element placed on
-        // several pages expands into one recognizer per page, and each needs an
-        // id distinct from the element's own and stable across compiles. sha256
-        // over the element id bytes concatenated with the page id bytes gives
-        // both: deterministic for fixed inputs, and collision-resistant enough
-        // that a clash with a real id is astronomically unlikely -- and if one
-        // ever occurred it would fail loudly in RecognitionCatalog::create's
-        // uniqueness guard rather than silently drop a recognizer.
-        [[nodiscard]]
-        auto derivedRecognizerId(
-            RecognizerId elementId,
-            PageId pageId
-        ) -> RecognizerId
-        {
-            auto seed             = std::vector<std::byte>{};
-            auto const elementHex = elementId.value().toString();
-            auto const pageHex    = pageId.value().toString();
-            seed.reserve(elementHex.size() + pageHex.size());
-            for (auto const character : elementHex)
-            {
-                seed.emplace_back(static_cast<std::byte>(character));
-            }
-            for (auto const character : pageHex)
-            {
-                seed.emplace_back(static_cast<std::byte>(character));
-            }
-            // sha256 over an in-memory buffer cannot fail; the Result models a
-            // streaming source, which this is not.
-            auto const digest = sha256(seed);
-            UF_CHECK_MSG(
-                digest.has_value(),
-                "hashing a derived recognizer id seed must not fail"
-            );
-            auto const digestBytes = digest->bytes();
-            auto truncated         = std::array<std::byte, 16>{};
-            for (auto index = std::size_t{0}; index < truncated.size(); ++index)
-            {
-                checkedAt(truncated, index) = static_cast<std::byte>(
-                    checkedAt(digestBytes, index)
-                );
-            }
-            return RecognizerId{
-                ResourceId::fromBytes(std::span<std::byte const, 16>{truncated})
-            };
-        }
-
         // The name for one per-placement runtime recognizer: the element name and
         // the page name joined by an underscore. Both are already valid ASCII
         // Luau member keys, so their underscore-joined form is one too, and the
@@ -236,6 +190,43 @@ namespace uf::annotation
             );
         }
 
+    }
+
+    auto derivedRuntimeRecognizerId(
+        RecognizerId elementId,
+        PageId pageId
+    ) -> RecognizerId
+    {
+        auto seed             = std::vector<std::byte>{};
+        auto const elementHex = elementId.value().toString();
+        auto const pageHex    = pageId.value().toString();
+        seed.reserve(elementHex.size() + pageHex.size());
+        for (auto const character : elementHex)
+        {
+            seed.emplace_back(static_cast<std::byte>(character));
+        }
+        for (auto const character : pageHex)
+        {
+            seed.emplace_back(static_cast<std::byte>(character));
+        }
+        // sha256 over an in-memory buffer cannot fail; the Result models a
+        // streaming source, which this is not.
+        auto const digest = sha256(seed);
+        UF_CHECK_MSG(
+            digest.has_value(),
+            "hashing a derived recognizer id seed must not fail"
+        );
+        auto const digestBytes = digest->bytes();
+        auto truncated         = std::array<std::byte, 16>{};
+        for (auto index = std::size_t{0}; index < truncated.size(); ++index)
+        {
+            checkedAt(truncated, index) = static_cast<std::byte>(
+                checkedAt(digestBytes, index)
+            );
+        }
+        return RecognizerId{
+            ResourceId::fromBytes(std::span<std::byte const, 16>{truncated})
+        };
     }
 
     auto compileAuthoringDocument(
@@ -604,7 +595,7 @@ namespace uf::annotation
                     UF_TRY_VALUE(
                         spec,
                         buildSpec(
-                            derivedRecognizerId(element.id(), placement.pageId),
+                            derivedRuntimeRecognizerId(element.id(), placement.pageId),
                             std::move(name),
                             placement.searchRoi,
                             std::vector<PageId>{placement.pageId}

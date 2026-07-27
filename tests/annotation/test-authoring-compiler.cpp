@@ -796,5 +796,12 @@ namespace uf::annotation
         REQUIRE(p_oneAsset != nullptr);
         REQUIRE(p_twoAsset != nullptr);
         CHECK(p_oneAsset->templateHash == p_twoAsset->templateHash);
+
+        // The public seam is the same mapping the compiler used: each per-page
+        // recognizer's id is derivedRuntimeRecognizerId(element, page). Every
+        // consumer of the manifest resolves an element id back to a runtime
+        // recognizer through this, so it must agree with what was emitted.
+        CHECK(p_one->id() == derivedRuntimeRecognizerId(actionId, pageOneId));
+        CHECK(p_two->id() == derivedRuntimeRecognizerId(actionId, pageTwoId));
     }
 }

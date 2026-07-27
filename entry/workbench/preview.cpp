@@ -20,9 +20,12 @@
 
 #include <algorithm>
 #include <cstddef>
+#include <format>
+#include <limits>
 #include <memory>
 #include <optional>
 #include <span>
+#include <string>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -159,6 +162,14 @@ namespace uf::workbench
         // The page half of a preview: every anchor's evidence and how the page
         // classified. Shared so the model check evaluates each screen once,
         // rather than once per recognizer it wants a score for.
+        //
+        // The policy arrives carrying the per-search budget. evaluatePage shares
+        // its budget across every anchor, so it is scaled here by the runtime's
+        // anchor count -- the same page-anchor order evaluatePage iterates -- so
+        // each anchor keeps a full per-search allowance rather than the first
+        // large search spending the whole page's total. This is the one place
+        // every page evaluation passes through, so scaling here covers the
+        // preview, every captured screen, and the live frame alike.
         [[nodiscard]]
         auto evaluatePageOn(
             annotation::RecognitionRuntime& runtime,
@@ -167,9 +178,12 @@ namespace uf::workbench
             annotation::RecognitionPolicy const& policy
         ) -> Result<PreviewResult>
         {
+            auto const anchorCount =
+                runtime.manifest().catalog().pageAnchorOrder().size();
+            auto const pagePolicy = pagePolicyFor(policy, anchorCount);
             UF_TRY_VALUE(
                 pageAttempt,
-                runtime.evaluatePage(frame, fingerprint, policy)
+                runtime.evaluatePage(frame, fingerprint, pagePolicy)
             );
 
             auto result = PreviewResult{};
@@ -225,6 +239,69 @@ namespace uf::workbench
                 )
                 {
                     return p_resolved->pageId;
+                }
+            }
+            return std::nullopt;
+        }
+
+        // How many pages an element is placed on. Anchors and unplaced elements
+        // are zero; a single placement and several are the two cases the
+        // compiler treats differently when it assigns runtime recognizer ids.
+        [[nodiscard]]
+        auto placementCountOf(
+            annotation::AuthoringDocument const& document,
+            annotation::RecognizerId elementId
+        ) -> std::size_t
+        {
+            auto count = std::size_t{0};
+            for (auto const& placement : document.placements())
+            {
+                if (placement.elementId == elementId)
+                {
+                    ++count;
+                }
+            }
+            return count;
+        }
+
+        // The runtime recognizer that stands for an action element on a screen
+        // whose page is pageContext. An element with at most one placement keeps
+        // its own id, present in the runtime under that id, and is searched on
+        // every screen; an element placed on several pages is represented by one
+        // runtime recognizer per page (see annotation::derivedRuntimeRecognizerId),
+        // so only the recognizer for pageContext -- and only when that page
+        // actually places the element -- may be evaluated. Returns nullopt when a
+        // multi-placed element is not placed on pageContext, or the screen is
+        // unclaimed: there is neither an authorization nor a search region for it
+        // there, so it is not searched. The UI keys evidence by the element id, so
+        // the caller must file whatever this recognizer produces under the element
+        // id, never the derived one.
+        [[nodiscard]]
+        auto runtimeRecognizerFor(
+            annotation::AuthoringDocument const& document,
+            annotation::RecognizerId elementId,
+            std::optional<annotation::PageId> pageContext
+        ) -> std::optional<annotation::RecognizerId>
+        {
+            if (placementCountOf(document, elementId) <= 1U)
+            {
+                return elementId;
+            }
+            if (!pageContext.has_value())
+            {
+                return std::nullopt;
+            }
+            for (auto const& placement : document.placements())
+            {
+                if (
+                    placement.elementId == elementId
+                    && placement.pageId == *pageContext
+                )
+                {
+                    return annotation::derivedRuntimeRecognizerId(
+                        elementId,
+                        *pageContext
+                    );
                 }
             }
             return std::nullopt;
@@ -429,31 +506,78 @@ namespace uf::workbench
             }
         }
 
+        // One action search on one screen: the runtime recognizer to evaluate,
+        // paired with the element id its evidence must be filed under. They differ
+        // only for an element placed on several pages, whose per-page runtime
+        // recognizer carries a derived id the UI never sees.
+        struct ActionSearch final
+        {
+            annotation::RecognizerId runtimeId;
+            annotation::RecognizerId elementId;
+        };
+
+        // The action searches to run on a screen whose page is pageContext, one
+        // per action element that is searched there. A single-placement element is
+        // always included under its own id; a multi-placed element is included
+        // only when pageContext places it, through the recognizer for that page.
+        // An element not searched here contributes no entry, exactly as it
+        // contributes no search region there.
+        [[nodiscard]]
+        auto actionSearchesOn(
+            annotation::AuthoringDocument const& document,
+            std::span<annotation::RecognizerId const> actionElementIds,
+            std::optional<annotation::PageId> pageContext
+        ) -> std::vector<ActionSearch>
+        {
+            auto searches = std::vector<ActionSearch>{};
+            searches.reserve(actionElementIds.size());
+            for (auto const& elementId : actionElementIds)
+            {
+                auto const runtimeId = runtimeRecognizerFor(
+                    document,
+                    elementId,
+                    pageContext
+                );
+                if (runtimeId.has_value())
+                {
+                    searches.emplace_back(
+                        ActionSearch{
+                            .runtimeId = *runtimeId,
+                            .elementId = elementId,
+                        }
+                    );
+                }
+            }
+            return searches;
+        }
+
         // Every action target's evidence on one frame. Action targets take no
         // part in resolving the page, so evaluatePage never scores them; they are
         // searched for the same reason the anchors are, because a button template
         // that also matches another screen is a misfire waiting for the page to
         // resolve there. A target the policy stopped on contributes no row rather
-        // than a score that was never measured.
+        // than a score that was never measured. Every row is filed under its
+        // element id, so a multi-placed element's per-page runtime recognizer
+        // reports under the id the UI selected it by, never the derived one.
         [[nodiscard]]
         auto evaluateActionsOn(
             annotation::RecognitionRuntime& runtime,
             Frame const& frame,
             annotation::ProjectFingerprint fingerprint,
-            std::span<annotation::RecognizerId const> actionIds,
+            std::span<ActionSearch const> searches,
             annotation::RecognitionPolicy const& policy
         ) -> Result<std::vector<PreviewAnchorRow>>
         {
             auto rows = std::vector<PreviewAnchorRow>{};
-            rows.reserve(actionIds.size());
-            for (auto const& actionId : actionIds)
+            rows.reserve(searches.size());
+            for (auto const& search : searches)
             {
                 UF_TRY_VALUE(
                     attempt,
                     runtime.evaluateActionTarget(
                         frame,
                         fingerprint,
-                        actionId,
+                        search.runtimeId,
                         policy
                     )
                 );
@@ -463,7 +587,9 @@ namespace uf::workbench
                     )
                 )
                 {
-                    rows.emplace_back(toAnchorRow(*p_evidence));
+                    auto row         = toAnchorRow(*p_evidence);
+                    row.recognizerId = search.elementId;
+                    rows.emplace_back(row);
                 }
             }
             return rows;
@@ -509,6 +635,26 @@ namespace uf::workbench
         }
     }
 
+    auto pagePolicyFor(
+        annotation::RecognitionPolicy const& perSearchPolicy,
+        std::size_t anchorSearchCount
+    ) -> annotation::RecognitionPolicy
+    {
+        auto scaled       = perSearchPolicy;
+        auto const searches = checkedCast<uint64>(anchorSearchCount);
+        auto const total    = searches.has_value()
+            ? checkedMultiply(perSearchPolicy.maximumPixelComparisons, *searches)
+            : std::optional<uint64>{};
+
+        // Overflow (or an unaddressable count) saturates to the largest ceiling
+        // we can name rather than falling back below the per-search intent: a
+        // shrunk budget is exactly the starvation this scaling removes.
+        scaled.maximumPixelComparisons = total.value_or(
+            std::numeric_limits<uint64>::max()
+        );
+        return scaled;
+    }
+
     auto runPreview(
         annotation::AuthoringDocument const& document,
         std::span<annotation::AuthoringSourceAsset const> sourceAssets,
@@ -547,31 +693,72 @@ namespace uf::workbench
                 && p_recognizer->annotationType() == annotation::AnnotationType::ActionTarget
             )
             {
-                UF_TRY_VALUE(
-                    actionAttempt,
-                    runtime.evaluateActionTarget(
-                        frame,
-                        fingerprint,
-                        *selectedRecognizerId,
-                        policy
-                    )
+                // The UI selects an element id. For an element placed on a single
+                // page (or an anchor) that is the runtime recognizer's id too; an
+                // element placed on several pages has one runtime recognizer per
+                // page, and only the one for this screen's page may be evaluated.
+                auto const pageContext = expectedPageOf(document, selectedSourceId);
+                auto const runtimeId   = runtimeRecognizerFor(
+                    document,
+                    *selectedRecognizerId,
+                    pageContext
                 );
-                if (
-                    auto const* p_actionStop = std::get_if<annotation::PageRecognitionStop>(
-                        &actionAttempt.result
-                    )
-                )
+                if (!runtimeId.has_value())
                 {
-                    result.actionStop = PreviewStop{
-                        .recognizerId = p_actionStop->recognizerId,
-                        .reason       = p_actionStop->reason,
-                    };
+                    // Multi-placed and not placed on this screen's page. The page
+                    // and anchor evaluation above stands; only the action search
+                    // is skipped, with a line saying why rather than a failure.
+                    auto const* p_element = document.findElement(
+                        *selectedRecognizerId
+                    );
+                    auto const name = p_element != nullptr
+                        ? p_element->name().value()
+                        : std::string{"this region"};
+                    result.actionSkipNote = pageContext.has_value()
+                        ? std::format(
+                            "action preview skipped: \"{}\" is not placed on "
+                            "this screen's page",
+                            name
+                        )
+                        : std::format(
+                            "action preview skipped: \"{}\" is not placed on "
+                            "this screen's page -- claim this screen to a page "
+                            "first",
+                            name
+                        );
                 }
                 else
                 {
-                    result.actionEvidence = toAnchorRow(
-                        std::get<annotation::AnchorEvidence>(actionAttempt.result)
+                    UF_TRY_VALUE(
+                        actionAttempt,
+                        runtime.evaluateActionTarget(
+                            frame,
+                            fingerprint,
+                            *runtimeId,
+                            policy
+                        )
                     );
+                    if (
+                        auto const* p_actionStop = std::get_if<annotation::PageRecognitionStop>(
+                            &actionAttempt.result
+                        )
+                    )
+                    {
+                        // Reported under the element id: nothing above preview.cpp
+                        // ever sees the derived per-page recognizer id.
+                        result.actionStop = PreviewStop{
+                            .recognizerId = *selectedRecognizerId,
+                            .reason       = p_actionStop->reason,
+                        };
+                    }
+                    else
+                    {
+                        auto row = toAnchorRow(
+                            std::get<annotation::AnchorEvidence>(actionAttempt.result)
+                        );
+                        row.recognizerId      = *selectedRecognizerId;
+                        result.actionEvidence = row;
+                    }
                 }
             }
         }
@@ -696,13 +883,22 @@ namespace uf::workbench
                 recordMargin(check.margins, working, asset.id, row);
             }
 
+            // A multi-placed element is searched only on a screen whose page
+            // places it, through that page's runtime recognizer; a single-placed
+            // element is searched on every screen under its own id. The page a
+            // regression records for this screen is the only page context it has.
+            auto const actionSearches = actionSearchesOn(
+                document,
+                actionIds,
+                expected
+            );
             UF_TRY_VALUE(
                 actionRows,
                 evaluateActionsOn(
                     runtime,
                     frame,
                     fingerprint,
-                    actionIds,
+                    actionSearches,
                     screenPolicy
                 )
             );
@@ -738,13 +934,22 @@ namespace uf::workbench
             recordLiveMargin(check.margins, row);
         }
 
+        // The live frame carries no recorded page, so the page it resolved to is
+        // its only context: a multi-placed element is measured through the
+        // recognizer for that page when it places the element, and left without a
+        // live score otherwise, since there is no region to search it in here.
+        auto const liveActionSearches = actionSearchesOn(
+            document,
+            actionIds,
+            livePreview.resolvedPageId
+        );
         UF_TRY_VALUE(
             liveActionRows,
             evaluateActionsOn(
                 runtime,
                 liveFrame,
                 fingerprint,
-                actionIds,
+                liveActionSearches,
                 livePolicy
             )
         );
