@@ -16,9 +16,10 @@ namespace uf::script
 {
     // Apply the task sandbox to a freshly opened main state, in the hardening
     // ledger's order: register and deep-freeze host tables, nil the survivors
-    // luaL_sandbox leaves behind (getfenv/setfenv/newproxy/coroutine/debug), nil
-    // the residual clock/random globals (os.time/os.clock/os.date/math.random),
-    // then luaL_sandbox to freeze the base libraries and the global table.
+    // luaL_sandbox leaves behind (getfenv/setfenv/newproxy/coroutine/debug and
+    // `_G`, the reflexive global-table alias), nil the residual clock/random
+    // globals (os.time/os.clock/os.date/math.random), then luaL_sandbox to freeze
+    // the base libraries and the global table.
     // Assumes luaL_openlibs already ran on `state`. `installHostTables` may be
     // empty, in which case no host tables are registered.
     auto installSandbox(

@@ -128,13 +128,21 @@ namespace uf::script
         // Nil the globals luaL_sandbox does NOT remove (verified on 0.730). A
         // script that spawns its own coroutine escapes the interrupt-driven
         // cancel; debug can uninstall hooks and read outside the sandbox;
-        // getfenv/setfenv/newproxy are environment escapes. The host uses
-        // coroutines and debug only from C, never through these globals.
+        // getfenv/setfenv/newproxy are environment escapes. `_G` is luaopen_base's
+        // self-reference to the global table (lbaselib.cpp) -- a live alias door
+        // that reaches `umbra` (and every other global) around the AST resource
+        // closure, e.g. `_G.umbra:capture()` or `rawget(_G, 'umbra')`; luaL_sandbox
+        // only freezes it, so it stays a readable handle unless removed here. A
+        // task needs only `umbra`, never `_G`. Nilling the `_G` name leaves the
+        // underlying global table (LUA_GLOBALSINDEX) and every real global intact;
+        // only the reflexive handle is gone. The host uses coroutines and debug
+        // only from C, never through these globals.
         nilGlobal(state, "getfenv");
         nilGlobal(state, "setfenv");
         nilGlobal(state, "newproxy");
         nilGlobal(state, "coroutine");
         nilGlobal(state, "debug");
+        nilGlobal(state, "_G");
 
         // Conservative determinism floor: drop the residual wall-clock and RNG
         // entry points until the host provides a logical clock and seeded RNG

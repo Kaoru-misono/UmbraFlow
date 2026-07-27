@@ -163,6 +163,7 @@ namespace uf::script
                 "getfenv == nil",
                 "setfenv == nil",
                 "newproxy == nil",
+                "_G == nil",
                 "coroutine == nil",
                 "debug == nil",
                 "os.time == nil",
