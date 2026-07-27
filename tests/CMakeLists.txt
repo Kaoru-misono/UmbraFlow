@@ -123,6 +123,18 @@ if(TARGET ${PROJECT_NAME}_script)
     )
 endif()
 
+if(TARGET ${PROJECT_NAME}_task)
+    cpp_add_test(
+        NAME test-task
+        SOURCES
+            task/test-task.cpp
+            task/test-task-binding.cpp
+        LIBS
+            ${PROJECT_NAME}_task
+            ${PROJECT_NAME}_image
+    )
+endif()
+
 if(TARGET ${PROJECT_NAME}_controller)
     cpp_add_test(
         NAME test-controller
