@@ -37,6 +37,17 @@ namespace uf::cli
                 return exitCodeForError(report.error(), runCancellationRequested());
             }
 
+            if (report->scriptMode)
+            {
+                std::cout << std::format(
+                    "run: task=\"{}\" hash={} trace=\"{}\"\n",
+                    report->taskName,
+                    report->scriptHash,
+                    report->tracePath
+                );
+                return ExitCode::Success;
+            }
+
             if (!report->actionDelivered)
             {
                 std::cerr << std::format(

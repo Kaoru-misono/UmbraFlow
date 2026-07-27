@@ -41,6 +41,7 @@ if(WIN32 AND TARGET ${PROJECT_NAME}_controller)
         PUBLIC
             ${PROJECT_NAME}_controller
         PRIVATE
+            ${PROJECT_NAME}_task
             user32
     )
 else()

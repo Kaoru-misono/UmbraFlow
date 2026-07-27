@@ -26,11 +26,12 @@ namespace uf::cli
         [[nodiscard]]
         auto isRunValueFlag(std::string_view flag) noexcept -> bool
         {
-            auto constexpr flags = std::array<std::string_view, 10>{
+            auto constexpr flags = std::array<std::string_view, 11>{
                 "--project",
                 "--selector",
                 "--page",
                 "--action",
+                "--task",
                 "--timeout",
                 "--poll",
                 "--budget",
@@ -149,6 +150,7 @@ namespace uf::cli
         auto selector = std::optional<std::string>{};
         auto page     = std::optional<std::string>{};
         auto action   = std::optional<std::string>{};
+        auto task     = std::optional<std::string>{};
 
         auto timeout            = k_defaultRunTimeout;
         auto pollInterval       = k_defaultRunPollInterval;
@@ -186,6 +188,10 @@ namespace uf::cli
             else if (flag == "--action")
             {
                 action = value;
+            }
+            else if (flag == "--task")
+            {
+                task = value;
             }
             else if (flag == "--timeout")
             {
@@ -233,6 +239,40 @@ namespace uf::cli
 
         UF_TRY_VALUE(requiredProject, require(std::move(project), "--project"));
         UF_TRY_VALUE(requiredSelector, require(std::move(selector), "--selector"));
+
+        auto const haveTask   = task && !task->empty();
+        auto const havePage   = page && !page->empty();
+        auto const haveAction = action && !action->empty();
+
+        // --task selects the script path; --page with --action selects the
+        // single-step smoke path. The two are mutually exclusive: a task script
+        // sources its own page and action names, so accepting both would make it
+        // ambiguous which path the run intends.
+        if (haveTask && (havePage || haveAction))
+        {
+            return invalid("--task cannot be combined with --page or --action");
+        }
+
+        if (haveTask)
+        {
+            return RunArgs{
+                .project            = std::move(requiredProject),
+                .selector           = std::move(requiredSelector),
+                .page               = {},
+                .action             = {},
+                .task               = *std::move(task),
+                .timeout            = timeout,
+                .pollInterval       = pollInterval,
+                .budget             = budget,
+                .recognitionTimeout = recognitionTimeout,
+                .maxFrameAge        = maxFrameAge,
+                .trace              = std::move(trace),
+            };
+        }
+
+        // The smoke path still requires an explicit page and action. Omitting all
+        // of --task, --page, and --action lands here and reports the missing page,
+        // preserving the pre-task usage contract that page and action are required.
         UF_TRY_VALUE(requiredPage, require(std::move(page), "--page"));
         UF_TRY_VALUE(requiredAction, require(std::move(action), "--action"));
 
@@ -241,6 +281,7 @@ namespace uf::cli
             .selector           = std::move(requiredSelector),
             .page               = std::move(requiredPage),
             .action             = std::move(requiredAction),
+            .task               = {},
             .timeout            = timeout,
             .pollInterval       = pollInterval,
             .budget             = budget,
@@ -253,14 +294,19 @@ namespace uf::cli
     auto runUsageText() noexcept -> std::string_view
     {
         return
-            "Usage: umbra-flow run --project DIR --selector TITLE-SUBSTRING "
+            "Usage:\n"
+            "  umbra-flow run --project DIR --selector TITLE-SUBSTRING "
+            "--task NAME [options]\n"
+            "  umbra-flow run --project DIR --selector TITLE-SUBSTRING "
             "--page NAME --action NAME [options]\n"
             "\n"
             "Required:\n"
             "  --project DIR                Published annotation project directory\n"
             "  --selector TITLE-SUBSTRING   Substring of the target window title\n"
-            "  --page NAME                  Page recognizer name to wait for\n"
-            "  --action NAME                Action target name to click\n"
+            "\n"
+            "One run mode is required:\n"
+            "  --task NAME                  Run project task tasks/NAME.luau\n"
+            "  --page NAME --action NAME    Wait for a page and click an action\n"
             "\n"
             "Options:\n"
             "  --timeout SEC                waitForPage timeout; default: 30\n"

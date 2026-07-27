@@ -86,6 +86,65 @@ namespace uf::cli
         CHECK(result->trace == "out.jsonl");
     }
 
+    TEST_CASE("parseRunArguments accepts the script path with --task")
+    {
+        auto const raw = std::vector<std::string>{
+            "--project",  "proj",
+            "--selector", "Game",
+            "--task",     "daily",
+        };
+
+        auto const result = parse(raw);
+        REQUIRE(result.has_value());
+        CHECK(result->task == "daily");
+        CHECK(result->page.empty());
+        CHECK(result->action.empty());
+        CHECK(result->project == "proj");
+        CHECK(result->selector == "Game");
+    }
+
+    TEST_CASE("parseRunArguments rejects --task combined with the smoke-path flags")
+    {
+        auto constexpr expected =
+            "--task cannot be combined with --page or --action";
+
+        SUBCASE("with --page")
+        {
+            auto const raw = std::vector<std::string>{
+                "--project", "proj", "--selector", "Game",
+                "--task",    "daily", "--page",     "home",
+            };
+            auto const result = parse(raw);
+            REQUIRE_FALSE(result.has_value());
+            CHECK(result.error().message() == expected);
+        }
+        SUBCASE("with --action")
+        {
+            auto const raw = std::vector<std::string>{
+                "--project", "proj",  "--selector", "Game",
+                "--task",    "daily", "--action",   "start",
+            };
+            auto const result = parse(raw);
+            REQUIRE_FALSE(result.has_value());
+            CHECK(result.error().message() == expected);
+        }
+        SUBCASE("with both page and action")
+        {
+            auto raw = minimalArgs();
+            raw.emplace_back("--task");
+            raw.emplace_back("daily");
+            auto const result = parse(raw);
+            REQUIRE_FALSE(result.has_value());
+            CHECK(result.error().message() == expected);
+        }
+    }
+
+    TEST_CASE("runUsageText documents the --task run mode")
+    {
+        auto const usage = runUsageText();
+        CHECK(usage.find("--task") != std::string_view::npos);
+    }
+
     TEST_CASE("parseRunArguments applies defaults for omitted optional flags")
     {
         auto const result = parse(minimalArgs());

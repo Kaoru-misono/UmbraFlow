@@ -44,13 +44,17 @@ namespace uf::cli
 
     // Parsed inputs for the `run` subcommand. Every field carries a resolved
     // value once parsing succeeds; the optional flags fall back to the defaults
-    // above so the composition never observes an unset field.
+    // above so the composition never observes an unset field. The run has two
+    // mutually exclusive modes: the smoke path fills page and action and leaves
+    // task empty; the script path fills task and leaves page and action empty.
+    // Parsing rejects any argument set that would select both or neither.
     struct RunArgs final
     {
         std::filesystem::path project{};
         std::string           selector{};
         std::string           page{};
         std::string           action{};
+        std::string           task{};
 
         MonotonicInstant::Duration timeout{k_defaultRunTimeout};
         MonotonicInstant::Duration pollInterval{k_defaultRunPollInterval};

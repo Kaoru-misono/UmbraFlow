@@ -21,12 +21,17 @@ namespace uf::cli
         Cancelled                     = 5,
     };
 
-    // The product of one `run` invocation. When m_actionDelivered is true the
-    // click landed and the client coordinates are meaningful; when it is false
-    // the page resolved but the action target was absent on it, and the caller
-    // maps that to the dedicated absent exit code.
+    // The product of one `run` invocation. scriptMode selects which fields carry
+    // meaning: the smoke path leaves it false and fills the page, action, and
+    // click fields (actionDelivered true means the click landed and the client
+    // coordinates are meaningful; false means the page resolved but the action
+    // target was absent, mapped to the dedicated absent exit code). The script
+    // path sets it true and fills taskName and scriptHash; the smoke-path fields
+    // stay at their defaults and are not read.
     struct RunReport final
     {
+        bool scriptMode{};
+
         bool actionDelivered{};
 
         std::string pageName{};
@@ -34,6 +39,9 @@ namespace uf::cli
 
         float clickClientX{};
         float clickClientY{};
+
+        std::string taskName{};
+        std::string scriptHash{};
 
         std::string tracePath{};
     };

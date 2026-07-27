@@ -129,6 +129,8 @@ if(TARGET ${PROJECT_NAME}_task)
         SOURCES
             task/test-task.cpp
             task/test-task-binding.cpp
+            task/test-task-loader.cpp
+            task/test-script-validator.cpp
         LIBS
             ${PROJECT_NAME}_task
             ${PROJECT_NAME}_image
