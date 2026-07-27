@@ -179,9 +179,9 @@ namespace uf::engine
 
     EngineSession::EngineSession(
         LoadedRuntime loadedRuntime,
-        std::unique_ptr<FrameSource> frameSource,
-        std::unique_ptr<ActionSink> actionSink,
-        std::unique_ptr<TraceSink> traceSink,
+        std::unique_ptr<IFrameSource> frameSource,
+        std::unique_ptr<IActionSink> actionSink,
+        std::unique_ptr<ITraceSink> traceSink,
         EngineSessionConfig config
     ) noexcept
         : m_loadedRuntime{std::move(loadedRuntime)}
@@ -213,9 +213,9 @@ namespace uf::engine
 
     auto EngineSession::create(
         LoadedRuntime loadedRuntime,
-        std::unique_ptr<FrameSource> frameSource,
-        std::unique_ptr<ActionSink> actionSink,
-        std::unique_ptr<TraceSink> traceSink,
+        std::unique_ptr<IFrameSource> frameSource,
+        std::unique_ptr<IActionSink> actionSink,
+        std::unique_ptr<ITraceSink> traceSink,
         EngineSessionConfig config
     ) -> Result<EngineSession>
     {

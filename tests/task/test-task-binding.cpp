@@ -38,7 +38,7 @@ namespace uf::task
         // task VM reproduces the single cancel source: once the stop is requested,
         // the VM interrupt hard-breaks the task thread, so no script statement after
         // the cancelled call runs.
-        class StopOnCaptureFrameSource final : public engine::FrameSource
+        class StopOnCaptureFrameSource final : public engine::IFrameSource
         {
             Frame            m_frame;
             std::stop_source m_stop;
@@ -112,7 +112,7 @@ namespace uf::task
         // runtime moves into the session, so both name the same identities.
         [[nodiscard]]
         auto buildBindingWith(
-            std::unique_ptr<engine::FrameSource> frameSource,
+            std::unique_ptr<engine::IFrameSource> frameSource,
             std::stop_token cancellation
         ) -> Built
         {

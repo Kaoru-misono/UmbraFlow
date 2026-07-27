@@ -11,11 +11,11 @@
 
 namespace uf::cli
 {
-    // A TraceSink that appends one serialized JSONL line per event and flushes
+    // An ITraceSink that appends one serialized JSONL line per event and flushes
     // after each write. Trace evidence must survive a crash, so the sink never
     // buffers across emits: a failed write or flush is surfaced as an error
     // Status rather than lost silently.
-    class FileTraceSink final : public engine::TraceSink
+    class FileTraceSink final : public engine::ITraceSink
     {
         struct OpenTag final
         {
@@ -29,7 +29,7 @@ namespace uf::cli
         [[nodiscard]]
         static auto create(
             std::filesystem::path const& path
-        ) -> Result<std::unique_ptr<engine::TraceSink>>;
+        ) -> Result<std::unique_ptr<engine::ITraceSink>>;
 
         [[nodiscard]] auto emit(engine::TraceEvent const& event) -> Status override;
     };

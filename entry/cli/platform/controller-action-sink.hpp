@@ -9,12 +9,12 @@
 
 namespace uf::cli::platform
 {
-    // Adapts controller background input to the engine ActionSink port. It owns
+    // Adapts controller background input to the engine IActionSink port. It owns
     // the delivery target and the per-target input bookkeeping (held inputs and
     // the audit log) that controller::click threads through. The observation
     // lease is forwarded into controller::click so the injection-layer fence
     // (frameId, targetGeneration, age) re-runs at delivery time as layer 2.
-    class ControllerActionSink final : public engine::ActionSink
+    class ControllerActionSink final : public engine::IActionSink
     {
         DeliveryTarget m_target;
         HeldInputs     m_held{};

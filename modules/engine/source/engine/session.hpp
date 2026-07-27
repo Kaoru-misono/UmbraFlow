@@ -136,17 +136,17 @@ namespace uf::engine
     {
         friend class Observation;
 
-        LoadedRuntime                m_loadedRuntime;
-        std::unique_ptr<FrameSource> m_frameSource;
-        std::unique_ptr<ActionSink>  m_actionSink;
-        std::unique_ptr<TraceSink>   m_traceSink;
-        EngineSessionConfig          m_config;
+        LoadedRuntime                 m_loadedRuntime;
+        std::unique_ptr<IFrameSource> m_frameSource;
+        std::unique_ptr<IActionSink>  m_actionSink;
+        std::unique_ptr<ITraceSink>   m_traceSink;
+        EngineSessionConfig           m_config;
 
         EngineSession(
             LoadedRuntime loadedRuntime,
-            std::unique_ptr<FrameSource> frameSource,
-            std::unique_ptr<ActionSink> actionSink,
-            std::unique_ptr<TraceSink> traceSink,
+            std::unique_ptr<IFrameSource> frameSource,
+            std::unique_ptr<IActionSink> actionSink,
+            std::unique_ptr<ITraceSink> traceSink,
             EngineSessionConfig config
         ) noexcept;
 
@@ -185,9 +185,9 @@ namespace uf::engine
         [[nodiscard]]
         static auto create(
             LoadedRuntime loadedRuntime,
-            std::unique_ptr<FrameSource> frameSource,
-            std::unique_ptr<ActionSink> actionSink,
-            std::unique_ptr<TraceSink> traceSink,
+            std::unique_ptr<IFrameSource> frameSource,
+            std::unique_ptr<IActionSink> actionSink,
+            std::unique_ptr<ITraceSink> traceSink,
             EngineSessionConfig config
         ) -> Result<EngineSession>;
 

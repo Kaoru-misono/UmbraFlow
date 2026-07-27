@@ -304,7 +304,7 @@ namespace uf::engine
         // Replays a fixed sequence of frames. Once the sequence is exhausted the
         // last frame repeats, so a poll loop never observes a spurious capture
         // failure while a deadline it is waiting on elapses.
-        class FakeFrameSource final : public FrameSource
+        class FakeFrameSource final : public IFrameSource
         {
             std::vector<Frame> m_frames;
             std::size_t        m_index{0};
@@ -355,7 +355,7 @@ namespace uf::engine
         // Counts delivered clicks so fail-closed cases can assert that none
         // escaped, and keeps the last client point and lease so the happy path can
         // confirm the delivered lease still carries the observation's identity.
-        class CountingActionSink final : public ActionSink
+        class CountingActionSink final : public IActionSink
         {
             uint32                            m_clickCount{0};
             std::optional<Point<ClientSpace>> m_lastClick{};
@@ -392,7 +392,7 @@ namespace uf::engine
             }
         };
 
-        class CollectingTraceSink final : public TraceSink
+        class CollectingTraceSink final : public ITraceSink
         {
             std::vector<TraceEvent> m_events{};
 
@@ -412,7 +412,7 @@ namespace uf::engine
 
         // Records every event but fails the emit whose kind matches a nominated
         // trigger, so a fallible post-click trace can be exercised deterministically.
-        class FailOnKindTraceSink final : public TraceSink
+        class FailOnKindTraceSink final : public ITraceSink
         {
             std::vector<TraceEvent> m_events{};
             TraceEventKind          m_failKind;

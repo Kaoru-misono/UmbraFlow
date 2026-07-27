@@ -10,10 +10,10 @@
 
 namespace uf::cli::platform
 {
-    // Adapts a WgcCaptureSession to the engine FrameSource port. capture()
+    // Adapts a WgcCaptureSession to the engine IFrameSource port. capture()
     // forwards the session capture and validateTargetInstance() forwards the
     // session's bound-target revalidation, so the engine stays platform-agnostic.
-    class WgcFrameSource final : public engine::FrameSource
+    class WgcFrameSource final : public engine::IFrameSource
     {
         WgcCaptureSession m_session;
 

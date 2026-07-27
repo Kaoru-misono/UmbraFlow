@@ -40,7 +40,9 @@ review unnoticed. Budget attention accordingly.
   under `public:` in a `class`, follows its actual access: `m_` when private,
   no prefix when public.
 - Pointer and smart-pointer parameters: `p_camelCase`.
-- Types: `PascalCase`; interfaces: `IPascalCase`.
+- Types: `PascalCase`. Every interface class is a pure abstract class and must
+  use the `ITypeName` form (for example, `IStorageProvider`) to make that role
+  explicit.
 - Avoid non-local state. Named value constants with static storage duration use
   `k_`. Mutable namespace-scope state uses `g_`. Class or function static state
   whose meaning is identity, a cache, a singleton, an initialization guard, or

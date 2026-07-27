@@ -19,17 +19,17 @@ namespace uf::engine
     //    methods; nothing above this port is platform-aware.
     //  - Tests: a fake replays a fixed vector<Frame> for CI without a live
     //    desktop, so the engine can be exercised deterministically.
-    class FrameSource
+    class IFrameSource
     {
     public:
-        FrameSource() = default;
+        IFrameSource() = default;
 
-        FrameSource(FrameSource const&) = delete;
-        FrameSource(FrameSource&&) = delete;
-        auto operator=(FrameSource const&) -> FrameSource& = delete;
-        auto operator=(FrameSource&&) -> FrameSource& = delete;
+        IFrameSource(IFrameSource const&) = delete;
+        IFrameSource(IFrameSource&&) = delete;
+        auto operator=(IFrameSource const&) -> IFrameSource& = delete;
+        auto operator=(IFrameSource&&) -> IFrameSource& = delete;
 
-        virtual ~FrameSource() = default;
+        virtual ~IFrameSource() = default;
 
         [[nodiscard]] virtual auto capture() -> Result<Frame> = 0;
         [[nodiscard]] virtual auto validateTargetInstance() -> Status = 0;
@@ -45,17 +45,17 @@ namespace uf::engine
     // check. The implementation MUST additionally revalidate the target identity
     // before posting and MUST deliver strictly in the background: it never steals
     // focus and never activates the target window.
-    class ActionSink
+    class IActionSink
     {
     public:
-        ActionSink() = default;
+        IActionSink() = default;
 
-        ActionSink(ActionSink const&) = delete;
-        ActionSink(ActionSink&&) = delete;
-        auto operator=(ActionSink const&) -> ActionSink& = delete;
-        auto operator=(ActionSink&&) -> ActionSink& = delete;
+        IActionSink(IActionSink const&) = delete;
+        IActionSink(IActionSink&&) = delete;
+        auto operator=(IActionSink const&) -> IActionSink& = delete;
+        auto operator=(IActionSink&&) -> IActionSink& = delete;
 
-        virtual ~ActionSink() = default;
+        virtual ~IActionSink() = default;
 
         [[nodiscard]]
         virtual auto click(
@@ -68,17 +68,17 @@ namespace uf::engine
     // constraint, so an emit failure is an error rather than a best-effort
     // side effect (D4): the engine emits at the throw-instant, before any caller
     // can swallow the failure it describes.
-    class TraceSink
+    class ITraceSink
     {
     public:
-        TraceSink() = default;
+        ITraceSink() = default;
 
-        TraceSink(TraceSink const&) = delete;
-        TraceSink(TraceSink&&) = delete;
-        auto operator=(TraceSink const&) -> TraceSink& = delete;
-        auto operator=(TraceSink&&) -> TraceSink& = delete;
+        ITraceSink(ITraceSink const&) = delete;
+        ITraceSink(ITraceSink&&) = delete;
+        auto operator=(ITraceSink const&) -> ITraceSink& = delete;
+        auto operator=(ITraceSink&&) -> ITraceSink& = delete;
 
-        virtual ~TraceSink() = default;
+        virtual ~ITraceSink() = default;
 
         [[nodiscard]] virtual auto emit(TraceEvent const& event) -> Status = 0;
     };

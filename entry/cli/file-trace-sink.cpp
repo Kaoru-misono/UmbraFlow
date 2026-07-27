@@ -35,7 +35,7 @@ namespace uf::cli
 
     auto FileTraceSink::create(
         std::filesystem::path const& path
-    ) -> Result<std::unique_ptr<engine::TraceSink>>
+    ) -> Result<std::unique_ptr<engine::ITraceSink>>
     {
         auto stream = std::ofstream{};
         errno       = 0;
@@ -52,7 +52,7 @@ namespace uf::cli
         }
 
         auto p_sink = std::make_unique<FileTraceSink>(OpenTag{}, std::move(stream));
-        return std::unique_ptr<engine::TraceSink>{std::move(p_sink)};
+        return std::unique_ptr<engine::ITraceSink>{std::move(p_sink)};
     }
 
     auto FileTraceSink::emit(engine::TraceEvent const& event) -> Status

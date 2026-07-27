@@ -89,7 +89,7 @@ namespace uf::task
     // constraint (roadmap landing rule 6), so an emit failure is an error rather
     // than a best-effort side effect: the caller emits at the decision instant and
     // treats a failed emit as aborting the current operation, mirroring the
-    // engine's TraceSink discipline (D4).
+    // engine's ITraceSink discipline (D4).
     class TaskTraceSink
     {
     public:

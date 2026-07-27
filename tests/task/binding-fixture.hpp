@@ -211,7 +211,7 @@ namespace uf::task
     }
 
     // Replays a fixed sequence of frames, repeating the last once exhausted.
-    class FakeFrameSource final : public engine::FrameSource
+    class FakeFrameSource final : public engine::IFrameSource
     {
         std::vector<Frame> m_frames;
         std::size_t        m_index{0};
@@ -243,7 +243,7 @@ namespace uf::task
     };
 
     // Counts delivered clicks so fail-closed cases can assert none escaped.
-    class CountingActionSink final : public engine::ActionSink
+    class CountingActionSink final : public engine::IActionSink
     {
         uint32 m_clickCount{0};
 
@@ -267,7 +267,7 @@ namespace uf::task
     // Records every delivered click point in order, so a determinism run can read
     // back the exact coordinate sequence a script produced and fold it into the
     // canonical action trace.
-    class RecordingActionSink final : public engine::ActionSink
+    class RecordingActionSink final : public engine::IActionSink
     {
         std::vector<Point<ClientSpace>> m_points{};
 
@@ -289,7 +289,7 @@ namespace uf::task
         }
     };
 
-    class DiscardingTraceSink final : public engine::TraceSink
+    class DiscardingTraceSink final : public engine::ITraceSink
     {
     public:
         [[nodiscard]] auto emit(engine::TraceEvent const& /*event*/) -> Status override
