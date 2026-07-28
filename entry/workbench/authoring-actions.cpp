@@ -5,10 +5,10 @@
 #include "model-check-view.hpp"
 #include "preview.hpp"
 #include "project-persistence.hpp"
-#include "app/workbench-app.hpp"
+#include "workbench-app.hpp"
 
 #include <annotation/authoring-document.hpp>
-#include <annotation/catalog.hpp>
+#include <annotation/resource.hpp>
 
 #include <core/error/result.hpp>
 #include <core/types/integer.hpp>

@@ -270,7 +270,7 @@ namespace uf::engine
             };
             auto frame = Frame::create(
                 FrameId{17},
-                SessionId{7},
+                CaptureSessionId{7},
                 TargetGeneration::fromValue(3),
                 MonotonicInstant::fromTimePoint(MonotonicInstant::TimePoint{}),
                 fingerprint.width(),

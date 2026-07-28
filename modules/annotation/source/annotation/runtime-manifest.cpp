@@ -47,36 +47,6 @@ namespace uf::annotation
         }
 
         [[nodiscard]]
-        auto parseRecognizerIds(
-            std::vector<std::string> const& encoded
-        ) -> Result<std::vector<RecognizerId>>
-        {
-            auto ids = std::vector<RecognizerId>{};
-            ids.reserve(encoded.size());
-            for (auto const& value : encoded)
-            {
-                UF_TRY_VALUE(id, ResourceId::parse(value));
-                ids.emplace_back(RecognizerId{id});
-            }
-            return ids;
-        }
-
-        [[nodiscard]]
-        auto parsePageIds(
-            std::vector<std::string> const& encoded
-        ) -> Result<std::vector<PageId>>
-        {
-            auto ids = std::vector<PageId>{};
-            ids.reserve(encoded.size());
-            for (auto const& value : encoded)
-            {
-                UF_TRY_VALUE(id, ResourceId::parse(value));
-                ids.emplace_back(PageId{id});
-            }
-            return ids;
-        }
-
-        [[nodiscard]]
         auto parseRecognizer(
             detail::CanonicalTomlReader& reader,
             ProjectFingerprint fingerprint
@@ -167,7 +137,7 @@ namespace uf::annotation
                     encoded,
                     reader.takeStringArrayField("allowed_page_ids")
                 );
-                UF_TRY_VALUE(parsed, parsePageIds(encoded));
+                UF_TRY_VALUE(parsed, detail::parseIds<PageId>(encoded));
                 allowedPageIds = std::move(parsed);
             }
 
@@ -208,12 +178,18 @@ namespace uf::annotation
                 requiredText,
                 reader.takeStringArrayField("required")
             );
-            UF_TRY_VALUE(required, parseRecognizerIds(requiredText));
+            UF_TRY_VALUE(
+                required,
+                detail::parseIds<RecognizerId>(requiredText)
+            );
             UF_TRY_VALUE(
                 forbiddenText,
                 reader.takeStringArrayField("forbidden")
             );
-            UF_TRY_VALUE(forbidden, parseRecognizerIds(forbiddenText));
+            UF_TRY_VALUE(
+                forbidden,
+                detail::parseIds<RecognizerId>(forbiddenText)
+            );
             return PageSignature::create(
                 PageSpec{
                     .id        = id,
@@ -333,21 +309,12 @@ namespace uf::annotation
             manifest.catalog().projectId().value()
         );
 
-        auto const fingerprint = manifest.catalog().fingerprint();
-        output += "base_resolution = ";
-        auto const resolution = std::array{
-            fingerprint.width(),
-            fingerprint.height(),
-        };
-        detail::appendUnsigned32Array(output, resolution);
-        output.push_back('\n');
-        output += "base_dpi = ";
-        auto const dpi = std::array{
-            fingerprint.dpiX(),
-            fingerprint.dpiY(),
-        };
-        detail::appendUnsigned32Array(output, dpi);
-        output.push_back('\n');
+        detail::appendFingerprintFields(
+            output,
+            manifest.catalog().fingerprint(),
+            "base_resolution",
+            "base_dpi"
+        );
 
         for (auto const& recognizer : manifest.catalog().recognizers())
         {
@@ -440,23 +407,11 @@ namespace uf::annotation
         UF_TRY_VALUE(projectIdText, reader.takeStringField("project_id"));
         UF_TRY_VALUE(projectId, ProjectId::create(std::move(projectIdText)));
         UF_TRY_VALUE(
-            resolution,
-            reader.takeUnsigned32ArrayField("base_resolution")
-        );
-        UF_TRY_VALUE(dpi, reader.takeUnsigned32ArrayField("base_dpi"));
-        if (resolution.size() != 2U || dpi.size() != 2U)
-        {
-            return invalidManifest(
-                "runtime manifest base_resolution and base_dpi must have two integers"
-            );
-        }
-        UF_TRY_VALUE(
             fingerprint,
-            ProjectFingerprint::create(
-                checkedAt(resolution, 0),
-                checkedAt(resolution, 1),
-                checkedAt(dpi, 0),
-                checkedAt(dpi, 1)
+            detail::parseFingerprintFields(
+                reader,
+                "base_resolution",
+                "base_dpi"
             )
         );
 

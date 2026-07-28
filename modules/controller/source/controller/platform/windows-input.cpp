@@ -1,6 +1,6 @@
 #include "windows-controller.hpp"
 
-#include "controller/detail/input-guard.hpp"
+#include "controller/detail/audit-log-access.hpp"
 #include "controller/detail/input-message.hpp"
 
 #include <core/types/integer.hpp>

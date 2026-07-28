@@ -3,10 +3,10 @@
 #include <authoring-actions.hpp>
 #include <authoring-edit.hpp>
 #include <panel-state.hpp>
-#include <app/workbench-app.hpp>
+#include <workbench-app.hpp>
 
 #include <annotation/authoring-document.hpp>
-#include <annotation/catalog.hpp>
+#include <annotation/resource.hpp>
 #include <annotation/content-hash.hpp>
 
 #include <core/error/result.hpp>

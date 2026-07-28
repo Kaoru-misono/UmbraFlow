@@ -16,7 +16,7 @@ namespace uf::m0_demo
     [[nodiscard]]
     auto createCaptureSession(
         ResolvedTarget const& target,
-        SessionId sessionId,
+        CaptureSessionId sessionId,
         WgcCaptureOptions options = {}
     ) -> Result<WgcCaptureSession>;
 }

@@ -1,5 +1,6 @@
 #pragma once
 
+#include "content-hash.hpp"
 #include "recognition.hpp"
 #include "runtime-manifest.hpp"
 

@@ -274,7 +274,7 @@ namespace uf::annotation::test
 
     inline auto frame(
         ProjectFingerprint projectFingerprint,
-        SessionId sessionId,
+        CaptureSessionId sessionId,
         TargetGeneration generation,
         FrameId frameId,
         MonotonicInstant capturedAt

@@ -2,9 +2,9 @@
 
 #include "authoring-edit.hpp"
 #include "panel-state.hpp"
-#include "app/workbench-app.hpp"
+#include "workbench-app.hpp"
 
-#include <annotation/catalog.hpp>
+#include <annotation/resource.hpp>
 
 #include <core/error/result.hpp>
 

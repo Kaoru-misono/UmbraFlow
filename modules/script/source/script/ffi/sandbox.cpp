@@ -142,6 +142,7 @@ namespace uf::script
         nilGlobal(state, "newproxy");
         nilGlobal(state, "coroutine");
         nilGlobal(state, "debug");
+        nilGlobal(state, "gcinfo");
         nilGlobal(state, "_G");
 
         // Conservative determinism floor: drop the residual wall-clock and RNG

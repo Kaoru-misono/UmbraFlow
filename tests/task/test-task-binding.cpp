@@ -64,7 +64,7 @@ namespace uf::task
 
         // Fails every emit, so a test can prove a verb aborts when its HostCall
         // event cannot be recorded rather than dropping the evidence silently.
-        class FailingTaskTraceSink final : public TaskTraceSink
+        class FailingTaskTraceSink final : public ITaskTraceSink
         {
         public:
             [[nodiscard]] auto emit(TaskTraceEvent const& /*event*/) -> Status override
@@ -79,7 +79,7 @@ namespace uf::task
         // Fails only when recording a verb's failure. A sink that failed on every
         // event would abort the first successful verb and no test could ever reach
         // the failure path it wants to observe.
-        class FailOnFailedTraceSink final : public TaskTraceSink
+        class FailOnFailedTraceSink final : public ITaskTraceSink
         {
         public:
             [[nodiscard]] auto emit(TaskTraceEvent const& event) -> Status override

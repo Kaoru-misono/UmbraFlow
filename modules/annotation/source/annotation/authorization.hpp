@@ -46,7 +46,7 @@ namespace uf::annotation
     struct ActionDeliveryState final
     {
         ProjectFingerprint liveFingerprint;
-        SessionId          sessionId;
+        CaptureSessionId   sessionId;
         TargetGeneration   targetGeneration{};
         FrameId            frameId;
         MonotonicInstant   now;

@@ -1,6 +1,6 @@
 #include <engine/trace.hpp>
 
-#include <annotation/catalog.hpp>
+#include <annotation/resource.hpp>
 
 #include <domain/error.hpp>
 #include <domain/ids.hpp>
@@ -39,7 +39,7 @@ namespace uf::engine
         auto event = TraceEvent{
             .kind             = TraceEventKind::ActionFound,
             .frameId          = FrameId{uint64{42}},
-            .sessionId        = SessionId{uint64{7}},
+            .sessionId        = CaptureSessionId{uint64{7}},
             .targetGeneration = TargetGeneration::fromValue(3),
             .pageId           = annotation::PageId{
                 resourceId("11111111-2222-3333-4444-555555555555")

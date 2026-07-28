@@ -4,7 +4,7 @@
 #include "page-view.hpp"
 
 #include <annotation/authoring-document.hpp>
-#include <annotation/catalog.hpp>
+#include <annotation/resource.hpp>
 
 #include <core/error/result.hpp>
 #include <core/safety/annotations.hpp>

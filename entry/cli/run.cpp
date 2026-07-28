@@ -5,6 +5,7 @@
 
 #include <domain/error.hpp>
 
+#include <filesystem>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -36,6 +37,12 @@ namespace uf::cli
             formatted += ' ';
             formatted += std::to_string(nativeCode.value());
         }
+
+        auto const location = error.location();
+        formatted += " | at ";
+        formatted += std::filesystem::path{location.file_name()}.filename().string();
+        formatted += ':';
+        formatted += std::to_string(location.line());
 
         return formatted;
     }

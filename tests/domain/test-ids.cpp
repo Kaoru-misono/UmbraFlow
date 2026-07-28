@@ -10,7 +10,9 @@
 #include <unordered_map>
 
 static_assert(!std::is_same_v<uf::EngineRunId, uf::TaskRunId>);
-static_assert(!std::is_same_v<uf::SessionId, uf::FrameId>);
+static_assert(!std::is_same_v<uf::CaptureSessionId, uf::EngineRunId>);
+static_assert(!std::is_same_v<uf::CaptureSessionId, uf::TaskRunId>);
+static_assert(!std::is_same_v<uf::CaptureSessionId, uf::FrameId>);
 static_assert(!std::is_convertible_v<uf::FrameId, uf::uint64>);
 static_assert(!std::is_convertible_v<uf::uint64, uf::FrameId>);
 

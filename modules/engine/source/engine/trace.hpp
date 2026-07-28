@@ -2,7 +2,7 @@
 
 #include <core/types/integer.hpp>
 
-#include <annotation/catalog.hpp>
+#include <annotation/resource.hpp>
 
 #include <domain/error.hpp>
 #include <domain/ids.hpp>
@@ -47,7 +47,7 @@ namespace uf::engine
         TraceEventKind kind{};
 
         std::optional<FrameId>          frameId{};
-        std::optional<SessionId>        sessionId{};
+        std::optional<CaptureSessionId> sessionId{};
         std::optional<TargetGeneration> targetGeneration{};
 
         std::optional<annotation::PageId>       pageId{};

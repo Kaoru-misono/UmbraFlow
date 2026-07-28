@@ -19,7 +19,7 @@ namespace uf
         {
             auto result = DeliveryTarget::create(
                 WindowHandle{window},
-                SessionId{1},
+                CaptureSessionId{1},
                 TargetGeneration{},
                 800,
                 450

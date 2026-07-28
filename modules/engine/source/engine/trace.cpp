@@ -125,7 +125,7 @@ namespace uf::engine
             std::string m_text{"{"};
             bool        m_needsComma{false};
 
-            void separate()
+            auto separate() -> void
             {
                 if (m_needsComma)
                 {
@@ -136,7 +136,10 @@ namespace uf::engine
             }
 
         public:
-            void addLiteral(std::string_view name, std::string_view literalValue)
+            auto addLiteral(
+                std::string_view name,
+                std::string_view literalValue
+            ) -> void
             {
                 separate();
                 m_text += escapeJsonString(name);
@@ -144,7 +147,10 @@ namespace uf::engine
                 m_text += literalValue;
             }
 
-            void addString(std::string_view name, std::string_view value)
+            auto addString(
+                std::string_view name,
+                std::string_view value
+            ) -> void
             {
                 addLiteral(name, escapeJsonString(value));
             }

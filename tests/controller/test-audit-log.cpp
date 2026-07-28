@@ -1,4 +1,4 @@
-#include <controller/detail/input-guard.hpp>
+#include <controller/detail/audit-log-access.hpp>
 #include <controller/input.hpp>
 
 #include <doctest/doctest.h>

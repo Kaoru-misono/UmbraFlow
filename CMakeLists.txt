@@ -1,9 +1,26 @@
 cmake_minimum_required(VERSION 3.30)
 
-project(UmbraFlow
-    VERSION 0.1.0
+set(APPLICATION_MANIFEST_FILE "${CMAKE_CURRENT_SOURCE_DIR}/manifest.txt")
+include(cmake/manifest.cmake)
+cpp_parse_manifest("${APPLICATION_MANIFEST_FILE}" ROOT_MANIFEST)
+
+if("${ROOT_MANIFEST_APPLICATION_NAME}" STREQUAL "")
+    message(FATAL_ERROR "[Application] manifest.txt must define [application].name.")
+endif()
+if("${ROOT_MANIFEST_APPLICATION_VERSION}" STREQUAL "")
+    message(FATAL_ERROR "[Application] manifest.txt must define [application].version.")
+endif()
+
+project("${ROOT_MANIFEST_APPLICATION_NAME}"
+    VERSION "${ROOT_MANIFEST_APPLICATION_VERSION}"
     DESCRIPTION "Native C++ visual automation framework for Windows: WGC capture, template matching, strict background PostMessage input"
     LANGUAGES CXX
+)
+
+set_property(
+    DIRECTORY
+    APPEND
+    PROPERTY CMAKE_CONFIGURE_DEPENDS "${APPLICATION_MANIFEST_FILE}"
 )
 
 option(CPP_BUILD_TESTS "Build project tests" ON)

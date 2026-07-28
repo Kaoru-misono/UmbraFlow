@@ -17,7 +17,7 @@ namespace uf::controller_detail
         auto describeDeliveryIdentity(DeliveryTarget const& target) -> std::string
         {
             return std::format(
-                "DeliveryIdentity {{ hwnd: {}, session_id: SessionId({}), generation: TargetGeneration({}) }}",
+                "DeliveryIdentity {{ hwnd: {}, session_id: CaptureSessionId({}), generation: TargetGeneration({}) }}",
                 static_cast<uintptr>(target.windowHandle().value()),
                 target.sessionId().value(),
                 target.generation().value()
@@ -30,7 +30,7 @@ namespace uf::controller_detail
 {
     auto checkPointerPreconditions(
         ObservationLease lease,
-        SessionId currentSession,
+        CaptureSessionId currentSession,
         TargetGeneration currentGeneration,
         MonotonicInstant now,
         Point<ClientSpace> point,
@@ -43,7 +43,7 @@ namespace uf::controller_detail
             return fail(
                 AutomationErrorKind::StaleObservation,
                 std::format(
-                    "lease session SessionId({}) != current SessionId({})",
+                    "lease session CaptureSessionId({}) != current CaptureSessionId({})",
                     lease.sessionId().value(),
                     currentSession.value()
                 )

@@ -116,7 +116,7 @@ namespace uf::m0_demo
                 }
                 else
                 {
-                    sessionId = SessionId{~m_target.sessionId().value()};
+                    sessionId = CaptureSessionId{~m_target.sessionId().value()};
                 }
 
                 UF_TRY_VALUE(

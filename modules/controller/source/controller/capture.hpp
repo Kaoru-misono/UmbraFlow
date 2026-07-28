@@ -134,7 +134,7 @@ namespace uf
         [[nodiscard]]
         static auto create(
             WindowHandle windowHandle,
-            SessionId sessionId,
+            CaptureSessionId sessionId,
             TargetGeneration targetGeneration,
             ClientGeometry client,
             WgcCaptureOptions options = {}
@@ -145,7 +145,7 @@ namespace uf
         [[nodiscard]] auto close() -> Status;
 
         [[nodiscard]] auto hygiene() const noexcept -> CaptureHygiene;
-        [[nodiscard]] auto sessionId() const noexcept -> SessionId;
+        [[nodiscard]] auto sessionId() const noexcept -> CaptureSessionId;
         [[nodiscard]] auto targetGeneration() const noexcept -> TargetGeneration;
     };
 }

@@ -1,4 +1,4 @@
-#include "detail/capture-d3d.hpp"
+#include "detail/capture-readback.hpp"
 
 #include <core/numeric/checked-arithmetic.hpp>
 #include <core/numeric/checked-cast.hpp>

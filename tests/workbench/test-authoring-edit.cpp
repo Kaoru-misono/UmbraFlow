@@ -603,6 +603,37 @@ namespace uf::workbench
         CHECK(placed->searchRoi == roi);
         CHECK(recognizerIn(shared->draft, actionId).shared);
         CHECK(buildAuthoringDocument(shared->draft).has_value());
+
+        auto removed = removePlacementFromPage(
+            std::move(shared->draft),
+            actionId,
+            pageId
+        );
+        REQUIRE(removed.has_value());
+        auto const remaining = pagesPlacedOn(*removed, actionId);
+        REQUIRE(remaining.size() == 1U);
+        CHECK(remaining.front() == annotation::test::pageId(k_pageId));
+        CHECK(buildAuthoringDocument(*removed).has_value());
+    }
+
+    TEST_CASE("placement withdrawal preserves page and interactive closure rules")
+    {
+        auto const actionId = annotation::test::recognizerId(k_actionId);
+        auto const pageId   = annotation::test::pageId(k_pageId);
+
+        auto const lastPlacement = removePlacementFromPage(
+            makeAuthoringDraft(document()),
+            actionId,
+            pageId
+        );
+        CHECK_FALSE(lastPlacement.has_value());
+
+        auto const anchor = removePlacementFromPage(
+            makeAuthoringDraft(document()),
+            annotation::test::recognizerId(k_anchorId),
+            pageId
+        );
+        CHECK_FALSE(anchor.has_value());
     }
 
     TEST_CASE("sharing a region onto a page that already has it is refused")

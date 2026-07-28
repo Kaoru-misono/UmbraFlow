@@ -83,7 +83,7 @@ namespace uf::m0_demo
                 session,
                 createCaptureSession(
                     resolved,
-                    SessionId{1},
+                    CaptureSessionId{1},
                     WgcCaptureOptions{}
                 )
             );

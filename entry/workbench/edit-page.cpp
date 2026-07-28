@@ -4,11 +4,11 @@
 #include "authoring-edit.hpp"
 #include "page-view.hpp"
 #include "panel-state.hpp"
-#include "app/canvas-math.hpp"
-#include "app/workbench-app.hpp"
+#include "canvas-math.hpp"
+#include "workbench-app.hpp"
 
 #include <annotation/authoring-document.hpp>
-#include <annotation/catalog.hpp>
+#include <annotation/resource.hpp>
 
 #include <core/error/contracts.hpp>
 #include <core/error/result.hpp>
@@ -834,42 +834,13 @@ namespace uf::workbench
 
     auto InteractiveRegion::removeFromThisPage() -> Status
     {
-        auto draft         = m_page.draftCopy();
-        auto const* target = findEditableRecognizer(draft, m_id);
-        if (target == nullptr)
-        {
-            return missingMember(m_id);
-        }
-
-        auto const pages  = uf::workbench::pagesPlacedOn(draft, m_id);
-        auto const onThis = std::ranges::contains(pages, m_page.pageId());
-        if (!onThis)
-        {
-            m_page.replaceDraft(std::move(draft));
-            return ok();
-        }
-        // Withdrawing an interactive element's last placement would leave it
-        // placed nowhere, which the closure rule forbids. This is the point the
-        // v1 copy model silently deleted the recognizer; under v2 the element is
-        // one thing on N pages, so the author is told to delete it instead.
-        if (pages.size() <= 1U)
-        {
-            return fail(
-                AutomationErrorKind::InvalidResource,
-                std::format(
-                    "\"{}\" is only on this page; an interactive region must stay "
-                    "on at least one, so delete it instead of removing it here",
-                    target->name
-                )
-            );
-        }
-        std::erase_if(
-            draft.placements,
-            [this](EditablePlacement const& placement)
-            {
-                return placement.elementId == m_id
-                    && placement.pageId == m_page.pageId();
-            }
+        UF_TRY_VALUE(
+            draft,
+            removePlacementFromPage(
+                m_page.draftCopy(),
+                m_id,
+                m_page.pageId()
+            )
         );
         m_page.replaceDraft(std::move(draft));
         return ok();

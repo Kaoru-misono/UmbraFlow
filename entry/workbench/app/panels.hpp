@@ -1,7 +1,7 @@
 #pragma once
 
-#include "canvas-math.hpp"
-#include "workbench-app.hpp"
+#include "../canvas-math.hpp"
+#include "../workbench-app.hpp"
 
 #include "panel-state.hpp"
 #include "platform/windows-texture-cache.hpp"
@@ -9,7 +9,7 @@
 
 #include <annotation/authoring-compiler.hpp>
 #include <annotation/authoring-document.hpp>
-#include <annotation/catalog.hpp>
+#include <annotation/resource.hpp>
 
 #include <core/error/result.hpp>
 #include <core/types/integer.hpp>
@@ -18,16 +18,17 @@
 #include <filesystem>
 #include <functional>
 #include <optional>
+#include <span>
 #include <string>
 
 namespace uf::workbench
 {
     // The platform-backed operations the panels invoke but cannot perform
-    // themselves: uploading a source image to a GPU texture, opening the OS file
-    // picker, and capturing a frame from a bound target. Each is a call-scoped
-    // callback the shell wires to a platform helper; the panels stay free of
-    // Win32, Direct3D, and Windows Graphics Capture. The callbacks are borrowed
-    // for the draw and never retained.
+    // themselves: uploading/pruning GPU textures, opening the OS file picker,
+    // and capturing a frame from a bound target. Each is a call-scoped callback
+    // the shell wires to a platform helper; the panels stay free of Win32,
+    // Direct3D, and Windows Graphics Capture. The callbacks are borrowed for the
+    // draw and never retained.
     struct WorkbenchServices final
     {
         std::function<
@@ -35,6 +36,10 @@ namespace uf::workbench
                 annotation::AuthoringSourceAsset const&
             )
         > textureFor{};
+
+        std::function<
+            void(std::span<annotation::AuthoringSource const>)
+        > pruneTextures{};
 
         std::function<
             Result<std::optional<std::filesystem::path>>()

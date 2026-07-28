@@ -1,8 +1,8 @@
 #include "args.hpp"
+#include "application-info.hpp"
 #include "run.hpp"
 
 #include <core/numeric/checked-cast.hpp>
-#include <core/project.hpp>
 
 #include <cstddef>
 #include <exception>
@@ -76,7 +76,7 @@ namespace uf::cli
         {
             if (raw.empty())
             {
-                std::cout << k_projectName << '\n';
+                std::cout << application::k_name << '\n';
                 std::cout << runUsageText();
                 return ExitCode::Success;
             }

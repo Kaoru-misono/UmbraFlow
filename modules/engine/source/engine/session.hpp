@@ -25,6 +25,11 @@
 
 namespace uf::engine
 {
+    namespace detail
+    {
+        class EngineSessionIdentity;
+    }
+
     class EngineSession;
 
     // The read-only configuration a session captures once at construction. It is
@@ -70,33 +75,33 @@ namespace uf::engine
     };
 
     // A single-use, move-only handle over one captured frame, vended only by
-    // EngineSession::observe. It carries the frame, its lease, and its identity,
-    // plus a non-owning back-reference to the session that produced it.
+    // EngineSession::observe. It carries the frame, its lease, its frame
+    // identity, and a shared immutable token identifying the session that
+    // produced it.
     //
-    // Lifetime contract: an Observation must never outlive its EngineSession. The
-    // session outlives every observation it vends, so the raw back-pointer is a
-    // pure optional observation of an object that provably outlives it, never an
-    // owner. Every operation checks m_invalidated first and fails
-    // StaleObservation before touching the session (D0/D1): consuming the handle
-    // by value makes it typed single-use, and the flag fences any surviving alias
-    // at runtime. The move operations copy the members into the destination and
-    // invalidate the source, so a moved-from handle is dead exactly like a
-    // consumed one and fails StaleObservation on any later use.
+    // The token owns no session state and is never dereferenced. It follows a
+    // moved EngineSession and lets every operation reject a handle vended by a
+    // different session without retaining a borrow into the session object.
+    // Consuming the handle by value makes it typed single-use, and the invalidated
+    // flag fences any surviving alias at runtime. The move operations copy the
+    // members into the destination and invalidate the source, so a moved-from
+    // handle is dead exactly like a consumed one and fails StaleObservation on
+    // any later use.
     class Observation final
     {
         friend class EngineSession;
 
-        Frame                     m_frame;
-        ObservationLease          m_lease;
-        annotation::FrameIdentity m_frameIdentity;
-        EngineSession*            m_session;
-        bool                      m_invalidated{false};
+        Frame                                                m_frame;
+        ObservationLease                                     m_lease;
+        annotation::FrameIdentity                            m_frameIdentity;
+        std::shared_ptr<detail::EngineSessionIdentity const> m_sessionIdentity;
+        bool                                                 m_invalidated{false};
 
         Observation(
             Frame frame,
             ObservationLease lease,
             annotation::FrameIdentity frameIdentity,
-            EngineSession* p_session
+            std::shared_ptr<detail::EngineSessionIdentity const> sessionIdentity
         ) noexcept;
 
     public:
@@ -107,13 +112,6 @@ namespace uf::engine
 
         ~Observation() = default;
 
-        [[nodiscard]]
-        auto resolvePage() -> Result<annotation::PageOutcome>;
-
-        [[nodiscard]]
-        auto findAction(
-            annotation::RecognizerId recognizerId
-        ) -> Result<std::optional<ActionFound>>;
     };
 
     // The record of one delivered click: the frame it was authorized against and
@@ -136,14 +134,16 @@ namespace uf::engine
     {
         friend class Observation;
 
-        LoadedRuntime                 m_loadedRuntime;
-        std::unique_ptr<IFrameSource> m_frameSource;
-        std::unique_ptr<IActionSink>  m_actionSink;
-        std::unique_ptr<ITraceSink>   m_traceSink;
-        EngineSessionConfig           m_config;
+        LoadedRuntime                                        m_loadedRuntime;
+        std::shared_ptr<detail::EngineSessionIdentity const> m_identity;
+        std::unique_ptr<IFrameSource>                        m_frameSource;
+        std::unique_ptr<IActionSink>                         m_actionSink;
+        std::unique_ptr<ITraceSink>                          m_traceSink;
+        EngineSessionConfig                                  m_config;
 
         EngineSession(
             LoadedRuntime loadedRuntime,
+            std::shared_ptr<detail::EngineSessionIdentity const> identity,
             std::unique_ptr<IFrameSource> frameSource,
             std::unique_ptr<IActionSink> actionSink,
             std::unique_ptr<ITraceSink> traceSink,
@@ -160,19 +160,10 @@ namespace uf::engine
         [[nodiscard]]
         auto emit(TraceEvent const& event) -> Status;
 
-        [[nodiscard]]
-        auto resolvePageFor(Frame const& frame) -> Result<annotation::PageOutcome>;
-
-        [[nodiscard]]
-        auto findActionFor(
-            Frame const& frame,
-            annotation::RecognizerId recognizerId
-        ) -> Result<std::optional<ActionFound>>;
-
         // D6: the minimal known-popup sweep lands in P0-C; P1 replaces this no-op
         // with the bot:on registry. It runs once per waitForPage cycle so the loop
         // shape is already in place when the real sweep arrives.
-        void sweepKnownPopups() noexcept;
+        auto sweepKnownPopups() noexcept -> void;
 
     public:
         EngineSession(EngineSession const&) = delete;
@@ -193,6 +184,17 @@ namespace uf::engine
 
         [[nodiscard]]
         auto observe() -> Result<Observation>;
+
+        [[nodiscard]]
+        auto resolvePage(
+            Observation const& observation
+        ) -> Result<annotation::PageOutcome>;
+
+        [[nodiscard]]
+        auto findAction(
+            Observation const& observation,
+            annotation::RecognizerId recognizerId
+        ) -> Result<std::optional<ActionFound>>;
 
         [[nodiscard]]
         auto act(

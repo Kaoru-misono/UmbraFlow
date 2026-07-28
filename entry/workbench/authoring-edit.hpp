@@ -225,6 +225,17 @@ namespace uf::workbench
         annotation::RecognizerId id
     ) -> std::vector<annotation::PageId>;
 
+    // Withdraws one info or interactive element from one page. Page anchors use
+    // signature roles rather than placements and are refused. An interactive
+    // element's last placement is also refused so the edit cannot violate the
+    // document closure rule. Removing an absent placement is idempotent.
+    [[nodiscard]]
+    auto removePlacementFromPage(
+        AuthoringDraft draft,
+        annotation::RecognizerId id,
+        annotation::PageId pageId
+    ) -> Result<AuthoringDraft>;
+
     // Marks an interactive region as reusable on other pages, or takes the mark
     // off. Marking is what puts it in the Shared regions palette, where the
     // author can reach it from the page they want to put it on, before any second

@@ -1,3 +1,12 @@
+set(APPLICATION_INFO_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/generated")
+set(APPLICATION_INFO_HEADER "${APPLICATION_INFO_DIRECTORY}/application-info.hpp")
+file(MAKE_DIRECTORY "${APPLICATION_INFO_DIRECTORY}")
+configure_file(
+    "${PROJECT_SOURCE_DIR}/cmake/application-info.hpp.in"
+    "${APPLICATION_INFO_HEADER}"
+    @ONLY
+)
+
 set(CLI_LIBRARY ${PROJECT_NAME}_cli_support)
 
 # Platform-free product logic: argument parsing, name resolution, the file trace
@@ -53,12 +62,14 @@ endif()
 
 add_executable(${PROJECT_NAME}
     cli/main.cpp
+    "${APPLICATION_INFO_HEADER}"
     ${CPP_UTF8_RC}
 )
 cpp_apply_safety_profile(${PROJECT_NAME})
 cpp_apply_utf8_manifest(${PROJECT_NAME})
 
 set_target_properties(${PROJECT_NAME} PROPERTIES OUTPUT_NAME "umbra-flow")
+target_include_directories(${PROJECT_NAME} PRIVATE "${APPLICATION_INFO_DIRECTORY}")
 target_link_libraries(${PROJECT_NAME} PRIVATE ${CLI_LIBRARY} ${PROJECT_NAME}_core)
 target_compile_features(${PROJECT_NAME} PRIVATE cxx_std_23)
 
@@ -136,10 +147,10 @@ if(WIN32 AND TARGET ${PROJECT_NAME}_annotation)
     set(WORKBENCH_LIBRARY ${PROJECT_NAME}_workbench_support)
 
     add_library(${WORKBENCH_LIBRARY} STATIC
-        workbench/app/canvas-math.cpp
-        workbench/app/canvas-math.hpp
-        workbench/app/workbench-app.cpp
-        workbench/app/workbench-app.hpp
+        workbench/canvas-math.cpp
+        workbench/canvas-math.hpp
+        workbench/workbench-app.cpp
+        workbench/workbench-app.hpp
         workbench/authoring-actions.cpp
         workbench/authoring-actions.hpp
         workbench/authoring-edit.cpp

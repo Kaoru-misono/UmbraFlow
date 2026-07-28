@@ -2,7 +2,7 @@
 
 #include "panel-state.hpp"
 #include "preview.hpp"
-#include "app/workbench-app.hpp"
+#include "workbench-app.hpp"
 
 #include <annotation/catalog.hpp>
 

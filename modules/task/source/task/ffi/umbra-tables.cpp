@@ -9,7 +9,7 @@
 #include <core/time/monotonic-time.hpp>
 #include <core/types/integer.hpp>
 
-#include <annotation/catalog.hpp>
+#include <annotation/resource.hpp>
 #include <annotation/recognition.hpp>
 
 #include <domain/error.hpp>

@@ -190,67 +190,13 @@ namespace uf::annotation
             );
         }
 
-        template <typename Id>
-        [[nodiscard]]
-        auto parseId(std::string_view value) -> Result<Id>
-        {
-            UF_TRY_VALUE(resourceId, ResourceId::parse(value));
-            return Id{resourceId};
-        }
-
-        template <typename Id>
-        [[nodiscard]]
-        auto parseIds(
-            std::vector<std::string> const& encoded
-        ) -> Result<std::vector<Id>>
-        {
-            auto ids = std::vector<Id>{};
-            ids.reserve(encoded.size());
-            for (auto const& value : encoded)
-            {
-                UF_TRY_VALUE(id, parseId<Id>(value));
-                ids.emplace_back(id);
-            }
-            return ids;
-        }
-
-        [[nodiscard]]
-        auto parseFingerprint(
-            detail::CanonicalTomlReader& reader,
-            std::string_view resolutionKey,
-            std::string_view dpiKey
-        ) -> Result<ProjectFingerprint>
-        {
-            UF_TRY_VALUE(
-                resolution,
-                reader.takeUnsigned32ArrayField(resolutionKey)
-            );
-            UF_TRY_VALUE(dpi, reader.takeUnsigned32ArrayField(dpiKey));
-            if (resolution.size() != 2U || dpi.size() != 2U)
-            {
-                return invalidAuthoring(
-                    std::format(
-                        "authoring document '{}' and '{}' must have two integers",
-                        resolutionKey,
-                        dpiKey
-                    )
-                );
-            }
-            return ProjectFingerprint::create(
-                checkedAt(resolution, 0),
-                checkedAt(resolution, 1),
-                checkedAt(dpi, 0),
-                checkedAt(dpi, 1)
-            );
-        }
-
         [[nodiscard]]
         auto parseSource(
             detail::CanonicalTomlReader& reader
         ) -> Result<AuthoringSource>
         {
             UF_TRY_VALUE(idText, reader.takeStringField("id"));
-            UF_TRY_VALUE(id, parseId<SourceId>(idText));
+            UF_TRY_VALUE(id, detail::parseId<SourceId>(idText));
             UF_TRY_VALUE(path, reader.takeStringField("path"));
             UF_TRY_VALUE(hashText, reader.takeStringField("content_hash"));
             UF_TRY_VALUE(contentHash, ContentHash::parse(hashText));
@@ -262,7 +208,7 @@ namespace uf::annotation
             }
             UF_TRY_VALUE(
                 fingerprint,
-                parseFingerprint(reader, "client_size", "dpi")
+                detail::parseFingerprintFields(reader, "client_size", "dpi")
             );
             UF_TRY_VALUE(backend, reader.takeStringField("capture_backend"));
             auto provenance = SourceProvenance{ImportedSourceProvenance{}};
@@ -300,7 +246,7 @@ namespace uf::annotation
         ) -> Result<PageSignature>
         {
             UF_TRY_VALUE(idText, reader.takeStringField("id"));
-            UF_TRY_VALUE(id, parseId<PageId>(idText));
+            UF_TRY_VALUE(id, detail::parseId<PageId>(idText));
             UF_TRY_VALUE(nameText, reader.takeStringField("name"));
             UF_TRY_VALUE(name, ResourceName::create(std::move(nameText)));
             UF_TRY_VALUE(
@@ -309,7 +255,7 @@ namespace uf::annotation
             );
             UF_TRY_VALUE(
                 required,
-                parseIds<RecognizerId>(requiredText)
+                detail::parseIds<RecognizerId>(requiredText)
             );
             UF_TRY_VALUE(
                 forbiddenText,
@@ -317,7 +263,7 @@ namespace uf::annotation
             );
             UF_TRY_VALUE(
                 forbidden,
-                parseIds<RecognizerId>(forbiddenText)
+                detail::parseIds<RecognizerId>(forbiddenText)
             );
             return PageSignature::create(
                 PageSpec{
@@ -357,9 +303,9 @@ namespace uf::annotation
         ) -> Result<RegressionCase>
         {
             UF_TRY_VALUE(idText, reader.takeStringField("id"));
-            UF_TRY_VALUE(id, parseId<RegressionId>(idText));
+            UF_TRY_VALUE(id, detail::parseId<RegressionId>(idText));
             UF_TRY_VALUE(sourceIdText, reader.takeStringField("source_id"));
-            UF_TRY_VALUE(sourceId, parseId<SourceId>(sourceIdText));
+            UF_TRY_VALUE(sourceId, detail::parseId<SourceId>(sourceIdText));
             UF_TRY_VALUE(
                 classificationText,
                 reader.takeStringField("classification")
@@ -380,7 +326,7 @@ namespace uf::annotation
                     pageIdText,
                     reader.takeStringField("expected_page_id")
                 );
-                UF_TRY_VALUE(pageId, parseId<PageId>(pageIdText));
+                UF_TRY_VALUE(pageId, detail::parseId<PageId>(pageIdText));
                 expectation = ResolvedRegression{pageId};
             }
             else if (outcome == "ambiguous")
@@ -418,31 +364,6 @@ namespace uf::annotation
                 return "confusable";
             }
             UF_UNREACHABLE_MSG("unknown regression classification");
-        }
-
-        auto appendFingerprintFields(
-            std::string& output,
-            ProjectFingerprint fingerprint,
-            std::string_view resolutionKey,
-            std::string_view dpiKey
-        ) -> void
-        {
-            output += resolutionKey;
-            output += " = ";
-            auto const resolution = std::array{
-                fingerprint.width(),
-                fingerprint.height(),
-            };
-            detail::appendUnsigned32Array(output, resolution);
-            output.push_back('\n');
-            output += dpiKey;
-            output += " = ";
-            auto const dpi = std::array{
-                fingerprint.dpiX(),
-                fingerprint.dpiY(),
-            };
-            detail::appendUnsigned32Array(output, dpi);
-            output.push_back('\n');
         }
 
         template <typename Id>
@@ -567,7 +488,7 @@ namespace uf::annotation
         ) -> Result<Element>
         {
             UF_TRY_VALUE(idText, reader.takeStringField("id"));
-            UF_TRY_VALUE(id, parseId<RecognizerId>(idText));
+            UF_TRY_VALUE(id, detail::parseId<RecognizerId>(idText));
             UF_TRY_VALUE(nameText, reader.takeStringField("name"));
             UF_TRY_VALUE(name, ResourceName::create(std::move(nameText)));
             UF_TRY_VALUE(typeText, reader.takeStringField("type"));
@@ -579,7 +500,7 @@ namespace uf::annotation
                 );
             }
             UF_TRY_VALUE(sourceIdText, reader.takeStringField("source_id"));
-            UF_TRY_VALUE(sourceId, parseId<SourceId>(sourceIdText));
+            UF_TRY_VALUE(sourceId, detail::parseId<SourceId>(sourceIdText));
             UF_TRY_VALUE(kindText, reader.takeStringField("recognizer_kind"));
             if (kindText != "gray_template")
             {
@@ -679,9 +600,9 @@ namespace uf::annotation
         ) -> Result<AuthoringPlacement>
         {
             UF_TRY_VALUE(pageIdText, reader.takeStringField("page_id"));
-            UF_TRY_VALUE(pageId, parseId<PageId>(pageIdText));
+            UF_TRY_VALUE(pageId, detail::parseId<PageId>(pageIdText));
             UF_TRY_VALUE(elementIdText, reader.takeStringField("element_id"));
-            UF_TRY_VALUE(elementId, parseId<RecognizerId>(elementIdText));
+            UF_TRY_VALUE(elementId, detail::parseId<RecognizerId>(elementIdText));
             UF_TRY_VALUE(
                 searchRoi,
                 detail::parsePixelRectField(reader, "search_roi")
@@ -1220,7 +1141,7 @@ namespace uf::annotation
             "project_id",
             document.catalog().projectId().value()
         );
-        appendFingerprintFields(
+        detail::appendFingerprintFields(
             output,
             document.catalog().fingerprint(),
             "base_resolution",
@@ -1237,7 +1158,7 @@ namespace uf::annotation
                 "content_hash",
                 source.contentHash().toString()
             );
-            appendFingerprintFields(
+            detail::appendFingerprintFields(
                 output,
                 source.fingerprint(),
                 "client_size",
@@ -1441,7 +1362,11 @@ namespace uf::annotation
         UF_TRY_VALUE(projectId, ProjectId::create(std::move(projectIdText)));
         UF_TRY_VALUE(
             fingerprint,
-            parseFingerprint(reader, "base_resolution", "base_dpi")
+            detail::parseFingerprintFields(
+                reader,
+                "base_resolution",
+                "base_dpi"
+            )
         );
 
         auto sources     = std::vector<AuthoringSource>{};

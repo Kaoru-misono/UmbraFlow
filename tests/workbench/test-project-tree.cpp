@@ -3,7 +3,7 @@
 #include <project-tree.hpp>
 
 #include <annotation/authoring-document.hpp>
-#include <annotation/catalog.hpp>
+#include <annotation/resource.hpp>
 #include <annotation/content-hash.hpp>
 
 #include <doctest/doctest.h>

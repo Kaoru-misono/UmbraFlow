@@ -144,7 +144,7 @@ namespace uf::workbench
             };
             auto frame = Frame::create(
                 FrameId{5},
-                SessionId{9},
+                CaptureSessionId{9},
                 generation,
                 MonotonicInstant::fromTimePoint(MonotonicInstant::TimePoint{}),
                 width,
@@ -306,7 +306,7 @@ namespace uf::workbench
         };
         auto grayFrame = Frame::create(
             FrameId{1},
-            SessionId{1},
+            CaptureSessionId{1},
             TargetGeneration::fromValue(1),
             MonotonicInstant::fromTimePoint(MonotonicInstant::TimePoint{}),
             1,

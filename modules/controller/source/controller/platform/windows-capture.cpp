@@ -1,6 +1,6 @@
 #include "controller/capture.hpp"
 
-#include "controller/detail/capture-d3d.hpp"
+#include "controller/detail/capture-readback.hpp"
 #include "controller/detail/capture-os-build.hpp"
 #include "controller/detail/capture-stall.hpp"
 #include "controller/detail/capture-wgc.hpp"
@@ -870,7 +870,7 @@ namespace uf
         winrt::event_token                      m_itemClosedToken;
         std::shared_ptr<FrameSlot>              m_frameSlot;
         controller_detail::StallTracker         m_stall;
-        SessionId                               m_sessionId;
+        CaptureSessionId                        m_sessionId;
         controller_detail::FrameIdCounter       m_frameIds;
         TargetGeneration                        m_targetGeneration;
         WindowInstanceMarker                    m_windowMarker;
@@ -901,7 +901,7 @@ namespace uf
             winrt::event_token itemClosedToken,
             std::shared_ptr<FrameSlot> p_frameSlot,
             MonotonicInstant startedAt,
-            SessionId sessionId,
+            CaptureSessionId sessionId,
             TargetGeneration targetGeneration,
             WindowInstanceMarker windowMarker,
             ClientGeometry client,
@@ -1117,7 +1117,7 @@ namespace uf
         [[nodiscard]]
         static auto create(
             WindowHandle windowHandle,
-            SessionId sessionId,
+            CaptureSessionId sessionId,
             TargetGeneration targetGeneration,
             ClientGeometry client,
             WgcCaptureOptions options
@@ -1712,7 +1712,7 @@ namespace uf
         }
 
         [[nodiscard]] auto hygiene() const noexcept -> CaptureHygiene { return m_hygiene; }
-        [[nodiscard]] auto sessionId() const noexcept -> SessionId { return m_sessionId; }
+        [[nodiscard]] auto sessionId() const noexcept -> CaptureSessionId { return m_sessionId; }
         [[nodiscard]]
         auto targetGeneration() const noexcept -> TargetGeneration
         {
@@ -1730,7 +1730,7 @@ namespace uf
 
     auto WgcCaptureSession::create(
         WindowHandle windowHandle,
-        SessionId sessionId,
+        CaptureSessionId sessionId,
         TargetGeneration targetGeneration,
         ClientGeometry client,
         WgcCaptureOptions options
@@ -1784,7 +1784,7 @@ namespace uf
         return m_impl->hygiene();
     }
 
-    auto WgcCaptureSession::sessionId() const noexcept -> SessionId
+    auto WgcCaptureSession::sessionId() const noexcept -> CaptureSessionId
     {
         UF_CHECK(m_impl != nullptr);
         return m_impl->sessionId();

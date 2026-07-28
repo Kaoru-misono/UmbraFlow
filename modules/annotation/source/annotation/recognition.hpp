@@ -32,13 +32,13 @@ namespace uf::annotation
 
     class FrameIdentity final
     {
-        SessionId        m_sessionId;
+        CaptureSessionId m_sessionId;
         TargetGeneration m_targetGeneration;
         FrameId          m_frameId;
 
     public:
         constexpr FrameIdentity(
-            SessionId sessionId,
+            CaptureSessionId sessionId,
             TargetGeneration targetGeneration,
             FrameId frameId
         ) noexcept
@@ -52,7 +52,7 @@ namespace uf::annotation
 
         [[nodiscard]] static auto fromFrame(Frame const& frame) noexcept -> FrameIdentity;
 
-        [[nodiscard]] auto sessionId() const noexcept -> SessionId;
+        [[nodiscard]] auto sessionId() const noexcept -> CaptureSessionId;
         [[nodiscard]] auto targetGeneration() const noexcept -> TargetGeneration;
         [[nodiscard]] auto frameId() const noexcept -> FrameId;
     };

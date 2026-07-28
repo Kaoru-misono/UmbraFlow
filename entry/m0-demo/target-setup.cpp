@@ -48,7 +48,7 @@ namespace uf::m0_demo
 
     auto createCaptureSession(
         ResolvedTarget const& target,
-        SessionId sessionId,
+        CaptureSessionId sessionId,
         WgcCaptureOptions options
     ) -> Result<WgcCaptureSession>
     {

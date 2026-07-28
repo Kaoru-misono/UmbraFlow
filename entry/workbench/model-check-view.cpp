@@ -3,7 +3,7 @@
 #include "authoring-actions.hpp"
 #include "model-check-job.hpp"
 #include "preview.hpp"
-#include "app/workbench-app.hpp"
+#include "workbench-app.hpp"
 
 #include <annotation/authoring-document.hpp>
 #include <annotation/catalog.hpp>

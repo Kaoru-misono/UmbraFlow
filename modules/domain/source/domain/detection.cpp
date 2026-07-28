@@ -14,7 +14,7 @@ namespace uf
     }
 
     Detection::Detection(
-        SessionId sessionId,
+        CaptureSessionId sessionId,
         TargetGeneration targetGeneration,
         FrameId frameId,
         Label label,
@@ -30,13 +30,13 @@ namespace uf
     {
     }
 
-    auto Detection::sessionId() const noexcept -> SessionId { return m_sessionId; }
+    auto Detection::sessionId() const noexcept -> CaptureSessionId { return m_sessionId; }
     auto Detection::targetGeneration() const noexcept -> TargetGeneration
     {
         return m_targetGeneration;
     }
     auto Detection::frameId() const noexcept -> FrameId { return m_frameId; }
-    auto Detection::label() const -> Label { return m_label; }
+    auto Detection::label() const noexcept -> Label const& { return m_label; }
     auto Detection::rect() const noexcept -> Rect<FrameSpace> { return m_rect; }
     auto Detection::confidence() const noexcept -> float { return m_confidence; }
 
@@ -69,7 +69,7 @@ namespace uf
         };
     }
 
-    auto ObservationLease::sessionId() const noexcept -> SessionId { return m_sessionId; }
+    auto ObservationLease::sessionId() const noexcept -> CaptureSessionId { return m_sessionId; }
     auto ObservationLease::targetGeneration() const noexcept -> TargetGeneration
     {
         return m_targetGeneration;
@@ -83,7 +83,7 @@ namespace uf
     }
 
     auto ObservationLease::validate(
-        SessionId currentSession,
+        CaptureSessionId currentSession,
         TargetGeneration currentGeneration,
         FrameId observedFrame,
         MonotonicInstant now

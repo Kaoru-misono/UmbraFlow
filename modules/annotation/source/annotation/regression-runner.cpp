@@ -160,7 +160,7 @@ namespace uf::annotation
                 frame,
                 Frame::create(
                     FrameId{*frameId},
-                    SessionId{1},
+                    CaptureSessionId{1},
                     generation,
                     MonotonicInstant::fromTimePoint(MonotonicInstant::TimePoint{}),
                     decoded.width,

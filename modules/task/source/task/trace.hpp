@@ -90,17 +90,17 @@ namespace uf::task
     // than a best-effort side effect: the caller emits at the decision instant and
     // treats a failed emit as aborting the current operation, mirroring the
     // engine's ITraceSink discipline (D4).
-    class TaskTraceSink
+    class ITaskTraceSink
     {
     public:
-        TaskTraceSink() = default;
+        ITaskTraceSink() = default;
 
-        TaskTraceSink(TaskTraceSink const&) = delete;
-        TaskTraceSink(TaskTraceSink&&) = delete;
-        auto operator=(TaskTraceSink const&) -> TaskTraceSink& = delete;
-        auto operator=(TaskTraceSink&&) -> TaskTraceSink& = delete;
+        ITaskTraceSink(ITaskTraceSink const&) = delete;
+        ITaskTraceSink(ITaskTraceSink&&) = delete;
+        auto operator=(ITaskTraceSink const&) -> ITaskTraceSink& = delete;
+        auto operator=(ITaskTraceSink&&) -> ITaskTraceSink& = delete;
 
-        virtual ~TaskTraceSink() = default;
+        virtual ~ITaskTraceSink() = default;
 
         [[nodiscard]] virtual auto emit(TaskTraceEvent const& event) -> Status = 0;
     };

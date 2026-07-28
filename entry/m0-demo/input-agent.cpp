@@ -732,7 +732,7 @@ namespace uf::m0_demo
                     );
                     auto rejectedTarget = DeliveryTarget::create(
                         delivery.windowHandle(),
-                        SessionId{~delivery.sessionId().value()},
+                        CaptureSessionId{~delivery.sessionId().value()},
                         delivery.generation(),
                         delivery.clientWidth(),
                         delivery.clientHeight()
@@ -865,7 +865,7 @@ namespace uf::m0_demo
         auto const client = resolved.clientSize();
         UF_TRY(ensureClientAreaUsable(client));
 
-        auto const sessionId = SessionId{1};
+        auto const sessionId = CaptureSessionId{1};
         UF_TRY_VALUE(
             delivery,
             DeliveryTarget::create(

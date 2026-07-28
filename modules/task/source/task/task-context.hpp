@@ -7,7 +7,7 @@
 #include <core/time/monotonic-time.hpp>
 #include <core/types/integer.hpp>
 
-#include <annotation/catalog.hpp>
+#include <annotation/resource.hpp>
 #include <annotation/recognition.hpp>
 
 #include <engine/session.hpp>
@@ -102,9 +102,9 @@ namespace uf::task
     // Lifetime contract: the caller MUST keep the TaskContext alive for at least
     // as long as the script::Engine (task VM) that binds it, because the VM's host
     // functions hold a raw pointer to it. The context is therefore non-movable so
-    // that pointer, and the address of the owned EngineSession that every retained
-    // Observation points back to, both stay stable. NOT thread-safe: every method
-    // runs on the VM's owning thread.
+    // that pointer stays stable. Retained Observations carry only the engine
+    // session's stable immutable identity token, never a borrow into the session
+    // object. NOT thread-safe: every method runs on the VM's owning thread.
     class TaskContext final
     {
         engine::EngineSession m_session;
@@ -116,7 +116,7 @@ namespace uf::task
         // reaches, so HostCall events emit through it (emitTrace) without a
         // second lifetime to thread; the owning host emits the surrounding
         // TaskStarted / ResourcesValidated / TaskFinished through the same object.
-        std::unique_ptr<TaskTraceSink> m_traceSink;
+        std::unique_ptr<ITaskTraceSink> m_traceSink;
         std::map<ObservationSeq, engine::Observation> m_observations{};
         ObservationSeq m_nextSeq{1};
         bool           m_fatal{false};
@@ -126,7 +126,7 @@ namespace uf::task
         explicit TaskContext(
             engine::EngineSession session,
             TaskContextConfig config = {},
-            std::unique_ptr<TaskTraceSink> traceSink = nullptr
+            std::unique_ptr<ITaskTraceSink> traceSink = nullptr
         ) noexcept;
 
         TaskContext(TaskContext const&) = delete;

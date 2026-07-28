@@ -108,7 +108,7 @@ namespace uf::annotation
             };
             return PageResolver::resolve(
                 fixture.catalog,
-                FrameIdentity{SessionId{7}, TargetGeneration::fromValue(3), FrameId{11}},
+                FrameIdentity{CaptureSessionId{7}, TargetGeneration::fromValue(3), FrameId{11}},
                 evaluations
             );
         }
@@ -207,7 +207,7 @@ namespace uf::annotation
             auto const evaluations = std::array{*evaluation};
             auto const result = PageResolver::resolve(
                 fixture.catalog,
-                FrameIdentity{SessionId{7}, TargetGeneration::fromValue(3), FrameId{11}},
+                FrameIdentity{CaptureSessionId{7}, TargetGeneration::fromValue(3), FrameId{11}},
                 evaluations
             );
             REQUIRE_FALSE(result.has_value());

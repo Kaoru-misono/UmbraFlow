@@ -8,6 +8,8 @@
 
 #include <array>
 #include <chrono>
+#include <filesystem>
+#include <source_location>
 #include <span>
 #include <string>
 #include <string_view>
@@ -53,6 +55,25 @@ namespace uf::cli
         {
             return fail(kind, "boundary test failure").error();
         }
+    }
+
+    TEST_CASE("run error rendering includes its originating source location")
+    {
+        auto const location = std::source_location::current();
+        auto failure = fail(
+            AutomationErrorKind::InvalidResource,
+            "bad project",
+            {},
+            location
+        );
+
+        auto const rendered = formatRunError(failure.error());
+        auto origin = std::filesystem::path{location.file_name()}
+                          .filename()
+                          .string();
+        origin += ':';
+        origin += std::to_string(location.line());
+        CHECK(rendered.find(origin) != std::string::npos);
     }
 
     TEST_CASE("parseRunArguments accepts every flag on the happy path")

@@ -66,7 +66,7 @@ namespace uf
     class Frame final
     {
         FrameId          m_id;
-        SessionId        m_sessionId;
+        CaptureSessionId m_sessionId;
         TargetGeneration m_targetGeneration;
         MonotonicInstant m_capturedAt;
 
@@ -80,7 +80,7 @@ namespace uf
 
         Frame(
             FrameId id,
-            SessionId sessionId,
+            CaptureSessionId sessionId,
             TargetGeneration targetGeneration,
             MonotonicInstant capturedAt,
             uint32 width,
@@ -95,7 +95,7 @@ namespace uf
         [[nodiscard]]
         static auto create(
             FrameId id,
-            SessionId sessionId,
+            CaptureSessionId sessionId,
             TargetGeneration targetGeneration,
             MonotonicInstant capturedAt,
             uint32 width,
@@ -107,7 +107,7 @@ namespace uf
         ) -> Result<Frame>;
 
         [[nodiscard]] auto id() const noexcept -> FrameId;
-        [[nodiscard]] auto sessionId() const noexcept -> SessionId;
+        [[nodiscard]] auto sessionId() const noexcept -> CaptureSessionId;
         [[nodiscard]] auto targetGeneration() const noexcept -> TargetGeneration;
         [[nodiscard]] auto capturedAt() const noexcept -> MonotonicInstant;
         [[nodiscard]] auto width() const noexcept -> uint32;

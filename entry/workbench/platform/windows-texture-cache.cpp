@@ -15,7 +15,10 @@
 #pragma warning(pop)
 
 #include <bit>
+#include <algorithm>
 #include <cstddef>
+#include <ranges>
+#include <span>
 #include <utility>
 #include <vector>
 
@@ -162,5 +165,24 @@ namespace uf::workbench::platform
             .width         = decoded.width,
             .height        = decoded.height,
         };
+    }
+
+    auto TextureCache::pruneTo(
+        std::span<annotation::AuthoringSource const> sources
+    ) -> void
+    {
+        std::erase_if(
+            m_cache->textures,
+            [sources](CachedTexture const& cached)
+            {
+                return std::ranges::none_of(
+                    sources,
+                    [id = cached.id](annotation::AuthoringSource const& source)
+                    {
+                        return source.id() == id;
+                    }
+                );
+            }
+        );
     }
 }

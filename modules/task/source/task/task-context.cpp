@@ -6,7 +6,7 @@
 #include <core/error/result.hpp>
 #include <core/types/integer.hpp>
 
-#include <annotation/catalog.hpp>
+#include <annotation/resource.hpp>
 #include <annotation/recognition.hpp>
 
 #include <domain/error.hpp>
@@ -22,7 +22,7 @@ namespace uf::task
     TaskContext::TaskContext(
         engine::EngineSession session,
         TaskContextConfig config,
-        std::unique_ptr<TaskTraceSink> traceSink
+        std::unique_ptr<ITaskTraceSink> traceSink
     ) noexcept
         : m_session{std::move(session)}
         , m_config{std::move(config)}
@@ -69,7 +69,7 @@ namespace uf::task
             );
         }
 
-        return it->second.resolvePage();
+        return m_session.resolvePage(it->second);
     }
 
     auto TaskContext::findAction(
@@ -86,7 +86,7 @@ namespace uf::task
             );
         }
 
-        return it->second.findAction(recognizerId);
+        return m_session.findAction(it->second, recognizerId);
     }
 
     auto TaskContext::click(

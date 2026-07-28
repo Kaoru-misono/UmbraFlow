@@ -118,7 +118,7 @@ namespace uf::workbench
             };
             return Frame::create(
                 FrameId{1},
-                SessionId{1},
+                CaptureSessionId{1},
                 TargetGeneration::fromValue(1),
                 MonotonicInstant::fromTimePoint(MonotonicInstant::TimePoint{}),
                 fingerprint.width(),

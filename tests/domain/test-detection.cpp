@@ -51,7 +51,7 @@ namespace uf
             };
             auto const frame = Frame::create(
                 FrameId{id},
-                SessionId{session},
+                CaptureSessionId{session},
                 generation,
                 capturedAt,
                 2,
@@ -168,7 +168,7 @@ namespace uf
 
         CHECK(
             lease->validate(
-                SessionId{uint64{1}},
+                CaptureSessionId{uint64{1}},
                 generation,
                 FrameId{uint64{10}},
                 lease->expiresAt()
@@ -177,7 +177,7 @@ namespace uf
 
         requireStaleObservation(
             lease->validate(
-                SessionId{uint64{2}},
+                CaptureSessionId{uint64{2}},
                 generation,
                 FrameId{uint64{10}},
                 frame.capturedAt()
@@ -188,7 +188,7 @@ namespace uf
         REQUIRE(nextGeneration.has_value());
         requireStaleObservation(
             lease->validate(
-                SessionId{uint64{1}},
+                CaptureSessionId{uint64{1}},
                 *nextGeneration,
                 FrameId{uint64{10}},
                 frame.capturedAt()
@@ -197,7 +197,7 @@ namespace uf
 
         requireStaleObservation(
             lease->validate(
-                SessionId{uint64{1}},
+                CaptureSessionId{uint64{1}},
                 generation,
                 FrameId{uint64{11}},
                 frame.capturedAt()
@@ -206,7 +206,7 @@ namespace uf
 
         requireStaleObservation(
             lease->validate(
-                SessionId{uint64{1}},
+                CaptureSessionId{uint64{1}},
                 generation,
                 FrameId{uint64{10}},
                 addTime(

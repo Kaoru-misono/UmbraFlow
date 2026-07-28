@@ -204,9 +204,9 @@ namespace uf::script
             // test-script.cpp asserts the loaders and residual clocks are gone;
             // this makes the rest of veto #3 explicit. Luau's luaL_openlibs never
             // opens io/package, its os library never registers the process and
-            // environment entries, and luaL_sandbox removes the manual GC hook
-            // (verified on 0.730, integration-plan §1). Luau's base library
-            // exposes no networking at all, so there is no network vector to deny.
+            // environment entries, and installSandbox removes the manual GC
+            // hook. Luau's base library exposes no networking at all, so there
+            // is no network vector to deny.
             auto engine = Engine::create();
             REQUIRE(engine.has_value());
 

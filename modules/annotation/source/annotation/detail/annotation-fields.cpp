@@ -89,4 +89,59 @@ namespace uf::annotation::detail
         appendUnsigned32Array(output, values);
         output.push_back('\n');
     }
+
+    auto parseFingerprintFields(
+        CanonicalTomlReader& reader,
+        std::string_view resolutionKey,
+        std::string_view dpiKey
+    ) -> Result<ProjectFingerprint>
+    {
+        UF_TRY_VALUE(
+            resolution,
+            reader.takeUnsigned32ArrayField(resolutionKey)
+        );
+        UF_TRY_VALUE(dpi, reader.takeUnsigned32ArrayField(dpiKey));
+        if (resolution.size() != 2U || dpi.size() != 2U)
+        {
+            return reader.invalid(
+                std::format(
+                    "'{}' and '{}' must each have two integers",
+                    resolutionKey,
+                    dpiKey
+                )
+            );
+        }
+        return ProjectFingerprint::create(
+            checkedAt(resolution, 0),
+            checkedAt(resolution, 1),
+            checkedAt(dpi, 0),
+            checkedAt(dpi, 1)
+        );
+    }
+
+    auto appendFingerprintFields(
+        std::string& output,
+        ProjectFingerprint fingerprint,
+        std::string_view resolutionKey,
+        std::string_view dpiKey
+    ) -> void
+    {
+        output += resolutionKey;
+        output += " = ";
+        auto const resolution = std::array{
+            fingerprint.width(),
+            fingerprint.height(),
+        };
+        appendUnsigned32Array(output, resolution);
+        output.push_back('\n');
+
+        output += dpiKey;
+        output += " = ";
+        auto const dpi = std::array{
+            fingerprint.dpiX(),
+            fingerprint.dpiY(),
+        };
+        appendUnsigned32Array(output, dpi);
+        output.push_back('\n');
+    }
 }

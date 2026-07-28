@@ -2,6 +2,8 @@
 
 #include "frame.hpp"
 
+#include <core/safety/annotations.hpp>
+
 #include <chrono>
 
 namespace uf
@@ -17,7 +19,7 @@ namespace uf
 
     class Detection final
     {
-        SessionId        m_sessionId;
+        CaptureSessionId m_sessionId;
         TargetGeneration m_targetGeneration;
         FrameId          m_frameId;
         Label            m_label;
@@ -26,7 +28,7 @@ namespace uf
 
     public:
         Detection(
-            SessionId sessionId,
+            CaptureSessionId sessionId,
             TargetGeneration targetGeneration,
             FrameId frameId,
             Label label,
@@ -36,23 +38,24 @@ namespace uf
 
         auto operator==(Detection const&) const -> bool = default;
 
-        [[nodiscard]] auto sessionId() const noexcept -> SessionId;
+        [[nodiscard]] auto sessionId() const noexcept -> CaptureSessionId;
         [[nodiscard]] auto targetGeneration() const noexcept -> TargetGeneration;
         [[nodiscard]] auto frameId() const noexcept -> FrameId;
-        [[nodiscard]] auto label() const -> Label;
+        [[nodiscard]]
+        auto label() const noexcept UF_LIFETIME_BOUND -> Label const&;
         [[nodiscard]] auto rect() const noexcept -> Rect<FrameSpace>;
         [[nodiscard]] auto confidence() const noexcept -> float;
     };
 
     class ObservationLease final
     {
-        SessionId        m_sessionId;
+        CaptureSessionId m_sessionId;
         TargetGeneration m_targetGeneration;
         FrameId          m_frameId;
         MonotonicInstant m_expiresAt;
 
         constexpr ObservationLease(
-            SessionId sessionId,
+            CaptureSessionId sessionId,
             TargetGeneration targetGeneration,
             FrameId frameId,
             MonotonicInstant expiresAt
@@ -73,7 +76,7 @@ namespace uf
             MonotonicInstant::Duration maximumAge
         ) -> Result<ObservationLease>;
 
-        [[nodiscard]] auto sessionId() const noexcept -> SessionId;
+        [[nodiscard]] auto sessionId() const noexcept -> CaptureSessionId;
         [[nodiscard]] auto targetGeneration() const noexcept -> TargetGeneration;
         [[nodiscard]] auto frameId() const noexcept -> FrameId;
         [[nodiscard]] auto expiresAt() const noexcept -> MonotonicInstant;
@@ -82,7 +85,7 @@ namespace uf
 
         [[nodiscard]]
         auto validate(
-            SessionId currentSession,
+            CaptureSessionId currentSession,
             TargetGeneration currentGeneration,
             FrameId observedFrame,
             MonotonicInstant now

@@ -166,6 +166,7 @@ namespace uf::script
                 "_G == nil",
                 "coroutine == nil",
                 "debug == nil",
+                "gcinfo == nil",
                 "os.time == nil",
                 "os.clock == nil",
                 "os.date == nil",

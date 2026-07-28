@@ -1,7 +1,7 @@
 #pragma once
 
 #include <annotation/authoring-document.hpp>
-#include <annotation/catalog.hpp>
+#include <annotation/resource.hpp>
 
 #include <core/types/integer.hpp>
 

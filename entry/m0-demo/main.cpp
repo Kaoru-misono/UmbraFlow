@@ -102,7 +102,7 @@ namespace uf::m0_demo
             auto const generation = resolved.currentGeneration();
             auto const client = resolved.clientSize();
             auto const process = resolved.identity().process();
-            auto const sessionId = SessionId{1};
+            auto const sessionId = CaptureSessionId{1};
             UF_TRY_VALUE(
                 options,
                 WgcCaptureOptions::create(args.stallTimeout, false)

@@ -249,7 +249,7 @@ namespace uf::annotation
             };
             auto frame = Frame::create(
                 frameId,
-                SessionId{7},
+                CaptureSessionId{7},
                 TargetGeneration::fromValue(3),
                 MonotonicInstant::fromTimePoint(MonotonicInstant::TimePoint{}),
                 fingerprint.width(),

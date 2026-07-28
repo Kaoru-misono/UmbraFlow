@@ -1,5 +1,5 @@
 #include "panels.hpp"
-#include "workbench-app.hpp"
+#include "../workbench-app.hpp"
 
 #include "platform/windows-capture-source.hpp"
 #include "platform/windows-file-dialog.hpp"
@@ -148,6 +148,13 @@ namespace uf::workbench
                     ) -> Result<platform::GpuSourceTexture>
                     {
                         return shell.textures().textureFor(asset);
+                    },
+                .pruneTextures =
+                    [&shell](
+                        std::span<annotation::AuthoringSource const> sources
+                    )
+                    {
+                        shell.textures().pruneTo(sources);
                     },
                 .pickPngToImport =
                     []() -> Result<std::optional<std::filesystem::path>>

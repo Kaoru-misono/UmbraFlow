@@ -26,6 +26,13 @@
 #include <utility>
 #include <variant>
 
+namespace uf::engine::detail
+{
+    class EngineSessionIdentity final
+    {
+    };
+}
+
 namespace uf::engine
 {
     namespace
@@ -55,11 +62,11 @@ namespace uf::engine
         // and stops early once cancellation is requested or the deadline has
         // passed. Sleeping is its only effect: the caller re-checks both conditions
         // and decides the outcome, so this only bounds latency.
-        void pollSleep(
+        auto pollSleep(
             MonotonicInstant::Duration interval,
             MonotonicInstant deadline,
             std::stop_token const& cancellation
-        )
+        ) -> void
         {
             using Duration   = MonotonicInstant::Duration;
             auto const slice = std::chrono::duration_cast<Duration>(
@@ -110,12 +117,12 @@ namespace uf::engine
         Frame frame,
         ObservationLease lease,
         annotation::FrameIdentity frameIdentity,
-        EngineSession* p_session
+        std::shared_ptr<detail::EngineSessionIdentity const> sessionIdentity
     ) noexcept
         : m_frame{std::move(frame)}
         , m_lease{lease}
         , m_frameIdentity{frameIdentity}
-        , m_session{p_session}
+        , m_sessionIdentity{std::move(sessionIdentity)}
     {
     }
 
@@ -123,7 +130,7 @@ namespace uf::engine
         : m_frame{other.m_frame}
         , m_lease{other.m_lease}
         , m_frameIdentity{other.m_frameIdentity}
-        , m_session{other.m_session}
+        , m_sessionIdentity{other.m_sessionIdentity}
         , m_invalidated{other.m_invalidated}
     {
         // D0/D1: a moved-from handle must be as dead as a consumed one, so the
@@ -138,53 +145,27 @@ namespace uf::engine
             return *this;
         }
 
-        m_frame         = other.m_frame;
-        m_lease         = other.m_lease;
-        m_frameIdentity = other.m_frameIdentity;
-        m_session       = other.m_session;
-        m_invalidated   = other.m_invalidated;
+        m_frame           = other.m_frame;
+        m_lease           = other.m_lease;
+        m_frameIdentity   = other.m_frameIdentity;
+        m_sessionIdentity = other.m_sessionIdentity;
+        m_invalidated     = other.m_invalidated;
 
         // D0/D1: invalidate the source so the moved-from handle fails closed.
         other.m_invalidated = true;
         return *this;
     }
 
-    auto Observation::resolvePage() -> Result<annotation::PageOutcome>
-    {
-        if (m_invalidated)
-        {
-            return fail(
-                AutomationErrorKind::StaleObservation,
-                "resolvePage called on an invalidated observation"
-            );
-        }
-
-        return m_session->resolvePageFor(m_frame);
-    }
-
-    auto Observation::findAction(
-        annotation::RecognizerId recognizerId
-    ) -> Result<std::optional<ActionFound>>
-    {
-        if (m_invalidated)
-        {
-            return fail(
-                AutomationErrorKind::StaleObservation,
-                "findAction called on an invalidated observation"
-            );
-        }
-
-        return m_session->findActionFor(m_frame, recognizerId);
-    }
-
     EngineSession::EngineSession(
         LoadedRuntime loadedRuntime,
+        std::shared_ptr<detail::EngineSessionIdentity const> identity,
         std::unique_ptr<IFrameSource> frameSource,
         std::unique_ptr<IActionSink> actionSink,
         std::unique_ptr<ITraceSink> traceSink,
         EngineSessionConfig config
     ) noexcept
         : m_loadedRuntime{std::move(loadedRuntime)}
+        , m_identity{std::move(identity)}
         , m_frameSource{std::move(frameSource)}
         , m_actionSink{std::move(actionSink)}
         , m_traceSink{std::move(traceSink)}
@@ -233,6 +214,7 @@ namespace uf::engine
 
         auto session = EngineSession{
             std::move(loadedRuntime),
+            std::make_shared<detail::EngineSessionIdentity>(),
             std::move(frameSource),
             std::move(actionSink),
             std::move(traceSink),
@@ -265,13 +247,29 @@ namespace uf::engine
 
         UF_TRY(emit(identityEvent(TraceEventKind::Observed, identity)));
 
-        return Observation{std::move(frame), lease, identity, this};
+        return Observation{std::move(frame), lease, identity, m_identity};
     }
 
-    auto EngineSession::resolvePageFor(
-        Frame const& frame
+    auto EngineSession::resolvePage(
+        Observation const& observation
     ) -> Result<annotation::PageOutcome>
     {
+        if (observation.m_sessionIdentity != m_identity)
+        {
+            return fail(
+                AutomationErrorKind::InternalInvariant,
+                "observation belongs to a different session"
+            );
+        }
+        if (observation.m_invalidated)
+        {
+            return fail(
+                AutomationErrorKind::StaleObservation,
+                "resolvePage called on an invalidated observation"
+            );
+        }
+
+        auto const& frame    = observation.m_frame;
         auto const identity = annotation::FrameIdentity::fromFrame(frame);
         auto attempt = m_loadedRuntime.runtime.evaluatePage(
             frame,
@@ -325,11 +323,27 @@ namespace uf::engine
         return outcome;
     }
 
-    auto EngineSession::findActionFor(
-        Frame const& frame,
+    auto EngineSession::findAction(
+        Observation const& observation,
         annotation::RecognizerId recognizerId
     ) -> Result<std::optional<ActionFound>>
     {
+        if (observation.m_sessionIdentity != m_identity)
+        {
+            return fail(
+                AutomationErrorKind::InternalInvariant,
+                "observation belongs to a different session"
+            );
+        }
+        if (observation.m_invalidated)
+        {
+            return fail(
+                AutomationErrorKind::StaleObservation,
+                "findAction called on an invalidated observation"
+            );
+        }
+
+        auto const& frame    = observation.m_frame;
         auto const identity = annotation::FrameIdentity::fromFrame(frame);
         auto attempt = m_loadedRuntime.runtime.evaluateActionTarget(
             frame,
@@ -438,11 +452,10 @@ namespace uf::engine
             );
         }
 
-        // D0: an observation carries a back-reference to the session that vended
-        // it. Acting on a handle from another session is a programming error, not
-        // a recoverable runtime condition, so reject it as a broken invariant
-        // before any other check touches the foreign observation.
-        if (observation.m_session != this)
+        // D0: an observation carries the stable identity token of the session
+        // that vended it. Acting on a handle from another session is a programming
+        // error, so reject it before any other check touches the foreign handle.
+        if (observation.m_sessionIdentity != m_identity)
         {
             return fail(
                 AutomationErrorKind::InternalInvariant,
@@ -545,7 +558,7 @@ namespace uf::engine
             sweepKnownPopups();
 
             UF_TRY_VALUE(observation, observe());
-            UF_TRY_VALUE(outcome, observation.resolvePage());
+            UF_TRY_VALUE(outcome, resolvePage(observation));
 
             auto const* p_resolved = std::get_if<annotation::ResolvedPage>(&outcome);
             if (p_resolved != nullptr && p_resolved->pageId() == pageId)
@@ -576,7 +589,7 @@ namespace uf::engine
         }
     }
 
-    void EngineSession::sweepKnownPopups() noexcept
+    auto EngineSession::sweepKnownPopups() noexcept -> void
     {
         // D6: intentional no-op until P0-C. See the declaration for the roadmap.
     }

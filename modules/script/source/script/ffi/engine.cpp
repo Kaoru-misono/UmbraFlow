@@ -52,21 +52,37 @@ namespace uf::script
             return checkedCast<std::size_t>(bytes)
                 .value_or(std::numeric_limits<std::size_t>::max());
         }
+
+        struct LuaStateDeleter final
+        {
+            auto operator()(lua_State* p_state) const noexcept -> void
+            {
+                if (p_state == nullptr)
+                {
+                    return;
+                }
+
+                // SAFETY: p_state is the owning lua_State handle returned by
+                // createStateWithQuota. Closing it releases the whole VM.
+                lua_close(p_state);
+            }
+        };
     }
 
     class Engine::Impl final
     {
-    public:
+        friend class Engine;
+
         // Memory ledger backing the accounting allocator, filled from the config
         // before the VM is created and read on every allocation. Declared first
-        // so it is destroyed last: ~Impl closes the state explicitly, so the
-        // frees Luau runs during teardown still see a live ledger.
+        // so it is destroyed last: m_state closes the VM first, while frees from
+        // Luau teardown can still reach this live ledger.
         MemoryQuota m_quota;
 
         // The owned VM handle. Left null until create() allocates it through the
         // accounting allocator, so a construction that fails before then closes
         // nothing.
-        lua_State* m_state{nullptr};
+        std::unique_ptr<lua_State, LuaStateDeleter> m_state;
 
         // Live cancellation/budget state the interrupt callback reads. Derived
         // from the config at construction (the deadline is anchored to now())
@@ -78,6 +94,7 @@ namespace uf::script
         // refuses with Cancelled instead of resuming an abandoned VM.
         bool m_terminal{false};
 
+    public:
         explicit Impl(EngineConfig const& config)
             : m_quota{.limitBytes = quotaLimit(config.memoryQuotaBytes)}
             , m_control{
@@ -93,18 +110,7 @@ namespace uf::script
         auto operator=(Impl const&) -> Impl& = delete;
         auto operator=(Impl&&) -> Impl& = delete;
 
-        ~Impl()
-        {
-            if (m_state != nullptr)
-            {
-                // SAFETY: m_state is the owning lua_State handle from
-                // createStateWithQuota; closing it here releases the whole VM.
-                // Every free runs through the accounting allocator, whose ledger
-                // m_quota is still alive (m_quota is destroyed after this body,
-                // being declared before m_state), so the frees are accounted.
-                lua_close(m_state);
-            }
-        }
+        ~Impl() = default;
     };
 
     Engine::Engine(std::unique_ptr<Impl> p_impl) noexcept
@@ -126,7 +132,8 @@ namespace uf::script
         // byte against impl->m_quota and refuses growth past the configured
         // ceiling. Returns null on host allocation failure, as luaL_newstate
         // would.
-        lua_State* state = createStateWithQuota(&impl->m_quota);
+        impl->m_state.reset(createStateWithQuota(&impl->m_quota));
+        auto* state = impl->m_state.get();
         if (state == nullptr)
         {
             return fail(
@@ -134,10 +141,6 @@ namespace uf::script
                 "createStateWithQuota returned null"
             );
         }
-        // Hand the raw state to Impl immediately so it is closed by RAII on any
-        // later early return.
-        impl->m_state = state;
-
         luaL_openlibs(state);
         // Install the caller's host tables (empty by default) in the sandbox
         // build order: openlibs -> register+freeze host tables -> nil the
@@ -167,7 +170,7 @@ namespace uf::script
         }
 
         auto result = runNumberOnThread(
-            m_impl->m_state,
+            m_impl->m_state.get(),
             source,
             chunkName,
             &m_impl->m_control

@@ -5,6 +5,7 @@
 #include "detail/input-revalidation.hpp"
 
 #include <core/error/contracts.hpp>
+#include <core/text/utf8.hpp>
 #include <core/types/integer.hpp>
 #include <core/utility/variant-match.hpp>
 #include <domain/error.hpp>
@@ -33,78 +34,19 @@ namespace uf
         [[nodiscard]]
         auto decodeUtf8ToUtf16(std::string_view text) -> Result<std::vector<uint16>>
         {
+            auto const scalars = decodeUtf8Scalars(text);
+            if (!scalars)
+            {
+                return fail(
+                    AutomationErrorKind::ActionRejected,
+                    "input text must contain valid UTF-8"
+                );
+            }
+
             auto codeUnits = std::vector<uint16>{};
             codeUnits.reserve(text.size());
-
-            auto codePoint         = uint32{};
-            auto minimumCodePoint  = uint32{};
-            auto continuationBytes = uint8{};
-            for (auto const character : text)
+            for (auto const codePoint : *scalars)
             {
-                auto const byte = static_cast<uint32>(
-                    static_cast<unsigned char>(character)
-                );
-                if (continuationBytes == 0U)
-                {
-                    if (byte <= 0x7FU)
-                    {
-                        codeUnits.emplace_back(static_cast<uint16>(byte));
-                        continue;
-                    }
-                    if (byte >= 0xC2U && byte <= 0xDFU)
-                    {
-                        codePoint         = byte & 0x1FU;
-                        minimumCodePoint  = 0x80U;
-                        continuationBytes = 1U;
-                        continue;
-                    }
-                    if (byte >= 0xE0U && byte <= 0xEFU)
-                    {
-                        codePoint         = byte & 0x0FU;
-                        minimumCodePoint  = 0x800U;
-                        continuationBytes = 2U;
-                        continue;
-                    }
-                    if (byte >= 0xF0U && byte <= 0xF4U)
-                    {
-                        codePoint         = byte & 0x07U;
-                        minimumCodePoint  = 0x10000U;
-                        continuationBytes = 3U;
-                        continue;
-                    }
-
-                    return fail(
-                        AutomationErrorKind::ActionRejected,
-                        "input text must contain valid UTF-8"
-                    );
-                }
-
-                if ((byte & 0xC0U) != 0x80U)
-                {
-                    return fail(
-                        AutomationErrorKind::ActionRejected,
-                        "input text must contain valid UTF-8"
-                    );
-                }
-
-                codePoint = (codePoint << 6U) | (byte & 0x3FU);
-                --continuationBytes;
-                if (continuationBytes != 0U)
-                {
-                    continue;
-                }
-                if (
-                    codePoint < minimumCodePoint
-                    || codePoint > 0x10FFFFU
-                    || (codePoint >= 0xD800U && codePoint <= 0xDFFFU)
-                )
-                {
-                    return fail(
-                        AutomationErrorKind::ActionRejected,
-                        "input text must contain valid UTF-8"
-                    );
-                }
-
                 if (codePoint <= 0xFFFFU)
                 {
                     codeUnits.emplace_back(static_cast<uint16>(codePoint));
@@ -117,14 +59,6 @@ namespace uf
                 );
                 codeUnits.emplace_back(
                     static_cast<uint16>(0xDC00U + (offset & 0x03FFU))
-                );
-            }
-
-            if (continuationBytes != 0U)
-            {
-                return fail(
-                    AutomationErrorKind::ActionRejected,
-                    "input text must contain valid UTF-8"
                 );
             }
             return codeUnits;
@@ -295,7 +229,7 @@ namespace uf
 {
     auto DeliveryTarget::create(
         WindowHandle windowHandle,
-        SessionId sessionId,
+        CaptureSessionId sessionId,
         TargetGeneration generation,
         uint32 clientWidth,
         uint32 clientHeight

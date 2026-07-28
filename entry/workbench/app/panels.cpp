@@ -1,7 +1,7 @@
 #include "panels.hpp"
 
-#include "canvas-math.hpp"
-#include "workbench-app.hpp"
+#include "../canvas-math.hpp"
+#include "../workbench-app.hpp"
 
 #include "authoring-actions.hpp"
 #include "edit-page.hpp"
@@ -706,6 +706,7 @@ namespace uf::workbench
         // page's placement even when the shown screen's claim is ambiguous.
         auto drawPageMemberRow(
             AppState& state,
+            AuthoringDraft const& draft,
             PanelUiState& ui,
             annotation::RecognizerDefinition const& recognizer,
             std::optional<annotation::SourceId> pageScreen,
@@ -757,7 +758,7 @@ namespace uf::workbench
                 return;
             }
 
-            auto const memberCount = pagesPlacedOn(state.draft(), id).size();
+            auto const memberCount = pagesPlacedOn(draft, id).size();
             auto const label       = memberCount > 1U
                 ? std::format(
                     "{}  (on {} pages)",
@@ -1345,6 +1346,7 @@ namespace uf::workbench
                         {
                             drawPageMemberRow(
                                 state,
+                                draft,
                                 ui,
                                 *p_recognizer,
                                 sample,
@@ -1378,6 +1380,7 @@ namespace uf::workbench
                         {
                             drawPageMemberRow(
                                 state,
+                                draft,
                                 ui,
                                 *p_recognizer,
                                 sample,
@@ -1466,6 +1469,7 @@ namespace uf::workbench
                         {
                             drawPageMemberRow(
                                 state,
+                                draft,
                                 ui,
                                 *p_recognizer,
                                 sample,
@@ -1490,6 +1494,7 @@ namespace uf::workbench
                         {
                             drawPageMemberRow(
                                 state,
+                                draft,
                                 ui,
                                 *p_recognizer,
                                 sample,
@@ -1531,7 +1536,7 @@ namespace uf::workbench
                         continue;
                     }
                     auto const pages = pagesPlacedOn(
-                        state.draft(),
+                        draft,
                         recognizer.id()
                     ).size();
                     ImGui::Bullet();
@@ -1602,6 +1607,7 @@ namespace uf::workbench
                         // template was cut from.
                         drawPageMemberRow(
                             state,
+                            draft,
                             ui,
                             recognizer,
                             std::nullopt,
@@ -2003,65 +2009,31 @@ namespace uf::workbench
             );
         }
 
-        // Withdraws a member's placement from one page. An anchor joins its page
-        // through the signature rather than a placement, so it is refused here and
-        // deleted or re-roled instead; an interactive region's last placement is
-        // refused with the same closure message the tree and EditPage use.
+        // Withdraws a member's placement through the action-layer closure rule and
+        // parks the resulting draft for the frame's single commit.
         auto removeMemberFromPage(
             AppState& state,
             PanelUiState& ui,
             annotation::RecognizerId id,
             annotation::PageId pageId,
-            annotation::AnnotationType type,
             std::string_view name
         ) -> void
         {
-            if (type == annotation::AnnotationType::PageAnchor)
+            auto removed = removePlacementFromPage(state.draft(), id, pageId);
+            if (!removed)
             {
                 ui.report(
                     LogSeverity::Error,
                     std::format(
-                        "\"{}\" identifies this page through its signature; delete "
-                        "it or change its role instead of removing it here",
-                        name
+                        "remove rejected: {}",
+                        toString(removed.error())
                     )
                 );
                 return;
             }
-            auto draft             = state.draft();
-            auto const interactive = (
-                type == annotation::AnnotationType::ActionTarget
-            );
-            auto const onOtherPage = std::ranges::any_of(
-                draft.placements,
-                [&](EditablePlacement const& placement)
-                {
-                    return placement.elementId == id && placement.pageId != pageId;
-                }
-            );
-            if (interactive && !onOtherPage)
-            {
-                ui.report(
-                    LogSeverity::Error,
-                    std::format(
-                        "\"{}\" is only on this page; an interactive region must "
-                        "stay on at least one, so delete it instead of removing it "
-                        "here",
-                        name
-                    )
-                );
-                return;
-            }
-            std::erase_if(
-                draft.placements,
-                [&](EditablePlacement const& placement)
-                {
-                    return placement.elementId == id && placement.pageId == pageId;
-                }
-            );
             requestEdit(
                 ui,
-                std::move(draft),
+                std::move(*removed),
                 std::format(
                     "removed \"{}\" from page \"{}\"",
                     name,
@@ -2144,7 +2116,6 @@ namespace uf::workbench
                     ui,
                     id,
                     *ui.contextMenuPage,
-                    type,
                     name
                 );
             }
@@ -2839,50 +2810,26 @@ namespace uf::workbench
                     }
                     else
                     {
-                        // Withdraw. The interactive-only region handle cannot
-                        // serve the info row this checkbox also governs, so the
-                        // placement is removed directly -- but with the same
-                        // closure guard removeFromThisPage applies: an interactive
-                        // element's last placement is refused, naming deletion,
-                        // rather than silently deleted as the v1 copy model did.
-                        auto draft            = state.draft();
-                        auto const interactive = (
-                            element.type
-                            == annotation::AnnotationType::ActionTarget
+                        auto removed = removePlacementFromPage(
+                            state.draft(),
+                            recognizerId,
+                            pageId
                         );
-                        auto const onOtherPage = std::ranges::any_of(
-                            draft.placements,
-                            [&](EditablePlacement const& placement)
-                            {
-                                return placement.elementId == recognizerId
-                                    && placement.pageId != pageId;
-                            }
-                        );
-                        if (interactive && !onOtherPage)
+                        if (!removed)
                         {
                             ui.report(
                                 LogSeverity::Error,
                                 std::format(
-                                    "\"{}\" is only on this page; an interactive "
-                                    "region must stay on at least one, so delete it "
-                                    "instead of removing it here",
-                                    element.name
+                                    "remove rejected: {}",
+                                    toString(removed.error())
                                 )
                             );
                         }
                         else
                         {
-                            std::erase_if(
-                                draft.placements,
-                                [&](EditablePlacement const& placement)
-                                {
-                                    return placement.elementId == recognizerId
-                                        && placement.pageId == pageId;
-                                }
-                            );
                             requestEdit(
                                 ui,
-                                std::move(draft),
+                                std::move(*removed),
                                 std::format(
                                     "removed \"{}\" from page \"{}\"",
                                     element.name,
@@ -4341,6 +4288,10 @@ namespace uf::workbench
         if (std::exchange(ui.importRequested, false))
         {
             performImport(state, services, ui);
+        }
+        if (services.pruneTextures)
+        {
+            services.pruneTextures(state.document().sources());
         }
         // The F5 preview runs here, on the document the frame's edit produced,
         // so its result is the one the Evidence tab renders just below.

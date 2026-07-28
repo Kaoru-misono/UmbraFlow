@@ -10,7 +10,7 @@ namespace uf::controller_detail
     [[nodiscard]]
     auto checkPointerPreconditions(
         ObservationLease lease,
-        SessionId currentSession,
+        CaptureSessionId currentSession,
         TargetGeneration currentGeneration,
         MonotonicInstant now,
         Point<ClientSpace> point,

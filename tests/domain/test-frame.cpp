@@ -46,7 +46,7 @@ namespace uf
         {
             return Frame::create(
                 FrameId{uint64{1}},
-                SessionId{uint64{1}},
+                CaptureSessionId{uint64{1}},
                 TargetGeneration{},
                 MonotonicInstant::fromTimePoint(
                     MonotonicInstant::TimePoint{}
@@ -78,7 +78,7 @@ namespace uf
         );
         auto const result = Frame::create(
             FrameId{uint64{1}},
-            SessionId{uint64{1}},
+            CaptureSessionId{uint64{1}},
             TargetGeneration{},
             MonotonicInstant::fromTimePoint(
                 MonotonicInstant::TimePoint{}
@@ -213,7 +213,7 @@ namespace uf
 
             auto const result = Frame::create(
                 FrameId{uint64{1}},
-                SessionId{uint64{1}},
+                CaptureSessionId{uint64{1}},
                 TargetGeneration{},
                 MonotonicInstant::fromTimePoint(
                     MonotonicInstant::TimePoint{}
@@ -235,7 +235,7 @@ namespace uf
     {
         auto const result = Frame::create(
             FrameId{uint64{1}},
-            SessionId{uint64{1}},
+            CaptureSessionId{uint64{1}},
             TargetGeneration{},
             MonotonicInstant::fromTimePoint(
                 MonotonicInstant::TimePoint{}

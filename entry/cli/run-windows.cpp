@@ -15,7 +15,7 @@
 #include <controller/target.hpp>
 #include <core/error/result.hpp>
 
-#include <annotation/catalog.hpp>
+#include <annotation/resource.hpp>
 #include <domain/error.hpp>
 #include <domain/ids.hpp>
 #include <domain/space.hpp>
@@ -80,7 +80,7 @@ namespace uf::cli
             auto const client       = resolved.clientSize();
             auto const windowHandle = resolved.windowHandle();
             auto const generation   = resolved.currentGeneration();
-            auto const sessionId    = SessionId{1};
+            auto const sessionId    = CaptureSessionId{1};
 
             // 4. Build the live fingerprint from resolved geometry and target DPI.
             // A mismatch against the manifest fingerprint makes the engine fail
@@ -186,7 +186,10 @@ namespace uf::cli
                 pageWait,
                 bound.session.waitForPage(pageId, args.timeout, args.pollInterval)
             );
-            UF_TRY_VALUE(maybeAction, pageWait.observation.findAction(actionId));
+            UF_TRY_VALUE(
+                maybeAction,
+                bound.session.findAction(pageWait.observation, actionId)
+            );
 
             auto report = RunReport{
                 .pageName   = args.page,

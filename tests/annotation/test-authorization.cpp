@@ -99,7 +99,7 @@ namespace uf::annotation
 
             auto frame = test::frame(
                 projectFingerprint,
-                SessionId{7},
+                CaptureSessionId{7},
                 TargetGeneration::fromValue(3),
                 FrameId{11},
                 test::instantAt(MonotonicInstant::Duration{100})
@@ -307,7 +307,7 @@ namespace uf::annotation
 
         auto frame = test::frame(
             projectFingerprint,
-            SessionId{7},
+            CaptureSessionId{7},
             TargetGeneration::fromValue(3),
             FrameId{11},
             test::instantAt(MonotonicInstant::Duration{100})

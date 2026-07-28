@@ -1,0 +1,9 @@
+#pragma once
+
+#include <string_view>
+
+namespace uf::application
+{
+    inline constexpr auto k_name = std::string_view{"@PROJECT_NAME@"};
+    inline constexpr auto k_version = std::string_view{"@PROJECT_VERSION@"};
+}

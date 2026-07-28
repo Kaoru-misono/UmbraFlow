@@ -2,10 +2,10 @@
 
 #include "authoring-edit.hpp"
 #include "model-check-job.hpp"
-#include "app/canvas-math.hpp"
-#include "app/workbench-app.hpp"
+#include "canvas-math.hpp"
+#include "workbench-app.hpp"
 
-#include <annotation/catalog.hpp>
+#include <annotation/resource.hpp>
 
 #include <core/types/integer.hpp>
 

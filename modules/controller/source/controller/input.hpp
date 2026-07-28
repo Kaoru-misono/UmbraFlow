@@ -114,13 +114,13 @@ namespace uf
     class DeliveryTarget final
     {
         WindowHandle     m_windowHandle;
-        SessionId        m_sessionId;
+        CaptureSessionId m_sessionId;
         TargetGeneration m_generation;
         ClientSize       m_clientSize;
 
         constexpr DeliveryTarget(
             WindowHandle windowHandle,
-            SessionId sessionId,
+            CaptureSessionId sessionId,
             TargetGeneration generation,
             ClientSize clientSize
         ) noexcept
@@ -135,7 +135,7 @@ namespace uf
         [[nodiscard]]
         static auto create(
             WindowHandle windowHandle,
-            SessionId sessionId,
+            CaptureSessionId sessionId,
             TargetGeneration generation,
             uint32 clientWidth,
             uint32 clientHeight
@@ -143,7 +143,7 @@ namespace uf
 
         [[nodiscard]]
         constexpr auto windowHandle() const noexcept -> WindowHandle { return m_windowHandle; }
-        [[nodiscard]] constexpr auto sessionId() const noexcept -> SessionId { return m_sessionId; }
+        [[nodiscard]] constexpr auto sessionId() const noexcept -> CaptureSessionId { return m_sessionId; }
         [[nodiscard]]
         constexpr auto generation() const noexcept -> TargetGeneration { return m_generation; }
         [[nodiscard]]
@@ -201,7 +201,7 @@ namespace uf
         struct DeliveryIdentity final
         {
             uintptr          window{};
-            SessionId        sessionId;
+            CaptureSessionId sessionId;
             TargetGeneration generation{};
 
             auto operator==(DeliveryIdentity const&) const -> bool = default;

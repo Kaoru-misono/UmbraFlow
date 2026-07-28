@@ -491,6 +491,69 @@ namespace uf::workbench
         return pages;
     }
 
+    auto removePlacementFromPage(
+        AuthoringDraft draft,
+        annotation::RecognizerId id,
+        annotation::PageId pageId
+    ) -> Result<AuthoringDraft>
+    {
+        auto const target = std::ranges::find(
+            draft.recognizers,
+            id,
+            &EditableRecognizer::id
+        );
+        if (target == draft.recognizers.end())
+        {
+            return fail(
+                AutomationErrorKind::InvalidResource,
+                std::format(
+                    "recognizer {} is not part of this draft",
+                    id.value().toString()
+                )
+            );
+        }
+        if (target->annotationType == annotation::AnnotationType::PageAnchor)
+        {
+            return fail(
+                AutomationErrorKind::InvalidResource,
+                std::format(
+                    "\"{}\" identifies its page through a signature; delete it "
+                    "or change its role instead of removing a placement",
+                    target->name
+                )
+            );
+        }
+
+        auto const pages = pagesPlacedOn(draft, id);
+        if (!std::ranges::contains(pages, pageId))
+        {
+            return draft;
+        }
+        if (
+            target->annotationType == annotation::AnnotationType::ActionTarget
+            && pages.size() <= 1U
+        )
+        {
+            return fail(
+                AutomationErrorKind::InvalidResource,
+                std::format(
+                    "\"{}\" is only on this page; an interactive region must stay "
+                    "on at least one, so delete it instead of removing it here",
+                    target->name
+                )
+            );
+        }
+
+        std::erase_if(
+            draft.placements,
+            [id, pageId](EditablePlacement const& placement)
+            {
+                return placement.elementId == id && placement.pageId == pageId;
+            }
+        );
+        return draft;
+    }
+
     auto duplicateElement(
         AuthoringDraft draft,
         DuplicateElementSpec const& spec

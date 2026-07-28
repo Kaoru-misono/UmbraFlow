@@ -1,10 +1,10 @@
 #include "../annotation/test-helpers.hpp"
 
 #include <authoring-edit.hpp>
-#include <app/workbench-app.hpp>
+#include <workbench-app.hpp>
 
 #include <annotation/authoring-document.hpp>
-#include <annotation/catalog.hpp>
+#include <annotation/resource.hpp>
 #include <annotation/content-hash.hpp>
 
 #include <doctest/doctest.h>

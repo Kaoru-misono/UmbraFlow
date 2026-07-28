@@ -24,7 +24,7 @@ namespace uf
     auto HeldInputs::describeIdentity(DeliveryIdentity const& identity) -> std::string
     {
         return std::format(
-            "DeliveryIdentity {{ hwnd: {}, session_id: SessionId({}), generation: TargetGeneration({}) }}",
+            "DeliveryIdentity {{ hwnd: {}, session_id: CaptureSessionId({}), generation: TargetGeneration({}) }}",
             identity.window,
             identity.sessionId.value(),
             identity.generation.value()

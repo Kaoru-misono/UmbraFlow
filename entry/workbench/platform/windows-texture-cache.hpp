@@ -1,11 +1,13 @@
 #pragma once
 
 #include <annotation/authoring-compiler.hpp>
+#include <annotation/authoring-document.hpp>
 
 #include <core/error/result.hpp>
 #include <core/types/integer.hpp>
 
 #include <memory>
+#include <span>
 
 struct ID3D11Device;
 
@@ -54,5 +56,12 @@ namespace uf::workbench::platform
         auto textureFor(
             annotation::AuthoringSourceAsset const& asset
         ) -> Result<GpuSourceTexture>;
+
+        // Releases views whose source no longer belongs to the live document.
+        // A later undo may reintroduce the source and textureFor then uploads it
+        // again; stale GPU resources never accumulate for the shell lifetime.
+        auto pruneTo(
+            std::span<annotation::AuthoringSource const> sources
+        ) -> void;
     };
 }

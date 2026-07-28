@@ -84,7 +84,7 @@ namespace uf::annotation
         };
     }
 
-    auto FrameIdentity::sessionId() const noexcept -> SessionId { return m_sessionId; }
+    auto FrameIdentity::sessionId() const noexcept -> CaptureSessionId { return m_sessionId; }
     auto FrameIdentity::targetGeneration() const noexcept -> TargetGeneration
     {
         return m_targetGeneration;

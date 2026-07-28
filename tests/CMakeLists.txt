@@ -144,13 +144,13 @@ if(TARGET ${PROJECT_NAME}_controller)
     cpp_add_test(
         NAME test-controller
         SOURCES
-            controller/test-capture-d3d.cpp
+            controller/test-capture-readback.cpp
             controller/test-capture-os-build.cpp
             controller/test-capture-stall.cpp
             controller/test-capture-wgc.cpp
             controller/test-discovery.cpp
             controller/test-dpi.cpp
-            controller/test-input-guard.cpp
+            controller/test-audit-log.cpp
             controller/test-input-held.cpp
             controller/test-input-message.cpp
             controller/test-input-revalidation.cpp

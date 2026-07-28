@@ -5,7 +5,7 @@
 #include <path-validation.hpp>
 #include <platform/windows-file-writer.hpp>
 
-#include <controller/detail/input-guard.hpp>
+#include <controller/detail/audit-log-access.hpp>
 #include <controller/input.hpp>
 #include <core/types/integer.hpp>
 #include <core/utility/scope-exit.hpp>
@@ -51,7 +51,7 @@ namespace uf::m0_demo
         {
             auto target = DeliveryTarget::create(
                 WindowHandle{0x1234},
-                SessionId{1},
+                CaptureSessionId{1},
                 generation,
                 800,
                 450
@@ -79,7 +79,7 @@ namespace uf::m0_demo
             );
             auto const frame = Frame::create(
                 FrameId{1},
-                SessionId{1},
+                CaptureSessionId{1},
                 generation,
                 capturedAt,
                 1,

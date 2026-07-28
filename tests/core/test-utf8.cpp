@@ -5,6 +5,7 @@
 #include <array>
 #include <string>
 #include <string_view>
+#include <vector>
 
 TEST_CASE("UTF-8 validation accepts scalar encodings")
 {
@@ -51,5 +52,22 @@ TEST_CASE("UTF-8 scalar encoding covers every sequence width")
     CHECK(
         output
         == std::string{"\x24\xC2\xA2\xE2\x82\xAC\xF0\x9F\x98\x80", 10}
+    );
+}
+
+TEST_CASE("UTF-8 scalar decoding covers every sequence width")
+{
+    auto const decoded = uf::decodeUtf8Scalars(
+        std::string_view{
+            "\x24\xC2\xA2\xE2\x82\xAC\xF0\x9F\x98\x80",
+            10,
+        }
+    );
+    REQUIRE(decoded.has_value());
+    auto const expected =
+        std::vector<uf::uint32>{0x24U, 0xA2U, 0x20ACU, 0x1F600U};
+    CHECK(*decoded == expected);
+    CHECK_FALSE(
+        uf::decodeUtf8Scalars(std::string_view{"\xED\xA0\x80", 3}).has_value()
     );
 }

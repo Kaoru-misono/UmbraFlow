@@ -6,7 +6,7 @@
 #include <task/task-context.hpp>
 #include <task/trace.hpp>
 
-#include <annotation/catalog.hpp>
+#include <annotation/resource.hpp>
 #include <annotation/content-hash.hpp>
 #include <annotation/recognition.hpp>
 #include <annotation/recognition-runtime.hpp>
@@ -184,7 +184,7 @@ namespace uf::task
         };
         auto frame = Frame::create(
             frameId,
-            SessionId{7},
+            CaptureSessionId{7},
             TargetGeneration::fromValue(3),
             MonotonicInstant::now(),
             fingerprint.width(),
@@ -302,7 +302,7 @@ namespace uf::task
     // the event sequence a run emits. The vector outlives the sink, which the
     // TaskContext owns: it is declared before the context at each use site, so the
     // observing pointer stays valid for the context's life.
-    class RecordingTaskTraceSink final : public TaskTraceSink
+    class RecordingTaskTraceSink final : public ITaskTraceSink
     {
         std::vector<TaskTraceEvent>* m_events;
 

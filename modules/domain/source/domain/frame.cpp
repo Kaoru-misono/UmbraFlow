@@ -86,7 +86,7 @@ namespace uf
 
     Frame::Frame(
         FrameId id,
-        SessionId sessionId,
+        CaptureSessionId sessionId,
         TargetGeneration targetGeneration,
         MonotonicInstant capturedAt,
         uint32 width,
@@ -111,7 +111,7 @@ namespace uf
 
     auto Frame::create(
         FrameId id,
-        SessionId sessionId,
+        CaptureSessionId sessionId,
         TargetGeneration targetGeneration,
         MonotonicInstant capturedAt,
         uint32 width,
@@ -188,7 +188,7 @@ namespace uf
     }
 
     auto Frame::id() const noexcept -> FrameId { return m_id; }
-    auto Frame::sessionId() const noexcept -> SessionId { return m_sessionId; }
+    auto Frame::sessionId() const noexcept -> CaptureSessionId { return m_sessionId; }
     auto Frame::targetGeneration() const noexcept -> TargetGeneration
     {
         return m_targetGeneration;

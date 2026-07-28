@@ -1,4 +1,4 @@
-#include <controller/detail/capture-d3d.hpp>
+#include <controller/detail/capture-readback.hpp>
 
 #include <core/types/integer.hpp>
 #include <domain/error.hpp>

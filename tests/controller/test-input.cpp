@@ -22,7 +22,7 @@ namespace uf
         [[nodiscard]]
         auto target(
             intptr window,
-            SessionId session = SessionId{1},
+            CaptureSessionId session = CaptureSessionId{1},
             TargetGeneration generation = TargetGeneration{},
             uint32 width = 800,
             uint32 height = 450
@@ -77,7 +77,7 @@ namespace uf
             );
             auto const frame = Frame::create(
                 FrameId{1},
-                SessionId{1},
+                CaptureSessionId{1},
                 generation,
                 MonotonicInstant::now(),
                 1,
@@ -112,7 +112,7 @@ namespace uf
         {
             auto const result = DeliveryTarget::create(
                 WindowHandle{0x10},
-                SessionId{1},
+                CaptureSessionId{1},
                 TargetGeneration{},
                 size.width,
                 size.height
@@ -166,7 +166,7 @@ namespace uf
     TEST_CASE("refreshed targets must match window session and generation")
     {
         auto const original = target(0x10);
-        auto const sameIdentityNewGeometry = target(0x10, SessionId{1}, {}, 640, 360);
+        auto const sameIdentityNewGeometry = target(0x10, CaptureSessionId{1}, {}, 640, 360);
         CHECK(
             controller_detail::ensureSameDeliveryIdentity(
                 original,
@@ -178,8 +178,8 @@ namespace uf
         REQUIRE(next.has_value());
         for (auto const& changed : std::array{
             target(0x20),
-            target(0x10, SessionId{2}),
-            target(0x10, SessionId{1}, *next),
+            target(0x10, CaptureSessionId{2}),
+            target(0x10, CaptureSessionId{1}, *next),
         })
         {
             auto const result = controller_detail::ensureSameDeliveryIdentity(
@@ -196,7 +196,7 @@ namespace uf
         auto const original = target(0x10);
         auto const next = original.generation().next();
         REQUIRE(next.has_value());
-        auto const replacement = target(0x20, SessionId{1}, *next);
+        auto const replacement = target(0x20, CaptureSessionId{1}, *next);
         auto held = HeldInputs{};
         auto const keyDown = controller_detail::HeldInputsAccess::onKeyDown(
             held,

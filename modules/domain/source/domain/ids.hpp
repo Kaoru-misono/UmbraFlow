@@ -17,7 +17,7 @@ namespace uf
     {
         struct EngineRunIdTag;
         struct TaskRunIdTag;
-        struct SessionIdTag;
+        struct CaptureSessionIdTag;
         struct FrameIdTag;
         struct StateIdTag;
         struct RecognitionIdTag;
@@ -27,7 +27,7 @@ namespace uf
 
     using EngineRunId = StrongId<detail::EngineRunIdTag>;
     using TaskRunId = StrongId<detail::TaskRunIdTag>;
-    using SessionId = StrongId<detail::SessionIdTag>;
+    using CaptureSessionId = StrongId<detail::CaptureSessionIdTag>;
     using FrameId = StrongId<detail::FrameIdTag>;
     using StateId = StrongId<detail::StateIdTag>;
     using RecognitionId = StrongId<detail::RecognitionIdTag>;

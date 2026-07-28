@@ -36,7 +36,7 @@ namespace uf::task
 
     auto FileTaskTraceSink::create(
         std::filesystem::path const& path
-    ) -> Result<std::unique_ptr<TaskTraceSink>>
+    ) -> Result<std::unique_ptr<ITaskTraceSink>>
     {
         auto stream = std::ofstream{};
         errno       = 0;
@@ -53,7 +53,7 @@ namespace uf::task
         }
 
         auto p_sink = std::make_unique<FileTaskTraceSink>(OpenTag{}, std::move(stream));
-        return std::unique_ptr<TaskTraceSink>{std::move(p_sink)};
+        return std::unique_ptr<ITaskTraceSink>{std::move(p_sink)};
     }
 
     auto FileTaskTraceSink::emit(TaskTraceEvent const& event) -> Status

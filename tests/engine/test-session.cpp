@@ -2,7 +2,7 @@
 
 #include <session.hpp>
 
-#include <annotation/catalog.hpp>
+#include <annotation/resource.hpp>
 #include <annotation/content-hash.hpp>
 #include <annotation/recognition.hpp>
 #include <annotation/recognition-runtime.hpp>
@@ -275,7 +275,7 @@ namespace uf::engine
             };
             auto frame = Frame::create(
                 frameId,
-                SessionId{7},
+                CaptureSessionId{7},
                 TargetGeneration::fromValue(3),
                 capturedAt,
                 fingerprint.width(),
@@ -533,12 +533,12 @@ namespace uf::engine
         auto observation = session.observe();
         REQUIRE(observation.has_value());
 
-        auto outcome = observation->resolvePage();
+        auto outcome = session.resolvePage(*observation);
         REQUIRE(outcome.has_value());
         REQUIRE(std::holds_alternative<anno::ResolvedPage>(*outcome));
         auto const& resolved = std::get<anno::ResolvedPage>(*outcome);
 
-        auto found = observation->findAction(actionT);
+        auto found = session.findAction(*observation, actionT);
         REQUIRE(found.has_value());
         REQUIRE(found->has_value());
 
@@ -584,7 +584,7 @@ namespace uf::engine
 
         auto observation = session.observe();
         REQUIRE(observation.has_value());
-        auto const outcome = observation->resolvePage();
+        auto const outcome = session.resolvePage(*observation);
         REQUIRE_FALSE(outcome.has_value());
         anno::test::requireErrorKind(
             outcome.error(),
@@ -610,12 +610,12 @@ namespace uf::engine
 
         auto observation = session.observe();
         REQUIRE(observation.has_value());
-        auto outcome = observation->resolvePage();
+        auto outcome = session.resolvePage(*observation);
         REQUIRE(outcome.has_value());
         REQUIRE(std::holds_alternative<anno::ResolvedPage>(*outcome));
         auto const& resolved = std::get<anno::ResolvedPage>(*outcome);
 
-        auto found = observation->findAction(actionT);
+        auto found = session.findAction(*observation, actionT);
         REQUIRE(found.has_value());
         REQUIRE(found->has_value());
 
@@ -651,12 +651,12 @@ namespace uf::engine
 
         auto observation = session.observe();
         REQUIRE(observation.has_value());
-        auto outcome = observation->resolvePage();
+        auto outcome = session.resolvePage(*observation);
         REQUIRE(outcome.has_value());
         REQUIRE(std::holds_alternative<anno::ResolvedPage>(*outcome));
         auto const& resolved = std::get<anno::ResolvedPage>(*outcome);
 
-        auto found = observation->findAction(actionT);
+        auto found = session.findAction(*observation, actionT);
         REQUIRE(found.has_value());
         REQUIRE(found->has_value());
 
@@ -683,10 +683,10 @@ namespace uf::engine
 
         auto observation = session.observe();
         REQUIRE(observation.has_value());
-        auto outcome = observation->resolvePage();
+        auto outcome = session.resolvePage(*observation);
         REQUIRE(outcome.has_value());
         auto const& resolved = std::get<anno::ResolvedPage>(*outcome);
-        auto found           = observation->findAction(actionT);
+        auto found           = session.findAction(*observation, actionT);
         REQUIRE(found.has_value());
         REQUIRE(found->has_value());
 
@@ -695,7 +695,7 @@ namespace uf::engine
         CHECK(under.clicks->clickCount() == 1);
 
         // The consumed observation must fail closed on any further use.
-        auto const reuse = observation->resolvePage();
+        auto const reuse = session.resolvePage(*observation);
         REQUIRE_FALSE(reuse.has_value());
         anno::test::requireErrorKind(reuse.error(), AutomationErrorKind::StaleObservation);
         CHECK(under.clicks->clickCount() == 1);
@@ -720,10 +720,31 @@ namespace uf::engine
         // Moving the handle transfers it to the destination and leaves the source
         // dead, so the moved-from handle fails closed exactly like a consumed one.
         auto moved = *std::move(source);
-        auto const reuse = source->resolvePage();
+        auto const reuse = session.resolvePage(*source);
         REQUIRE_FALSE(reuse.has_value());
         anno::test::requireErrorKind(reuse.error(), AutomationErrorKind::StaleObservation);
         CHECK(under.clicks->clickCount() == 0);
+    }
+
+    TEST_CASE("engine session move preserves observations already vended")
+    {
+        auto parts             = singlePageRuntime();
+        auto const fingerprint = parts.fingerprint;
+        auto frames            = std::vector<Frame>{};
+        frames.emplace_back(
+            grayFrame(fingerprint, resolvingPixels(), FrameId{17}, MonotonicInstant::now())
+        );
+
+        auto under = makeSession(std::move(parts), std::move(frames), baseConfig(fingerprint));
+        REQUIRE(under.session.has_value());
+
+        auto observation = under.session->observe();
+        REQUIRE(observation.has_value());
+
+        auto session = std::move(*under.session);
+        auto outcome = session.resolvePage(*observation);
+        REQUIRE(outcome.has_value());
+        CHECK(std::holds_alternative<anno::ResolvedPage>(*outcome));
     }
 
     TEST_CASE("engine session rejects an observation vended by a different session")
@@ -752,11 +773,25 @@ namespace uf::engine
 
         auto observation = sessionA.observe();
         REQUIRE(observation.has_value());
-        auto outcome = observation->resolvePage();
+
+        auto const foreignResolve = sessionB.resolvePage(*observation);
+        REQUIRE_FALSE(foreignResolve.has_value());
+        anno::test::requireErrorKind(
+            foreignResolve.error(),
+            AutomationErrorKind::InternalInvariant
+        );
+        auto const foreignFind = sessionB.findAction(*observation, actionT);
+        REQUIRE_FALSE(foreignFind.has_value());
+        anno::test::requireErrorKind(
+            foreignFind.error(),
+            AutomationErrorKind::InternalInvariant
+        );
+
+        auto outcome = sessionA.resolvePage(*observation);
         REQUIRE(outcome.has_value());
         REQUIRE(std::holds_alternative<anno::ResolvedPage>(*outcome));
         auto const& resolved = std::get<anno::ResolvedPage>(*outcome);
-        auto found           = observation->findAction(actionT);
+        auto found           = sessionA.findAction(*observation, actionT);
         REQUIRE(found.has_value());
         REQUIRE(found->has_value());
 
@@ -795,11 +830,11 @@ namespace uf::engine
 
         auto observation = session->observe();
         REQUIRE(observation.has_value());
-        auto outcome = observation->resolvePage();
+        auto outcome = session->resolvePage(*observation);
         REQUIRE(outcome.has_value());
         REQUIRE(std::holds_alternative<anno::ResolvedPage>(*outcome));
         auto const& resolved = std::get<anno::ResolvedPage>(*outcome);
-        auto found           = observation->findAction(actionT);
+        auto found           = session->findAction(*observation, actionT);
         REQUIRE(found.has_value());
         REQUIRE(found->has_value());
 
@@ -836,7 +871,7 @@ namespace uf::engine
 
         auto observation = session.observe();
         REQUIRE(observation.has_value());
-        auto outcome = observation->resolvePage();
+        auto outcome = session.resolvePage(*observation);
         REQUIRE(outcome.has_value());
 
         // The outcome is the UnknownPage alternative: no ResolvedPage exists, so
@@ -865,7 +900,7 @@ namespace uf::engine
 
         auto observation = session.observe();
         REQUIRE(observation.has_value());
-        auto const found = observation->findAction(actionT);
+        auto const found = session.findAction(*observation, actionT);
         REQUIRE_FALSE(found.has_value());
         anno::test::requireErrorKind(found.error(), AutomationErrorKind::RecognitionFailed);
         CHECK(under.clicks->clickCount() == 0);
@@ -896,7 +931,7 @@ namespace uf::engine
         auto const didRequest = cancellation.request_stop();
         REQUIRE(didRequest);
 
-        auto const outcome = observation->resolvePage();
+        auto const outcome = session.resolvePage(*observation);
         REQUIRE_FALSE(outcome.has_value());
         anno::test::requireErrorKind(outcome.error(), AutomationErrorKind::Cancelled);
         CHECK(under.clicks->clickCount() == 0);
@@ -919,11 +954,11 @@ namespace uf::engine
 
         auto observation = session.observe();
         REQUIRE(observation.has_value());
-        auto outcome = observation->resolvePage();
+        auto outcome = session.resolvePage(*observation);
         REQUIRE(outcome.has_value());
         REQUIRE(std::holds_alternative<anno::ResolvedPage>(*outcome));
         auto const& resolved = std::get<anno::ResolvedPage>(*outcome);
-        auto found           = observation->findAction(actionT);
+        auto found           = session.findAction(*observation, actionT);
         REQUIRE(found.has_value());
         REQUIRE(found->has_value());
 
@@ -958,11 +993,11 @@ namespace uf::engine
 
         auto observation = session.observe();
         REQUIRE(observation.has_value());
-        auto outcome = observation->resolvePage();
+        auto outcome = session.resolvePage(*observation);
         REQUIRE(outcome.has_value());
         REQUIRE(std::holds_alternative<anno::ResolvedPage>(*outcome));
         auto const& resolved = std::get<anno::ResolvedPage>(*outcome);
-        auto found           = observation->findAction(actionT);
+        auto found           = session.findAction(*observation, actionT);
         REQUIRE(found.has_value());
         REQUIRE(found->has_value());
 

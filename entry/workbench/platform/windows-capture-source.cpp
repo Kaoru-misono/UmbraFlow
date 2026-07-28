@@ -174,7 +174,7 @@ namespace uf::workbench::platform
             session,
             WgcCaptureSession::create(
                 match->handle(),
-                SessionId{1},
+                CaptureSessionId{1},
                 TargetGeneration::fromValue(1),
                 geometry
             )
