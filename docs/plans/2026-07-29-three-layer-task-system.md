@@ -111,13 +111,33 @@ Lua 侧句柄只是一张**票**。C++ 持有票据账本,每次使用拿票对�
 
 连锁简化三处:
 
+**硬规则:每个 generation 同时只允许存在一个打开的周期。** 账本至多一条。
+只要账本能装两条,「page 与 hit 同源」就仍然只是一次**检查**,而 C++ 不能依赖
+framework 的自觉;收窄到一条,第二帧根本不存在,跨帧混用才真的不可能发生。这也正是
+Model B 的语义,而且没有任何已知场景需要同时持有两个周期:wait 循环每轮开一个关一个,
+interrupt handler 拿到的是**当前**周期,handler 消费掉观察后由外层循环重开。
+
+连锁简化三处:
+
 1. **跨帧校验变成结构性的。** 今天每个句柄要记「源自哪次观察」,`click` 里比对两个
-   seq。有了周期,一次只持有一个周期,page 与 hit 天然同源,那套 seq 机械整体删除。
+   seq。有了周期,那套 seq 机械整体删除;命中句柄只带 ordinal,与当前周期不符即
+   StaleObservation——在「至多一个周期」下这就是陈旧性检查本身。
 2. **`cycle_click` 不收 page 参数。** C++ 要求该 ticket 已成功解析出页面,并用它作为
    授权证据。脚本无法提供不匹配的页面证据——四要件从「校验」变成「构造上不可能违反」。
    页面身份判断(`page:is(uf.pages.home)`)是脚本分支,与授权证据是两件事,互不影响。
-3. **`maxLiveObservations` 从脚本可见层消失。** 它作为 C++ 侧保证保留(护宿主内存),
-   但正常代码永不触及,不再是作者需要理解的概念。
+3. **`maxLiveObservations` 这个旋钮整个删掉。** 上限恒为 1,「护宿主内存」的保证由
+   结构满足,不再需要一个可配置的数,也不再需要 `guardObservationBudget` 那套
+   「先强制 GC 再拒绝」。
+
+> **修订 2026-07-29(orchestrator)**:本节初稿写的是「票据账本」,隐含账本可装多条。
+> 那样「跨帧结构性不可能」这句话不成立。上面的硬规则是收紧后的版本。
+
+**嵌套 wait 的行为**:点击已消费周期,所以「等首页 → 点按钮 → 等下一页」这种顺序
+嵌套天然可行,而且是最常见的写法。真正的嵌套(外层周期仍开着就再等一个页面)会撞上
+「已有打开周期」,**它该失败**,但必须由 framework 在 Luau 侧抛可读的话
+(「不能在一个观察周期打开时再开一个;先消费或关闭外层周期」);C++ 的
+InternalInvariant 只作为 framework 有 bug 时的兜底,正常路径下作者永远看不到。
+分层原则:framework 负责好消息,C++ 负责保证。
 
 生命周期责任:framework 负责关(纯 Luau,`pcall` 清理路径可靠);generation 拆除时
 C++ 兜底释放账本里的一切。
@@ -331,11 +351,19 @@ verto 第 6 条(人为阻塞每个长耗时 binding,验证总退出仍在预算�
 
 **kind 表只有一份真相。** `AutomationErrorKind`(C++)是真相:
 
-- C++ 侧的 kind→wire 名映射**合并为一个函数**。今天有两份(`umbra-tables.cpp:75-96`
-  和 `trace.cpp:113-135`),注释要求二者恒等但无共享真相、无一致性测试
-  (p0b §6 第 5 项)。删一份。
-- Python 生成器解析该 enum,产出 Luau 的 `uf.errors` 表。
-- 一条测试断言生成表覆盖 enum 的每个取值。
+- C++ 侧的 kind→wire 名映射**合并为一个函数,住在 `modules/domain`**。domain 拥有
+  这个 enum,而 task 与 trace 都依赖它,所以那是唯一一个两边都不必互相依赖的家。
+  合并前有两份(`umbra-tables.cpp` 的 `snakeName` 与 `trace/event.cpp` 的
+  `errorKindWireName`),注释要求二者恒等但无共享真相、无一致性测试(p0b §6 第 5 项)。
+- `uf.errors` 由**宿主在装能力面时用 C++ 直接构建**,与 `uf.pages` / `uf.recognizers`
+  并列,递归只读。
+- 两条测试:表覆盖 enum 的每个取值(不多不少);同一 kind 在 trace 里的拼写与脚本
+  可见的拼写是同一个字符串。
+
+> **修订 2026-07-29(orchestrator)**:本节原写「Python 生成器解析该 enum 产出
+> Luau 表」。不需要。那张表只是一堆字符串,宿主直接从 domain 那个函数构建,单一真相
+> **由构造保证**,不用解析、不用构建期 codegen、不多一件需要同步的产物;覆盖性检查
+> 也从构建期解析变成运行期断言,更实。
 
 不生成 C++ enum——那会伤 IDE 导航,收益不抵。
 
@@ -591,7 +619,8 @@ SLA;一条 trace 足以解释每一步。
 **modules/task**
 
 - frame-box 的 GC 析构释放路径、`guardObservationBudget`、seq 跨帧校验机械
-  (`umbra-tables.cpp` 里约 300 行)。
+  (`umbra-tables.cpp` 里约 300 行),以及 `TaskContextConfig::maxLiveObservations`
+  这个旋钮本身(见 §4 的修订:上限恒为 1)。
 - `DeterministicClock` 及 `now()` 的全部绑定。
 - `task-trace/v1` 作为独立 schema。
 - `uf:try` 的 C 绑定(语义由纯 Luau 承接,`markFatal`/`guardFatal` 保留)。
@@ -692,6 +721,16 @@ pause 的实现(只留 §13 的签名,以及「framework 的观察周期边界�
 2. `ctx:settle` 的时长上限,以及超限是 Tier B 还是 framework 不变量失败。
 3. workbench 共享元素展开名(`back_<page>`)直接成为 `uf.recognizers.back_main`
    这类 member key,可读性是否接受(p0b 遗留项)。
+4. **最小验证门是否补一道 clang 检查。** 2026-07-29 实测发现一个结构性盲区:
+   `modules/core/source/core/safety/annotations.hpp` 里的 `UF_LIFETIME_BOUND` 等
+   注解按 `defined(__clang__)` 分支,MSVC 下展开为空。于是把 `UF_LIFETIME_BOUND`
+   写在非成员函数的声明符位置(只有成员函数合法,它标注的是隐式对象参数)在本地
+   **四个静态门 + 16/16 CI 全绿**,而 clang 下是硬错误,必挂 `linux-analysis`
+   那道必需 CI 门。CLAUDE.md 的最小门是纯 MSVC,结构上看不见这一整类问题。
+   两条路:①把 `cmake --preset x64-analysis`(在 MSVC 构建上开 clang-tidy,会展开
+   这些注解)加进最小门;②加一个轻量脚本,用 VS 自带的 clang 对改动过的 TU 跑
+   `-fsyntax-only`。我已验证第二条可行且很快(用 `compile_commands.json` 的 include
+   集,单 TU 秒级),并且双向可证伪:错位置报错、对位置通过。
 
 **风险:**
 
