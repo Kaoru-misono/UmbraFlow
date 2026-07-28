@@ -1,7 +1,5 @@
 #pragma once
 
-#include "trace.hpp"
-
 #include <core/error/result.hpp>
 
 #include <domain/detection.hpp>
@@ -62,24 +60,5 @@ namespace uf::engine
             Point<ClientSpace> point,
             ObservationLease const& lease
         ) -> Status = 0;
-    };
-
-    // A port that records one trace event. Traceability is a load-bearing
-    // constraint, so an emit failure is an error rather than a best-effort
-    // side effect (D4): the engine emits at the throw-instant, before any caller
-    // can swallow the failure it describes.
-    class ITraceSink
-    {
-    public:
-        ITraceSink() = default;
-
-        ITraceSink(ITraceSink const&) = delete;
-        ITraceSink(ITraceSink&&) = delete;
-        auto operator=(ITraceSink const&) -> ITraceSink& = delete;
-        auto operator=(ITraceSink&&) -> ITraceSink& = delete;
-
-        virtual ~ITraceSink() = default;
-
-        [[nodiscard]] virtual auto emit(TraceEvent const& event) -> Status = 0;
     };
 }

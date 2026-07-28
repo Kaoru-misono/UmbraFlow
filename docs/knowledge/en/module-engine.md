@@ -175,27 +175,31 @@ failed.
 
 ### Trace Events
 
-`modules/engine/source/engine/trace.hpp` defines the schema `engine-trace/v1` and `TraceEvent`. The
-event vocabulary is currently:
+The schema is owned by `modules/trace/source/trace/event.hpp` under the id `umbraflow-trace/v1`;
+engine and task write into the same stream. The events engine emits are:
 
-- Lifecycle: `SessionStarted`, `Observed`, `ObservationInvalidated`.
-- Page: `PageResolved`, `PageUnknown`, `PageAmbiguous`.
-- Action: `ActionFound`, `ActionAbsent`, `ActionAuthorized`, `ActionRejected`,
-  `ClickDelivered`.
-- Stop and error: `RecognitionStopped`, `Failure`.
+- `engine.observed`, `engine.observation_invalidated`.
+- `engine.page_resolved`, with outcome `Resolved` / `Unknown` / `Ambiguous` / `Stopped` / `Failed`.
+  A completed attempt also carries `pageScores`: one entry per evaluated page naming its candidacy
+  and the required anchor that scored worst against its own ceiling, so a non-resolution says how
+  far off it was rather than only that it happened.
+- `engine.action_found`, with outcome `Found` / `Absent` / `Stopped` / `Failed`.
+- `engine.action_authorized`, `engine.action_rejected`, `engine.action_delivered`.
 
-Optional fields cover frame/session/target identity, `PageId`, `RecognizerId`, `sadScore`,
-`maximumSad`, `PixelRect`, `SadSearchStopReason`, `AutomationErrorKind`, message, and client click
-point. Absent fields are simply omitted, not output as `null`.
+`engine-trace/v1`'s `PageResolved` / `PageUnknown` / `PageAmbiguous` and `ActionFound` /
+`ActionAbsent` collapse into the outcome of the two kinds above. The stage-independent
+`RecognitionStopped` and `Failure` become outcomes of the stage they occurred in, so a reader can
+now tell *which* step stopped or failed — information the old vocabulary did not carry.
+On the script path `SessionStarted` has no successor: the composition root's `run.started` records
+the same instant and adds the project, task, source hash, framework version and bundle hash, Luau
+compiler version, seed, and run identity. `entry/cli`'s smoke path writes no run-level event at all
+and its trace opens on the first `engine.observed`; that path is deleted with stage 1d's TaskHost.
 
-`serializeTraceEvent` in `modules/engine/source/engine/trace.cpp` always writes `schema` first, then
-outputs in a fixed field order; the wire names are owned by an explicit `switch` and do not change
-silently when a C++ enum is renamed. Strings escape the structural characters and control bytes that
-JSON must escape.
-
-The serializer returns a single-line JSON object. Only `FileTraceSink` appends `\n`, and it flushes
-immediately after each emit so that evidence already generated remains visible after a crash as much
-as possible.
+`trace::TraceRecorder` stamps `seq`, `runId` and `generationId` onto every event, plus `wallClock`
+inside `meta`. `meta` is the documented non-golden field set, stripped by
+`trace::stripNonGoldenFields` before a golden comparison. Engine does not own a sink: it borrows the
+run's recorder, and opening the file, writing each line and flushing belong to `FileTraceSink` in
+`modules/trace`.
 
 ## Constraints That Must Remain True
 

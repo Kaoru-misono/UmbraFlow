@@ -17,6 +17,7 @@ namespace uf
     {
         struct EngineRunIdTag;
         struct TaskRunIdTag;
+        struct GenerationIdTag;
         struct CaptureSessionIdTag;
         struct FrameIdTag;
         struct StateIdTag;
@@ -27,6 +28,10 @@ namespace uf
 
     using EngineRunId = StrongId<detail::EngineRunIdTag>;
     using TaskRunId = StrongId<detail::TaskRunIdTag>;
+    // One loaded project instance of the script layer: every ticket, VM state,
+    // and host resource a run holds belongs to exactly one generation, and
+    // tearing the generation down releases all of them at once.
+    using GenerationId = StrongId<detail::GenerationIdTag>;
     using CaptureSessionId = StrongId<detail::CaptureSessionIdTag>;
     using FrameId = StrongId<detail::FrameIdTag>;
     using StateId = StrongId<detail::StateIdTag>;

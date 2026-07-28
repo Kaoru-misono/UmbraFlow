@@ -4,7 +4,6 @@
 
 #include <task/capability-surface.hpp>
 #include <task/task-context.hpp>
-#include <task/trace.hpp>
 
 #include <annotation/resource.hpp>
 #include <annotation/content-hash.hpp>
@@ -28,6 +27,10 @@
 #include <engine/session.hpp>
 
 #include <image/png.hpp>
+
+#include <trace/event.hpp>
+#include <trace/recorder.hpp>
+#include <trace/sink.hpp>
 
 #include <doctest/doctest.h>
 
@@ -289,35 +292,45 @@ namespace uf::task
         }
     };
 
-    class DiscardingTraceSink final : public engine::ITraceSink
+    class DiscardingTraceSink final : public trace::ITraceSink
     {
     public:
-        [[nodiscard]] auto emit(engine::TraceEvent const& /*event*/) -> Status override
+        [[nodiscard]]
+        auto emit(trace::StampedTraceEvent const& /*event*/) -> Status override
         {
             return ok();
         }
     };
 
-    // Records every task-trace event into an external vector so a test can assert
-    // the event sequence a run emits. The vector outlives the sink, which the
-    // TaskContext owns: it is declared before the context at each use site, so the
-    // observing pointer stays valid for the context's life.
-    class RecordingTaskTraceSink final : public ITaskTraceSink
+    // Records every stamped event a run emits, so a test can assert both the
+    // sequence of events and the identity stamped onto each one. The sink owns
+    // its buffer, and the recorder owns the sink through a unique_ptr, so an
+    // observing pointer to the sink stays valid for the recorder's life.
+    class RecordingTraceSink final : public trace::ITraceSink
     {
-        std::vector<TaskTraceEvent>* m_events;
+        std::vector<trace::StampedTraceEvent> m_events{};
 
     public:
-        explicit RecordingTaskTraceSink(std::vector<TaskTraceEvent>* events) noexcept
-            : m_events{events}
+        [[nodiscard]]
+        auto emit(trace::StampedTraceEvent const& event) -> Status override
         {
-        }
-
-        [[nodiscard]] auto emit(TaskTraceEvent const& event) -> Status override
-        {
-            m_events->push_back(event);
+            m_events.emplace_back(event);
             return ok();
         }
+
+        [[nodiscard]]
+        auto events() const noexcept UF_LIFETIME_BOUND
+            -> std::vector<trace::StampedTraceEvent> const&
+        {
+            return m_events;
+        }
     };
+
+    // The run identity the task fixtures stamp. modules/task never authors it --
+    // the composition root does -- so a fixed pair is enough to prove every event
+    // of a run lands under one identity.
+    inline constexpr auto k_fixtureRunId        = TaskRunId{5};
+    inline constexpr auto k_fixtureGenerationId = GenerationId{1};
 
     [[nodiscard]]
     inline auto baseConfig(anno::ProjectFingerprint fingerprint)

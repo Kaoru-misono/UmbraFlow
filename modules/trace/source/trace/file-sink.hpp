@@ -1,21 +1,21 @@
 #pragma once
 
-#include <core/error/result.hpp>
+#include "event.hpp"
+#include "sink.hpp"
 
-#include <engine/ports.hpp>
-#include <engine/trace.hpp>
+#include <core/error/result.hpp>
 
 #include <filesystem>
 #include <fstream>
 #include <memory>
 
-namespace uf::cli
+namespace uf::trace
 {
     // An ITraceSink that appends one serialized JSONL line per event and flushes
     // after each write. Trace evidence must survive a crash, so the sink never
-    // buffers across emits: a failed write or flush is surfaced as an error
-    // Status rather than lost silently.
-    class FileTraceSink final : public engine::ITraceSink
+    // buffers across emits: a failed write or flush is surfaced as an error Status
+    // rather than lost silently. One run writes one file through one sink.
+    class FileTraceSink final : public ITraceSink
     {
         struct OpenTag final
         {
@@ -29,8 +29,8 @@ namespace uf::cli
         [[nodiscard]]
         static auto create(
             std::filesystem::path const& path
-        ) -> Result<std::unique_ptr<engine::ITraceSink>>;
+        ) -> Result<std::unique_ptr<ITraceSink>>;
 
-        [[nodiscard]] auto emit(engine::TraceEvent const& event) -> Status override;
+        [[nodiscard]] auto emit(StampedTraceEvent const& event) -> Status override;
     };
 }

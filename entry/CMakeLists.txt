@@ -9,13 +9,12 @@ configure_file(
 
 set(CLI_LIBRARY ${PROJECT_NAME}_cli_support)
 
-# Platform-free product logic: argument parsing, name resolution, the file trace
-# sink, and the error/exit-code boundary. Linked into the executable and tests.
+# Platform-free product logic: argument parsing, name resolution, and the
+# error/exit-code boundary. Linked into the executable and tests. The trace file
+# sink lives in modules/trace, which owns the single evidence stream.
 add_library(${CLI_LIBRARY} STATIC
     cli/args.cpp
     cli/args.hpp
-    cli/file-trace-sink.cpp
-    cli/file-trace-sink.hpp
     cli/name-resolution.cpp
     cli/name-resolution.hpp
     cli/run.cpp

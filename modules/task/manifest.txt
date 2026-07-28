@@ -15,5 +15,5 @@ luau_directory = runtime
 luau_version = 0.1.0
 
 [dependencies]
-public = core domain annotation engine script
+public = core domain annotation engine script trace
 private = Luau.VM Luau.Compiler Luau.Ast

@@ -1,6 +1,5 @@
 #include <task/capability-surface.hpp>
 #include <task/task-context.hpp>
-#include <task/trace.hpp>
 
 #include <core/error/error.hpp>
 #include <core/error/result.hpp>
@@ -16,11 +15,14 @@
 
 #include <engine/session.hpp>
 
+#include <trace/event.hpp>
+
 #include <chrono>
 #include <memory>
 #include <optional>
 #include <ratio>
 #include <string>
+#include <string_view>
 #include <unordered_set>
 #include <utility>
 #include <variant>
@@ -461,27 +463,53 @@ namespace uf::task
                 .value_or(AutomationErrorKind::InternalInvariant);
         }
 
-        // Emits the HostCall trace event for a verb at its exit. A sink failure
-        // aborts the verb as a Tier B IoFailure: losing trace evidence is a hard
-        // error, not a silent drop, matching the engine's throw-instant emit
-        // discipline (D4). A null sink (tracing disabled) makes emitTrace a success
-        // no-op, so this is free when tracing is off and every existing binding
-        // path is unchanged.
+        // Which verb ran and what it was handed. Every task.native_call carries
+        // it, so a verb the host fails before the engine is reached -- a stale or
+        // cross-frame observation, which is the only failure that produces no
+        // engine event at all -- still names the frame the script tried to use.
+        // A call-scoped parameter type: `verb` views a string literal and the
+        // struct never outlives the call that builds it.
+        struct NativeCallIdentity final
+        {
+            std::string_view                        verb;
+            std::optional<uint64>                   observationSeq{};
+            std::optional<uint64>                   hitObservationSeq{};
+            std::optional<annotation::RecognizerId> recognizerId{};
+        };
+
+        [[nodiscard]]
+        auto nativeCallEvent(
+            NativeCallIdentity const& call,
+            trace::NativeCallOutcome outcome,
+            std::optional<AutomationErrorKind> errorKind
+        ) -> trace::TraceEvent
+        {
+            return trace::TraceEvent{
+                .kind       = trace::TraceEventKind::TaskNativeCall,
+                .nativeCall = trace::TraceEvent::NativeCall{
+                    .verb              = std::string{call.verb},
+                    .outcome           = outcome,
+                    .observationSeq    = call.observationSeq,
+                    .hitObservationSeq = call.hitObservationSeq,
+                },
+                .recognizerId = call.recognizerId,
+                .errorKind    = errorKind,
+            };
+        }
+
+        // Emits the task.native_call trace event for a verb at its exit. A sink
+        // failure aborts the verb as a Tier B IoFailure: losing trace evidence is
+        // a hard error, not a silent drop, matching the engine's throw-instant
+        // emit discipline (D4).
         auto traceHostCall(
             lua_State* state,
             TaskContext* context,
-            char const* verb,
-            HostCallOutcome outcome,
-            std::optional<AutomationErrorKind> errorKind
+            NativeCallIdentity const& call,
+            trace::NativeCallOutcome outcome
         ) -> void
         {
             auto status = context->emitTrace(
-                TaskTraceEvent{
-                    .kind      = TaskTraceEventKind::HostCall,
-                    .verb      = std::string{verb},
-                    .outcome   = outcome,
-                    .errorKind = errorKind,
-                }
+                nativeCallEvent(call, outcome, std::nullopt)
             );
             if (!status)
             {
@@ -509,17 +537,16 @@ namespace uf::task
         auto traceHostCallFailure(
             lua_State* state,
             TaskContext* context,
-            char const* verb,
+            NativeCallIdentity const& call,
             Error const& error
         ) -> void
         {
             auto status = context->emitTrace(
-                TaskTraceEvent{
-                    .kind      = TaskTraceEventKind::HostCall,
-                    .verb      = std::string{verb},
-                    .outcome   = HostCallOutcome::Failed,
-                    .errorKind = kindOf(error),
-                }
+                nativeCallEvent(
+                    call,
+                    trace::NativeCallOutcome::Failed,
+                    kindOf(error)
+                )
             );
             if (!status)
             {
@@ -536,18 +563,16 @@ namespace uf::task
             guardFatal(state, context);
             guardObservationBudget(state, context);
 
+            // capture mints its own sequence rather than being handed one, so its
+            // identity is the verb alone.
+            auto const call = NativeCallIdentity{.verb = "capture"};
+
             auto result = context->capture();
             if (!result)
             {
-                traceHostCallFailure(state, context, "capture", result.error());
+                traceHostCallFailure(state, context, call, result.error());
             }
-            traceHostCall(
-                state,
-                context,
-                "capture",
-                HostCallOutcome::Succeeded,
-                std::nullopt
-            );
+            traceHostCall(state, context, call, trace::NativeCallOutcome::Succeeded);
             pushBoxed<FrameBox>(
                 state,
                 FrameBox{.seq = *result, .context = context},
@@ -563,19 +588,18 @@ namespace uf::task
             auto* context = boundContext(state);
             guardFatal(state, context);
 
-            auto* frame  = checkBox<FrameBox>(state, 1, k_frameType, "frame");
-            auto  result = context->resolvePage(frame->seq);
+            auto* frame = checkBox<FrameBox>(state, 1, k_frameType, "frame");
+            auto const call = NativeCallIdentity{
+                .verb           = "resolve_page",
+                .observationSeq = frame->seq,
+            };
+
+            auto result = context->resolvePage(frame->seq);
             if (!result)
             {
-                traceHostCallFailure(state, context, "resolve_page", result.error());
+                traceHostCallFailure(state, context, call, result.error());
             }
-            traceHostCall(
-                state,
-                context,
-                "resolve_page",
-                HostCallOutcome::Succeeded,
-                std::nullopt
-            );
+            traceHostCall(state, context, call, trace::NativeCallOutcome::Succeeded);
             pushBoxed<OutcomeBox>(
                 state,
                 OutcomeBox{.seq = frame->seq, .outcome = *std::move(result)},
@@ -595,32 +619,26 @@ namespace uf::task
             auto* frame = checkBox<FrameBox>(state, 1, k_frameType, "frame");
             auto* recognizer =
                 checkBox<annotation::RecognizerId>(state, 2, k_recognizerType, "recognizer");
+            auto const call = NativeCallIdentity{
+                .verb           = "find",
+                .observationSeq = frame->seq,
+                .recognizerId   = *recognizer,
+            };
+
             auto result = context->findAction(frame->seq, *recognizer);
             if (!result)
             {
-                traceHostCallFailure(state, context, "find", result.error());
+                traceHostCallFailure(state, context, call, result.error());
             }
 
             auto found = *std::move(result);
             if (!found.has_value())
             {
-                traceHostCall(
-                    state,
-                    context,
-                    "find",
-                    HostCallOutcome::Empty,
-                    std::nullopt
-                );
+                traceHostCall(state, context, call, trace::NativeCallOutcome::Empty);
                 lua_pushnil(state);
                 return 1;
             }
-            traceHostCall(
-                state,
-                context,
-                "find",
-                HostCallOutcome::Succeeded,
-                std::nullopt
-            );
+            traceHostCall(state, context, call, trace::NativeCallOutcome::Succeeded);
             pushBoxed<HitBox>(
                 state,
                 HitBox{.seq = frame->seq, .action = *std::move(found)},
@@ -661,18 +679,22 @@ namespace uf::task
 
             auto* page = checkBox<ResolvedPageBox>(state, 2, k_resolvedPageType, "page");
             auto* hit  = checkBox<HitBox>(state, 3, k_hitType, "hit");
-            auto  result = context->click(page->seq, hit->seq, page->page, hit->action);
+
+            // Both sequences are recorded because click's first guard rejects a
+            // page and a hit drawn from different captures, and the two numbers
+            // are that rejection's entire content.
+            auto const call = NativeCallIdentity{
+                .verb              = "click",
+                .observationSeq    = page->seq,
+                .hitObservationSeq = hit->seq,
+            };
+
+            auto result = context->click(page->seq, hit->seq, page->page, hit->action);
             if (!result)
             {
-                traceHostCallFailure(state, context, "click", result.error());
+                traceHostCallFailure(state, context, call, result.error());
             }
-            traceHostCall(
-                state,
-                context,
-                "click",
-                HostCallOutcome::Succeeded,
-                std::nullopt
-            );
+            traceHostCall(state, context, call, trace::NativeCallOutcome::Succeeded);
             return 0;
         }
 
@@ -783,18 +805,16 @@ namespace uf::task
             auto const timeout      = readWaitDuration(state, 3, "timeout_ms");
             auto const pollInterval = readWaitDuration(state, 3, "poll_interval_ms");
 
+            // wait_for_page mints the sequence its own observation is retained
+            // under, so like capture it is handed none.
+            auto const call = NativeCallIdentity{.verb = "wait_for_page"};
+
             auto result = context->waitForPage(*reference, timeout, pollInterval);
             if (!result)
             {
-                traceHostCallFailure(state, context, "wait_for_page", result.error());
+                traceHostCallFailure(state, context, call, result.error());
             }
-            traceHostCall(
-                state,
-                context,
-                "wait_for_page",
-                HostCallOutcome::Succeeded,
-                std::nullopt
-            );
+            traceHostCall(state, context, call, trace::NativeCallOutcome::Succeeded);
 
             auto wait = *std::move(result);
             lua_createtable(state, 0, 2);

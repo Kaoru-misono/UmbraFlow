@@ -112,25 +112,29 @@ loadRuntimeProject
 
 ### 追踪事件
 
-`modules/engine/source/engine/trace.hpp` 定义 schema
-`engine-trace/v1` 与 `TraceEvent`。事件词汇目前是：
+schema 由 `modules/trace/source/trace/event.hpp` 拥有，id 是
+`umbraflow-trace/v1`；engine 与 task 写同一条流。engine 发出的事件是：
 
-- 生命周期：`SessionStarted`、`Observed`、`ObservationInvalidated`。
-- 页面：`PageResolved`、`PageUnknown`、`PageAmbiguous`。
-- 动作：`ActionFound`、`ActionAbsent`、`ActionAuthorized`、`ActionRejected`、
-  `ClickDelivered`。
-- 停止与错误：`RecognitionStopped`、`Failure`。
+- `engine.observed`、`engine.observation_invalidated`。
+- `engine.page_resolved`，outcome 为 `Resolved` / `Unknown` / `Ambiguous` /
+  `Stopped` / `Failed`。跑完的一次尝试还带 `pageScores`：每个被评估的 page 一条，
+  记录它是否仍是候选，以及它最差的 required anchor 相对自身上限的分数，因此没解析
+  出来时能读出差了多少，而不是只知道没解析出来。
+- `engine.action_found`，outcome 为 `Found` / `Absent` / `Stopped` / `Failed`。
+- `engine.action_authorized`、`engine.action_rejected`、`engine.action_delivered`。
 
-可选字段覆盖 frame/session/target identity、`PageId`、`RecognizerId`、`sadScore`、
-`maximumSad`、`PixelRect`、`SadSearchStopReason`、`AutomationErrorKind`、message 和
-client click point。缺席字段直接省略，不输出 `null`。
+`engine-trace/v1` 的 `PageResolved` / `PageUnknown` / `PageAmbiguous` 与
+`ActionFound` / `ActionAbsent` 折叠成上面两个 kind 的 outcome；原先与阶段无关的
+`RecognitionStopped` 与 `Failure` 也成为对应阶段的 outcome，因此现在还能读出停止或
+失败发生在哪一步。在脚本路径上 `SessionStarted` 没有后继：组合根的 `run.started`
+记录同一时刻，并带上 project、task、source hash、framework 版本与 bundle hash、
+Luau 编译器版本、seed 与 run 身份。`entry/cli` 的 smoke 路径不写任何 run 级事件，
+它的 trace 从第一条 `engine.observed` 开始；该路径随 stage 1d 的 TaskHost 一起删除。
 
-`modules/engine/source/engine/trace.cpp` 的 `serializeTraceEvent` 总是先写 `schema`，
-再按固定字段顺序输出；wire name 由显式 `switch` 所有，不会因 C++ enum 重命名而
-静默改变。字符串会转义 JSON 必须转义的结构字符和 control bytes。
-
-serializer 返回单行 JSON object。`FileTraceSink` 才追加 `\n`，每次 emit 后立即
-flush，使已经生成的证据尽量在 crash 后仍可见。
+`trace::TraceRecorder` 在每条事件上盖 `seq`、`runId`、`generationId`，以及 `meta`
+里的 `wallClock`。`meta` 是文档化的非 golden 字段集，golden 比较前用
+`trace::stripNonGoldenFields` 剥掉。engine 不拥有 sink：它借用 run 的 recorder，
+文件的打开、逐条写入与 flush 由 `modules/trace` 的 `FileTraceSink` 负责。
 
 ## 必须保持的约束
 

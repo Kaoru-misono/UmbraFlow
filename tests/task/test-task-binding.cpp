@@ -1,12 +1,16 @@
 #include "binding-fixture.hpp"
 
 #include <task/capability-surface.hpp>
+#include <task/framework-bundle.hpp>
+#include <task/run-trace.hpp>
+#include <task/script-validator.hpp>
 #include <task/task-context.hpp>
-#include <task/trace.hpp>
+#include <task/task-loader.hpp>
 
 #include <script/engine.hpp>
 #include <script/testing/cancel-probe.hpp>
 
+#include <core/error/error.hpp>
 #include <core/error/result.hpp>
 #include <core/types/integer.hpp>
 
@@ -17,15 +21,19 @@
 
 #include <engine/session.hpp>
 
+#include <trace/event.hpp>
+
 #include <doctest/doctest.h>
 
 #include <chrono>
 #include <cstddef>
+#include <format>
 #include <memory>
 #include <optional>
 #include <stop_token>
 #include <string>
 #include <string_view>
+#include <system_error>
 #include <utility>
 #include <vector>
 
@@ -62,58 +70,141 @@ namespace uf::task
             }
         };
 
-        // Fails every emit, so a test can prove a verb aborts when its HostCall
-        // event cannot be recorded rather than dropping the evidence silently.
-        class FailingTaskTraceSink final : public ITaskTraceSink
+        // Fails only when recording a native call, so a test can prove a verb
+        // aborts when its task.native_call event cannot be recorded rather than
+        // dropping the evidence silently. Letting the engine's own events through
+        // keeps the failure exactly where the test aims it.
+        class FailOnNativeCallTraceSink final : public trace::ITraceSink
         {
         public:
-            [[nodiscard]] auto emit(TaskTraceEvent const& /*event*/) -> Status override
+            [[nodiscard]]
+            auto emit(trace::StampedTraceEvent const& event) -> Status override
             {
-                return fail(
-                    AutomationErrorKind::IoFailure,
-                    "task trace sink deliberately failing"
-                );
-            }
-        };
-
-        // Fails only when recording a verb's failure. A sink that failed on every
-        // event would abort the first successful verb and no test could ever reach
-        // the failure path it wants to observe.
-        class FailOnFailedTraceSink final : public ITaskTraceSink
-        {
-        public:
-            [[nodiscard]] auto emit(TaskTraceEvent const& event) -> Status override
-            {
-                if (event.outcome == HostCallOutcome::Failed)
+                if (event.event().kind == trace::TraceEventKind::TaskNativeCall)
                 {
                     return fail(
                         AutomationErrorKind::IoFailure,
-                        "task trace sink deliberately failing on a failure record"
+                        "trace sink deliberately failing on a native call"
                     );
                 }
                 return ok();
             }
         };
 
-        // A constructed EngineSession plus the surface built from its own catalog
-        // and a non-owning observer of the click sink. The surface is captured
-        // before the runtime moves into the session, so both name the same
-        // recognizer and page identities.
+        // Fails only when recording a verb's failure. A sink that failed on every
+        // event would abort the first successful verb and no test could ever reach
+        // the failure path it wants to observe.
+        class FailOnFailedTraceSink final : public trace::ITraceSink
+        {
+        public:
+            [[nodiscard]]
+            auto emit(trace::StampedTraceEvent const& event) -> Status override
+            {
+                auto const& call = event.event().nativeCall;
+                if (
+                    call.has_value()
+                    && call->outcome == trace::NativeCallOutcome::Failed
+                )
+                {
+                    return fail(
+                        AutomationErrorKind::IoFailure,
+                        "trace sink deliberately failing on a failure record"
+                    );
+                }
+                return ok();
+            }
+        };
+
+        [[nodiscard]]
+        auto kindsOf(std::vector<trace::StampedTraceEvent> const& events)
+            -> std::vector<trace::TraceEventKind>
+        {
+            auto kinds = std::vector<trace::TraceEventKind>{};
+            kinds.reserve(events.size());
+            for (auto const& event : events)
+            {
+                kinds.emplace_back(event.event().kind);
+            }
+            return kinds;
+        }
+
+        // Every recorded event as the wire line a reader sees, with the non-golden
+        // meta member stripped -- the documented way to compare traces.
+        [[nodiscard]]
+        auto strippedLines(std::vector<trace::StampedTraceEvent> const& events)
+            -> std::vector<std::string>
+        {
+            auto lines = std::vector<std::string>{};
+            lines.reserve(events.size());
+            for (auto const& event : events)
+            {
+                lines.emplace_back(
+                    trace::stripNonGoldenFields(trace::serializeTraceEvent(event))
+                );
+            }
+            return lines;
+        }
+
+        [[nodiscard]]
+        auto nativeCallVerbs(std::vector<trace::StampedTraceEvent> const& events)
+            -> std::vector<std::string>
+        {
+            auto verbs = std::vector<std::string>{};
+            for (auto const& event : events)
+            {
+                if (event.event().nativeCall.has_value())
+                {
+                    verbs.emplace_back(event.event().nativeCall->verb);
+                }
+            }
+            return verbs;
+        }
+
+        // The first native call recorded for `verb`, or null when the run made
+        // none. The returned pointer observes storage owned by the recording sink
+        // behind `events`, which the annotation on that parameter states.
+        [[nodiscard]]
+        auto findNativeCall(
+            std::vector<trace::StampedTraceEvent> const& events UF_LIFETIME_BOUND,
+            std::string_view verb
+        ) noexcept -> trace::TraceEvent::NativeCall const*
+        {
+            for (auto const& event : events)
+            {
+                auto const& call = event.event().nativeCall;
+                if (call.has_value() && call->verb == verb)
+                {
+                    return &*call;
+                }
+            }
+            return nullptr;
+        }
+
+        // The run's recorder, a constructed EngineSession over it, the surface
+        // built from its own catalog, and a non-owning observer of the click sink.
+        // The surface is captured before the runtime moves into the session, so
+        // both name the same recognizer and page identities.
+        //
+        // The recorder is declared first and held through a unique_ptr: the
+        // session borrows it (see engine/session.hpp), so it must outlive the
+        // session and keep a stable address when this struct is moved.
         struct Built final
         {
-            Result<engine::EngineSession> session;
-            CapabilitySurface             surface;
-            CountingActionSink*           clicks;
+            std::unique_ptr<trace::TraceRecorder> recorder;
+            Result<engine::EngineSession>         session;
+            CapabilitySurface                     surface;
+            CountingActionSink*                   clicks;
         };
 
         // Builds the session from `frameSource` with `cancellation` armed on the
-        // engine config, plus the surface built from its own catalog and a
-        // non-owning observer of the click sink. The surface is captured before the
-        // runtime moves into the session, so both name the same identities.
+        // engine config, recording into `traceSink`. One recorder serves both the
+        // engine session and the TaskContext built over it, which is what puts
+        // their events into a single ordered stream.
         [[nodiscard]]
         auto buildBindingWith(
             std::unique_ptr<engine::IFrameSource> frameSource,
-            std::stop_token cancellation
+            std::stop_token cancellation,
+            std::unique_ptr<trace::ITraceSink> traceSink
         ) -> Built
         {
             auto parts   = singlePageRuntime();
@@ -123,21 +214,26 @@ namespace uf::task
             REQUIRE(surface.has_value());
 
             auto actionSink = std::make_unique<CountingActionSink>();
-            auto traceSink  = std::make_unique<DiscardingTraceSink>();
             auto* const p_clicks = actionSink.get();
             auto config         = baseConfig(parts.fingerprint);
             config.cancellation = std::move(cancellation);
-            auto session         = engine::EngineSession::create(
+            auto recorder       = std::make_unique<trace::TraceRecorder>(
+                std::move(traceSink),
+                k_fixtureRunId,
+                k_fixtureGenerationId
+            );
+            auto session = engine::EngineSession::create(
                 std::move(parts.loaded),
                 std::move(frameSource),
                 std::move(actionSink),
-                std::move(traceSink),
+                *recorder,
                 config
             );
             return Built{
-                .session = std::move(session),
-                .surface = *std::move(surface),
-                .clicks  = p_clicks,
+                .recorder = std::move(recorder),
+                .session  = std::move(session),
+                .surface  = *std::move(surface),
+                .clicks   = p_clicks,
             };
         }
 
@@ -146,7 +242,8 @@ namespace uf::task
         {
             return buildBindingWith(
                 std::make_unique<FakeFrameSource>(std::move(frames)),
-                std::stop_token{}
+                std::stop_token{},
+                std::make_unique<DiscardingTraceSink>()
             );
         }
 
@@ -221,6 +318,7 @@ namespace uf::task
             REQUIRE(built.session.has_value());
             TaskContext context{
                 *std::move(built.session),
+                *built.recorder,
                 TaskContextConfig{.randomSeed = seed},
             };
 
@@ -252,7 +350,7 @@ namespace uf::task
             frames.emplace_back(grayFrame(anno::test::fingerprint(3, 1, 96, 96), resolvingPixels(), FrameId{17}));
             auto built = buildBinding(std::move(frames));
             REQUIRE(built.session.has_value());
-            TaskContext context{*std::move(built.session)};
+            TaskContext context{*std::move(built.session), *built.recorder};
 
             constexpr std::string_view source = R"lua(
                 local frame = umbra:capture()
@@ -276,7 +374,7 @@ namespace uf::task
             frames.emplace_back(grayFrame(anno::test::fingerprint(3, 1, 96, 96), resolvingPixels(), FrameId{17}));
             auto built = buildBinding(std::move(frames));
             REQUIRE(built.session.has_value());
-            TaskContext context{*std::move(built.session)};
+            TaskContext context{*std::move(built.session), *built.recorder};
 
             // After the click consumes the observation, resolve_page, find, and a
             // second click all fail with a frozen, protected stale_observation
@@ -315,7 +413,7 @@ namespace uf::task
             frames.emplace_back(grayFrame(anno::test::fingerprint(3, 1, 96, 96), resolvingPixels(), FrameId{18}));
             auto built = buildBinding(std::move(frames));
             REQUIRE(built.session.has_value());
-            TaskContext context{*std::move(built.session)};
+            TaskContext context{*std::move(built.session), *built.recorder};
 
             // p1 belongs to the first capture, h2 to the second. The binding layer
             // rejects the mix before the engine, and neither frame is consumed.
@@ -344,7 +442,7 @@ namespace uf::task
             frames.emplace_back(grayFrame(anno::test::fingerprint(3, 1, 96, 96), unknownPixels(), FrameId{17}));
             auto built = buildBinding(std::move(frames));
             REQUIRE(built.session.has_value());
-            TaskContext context{*std::move(built.session)};
+            TaskContext context{*std::move(built.session), *built.recorder};
 
             constexpr std::string_view source = R"lua(
                 local frame = umbra:capture()
@@ -362,7 +460,7 @@ namespace uf::task
             frames.emplace_back(grayFrame(anno::test::fingerprint(3, 1, 96, 96), resolvingPixels(), FrameId{21}));
             auto built = buildBinding(std::move(frames));
             REQUIRE(built.session.has_value());
-            TaskContext context{*std::move(built.session)};
+            TaskContext context{*std::move(built.session), *built.recorder};
 
             // wait_for_page resolves page_a on the first capture and hands back a
             // { page, frame } sharing one observation sequence, so find on the frame
@@ -387,7 +485,7 @@ namespace uf::task
             frames.emplace_back(grayFrame(anno::test::fingerprint(3, 1, 96, 96), unknownPixels(), FrameId{22}));
             auto built = buildBinding(std::move(frames));
             REQUIRE(built.session.has_value());
-            TaskContext context{*std::move(built.session)};
+            TaskContext context{*std::move(built.session), *built.recorder};
 
             // A short explicit budget keeps the poll loop brief; the unknown frame
             // never resolves page_a, so the wait times out as a Tier B error whose
@@ -417,7 +515,7 @@ namespace uf::task
             frames.emplace_back(grayFrame(anno::test::fingerprint(3, 1, 96, 96), resolvingPixels(), FrameId{24}));
             auto built = buildBinding(std::move(frames));
             REQUIRE(built.session.has_value());
-            TaskContext context{*std::move(built.session)};
+            TaskContext context{*std::move(built.session), *built.recorder};
 
             // 1e15 ms cleared the old <= 1e15 bound yet overflowed the nanosecond
             // tick rep inside duration_cast (undefined behaviour). It is now a clean
@@ -443,7 +541,7 @@ namespace uf::task
             frames.emplace_back(grayFrame(anno::test::fingerprint(3, 1, 96, 96), resolvingPixels(), FrameId{23}));
             auto built = buildBinding(std::move(frames));
             REQUIRE(built.session.has_value());
-            TaskContext context{*std::move(built.session)};
+            TaskContext context{*std::move(built.session), *built.recorder};
 
             // The first click consumes the frame; a second click inside try is a
             // Tier B stale_observation, returned as (false, errorTable). A plainly
@@ -475,7 +573,7 @@ namespace uf::task
             frames.emplace_back(grayFrame(anno::test::fingerprint(3, 1, 96, 96), resolvingPixels(), FrameId{24}));
             auto built = buildBinding(std::move(frames));
             REQUIRE(built.session.has_value());
-            TaskContext context{*std::move(built.session)};
+            TaskContext context{*std::move(built.session), *built.recorder};
 
             // error('boom') is the script's own failure, not a Tier B automation
             // error: try must re-raise it, so the outer pcall -- not try -- is what
@@ -511,11 +609,13 @@ namespace uf::task
                 auto frame = grayFrame(anno::test::fingerprint(3, 1, 96, 96), resolvingPixels(), FrameId{25});
                 auto built = buildBindingWith(
                     std::make_unique<StopOnCaptureFrameSource>(std::move(frame), stop),
-                    stop.get_token()
+                    stop.get_token(),
+                    std::make_unique<DiscardingTraceSink>()
                 );
                 REQUIRE(built.session.has_value());
                 TaskContext context{
                     *std::move(built.session),
+                    *built.recorder,
                     TaskContextConfig{.cancellation = stop.get_token()},
                 };
 
@@ -560,13 +660,13 @@ namespace uf::task
             // re-raising, which is what makes the substitution observable.
             auto frames = std::vector<Frame>{};
             frames.emplace_back(grayFrame(anno::test::fingerprint(3, 1, 96, 96), resolvingPixels(), FrameId{88}));
-            auto built = buildBinding(std::move(frames));
+            auto built = buildBindingWith(
+                std::make_unique<FakeFrameSource>(std::move(frames)),
+                std::stop_token{},
+                std::make_unique<FailOnFailedTraceSink>()
+            );
             REQUIRE(built.session.has_value());
-            TaskContext context{
-                *std::move(built.session),
-                TaskContextConfig{},
-                std::make_unique<FailOnFailedTraceSink>(),
-            };
+            TaskContext context{*std::move(built.session), *built.recorder};
 
             constexpr std::string_view source = R"lua(
                 local frame = umbra:capture()
@@ -601,6 +701,7 @@ namespace uf::task
             // captures must have released its observation for the map to drain.
             TaskContext context{
                 *std::move(built.session),
+                *built.recorder,
                 TaskContextConfig{.maxLiveObservations = 0},
             };
 
@@ -633,6 +734,7 @@ namespace uf::task
             // InvalidResource, and the table holds exactly `cap` frames then.
             TaskContext context{
                 *std::move(built.session),
+                *built.recorder,
                 TaskContextConfig{.maxLiveObservations = 3},
             };
 
@@ -671,7 +773,7 @@ namespace uf::task
             frames.emplace_back(grayFrame(fingerprint, resolvingPixels(), FrameId{41}));
             auto built = buildBinding(std::move(frames));
             REQUIRE(built.session.has_value());
-            TaskContext context{*std::move(built.session)};
+            TaskContext context{*std::move(built.session), *built.recorder};
 
             constexpr std::string_view source = R"lua(
                 local target = umbra.pages.page_a
@@ -702,7 +804,7 @@ namespace uf::task
             frames.emplace_back(grayFrame(anno::test::fingerprint(3, 1, 96, 96), resolvingPixels(), FrameId{33}));
             auto built = buildBinding(std::move(frames));
             REQUIRE(built.session.has_value());
-            TaskContext context{*std::move(built.session)};
+            TaskContext context{*std::move(built.session), *built.recorder};
 
             auto const seq = context.capture();
             REQUIRE(seq.has_value());
@@ -724,7 +826,7 @@ namespace uf::task
             frames.emplace_back(grayFrame(anno::test::fingerprint(3, 1, 96, 96), resolvingPixels(), FrameId{60}));
             auto built = buildBinding(std::move(frames));
             REQUIRE(built.session.has_value());
-            TaskContext context{*std::move(built.session)};
+            TaskContext context{*std::move(built.session), *built.recorder};
 
             // now() is a number, never negative, never runs backwards between two
             // calls, and carries no fractional millisecond tail.
@@ -747,7 +849,7 @@ namespace uf::task
             frames.emplace_back(grayFrame(anno::test::fingerprint(3, 1, 96, 96), resolvingPixels(), FrameId{61}));
             auto built = buildBinding(std::move(frames));
             REQUIRE(built.session.has_value());
-            TaskContext context{*std::move(built.session)};
+            TaskContext context{*std::move(built.session), *built.recorder};
 
             // The sandbox removed the native clocks and RNG, so umbra:random is the
             // sole source of randomness; no-argument random() is a float in [0, 1);
@@ -781,19 +883,19 @@ namespace uf::task
             CHECK(runBound(context, built, source) == doctest::Approx(1.0));
         }
 
-        TEST_CASE("umbra binding emits a HostCall trace event at each engine-backed verb")
+        TEST_CASE("a capture-to-click run produces one ordered stream both layers wrote")
         {
             auto frames = std::vector<Frame>{};
             frames.emplace_back(grayFrame(anno::test::fingerprint(3, 1, 96, 96), resolvingPixels(), FrameId{70}));
-            auto built = buildBinding(std::move(frames));
+            auto traceSink       = std::make_unique<RecordingTraceSink>();
+            auto* const p_traces = traceSink.get();
+            auto built = buildBindingWith(
+                std::make_unique<FakeFrameSource>(std::move(frames)),
+                std::stop_token{},
+                std::move(traceSink)
+            );
             REQUIRE(built.session.has_value());
-
-            auto events = std::vector<TaskTraceEvent>{};
-            TaskContext context{
-                *std::move(built.session),
-                TaskContextConfig{},
-                std::make_unique<RecordingTaskTraceSink>(&events),
-            };
+            TaskContext context{*std::move(built.session), *built.recorder};
 
             constexpr std::string_view source = R"lua(
                 local frame = umbra:capture()
@@ -805,36 +907,81 @@ namespace uf::task
 
             CHECK(runBound(context, built, source) == doctest::Approx(1.0));
 
-            // capture, resolve_page, find, click each emit exactly one HostCall in
-            // call order; the pure handle reads resolved() and is() emit nothing.
-            REQUIRE(events.size() == 4U);
+            auto const& events = p_traces->events();
+
+            // Every event of the run carries the same run identity and the next
+            // sequence number, whichever layer wrote it. This is what the two old
+            // schemas could not do: they had no join key at all.
+            REQUIRE_FALSE(events.empty());
+            for (auto index = std::size_t{0}; index < events.size(); ++index)
+            {
+                CHECK(events[index].sequence() == index + 1U);
+                CHECK(events[index].runId() == k_fixtureRunId);
+                CHECK(events[index].generationId() == k_fixtureGenerationId);
+            }
+
+            // The engine event and the task.native_call it caused sit adjacent in
+            // one stream, so a reader can correlate them: each verb's native call
+            // immediately follows the engine work it drove, and the click's
+            // engine.action_delivered names the frame the capture observed.
+            auto const kinds = kindsOf(events);
+            auto const expected = std::vector<trace::TraceEventKind>{
+                trace::TraceEventKind::EngineObserved,
+                trace::TraceEventKind::TaskNativeCall,
+                trace::TraceEventKind::EnginePageResolved,
+                trace::TraceEventKind::TaskNativeCall,
+                trace::TraceEventKind::EngineActionFound,
+                trace::TraceEventKind::TaskNativeCall,
+                trace::TraceEventKind::EngineActionAuthorized,
+                trace::TraceEventKind::EngineActionDelivered,
+                trace::TraceEventKind::EngineObservationInvalidated,
+                trace::TraceEventKind::TaskNativeCall,
+            };
+            CHECK(kinds == expected);
+
+            auto const observed = events[0].event();
+            REQUIRE(observed.frame.has_value());
+            CHECK(observed.frame->frameId() == FrameId{70});
+            auto const delivered = events[7].event();
+            REQUIRE(delivered.frame.has_value());
+            CHECK(delivered.frame->frameId() == FrameId{70});
+
+            // capture, resolve_page, find and click each emit exactly one native
+            // call, in call order; the pure handle reads resolved() and is() emit
+            // nothing.
+            auto const verbs = nativeCallVerbs(events);
+            CHECK(
+                verbs
+                == std::vector<std::string>{"capture", "resolve_page", "find", "click"}
+            );
             for (auto const& event : events)
             {
-                CHECK(event.kind == TaskTraceEventKind::HostCall);
-                CHECK(event.outcome == HostCallOutcome::Succeeded);
+                if (event.event().nativeCall.has_value())
+                {
+                    CHECK(
+                        event.event().nativeCall->outcome
+                        == trace::NativeCallOutcome::Succeeded
+                    );
+                }
             }
-            CHECK(events[0].verb == "capture");
-            CHECK(events[1].verb == "resolve_page");
-            CHECK(events[2].verb == "find");
-            CHECK(events[3].verb == "click");
         }
 
-        TEST_CASE("umbra binding emits an Empty HostCall for a find that finds nothing")
+        TEST_CASE("umbra binding emits an Empty native call for a find that finds nothing")
         {
             auto frames = std::vector<Frame>{};
             frames.emplace_back(grayFrame(anno::test::fingerprint(3, 1, 96, 96), unknownPixels(), FrameId{71}));
-            auto built = buildBinding(std::move(frames));
+            auto traceSink       = std::make_unique<RecordingTraceSink>();
+            auto* const p_traces = traceSink.get();
+            auto built = buildBindingWith(
+                std::make_unique<FakeFrameSource>(std::move(frames)),
+                std::stop_token{},
+                std::move(traceSink)
+            );
             REQUIRE(built.session.has_value());
-
-            auto events = std::vector<TaskTraceEvent>{};
-            TaskContext context{
-                *std::move(built.session),
-                TaskContextConfig{},
-                std::make_unique<RecordingTaskTraceSink>(&events),
-            };
+            TaskContext context{*std::move(built.session), *built.recorder};
 
             // The frame resolves nothing, so find completes without a match; its
-            // HostCall records Empty (Tier A) rather than Succeeded or Failed.
+            // native call records Empty (Tier A) rather than Succeeded or Failed.
             constexpr std::string_view source = R"lua(
                 local frame = umbra:capture()
                 local hit = frame:find(umbra.recognizers.action_target)
@@ -843,30 +990,218 @@ namespace uf::task
 
             CHECK(runBound(context, built, source) == doctest::Approx(1.0));
 
-            REQUIRE(events.size() == 2U);
-            CHECK(events[0].verb == "capture");
-            CHECK(events[0].outcome == HostCallOutcome::Succeeded);
-            CHECK(events[1].verb == "find");
-            CHECK(events[1].outcome == HostCallOutcome::Empty);
+            auto const& events = p_traces->events();
+            CHECK(
+                nativeCallVerbs(events) == std::vector<std::string>{"capture", "find"}
+            );
+
+            auto const* p_find = findNativeCall(events, "find");
+            REQUIRE(p_find != nullptr);
+            CHECK(p_find->outcome == trace::NativeCallOutcome::Empty);
+        }
+
+        TEST_CASE("runFinishedEvent maps how a run ended onto the trace's run outcome")
+        {
+            // The only mapping the composition root used to hold inline, where no
+            // test target could reach it. Each branch is a distinct wire line, and
+            // a run that ends is the one event an operator always reads.
+            SUBCASE("a clean return is Completed and names no error kind")
+            {
+                auto const event = runFinishedEvent(nullptr);
+                CHECK(event.kind == trace::TraceEventKind::RunFinished);
+                CHECK(event.runOutcome == trace::RunOutcome::Completed);
+                CHECK_FALSE(event.errorKind.has_value());
+            }
+
+            SUBCASE("a cancellation spends the generation rather than failing it")
+            {
+                auto const cancelled = fail(
+                    AutomationErrorKind::Cancelled,
+                    "stopped by the single cancel source"
+                );
+                auto const event = runFinishedEvent(&cancelled.error());
+                CHECK(event.runOutcome == trace::RunOutcome::Cancelled);
+                CHECK(event.errorKind == AutomationErrorKind::Cancelled);
+            }
+
+            SUBCASE("every other failure is Failed under its own kind")
+            {
+                auto const timedOut = fail(
+                    AutomationErrorKind::Timeout,
+                    "the page never appeared"
+                );
+                auto const event = runFinishedEvent(&timedOut.error());
+                CHECK(event.runOutcome == trace::RunOutcome::Failed);
+                CHECK(event.errorKind == AutomationErrorKind::Timeout);
+            }
+
+            SUBCASE("an error carrying no automation kind still names one")
+            {
+                auto const unclassified = Error{
+                    std::make_error_code(std::errc::io_error),
+                    "not an automation failure",
+                };
+                auto const event = runFinishedEvent(&unclassified);
+                CHECK(event.runOutcome == trace::RunOutcome::Failed);
+                CHECK(event.errorKind == AutomationErrorKind::InternalInvariant);
+            }
+        }
+
+        TEST_CASE("a run records all three layers as one ordered umbraflow-trace/v1 stream")
+        {
+            // The merge's acceptance criterion, end to end: the host's run-level
+            // events, the engine's recognition and delivery events, and the script
+            // layer's native calls, all under one sequence, run id and generation
+            // id, asserted as the exact wire lines a reader would see.
+            auto frames = std::vector<Frame>{};
+            frames.emplace_back(
+                grayFrame(anno::test::fingerprint(3, 1, 96, 96), resolvingPixels(), FrameId{73})
+            );
+            auto traceSink       = std::make_unique<RecordingTraceSink>();
+            auto* const p_traces = traceSink.get();
+            auto built = buildBindingWith(
+                std::make_unique<FakeFrameSource>(std::move(frames)),
+                std::stop_token{},
+                std::move(traceSink)
+            );
+            REQUIRE(built.session.has_value());
+
+            // The run identity and its validated resource closure open the stream
+            // before any VM exists, exactly as the composition root writes them.
+            REQUIRE(
+                built.recorder
+                    ->emit(
+                        runStartedEvent(
+                            RunStartSpec{
+                                .projectId  = "personal.task_binding",
+                                .taskName   = "daily",
+                                .sourceHash = "abc123",
+                                .seed       = uint64{42},
+                            }
+                        )
+                    )
+                    .has_value()
+            );
+            REQUIRE(
+                built.recorder
+                    ->emit(
+                        runResourcesValidatedEvent(
+                            ScriptResourceReport{
+                                .recognizers = {"action_target"},
+                                .pages       = {"page_a"},
+                            }
+                        )
+                    )
+                    .has_value()
+            );
+
+            TaskContext context{*std::move(built.session), *built.recorder};
+
+            constexpr std::string_view source = R"lua(
+                local frame = umbra:capture()
+                local page = frame:resolve_page():resolved()
+                local hit = frame:find(umbra.recognizers.action_target)
+                umbra:click(page, hit)
+                return 1
+            )lua";
+            CHECK(runBound(context, built, source) == doctest::Approx(1.0));
+
+            REQUIRE(built.recorder->emit(runFinishedEvent(nullptr)).has_value());
+
+            // The framework version, bundle hash and Luau compiler version are
+            // interpolated rather than frozen: they legitimately change when the
+            // framework or the vendored compiler is rebuilt, while their presence
+            // and position in the line is exactly what this pins. A run.started
+            // that omitted them would not match.
+            auto const startedLine = std::format(
+                "{{\"schema\":\"umbraflow-trace/v1\",\"kind\":\"run.started\""
+                ",\"seq\":1,\"runId\":5,\"generationId\":1"
+                ",\"projectId\":\"personal.task_binding\",\"taskName\":\"daily\""
+                ",\"sourceHash\":\"abc123\",\"frameworkVersion\":\"{}\""
+                ",\"frameworkHash\":\"{}\",\"luauVersion\":\"{}\",\"seed\":42}}",
+                frameworkVersion(),
+                frameworkBundleHash(),
+                luauRuntimeVersion()
+            );
+
+            auto const expected = std::vector<std::string>{
+                startedLine,
+                "{\"schema\":\"umbraflow-trace/v1\",\"kind\":\"run.resources_validated\""
+                ",\"seq\":2,\"runId\":5,\"generationId\":1"
+                ",\"recognizers\":[\"action_target\"],\"pages\":[\"page_a\"]}",
+                "{\"schema\":\"umbraflow-trace/v1\",\"kind\":\"engine.observed\""
+                ",\"seq\":3,\"runId\":5,\"generationId\":1"
+                ",\"frameId\":73,\"sessionId\":7,\"targetGeneration\":3}",
+                "{\"schema\":\"umbraflow-trace/v1\",\"kind\":\"task.native_call\""
+                ",\"seq\":4,\"runId\":5,\"generationId\":1"
+                ",\"verb\":\"capture\",\"outcome\":\"Succeeded\"}",
+                "{\"schema\":\"umbraflow-trace/v1\",\"kind\":\"engine.page_resolved\""
+                ",\"seq\":5,\"runId\":5,\"generationId\":1"
+                ",\"frameId\":73,\"sessionId\":7,\"targetGeneration\":3"
+                ",\"pageOutcome\":\"Resolved\""
+                ",\"pageId\":\"00000000-0000-0000-0000-000000000111\""
+                ",\"pageScores\":[{\"pageId\":\"00000000-0000-0000-0000-000000000111\""
+                ",\"candidate\":true"
+                ",\"worstAnchor\":\"00000000-0000-0000-0000-000000000011\""
+                ",\"worstAnchorSad\":0,\"worstAnchorMaximumSad\":0}]}",
+                "{\"schema\":\"umbraflow-trace/v1\",\"kind\":\"task.native_call\""
+                ",\"seq\":6,\"runId\":5,\"generationId\":1"
+                ",\"verb\":\"resolve_page\",\"observationSeq\":1"
+                ",\"outcome\":\"Succeeded\"}",
+                "{\"schema\":\"umbraflow-trace/v1\",\"kind\":\"engine.action_found\""
+                ",\"seq\":7,\"runId\":5,\"generationId\":1"
+                ",\"frameId\":73,\"sessionId\":7,\"targetGeneration\":3"
+                ",\"actionOutcome\":\"Found\",\"sadScore\":0,\"maximumSad\":0"
+                ",\"matchedRect\":{\"x\":1,\"y\":0,\"width\":1,\"height\":1}"
+                ",\"recognizerId\":\"00000000-0000-0000-0000-000000000013\"}",
+                "{\"schema\":\"umbraflow-trace/v1\",\"kind\":\"task.native_call\""
+                ",\"seq\":8,\"runId\":5,\"generationId\":1"
+                ",\"verb\":\"find\",\"observationSeq\":1,\"outcome\":\"Succeeded\""
+                ",\"recognizerId\":\"00000000-0000-0000-0000-000000000013\"}",
+                "{\"schema\":\"umbraflow-trace/v1\",\"kind\":\"engine.action_authorized\""
+                ",\"seq\":9,\"runId\":5,\"generationId\":1"
+                ",\"frameId\":73,\"sessionId\":7,\"targetGeneration\":3}",
+                "{\"schema\":\"umbraflow-trace/v1\",\"kind\":\"engine.action_delivered\""
+                ",\"seq\":10,\"runId\":5,\"generationId\":1"
+                ",\"frameId\":73,\"sessionId\":7,\"targetGeneration\":3"
+                ",\"clickClientX\":1,\"clickClientY\":0}",
+                "{\"schema\":\"umbraflow-trace/v1\""
+                ",\"kind\":\"engine.observation_invalidated\""
+                ",\"seq\":11,\"runId\":5,\"generationId\":1"
+                ",\"frameId\":73,\"sessionId\":7,\"targetGeneration\":3}",
+                "{\"schema\":\"umbraflow-trace/v1\",\"kind\":\"task.native_call\""
+                ",\"seq\":12,\"runId\":5,\"generationId\":1"
+                ",\"verb\":\"click\",\"observationSeq\":1,\"hitObservationSeq\":1"
+                ",\"outcome\":\"Succeeded\"}",
+                "{\"schema\":\"umbraflow-trace/v1\",\"kind\":\"run.finished\""
+                ",\"seq\":13,\"runId\":5,\"generationId\":1"
+                ",\"runOutcome\":\"Completed\"}",
+            };
+
+            auto const actual = strippedLines(p_traces->events());
+            REQUIRE(actual.size() == expected.size());
+            for (auto index = std::size_t{0}; index < expected.size(); ++index)
+            {
+                CHECK(actual[index] == expected[index]);
+            }
         }
 
         TEST_CASE("umbra binding aborts a verb as Tier B io_failure when the trace sink fails")
         {
             auto frames = std::vector<Frame>{};
             frames.emplace_back(grayFrame(anno::test::fingerprint(3, 1, 96, 96), resolvingPixels(), FrameId{72}));
-            auto built = buildBinding(std::move(frames));
+            auto built = buildBindingWith(
+                std::make_unique<FakeFrameSource>(std::move(frames)),
+                std::stop_token{},
+                std::make_unique<FailOnNativeCallTraceSink>()
+            );
             REQUIRE(built.session.has_value());
+            TaskContext context{*std::move(built.session), *built.recorder};
 
-            TaskContext context{
-                *std::move(built.session),
-                TaskContextConfig{},
-                std::make_unique<FailingTaskTraceSink>(),
-            };
-
-            // capture succeeds in the engine, but recording its HostCall fails;
+            // capture succeeds in the engine, but recording its native call fails;
             // losing the trace evidence aborts the verb as a Tier B io_failure
             // carrying the protected umbra.error metatable, rather than dropping
-            // the record silently (the engine trace's throw-instant discipline).
+            // the record silently (the trace's throw-instant discipline).
             constexpr std::string_view source = R"lua(
                 local ok, err = pcall(function() return umbra:capture() end)
                 if ok then return 0 end

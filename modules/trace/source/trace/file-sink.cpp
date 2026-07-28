@@ -1,6 +1,6 @@
-#include <task/file-trace-sink.hpp>
+#include "file-sink.hpp"
 
-#include <task/trace.hpp>
+#include "event.hpp"
 
 #include <core/error/contracts.hpp>
 
@@ -13,7 +13,7 @@
 #include <system_error>
 #include <utility>
 
-namespace uf::task
+namespace uf::trace
 {
     namespace
     {
@@ -28,15 +28,15 @@ namespace uf::task
         }
     }
 
-    FileTaskTraceSink::FileTaskTraceSink(OpenTag, std::ofstream stream) noexcept
+    FileTraceSink::FileTraceSink(OpenTag, std::ofstream stream) noexcept
         : m_stream{std::move(stream)}
     {
         UF_CHECK(m_stream.is_open());
     }
 
-    auto FileTaskTraceSink::create(
+    auto FileTraceSink::create(
         std::filesystem::path const& path
-    ) -> Result<std::unique_ptr<ITaskTraceSink>>
+    ) -> Result<std::unique_ptr<ITraceSink>>
     {
         auto stream = std::ofstream{};
         errno       = 0;
@@ -45,27 +45,27 @@ namespace uf::task
         {
             return fail(
                 AutomationErrorKind::IoFailure,
-                "cannot open task trace file "
+                "cannot open trace file "
                     + path.string()
                     + ": "
                     + currentIoError().message()
             );
         }
 
-        auto p_sink = std::make_unique<FileTaskTraceSink>(OpenTag{}, std::move(stream));
-        return std::unique_ptr<ITaskTraceSink>{std::move(p_sink)};
+        auto p_sink = std::make_unique<FileTraceSink>(OpenTag{}, std::move(stream));
+        return std::unique_ptr<ITraceSink>{std::move(p_sink)};
     }
 
-    auto FileTaskTraceSink::emit(TaskTraceEvent const& event) -> Status
+    auto FileTraceSink::emit(StampedTraceEvent const& event) -> Status
     {
         errno = 0;
-        m_stream << serializeTaskTraceEvent(event) << '\n';
+        m_stream << serializeTraceEvent(event) << '\n';
         m_stream.flush();
         if (!m_stream)
         {
             return fail(
                 AutomationErrorKind::IoFailure,
-                "task trace emit failed: " + currentIoError().message()
+                "trace emit failed: " + currentIoError().message()
             );
         }
         return ok();

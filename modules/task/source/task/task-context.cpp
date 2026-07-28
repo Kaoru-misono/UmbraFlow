@@ -1,7 +1,5 @@
 #include <task/task-context.hpp>
 
-#include <task/trace.hpp>
-
 #include <core/error/contracts.hpp>
 #include <core/error/result.hpp>
 #include <core/types/integer.hpp>
@@ -13,7 +11,9 @@
 
 #include <engine/session.hpp>
 
-#include <memory>
+#include <trace/event.hpp>
+#include <trace/recorder.hpp>
+
 #include <optional>
 #include <utility>
 
@@ -21,13 +21,13 @@ namespace uf::task
 {
     TaskContext::TaskContext(
         engine::EngineSession session,
-        TaskContextConfig config,
-        std::unique_ptr<ITaskTraceSink> traceSink
+        trace::TraceRecorder& recorder,
+        TaskContextConfig config
     ) noexcept
         : m_session{std::move(session)}
         , m_config{std::move(config)}
         , m_rng{m_config.randomSeed}
-        , m_traceSink{std::move(traceSink)}
+        , m_recorder{recorder}
     {
     }
 
@@ -194,13 +194,9 @@ namespace uf::task
         return m_traceFailed;
     }
 
-    auto TaskContext::emitTrace(TaskTraceEvent const& event) -> Status
+    auto TaskContext::emitTrace(trace::TraceEvent const& event) -> Status
     {
-        if (m_traceSink == nullptr)
-        {
-            return ok();
-        }
-        return m_traceSink->emit(event);
+        return m_recorder.emit(event);
     }
 
     auto TaskContext::nowMillis() noexcept -> int64

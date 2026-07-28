@@ -2,7 +2,6 @@
 
 #include <task/capability-surface.hpp>
 #include <task/task-context.hpp>
-#include <task/trace.hpp>
 
 #include <script/engine.hpp>
 
@@ -13,6 +12,10 @@
 #include <domain/space.hpp>
 
 #include <engine/session.hpp>
+
+#include <trace/event.hpp>
+#include <trace/recorder.hpp>
+#include <trace/sink.hpp>
 
 #include <doctest/doctest.h>
 
@@ -106,15 +109,20 @@ namespace uf::task
             return frames;
         }
 
-        // A session over the fixed frame plan wired to a recording action sink, so
-        // the harness can read back every delivered click point. The surface is
+        // A session over the fixed frame plan wired to a recording action sink and
+        // one recorder shared with the TaskContext, so the harness reads back both
+        // every delivered click point and the whole merged trace. The surface is
         // built from the runtime's own catalog before the runtime moves into the
-        // session, exactly as the binding fixture does.
+        // session, exactly as the binding fixture does. The recorder is declared
+        // first and held through a unique_ptr: the session borrows it and must
+        // die first, and its address must survive this struct being moved.
         struct RecordingBuild final
         {
-            Result<engine::EngineSession> session;
-            CapabilitySurface             surface;
-            RecordingActionSink*          clicks;
+            std::unique_ptr<trace::TraceRecorder> recorder;
+            Result<engine::EngineSession>         session;
+            CapabilitySurface                     surface;
+            RecordingActionSink*                  clicks;
+            RecordingTraceSink*                   traces;
         };
 
         [[nodiscard]]
@@ -127,31 +135,42 @@ namespace uf::task
             REQUIRE(surface.has_value());
 
             auto        actionSink = std::make_unique<RecordingActionSink>();
-            auto        traceSink  = std::make_unique<DiscardingTraceSink>();
+            auto        traceSink  = std::make_unique<RecordingTraceSink>();
             auto* const p_clicks   = actionSink.get();
-            auto        session    = engine::EngineSession::create(
+            auto* const p_traces   = traceSink.get();
+            auto        recorder   = std::make_unique<trace::TraceRecorder>(
+                std::move(traceSink),
+                k_fixtureRunId,
+                k_fixtureGenerationId
+            );
+            auto session = engine::EngineSession::create(
                 std::move(parts.loaded),
                 std::make_unique<FakeFrameSource>(planFrames()),
                 std::move(actionSink),
-                std::move(traceSink),
+                *recorder,
                 baseConfig(parts.fingerprint)
             );
             return RecordingBuild{
-                .session = std::move(session),
-                .surface = *std::move(surface),
-                .clicks  = p_clicks,
+                .recorder = std::move(recorder),
+                .session  = std::move(session),
+                .surface  = *std::move(surface),
+                .clicks   = p_clicks,
+                .traces   = p_traces,
             };
         }
 
         // Reduces one run to its canonical action-trace string: every delivered
-        // click point, then every task-trace event. Click coordinates are floats
-        // derived deterministically from integer recognition, so their bit
+        // click point, then every serialized trace line with the non-golden `meta`
+        // member stripped. Stripping is the documented golden comparison: the wall
+        // clock is the one field that legitimately differs between two runs at the
+        // same seed, and everything outside it must not. Click coordinates are
+        // floats derived deterministically from integer recognition, so their bit
         // patterns are emitted directly -- bypassing any float-to-text formatting
         // whose stability is not the property under test.
         [[nodiscard]]
         auto canonicalize(
             RecordingActionSink const& clicks,
-            std::vector<TaskTraceEvent> const& events
+            std::vector<trace::StampedTraceEvent> const& events
         ) -> std::string
         {
             auto out = std::string{"clicks\n"};
@@ -166,7 +185,7 @@ namespace uf::task
             out += "trace\n";
             for (auto const& event : events)
             {
-                out += serializeTaskTraceEvent(event);
+                out += trace::stripNonGoldenFields(trace::serializeTraceEvent(event));
                 out += '\n';
             }
             return out;
@@ -181,12 +200,12 @@ namespace uf::task
             auto built = buildRecordingSession();
             REQUIRE(built.session.has_value());
 
-            // `events` outlives the context that owns the recording sink writing
-            // into it, so it is declared first; the context outlives the VM whose
-            // verbs reach it, so it is declared before the VM.
-            auto events  = std::vector<TaskTraceEvent>{};
+            // The context borrows the same recorder the session does, so this run
+            // records one merged stream. It outlives the VM whose verbs reach it,
+            // so it is declared before the VM.
             auto context = TaskContext{
                 *std::move(built.session),
+                *built.recorder,
                 TaskContextConfig{
                     // Disable the retention guard so no forced VM collection ever
                     // runs mid-script: the tail's extra captures simply accumulate.
@@ -195,7 +214,6 @@ namespace uf::task
                     .maxLiveObservations = 0,
                     .randomSeed          = seed,
                 },
-                std::make_unique<RecordingTaskTraceSink>(&events),
             };
 
             auto vm = script::Engine::create(
@@ -207,7 +225,7 @@ namespace uf::task
             auto const result = vm->runNumber(k_harnessScript, "determinism-harness");
             REQUIRE(result.has_value());
 
-            return canonicalize(*built.clicks, events);
+            return canonicalize(*built.clicks, built.traces->events());
         }
 
         // Two seeds known to diverge within a few draws (the same pair the RNG
@@ -235,8 +253,16 @@ namespace uf::task
             CHECK(baseline.find("\ntrace\n") != std::string::npos);
             CHECK(
                 baseline.find(
-                    "\"kind\":\"HostCall\",\"verb\":\"click\",\"outcome\":\"Succeeded\""
+                    "\"verb\":\"click\",\"observationSeq\":2,\"hitObservationSeq\":2"
+                    ",\"outcome\":\"Succeeded\""
                 )
+                != std::string::npos
+            );
+
+            // The merged stream also carries the engine work the click rested on,
+            // so the canonical string is not a task-only projection any more.
+            CHECK(
+                baseline.find("\"kind\":\"engine.action_delivered\"")
                 != std::string::npos
             );
 

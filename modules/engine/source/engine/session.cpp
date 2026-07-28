@@ -16,6 +16,9 @@
 #include <domain/ids.hpp>
 #include <domain/space.hpp>
 
+#include <trace/event.hpp>
+#include <trace/recorder.hpp>
+
 #include <algorithm>
 #include <chrono>
 #include <format>
@@ -25,6 +28,7 @@
 #include <thread>
 #include <utility>
 #include <variant>
+#include <vector>
 
 namespace uf::engine::detail
 {
@@ -38,19 +42,80 @@ namespace uf::engine
     namespace
     {
         // Prefills a trace event with the frame identity every downstream event
-        // shares, so each emit site sets only the fields unique to its kind.
+        // shares, so each emit site sets only the fields unique to its kind. The
+        // frame group is the join key that ties an engine event to the capture it
+        // came from.
         [[nodiscard]]
         auto identityEvent(
-            TraceEventKind kind,
+            trace::TraceEventKind kind,
             annotation::FrameIdentity identity
-        ) -> TraceEvent
+        ) -> trace::TraceEvent
         {
-            return TraceEvent{
-                .kind             = kind,
-                .frameId          = identity.frameId(),
-                .sessionId        = identity.sessionId(),
-                .targetGeneration = identity.targetGeneration(),
+            return trace::TraceEvent{
+                .kind  = kind,
+                .frame = identity,
             };
+        }
+
+        // The required anchor of `evaluation` that scored worst against its own
+        // ceiling, which is the one a non-resolution turns on. An anchor whose
+        // search produced no comparable position at all carries no score and is
+        // worse than any scored one, so it wins immediately. Returns nullopt when
+        // the page declares no required anchor.
+        [[nodiscard]]
+        auto worstRequiredAnchor(
+            annotation::PageEvaluation const& evaluation
+        ) noexcept -> std::optional<annotation::AnchorEvidence>
+        {
+            auto worst = std::optional<annotation::AnchorEvidence>{};
+            for (auto const& anchor : evaluation.required())
+            {
+                if (!worst)
+                {
+                    worst = anchor;
+                    continue;
+                }
+                if (!worst->sadScore().has_value())
+                {
+                    break;
+                }
+                if (
+                    !anchor.sadScore().has_value()
+                    || *anchor.sadScore() > *worst->sadScore()
+                )
+                {
+                    worst = anchor;
+                }
+            }
+            return worst;
+        }
+
+        // The per-page evidence behind one completed page-resolution attempt, in
+        // the resolver's own page order. It answers the operator's first question
+        // on a non-resolution -- which page was close and by how much -- which the
+        // outcome name alone cannot.
+        [[nodiscard]]
+        auto pageScores(
+            annotation::PageResolutionEvidence const& evidence
+        ) -> std::vector<trace::TraceEvent::Page::Score>
+        {
+            auto scores = std::vector<trace::TraceEvent::Page::Score>{};
+            scores.reserve(evidence.pages().size());
+            for (auto const& evaluation : evidence.pages())
+            {
+                auto score = trace::TraceEvent::Page::Score{
+                    .pageId    = evaluation.pageId(),
+                    .candidate = evaluation.candidate(),
+                };
+                if (auto const worst = worstRequiredAnchor(evaluation))
+                {
+                    score.worstAnchor           = worst->recognizerId();
+                    score.worstAnchorSad        = worst->sadScore();
+                    score.worstAnchorMaximumSad = worst->maximumSad();
+                }
+                scores.emplace_back(std::move(score));
+            }
+            return scores;
         }
 
         // The longest a single poll sleep blocks before it re-checks cancellation
@@ -161,14 +226,14 @@ namespace uf::engine
         std::shared_ptr<detail::EngineSessionIdentity const> identity,
         std::unique_ptr<IFrameSource> frameSource,
         std::unique_ptr<IActionSink> actionSink,
-        std::unique_ptr<ITraceSink> traceSink,
+        trace::TraceRecorder& recorder,
         EngineSessionConfig config
     ) noexcept
         : m_loadedRuntime{std::move(loadedRuntime)}
         , m_identity{std::move(identity)}
         , m_frameSource{std::move(frameSource)}
         , m_actionSink{std::move(actionSink)}
-        , m_traceSink{std::move(traceSink)}
+        , m_recorder{recorder}
         , m_config{std::move(config)}
     {
     }
@@ -187,41 +252,46 @@ namespace uf::engine
         };
     }
 
-    auto EngineSession::emit(TraceEvent const& event) -> Status
+    auto EngineSession::emit(trace::TraceEvent const& event) -> Status
     {
-        return m_traceSink->emit(event);
+        return m_recorder.emit(event);
     }
 
+    // The former engine-trace/v1 SessionStarted event has no successor here. It
+    // carried no fields at all, and on the script path the run's own `run.started`
+    // -- written by the composition root with the project, task, source hash,
+    // framework version and hash, seed, run id and generation id -- records
+    // strictly more about the same instant, since a run binds exactly one engine
+    // session.
+    //
+    // This is a claim about the script path only. entry/cli's runSmokeFlow binds a
+    // session without ever writing a run-level event, so its trace opens on the
+    // first engine.observed. That path is deleted with stage 1d's TaskHost and is
+    // deliberately not given run.* events in the meantime.
     auto EngineSession::create(
         LoadedRuntime loadedRuntime,
         std::unique_ptr<IFrameSource> frameSource,
         std::unique_ptr<IActionSink> actionSink,
-        std::unique_ptr<ITraceSink> traceSink,
+        trace::TraceRecorder& recorder,
         EngineSessionConfig config
     ) -> Result<EngineSession>
     {
-        if (
-            frameSource == nullptr
-            || actionSink == nullptr
-            || traceSink == nullptr
-        )
+        if (frameSource == nullptr || actionSink == nullptr)
         {
             return fail(
                 AutomationErrorKind::InvalidResource,
-                "engine session requires a frame source, action sink, and trace sink"
+                "engine session requires a frame source and an action sink"
             );
         }
 
-        auto session = EngineSession{
+        return EngineSession{
             std::move(loadedRuntime),
             std::make_shared<detail::EngineSessionIdentity>(),
             std::move(frameSource),
             std::move(actionSink),
-            std::move(traceSink),
+            recorder,
             std::move(config),
         };
-        UF_TRY(session.emit(TraceEvent{.kind = TraceEventKind::SessionStarted}));
-        return session;
     }
 
     auto EngineSession::observe() -> Result<Observation>
@@ -245,7 +315,7 @@ namespace uf::engine
         );
         auto const identity = annotation::FrameIdentity::fromFrame(frame);
 
-        UF_TRY(emit(identityEvent(TraceEventKind::Observed, identity)));
+        UF_TRY(emit(identityEvent(trace::TraceEventKind::EngineObserved, identity)));
 
         return Observation{std::move(frame), lease, identity, m_identity};
     }
@@ -276,9 +346,15 @@ namespace uf::engine
             m_config.liveFingerprint,
             makeRecognitionPolicy()
         );
+        // Every exit of a page-resolution attempt writes one engine.page_resolved
+        // event whose outcome names how it ended, so a reader never has to infer
+        // the stage a stop or failure came from.
         if (!attempt)
         {
-            auto event      = identityEvent(TraceEventKind::Failure, identity);
+            auto event      = identityEvent(trace::TraceEventKind::EnginePageResolved, identity);
+            event.page      = trace::TraceEvent::Page{
+                .outcome = trace::PageResolution::Failed,
+            };
             event.errorKind = automationErrorKind(attempt.error());
             event.message   = std::string{attempt.error().message()};
             UF_TRY(emit(event));
@@ -291,7 +367,10 @@ namespace uf::engine
             )
         )
         {
-            auto event = identityEvent(TraceEventKind::RecognitionStopped, identity);
+            auto event         = identityEvent(trace::TraceEventKind::EnginePageResolved, identity);
+            event.page         = trace::TraceEvent::Page{
+                .outcome = trace::PageResolution::Stopped,
+            };
             event.recognizerId = p_stop->recognizerId;
             event.stopReason   = p_stop->reason;
             UF_TRY(emit(event));
@@ -304,21 +383,38 @@ namespace uf::engine
             );
         }
 
-        auto outcome = std::get<annotation::PageOutcome>(std::move(attempt->result));
-        auto kind   = TraceEventKind::PageUnknown;
-        auto pageId = std::optional<annotation::PageId>{};
+        auto outcome    = std::get<annotation::PageOutcome>(std::move(attempt->result));
+        auto resolution = trace::PageResolution::Unknown;
+        auto pageId     = std::optional<annotation::PageId>{};
         if (auto const* p_resolved = std::get_if<annotation::ResolvedPage>(&outcome))
         {
-            kind   = TraceEventKind::PageResolved;
-            pageId = p_resolved->pageId();
+            resolution = trace::PageResolution::Resolved;
+            pageId     = p_resolved->pageId();
         }
         else if (std::holds_alternative<annotation::AmbiguousPages>(outcome))
         {
-            kind = TraceEventKind::PageAmbiguous;
+            resolution = trace::PageResolution::Ambiguous;
         }
 
-        auto event   = identityEvent(kind, identity);
-        event.pageId = pageId;
+        // Every alternative of a completed attempt carries the same evidence, so
+        // the scores reach the line whether the page resolved, stayed unknown, or
+        // came out ambiguous -- the two non-resolutions being exactly the cases an
+        // operator has to explain.
+        auto const& evidence = std::visit(
+            [](auto const& alternative) noexcept
+                -> annotation::PageResolutionEvidence const&
+            {
+                return alternative.evidence();
+            },
+            outcome
+        );
+
+        auto event = identityEvent(trace::TraceEventKind::EnginePageResolved, identity);
+        event.page = trace::TraceEvent::Page{
+            .outcome = resolution,
+            .pageId  = pageId,
+            .scores  = pageScores(evidence),
+        };
         UF_TRY(emit(event));
         return outcome;
     }
@@ -351,11 +447,16 @@ namespace uf::engine
             recognizerId,
             makeRecognitionPolicy()
         );
+        // As with resolvePage, every exit writes one engine.action_found event
+        // whose outcome names how the search ended.
         if (!attempt)
         {
-            auto event         = identityEvent(TraceEventKind::Failure, identity);
-            event.errorKind    = automationErrorKind(attempt.error());
+            auto event         = identityEvent(trace::TraceEventKind::EngineActionFound, identity);
+            event.action       = trace::TraceEvent::Action{
+                .outcome = trace::ActionSearch::Failed,
+            };
             event.recognizerId = recognizerId;
+            event.errorKind    = automationErrorKind(attempt.error());
             event.message      = std::string{attempt.error().message()};
             UF_TRY(emit(event));
             return std::unexpected{std::move(attempt).error()};
@@ -367,7 +468,10 @@ namespace uf::engine
             )
         )
         {
-            auto event = identityEvent(TraceEventKind::RecognitionStopped, identity);
+            auto event         = identityEvent(trace::TraceEventKind::EngineActionFound, identity);
+            event.action       = trace::TraceEvent::Action{
+                .outcome = trace::ActionSearch::Stopped,
+            };
             event.recognizerId = p_stop->recognizerId;
             event.stopReason   = p_stop->reason;
             UF_TRY(emit(event));
@@ -383,10 +487,13 @@ namespace uf::engine
         auto const& evidence = std::get<annotation::AnchorEvidence>(attempt->result);
         if (!evidence.hit())
         {
-            auto event         = identityEvent(TraceEventKind::ActionAbsent, identity);
+            auto event         = identityEvent(trace::TraceEventKind::EngineActionFound, identity);
+            event.action       = trace::TraceEvent::Action{
+                .outcome    = trace::ActionSearch::Absent,
+                .sadScore   = evidence.sadScore(),
+                .maximumSad = evidence.maximumSad(),
+            };
             event.recognizerId = recognizerId;
-            event.sadScore     = evidence.sadScore();
-            event.maximumSad   = evidence.maximumSad();
             UF_TRY(emit(event));
             return std::optional<ActionFound>{std::nullopt};
         }
@@ -422,11 +529,14 @@ namespace uf::engine
             )
         );
 
-        auto event         = identityEvent(TraceEventKind::ActionFound, identity);
+        auto event         = identityEvent(trace::TraceEventKind::EngineActionFound, identity);
+        event.action       = trace::TraceEvent::Action{
+            .outcome     = trace::ActionSearch::Found,
+            .sadScore    = evidence.sadScore(),
+            .maximumSad  = evidence.maximumSad(),
+            .matchedRect = *matchedRect,
+        };
         event.recognizerId = recognizerId;
-        event.sadScore     = evidence.sadScore();
-        event.maximumSad   = evidence.maximumSad();
-        event.matchedRect  = *matchedRect;
         UF_TRY(emit(event));
 
         return std::optional<ActionFound>{
@@ -488,15 +598,15 @@ namespace uf::engine
         );
         if (!authorized)
         {
-            auto event         = identityEvent(TraceEventKind::ActionRejected, identity);
-            event.errorKind    = automationErrorKind(authorized.error());
+            auto event         = identityEvent(trace::TraceEventKind::EngineActionRejected, identity);
             event.recognizerId = action.actionDetection().recognizerId();
+            event.errorKind    = automationErrorKind(authorized.error());
             event.message      = std::string{authorized.error().message()};
             UF_TRY(emit(event));
             return std::unexpected{std::move(authorized).error()};
         }
 
-        UF_TRY(emit(identityEvent(TraceEventKind::ActionAuthorized, identity)));
+        UF_TRY(emit(identityEvent(trace::TraceEventKind::EngineActionAuthorized, identity)));
 
         UF_TRY_VALUE(framePoint, pixelPointToFramePoint(action.clickPixel()));
         auto const clientPoint = observation.m_frame.transform().frameToClient(framePoint);
@@ -508,9 +618,9 @@ namespace uf::engine
         auto revalidation = m_frameSource->validateTargetInstance();
         if (!revalidation)
         {
-            auto event         = identityEvent(TraceEventKind::ActionRejected, identity);
-            event.errorKind    = automationErrorKind(revalidation.error());
+            auto event         = identityEvent(trace::TraceEventKind::EngineActionRejected, identity);
             event.recognizerId = action.actionDetection().recognizerId();
+            event.errorKind    = automationErrorKind(revalidation.error());
             event.message      = std::string{revalidation.error().message()};
             UF_TRY(emit(event));
             return std::unexpected{std::move(revalidation).error()};
@@ -521,16 +631,27 @@ namespace uf::engine
         UF_TRY(m_actionSink->click(clientPoint, observation.m_lease));
 
         // D0/D1: the click has landed, so consume the handle before any fallible
-        // post-click trace emit. If a ClickDelivered or ObservationInvalidated
-        // emit then fails, the error still propagates, but a retry with a
-        // surviving alias finds the handle already dead and cannot double-deliver.
+        // post-click trace emit. If an engine.action_delivered or
+        // engine.observation_invalidated emit then fails, the error still
+        // propagates, but a retry with a surviving alias finds the handle already
+        // dead and cannot double-deliver.
         observation.m_invalidated = true;
 
-        auto clickEvent        = identityEvent(TraceEventKind::ClickDelivered, identity);
+        auto clickEvent = identityEvent(
+            trace::TraceEventKind::EngineActionDelivered,
+            identity
+        );
         clickEvent.clickClient = clientPoint;
         UF_TRY(emit(clickEvent));
 
-        UF_TRY(emit(identityEvent(TraceEventKind::ObservationInvalidated, identity)));
+        UF_TRY(
+            emit(
+                identityEvent(
+                    trace::TraceEventKind::EngineObservationInvalidated,
+                    identity
+                )
+            )
+        );
 
         return ActReceipt{
             .frameId    = identity.frameId(),

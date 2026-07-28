@@ -2,7 +2,6 @@
 
 #include "ports.hpp"
 #include "runtime-loader.hpp"
-#include "trace.hpp"
 
 #include <core/error/result.hpp>
 #include <core/safety/annotations.hpp>
@@ -18,6 +17,9 @@
 #include <domain/frame.hpp>
 #include <domain/ids.hpp>
 #include <domain/space.hpp>
+
+#include <trace/event.hpp>
+#include <trace/recorder.hpp>
 
 #include <memory>
 #include <optional>
@@ -130,6 +132,18 @@ namespace uf::engine
         annotation::ResolvedPage page;
     };
 
+    // The recognition and action pipeline over one bound capture target.
+    //
+    // Trace lifetime contract: the session does NOT own its trace sink. It stores
+    // a non-owning borrow of the run's trace::TraceRecorder, which is owned by the
+    // composition root that builds the session -- today `entry/cli/run-windows.cpp`
+    // (`BoundTarget::recorder`), and the TaskHost once stage 1d extracts it. That
+    // owner MUST construct the recorder before the session and destroy it after,
+    // and MUST keep it at a stable address for the session's whole life; the
+    // recorder is non-movable so the address cannot drift. The borrow exists
+    // because the run has exactly one evidence stream and every layer stamps its
+    // events through the same sequence counter, which a per-session owned sink
+    // could not provide.
     class EngineSession final
     {
         friend class Observation;
@@ -138,7 +152,7 @@ namespace uf::engine
         std::shared_ptr<detail::EngineSessionIdentity const> m_identity;
         std::unique_ptr<IFrameSource>                        m_frameSource;
         std::unique_ptr<IActionSink>                         m_actionSink;
-        std::unique_ptr<ITraceSink>                          m_traceSink;
+        trace::TraceRecorder&                                m_recorder;
         EngineSessionConfig                                  m_config;
 
         EngineSession(
@@ -146,7 +160,7 @@ namespace uf::engine
             std::shared_ptr<detail::EngineSessionIdentity const> identity,
             std::unique_ptr<IFrameSource> frameSource,
             std::unique_ptr<IActionSink> actionSink,
-            std::unique_ptr<ITraceSink> traceSink,
+            trace::TraceRecorder& recorder,
             EngineSessionConfig config
         ) noexcept;
 
@@ -158,7 +172,7 @@ namespace uf::engine
         auto makeRecognitionPolicy() const -> annotation::RecognitionPolicy;
 
         [[nodiscard]]
-        auto emit(TraceEvent const& event) -> Status;
+        auto emit(trace::TraceEvent const& event) -> Status;
 
         // D6: the minimal known-popup sweep lands in P0-C; P1 replaces this no-op
         // with the bot:on registry. It runs once per waitForPage cycle so the loop
@@ -178,7 +192,7 @@ namespace uf::engine
             LoadedRuntime loadedRuntime,
             std::unique_ptr<IFrameSource> frameSource,
             std::unique_ptr<IActionSink> actionSink,
-            std::unique_ptr<ITraceSink> traceSink,
+            trace::TraceRecorder& recorder,
             EngineSessionConfig config
         ) -> Result<EngineSession>;
 

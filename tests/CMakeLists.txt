@@ -84,9 +84,16 @@ cpp_add_test(
 )
 
 cpp_add_test(
+    NAME test-trace
+    SOURCES
+        trace/test-trace.cpp
+    LIBS
+        ${PROJECT_NAME}_trace
+)
+
+cpp_add_test(
     NAME test-engine
     SOURCES
-        engine/test-trace.cpp
         engine/test-runtime-loader.cpp
         engine/test-session.cpp
     LIBS
@@ -96,7 +103,6 @@ cpp_add_test(
 
 set(CLI_TEST_SOURCES
     cli/test-args.cpp
-    cli/test-file-trace-sink.cpp
     cli/test-name-resolution.cpp
 )
 # selectCandidate operates on the controller's TargetCandidate and is compiled
@@ -134,7 +140,6 @@ if(TARGET ${PROJECT_NAME}_task)
             task/test-task-loader.cpp
             task/test-script-validator.cpp
             task/test-deterministic.cpp
-            task/test-task-trace.cpp
         LIBS
             ${PROJECT_NAME}_task
             ${PROJECT_NAME}_image

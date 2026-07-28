@@ -1,7 +1,6 @@
 #include "run.hpp"
 
 #include "candidate-selection.hpp"
-#include "file-trace-sink.hpp"
 #include "name-resolution.hpp"
 #include "platform/controller-action-sink.hpp"
 #include "platform/wgc-frame-source.hpp"
@@ -16,7 +15,6 @@
 #include <core/error/result.hpp>
 
 #include <annotation/resource.hpp>
-#include <domain/error.hpp>
 #include <domain/ids.hpp>
 #include <domain/space.hpp>
 #include <engine/runtime-loader.hpp>
@@ -25,11 +23,13 @@
 #include <script/engine.hpp>
 
 #include <task/capability-surface.hpp>
-#include <task/file-trace-sink.hpp>
+#include <task/run-trace.hpp>
 #include <task/script-validator.hpp>
 #include <task/task-context.hpp>
 #include <task/task-loader.hpp>
-#include <task/trace.hpp>
+
+#include <trace/file-sink.hpp>
+#include <trace/recorder.hpp>
 
 #include <cstddef>
 #include <filesystem>
@@ -41,16 +41,32 @@ namespace uf::cli
 {
     namespace
     {
-        // A bound live target: the console cancellation registration and the
-        // constructed engine session over that target. The cancellation is held
-        // by value so it stays installed for the whole run; both run paths build
-        // it identically, so the binding lives here once. The session must not
-        // outlive the process-static cancellation source, which it never does --
-        // both die when the owning run report scope ends.
+        // P0 runs one task per process, so the run and the script-layer
+        // generation are both the first of their kind. Stage 1d's TaskHost hands
+        // out real per-run values; until then these are the honest constants for
+        // a one-run process rather than placeholders for a missing source.
+        constexpr auto k_singleRunId        = TaskRunId{1};
+        constexpr auto k_singleGenerationId = GenerationId{1};
+
+        // A bound live target: the console cancellation registration, the run's
+        // trace recorder, and the constructed engine session over that target.
+        // The cancellation is held by value so it stays installed for the whole
+        // run; both run paths build it identically, so the binding lives here
+        // once. The session must not outlive the process-static cancellation
+        // source, which it never does -- both die when the owning run report
+        // scope ends.
+        //
+        // The recorder is held through a unique_ptr so its address survives this
+        // struct being moved out of bindTargetAndSession: the session stores a
+        // borrow of it (see engine/session.hpp's trace lifetime contract), and
+        // declaring it before the session makes the session die first. This is
+        // the composition root that owns the run's single evidence stream; stage
+        // 1d relocates exactly this ownership into TaskHost.
         struct BoundTarget final
         {
-            platform::ConsoleCancellation cancellation;
-            engine::EngineSession         session;
+            platform::ConsoleCancellation         cancellation;
+            std::unique_ptr<trace::TraceRecorder> recorder;
+            engine::EngineSession                 session;
         };
 
         // Declares DPI awareness, installs Ctrl-C cancellation, resolves the
@@ -128,8 +144,15 @@ namespace uf::cli
                 )
             );
 
-            // 7. Wire the adapters over the resolved capabilities.
-            UF_TRY_VALUE(traceSink, FileTraceSink::create(args.trace));
+            // 7. Wire the adapters over the resolved capabilities. The trace file
+            // opens only once the target is bound, so a run that never found its
+            // window leaves no evidence file behind.
+            UF_TRY_VALUE(traceSink, trace::FileTraceSink::create(args.trace));
+            auto recorder = std::make_unique<trace::TraceRecorder>(
+                std::move(traceSink),
+                k_singleRunId,
+                k_singleGenerationId
+            );
             auto frameSource = std::make_unique<platform::WgcFrameSource>(
                 std::move(session)
             );
@@ -151,13 +174,14 @@ namespace uf::cli
                     std::move(loaded),
                     std::move(frameSource),
                     std::move(actionSink),
-                    std::move(traceSink),
+                    *recorder,
                     std::move(config)
                 )
             );
 
             return BoundTarget{
                 .cancellation = std::move(cancellation),
+                .recorder     = std::move(recorder),
                 .session      = std::move(engineSession),
             };
         }
@@ -218,10 +242,11 @@ namespace uf::cli
 
         // The script flow: source a project-owned task by name, validate every
         // umbra reference before any VM exists, then run it on a task VM whose only
-        // capability is the umbra table bound to the engine session. The task-trace
-        // (task-trace/v1) records the run's identity, its validated resource
-        // closure, every host-API return, and how it ended; it is a separate
-        // versioned stream beside the engine trace, replacing the phase-2b sidecar.
+        // capability is the umbra table bound to the engine session. One
+        // umbraflow-trace/v1 stream records the run's identity, its validated
+        // resource closure, every recognition and action step, every host-API
+        // return, and how it ended -- all under one sequence, run id and
+        // generation id.
         [[nodiscard]]
         auto runScriptFlow(
             RunArgs const& args,
@@ -256,57 +281,46 @@ namespace uf::cli
 
             UF_TRY_VALUE(bound, bindTargetAndSession(args, std::move(loaded)));
 
-            // The task trace sits in its own versioned file beside the engine
-            // trace. Opened once the target is bound, matching where the engine
-            // trace opens: a run that never found its window leaves no evidence
-            // files behind.
-            auto taskTracePath = args.trace;
-            taskTracePath += ".task.jsonl";
-            UF_TRY_VALUE(
-                taskTraceSink,
-                task::FileTaskTraceSink::create(taskTracePath)
-            );
-
             // The fixed seed the deterministic RNG draws from is recorded in the
             // trace so a run reproduces on replay; the host uses the stable default
             // until a per-run seed source lands.
             auto const seed = task::k_defaultRandomSeed;
 
-            // The context owns the session and the task-trace sink, and must
+            // The run identity opens the stream, before the VM exists, so every
+            // later event is attributable to this exact task build -- including
+            // the framework version and bundle hash, which task::runStartedEvent
+            // reads from this binary rather than taking from here.
+            UF_TRY(
+                bound.recorder->emit(
+                    task::runStartedEvent(
+                        task::RunStartSpec{
+                            .projectId  = projectId,
+                            .taskName   = loadedTask.name,
+                            .sourceHash = loadedTask.hash.hex(),
+                            .seed       = seed,
+                        }
+                    )
+                )
+            );
+            UF_TRY(
+                bound.recorder->emit(
+                    task::runResourcesValidatedEvent(resourceReport)
+                )
+            );
+
+            // The context owns the session and borrows the same recorder, and must
             // outlive the VM that binds it, so it is declared before the Engine and
             // destroyed after it. The one stop token drives both the engine
             // (returns Cancelled) and the VM interrupt (hard-breaks the task
             // thread), so a Ctrl-C is a single cancellation source, never two.
             auto context = task::TaskContext{
                 std::move(bound.session),
+                *bound.recorder,
                 task::TaskContextConfig{
                     .cancellation = bound.cancellation.token(),
                     .randomSeed   = seed,
                 },
-                std::move(taskTraceSink),
             };
-
-            UF_TRY(
-                context.emitTrace(
-                    task::TaskTraceEvent{
-                        .kind        = task::TaskTraceEventKind::TaskStarted,
-                        .taskName    = loadedTask.name,
-                        .scriptHash  = loadedTask.hash.hex(),
-                        .luauVersion = task::luauRuntimeVersion(),
-                        .projectId   = projectId,
-                        .seed        = seed,
-                    }
-                )
-            );
-            UF_TRY(
-                context.emitTrace(
-                    task::TaskTraceEvent{
-                        .kind        = task::TaskTraceEventKind::ResourcesValidated,
-                        .recognizers = resourceReport.recognizers,
-                        .pages       = resourceReport.pages,
-                    }
-                )
-            );
 
             auto vmConfig = script::EngineConfig{
                 .cancellation      = bound.cancellation.token(),
@@ -320,26 +334,12 @@ namespace uf::cli
             // and a clean return means the task ran to completion.
             auto runResult = vm.runNumber(loadedTask.source, loadedTask.name);
 
-            // Record how the generation ended before surfacing the outcome: a clean
-            // return is Completed, a cancellation spends the generation, and every
-            // other failure names its automation kind.
-            auto finishedEvent = task::TaskTraceEvent{
-                .kind = task::TaskTraceEventKind::TaskFinished,
-            };
-            if (runResult)
-            {
-                finishedEvent.exitReason = task::TaskExitReason::Completed;
-            }
-            else
-            {
-                auto const kind = automationErrorKind(runResult.error())
-                    .value_or(AutomationErrorKind::InternalInvariant);
-                finishedEvent.errorKind  = kind;
-                finishedEvent.exitReason = kind == AutomationErrorKind::Cancelled
-                    ? task::TaskExitReason::Cancelled
-                    : task::TaskExitReason::Failed;
-            }
-            auto finishStatus = context.emitTrace(finishedEvent);
+            // Record how the generation ended before surfacing the outcome. The
+            // outcome mapping itself lives in task::runFinishedEvent, where a test
+            // can reach it.
+            auto finishStatus = context.emitTrace(
+                task::runFinishedEvent(runResult ? nullptr : &runResult.error())
+            );
 
             // The run's own failure takes precedence over a trace-emit failure, so
             // surface it first; a failed TaskFinished emit only fails the run when

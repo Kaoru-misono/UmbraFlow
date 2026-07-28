@@ -7,4 +7,4 @@ version = 0.1.0
 unity_build = false
 
 [dependencies]
-public = core domain annotation
+public = core domain annotation trace

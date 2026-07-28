@@ -1,7 +1,6 @@
 #pragma once
 
 #include <task/deterministic.hpp>
-#include <task/trace.hpp>
 
 #include <core/error/result.hpp>
 #include <core/time/monotonic-time.hpp>
@@ -11,6 +10,9 @@
 #include <annotation/recognition.hpp>
 
 #include <engine/session.hpp>
+
+#include <trace/event.hpp>
+#include <trace/recorder.hpp>
 
 #include <chrono>
 #include <map>
@@ -29,8 +31,8 @@ namespace uf::task
     using ObservationSeq = uint64;
 
     // The default seed for a task's deterministic RNG (umbra:random). A real run
-    // overrides it with a host-chosen seed recorded in the task trace (task-trace/
-    // v1), so a run can be replayed by re-supplying the same seed; this constant
+    // overrides it with a host-chosen seed recorded in the run.started trace
+    // event, so a run can be replayed by re-supplying the same seed; this constant
     // only gives tests and unconfigured contexts a stable, non-zero starting point.
     // Because the sandbox removed math.random, umbra:random seeded from this value
     // is a script's only randomness, so nothing outside the host can perturb the
@@ -74,7 +76,7 @@ namespace uf::task
 
         // Fixed seed for this task's deterministic RNG (umbra:random). Left at the
         // stable default here; the owning host injects a fresh per-run seed and
-        // records it in the task trace so a run reproduces on replay. See
+        // records it in run.started so a run reproduces on replay. See
         // k_defaultRandomSeed.
         uint64          randomSeed{k_defaultRandomSeed};
     };
@@ -105,18 +107,24 @@ namespace uf::task
     // that pointer stays stable. Retained Observations carry only the engine
     // session's stable immutable identity token, never a borrow into the session
     // object. NOT thread-safe: every method runs on the VM's owning thread.
+    //
+    // Trace lifetime contract: the context does NOT own a trace sink. It stores a
+    // non-owning borrow of the run's trace::TraceRecorder, which is owned by the
+    // composition root that builds the context -- today `entry/cli/run-windows.cpp`
+    // (`BoundTarget::recorder`), and the TaskHost once stage 1d extracts it. That
+    // owner MUST construct the recorder before the context and destroy it after,
+    // and MUST keep it at a stable address; the recorder is non-movable so the
+    // address cannot drift. It is the SAME recorder the owned EngineSession
+    // borrows, which is what puts task.native_call and the engine.* events it
+    // caused into one ordered stream.
     class TaskContext final
     {
         engine::EngineSession m_session;
         TaskContextConfig     m_config;
         DeterministicClock    m_clock{};
         DeterministicRng      m_rng;
-        // The task-trace sink, or null when tracing is disabled. Owned here
-        // because the context is the single object every host verb already
-        // reaches, so HostCall events emit through it (emitTrace) without a
-        // second lifetime to thread; the owning host emits the surrounding
-        // TaskStarted / ResourcesValidated / TaskFinished through the same object.
-        std::unique_ptr<ITaskTraceSink> m_traceSink;
+        trace::TraceRecorder& m_recorder;
+
         std::map<ObservationSeq, engine::Observation> m_observations{};
         ObservationSeq m_nextSeq{1};
         bool           m_fatal{false};
@@ -125,8 +133,8 @@ namespace uf::task
     public:
         explicit TaskContext(
             engine::EngineSession session,
-            TaskContextConfig config = {},
-            std::unique_ptr<ITaskTraceSink> traceSink = nullptr
+            trace::TraceRecorder& recorder,
+            TaskContextConfig config = {}
         ) noexcept;
 
         TaskContext(TaskContext const&) = delete;
@@ -221,7 +229,7 @@ namespace uf::task
         [[nodiscard]]
         auto fatal() const noexcept -> bool;
 
-        // Latches that a task-trace event could not be recorded. A verb that is
+        // Latches that a trace event could not be recorded. A verb that is
         // already failing cannot raise the sink's failure instead of its own --
         // that would let a broken sink downgrade a cancellation into an error a
         // script can catch -- so it latches here and raises its real cause. The
@@ -232,14 +240,15 @@ namespace uf::task
         [[nodiscard]]
         auto traceFailed() const noexcept -> bool;
 
-        // Records one task-trace event through the sink installed at construction,
-        // or a success no-op when tracing is disabled (null sink). A sink failure
-        // returns the error so the caller can abort the operation whose evidence
-        // was lost, matching the engine's trace discipline. The observation and
-        // action verbs call this at their exit to emit HostCall; the owning host
-        // emits TaskStarted / ResourcesValidated / TaskFinished around the run.
+        // Records one event through the run's recorder, which stamps the sequence,
+        // run id and generation id. A sink failure returns the error so the caller
+        // can abort the operation whose evidence was lost, matching the engine's
+        // trace discipline. The observation and action verbs call this at their
+        // exit to emit task.native_call; the owning host emits the surrounding
+        // run.started / run.resources_validated / run.finished directly on the
+        // same recorder.
         [[nodiscard]]
-        auto emitTrace(TaskTraceEvent const& event) -> Status;
+        auto emitTrace(trace::TraceEvent const& event) -> Status;
 
         // The next reading of the task's logical clock, in whole milliseconds,
         // backing umbra:now(). Monotone and non-decreasing across calls, and
