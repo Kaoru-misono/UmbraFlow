@@ -14,12 +14,12 @@
 - 发布物读取：`loadRuntimeProject` 读取 runtime manifest 与其引用的模板资产，构造 `annotation::RecognitionRuntime`。
 - 单帧决策：`EngineSession::observe` 产生 `Observation`；页面解析与动作查找都读取该句柄持有的同一 `Frame`，不会隐式再截图。
 - 坐标动作交付：`EngineSession::act` 把页面证据、动作证据、帧 identity、lease、live fingerprint 和目标实例复核串成一条 fail-closed 路径。
-- 运行证据：`TraceEvent` 与 `serializeTraceEvent` 定义稳定、带版本的 JSON 记录；`TraceSink` 把持久化策略留给组合根。
+- 运行证据：`TraceEvent` 与 `serializeTraceEvent` 定义稳定、带版本的 JSON 记录；`ITraceSink` 把持久化策略留给组合根。
 
 engine 不负责以下工作：
 
 - 不发现窗口、不创建 WGC、不调用 Win32 输入 API。`modules/engine/manifest.txt` 只依赖 `core`、`domain`、`annotation`，没有 `controller`，因此 engine 可以在非 Windows 主机和离线 CI 中构建、测试。
-- 不决定具体平台如何严格后台投递。它通过 `ActionSink` 写下契约；Windows 实现位于 `entry/cli/platform/controller-action-sink.hpp`，平台能力仍由 controller 所有。
+- 不决定具体平台如何严格后台投递。它通过 `IActionSink` 写下契约；Windows 实现位于 `entry/cli/platform/controller-action-sink.hpp`，平台能力仍由 controller 所有。
 - 不拥有目标选择、DPI awareness、窗口 geometry 或 Ctrl-C 注册。这些组合职责位于 `entry/cli/run-windows.cpp`。
 - 不编辑或发布 annotation 项目，也不读取 authoring document。它只读 `generated/annotations.runtime.toml` 与该 manifest 闭包内的 runtime 模板。
 - 不实现 Luau 宿主、任务队列、pause/resume、事件订阅或常驻进程生命周期。`modules/script/source/script/engine.hpp` 中现有 `uf::script::Engine` 仍是独立的最小 Luau 执行器，当前没有依赖或绑定 `uf::engine::EngineSession`。
@@ -36,10 +36,10 @@ engine 不负责以下工作：
 
 公开端口集中在 `modules/engine/source/engine/ports.hpp`。
 
-- `FrameSource::capture() -> Result<Frame>` 从一个已经绑定的目标取得帧。
-- `FrameSource::validateTargetInstance() -> Status` 复核绑定的仍是同一个目标实例。engine 在 capture 前调用一次，在 delivery 前再调用一次，后者用于关闭“观察后 HWND 被复用或目标被替换”的窗口。
-- `ActionSink::click(Point<ClientSpace>, ObservationLease const&) -> Status` 接收 client 坐标和原始 lease。lease pass-through 是接口的一部分，适配器不能只传坐标，否则 controller 层无法执行第二层 session/generation/age fencing。
-- `TraceSink::emit(TraceEvent const&) -> Status` 是同步、可失败的证据端口。失败不是 best-effort warning，而会中止当前 engine 操作。
+- `IFrameSource::capture() -> Result<Frame>` 从一个已经绑定的目标取得帧。
+- `IFrameSource::validateTargetInstance() -> Status` 复核绑定的仍是同一个目标实例。engine 在 capture 前调用一次，在 delivery 前再调用一次，后者用于关闭“观察后 HWND 被复用或目标被替换”的窗口。
+- `IActionSink::click(Point<ClientSpace>, ObservationLease const&) -> Status` 接收 client 坐标和原始 lease。lease pass-through 是接口的一部分，适配器不能只传坐标，否则 controller 层无法执行第二层 session/generation/age fencing。
+- `ITraceSink::emit(TraceEvent const&) -> Status` 是同步、可失败的证据端口。失败不是 best-effort warning，而会中止当前 engine 操作。
 
 三个端口都不可复制、不可移动，由虚析构支持组合根提供实现。`EngineSession` 通过 `std::unique_ptr` 独占它们，因而端口实现和其中的平台资源与 session 同寿命。
 
@@ -70,8 +70,12 @@ Windows 产品入口使用两个薄适配器：
 - `EngineSessionConfig` 固定 live `ProjectFingerprint`、每次识别的 pixel comparison budget、recognition timeout、最大动作帧龄和共享 `std::stop_token`。
 - `EngineSession::create` 要求三个端口都非空，保存 `LoadedRuntime` 与配置，并首先 emit `SessionStarted`。首条 trace 写入失败时 session 不会创建成功。
 - `EngineSession::observe() -> Result<Observation>` 先检查 cancellation，再复核目标实例、capture、由 `ObservationLease::forFrame` 建 lease、提取 `annotation::FrameIdentity`，emit `Observed` 后才把句柄交给调用者。
-- `Observation::resolvePage()` 调用同一 session 的 `RecognitionRuntime::evaluatePage`，返回 `ResolvedPage`、`UnknownPage` 或 `AmbiguousPages` 组成的 `PageOutcome`。
-- `Observation::findAction(RecognizerId)` 调用 `evaluateActionTarget`。未命中是 `Result<std::optional<ActionFound>>` 的成功空值，对应 D4 Tier A，不是错误。
+- `EngineSession::resolvePage(Observation const&)` 对传入 observation 持有的 frame
+  调用自身 `RecognitionRuntime::evaluatePage`，返回由 `ResolvedPage`、
+  `UnknownPage` 或 `AmbiguousPages` 组成的 `PageOutcome`。
+- `EngineSession::findAction(Observation const&, RecognizerId)` 对同一 frame 调用
+  `evaluateActionTarget`。未命中是 `Result<std::optional<ActionFound>>` 的成功空值，
+  对应 D4 Tier A，不是错误。
 - `ActionFound` 保存原始 `AnchorEvidence`、绑定 recognizer identity 的 `ActionDetection` 和确定性的 `PixelPoint`。点击点由 annotation 的 `resolveClickPixel` 决定；match rect 经 `pixelRectToFrameRect` 变成 authorization-ready `Detection`。
 - `EngineSession::act(Observation&&, ResolvedPage const&, ActionFound const&)` 消费 observation，成功返回记录被授权 `FrameId` 与 client-space 坐标的 `ActReceipt`。
 - `EngineSession::waitForPage(PageId, timeout, pollInterval)` 重复 observe/resolve，命中后返回成对的 `Observation` 与同帧 `ResolvedPage`，调用方无需、也不应重新识别。
@@ -82,12 +86,12 @@ Windows 产品入口使用两个薄适配器：
 loadRuntimeProject
   -> resolve page/action names
   -> bind WgcCaptureSession + DeliveryTarget
-  -> create FrameSource/ActionSink/TraceSink adapters
+  -> create IFrameSource/IActionSink/ITraceSink adapters
   -> EngineSession::create
   -> waitForPage
-  -> PageWait::m_observation.findAction
+  -> EngineSession::findAction(PageWait::m_observation, actionId)
   -> EngineSession::act
-  -> ActionSink::click
+  -> IActionSink::click
 ```
 
 `act` 内部的关键顺序是：
@@ -97,8 +101,8 @@ loadRuntimeProject
 3. `annotation::authorizeCoordinateAction`；
 4. emit `ActionAuthorized`；
 5. pixel → frame → client 坐标变换；
-6. delivery-edge `FrameSource::validateTargetInstance`；
-7. `ActionSink::click(clientPoint, observation.m_lease)`；
+6. delivery-edge `IFrameSource::validateTargetInstance`；
+7. `IActionSink::click(clientPoint, observation.m_lease)`；
 8. 立即设置 `observation.m_invalidated = true`；
 9. emit `ClickDelivered` 与 `ObservationInvalidated`。
 
@@ -136,7 +140,7 @@ flush，使已经生成的证据尽量在 crash 后仍可见。
 
 - session 缺任一端口时，`EngineSession::create` 返回 `InvalidResource`。
 - live fingerprint 与 catalog fingerprint 不同，识别或授权拒绝。
-- page evidence、action detection 与 delivery 的 `SessionId`、
+- page evidence、action detection 与 delivery 的 `CaptureSessionId`、
   `TargetGeneration`、`FrameId` 必须相同；action recognizer 还必须属于 active
   catalog、类型为 `ActionTarget` 且允许 resolved page。
 - `ObservationLease::validate` 校验 session、generation、frame 和 expiration；
@@ -161,13 +165,14 @@ D1 的 Model B 被编码为句柄，而非仅靠调用约定：
 - `Observation` 独占一份 `Frame`、对应 `ObservationLease` 和 `FrameIdentity`。
 - 它不可复制，只可移动；move constructor 和 move assignment 都立即把 source
   标为 invalidated，所以 moved-from 句柄与已消费句柄行为一致。
-- `resolvePage` 和 `findAction` 首先检查 invalidated flag；失效后任何查询都返回
-  `StaleObservation`。
+- `EngineSession::resolvePage` 与 `EngineSession::findAction` 首先检查 observation
+  的 invalidated flag；失效后任一查询都返回 `StaleObservation`。
 - `act` 接受 `Observation&&`，成功投递后作废整个 observation。调用者必须重新
   `observe`，从结构上维持“一次观察、同帧多查询、一次坐标动作、重新观察”。
-- observation 保存非 owning `EngineSession*`。header 明确规定 session 必须比其
-  vended observations 长寿；每次 `act` 还检查句柄确由当前 session 产生，跨 session
-  使用返回 `InternalInvariant`。
+- observation 不保存指向 `EngineSession` 的指针或 borrow，而是与产生它的 session
+  共享一个私有、不可变的 identity token。token 会随 session move 到新对象，既有
+  observation 因而仍然有效；把它交给其他 session 会返回 `InternalInvariant`，过程中
+  不会解引用 moved-from 对象。
 - session 独占 runtime 与三个端口；`ActionFound`、`PageWait`、`ActReceipt` 都是
   明确拥有其结果的值，不返回悬空的临时 view。
 
@@ -202,7 +207,7 @@ D4 要求错误在向上层传播的瞬间记录，而不是期待未来脚本�
 
 emit 自身可失败；`UF_TRY` 会立即传播该失败，因此 trace 基础设施故障不会被降级成
 无声运行。还应注意当前覆盖范围：session 创建前的 loader 错误、observe/act 的前置
-cancellation、`waitForPage` 自身 timeout/cancellation，以及 `ActionSink::click`
+cancellation、`waitForPage` 自身 timeout/cancellation，以及 `IActionSink::click`
 直接失败，目前没有统一生成 `Failure` 事件。扩展错误路径时必须阅读具体 emit site，
 不能假设存在中央拦截器。
 
@@ -219,7 +224,7 @@ engine 只规定“必须严格后台”的端口契约，具体机制由 Window
   `ControllerActionSink` 维护 held-input bookkeeping，并在 click 失败时补偿 release。
 
 因此 engine 的 platform-free 并非减少安全性，而是把可移植的授权时序与不可移植的
-投递证明分层。任何新 adapter 都必须重新兑现 `ActionSink` 的严格后台和 lease
+投递证明分层。任何新 adapter 都必须重新兑现 `IActionSink` 的严格后台和 lease
 pass-through 契约；仅仅“实现了虚函数”并不自动获得该保证。
 
 ## 端口与依赖
@@ -231,7 +236,7 @@ pass-through 契约；仅仅“实现了虚函数”并不自动获得该保证�
 - annotation 通过 runtime manifest 提供 catalog、模板、page signatures、
   action-target 定义与 allowed-page policy。
 - domain 提供 `Frame`、`CoordinateTransform`、`Detection`、`ObservationLease`、
-  `SessionId`、`TargetGeneration`、`FrameId` 和 `AutomationErrorKind`。
+  `CaptureSessionId`、`TargetGeneration`、`FrameId` 和 `AutomationErrorKind`。
 - core 提供 `Result`/`Status`、monotonic time、整数类型和 contracts。
 
 主要 outbound edges 如下：
@@ -316,9 +321,9 @@ engine。D4 Tier C 的不可吞取消、VM interrupt、instruction/runtime budge
 
 ### 平台与 fake
 
-P3 第二平台和测试替身都通过 `FrameSource`、`ActionSink`、`TraceSink` 接入。
+P3 第二平台和测试替身都通过 `IFrameSource`、`IActionSink`、`ITraceSink` 接入。
 新增平台时，目标发现与 adapter 仍放 entry/platform；engine 不增加 `#ifdef Windows`。
-新 `ActionSink` 必须证明目标实例、lease fencing 与 strict-background，而不是只做
+新 `IActionSink` 必须证明目标实例、lease fencing 与 strict-background，而不是只做
 坐标传输。
 
 ### 等待与 D6

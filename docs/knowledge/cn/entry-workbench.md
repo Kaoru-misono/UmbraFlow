@@ -70,7 +70,7 @@ shell 每帧同步调用 `drawWorkbench`。只有 `dispatch`/`main` 会把错误
 redo，并把 undo 限制为 `k_maximumAuthoringUndoEntries == 100`。
 `undo`/`redo` 移动完整 document value，所以跨 recognizer/page 的引用始终作为同一版本恢复。
 
-`entry/workbench/app/workbench-app.hpp` 的 `AppState` 是窗口背后的
+`entry/workbench/workbench-app.hpp` 的 `AppState` 是窗口背后的
 ImGui-free session aggregate：
 
 - `m_history` 是 document 的唯一真相；
@@ -89,7 +89,7 @@ Preview。dirty flag 则保守：undo 回已保存内容仍可能保持 dirty，
 
 ### 生成 ResourceId
 
-`entry/workbench/app/workbench-app.cpp` 的 `mintResourceId` 用 `std::random_device` 填满 16 bytes，再设置 UUID version 4 nibble 和 RFC 4122 variant bits，最后调用 `modules/annotation/source/annotation/catalog.hpp` 的 `ResourceId::fromBytes`。
+`entry/workbench/workbench-app.cpp` 的 `mintResourceId` 用 `std::random_device` 填满 16 bytes，再设置 UUID version 4 nibble 和 RFC 4122 variant bits，最后调用 `modules/annotation/source/annotation/resource.hpp` 的 `ResourceId::fromBytes`。
 `fromBytes` 本身按契约不验证 version/variant，因此 authoring caller 负责设置 convention。
 
 `SourceId`、`RecognizerId`、`PageId` 等是 `ResourceId` 上的 distinct strong types；panel 在新增 source、recognizer 或 page 时先 mint，再包成对应 ID。随机性只决定新资源 identity，不进入 runtime matching。
@@ -220,7 +220,12 @@ document、draft、history entries、source bytes、compiled artifacts 和 Previ
 state。`GuiShellState` 按析构顺序释放 ImGui backends/context、D3D resources、
 window 和 registered class。texture cache 持有 D3D device 与 shader-resource
 view 的 owning COM references；暴露给 panel 的 `GpuSourceTexture` 只是 cache
-lifetime 内有效的 opaque handle。
+lifetime 内有效的 opaque handle。根据
+[2026-07-28 review follow-up](../../plans/2026-07-28-full-project-review-fixes.md)，
+document edit 或 import 后，`drawWorkbench` 会通过
+`WorkbenchServices::pruneTextures` 传递当前 source 列表；Windows 组合根把它转给
+`TextureCache::pruneTo`，因此已删除 source ID 对应的 GPU view 会释放，不会在 shell
+生命周期内持续累积。
 
 `GuiFrameCallback` 由 `GuiShell::run` 同步调用且不保存；
 `WorkbenchServices` callback 只在一次 draw 中借用。`main.cpp` 的 reference

@@ -440,12 +440,16 @@
    "name": "uf::utf8",
    "kind": "functions",
    "file": "modules/core/source/core/text/utf8.hpp",
-   "line": 10,
-   "responsibility": "在字节边界做确定性的 UTF-8 验证与 scalar 编码，拒绝一切非 canonical 序列，把字节层的含混挡在业务算法之外。",
+   "line": 12,
+   "responsibility": "在字节边界做确定性的 UTF-8 验证、Unicode scalar 解码与 scalar 编码，拒绝一切非 canonical 序列，把字节层的含混挡在业务算法之外。",
    "members": [
     {
      "sig": "auto isValidUtf8(std::string_view value) noexcept -> bool",
      "note": "接受合法 1-4 byte 编码，拒绝孤立 continuation、overlong、截断、surrogate 与超 0x10FFFF。"
+    },
+    {
+     "sig": "auto decodeUtf8Scalars(std::string_view value) -> std::optional<std::vector<uint32>>",
+     "note": "把合法 UTF-8 解码为 Unicode scalar 序列；遇到非法、非 canonical 或不完整编码返回 std::nullopt。"
     },
     {
      "sig": "auto appendUtf8Scalar(std::string& output, uint32 codePoint) -> void",
@@ -846,19 +850,6 @@
     {
      "sig": "auto matchVariant(Variant&& variant, Handlers&&... handlers) -> decltype(auto)",
      "note": "构造 Overload 后交给 std::visit。"
-    }
-   ]
-  },
-  {
-   "name": "uf::k_projectName",
-   "kind": "functions",
-   "file": "modules/core/source/core/project.hpp",
-   "line": 7,
-   "responsibility": "提供项目名称常量。core 只给这一项标识常量，且不存在聚合 core.hpp，调用方必须精确 include 所需 facility。",
-   "members": [
-    {
-     "sig": "inline constexpr auto k_projectName = std::string_view{\"UmbraFlow\"}",
-     "note": "项目名称字符串视图常量。"
     }
    ]
   }

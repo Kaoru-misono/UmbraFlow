@@ -3,7 +3,7 @@
  "title": "modules/domain — 领域类型",
  "summary": "domain 是 UmbraFlow 的平台无关语义层，把“哪一帧、哪个目标实例、哪个坐标系、这次动作是否仍可信”编码成可跨模块传递的不可变值。它只依赖 core，被 vision、image、annotation、engine、controller 和 script 共用。它提供坐标空间与几何、强类型身份、帧与像素所有权、动作时效凭证和自动化错误分类，本身不做识别、窗口管理或输入投递。",
  "notOwned": [
-  "不产生 SessionId / FrameId：SessionId 由组合根（CLI）提供，FrameId 由 controller 的 FrameIdCounter 逐捕获分配。",
+  "不产生 CaptureSessionId / FrameId：CaptureSessionId 由组合根（CLI）提供，FrameId 由 controller 的 FrameIdCounter 逐捕获分配。",
   "不判断目标何时换代：controller 的 ResolvedTarget 根据进程实例、句柄、client size 推进 TargetGeneration。",
   "不解释检测标签能否触发动作：annotation 的授权才绑定 catalog、recognizer、page 与 live fingerprint。",
   "不执行模板匹配、裁图、PNG 编解码、trace 或重试——分别属于 vision、image、engine 或调用者。",
@@ -320,7 +320,7 @@
    "responsibility": "一组基于 StrongId<Tag> 的强类型身份别名。相同的 uint64 数值不能在这些类型之间隐式转换，因此日志里“17”相同不等于语义身份相同。",
    "members": [
     {
-     "sig": "using SessionId = StrongId<SessionIdTag>",
+     "sig": "using CaptureSessionId = StrongId<CaptureSessionIdTag>",
      "note": "捕获会话身份，隔离跨 session 的 FrameId 碰撞。"
     },
     {
@@ -362,7 +362,7 @@
      "note": "支持有序比较，可作容器 key。"
     }
    ],
-   "lifetime": "value() 返回的引用受 Label owner 生命周期约束（UF_LIFETIME_BOUND）；Detection::label() 则按值返回副本。",
+   "lifetime": "value() 返回的引用受 Label owner 生命周期约束（UF_LIFETIME_BOUND）；Detection::label() 返回其内部 Label 的 const reference，同样只能在 Detection owner 存活且未失效时使用。",
    "related": [
     "uf::Detection"
    ]
@@ -472,10 +472,10 @@
    "kind": "class",
    "file": "modules/domain/source/domain/frame.hpp",
    "line": 66,
-   "responsibility": "带身份、捕获时间、像素所有权和坐标变换的一帧。create 同时证明 owner 非空、尺寸非零、stride 与 bufferLength 足够、乘法不溢出，且 transform.frameSize() 与 width/height 完全一致——身份三元组 (SessionId, TargetGeneration, FrameId) 从此固化。",
+   "responsibility": "带身份、捕获时间、像素所有权和坐标变换的一帧。create 同时证明 owner 非空、尺寸非零、stride 与 bufferLength 足够、乘法不溢出，且 transform.frameSize() 与 width/height 完全一致——身份三元组 (CaptureSessionId, TargetGeneration, FrameId) 从此固化。",
    "members": [
     {
-     "sig": "static auto create(FrameId, SessionId, TargetGeneration, MonotonicInstant capturedAt, uint32 width, height, size_t stride, PixelFormat, shared_ptr<FrameBuffer const>, CoordinateTransform) -> Result<Frame>",
+     "sig": "static auto create(FrameId, CaptureSessionId, TargetGeneration, MonotonicInstant capturedAt, uint32 width, height, size_t stride, PixelFormat, shared_ptr<FrameBuffer const>, CoordinateTransform) -> Result<Frame>",
      "note": "校验全部 buffer geometry 与 transform 尺寸一致性。"
     },
     {
@@ -532,11 +532,11 @@
    "name": "uf::Detection",
    "kind": "class",
    "file": "modules/domain/source/domain/detection.hpp",
-   "line": 18,
-   "responsibility": "不可变的同帧几何证据：携带 (SessionId, TargetGeneration, FrameId)、Label、Rect<FrameSpace> 和 confidence。构造器不校验 rect 或 confidence——可信动作还须经 annotation 的 recognizer/page 授权，不能只凭 label。",
+   "line": 20,
+   "responsibility": "不可变的同帧几何证据：携带 (CaptureSessionId, TargetGeneration, FrameId)、Label、Rect<FrameSpace> 和 confidence。构造器不校验 rect 或 confidence——可信动作还须经 annotation 的 recognizer/page 授权，不能只凭 label。",
    "members": [
     {
-     "sig": "Detection(SessionId, TargetGeneration, FrameId, Label, Rect<FrameSpace>, float confidence)",
+     "sig": "Detection(CaptureSessionId, TargetGeneration, FrameId, Label, Rect<FrameSpace>, float confidence)",
      "note": "纯值构造，不校验几何或置信度。"
     },
     {
@@ -544,8 +544,8 @@
      "note": "同帧身份三元组。"
     },
     {
-     "sig": "auto label() const -> Label",
-     "note": "按值返回标签副本。"
+     "sig": "auto label() const noexcept UF_LIFETIME_BOUND -> Label const&",
+     "note": "借用 Detection 内部标签，避免复制；引用生命周期绑定 Detection owner。"
     },
     {
      "sig": "auto rect() const noexcept -> Rect<FrameSpace>",
@@ -556,6 +556,7 @@
      "note": "识别置信度。"
     }
    ],
+   "lifetime": "纯值类型；label() 返回内部 Label 的受限借用，Detection 析构、移动或赋值后不得继续使用该引用。",
    "related": [
     "uf::Frame",
     "uf::Label",
@@ -566,7 +567,7 @@
    "name": "uf::ObservationLease",
    "kind": "class",
    "file": "modules/domain/source/domain/detection.hpp",
-   "line": 47,
+   "line": 50,
    "responsibility": "动作时效凭证：只能用 forFrame 从真实 Frame 派生，复制帧三元身份并计算 expiresAt = capturedAt + effectiveAge。validate 按 session→generation→frame→年龄顺序检查，任一失败即 StaleObservation，让“来自同标签但不同帧”的证据无法授权。",
    "members": [
     {
@@ -574,7 +575,7 @@
      "note": "从帧派生，年龄经 clampMaxActionFrameAge 只能缩短。"
     },
     {
-     "sig": "auto validate(SessionId, TargetGeneration, FrameId observedFrame, MonotonicInstant now) const -> Status",
+     "sig": "auto validate(CaptureSessionId, TargetGeneration, FrameId observedFrame, MonotonicInstant now) const -> Status",
      "note": "逐项比较身份再检查年龄，不重试。"
     },
     {
@@ -586,11 +587,11 @@
      "note": "凭证的身份与到期时间访问器。"
     },
     {
-     "sig": "constexpr k_defaultMaxActionFrameAge = 750ms（detection.hpp:9）",
+     "sig": "inline constexpr auto k_defaultMaxActionFrameAge = std::chrono::duration_cast<MonotonicInstant::Duration>(std::chrono::milliseconds{750})",
      "note": "默认 fuse。"
     },
     {
-     "sig": "auto clampMaxActionFrameAge(Duration) noexcept（detection.hpp:14）",
+     "sig": "auto clampMaxActionFrameAge(MonotonicInstant::Duration requested) noexcept -> MonotonicInstant::Duration",
      "note": "effectiveAge = min(requested, 750ms)，只能缩短、拒绝负时长。"
     }
    ],
@@ -726,7 +727,7 @@
    "title": "从像素证据到后台点击的同帧动作",
    "steps": [
     {
-     "text": "controller 解析窗口与 client geometry，维护 SessionId/TargetGeneration，捕获像素并分配 FrameId。"
+     "text": "controller 解析窗口与 client geometry，维护 CaptureSessionId/TargetGeneration，捕获像素并分配 FrameId。"
     },
     {
      "text": "CoordinateTransform::create 把 desktop client origin、client extent 与 frame extent 固化。",
@@ -757,9 +758,9 @@
    "title": "ObservationLease 的派生与校验",
    "steps": [
     {
-     "text": "forFrame 从真实 Frame 复制 (SessionId, TargetGeneration, FrameId)，年龄经 clampMaxActionFrameAge 只能缩短到 ≤750ms。",
+     "text": "forFrame 从真实 Frame 复制 (CaptureSessionId, TargetGeneration, FrameId)，年龄经 clampMaxActionFrameAge 只能缩短到 ≤750ms。",
      "file": "modules/domain/source/domain/detection.hpp",
-     "line": 70
+     "line": 74
     },
     {
      "text": "expiresAt = capturedAt + effectiveAge，由 checkedAddMonotonic 拒绝 deadline 溢出。",
@@ -769,12 +770,12 @@
     {
      "text": "动作投递前 validate 按 session→generation→observed frame→年龄顺序逐项比较，任一失败即 StaleObservation。",
      "file": "modules/domain/source/domain/detection.hpp",
-     "line": 84
+     "line": 87
     },
     {
      "text": "到期判断严格为 now > expiresAt；恰好在 deadline 仍有效，之后立即失效。",
      "file": "modules/domain/source/domain/detection.hpp",
-     "line": 81
+     "line": 84
     }
    ]
   }

@@ -1,12 +1,12 @@
 {
  "module": "entry-cli",
- "title": "entry/cli — 产品命令行与 Windows 组合根",
- "summary": "entry/cli 是 umbra-flow 的命令行入口，也是 Windows 上把平台无关的 engine 端口接到真实捕获与后台输入的组合根。它负责参数解析、资源名称到 ID 的翻译、三个端口适配器的装配，以及把一切结构化结果收敛为稳定退出码；固定的 smoke flow 是「等一个页面、找一个 action、存在就点一次」。同目录的 entry/m0-demo 是已冻结的早期端到端捕获/后台输入验证程序，不在本图谱建模范围内。",
+ "title": "entry/cli — 产品命令行、task 启动与 Windows 组合根",
+ "summary": "entry/cli 是 umbra-flow 的命令行入口，也是 Windows 上把平台无关 engine 端口接到真实捕获与后台输入的组合根。它负责参数解析、资源名称到 ID 的翻译、三个端口适配器的装配，以及把结构化结果收敛为稳定退出码；run 可在「等页面并点击一次」的 smoke 模式与「加载、预验证并执行项目 Luau task」的 script 模式之间二选一。同目录的 entry/m0-demo 是已冻结的早期端到端捕获/后台输入验证程序，不在本图谱建模范围内。",
  "notOwned": [
   "不拥有识别、页面判定、动作授权或 observation 生命周期（属于 annotation 与 engine）",
   "不拥有 Win32 窗口枚举、WGC、target generation、lease 校验或消息投递（属于 controller，CLI 只做薄适配）",
-  "不定义任务语言或通用工作流，runProduct 只是一条固定 smoke flow",
-  "不读取 authoring 文档，也不生成 manifest 或模板，只消费已发布项目",
+  "不定义 Luau 语义或通用工作流；script/task 模块拥有 VM、能力面、资源预验证和 task trace，CLI 只选择并装配运行模式",
+  "不读取 authoring 文档，也不生成 manifest 或模板，只消费已发布 runtime 与项目 task",
   "不提供前台或全局输入降级，后台投递失败即产品失败",
   "不承担守护进程、托盘、调度或多任务生命周期，一进程一次 run"
  ],
@@ -15,7 +15,9 @@
   "domain",
   "annotation",
   "engine",
-  "controller"
+  "controller",
+  "script",
+  "task"
  ],
  "readingOrder": [
   {
@@ -32,7 +34,7 @@
   },
   {
    "path": "entry/cli/run-windows.cpp",
-   "why": "真正的 Windows 组合序列，展示三个适配器如何连到 EngineSession"
+   "why": "真正的 Windows 组合序列，展示共享目标绑定如何支撑 smoke 与 script 两条运行路径"
   },
   {
    "path": "entry/cli/name-resolution.hpp",
@@ -48,8 +50,8 @@
    "name": "uf::cli::RunArgs",
    "kind": "struct",
    "file": "entry/cli/args.hpp",
-   "line": 48,
-   "responsibility": "一次 run 调用的完整值对象。解析成功后不存在「未设置」的可选字段：四个必填项非空，其余字段已落到安全默认值，因此下游组合只处理类型化值而不再解析字符串。",
+   "line": 51,
+   "responsibility": "一次 run 调用的完整值对象。project 与 selector 始终必填；task 模式要求 task 非空且 page/action 为空，smoke 模式要求 page/action 非空且 task 为空。其余字段采用安全默认值，因此下游组合只处理类型化值而不再解析字符串。",
    "members": [
     {
      "sig": "std::filesystem::path project",
@@ -61,11 +63,15 @@
     },
     {
      "sig": "std::string page",
-     "note": "要等待的页面名称，必填"
+     "note": "smoke 模式要等待的页面名称"
     },
     {
      "sig": "std::string action",
-     "note": "要点击的 action target 名称，必填"
+     "note": "smoke 模式要点击的 action target 名称"
+    },
+    {
+     "sig": "std::string task",
+     "note": "script 模式要加载的 tasks/NAME.luau 名称；与 page/action 互斥"
     },
     {
      "sig": "MonotonicInstant::Duration timeout",
@@ -105,12 +111,12 @@
    "name": "uf::cli::run-arguments",
    "kind": "functions",
    "file": "entry/cli/args.hpp",
-   "line": 66,
-   "responsibility": "把原始参数字符串解析成 RunArgs，并提供 usage 文本。守住「flag 后紧跟 value」的二元组契约与整数/duration 的范围检查，任何未知 flag、缺值、非整数或越界都 fail-closed 为 InvalidResource，不依赖 locale。",
+   "line": 71,
+   "responsibility": "把原始参数字符串解析成 RunArgs，并提供 usage 文本。守住「flag 后紧跟 value」、task 与 page/action 模式互斥、整数/duration 范围三类契约；未知 flag、缺值、模式冲突、非整数或越界都 fail-closed 为 InvalidResource，不依赖 locale。",
    "members": [
     {
      "sig": "auto parseRunArguments(std::span<std::string const> raw) -> Result<RunArgs>",
-     "note": "十个成对 value flag 转成类型化 RunArgs"
+     "note": "十一个成对 value flag 转成类型化 RunArgs，并证明恰好选择一种 run 模式"
     },
     {
      "sig": "auto runUsageText() noexcept -> std::string_view",
@@ -161,12 +167,16 @@
    "name": "uf::cli::RunReport",
    "kind": "struct",
    "file": "entry/cli/run.hpp",
-   "line": 28,
-   "responsibility": "一次 run 的产物。actionDelivered 为真时点击落地、client 坐标有意义；为假时页面已解析但 action target 缺席，调用方据此映射到专用的 absent 退出码。",
+   "line": 31,
+   "responsibility": "一次 run 的带判别结果。scriptMode=false 时使用页面、动作、投递状态和点击坐标；scriptMode=true 时使用 taskName 与 scriptHash。调用方先检查判别字段，不读取另一模式保持默认值的成员。",
    "members": [
     {
+     "sig": "bool scriptMode",
+     "note": "结果判别字段：true 为 script task，false 为 smoke flow"
+    },
+    {
      "sig": "bool actionDelivered",
-     "note": "动作是否真的投递"
+     "note": "smoke 模式动作是否真的投递"
     },
     {
      "sig": "std::string pageName",
@@ -185,8 +195,16 @@
      "note": "实际 client 空间点击 Y（仅投递时有效）"
     },
     {
+     "sig": "std::string taskName",
+     "note": "script 模式实际运行的 task 名称"
+    },
+    {
+     "sig": "std::string scriptHash",
+     "note": "script 模式已运行源码的内容哈希"
+    },
+    {
      "sig": "std::string tracePath",
-     "note": "写入的 trace 文件路径"
+     "note": "engine trace 路径；script 模式另写同基名的 .task.jsonl"
     }
    ],
    "related": [
@@ -197,12 +215,12 @@
    "name": "uf::cli::run-driver",
    "kind": "functions",
    "file": "entry/cli/run.hpp",
-   "line": 44,
-   "responsibility": "run 路径的产品驱动与错误/退出码边界。runProduct 按 host 实现（Windows 全组合，其他 host 报 unsupported）；退出码映射先看 stopRequested，让操作者的 Ctrl-C 意图优先于阻塞步骤最终冒出的底层错误。",
+   "line": 53,
+   "responsibility": "run 路径的产品驱动与错误/退出码边界。Windows 的 runProduct 加载 runtime 后按 RunArgs 选择 smoke 或 script 路径并复用同一目标绑定；其他 host 报 unsupported。退出码映射先看 stopRequested，让操作者的 Ctrl-C 意图优先于底层错误。",
    "members": [
     {
      "sig": "auto runProduct(RunArgs const& args) -> Result<RunReport>",
-     "note": "运行固定 smoke flow：绑定目标、等页面、找动作、act"
+     "note": "加载发布项目，按 task 是否存在运行 script task 或单步 smoke flow"
     },
     {
      "sig": "auto runCancellationRequested() noexcept -> bool",
@@ -210,7 +228,7 @@
     },
     {
      "sig": "auto formatRunError(Error const& error) -> std::string",
-     "note": "组合 kind/message/context/native 类别为单行诊断"
+     "note": "组合 kind、message、context、native code 与错误源文件 basename:line 为单行诊断"
     },
     {
      "sig": "auto exitCodeForError(Error const& error, bool stopRequested) noexcept -> ExitCode",
@@ -228,7 +246,7 @@
    "name": "uf::cli::name-resolution",
    "kind": "functions",
    "file": "entry/cli/name-resolution.hpp",
-   "line": 14,
+   "line": 15,
    "responsibility": "资源名称边界：把人输入的 --page / --action 名称翻译成 manifest 的稳定 ID。匹配精确且区分大小写，page 只在 pages 中查、action 只在 ActionTarget recognizer 中查，未知名称 fail 时列出全部可用名称供操作者改正。",
    "members": [
     {
@@ -251,14 +269,14 @@
    "kind": "class",
    "file": "entry/cli/file-trace-sink.hpp",
    "line": 18,
-   "responsibility": "把 engine TraceSink 端口落到文件。每次 emit 写一条序列化 JSONL 并立即 flush，绝不跨 emit 缓存，因为 trace 证据必须能在崩溃后留存；写或 flush 失败作为 IoFailure Status 返回而不是静默丢日志。",
+   "responsibility": "把 engine ITraceSink 端口落到文件。每次 emit 写一条序列化 JSONL 并立即 flush，绝不跨 emit 缓存，因为 trace 证据必须能在崩溃后留存；写或 flush 失败作为 IoFailure Status 返回而不是静默丢日志。",
    "members": [
     {
      "sig": "FileTraceSink(OpenTag, std::ofstream stream) noexcept",
      "note": "私有 tag 构造，仅供 create 使用"
     },
     {
-     "sig": "static auto create(std::filesystem::path const& path) -> Result<std::unique_ptr<engine::TraceSink>>",
+     "sig": "static auto create(std::filesystem::path const& path) -> Result<std::unique_ptr<engine::ITraceSink>>",
      "note": "以 binary+trunc 打开，失败为 IoFailure"
     },
     {
@@ -266,9 +284,9 @@
      "note": "写一条 JSONL、追加换行并 flush"
     }
    ],
-   "lifetime": "拥有 std::ofstream；以 unique_ptr<engine::TraceSink> 返回后被 move 进 EngineSession，从此由 session 拥有生命周期。",
+   "lifetime": "拥有 std::ofstream；以 unique_ptr<engine::ITraceSink> 返回后被 move 进 EngineSession，从此由 session 拥有生命周期。",
    "related": [
-    "uf::engine::TraceSink",
+    "uf::engine::ITraceSink",
     "uf::engine::TraceEvent"
    ]
   },
@@ -276,7 +294,7 @@
    "name": "uf::cli::selectCandidate",
    "kind": "functions",
    "file": "entry/cli/candidate-selection.hpp",
-   "line": 19,
+   "line": 20,
    "responsibility": "从枚举出的候选中挑出标题包含 selector 子串、且可捕获（可见、未最小化）的唯一窗口。反自动化会用大量近同名隐形 decoy 窗口包围真窗口，故零个或多个匹配都 fail TargetUnavailable 而绝不按枚举顺序猜测。返回是拥有型拷贝，不别名输入 span。",
    "members": [
     {
@@ -327,7 +345,7 @@
    "kind": "class",
    "file": "entry/cli/platform/wgc-frame-source.hpp",
    "line": 16,
-   "responsibility": "把 controller 的 WgcCaptureSession 适配到 engine FrameSource 端口。capture 与 validateTargetInstance 都原样转发，不复制任何 capture 规则（frame ID、generation、content-size 失效、stall 全留给 controller），使 engine 保持平台无关。",
+   "responsibility": "把 controller 的 WgcCaptureSession 适配到 engine IFrameSource 端口。capture 与 validateTargetInstance 都原样转发，不复制任何 capture 规则（frame ID、generation、content-size 失效、stall 全留给 controller），使 engine 保持平台无关。",
    "members": [
     {
      "sig": "explicit WgcFrameSource(WgcCaptureSession session) noexcept",
@@ -342,10 +360,10 @@
      "note": "转发绑定目标复验"
     }
    ],
-   "lifetime": "按值拥有 move-only 的 WgcCaptureSession；以 unique_ptr<engine::FrameSource> move 进 EngineSession 后由 session 拥有。",
+   "lifetime": "按值拥有 move-only 的 WgcCaptureSession；以 unique_ptr<engine::IFrameSource> move 进 EngineSession 后由 session 拥有。",
    "related": [
     "uf::WgcCaptureSession",
-    "uf::engine::FrameSource",
+    "uf::engine::IFrameSource",
     "uf::Frame"
    ]
   },
@@ -354,7 +372,7 @@
    "kind": "class",
    "file": "entry/cli/platform/controller-action-sink.hpp",
    "line": 17,
-   "responsibility": "把 controller 后台输入适配到 engine ActionSink 端口。它拥有 DeliveryTarget 及每目标的 held inputs 与 audit log，并把 ObservationLease 不变地转交 controller::click，使注入层 fence（frameId、generation、age）在投递时作为第二层再次运行。",
+   "responsibility": "把 controller 后台输入适配到 engine IActionSink 端口。它拥有 DeliveryTarget 及每目标的 held inputs 与 audit log，并把 ObservationLease 不变地转交 controller::click，使注入层 fence（frameId、generation、age）在投递时作为第二层再次运行。",
    "members": [
     {
      "sig": "explicit ControllerActionSink(DeliveryTarget target) noexcept",
@@ -365,10 +383,10 @@
      "note": "把 lease 原样转交 controller::click"
     }
    ],
-   "lifetime": "按值拥有 DeliveryTarget，并持有拥有型 HeldInputs 与 AuditLog（不借用 runProduct 栈上临时对象）；以 unique_ptr<engine::ActionSink> move 进 EngineSession 后由 session 拥有。",
+   "lifetime": "按值拥有 DeliveryTarget，并持有拥有型 HeldInputs 与 AuditLog（不借用 runProduct 栈上临时对象）；以 unique_ptr<engine::IActionSink> move 进 EngineSession 后由 session 拥有。",
    "related": [
     "uf::DeliveryTarget",
-    "uf::engine::ActionSink",
+    "uf::engine::IActionSink",
     "uf::ObservationLease"
    ]
   },
@@ -376,7 +394,7 @@
    "name": "uf::cli::platform::clientOriginDesktop",
    "kind": "functions",
    "file": "entry/cli/platform/windows-target-geometry.hpp",
-   "line": 12,
+   "line": 13,
    "responsibility": "解析窗口 client 区在 desktop 空间的原点，供捕获会话从 resolved target 构建 ClientGeometry。这是产品在 Windows 上取得平台端口的几何策略，把 Win32 坐标细节挡在 engine 之外。",
    "members": [
     {
@@ -397,12 +415,12 @@
     {
      "text": "main 把 argv 复制成拥有所有权的 vector，校验参数个数可安全转换且非零，最外层捕获所有异常，再调 dispatch",
      "file": "entry/cli/main.cpp",
-     "line": 85
+     "line": 98
     },
     {
      "text": "dispatch：空参数打印项目名与 usage 返回 Success；首参为 run 交给 dispatchRun；其他首参视为 unknown subcommand 返回 Failure",
      "file": "entry/cli/main.cpp",
-     "line": 64
+     "line": 77
     },
     {
      "text": "dispatchRun 先 parseRunArguments；失败则打印错误与 usage，并以 stopRequested=false 映射退出码（解析早于 handler 安装）",
@@ -412,57 +430,57 @@
     {
      "text": "解析成功则 runProduct；失败时以 runCancellationRequested() 映射退出码，让 Ctrl-C 意图优先于底层错误",
      "file": "entry/cli/main.cpp",
-     "line": 33
+     "line": 35
     },
     {
-     "text": "actionDelivered 为假则报 ActionAbsent(3)；为真则打印 page/action/click/trace 并返回 Success",
+     "text": "scriptMode 为真时打印 task/hash/trace；否则 actionDelivered 为假映射 ActionAbsent(3)，为真打印 page/action/click/trace",
      "file": "entry/cli/main.cpp",
-     "line": 40
+     "line": 42
     }
    ]
   },
   {
-   "title": "Windows 组合与一次 observe→act",
+   "title": "Windows 共享绑定与双运行模式",
    "steps": [
     {
-     "text": "先离线加载项目并解析 page/action 名称到 ID，桌面副作用之前完成，坏 manifest 或未知名称在绑定任何目标前 fail-fast",
+     "text": "runProduct 先离线加载 runtime，再以 task 是否非空选择 script path 或 smoke path；参数解析已证明两种模式恰好选一",
      "file": "entry/cli/run-windows.cpp",
-     "line": 35
+     "line": 359
     },
     {
-     "text": "声明 per-monitor-aware V2，随后 client size/origin 与 DPI fingerprint 处于一致坐标解释下",
+     "text": "script path 在绑定桌面和创建 VM 前构造 CapabilitySurface、加载 task 并预验证全部 umbra 资源引用",
      "file": "entry/cli/run-windows.cpp",
-     "line": 46
+     "line": 226
     },
     {
-     "text": "安装 ConsoleCancellation，取得供 engine 的 stop token",
+     "text": "两条路径都进入 bindTargetAndSession：声明 DPI、安装取消、唯一选择并解析窗口，创建 live fingerprint、捕获与 delivery",
      "file": "entry/cli/run-windows.cpp",
-     "line": 49
+     "line": 63
     },
     {
-     "text": "enumerateCandidates + selectCandidate（唯一子串匹配）+ resolveTarget，取得 ClientSize/WindowHandle/Generation",
+     "text": "共享绑定创建 FileTraceSink、WgcFrameSource 与 ControllerActionSink，并以 IFrameSource/IActionSink/ITraceSink 所有权移交 EngineSession::create",
      "file": "entry/cli/run-windows.cpp",
-     "line": 52
+     "line": 132
     },
     {
-     "text": "用 resolved 几何与目标 DPI 创建 live ProjectFingerprint；它必须与 manifest fingerprint 相等，否则 engine 拒绝识别与动作",
+     "text": "smoke path 解析 page/action 名称，waitForPage 后由 EngineSession::findAction(observation, actionId) 查询同一帧",
      "file": "entry/cli/run-windows.cpp",
-     "line": 65
+     "line": 169
     },
     {
-     "text": "clientOriginDesktop + ClientGeometry + WgcCaptureSession，再用同一 handle/session/generation 创建 DeliveryTarget，保证捕获与投递身份同源",
+     "text": "action 缺席返回 actionDelivered=false；存在时 EngineSession::act 消费 observation，并把实际 client 点击点写入 RunReport",
      "file": "entry/cli/run-windows.cpp",
-     "line": 76
+     "line": 191
     },
     {
-     "text": "创建 FileTraceSink、WgcFrameSource、ControllerActionSink，填 EngineSessionConfig，以 unique_ptr 移交三端口给 EngineSession::create",
+     "text": "script path 创建独立 task-trace/v1 sink 和拥有 EngineSession 的 TaskContext，再把受限 umbra host table 安装进新 VM",
      "file": "entry/cli/run-windows.cpp",
-     "line": 108
+     "line": 267
     },
     {
-     "text": "waitForPage 得到与命中同源的 Observation，在其上 findAction；缺席返回 actionDelivered=false，存在则 act 消费 observation 并把 client 点击点写入 RunReport",
+     "text": "VM 执行完成或失败后先记录 TaskFinished；成功报告 scriptMode、taskName 与 scriptHash，失败按原 automation kind 上送",
      "file": "entry/cli/run-windows.cpp",
-     "line": 133
+     "line": 321
     }
    ]
   }

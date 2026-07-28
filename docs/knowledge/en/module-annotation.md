@@ -63,7 +63,9 @@ incompatible geometry can never cross the authorization boundary.
 
 ### Identity, Geometry, and Catalog
 
-The public domain surface begins at `modules/annotation/source/annotation/catalog.hpp`:
+The shared resource vocabulary begins at
+`modules/annotation/source/annotation/resource.hpp`; catalog definitions build on it in
+`modules/annotation/source/annotation/catalog.hpp`:
 
 - `ResourceId` holds a 16-byte UUID; `parse` accepts the fixed 36-character UUID shape, and
   `toString` emits the lowercase canonical form.
@@ -199,7 +201,7 @@ most 16 MiB per document, and at the end rejects non-canonical input via
 
 ### Thresholds, Runtime Recognition, and Stop Reasons
 
-`SimilarityThreshold` in `modules/annotation/source/annotation/catalog.hpp` stores `[0, 10000]` in
+`SimilarityThreshold` in `modules/annotation/source/annotation/resource.hpp` stores `[0, 10000]` in
 basis points. `maximumSad(width, height)` is implemented with checked `uint64` arithmetic:
 
 ```text
@@ -327,7 +329,7 @@ the UI layer.
 **Strict-background evidence chain.** annotation does not touch the input API, but it requires the
 page, detection, lease, and delivery fingerprint/identity to hold simultaneously.
 `modules/engine/source/engine/session.cpp`, after authorization, further calls
-`FrameSource::validateTargetInstance`, passes the lease to `ActionSink::click`, and invalidates the
+`IFrameSource::validateTargetInstance`, passes the lease to `IActionSink::click`, and invalidates the
 observation after successful delivery. The annotation gate is therefore the domain layer of a
 two-layer delivery fence, not the entirety of a complete background protocol.
 
@@ -355,7 +357,7 @@ The outbound runtime path enters engine:
   `ActionDetection::create`; `resolveClickPixel` produces the frame pixel, and
   `authorizeCoordinateAction` validates the four-condition gate at act time.
 - engine converts the pixel into `FrameSpace`/`ClientSpace`, re-verifies the target instance, and
-  only then calls the controller-backed `ActionSink`. What crosses the annotation boundary is values,
+  only then calls the controller-backed `IActionSink`. What crosses the annotation boundary is values,
   evidence, and `Status`, not OS handles.
 
 `runAuthoringRegressions` lives in `modules/annotation/source/annotation/regression-runner.cpp`. It

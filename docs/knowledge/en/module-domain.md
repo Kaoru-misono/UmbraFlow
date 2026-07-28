@@ -27,7 +27,7 @@ It owns five groups of contracts:
 
 `domain` deliberately does not own the following responsibilities:
 
-- It does not produce `SessionId` or `FrameId`. `SessionId` is provided by the composition root and
+- It does not produce `CaptureSessionId` or `FrameId`. `CaptureSessionId` is provided by the composition root and
   is currently constructed by the CLI in `entry/cli/run-windows.cpp`; the per-capture allocation of
   `FrameId` is done by `FrameIdCounter` in
   `modules/controller/source/controller/detail/capture-wgc.hpp`.
@@ -154,7 +154,7 @@ Action boundaries use two different rules:
 ### Frame Identity and Pixel Ownership
 
 `modules/domain/source/domain/ids.hpp` uses `StrongId<Tag>` to define `EngineRunId`, `TaskRunId`,
-`SessionId`, `FrameId`, `StateId`, `RecognitionId`, and `ActionId`. The same `uint64` value cannot be
+`CaptureSessionId`, `FrameId`, `StateId`, `RecognitionId`, and `ActionId`. The same `uint64` value cannot be
 implicitly converted between these types, so an identical "17" in a log does not imply identical
 semantic identity.
 
@@ -171,10 +171,10 @@ The meaning of D0's dual counters is locked by
 - `TargetGeneration` is the low-frequency safety dimension. `ResolvedTarget` advances it when the
   process instance changes, the handle/client size changes, continuity is lost, or an explicit
   re-resolve happens; a no-change revalidation of the same target does not advance it.
-- `SessionId` further isolates capture sessions, avoiding collisions between a new session recounting
+- `CaptureSessionId` further isolates capture sessions, avoiding collisions between a new session recounting
   from a low `FrameId` and old evidence.
 
-The true frame identity is therefore the triple `(SessionId, TargetGeneration, FrameId)`. `Frame`,
+The true frame identity is therefore the triple `(CaptureSessionId, TargetGeneration, FrameId)`. `Frame`,
 `Detection`, `ObservationLease`, and annotation's `FrameIdentity` all carry or derive this set of
 values.
 
@@ -203,13 +203,15 @@ produce time, nor a serializable wall clock.
 
 ### `Detection` and `ObservationLease`
 
-`Detection` is an immutable value carrier: it holds `SessionId`, `TargetGeneration`, `FrameId`,
+`Detection` is an immutable value carrier: it holds `CaptureSessionId`, `TargetGeneration`, `FrameId`,
 `Label`, `Rect<FrameSpace>`, and `confidence`. The constructor does not validate the rect or the
 confidence; a trustworthy action must additionally pass annotation's recognizer/page authorization
 and cannot rely on the label alone.
 
 `Label::create` guarantees the string is valid UTF-8 but allows the empty string; `value()` returns a
-const reference bound to the owner's lifetime, while `Detection::label()` returns a copy by value.
+const reference bound to the owner's lifetime. As recorded in the
+[2026-07-28 review follow-up](../../plans/2026-07-28-full-project-review-fixes.md),
+`Detection::label()` likewise returns a lifetime-bound `Label const&` instead of copying the label.
 
 `ObservationLease`'s constructor is private and can only be derived from a real `Frame` via
 `forFrame`. It copies the frame's identity triple and computes `expiresAt = capturedAt +
@@ -262,7 +264,7 @@ structured failure; the conversion functions do not automatically carve out an a
 is still clamped to the true extent.
 
 **Identity consistency.** From a single recognition to action authorization,
-`(SessionId, TargetGeneration, FrameId)` must be maintained.
+`(CaptureSessionId, TargetGeneration, FrameId)` must be maintained.
 `modules/annotation/source/annotation/authorization.cpp` compares the `FrameIdentity` of the resolved
 page, action detection, and delivery state, then calls `ObservationLease::validate`. This makes a
 detection "from the same label but a different frame" impossible to authorize.
@@ -276,7 +278,7 @@ trace failure that would induce a duplicate click.
 **D0 authority and current state must be distinguished.**
 `docs/plans/2026-07-21-lua-task-model-grill-decisions.md` requires the injection layer to re-check
 both `FrameId` and `TargetGeneration`. The current Controller's `checkPointerPreconditions` actually
-re-checks `SessionId`, lease age, `TargetGeneration`, and the client point, but has no "current
+re-checks `CaptureSessionId`, lease age, `TargetGeneration`, and the client point, but has no "current
 `FrameId`" parameter; `FrameId` is currently constrained by annotation/engine's same-frame comparison
 and the single consumption of `Observation`. A maintainer should not treat the comment's "delivery
 layer re-runs frameId fence" as already independently implemented by the Controller.
@@ -293,7 +295,7 @@ owner. `Detection`, lease, transform, and IDs are all carried by value. `domain`
 pointer, callback, or asynchronous borrow.
 
 **Strict-background is a cross-module invariant.** `domain` only provides `Point<ClientSpace>`, the
-lease, and error semantics; `engine::ActionSink` requires the adapter to pass the lease down to the
+lease, and error semantics; `engine::IActionSink` requires the adapter to pass the lease down to the
 delivery layer, and the Controller ultimately uses `PostMessageW`. `SetForegroundWindow`, `SetFocus`,
 `SendInput`, `mouse_event`, `keybd_event`, and `SetCursorPos` are listed as forbidden. No domain
 extension may degrade to foreground or global input on the grounds that "the coordinates are not
@@ -303,7 +305,7 @@ expressive enough".
 
 The typical data flow is as follows:
 
-1. `controller` resolves the window and client geometry, maintains `SessionId`/`TargetGeneration`,
+1. `controller` resolves the window and client geometry, maintains `CaptureSessionId`/`TargetGeneration`,
    captures pixels, and allocates a `FrameId` per frame.
 2. `CoordinateTransform::create` fixes the desktop client origin, client extent, and frame extent
    into the same `Frame`.
@@ -316,7 +318,7 @@ The typical data flow is as follows:
    project, fingerprint, identity triple, and lease are consistent.
 7. engine converts the integer click pixel into a `Point<ClientSpace>` via `pixelPointToFramePoint`
    and the frame's `frameToClient`.
-8. `engine::ActionSink::click` hands the client point together with the original lease to the
+8. `engine::IActionSink::click` hands the client point together with the original lease to the
    Controller; the Controller re-checks the target generation, session, age, window liveness, and
    client bounds, then delivers it in the background via `PostMessageW`.
 9. After success, engine invalidates the `Observation`, and the next action must observe again.
@@ -375,7 +377,7 @@ Cross-module tests pin "how domain values actually land":
 - `tests/controller/test-input-revalidation.cpp` pins session/generation/age fencing, client bounds,
   and the signed-16-bit message coordinate limit; it also reflects that there is currently no current
   `FrameId` parameter.
-- `tests/controller/test-input-guard.cpp` pins the strict-background forbidden API set and the
+- `tests/controller/test-audit-log.cpp` pins the strict-background forbidden API set and the
   delivery audit.
 - `tests/annotation/test-authorization.cpp` pins same-frame page/detection/lease/fingerprint,
   recognizer identity, and allowed-page authorization.
@@ -409,7 +411,7 @@ into domain.
 `docs/plans/2026-07-21-lua-task-model-grill-decisions.md`, the most clearly unclosed seam is to give
 the Controller delivery a comparable current `FrameId`, so that it independently verifies the lease's
 dual counters at the final delivery point rather than relying only on engine's single consumption.
-Extending this requires adjusting both the `ActionSink`/Controller delivery contract and the
+Extending this requires adjusting both the `IActionSink`/Controller delivery contract and the
 corresponding tests together, not just changing a comment.
 
 **New error kinds.** When adding an item to `AutomationErrorKind`, you should keep the enum

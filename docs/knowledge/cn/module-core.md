@@ -21,16 +21,18 @@ dependency，并检查整个模块图无环。这不是构建文件的偶然状�
 - `concurrency/`：把互斥锁与受保护值绑定的同步访问。
 - `numeric/`：整数运算、整数转换和浮点到整数转换的显式失败。
 - `safety/`：静态分析注解与连续存储的受检索引。
-- `text/`：UTF-8 验证、Unicode scalar 编码及隔离的 code-unit 位转换。
+- `text/`：UTF-8 验证与 scalar 解码/编码，以及隔离的 code-unit 位转换。
 - `types/`：固定宽度整数、强类型值、标识符、generation、非零值、flags 和
   显式枚举反射。
 - `time/`：进程内单调时刻及其溢出安全运算。
 - `utility/`：`std::variant` visitor 组合与确定性 scope cleanup。
 
-`modules/core/source/core/project.hpp` 另提供 `k_projectName`，但不存在聚合
-`core.hpp`。调用方必须 include 所需的精确 facility；这样依赖面、编译成本和
-概念耦合都保持可见。只有需要非模板实现的 facility 才有匹配的 `.cpp`：
-`error/contracts.cpp`、`error/error.cpp` 和 `text/utf8.cpp`。
+不存在聚合 `core.hpp`。调用方必须 include 所需的精确 facility；这样依赖面、
+编译成本和概念耦合都保持可见。应用 identity 留在 entry 层，不进入这个只包含
+机制的叶节点。根据 2026-07-28 的开发者决定，仓库根 `manifest.txt` 向 CMake
+提供应用名和版本，再生成仅供 entry 使用的 `application-info.hpp`。只有需要非模板
+实现的 facility 才有匹配的 `.cpp`：`error/contracts.cpp`、`error/error.cpp`
+和 `text/utf8.cpp`。
 
 `core` 不包含产品语义。它不知道 frame、detection、annotation、engine
 session、Windows handle、Luau、GUI 或具体游戏，也不决定失败是否应该 retry、
@@ -191,9 +193,10 @@ lvalue range；`CheckedAccessRange` 明确拒绝 temporary owner，避免返回�
 
 `modules/core/source/core/text/utf8.hpp` 的 `isValidUtf8()` 接受空串和合法的
 1–4 byte scalar encoding，拒绝孤立 continuation、overlong sequence、截断序列、
-surrogate 与大于 `0x10FFFF` 的值。`appendUtf8Scalar()` 覆盖四种编码宽度，
-调用者若传入 surrogate 或越界 code point 会触发 `UF_CHECK`，因为函数前置条件
-已经声明参数必须是 Unicode scalar。
+surrogate 与大于 `0x10FFFF` 的值。`decodeUtf8Scalars()` 复用同一状态机，返回
+解码后的 `uint32` scalars，输入畸形时返回 `std::nullopt`。`appendUtf8Scalar()`
+覆盖四种编码宽度；调用者若传入 surrogate 或越界 code point 会触发 `UF_CHECK`，
+因为函数前置条件已经声明参数必须是 Unicode scalar。
 
 原始 code-unit 表示转换集中在
 `modules/core/source/core/text/unsafe/unicode-code-unit.hpp`：

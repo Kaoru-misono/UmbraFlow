@@ -64,12 +64,12 @@
 
 ## 1.5 B1 — 最小 runtime(modules/engine,2026-07-24 落地)
 
-- [x] `modules/engine`:平台无关端口(FrameSource/ActionSink 带租约透传/TraceSink)、
+- [x] `modules/engine`:平台无关端口(IFrameSource/IActionSink 带租约透传/ITraceSink)、
       runtime manifest 读取路径、versioned JSONL trace、Observation 句柄 API
-      (observe→resolvePage/findAction→act,动作即失效;取消与目标失活在投递边拦截)。
+      (observe→session.resolvePage/findAction→act,动作即失效;取消与目标失活在投递边拦截)。
 - [x] `umbra-flow run`:第一个同时链接 engine+controller 的组合根;
       发现→指纹→会话→waitForPage→findAction→act,区分退出码,Ctrl-C 进 stop_token。
-- [x] Fake FrameSource 合成帧回放 + fail-closed 全谱(Unknown/Ambiguous/stop reasons/
+- [x] Fake IFrameSource 合成帧回放 + fail-closed 全谱(Unknown/Ambiguous/stop reasons/
       租约过期/指纹不符/失效句柄复用 → 全部零投递)进 CI。
 - [x] **真机冒烟(2026-07-25 通过,release + 生产 750ms 租约)**:手写最小 manifest,
       卡厄思梦境识别+授权+后台点击。**release `umbra-flow run` 在无任何租约放宽下**:识别精确

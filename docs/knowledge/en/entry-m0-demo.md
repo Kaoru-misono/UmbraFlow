@@ -102,7 +102,7 @@ The default pipeline's `--threshold` is required and ranges over 0..255; the def
 2. `installConsoleControlHandler()` installs the Ctrl-C/Ctrl-Break stop flag.
 3. `enumerateCandidates()`, `buildSelector()`, and `resolveTarget()` produce a
    `ResolvedTarget`.
-4. Creates a `WgcCaptureSession` with a fixed `SessionId{1}`.
+4. Creates a `WgcCaptureSession` with a fixed `CaptureSessionId{1}`.
 5. `loadTemplate()` converts the three PNGs into grayscale `Template`s.
 6. Assembles `Templates` and `LoopConfig` from `Args`.
 7. Creates a `DeliveryTarget` from the HWND, session, generation, and client size.
@@ -424,7 +424,7 @@ The recognition and authorization seams have already moved to `modules/annotatio
 thresholds, and runtime manifests should all follow `docs/plans/2026-07-22-annotation-design.md`, and
 must not add a fourth M0 template or stuff a page special case into `clickWhenPresent()`.
 
-The platform-composition seam is in the product runner's `FrameSource`/`ActionSink` adapter.
+The platform-composition seam is in the product runner's `IFrameSource`/`IActionSink` adapter.
 `docs/plans/2026-07-23-engine-architecture.md` requires the engine to stay platform-independent, with
 Windows WGC and background input composed in the entry adapter; the Fake port replays synthetic frames
 in CI and records zero/present delivery. A future second platform should also implement these ports
@@ -451,7 +451,7 @@ are:
 3. an expired lease still fails closed with zero delivery;
 4. the A1+B1 on-hardware end-to-end loop, from workbench-generated manifest to runner consumption, is
    complete;
-5. the Fake FrameSource and the static screenshot regression pin the same fail-closed semantics.
+5. the Fake IFrameSource and the static screenshot regression pin the same fail-closed semantics.
 
 The frozen declaration in `docs/plans/2026-07-20-m0-demo-port-deviations.md` further requires: retain
 M0 as an acceptance reference until the above on-hardware capability parity is reached, and retire it

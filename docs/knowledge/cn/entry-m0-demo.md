@@ -94,7 +94,7 @@ click home -> wait result -> click reset -> wait home
 2. `installConsoleControlHandler()` 安装 Ctrl-C/Ctrl-Break stop flag。
 3. `enumerateCandidates()`、`buildSelector()`、`resolveTarget()` 得到
    `ResolvedTarget`。
-4. 用固定的 `SessionId{1}` 创建 `WgcCaptureSession`。
+4. 用固定的 `CaptureSessionId{1}` 创建 `WgcCaptureSession`。
 5. `loadTemplate()` 把三张 PNG 转成灰度 `Template`。
 6. 从 `Args` 组装 `Templates` 与 `LoopConfig`。
 7. 以 HWND、session、generation 和 client size 创建 `DeliveryTarget`。
@@ -395,7 +395,7 @@ M0 不应继续扩成产品；后续能力从外部替代。
 runtime manifest 都应遵循 `docs/plans/2026-07-22-annotation-design.md`，不能增加第四张
 M0 template 或给 `clickWhenPresent()` 塞 page 特例。
 
-新平台通过产品 runner 的 `FrameSource`/`ActionSink` 适配器接入。
+新平台通过产品 runner 的 `IFrameSource`/`IActionSink` 适配器接入。
 `docs/plans/2026-07-23-engine-architecture.md` 要求 engine 保持平台无关，
 Windows WGC 和 background input 在 entry adapter 组合；Fake port 则在 CI 回放合成
 frame 并记录零/有投递。未来第二平台也应实现这些 port，而不是条件编译 M0 pipeline。
@@ -417,7 +417,7 @@ stall-timeout 与 lease-age 配对、capture wait cancellation 等。不要在 M
 2. K2 capture 仍为 `delta=(0,0)`；
 3. lease 过期仍 fail closed、零投递；
 4. workbench 生成 manifest 到 runner 消费的 A1+B1 真机端到端闭环完成；
-5. Fake FrameSource 与静态 screenshot regression 固定相同 fail-closed 语义。
+5. Fake IFrameSource 与静态 screenshot regression 固定相同 fail-closed 语义。
 
 `docs/plans/2026-07-20-m0-demo-port-deviations.md` 的冻结声明进一步要求：
 在上述真机能力对齐前保留 M0 作为验收参考，对齐后才退役。

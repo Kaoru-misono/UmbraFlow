@@ -150,12 +150,16 @@ a batch touch different files and may run in parallel unless noted.
   code across TUs and must keep diagnostics byte-identical. All edits are in the
   same module — treat as one atomic change, do not split across parallel agents.
 
-**In-flight work flag.** `entry/workbench` currently has uncommitted changes in
+**In-flight work flag (historical; cleared 2026-07-28).** ~~`entry/workbench`
+currently has uncommitted changes in
 `entry/workbench/app/panels.cpp`, `entry/workbench/app/panels.hpp`,
 `entry/workbench/app/workbench-app.cpp`, `entry/workbench/authoring-edit.cpp`,
 `entry/workbench/authoring-edit.hpp`, and
 `tests/workbench/test-authoring-edit.cpp`. The Batch 2 edit to `panels.cpp`
-will interleave with that work — coordinate or land after those changes commit.
+will interleave with that work — coordinate or land after those changes
+commit.~~ The flagged 2026-07-25 work is no longer in flight;
+`workbench-app.*` moved to `entry/workbench/` in the 2026-07-28 full-project
+review follow-up.
 
 ## 5. Method and limits
 

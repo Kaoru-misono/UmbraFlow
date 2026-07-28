@@ -1,7 +1,7 @@
 {
  "module": "entry-workbench",
  "title": "entry/workbench — 标注工作台",
- "summary": "umbra-workbench 是 A1 阶段的 Windows 标注工具，把 annotation、image、vision、controller 组合成一个作者工作台。它拥有从「取得一张完整源图」到「发布可供 runtime 消费的生成闭包」的作者工作流，但不定义 schema、匹配或序列化规则——那些都交给已有模块，panel 只收集输入、显示错误。support 层完全不含 ImGui，供 test-workbench 直接链接。",
+ "summary": "umbra-workbench 是 Windows 标注工具，把 annotation、image、vision、controller 组合成 page-centric 作者工作台。它拥有从取得完整源图、编辑 element+placement 文档，到发布 runtime 闭包的工作流，但不重写 schema、匹配或序列化规则。ImGui-free app/backend 已平铺在 entry/workbench 根目录，app/ 只保留 panel 与 executable 组合代码。",
  "notOwned": [
   "schema、引用闭合、矩形与 fingerprint 合法性属于 annotation/authoring-document",
   "template crop、runtime manifest 生成、canonical ordering 属于 annotation/authoring-compiler",
@@ -24,7 +24,7 @@
    "why": "编辑中间模型与 undo/redo 历史是整个工作台的核心，一切编辑都经此重建成完整 document"
   },
   {
-   "path": "entry/workbench/app/workbench-app.hpp",
+   "path": "entry/workbench/workbench-app.hpp",
    "why": "AppState 是窗口背后的 ImGui-free session aggregate，串起历史、asset cache、selection 与 preview"
   },
   {
@@ -49,8 +49,8 @@
    "name": "uf::workbench::AuthoringDraft",
    "kind": "struct",
    "file": "entry/workbench/authoring-edit.hpp",
-   "line": 68,
-   "responsibility": "供界面编辑的中间数据聚合。控件可暂写普通字符串/整数/vector，但这些值不能直接持久化——draft 必须整体重建成完整有效的 AuthoringDocument 才能进入历史，避免「先改半个对象、以后再校验」。",
+   "line": 83,
+   "responsibility": "供界面编辑的 v2 中间数据聚合。控件可暂写普通字符串/整数/vector，但 element 与 page-side placement 必须一起整体重建成完整有效的 AuthoringDocument 才能进入历史。",
    "members": [
     {
      "sig": "annotation::ProjectId projectId",
@@ -66,7 +66,11 @@
     },
     {
      "sig": "std::vector<EditableRecognizer> recognizers",
-     "note": "可编辑识别器"
+     "note": "可编辑 element 定义"
+    },
+    {
+     "sig": "std::vector<EditablePlacement> placements",
+     "note": "interactive/info element 的逐页放置与独立 search ROI"
     },
     {
      "sig": "std::vector<EditablePage> pages",
@@ -80,6 +84,7 @@
    "related": [
     "uf::workbench::EditableSource",
     "uf::workbench::EditableRecognizer",
+    "uf::workbench::EditablePlacement",
     "uf::workbench::EditablePage",
     "uf::workbench::EditableRegression",
     "uf::workbench::AuthoringEditHistory"
@@ -132,7 +137,7 @@
    "kind": "struct",
    "file": "entry/workbench/authoring-edit.hpp",
    "line": 33,
-   "responsibility": "一个识别器在 draft 中的可编辑视图，含模板矩形、搜索 ROI、阈值、点击偏移和授权页集合。shared 标志是纯 authoring-time 意图（在第二页出现之前就要标），因此存在识别器旁而非进入 runtime。",
+   "responsibility": "一个 v2 element 在 draft 中的可编辑定义：模板、默认 search ROI、阈值、类型与可选点击。逐页成员关系和每页 ROI 位于 EditablePlacement；shared 只表达作者复用意图。",
    "members": [
     {
      "sig": "annotation::RecognizerId id",
@@ -147,8 +152,12 @@
      "note": "模板从哪张源图裁下"
     },
     {
-     "sig": "PixelRect templateRect / searchRoi",
-     "note": "模板矩形与搜索区域"
+     "sig": "PixelRect templateRect",
+     "note": "element 唯一模板矩形"
+    },
+    {
+     "sig": "PixelRect searchRoi",
+     "note": "新 placement 复制的默认搜索区域"
     },
     {
      "sig": "uint32 similarityBasisPoints",
@@ -159,23 +168,45 @@
      "note": "action target 的默认点击"
     },
     {
-     "sig": "std::vector<annotation::PageId> allowedPageIds",
-     "note": "被授权的页面"
-    },
-    {
      "sig": "bool shared",
      "note": "作者标记「可在其它页复用」的意图，纯 authoring-only"
     }
    ],
    "related": [
-    "uf::workbench::EditableTemplateOffset"
+    "uf::workbench::EditableTemplateOffset",
+    "uf::workbench::EditablePlacement"
+   ]
+  },
+  {
+   "name": "uf::workbench::EditablePlacement",
+   "kind": "struct",
+   "file": "entry/workbench/authoring-edit.hpp",
+   "line": 60,
+   "responsibility": "annotation::AuthoringPlacement 的 draft-side 对应物，把一个 interactive/info element 放到一页，并保存 runtime 在该页使用的独立 search ROI。anchor 不使用 placement，而通过 page signature 归属页面。",
+   "members": [
+    {
+     "sig": "annotation::PageId pageId",
+     "note": "placement 所属页面。"
+    },
+    {
+     "sig": "annotation::RecognizerId elementId",
+     "note": "被放置的 element。"
+    },
+    {
+     "sig": "PixelRect searchRoi",
+     "note": "该页自己的搜索区域。"
+    }
+   ],
+   "related": [
+    "uf::workbench::EditableRecognizer",
+    "uf::workbench::AuthoringDraft"
    ]
   },
   {
    "name": "uf::workbench::EditablePage",
    "kind": "struct",
    "file": "entry/workbench/authoring-edit.hpp",
-   "line": 52,
+   "line": 67,
    "responsibility": "一页的签名在 draft 中的可编辑视图：required 锚点识别这是哪一页，forbidden 锚点则必须不匹配。空签名会被 AuthoringDocument 拒绝，故锚点只能随页面一起提交。",
    "members": [
     {
@@ -200,7 +231,7 @@
    "name": "uf::workbench::EditableRegression",
    "kind": "struct",
    "file": "entry/workbench/authoring-edit.hpp",
-   "line": 60,
+   "line": 75,
    "responsibility": "一条回归用例的可编辑视图，记录某张源图被期望解析成哪一页。它是文档中唯一「某张截图代表哪一页」的陈述，也是 whole-model check 唯一可对照的基准。",
    "members": [
     {
@@ -225,8 +256,8 @@
    "name": "uf::workbench::PageMemberKind",
    "kind": "enum",
    "file": "entry/workbench/authoring-edit.hpp",
-   "line": 136,
-   "responsibility": "新识别器加入一页时它扮演什么角色——两种关系互不相关，是作者画一个矩形时唯一要做的决定。",
+   "line": 153,
+   "responsibility": "新 element 加入一页时扮演的角色：anchor 进入 signature，action/info 则生成 placement。作者画一个矩形时只需选择这一项。",
    "members": [
     {
      "sig": "Anchor",
@@ -235,6 +266,10 @@
     {
      "sig": "ActionTarget",
      "note": "作者可在此页点击的目标、被授权在该页"
+    },
+    {
+     "sig": "InfoRegion",
+     "note": "无点击语义的信息 placement"
     }
    ]
   },
@@ -242,7 +277,7 @@
    "name": "uf::workbench::NewPageSpec",
    "kind": "struct",
    "file": "entry/workbench/authoring-edit.hpp",
-   "line": 100,
+   "line": 116,
    "responsibility": "createPageFromSource 从调用者拿到的一切建页输入。三个 id 由调用者铸造（铸造不纯、函数要保持可测），页名与锚点名则从 draft 派生。",
    "members": [
     {
@@ -279,7 +314,7 @@
    "name": "uf::workbench::CreatedPage",
    "kind": "struct",
    "file": "entry/workbench/authoring-edit.hpp",
-   "line": 111,
+   "line": 127,
    "responsibility": "createPageFromSource 的结果：建好页与首锚点后的完整 draft，连同派生出的页名与锚点名，供调用者展示与随后选中。",
    "members": [
     {
@@ -304,7 +339,7 @@
    "name": "uf::workbench::PageMemberSpec",
    "kind": "struct",
    "file": "entry/workbench/authoring-edit.hpp",
-   "line": 142,
+   "line": 160,
    "responsibility": "addPageMember 给一页加一个 typed+linked 识别器所需的输入。kind 决定它是锚点还是 action target——作者画一个矩形时唯一要做的决定。",
    "members": [
     {
@@ -342,7 +377,7 @@
    "name": "uf::workbench::AddedPageMember",
    "kind": "struct",
    "file": "entry/workbench/authoring-edit.hpp",
-   "line": 153,
+   "line": 171,
    "responsibility": "addPageMember 与 shareRegionOnPage 的共同结果：加入成员后的完整 draft 与派生的成员名，供调用者落地后选中该成员。",
    "members": [
     {
@@ -364,7 +399,7 @@
    "name": "uf::workbench::SharedRegionSpec",
    "kind": "struct",
    "file": "entry/workbench/authoring-edit.hpp",
-   "line": 204,
+   "line": 254,
    "responsibility": "shareRegionOnPage 把一个交互区域复用到另一页的输入：新副本识别器 id、被复用的源识别器、目标页、以及副本在该页的搜索区。",
    "members": [
     {
@@ -393,7 +428,7 @@
    "name": "uf::workbench::RetemplatedRegion",
    "kind": "struct",
    "file": "entry/workbench/authoring-edit.hpp",
-   "line": 227,
+   "line": 282,
    "responsibility": "retemplateSharedRegion 的结果：移动模板矩形并带动共享组每个成员后的 draft，movedMembers 报告一起被移动了多少个成员。",
    "members": [
     {
@@ -413,7 +448,7 @@
    "name": "uf::workbench::ScreenClaimSpec",
    "kind": "struct",
    "file": "entry/workbench/authoring-edit.hpp",
-   "line": 248,
+   "line": 303,
    "responsibility": "claimScreenForPage 声明某截图解析到某页的输入。regressionId 只在需要新增回归用例时才被读取，重指已有屏时不用。",
    "members": [
     {
@@ -437,7 +472,7 @@
    "name": "uf::workbench::RetypedRecognizer",
    "kind": "struct",
    "file": "entry/workbench/authoring-edit.hpp",
-   "line": 274,
+   "line": 360,
    "responsibility": "一次识别器类型变更连同它顺带做的所有修复。授权是作者没主动要的权限、被清空的字段让转换有损，所以两者都不能悄悄发生，必须逐项报给调用者。",
    "members": [
     {
@@ -466,7 +501,7 @@
    "name": "uf::workbench::DeletedEntity",
    "kind": "struct",
    "file": "entry/workbench/authoring-edit.hpp",
-   "line": 303,
+   "line": 389,
    "responsibility": "一次删除连同它带走的东西。文档中每个实体都被别人引用，删一个总会改动邻居；计数让调用者说清还有什么随之移动，不适用的计数保持为零。",
    "members": [
     {
@@ -491,7 +526,7 @@
    "name": "uf::workbench::AuthoringEditHistory",
    "kind": "class",
    "file": "entry/workbench/authoring-edit.hpp",
-   "line": 342,
+   "line": 428,
    "responsibility": "document 的唯一真相与 undo/redo 历史。apply 先把 draft 重建成完整 document，再比较规范序列化：相同则不写历史；不同则把旧版本移入 undo、清空 redo、限制 100 条。undo/redo 整体移动 document value，故跨识别器/页面的引用始终作为同一版本恢复。",
    "members": [
     {
@@ -515,6 +550,10 @@
      "note": "单调版本位置，供 stale-commit 守卫"
     },
     {
+     "sig": "auto position() const -> uint64",
+     "note": "随 undo/redo 恢复的文档位置 identity，供 saved/dirty 比较"
+    },
+    {
      "sig": "auto undo() -> bool / auto redo() -> bool",
      "note": "整体移动完整 document value"
     },
@@ -523,7 +562,7 @@
      "note": "历史可否前进/后退"
     }
    ],
-   "lifetime": "拥有 m_current 与 undo/redo 两栈全部为 value；document() 返回 UF_LIFETIME_BOUND 引用，调用者不得当 owner。m_revision 不随 undo 回退，是历史在时间中的位置而非文档身份。",
+   "lifetime": "拥有 m_current 与 undo/redo Snapshot 两栈；Snapshot 把 document 与 position 一起移动。document() 返回 UF_LIFETIME_BOUND 引用。revision 单调前进做 stale-commit fence，position 随历史恢复做 saved identity。",
    "related": [
     "uf::workbench::AuthoringDraft",
     "uf::workbench::AppState"
@@ -533,7 +572,7 @@
    "name": "uf::workbench::authoring-draft-round-trip",
    "kind": "functions",
    "file": "entry/workbench/authoring-edit.hpp",
-   "line": 78,
+   "line": 95,
    "responsibility": "draft 与规范化 AuthoringDocument 之间的双向路径。它解释了为何 GUI 不做半成品编辑：一次 edit 要么得到完整有效 document，要么原版本不动。",
    "members": [
     {
@@ -584,24 +623,28 @@
    "name": "uf::workbench::shared-region-edits",
    "kind": "functions",
    "file": "entry/workbench/authoring-edit.hpp",
-   "line": 183,
-   "responsibility": "共享交互区域的编辑：一个元素画一次，复制到多页时每份是各自授权、各带搜索区的普通识别器，runtime 与生成的 manifest 从不知道「组」存在。shared 标记是把巧合变成陈述的东西。",
+   "line": 223,
+   "responsibility": "共享交互区域的编辑：v2 中一个 element 原生放置到多页，每个 placement 保存自己的 search ROI，不再复制 recognizer 或维护隐式副本组。shared 标记只表达作者希望复用的意图。",
    "members": [
     {
-     "sig": "sharedRegionMembers(AuthoringDraft const&, RecognizerId) -> vector<RecognizerId>",
-     "note": "同一共享元素的所有副本（同源同模板同类型且被标记）"
+     "sig": "pagesPlacedOn(AuthoringDraft const&, RecognizerId) -> vector<PageId>",
+     "note": "列出一个 element 的 placement 所在页，anchor 无 placement"
     },
     {
      "sig": "setRegionShared(AuthoringDraft, RecognizerId, bool) -> Result<AuthoringDraft>",
-     "note": "标记/取消复用意图，拒绝取消仍在多页的元素"
+     "note": "设置纯 authoring-time 复用意图，不改 placement"
     },
     {
-     "sig": "shareRegionOnPage(AuthoringDraft, SharedRegionSpec const&) -> Result<AddedPageMember>",
-     "note": "把一个交互区域复用到另一页"
+     "sig": "removePlacementFromPage(AuthoringDraft, RecognizerId, PageId) -> Result<AuthoringDraft>",
+     "note": "撤一页 placement；拒绝 anchor 与 interactive 的最后 placement"
     },
     {
-     "sig": "retemplateSharedRegion(AuthoringDraft, RecognizerId, PixelRect) -> Result<RetemplatedRegion>",
-     "note": "移动模板矩形并带动组内每个成员，各自搜索区若容不下则失败点名"
+     "sig": "shareRegionOnPage(AuthoringDraft, SharedRegionSpec const&) -> Result<SharedRegionPlacement>",
+     "note": "把同一个 element 以独立 search ROI 放到另一页"
+    },
+    {
+     "sig": "setElementTemplateRect(AuthoringDraft, RecognizerId, PixelRect) -> Result<RetemplatedRegion>",
+     "note": "改 element 唯一模板；所有 placement ROI 都必须继续容纳它"
     }
    ],
    "related": [
@@ -612,7 +655,7 @@
    "name": "uf::workbench::recognizer-retype-and-delete",
    "kind": "functions",
    "file": "entry/workbench/authoring-edit.hpp",
-   "line": 292,
+   "line": 379,
    "responsibility": "改类型与删除这类会牵动邻居的编辑。retype 在同一 draft 里修复 catalog 与类型绑定的每个字段（单字段逐个改永远无法成功）；delete 系列会撤下引用并拒绝会让某页无锚点/某目标无授权页的删除。",
    "members": [
     {
@@ -638,10 +681,117 @@
    ]
   },
   {
+   "name": "uf::workbench::DuplicateElementSpec",
+   "kind": "struct",
+   "file": "entry/workbench/authoring-edit.hpp",
+   "line": 188,
+   "responsibility": "duplicateElement 的输入：指定被复制 element 与调用方铸造的新 identity。",
+   "members": [
+    {
+     "sig": "annotation::RecognizerId sourceElementId",
+     "note": "源 element。"
+    },
+    {
+     "sig": "annotation::RecognizerId newElementId",
+     "note": "独立副本的新 ID。"
+    }
+   ],
+   "related": [
+    "uf::workbench::DuplicatedElement"
+   ]
+  },
+  {
+   "name": "uf::workbench::DuplicatedElement",
+   "kind": "struct",
+   "file": "entry/workbench/authoring-edit.hpp",
+   "line": 194,
+   "responsibility": "独立复制一个 element 的结果；副本继承原 placement 集但拥有新 ID 与唯一派生名。",
+   "members": [
+    {
+     "sig": "AuthoringDraft draft",
+     "note": "复制后的完整 draft。"
+    },
+    {
+     "sig": "std::string name",
+     "note": "副本的唯一派生名。"
+    }
+   ],
+   "related": [
+    "uf::workbench::DuplicateElementSpec",
+    "uf::workbench::AuthoringDraft"
+   ]
+  },
+  {
+   "name": "uf::workbench::SharedRegionPlacement",
+   "kind": "struct",
+   "file": "entry/workbench/authoring-edit.hpp",
+   "line": 261,
+   "responsibility": "把同一个 interactive element 放到另一页后的结果，返回完整 draft 与 element 名；不会铸造 recognizer 副本。",
+   "members": [
+    {
+     "sig": "AuthoringDraft draft",
+     "note": "新增 placement 后的完整 draft。"
+    },
+    {
+     "sig": "std::string name",
+     "note": "被复用 element 的名字。"
+    }
+   ],
+   "related": [
+    "uf::workbench::SharedRegionSpec",
+    "uf::workbench::EditablePlacement"
+   ]
+  },
+  {
+   "name": "uf::workbench::PagelessExpectation",
+   "kind": "enum",
+   "file": "entry/workbench/authoring-edit.hpp",
+   "line": 330,
+   "responsibility": "不命名页面的两类 screen regression 期望；resolved claim 仍由 page-scoped EditPage 处理。",
+   "members": [
+    {
+     "sig": "Unknown",
+     "note": "期望不解析到任何页面。"
+    },
+    {
+     "sig": "Ambiguous",
+     "note": "允许多个页面竞争。"
+    }
+   ],
+   "related": [
+    "uf::workbench::ScreenExpectationSpec"
+   ]
+  },
+  {
+   "name": "uf::workbench::ScreenExpectationSpec",
+   "kind": "struct",
+   "file": "entry/workbench/authoring-edit.hpp",
+   "line": 336,
+   "responsibility": "recordScreenExpectation 的输入，把一张 screen 绑定到 Unknown 或 Ambiguous 期望；已有 case 会被改写而非重复添加。",
+   "members": [
+    {
+     "sig": "annotation::RegressionId regressionId",
+     "note": "需要新增 case 时使用的 ID。"
+    },
+    {
+     "sig": "annotation::SourceId sourceId",
+     "note": "被分类 screen。"
+    },
+    {
+     "sig": "PagelessExpectation expectation",
+     "note": "无页期望。"
+    }
+   ],
+   "related": [
+    "uf::workbench::PagelessExpectation",
+    "uf::workbench::EditableRegression"
+   ]
+  },
+  {
    "name": "uf::workbench::CanvasView",
    "kind": "struct",
-   "file": "entry/workbench/app/workbench-app.hpp",
-   "line": 34,
+   "file": "entry/workbench/workbench-app.hpp",
+   "line": 35,
    "responsibility": "canvas 视口状态：zoom 是 screen-per-source 像素缩放，pan 是映射到画布原点的源图左上像素。纯 view state，从不进入文档。",
    "members": [
     {
@@ -657,9 +807,9 @@
   {
    "name": "uf::workbench::AppState",
    "kind": "class",
-   "file": "entry/workbench/app/workbench-app.hpp",
-   "line": 51,
-   "responsibility": "窗口背后完整、平台无关的编辑状态。history 是「哪些源存在」的唯一真相；asset cache 按 SourceId 索引、不随 undo 回滚、组装 compiler 输入时被过滤到文档。每次文档变更都经 applyEdit，GUI 层只读与调方法、从不直接碰历史。",
+   "file": "entry/workbench/workbench-app.hpp",
+   "line": 52,
+   "responsibility": "窗口背后完整、平台无关的编辑状态。history 是文档唯一真相，asset cache 不随 undo 回滚；typed Selection、canvas view、preview/model-check 与 saved position 都集中在这里。每次文档变更都经 applyEdit。",
    "members": [
     {
      "sig": "static createEmpty(path) -> Result<AppState>",
@@ -686,6 +836,10 @@
      "note": "整个 cache（含 orphan），仅供按 id 查找"
     },
     {
+     "sig": "auto selection() const UF_LIFETIME_BOUND -> Selection const&",
+     "note": "Screen/Page/Element 三选一的 typed selection。"
+    },
+    {
      "sig": "auto revision() const -> uint64",
      "note": "编辑历史位置，盖在 EditPage 上做 stale-commit 守卫"
     },
@@ -695,18 +849,18 @@
     },
     {
      "sig": "auto markSaved() -> void",
-     "note": "清 dirty 并 prune 不可达 orphan"
+     "note": "记录当前 history position 为 saved，并 prune 不可达 orphan"
     },
     {
-     "sig": "auto setSelected.../setCanvasView/setLastPreview...",
-     "note": "transient UI state 写入"
+     "sig": "auto select(Selection selection) noexcept -> void",
+     "note": "typed selection 的唯一写入口。"
     },
     {
      "sig": "auto undo()/redo() -> bool",
      "note": "移动文档并 reconcile selection、清 stale preview"
     }
    ],
-   "lifetime": "history/asset bytes/preview 结果均按 value 拥有。cache 故意不随 undo 回滚——撤销 import 后 PNG 成 harmless orphan，redo 可复用；成功 save 后 markSaved 才 prune。返回引用/span 的 accessor 标 UF_LIFETIME_BOUND。",
+   "lifetime": "history/asset bytes/selection/preview 结果均按 value 拥有。cache 不随 undo 回滚；成功 save 后 markSaved 才 prune。dirty 由 history.position() 与 saved position 比较，故 undo 回已保存位置会重新变 clean。返回引用/span 的 accessor 标 UF_LIFETIME_BOUND。",
    "related": [
     "uf::workbench::AuthoringEditHistory",
     "uf::workbench::IngestedSource",
@@ -717,7 +871,7 @@
   {
    "name": "uf::workbench::mintResourceId",
    "kind": "functions",
-   "file": "entry/workbench/app/workbench-app.hpp",
+   "file": "entry/workbench/workbench-app.hpp",
    "line": 29,
    "responsibility": "为新 authoring 资源铸造 RFC 4122 v4 UUID：122 随机位加 version/variant nibble。只有 authoring 铸造 id，故 std::random_device 足够；随机性只决定新资源身份，不进入 runtime matching。",
    "members": [
@@ -831,7 +985,7 @@
    "name": "uf::workbench::ScreenCheckOutcome",
    "kind": "enum",
    "file": "entry/workbench/preview.hpp",
-   "line": 113,
+   "line": 152,
    "responsibility": "一张截图对照它被声称代表的页面解析出的结果。Unclaimed 与 Stopped 不是失败判决——它们表示检查无话可说，报成失败会误导作者。",
    "members": [
     {
@@ -856,7 +1010,7 @@
    "name": "uf::workbench::ScreenCheck",
    "kind": "struct",
    "file": "entry/workbench/preview.hpp",
-   "line": 125,
+   "line": 164,
    "responsibility": "whole-model check 中一张截图的行：它解析到什么、被记录为什么、以及这两者中哪个是最终 outcome。",
    "members": [
     {
@@ -880,7 +1034,7 @@
    "name": "uf::workbench::RecognizerMargin",
    "kind": "struct",
    "file": "entry/workbench/preview.hpp",
-   "line": 143,
+   "line": 182,
    "responsibility": "一个识别器在自己所属屏幕与最接近的另一屏上的相似度分数。以对共享预算的原始分数（非比率）报告，因为 maximumSad 只依赖模板与阈值、不依赖屏幕，故两屏分数直接可比。间距是最值得盯的数字。",
    "members": [
     {
@@ -905,7 +1059,7 @@
    "name": "uf::workbench::LiveScreenCheck",
    "kind": "struct",
    "file": "entry/workbench/preview.hpp",
-   "line": 171,
+   "line": 291,
    "responsibility": "运行目标当前屏幕的检查。实时帧不带记录期望（作者正看着它），故只报页面如何分类，不附对错判决。",
    "members": [
     {
@@ -926,7 +1080,7 @@
    "name": "uf::workbench::ModelCheck",
    "kind": "struct",
    "file": "entry/workbench/preview.hpp",
-   "line": 178,
+   "line": 298,
    "responsibility": "一次全模型检查的完整结果：每屏解析情况、每识别器间距、以及可选的实时帧检查。作者无法用肉眼做这件事——一个标记总以零分匹配它裁自的图，唯一证据是它在别屏上的分数。",
    "members": [
     {
@@ -1059,8 +1213,8 @@
   {
    "name": "uf::workbench::RectGripKind",
    "kind": "enum",
-   "file": "entry/workbench/app/canvas-math.hpp",
-   "line": 17,
+   "file": "entry/workbench/canvas-math.hpp",
+   "line": 20,
    "responsibility": "一次 canvas 手势操纵矩形的哪一部分：八个 resize grip 之一或 Move 整体平移。此枚举被 hit-test 与释放后应用的编辑共用。",
    "members": [
     {
@@ -1076,8 +1230,8 @@
   {
    "name": "uf::workbench::CanvasPoint",
    "kind": "struct",
-   "file": "entry/workbench/app/canvas-math.hpp",
-   "line": 32,
+   "file": "entry/workbench/canvas-math.hpp",
+   "line": 35,
    "responsibility": "canvas 自身屏幕空间中的一点，作为单一值返回而非写两个 out 参数。",
    "members": [
     {
@@ -1089,8 +1243,8 @@
   {
    "name": "uf::workbench::canvas-math",
    "kind": "functions",
-   "file": "entry/workbench/app/canvas-math.hpp",
-   "line": 41,
+   "file": "entry/workbench/canvas-math.hpp",
+   "line": 45,
    "responsibility": "canvas 视口的纯几何变换与手势数学：源↔屏正逆映射、保持锚点的缩放、按缩放折算的平移、grip 命中测试、以及把 grip 拖拽夹在源范围内（最小 1 像素）的矩形编辑。全为纯函数，供 test-canvas-math 直接验证。",
    "members": [
     {
@@ -1128,12 +1282,16 @@
    "name": "uf::workbench::WorkbenchServices",
    "kind": "struct",
    "file": "entry/workbench/app/panels.hpp",
-   "line": 31,
-   "responsibility": "panel 要用但自己做不了的平台操作：上传源图到 GPU 纹理、开系统文件选择器、从绑定目标捕获帧、追加操作日志。每个都是 call-scoped 回调，由 shell 接到平台 helper，使 panel 不碰 Win32/D3D/WGC。回调只在一次 draw 中借用、从不保存。",
+   "line": 32,
+   "responsibility": "panel 要用但自己做不了的平台操作：上传/裁剪 GPU 纹理、开系统文件选择器、捕获目标帧、追加操作日志。每个都是 call-scoped 回调，由 shell 接到平台 helper，使 panel 不碰 Win32/D3D/WGC。",
    "members": [
     {
      "sig": "std::function<Result<GpuSourceTexture>(AuthoringSourceAsset const&)> textureFor",
      "note": "上传源图到 GPU 纹理"
+    },
+    {
+     "sig": "std::function<void(std::span<annotation::AuthoringSource const>)> pruneTextures",
+     "note": "edit/import 后释放已不在 live document 中的 GPU views"
     },
     {
      "sig": "std::function<Result<optional<path>>()> pickPngToImport",
@@ -1144,11 +1302,11 @@
      "note": "从标题匹配的目标捕获帧"
     },
     {
-     "sig": "std::function<void(string_view)> appendLog",
-     "note": "可选：追加时间戳日志行"
+     "sig": "std::function<void(LogSeverity, std::string_view, std::string_view)> appendLog",
+     "note": "可选：按 severity、timestamp、message 追加操作日志"
     }
    ],
-   "lifetime": "四个 std::function 回调只在单次 drawWorkbench 期间借用有效，panel 不得跨帧保存；main.cpp 的 reference capture 靠 GuiShell::run 的同步协议成立。",
+   "lifetime": "五个 std::function 回调只在单次 drawWorkbench 期间借用有效，panel 不得跨帧保存；main.cpp 的 reference capture 靠 GuiShell::run 的同步协议成立。",
    "related": [
     "uf::workbench::platform::GpuSourceTexture",
     "uf::workbench::IngestedSource"
@@ -1158,7 +1316,7 @@
    "name": "uf::workbench::drawWorkbench",
    "kind": "functions",
    "file": "entry/workbench/app/panels.hpp",
-   "line": 61,
+   "line": 71,
    "responsibility": "一帧内绘制整个工作台（sources/canvas/properties/actions 四个即时模式面板）。通过 AppState 读写会话、只经 services 触及平台、把 widget 状态留在 ui。是三层组合的唯一 GUI 入口。",
    "members": [
     {
@@ -1274,7 +1432,7 @@
    "name": "uf::workbench::InteractiveRegion",
    "kind": "class",
    "file": "entry/workbench/edit-page.hpp",
-   "line": 197,
+   "line": 229,
    "responsibility": "对被编辑页某个交互区域的活借用 handle。持有其 EditPage 与成员 id，每次调用都按 id 重解析，故经另一 handle 做的结构性编辑不会让它指向已释放存储。不可拷贝不可移动：只作为发起它的那次 draw 内的局部存在。",
    "members": [
     {
@@ -1320,7 +1478,7 @@
    "name": "uf::workbench::PageAnchor",
    "kind": "class",
    "file": "entry/workbench/edit-page.hpp",
-   "line": 249,
+   "line": 281,
    "responsibility": "签名成员的对称 handle：识别（或必须不识别）此页的锚点。与 InteractiveRegion 同样的借用契约——non-copyable/non-movable、每次按 id 解析、只由 EditPage 铸造。",
    "members": [
     {
@@ -1395,7 +1553,7 @@
    "name": "uf::workbench::PanelUiState",
    "kind": "struct",
    "file": "entry/workbench/panel-state.hpp",
-   "line": 28,
+   "line": 83,
    "responsibility": "panel 自己的跨帧 widget 状态，由 entry point 拥有并每帧传回。它持有即时模式控件写入的文本缓冲、进行中的 canvas 拖拽、以及停放的单帧 edit，这些都不属于平台无关的 AppState。此处无任何 ImGui 类型，这正是让 panel 请求的动作能住在可被 test-workbench 直链的 authoring-actions/model-check-view 里的原因。",
    "members": [
     {
@@ -1519,10 +1677,206 @@
    ]
   },
   {
+   "name": "uf::workbench::PlacementContext",
+   "kind": "struct",
+   "file": "entry/workbench/authoring-actions.hpp",
+   "line": 184,
+   "responsibility": "canvas 编辑一个 interactive region 时解析出的 page placement 上下文，决定 search-ROI 修改写到哪一页。",
+   "members": [
+    {
+     "sig": "annotation::PageId page",
+     "note": "placement 所属页。"
+    },
+    {
+     "sig": "PixelRect searchRoi",
+     "note": "该页的独立搜索区域。"
+    }
+   ]
+  },
+  {
+   "name": "uf::workbench::ScreenPixelRect",
+   "kind": "struct",
+   "file": "entry/workbench/canvas-math.hpp",
+   "line": 125,
+   "responsibility": "source rect 映射并取整后的设备像素边界，使 fractional zoom 下的 overlay 保持清晰。",
+   "members": [
+    {
+     "sig": "float left",
+     "note": "左边界。"
+    },
+    {
+     "sig": "float top",
+     "note": "上边界。"
+    },
+    {
+     "sig": "float right",
+     "note": "右边界。"
+    },
+    {
+     "sig": "float bottom",
+     "note": "下边界。"
+    }
+   ]
+  },
+  {
+   "name": "uf::workbench::LogSeverity",
+   "kind": "enum",
+   "file": "entry/workbench/panel-state.hpp",
+   "line": 28,
+   "responsibility": "操作日志的显式严重度，供 panel report、内存 Log window 与磁盘 writer 共用。",
+   "members": [
+    {
+     "sig": "Info",
+     "note": "普通成功。"
+    },
+    {
+     "sig": "Warning",
+     "note": "已落地但需关注。"
+    },
+    {
+     "sig": "Error",
+     "note": "拒绝或失败。"
+    }
+   ]
+  },
+  {
+   "name": "uf::workbench::ToolbarCommand",
+   "kind": "enum",
+   "file": "entry/workbench/panel-state.hpp",
+   "line": 42,
+   "responsibility": "必须等同帧 parked edit 落地后再执行的状态修改命令。",
+   "members": [
+    {
+     "sig": "SaveAndGenerate",
+     "note": "保存并生成。"
+    },
+    {
+     "sig": "Undo",
+     "note": "撤销。"
+    },
+    {
+     "sig": "Redo",
+     "note": "重做。"
+    }
+   ]
+  },
+  {
+   "name": "uf::workbench::ModelCellOutcome",
+   "kind": "enum",
+   "file": "entry/workbench/preview.hpp",
+   "line": 211,
+   "responsibility": "marks×screens 网格中一个 element/screen 组合的搜索结果。",
+   "members": [
+    {
+     "sig": "Hit",
+     "note": "搜索命中。"
+    },
+    {
+     "sig": "Miss",
+     "note": "完整搜索未命中。"
+    },
+    {
+     "sig": "Stopped",
+     "note": "预算或 deadline 中止。"
+    },
+    {
+     "sig": "NotSearchedHere",
+     "note": "该页不放置此 element。"
+    }
+   ]
+  },
+  {
+   "name": "uf::workbench::ModelCheckCell",
+   "kind": "struct",
+   "file": "entry/workbench/preview.hpp",
+   "line": 230,
+   "responsibility": "一个 element 在一个 captured screen 上的完整检查单元，保留结果、分数、期望命中与停止原因。",
+   "members": [
+    {
+     "sig": "annotation::RecognizerId elementId",
+     "note": "element 行 identity。"
+    },
+    {
+     "sig": "annotation::SourceId screenId",
+     "note": "screen 列 identity。"
+    },
+    {
+     "sig": "ModelCellOutcome outcome",
+     "note": "搜索结果。"
+    },
+    {
+     "sig": "std::optional<uint64> sadScore",
+     "note": "Hit/Miss 的测量分数。"
+    },
+    {
+     "sig": "uint64 maximumSad",
+     "note": "阈值预算。"
+    },
+    {
+     "sig": "bool expectedHit",
+     "note": "文档是否要求在该 screen 命中。"
+    },
+    {
+     "sig": "std::optional<SadSearchStopReason> stopReason",
+     "note": "Stopped 的原因。"
+    }
+   ]
+  },
+  {
+   "name": "uf::workbench::ModelCellColor",
+   "kind": "enum",
+   "file": "entry/workbench/preview.hpp",
+   "line": 256,
+   "responsibility": "由纯 classifyModelCell 决定的网格色带，把正确、薄边界、误配与未搜索从 ImGui 中抽离。",
+   "members": [
+    {
+     "sig": "Expected",
+     "note": "正确且裕量充足。"
+    },
+    {
+     "sig": "Thin",
+     "note": "停止或离阈值过近。"
+    },
+    {
+     "sig": "Misfire",
+     "note": "实际结果违反 expectedHit。"
+    },
+    {
+     "sig": "NotSearched",
+     "note": "显式未搜索。"
+    }
+   ]
+  },
+  {
+   "name": "uf::workbench::ScreenBucket",
+   "kind": "enum",
+   "file": "entry/workbench/project-tree.hpp",
+   "line": 23,
+   "responsibility": "project tree 按 regression expectation 对 captured screens 的分类。",
+   "members": [
+    {
+     "sig": "NeedsClassification",
+     "note": "尚无 regression case。"
+    },
+    {
+     "sig": "ExpectedUnknown",
+     "note": "期望 Unknown。"
+    },
+    {
+     "sig": "ExpectedAmbiguous",
+     "note": "期望 Ambiguous。"
+    },
+    {
+     "sig": "Resolved",
+     "note": "case 指向具体页面。"
+    }
+   ]
+  },
+  {
    "name": "uf::workbench::platform::GpuSourceTexture",
    "kind": "struct",
    "file": "entry/workbench/platform/windows-texture-cache.hpp",
-   "line": 18,
+   "line": 20,
    "responsibility": "canvas 可绘制的 GPU 常驻源图。handle 是底层 D3D shader-resource view 被重解释成的 opaque 整数，caller 作为 ImTextureID 传给 ImGui；D3D 类型从不跨此边界。handle 在 cache 生命期内有效。",
    "members": [
     {
@@ -1539,7 +1893,7 @@
    "name": "uf::workbench::platform::TextureCache",
    "kind": "class",
    "file": "entry/workbench/platform/windows-texture-cache.hpp",
-   "line": 29,
+   "line": 31,
    "responsibility": "按需把工作台源图解码上传成 D3D11 纹理并各自保留，使一张源图至多解码上传一次。持有创建每个 view 所用 device 的一份 share；所有 D3D 状态藏在此边界之后的实现里。",
    "members": [
     {
@@ -1549,6 +1903,10 @@
     {
      "sig": "auto textureFor(AuthoringSourceAsset const&) -> Result<GpuSourceTexture>",
      "note": "首次请求时上传、之后返回缓存 view；解码或上传失败才 fail"
+    },
+    {
+     "sig": "auto pruneTo(std::span<annotation::AuthoringSource const> sources) -> void",
+     "note": "释放 SourceId 已不属于 live document 的 cached views"
     }
    ],
    "lifetime": "move-only（unique_ptr PIMPL）。持有 D3D device 与 SRV 的 owning COM 引用；GpuSourceTexture 只是 cache 生命期内有效的 opaque handle，caller 须保 device 活得不短于 cache。",
@@ -1682,13 +2040,13 @@
     },
     {
      "text": "AppState::addIngestedSource 经编辑历史追加 immutable 记录、保留 PNG 资产，首张源图定项目 fingerprint",
-     "file": "entry/workbench/app/workbench-app.hpp",
-     "line": 156
+     "file": "entry/workbench/workbench-app.hpp",
+     "line": 255
     },
     {
      "text": "作者的每次编辑经 applyEdit / EditPage::commit 停放为 draft，applyPendingEdit 每帧重建成完整 document 并写入 AuthoringEditHistory",
-     "file": "entry/workbench/authoring-edit.hpp",
-     "line": 375
+     "file": "entry/workbench/authoring-actions.hpp",
+     "line": 101
     },
     {
      "text": "saveAndGenerateAuthoringProject 先 compile 校验，再按序发布：内容寻址源 PNG → 模板 PNG → annotations.toml → runtime manifest（最后作为 commit point）",
@@ -1702,13 +2060,13 @@
    "steps": [
     {
      "text": "要求选中的 SourceId 存在，取 compilerSourceAssets（过滤 orphan、按文档顺序）",
-     "file": "entry/workbench/app/workbench-app.hpp",
-     "line": 115
+     "file": "entry/workbench/workbench-app.hpp",
+     "line": 200
     },
     {
      "text": "对当前文档与源资产调用 compileAuthoringDocument，得到模板 PNG 与 runtime 输入",
      "file": "entry/workbench/preview.hpp",
-     "line": 84
+     "line": 123
     },
     {
      "text": "组装 EncodedRuntimeTemplate 并 RecognitionRuntime::create",
@@ -1723,7 +2081,7 @@
     {
      "text": "把结果摊平成 PreviewAnchorRow / PreviewStop 存进 AppState::setLastPreview，stop 不压成 hit=false，结果不进文档或动作交付",
      "file": "entry/workbench/preview.hpp",
-     "line": 60
+     "line": 61
     }
    ]
   }

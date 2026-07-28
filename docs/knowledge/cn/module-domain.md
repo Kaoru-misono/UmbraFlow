@@ -16,7 +16,7 @@
 
 `domain` 不负责以下工作：
 
-- 不产生 `SessionId` 或 `FrameId`。`SessionId` 由组合根提供，当前 CLI 在 `entry/cli/run-windows.cpp` 构造；`FrameId` 的逐捕获分配由 `modules/controller/source/controller/detail/capture-wgc.hpp` 的 `FrameIdCounter` 完成。
+- 不产生 `CaptureSessionId` 或 `FrameId`。`CaptureSessionId` 由组合根提供，当前 CLI 在 `entry/cli/run-windows.cpp` 构造；`FrameId` 的逐捕获分配由 `modules/controller/source/controller/detail/capture-wgc.hpp` 的 `FrameIdCounter` 完成。
 - 不判断何时目标窗口已换代。`modules/controller/source/controller/target.cpp` 的 `ResolvedTarget` 根据进程实例、窗口句柄、client size 和连续性推进 `TargetGeneration`。
 - 不解释检测标签是否能触发动作。`Detection` 只是带同帧身份的几何证据；`modules/annotation/source/annotation/authorization.cpp` 的 `ActionDetection` 和 `authorizeCoordinateAction` 才绑定 catalog、recognizer、page 与 live fingerprint。
 - 不执行模板匹配、裁图、PNG 编解码、trace 或重试。相应策略分别属于 `vision`、`image`、`engine` 或调用者。
@@ -88,7 +88,7 @@
 
 ### Frame 身份与像素所有权
 
-`modules/domain/source/domain/ids.hpp` 用 `StrongId<Tag>` 定义 `EngineRunId`、`TaskRunId`、`SessionId`、`FrameId`、`StateId`、`RecognitionId` 和 `ActionId`。相同的 `uint64` 数值不能在这些类型之间隐式转换，因此日志里“17”相同不等于语义身份相同。
+`modules/domain/source/domain/ids.hpp` 用 `StrongId<Tag>` 定义 `EngineRunId`、`TaskRunId`、`CaptureSessionId`、`FrameId`、`StateId`、`RecognitionId` 和 `ActionId`。相同的 `uint64` 数值不能在这些类型之间隐式转换，因此日志里“17”相同不等于语义身份相同。
 
 `TargetGeneration` 包装 `core::Generation`。默认值与 `initial()` 相同；`fromValue` 主要用于恢复或测试；`next()` 在 `uint64` 顶点返回 `InternalInvariant`，绝不回绕后重新接受陈旧证据。
 
@@ -96,9 +96,9 @@ D0 的双计数器含义由 `docs/plans/2026-07-21-lua-task-model-grill-decision
 
 - `FrameId` 是高频 liveness 维度。当前 WGC `FrameIdCounter::nextId` 在每次成功组装 frame 前分配递增 ID，计数器溢出即失败。
 - `TargetGeneration` 是低频 safety 维度。`ResolvedTarget` 在进程实例变化、handle/client size 变化、丢失连续性或显式 re-resolve 时推进它；同一目标的无变化 revalidation 不推进。
-- `SessionId` 再隔离捕获会话，避免新 session 从低 `FrameId` 重新计数时与旧证据碰撞。
+- `CaptureSessionId` 再隔离捕获会话，避免新 session 从低 `FrameId` 重新计数时与旧证据碰撞。
 
-frame identity 由 `(SessionId, TargetGeneration, FrameId)` 三元组组成。`Frame`、
+frame identity 由 `(CaptureSessionId, TargetGeneration, FrameId)` 三元组组成。`Frame`、
 `Detection`、`ObservationLease`，以及 annotation 的 `FrameIdentity` 都携带或导出
 这一组值。
 
@@ -119,9 +119,12 @@ Windows capture 在 `modules/controller/source/controller/platform/windows-captu
 
 ### `Detection` 与 `ObservationLease`
 
-`Detection` 是不可变值载体：保存 `SessionId`、`TargetGeneration`、`FrameId`、`Label`、`Rect<FrameSpace>` 和 `confidence`。构造器不校验 rect 或 confidence；可信动作还必须经过 annotation 的 recognizer/page 授权，不能只凭 label。
+`Detection` 是不可变值载体：保存 `CaptureSessionId`、`TargetGeneration`、`FrameId`、`Label`、`Rect<FrameSpace>` 和 `confidence`。构造器不校验 rect 或 confidence；可信动作还必须经过 annotation 的 recognizer/page 授权，不能只凭 label。
 
-`Label::create` 保证字符串是合法 UTF-8，但允许空字符串；`value()` 返回受 owner 生命周期约束的 const reference，`Detection::label()` 则按值返回副本。
+`Label::create` 保证字符串是合法 UTF-8，但允许空字符串；`value()` 返回受 owner
+生命周期约束的 const reference。根据
+[2026-07-28 review follow-up](../../plans/2026-07-28-full-project-review-fixes.md)，
+`Detection::label()` 同样返回 lifetime-bound `Label const&`，不会按值复制 label。
 
 `ObservationLease` 的构造器私有，只能用 `forFrame` 从真实 `Frame` 派生。它复制 frame 三元身份，并计算 `expiresAt = capturedAt + effectiveAge`。
 
@@ -150,30 +153,30 @@ Windows capture 在 `modules/controller/source/controller/platform/windows-captu
 
 **Fail-closed。** 非有限几何、空/越界区域、整数溢出、transform/frame 尺寸不一致、陈旧身份、过期 lease 和未知错误分类都返回结构化失败；转换函数不会自动裁出一个“看起来能用”的动作目标。矩形边界的 epsilon 只吸收浮点噪声，最终仍 clamp 到真实 extent。
 
-**身份一致性。** 同一次识别到动作授权必须维持 `(SessionId, TargetGeneration, FrameId)`。`modules/annotation/source/annotation/authorization.cpp` 比较 resolved page、action detection 和 delivery state 的 `FrameIdentity`，然后调用 `ObservationLease::validate`。这让“来自同标签但不同帧”的 detection 无法授权。
+**身份一致性。** 同一次识别到动作授权必须维持 `(CaptureSessionId, TargetGeneration, FrameId)`。`modules/annotation/source/annotation/authorization.cpp` 比较 resolved page、action detection 和 delivery state 的 `FrameIdentity`，然后调用 `ObservationLease::validate`。这让“来自同标签但不同帧”的 detection 无法授权。
 
 **D0/D1 的当前实现层次。** `modules/engine/source/engine/session.cpp` 的 `Observation` 是 move-only；move source 与成功 click 后的 handle 都被标记 invalidated，再使用返回 `StaleObservation`。成功投递后先置 invalidated，再发送可能失败的 trace，避免 trace 失败诱发重复 click。
 
-**D0 权威与现状必须区分。** `docs/plans/2026-07-21-lua-task-model-grill-decisions.md` 要求注入层同时重检 `FrameId` 与 `TargetGeneration`。当前 Controller 的 `checkPointerPreconditions` 实际重检 `SessionId`、lease age、`TargetGeneration` 和 client point，却没有“当前 `FrameId`”参数；`FrameId` 现由 annotation/engine 的同帧比较与 `Observation` 单次消费约束。维护者不应把注释中的“delivery layer re-runs frameId fence”当成已经由 Controller 独立实现。
+**D0 权威与现状必须区分。** `docs/plans/2026-07-21-lua-task-model-grill-decisions.md` 要求注入层同时重检 `FrameId` 与 `TargetGeneration`。当前 Controller 的 `checkPointerPreconditions` 实际重检 `CaptureSessionId`、lease age、`TargetGeneration` 和 client point，却没有“当前 `FrameId`”参数；`FrameId` 现由 annotation/engine 的同帧比较与 `Observation` 单次消费约束。维护者不应把注释中的“delivery layer re-runs frameId fence”当成已经由 Controller 独立实现。
 
 **确定性优先，时间只作保险丝。** 身份相等是主要判据，纯坐标变换、整数边界和恢复映射对相同输入给出相同输出。单调时间只用于 `max_action_frame_age`，处理游戏自身改变界面但 generation 未变化的漏网情况；超时只向拒绝方向影响结果。
 
 **所有权与生命周期可见。** `Frame` 用 `shared_ptr<const FrameBuffer>` 共享大像素数据，`bytes()` 的 span 明确依赖 `FrameBuffer` owner。`Detection`、lease、transform 和 ID 都按值携带。`domain` 不保存 raw pointer、callback 或异步 borrow。
 
-**Strict-background 是跨模块不变量。** `domain` 只提供 `Point<ClientSpace>`、lease 和错误语义；`engine::ActionSink` 要求适配器把 lease 传到 delivery layer，Controller 最终使用 `PostMessageW`。`SetForegroundWindow`、`SetFocus`、`SendInput`、`mouse_event`、`keybd_event`、`SetCursorPos` 被列为 forbidden。任何 domain 扩展都不能以“坐标不够表达”为理由降级到前台或全局输入。
+**Strict-background 是跨模块不变量。** `domain` 只提供 `Point<ClientSpace>`、lease 和错误语义；`engine::IActionSink` 要求适配器把 lease 传到 delivery layer，Controller 最终使用 `PostMessageW`。`SetForegroundWindow`、`SetFocus`、`SendInput`、`mouse_event`、`keybd_event`、`SetCursorPos` 被列为 forbidden。任何 domain 扩展都不能以“坐标不够表达”为理由降级到前台或全局输入。
 
 ## 被哪些模块使用
 
 典型数据流如下：
 
-1. `controller` 解析窗口与 client geometry，维护 `SessionId`/`TargetGeneration`，捕获像素并为每帧分配 `FrameId`。
+1. `controller` 解析窗口与 client geometry，维护 `CaptureSessionId`/`TargetGeneration`，捕获像素并为每帧分配 `FrameId`。
 2. `CoordinateTransform::create` 把 desktop client origin、client extent 与 frame extent 固化在同一个 `Frame` 中。
 3. `Frame::create` 验证 buffer geometry、transform 尺寸和 immutable pixel owner。
 4. `engine::EngineSession::observe` 先 revalidate target，再 capture，并从 frame 创建 `ObservationLease`。
 5. `annotation::RecognitionRuntime`/`vision` 在 frame 像素上产生整数 `PixelRect` 证据；engine 通过 `pixelRectToFrameRect` 创建同帧 `Detection`。
 6. annotation 把 detection 绑定到 `action_target` recognizer，并证明 page、project、fingerprint、三元身份和 lease 一致。
 7. engine 把整数 click pixel 经 `pixelPointToFramePoint` 和 frame 的 `frameToClient` 转成 `Point<ClientSpace>`。
-8. `engine::ActionSink::click` 把 client point 与原 lease 一并交给 Controller；Controller 重检目标 generation、session、年龄、窗口存活与 client bounds，再由 `PostMessageW` 后台投递。
+8. `engine::IActionSink::click` 把 client point 与原 lease 一并交给 Controller；Controller 重检目标 generation、session、年龄、窗口存活与 client bounds，再由 `PostMessageW` 后台投递。
 9. 成功后 engine 使 `Observation` 失效，下一动作必须重新 observe。
 
 入站边主要是 `core`：`Result`/`Status`、checked arithmetic/cast、`StrongId`/`Generation`、enum reflection、`MonotonicInstant` 和 release-safe contracts。`domain` 把这些通用机制组合成自动化语义，但不把 UmbraFlow 策略下沉到 `core`。
@@ -206,7 +209,7 @@ Windows capture 在 `modules/controller/source/controller/platform/windows-captu
 - `tests/controller/test-capture-wgc.cpp` 固定 session 内 `FrameId` 单调和 overflow 拒绝，并验证 capture geometry 创建 transform。
 - `tests/controller/test-target.cpp` 固定何种窗口身份变化恰好推进一次 `TargetGeneration`。
 - `tests/controller/test-input-revalidation.cpp` 固定 session/generation/age fencing、client bounds 和 signed-16-bit message 坐标限制；它也反映当前没有 current `FrameId` 入参。
-- `tests/controller/test-input-guard.cpp` 固定 strict-background forbidden API 集合与投递 audit。
+- `tests/controller/test-audit-log.cpp` 固定 strict-background forbidden API 集合与投递 audit。
 - `tests/annotation/test-authorization.cpp` 固定 same-frame page/detection/lease/fingerprint、recognizer identity 和 allowed-page 授权。
 - `tests/engine/test-session.cpp` 固定 observe-to-click 数据流、lease 原样传递、动作后失效、moved-from/foreign observation 拒绝、delivery-edge target revalidation，以及 trace 失败不能使动作可重放。
 
@@ -224,7 +227,7 @@ Windows capture 在 `modules/controller/source/controller/platform/windows-captu
 `docs/plans/2026-07-21-lua-task-model-grill-decisions.md`，Controller delivery
 还需要获得可比较的 current `FrameId`，才能在最终投递点独立验证 lease
 的双计数器，而不是只依赖 engine 的单次消费。实现时需要同时调整
-`ActionSink`、Controller delivery contract 和相应测试，不能只改注释。
+`IActionSink`、Controller delivery contract 和相应测试，不能只改注释。
 
 **新错误 kind。** 在 `AutomationErrorKind` 增项时，应同步 enum reflection、`failureResponse` 穷尽映射、trace/脚本边界和 `tests/domain/test-error.cpp` 的完整 case 表。是否 retry 是控制流政策，不能从错误名字临时猜测。
 

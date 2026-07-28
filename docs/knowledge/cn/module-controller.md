@@ -37,7 +37,7 @@ controller 不负责以下策略：
 - 不决定产品如何按标题模糊匹配、是否忽略隐藏窗口，或如何向用户展示歧义。
   controller 自身只提供精确 selector 和“必须唯一”的解析；CLI、workbench 可以在
   候选值之上实现各自策略。
-- 不分配产品级 `SessionId`，不管理任务取消、重试、trace 文件或 Luau 生命周期。
+- 不分配产品级 `CaptureSessionId`，不管理任务取消、重试、trace 文件或 Luau 生命周期。
 - 不验证项目的 `ProjectFingerprint`。`TargetIdentity` 不含 DPI，
   `DeliveryTarget` 也不携带 compatibility proof。
 - 不提供前台激活、全局输入或移动真实光标的降级路径。目标不接受
@@ -101,7 +101,7 @@ generation；对已经锁存失效的目标不会重复推进。这使每次连�
 ### WGC session 与帧
 
 调用者先用 `ClientGeometry::create` 提供物理 desktop-space client origin 和正的
-client extent，再调用 `WgcCaptureSession::create(WindowHandle, SessionId,
+client extent，再调用 `WgcCaptureSession::create(WindowHandle, CaptureSessionId,
 TargetGeneration, ClientGeometry, WgcCaptureOptions)`。session 固定保存创建时的
 session/generation；目标变化后应销毁并以新 generation 重建，而不是原地改写。
 
@@ -158,7 +158,7 @@ accepting=false 后会关闭其 frame，不会重新填充 slot。
 
 ### 严格后台输入
 
-`DeliveryTarget::create` 把 `WindowHandle`、`SessionId`、
+`DeliveryTarget::create` 把 `WindowHandle`、`CaptureSessionId`、
 `TargetGeneration` 和非空 `ClientSize` 固定为一个投递 capability。它不拥有
 窗口，也不自动跟随 `ResolvedTarget`；generation 或 session 改变时应创建新值。
 
@@ -193,7 +193,7 @@ extended-key 位；`inputText` 先严格解码 UTF-8，再按 UTF-16 code unit �
 随后失败的普通 HWND；null/broadcast 因未尝试而不留 record。
 
 `HeldInputs` 用 ordered set/map 保存 held keys 与 pointer，并绑定
-`{ HWND, SessionId, TargetGeneration }`。`releaseHeld` 总是先清空内存状态，再按
+`{ HWND, CaptureSessionId, TargetGeneration }`。`releaseHeld` 总是先清空内存状态，再按
 key 后 pointer 的稳定顺序 best-effort 投递 Up，并为每项返回 `ReleaseOutcome`。
 identity 不匹配时完全不投递。清空优先保证本进程不会把旧 held capability 带到
 新目标，但也意味着失败的 Up 没有内建重试状态。
@@ -286,7 +286,7 @@ helper，主要目的是让边界规则可离线测试，而不是提供第二�
 
 - `core` 提供 `Result`/`Status`、contracts、checked arithmetic/cast、strong
   values、non-wrapping generation、monotonic time 和 scope-exit。
-- `domain` 提供 `Frame`、`FrameBuffer`、`SessionId`、`TargetGeneration`、
+- `domain` 提供 `Frame`、`FrameBuffer`、`CaptureSessionId`、`TargetGeneration`、
   `ObservationLease`、坐标空间、`CoordinateTransform` 与
   `AutomationErrorKind`。controller 产生或消费这些值，但不重新定义其语义。
 
@@ -300,7 +300,7 @@ helper，主要目的是让边界规则可离线测试，而不是提供第二�
 4. 同一 HWND/session/generation 创建 `WgcCaptureSession` 和
    `DeliveryTarget`；
 5. `entry/cli/platform/wgc-frame-source.hpp` 的 `WgcFrameSource` 把 capture 和
-   marker validation 映射到 `engine::FrameSource`；
+   marker validation 映射到 `engine::IFrameSource`；
 6. `entry/cli/platform/controller-action-sink.cpp` 的 `ControllerActionSink` 拥有
    `DeliveryTarget`、`HeldInputs`、`AuditLog`，把 lease 原样传给 `uf::click`，
    click 失败后调用 `releaseHeld` 并保留原始错误。
@@ -318,7 +318,7 @@ source ingestion。其 visible/non-iconic 和“第一个 title substring match�
 
 `entry/m0-demo/` 直接使用 target、capture 和 input 接口，现已冻结为真机验收
 参考；产品路径由 engine/CLI 组合取代。低层 `AuditLog` 记录 Win32 message
-attempt，engine `TraceSink` 记录 observe/authorize/deliver 等产品事件，二者目的
+attempt，engine `ITraceSink` 记录 observe/authorize/deliver 等产品事件，二者目的
 不同，不能互相替代。
 
 ## 测试
@@ -341,7 +341,7 @@ attempt，engine `TraceSink` 记录 observe/authorize/deliver 等产品事件，
 - `tests/controller/test-capture-stall.cpp` 钉住 timeout 边界、arrival-time
   freshness 和新 arrival 重置；`tests/controller/test-capture-os-build.cpp`
   钉住 19041/20348 capability threshold。
-- `tests/controller/test-capture-d3d.cpp` 覆盖 DWM/WGC crop geometry、far-edge
+- `tests/controller/test-capture-readback.cpp` 覆盖 DWM/WGC crop geometry、far-edge
   bounds、overflow/zero rejection 和 padded-row BGRA8 packing。
 - `tests/controller/test-input-message.cpp` 钉住 keyboard/mouse message bits、
   extended keys、UTF-8→UTF-16、signed-16-bit coordinates、失败投递先审计以及
@@ -353,7 +353,7 @@ attempt，engine `TraceSink` 记录 observe/authorize/deliver 等产品事件，
   clear-before-attempt 和 mismatch 时零 post；`tests/controller/test-input.cpp`
   覆盖 empty delivery geometry、dead-target compensation、refresh identity 与
   long-press 前置拒绝。
-- `tests/controller/test-input-guard.cpp` 钉住 runtime forbidden-name list 和
+- `tests/controller/test-audit-log.cpp` 钉住 runtime forbidden-name list 和
   `AuditLog` append 顺序；静态源码禁令另由 `scripts/check_safety.py` 执行。
 - `tests/engine/test-session.cpp` 从端口另一侧钉住 delivery-edge target
   revalidation、lease pass-through 和各种授权失败时 sink click count 为零。
@@ -383,7 +383,7 @@ resize、recreation、minimize/stall、DPI、遮挡与焦点不变仍需要真�
 Controller delivery 前持续复核 live size、integer DPI、target identity 与
 transform。当前 `ResolvedTarget` 不保存 DPI，CLI 的 live fingerprint 只在启动
 时构造，`DeliveryTarget` 也没有 compatibility proof。新增 fresh observation
-必须在 `FrameSource::validateTargetInstance` 和 delivery 边缘接入；不匹配应推进
+必须在 `IFrameSource::validateTargetInstance` 和 delivery 边缘接入；不匹配应推进
 generation 或返回 `TargetCompatibilityUnverified`，不能只更新
 `CoordinateTransform` 后继续使用旧 lease。P1 的 base-to-live 自适应变换应保持
 为 annotation/runtime 的独立值，不应塞进 controller 现有 live

@@ -92,13 +92,15 @@ Windows 产品路径的组合入口是 `entry/cli/run-windows.cpp`：
 2. 以上离线检查在访问桌面之前完成。清单损坏、模板缺失或名称错误不会先创建平台资源。
 3. controller 选择唯一目标窗口，建立 `TargetGeneration` 和 WGC 捕获会话。
 4. `WgcCaptureSession::capture` 返回带像素、捕获时间、坐标变换和身份的 `Frame`。
-5. `EngineSession::observe` 创建 `Observation`。同一次观察中的页面解析和动作查找始终
-   使用同一帧，不会在中间隐式重新截图。
+5. `EngineSession::observe` 创建 `Observation`。
+   `EngineSession::resolvePage(observation)` 与
+   `EngineSession::findAction(observation, id)` 始终使用该 observation 持有的同一帧，
+   不会在中间隐式重新截图。
 6. annotation 将页面解析为 `ResolvedPage`、`UnknownPage` 或 `AmbiguousPages`。
    只有唯一页面和完整识别结果可以继续。
 7. `authorizeCoordinateAction` 同时检查页面权限、动作检测、观察租约、项目指纹和帧身份。
 8. engine 把动作坐标转换到 client space，投递前再次确认目标实例，并把原始 lease
-   交给 `ActionSink`。
+   交给 `IActionSink`。
 9. controller 再检查 session、generation、租约年龄、坐标范围和 Win32 编码范围，
    最后通过 `PostMessageW` 投递；失败时不会降级为前台或全局输入。
 10. engine 生成带版本的 `TraceEvent`，CLI 以 JSONL 逐条写入并刷新。
@@ -125,11 +127,11 @@ Windows 产品路径的组合入口是 `entry/cli/run-windows.cpp`：
 
 ### 同帧和身份隔离
 
-帧身份由 `(SessionId, TargetGeneration, FrameId)` 组成：
+帧身份由 `(CaptureSessionId, TargetGeneration, FrameId)` 组成：
 
 - `FrameId` 在一次捕获会话中单调增加；
 - `TargetGeneration` 在目标实例、窗口句柄、客户区尺寸或连续性变化时增加；
-- `SessionId` 隔离不同捕获会话。
+- `CaptureSessionId` 隔离不同捕获会话。
 
 `Observation` 持有原始帧。页面证据、动作证据和租约都来自这同一帧。成功投递后，
 observation 立即失效，防止重复点击。
@@ -145,8 +147,10 @@ observation 立即失效，防止重复点击。
 ### 所有权和平台边界
 
 `Frame` 共享只读像素所有权，`GrayImage` 等 view 只在 backing buffer 有效时使用。
-`EngineSession` 独占三个端口，`Observation` 也不能跨 session 使用。平台 handle、D3D
-对象和 Win32 输入实现留在 controller 或 `entry/` 的平台目录。
+`EngineSession` 独占三个端口，`Observation` 也不能跨 session 使用。observation
+不 borrow session；私有共享 identity token 会随 session move，在没有 raw
+back-pointer 的情况下维持该边界。平台 handle、D3D 对象和 Win32 输入实现留在
+controller 或 `entry/` 的平台目录。
 
 严格后台不是一个可选开关，而是可达 API 的限制。当前允许的输入路径最终落到目标窗口
 的 `PostMessageW`；`SetForegroundWindow`、`SetFocus`、`SendInput`、`mouse_event`、

@@ -28,3 +28,21 @@ Everything the host needs to automate one game target: the authoring
 document, source screenshots, the generated runtime recognition assets, and
 the tasks written against them.
 _Avoid_: workspace, profile
+
+### Runtime
+
+**Engine session (`engine::EngineSession`)**:
+The stateful engine capability scope that owns one loaded recognition runtime,
+one frame source, one action sink, and one trace sink. It vends observations
+and authorizes actions for one bound target. The name describes the lifetime
+of that capability bundle; it does not imply that the object has a
+`CaptureSessionId`.
+_Avoid_: engine run (would conflate the capability scope with execution
+identity and `EngineRunId`), capture session
+
+**Capture session identity (`CaptureSessionId`)**:
+The outer component of frame identity. Together with `TargetGeneration` and
+`FrameId`, it prevents evidence from distinct capture sessions from
+colliding. It is supplied by the composition root and belongs to captured
+frames, not to `engine::EngineSession`.
+_Avoid_: `SessionId` (too generic), engine session id, task session id

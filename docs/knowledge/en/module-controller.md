@@ -39,7 +39,7 @@ controller deliberately does not own the following policies:
   how ambiguity is presented to the user. controller itself provides only precise selectors and
   "must be unique" resolution; the CLI and workbench can implement their own policies on top of the
   candidate values.
-- It does not allocate product-level `SessionId`, nor manage task cancellation, retries, trace files,
+- It does not allocate product-level `CaptureSessionId`, nor manage task cancellation, retries, trace files,
   or the Luau lifecycle.
 - It does not validate the project's `ProjectFingerprint`. `TargetIdentity` does not include DPI, and
   `DeliveryTarget` does not carry a compatibility proof.
@@ -107,7 +107,7 @@ and the equal-value HWND recycling race remains a registered open item.
 ### WGC session and frames
 
 The caller first uses `ClientGeometry::create` to supply the physical desktop-space client origin and
-a positive client extent, then calls `WgcCaptureSession::create(WindowHandle, SessionId,
+a positive client extent, then calls `WgcCaptureSession::create(WindowHandle, CaptureSessionId,
 TargetGeneration, ClientGeometry, WgcCaptureOptions)`. The session permanently retains the
 session/generation it was created with; after the target changes it should be destroyed and rebuilt
 with a new generation rather than mutated in place.
@@ -170,7 +170,7 @@ accepting=false closes its frame and does not refill the slot.
 
 ### Strict-background input
 
-`DeliveryTarget::create` fixes `WindowHandle`, `SessionId`, `TargetGeneration`, and a non-empty
+`DeliveryTarget::create` fixes `WindowHandle`, `CaptureSessionId`, `TargetGeneration`, and a non-empty
 `ClientSize` into a single delivery capability. It does not own the window, nor does it automatically
 follow `ResolvedTarget`; when the generation or session changes, a new value should be created.
 
@@ -206,7 +206,7 @@ rejects a null HWND and `HWND_BROADCAST`, then writes the attempt to the `AuditL
 HWND that subsequently fails; null/broadcast leaves no record because no attempt is made.
 
 `HeldInputs` uses an ordered set/map to store held keys and the pointer, bound to
-`{ HWND, SessionId, TargetGeneration }`. `releaseHeld` always clears the in-memory state first, then
+`{ HWND, CaptureSessionId, TargetGeneration }`. `releaseHeld` always clears the in-memory state first, then
 best-effort delivers the Up in the stable order of keys before pointer, returning a `ReleaseOutcome`
 for each item. When the identity does not match, nothing is delivered at all. Clearing first
 guarantees that this process does not carry an old held capability to a new target, but it also means
@@ -301,7 +301,7 @@ Downward, controller crosses only two module edges:
 
 - `core` provides `Result`/`Status`, contracts, checked arithmetic/cast, strong values, non-wrapping
   generation, monotonic time, and scope-exit.
-- `domain` provides `Frame`, `FrameBuffer`, `SessionId`, `TargetGeneration`, `ObservationLease`,
+- `domain` provides `Frame`, `FrameBuffer`, `CaptureSessionId`, `TargetGeneration`, `ObservationLease`,
   coordinate spaces, `CoordinateTransform`, and `AutomationErrorKind`. controller produces or consumes
   these values but does not redefine their semantics.
 
@@ -314,7 +314,7 @@ Upward, the current product composition happens in `entry/cli/run-windows.cpp`:
    `clientOriginDesktop` constructs the initial `ClientGeometry`;
 4. the same HWND/session/generation creates the `WgcCaptureSession` and the `DeliveryTarget`;
 5. `WgcFrameSource` in `entry/cli/platform/wgc-frame-source.hpp` maps capture and marker validation
-   onto `engine::FrameSource`;
+   onto `engine::IFrameSource`;
 6. `ControllerActionSink` in `entry/cli/platform/controller-action-sink.cpp` owns the
    `DeliveryTarget`, `HeldInputs`, and `AuditLog`, passes the lease through to `uf::click` unchanged,
    and after a click failure calls `releaseHeld` while preserving the original error.
@@ -332,7 +332,7 @@ resolution contract.
 
 `entry/m0-demo/` uses the target, capture, and input surfaces directly and is now frozen as a
 real-machine acceptance reference; the product path is superseded by the engine/CLI composition. The
-low-level `AuditLog` records Win32 message attempts, while the engine `TraceSink` records product
+low-level `AuditLog` records Win32 message attempts, while the engine `ITraceSink` records product
 events such as observe/authorize/deliver; the two serve different purposes and cannot substitute for
 each other.
 
@@ -354,7 +354,7 @@ as possible.
 - `tests/controller/test-capture-stall.cpp` pins down the timeout boundary, arrival-time freshness,
   and the reset on a new arrival; `tests/controller/test-capture-os-build.cpp` pins down the
   19041/20348 capability threshold.
-- `tests/controller/test-capture-d3d.cpp` covers DWM/WGC crop geometry, far-edge bounds, overflow/zero
+- `tests/controller/test-capture-readback.cpp` covers DWM/WGC crop geometry, far-edge bounds, overflow/zero
   rejection, and padded-row BGRA8 packing.
 - `tests/controller/test-input-message.cpp` pins down keyboard/mouse message bits, extended keys,
   UTF-8→UTF-16, signed-16-bit coordinates, auditing before a failed delivery, and zero delivery for
@@ -366,7 +366,7 @@ as possible.
   clear-before-attempt, and zero posts on mismatch; `tests/controller/test-input.cpp` covers empty
   delivery geometry, dead-target compensation, refresh identity, and long-press precondition
   rejection.
-- `tests/controller/test-input-guard.cpp` pins down the runtime forbidden-name list and the `AuditLog`
+- `tests/controller/test-audit-log.cpp` pins down the runtime forbidden-name list and the `AuditLog`
   append order; the static source-code ban is enforced separately by `scripts/check_safety.py`.
 - `tests/engine/test-session.cpp` pins down, from the other side of the port, delivery-edge target
   revalidation, lease pass-through, and a sink click count of zero on the various authorization
@@ -397,7 +397,7 @@ The second group is the continuous compatibility gate. §2 of
 to continuously re-check the live size, integer DPI, target identity, and transform beforehand.
 Currently `ResolvedTarget` does not store the DPI, the CLI's live fingerprint is constructed only at
 startup, and `DeliveryTarget` has no compatibility proof. A new fresh observation must be wired into
-`FrameSource::validateTargetInstance` and the delivery edge; a mismatch should advance the generation
+`IFrameSource::validateTargetInstance` and the delivery edge; a mismatch should advance the generation
 or return `TargetCompatibilityUnverified`, and must not merely update the `CoordinateTransform` and
 keep using the old lease. P1's base-to-live adaptive transform should remain a separate value of
 annotation/runtime and should not be crammed into controller's existing live Client↔Frame

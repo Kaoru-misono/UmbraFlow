@@ -270,7 +270,7 @@ and does not change the best result.
 **Strict-background holds only indirectly, through the evidence chain.** These two modules have no
 input capability and cannot promise background delivery to a window. What they guarantee is that what
 they hand to the upper layers is either completed evidence or an explicit stop.
-`modules/engine/source/engine/session.cpp` can call `ActionSink::click` only after annotation
+`modules/engine/source/engine/session.cpp` can call `IActionSink::click` only after annotation
 produces authorizable completed evidence; a stop first enters the trace and returns an error. So what
 is held here is the recognition precondition of strict-background, not the delivery protocol itself.
 

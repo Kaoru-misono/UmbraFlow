@@ -104,14 +104,15 @@ The composition root for the Windows product path is `entry/cli/run-windows.cpp`
    capture session.
 4. `WgcCaptureSession::capture` returns a `Frame` with pixels, capture time, coordinate transform,
    and identity.
-5. `EngineSession::observe` creates an `Observation`. Page resolution and action lookup within the
-   same observation always use the same frame; they do not recapture implicitly.
+5. `EngineSession::observe` creates an `Observation`.
+   `EngineSession::resolvePage(observation)` and `EngineSession::findAction(observation, id)` always
+   use the frame held by that same observation; they do not recapture implicitly.
 6. Annotation resolves the page to `ResolvedPage`, `UnknownPage`, or `AmbiguousPages`. Only one
    uniquely resolved page with complete recognition evidence can continue.
 7. `authorizeCoordinateAction` checks page permission, action detection, observation lease,
    project fingerprint, and frame identity together.
 8. Engine converts the action coordinate to client space, revalidates the target instance before
-   delivery, and passes the original lease to `ActionSink`.
+   delivery, and passes the original lease to `IActionSink`.
 9. Controller rechecks session, generation, lease age, coordinate bounds, and the Win32 encoding
    range before delivering through `PostMessageW`. Failure never falls back to foreground or global
    input.
@@ -141,12 +142,12 @@ retry the same action.
 
 ### Same-frame decisions and identity isolation
 
-Frame identity is the tuple `(SessionId, TargetGeneration, FrameId)`:
+Frame identity is the tuple `(CaptureSessionId, TargetGeneration, FrameId)`:
 
 - `FrameId` increases monotonically within one capture session;
 - `TargetGeneration` advances when the target instance, window handle, client size, or continuity
   changes;
-- `SessionId` separates distinct capture sessions.
+- `CaptureSessionId` separates distinct capture sessions.
 
 `Observation` owns the original frame. Page evidence, action evidence, and the lease all come from
 that same frame. After successful delivery, the observation is invalidated immediately to prevent
@@ -167,8 +168,10 @@ a duplicate click.
 
 `Frame` shares immutable pixel ownership, and views such as `GrayImage` are used only while their
 backing buffer remains alive. `EngineSession` exclusively owns its three ports, and an
-`Observation` cannot cross session boundaries. Platform handles, D3D objects, and Win32 input
-implementation remain under controller or the platform directories in `entry/`.
+`Observation` cannot cross session boundaries. The observation does not borrow the session; a
+private shared identity token follows a moved session and preserves the boundary without a raw
+back-pointer. Platform handles, D3D objects, and Win32 input implementation remain under controller
+or the platform directories in `entry/`.
 
 Strict-background is a restriction on reachable APIs, not an optional switch. The allowed input
 path currently ends at `PostMessageW` for the target window.

@@ -44,7 +44,8 @@
 
 ### 身份、几何和 Catalog
 
-公共领域表面从 `modules/annotation/source/annotation/catalog.hpp` 开始：
+共享 resource 词汇从 `modules/annotation/source/annotation/resource.hpp` 开始；
+catalog 定义则在 `modules/annotation/source/annotation/catalog.hpp` 上层组合它：
 
 - `ResourceId` 保存 16 字节 UUID，`parse` 接受固定的 36 字符 UUID 形状，`toString` 输出小写 canonical 形式。
 - `RecognizerId`、`PageId`、`SourceId` 和 `RegressionId` 是基于 `ResourceId` 的不同 `StrongValue`，避免跨资源类别误传。
@@ -153,7 +154,7 @@ regression→source 和 resolved regression→page 引用，并保证 source、r
 
 ### 阈值、运行时识别与停止原因
 
-`SimilarityThreshold` 在 `modules/annotation/source/annotation/catalog.hpp` 中以 basis points
+`SimilarityThreshold` 在 `modules/annotation/source/annotation/resource.hpp` 中以 basis points
 保存 `[0, 10000]`。`maximumSad(width, height)` 用 checked `uint64` 算术实现：
 
 ```text
@@ -256,7 +257,7 @@ SAD comparisons 都有显式上限。deadline 与 cancellation 和 comparison bu
 
 **Strict-background 的证据链。** annotation 不接触输入 API，但它要求 page、detection、lease 与
 delivery 指纹/身份同时成立。`modules/engine/source/engine/session.cpp` 在授权后还调用
-`FrameSource::validateTargetInstance`，把 lease 传到 `ActionSink::click`，并在成功投递后使 observation
+`IFrameSource::validateTargetInstance`，把 lease 传到 `IActionSink::click`，并在成功投递后使 observation
 失效。因而 annotation gate 是两层投递围栏中的领域层，而不是完整后台协议的全部。
 
 ## 依赖关系
@@ -280,7 +281,7 @@ delivery 指纹/身份同时成立。`modules/engine/source/engine/session.cpp` 
 - action hit 被转换为 domain `Detection`，再经 `ActionDetection::create` 绑定 recognizer identity；
   `resolveClickPixel` 生成 frame pixel，`authorizeCoordinateAction` 在 act 时验证四条件 gate。
 - engine 把 pixel 转为 `FrameSpace`/`ClientSpace`，复验 target instance，才调用 controller-backed
-  `ActionSink`。跨 annotation 边界传递的是值、证据和 `Status`，不是 OS handle。
+  `IActionSink`。跨 annotation 边界传递的是值、证据和 `Status`，不是 OS handle。
 
 `runAuthoringRegressions` 位于
 `modules/annotation/source/annotation/regression-runner.cpp`。它先走真实 compiler/runtime 构造链路，

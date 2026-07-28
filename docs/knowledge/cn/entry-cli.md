@@ -44,7 +44,7 @@
   `run`。
 
 这条边界解释了为什么目标发现留在 entry，而没有进入 `engine`：
-`engine::FrameSource` 接收的是“已经绑定的一个目标”，从而保持平台无关；
+`engine::IFrameSource` 接收的是“已经绑定的一个目标”，从而保持平台无关；
 窗口标题选择、DPI 声明和 Win32 几何则是产品在 Windows 上如何取得该端口的
 策略。
 
@@ -54,7 +54,7 @@
 
 `entry/cli/main.cpp` 的 `dispatch` 只有两个公开产品路径：
 
-- 空参数：打印 `k_projectName` 与 `runUsageText()`，返回 `0`。
+- 空参数：打印生成的 `application::k_name` 与 `runUsageText()`，返回 `0`。
 - 首参数为 `run`：把剩余参数交给 `dispatchRun`。
 
 其他首参数被视为 unknown subcommand，打印错误与 usage，返回 `1`。
@@ -115,7 +115,7 @@ manifest 引用读取 `assets/templates/<hash>.png`，由
    `TargetUnavailable`，不会依赖枚举顺序猜测。
 4. 用所选 handle 构造 `TargetSelector`，再由 `resolveTarget` 得到
    `ResolvedTarget`，读取 `ClientSize`、`WindowHandle` 与当前
-   `TargetGeneration`。当前一次性进程使用固定 `SessionId{1}`。
+   `TargetGeneration`。当前一次性进程使用固定 `CaptureSessionId{1}`。
 5. 从 resolved client width/height 与候选窗口的 DPI 创建实时
    `annotation::ProjectFingerprint`。它不是替换 manifest fingerprint；
    两者在 recognition 和 action authorization 中必须相等。
@@ -130,18 +130,18 @@ manifest 引用读取 `assets/templates/<hash>.png`，由
 
 `EngineSessionConfig` 携带 live fingerprint、像素预算、单次识别期限、
 最大帧年龄和 cancellation token。三个 adapter 以
-`std::unique_ptr<engine::FrameSource>`、`std::unique_ptr<engine::ActionSink>`、
-`std::unique_ptr<engine::TraceSink>` 移交给 session；从这一点起 session 拥有
+`std::unique_ptr<engine::IFrameSource>`、`std::unique_ptr<engine::IActionSink>`、
+`std::unique_ptr<engine::ITraceSink>` 移交给 session；从这一点起 session 拥有
 端口生命周期。
 
 执行阶段调用
 `modules/engine/source/engine/session.hpp` 的
 `EngineSession::waitForPage(pageId, timeout, pollInterval)`。返回的 `PageWait`
-把命中的 `ResolvedPage` 与产生它的同一 `Observation` 配对，CLI 随后在该
-observation 上调用 `findAction(actionId)`，不会为动作另抓一帧。
+把命中的 `ResolvedPage` 与产生它的同一 `Observation` 配对，CLI 随后调用
+`EngineSession::findAction(observation, actionId)`，不会为动作另抓一帧。
 
 动作缺席是正常的 Tier-A 结果：
-`findAction` 返回成功的空 `std::optional<ActionFound>`，CLI 生成
+`EngineSession::findAction` 返回成功的空 `std::optional<ActionFound>`，CLI 生成
 `RunReport{m_actionDelivered = false}`。动作存在时，
 `EngineSession::act` 消费 observation，执行授权、frame-to-client 变换和投递，
 返回 `ActReceipt`；CLI 把实际 client click point 写入成功报告。
@@ -169,7 +169,7 @@ client bounds 与 Win32 signed-16-bit 编码范围。
 
 `entry/cli/file-trace-sink.hpp` 的 `FileTraceSink` 拥有 `std::ofstream`。
 `create` 以 binary + trunc 模式打开路径并返回
-`std::unique_ptr<engine::TraceSink>`；打开失败是 `IoFailure`。每次 `emit` 使用
+`std::unique_ptr<engine::ITraceSink>`；打开失败是 `IoFailure`。每次 `emit` 使用
 `engine::serializeTraceEvent` 写一条 JSONL、追加换行并立即 `flush`，写或 flush
 失败同样向 engine 返回 `IoFailure`。这避免事件跨 emit 留在 C++ stream buffer
 中，但代码没有声明文件系统级 durable sync 保证。
@@ -206,7 +206,7 @@ client bounds 与 Win32 signed-16-bit 编码范围。
 `UF_TRY` 立即终止。live fingerprint 不匹配 manifest 时，
 `RecognitionRuntime` 拒绝识别，`authorizeCoordinateAction` 也再次拒绝动作。
 动作 authorization 之后，`EngineSession::act` 还会在 sink 调用前通过
-`FrameSource::validateTargetInstance` 复验绑定实例，失败时零投递。
+`IFrameSource::validateTargetInstance` 复验绑定实例，失败时零投递。
 
 **两层 stale-observation fence。** engine 层用 observation 携带的
 `ObservationLease`、`ResolvedPage` 和 `ActionDetection` 调用
@@ -227,9 +227,10 @@ registration；实际 `stop_source` 是 module-static process-lifetime 对象，
 handler 注销后退出码边界仍能读取 stop 状态。该 source 一旦停止不会复位，这与
 “每进程恰好一次 run”契约一致。
 
-`engine::Observation` 内部有指向其 `EngineSession` 的非 owning back-reference，
-因此必须短于 session；`runProduct` 的局部作用域满足这一点。observation
-move 后源对象失效，`act` 又按 rvalue 消费它，类型和运行时 flag 一起限制复用。
+`engine::Observation` 不 borrow 它的 `EngineSession`，只与产生它的 session
+共享一个私有、不可变的 identity token；移动 session 不会留下悬空
+back-reference，其他 session 仍能拒绝该句柄。observation move 后源对象失效，
+`act` 又按 rvalue 消费它，类型和运行时 flag 一起限制复用。
 
 **严格后台。** CLI 不调用 focus、activation 或全局输入 API。
 `ControllerActionSink` 最终进入
@@ -238,7 +239,7 @@ move 后源对象失效，`act` 又按 rvalue 消费它，类型和运行时 fla
 null 与 `HWND_BROADCAST`。目标失活、消息投递失败或兼容性无法确认时都失败，
 不存在“为了成功”切到前台输入的 fallback。
 
-**Trace 是正确性路径的一部分。** `engine::TraceSink::emit` 返回 `Status`，
+**Trace 是正确性路径的一部分。** `engine::ITraceSink::emit` 返回 `Status`，
 session creation 的 `SessionStarted`、识别失败、授权与投递相关事件都可令操作
 失败。`FileTraceSink` 也不吞写入错误。这使“无法留下所要求的证据”成为显式产品
 失败，而不是不可见的 best-effort 丢日志。
@@ -257,7 +258,7 @@ substring、名称和退出码；CLI 在这一层负责可读诊断与默认值�
 
 `engine` 不看到 HWND、console handler、文件选择语法或标题 substring。
 反方向，CLI 不解释 recognizer evidence、page outcome 或授权规则，只驱动
-`waitForPage`、`findAction`、`act` 的公开表面。
+`waitForPage`、`EngineSession::findAction`、`act` 的公开表面。
 
 向 `controller` 的出站边只存在于 Windows build。跨边界的是 resolved
 `WindowHandle`、`ClientSize`、`Dpi`、`TargetGeneration`、`ClientGeometry`、
@@ -275,6 +276,12 @@ substring、名称和退出码；CLI 在这一层负责可读诊断与默认值�
 链接。Windows 时 library 再加入真实 adapter 并链接 controller；其他平台加入
 `run-unsupported.cpp`。因此平台无关契约能在没有 Windows desktop 的 CI 中测试，
 而产品 executable 不需要导出内部函数。
+
+根据 2026-07-28 的开发者决定，仓库根 `manifest.txt` 是应用名和版本的权威来源。
+顶层 CMake 从中得到 `PROJECT_NAME`/`PROJECT_VERSION`，`entry/CMakeLists.txt`
+再把 `application-info.hpp` 生成到 build tree，供 CLI executable 私有使用。因此
+`main.cpp` 读取的是类型化生成元数据，不需要在 `core` 放产品常量，也不需要全局
+compile-definition macro。
 
 ## 测试
 
@@ -324,7 +331,7 @@ flow，并把任务语言留给 Luau。因此新增任务编排应接到
 
 同一计划还列出以下扩展点：
 
-- P3 第二平台通过实现相同 `FrameSource`、`ActionSink`、`TraceSink` 接入；
+- P3 第二平台通过实现相同 `IFrameSource`、`IActionSink`、`ITraceSink` 接入；
   CLI host implementation 可以替换 `run-unsupported.cpp`，engine 无需感知平台。
 - B2 Luau 对 `Observation`、observe/find/act/wait 做 1:1 binding；现有 C++
   API 形状就是为避免届时重构而保留。

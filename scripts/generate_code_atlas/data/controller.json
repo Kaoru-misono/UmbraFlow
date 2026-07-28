@@ -5,7 +5,7 @@
  "notOwned": [
   "不识别页面、不解释 Detection、不授权动作——这些属于 annotation 与 engine。",
   "不决定标题模糊匹配、隐藏窗口取舍或歧义展示策略；只提供精确 selector 与必须唯一的解析。",
-  "不分配产品级 SessionId，不管理取消/重试/trace/Luau 生命周期。",
+  "不分配产品级 CaptureSessionId，不管理取消/重试/trace/Luau 生命周期。",
   "不校验 ProjectFingerprint，不在 TargetIdentity/DeliveryTarget 里携带 DPI 或 compatibility proof。",
   "不提供前台激活、全局输入或移动真实光标的降级路径；目标不接受 PostMessageW 时直接失败。",
   "不抽象第二个平台，故意保持 Windows-only；跨平台端口在 engine 一侧。"
@@ -360,7 +360,7 @@
    "responsibility": "把一个已绑定窗口包装成 free-threaded WGC 会话，返回裁到 client area 的 BGRA8 Frame。守住 fail-closed：ContentSize 改变、item closed、marker 不符、stale arrival 都永久锁存失效，必须以新 generation 重建而非原地改写。",
    "members": [
     {
-     "sig": "static create(WindowHandle, SessionId, TargetGeneration, ClientGeometry, WgcCaptureOptions = {}) -> Result<WgcCaptureSession>",
+     "sig": "static create(WindowHandle, CaptureSessionId, TargetGeneration, ClientGeometry, WgcCaptureOptions = {}) -> Result<WgcCaptureSession>",
      "note": "固定 session/generation，建 marker、D3D device、frame pool 并 StartCapture。"
     },
     {
@@ -478,10 +478,10 @@
    "kind": "class",
    "file": "modules/controller/source/controller/input.hpp",
    "line": 114,
-   "responsibility": "把 {WindowHandle, SessionId, TargetGeneration, 非空 ClientSize} 固定为一个投递 capability。它不拥有窗口、不自动跟随 ResolvedTarget；generation/session 改变时应创建新值。",
+   "responsibility": "把 {WindowHandle, CaptureSessionId, TargetGeneration, 非空 ClientSize} 固定为一个投递 capability。它不拥有窗口、不自动跟随 ResolvedTarget；generation/session 改变时应创建新值。",
    "members": [
     {
-     "sig": "static create(WindowHandle, SessionId, TargetGeneration, uint32 clientWidth, uint32 clientHeight) -> Result<DeliveryTarget>",
+     "sig": "static create(WindowHandle, CaptureSessionId, TargetGeneration, uint32 clientWidth, uint32 clientHeight) -> Result<DeliveryTarget>",
      "note": "校验非空 client 尺寸。"
     },
     {
@@ -568,7 +568,7 @@
    "kind": "class",
    "file": "modules/controller/source/controller/input.hpp",
    "line": 199,
-   "responsibility": "caller-owned 的按下状态，绑定 {HWND, SessionId, TargetGeneration}。守住『本进程不会把旧 held capability 带到新目标』：identity 不符时完全不投递，releaseAll 总是先清空内存再 best-effort 投 Up。",
+   "responsibility": "caller-owned 的按下状态，绑定 {HWND, CaptureSessionId, TargetGeneration}。守住『本进程不会把旧 held capability 带到新目标』：identity 不符时完全不投递，releaseAll 总是先清空内存再 best-effort 投 Up。",
    "members": [
     {
      "sig": "empty() / size() -> ...",
@@ -745,7 +745,7 @@
   {
    "name": "uf::controller_detail::ClientCropRect",
    "kind": "class",
-   "file": "modules/controller/source/controller/detail/capture-d3d.hpp",
+   "file": "modules/controller/source/controller/detail/capture-readback.hpp",
    "line": 16,
    "responsibility": "计算 full-window WGC 帧内的 client 子矩形；extended extent 必须来自 DWMWA_EXTENDED_FRAME_BOUNDS 而非 GetWindowRect，以免把 WGC 不含的隐形 resize border 算进 crop。",
    "members": [
@@ -771,7 +771,7 @@
    "name": "uf::controller_detail::capture-os-build",
    "kind": "functions",
    "file": "modules/controller/source/controller/detail/capture-os-build.hpp",
-   "line": 10,
+   "line": 11,
    "responsibility": "把 WGC 能力阈值做成纯常量判定，供 session 决定能否关 cursor capture、是否支持 borderless。",
    "members": [
     {
@@ -792,7 +792,7 @@
    "name": "uf::controller_detail::input-message",
    "kind": "functions",
    "file": "modules/controller/source/controller/detail/input-message.hpp",
-   "line": 45,
+   "line": 46,
    "responsibility": "把每个输入动作确定性地编码为 PostSpec（仅限白名单消息），并在唯一系统调用点尝试投递；bit layout 与消息集合都是显式规则，无隐式 rounding。",
    "members": [
     {
@@ -813,7 +813,7 @@
     },
     {
      "sig": "utf16CodeUnits(std::string_view) -> Result<std::vector<uint16>>",
-     "note": "严格 UTF-8→UTF-16 解码。"
+     "note": "复用 uf::decodeUtf8Scalars 做严格 UTF-8 解码，再编码为 UTF-16 code units。"
     },
     {
      "sig": "scanCodeFor(uint16 virtualKey) -> uint8",

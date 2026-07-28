@@ -98,7 +98,7 @@ genuine change moves the current document into undo, clears redo, and caps undo 
 `undo`/`redo` move a complete document value, so references spanning recognizers/pages are always
 restored as one and the same version.
 
-The `AppState` in `entry/workbench/app/workbench-app.hpp` is the ImGui-free session aggregate behind
+The `AppState` in `entry/workbench/workbench-app.hpp` is the ImGui-free session aggregate behind
 the window:
 
 - `m_history` is the single source of truth for the document;
@@ -123,9 +123,9 @@ the upgrade direction.
 
 ### ResourceId minting
 
-The `mintResourceId` in `entry/workbench/app/workbench-app.cpp` fills 16 bytes with
+The `mintResourceId` in `entry/workbench/workbench-app.cpp` fills 16 bytes with
 `std::random_device`, then sets the UUID version 4 nibble and the RFC 4122 variant bits, and finally
-calls the `ResourceId::fromBytes` from `modules/annotation/source/annotation/catalog.hpp`.
+calls the `ResourceId::fromBytes` from `modules/annotation/source/annotation/resource.hpp`.
 By contract, `fromBytes` itself does not validate version/variant, so the authoring caller is
 responsible for setting the convention.
 
@@ -268,7 +268,12 @@ Both `GuiShell` and `TextureCache` isolate native state behind a move-only `std:
 `GuiShellState` releases the ImGui backends/context, D3D resources, window, and registered class in
 destruction order. The texture cache holds owning COM references to the D3D device and
 shader-resource views; the `GpuSourceTexture` exposed to a panel is only an opaque handle valid
-within the cache lifetime.
+within the cache lifetime. As recorded in the
+[2026-07-28 review follow-up](../../plans/2026-07-28-full-project-review-fixes.md), after
+document edits and imports, `drawWorkbench` passes the current source list through
+`WorkbenchServices::pruneTextures`; the Windows composition root routes it to
+`TextureCache::pruneTo`, so deleted source IDs release their GPU views instead of accumulating for
+the shell lifetime.
 
 `GuiFrameCallback` is called synchronously by `GuiShell::run` and is not stored; the
 `WorkbenchServices` callbacks are borrowed only within a single draw. The reference captures in

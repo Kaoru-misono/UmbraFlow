@@ -222,7 +222,7 @@ cooperative poll 和精确 completed count。pruning 是性能优化，但不放
 
 **Strict-background 只通过证据链间接成立。** 这两个模块没有 input capability，也不能承诺窗口后台投递。
 它们保证交给上层的是 completed evidence 或显式 stop。`modules/engine/source/engine/session.cpp` 只有在
-annotation 产出可授权的 completed evidence 后才可能调用 `ActionSink::click`；stop 会先进入 trace 并
+annotation 产出可授权的 completed evidence 后才可能调用 `IActionSink::click`；stop 会先进入 trace 并
 返回 error。因此这里守住的是 strict-background 的识别前置条件，而不是 delivery protocol 本身。
 
 ## 依赖关系

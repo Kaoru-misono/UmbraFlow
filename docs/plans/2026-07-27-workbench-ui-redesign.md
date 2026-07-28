@@ -149,7 +149,7 @@ changing the annotation module's recognition or budget semantics.
 ### 2026-07-27 — U1a typed selection (shipped)
 
 Decision 3 only: the selection became a typed value in `AppState`; no tree,
-toolbar, or drawer (those stay U1b). Files: `app/workbench-app.{hpp,cpp}`,
+toolbar, or drawer (those stay U1b). Files: `workbench-app.{hpp,cpp}`,
 `authoring-actions.{hpp,cpp}`, `panel-state.hpp`, `app/panels.cpp`,
 `tests/workbench/test-workbench-app.cpp`, `tests/workbench/test-edit-page.cpp`.
 
@@ -201,7 +201,7 @@ context-sensitive inspector, and the programmatic default dock layout
 (the whole panel set and frame orchestration rewritten), `panel-state.hpp`
 (`ToolbarCommand`, queued command + capture/import flags), `authoring-actions.
 {hpp,cpp}` (`requestToolbarCommand` / `dispatchToolbarCommand`),
-`app/workbench-app.{hpp,cpp}` (staleness flags), new `project-tree.{hpp,cpp}`
+`workbench-app.{hpp,cpp}` (staleness flags), new `project-tree.{hpp,cpp}`
 (pure bucket + regression-screen derivations), `entry/CMakeLists.txt` and
 `tests/CMakeLists.txt`, and tests `test-project-tree.cpp` (new),
 `test-workbench-app.cpp`, `test-authoring-actions.cpp`.
@@ -260,7 +260,7 @@ context-sensitive inspector, and the programmatic default dock layout
 Decision 9's state machine, decision 8's atomic creation, decision 10's visible
 navigation, and the canvas context menus. Files: `app/panels.cpp` (the whole
 canvas surface rewritten plus context-menu / creation / retype helpers),
-`app/canvas-math.{hpp,cpp}` (the new pure geometry), `panel-state.hpp`
+`canvas-math.{hpp,cpp}` (the new pure geometry), `panel-state.hpp`
 (`CanvasGesture` + its in-progress data), `edit-page.{hpp,cpp}`
 (`NewDrawnMemberSpec` / `AddedMember` / `placeDrawn`), `authoring-actions.
 {hpp,cpp}` (`shownPageForScreen`, extracted from `placementContext`), and tests
@@ -387,7 +387,7 @@ Files: `app/panels.cpp` (shortcuts, rename helpers, the confirmation modal,
 `performPreview` extracted from the Evidence tab, and the entry-point rewiring),
 `panel-state.hpp` (`RenameKind`, `InlineRename`, `PendingDelete`, and the
 `previewRequested` / rename / confirmation fields), `authoring-edit.{hpp,cpp}`
-(`AuthoringEditHistory::position`), `app/workbench-app.{hpp,cpp}`
+(`AuthoringEditHistory::position`), `workbench-app.{hpp,cpp}`
 (`m_savedPosition` replacing the latched `m_dirty`), and tests
 `test-workbench-app.cpp`, `test-authoring-edit.cpp`.
 

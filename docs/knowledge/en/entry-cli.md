@@ -47,7 +47,7 @@ This directory deliberately does not own the following responsibilities:
   one `run` per process.
 
 This boundary explains why target discovery stays in the entry layer rather than moving into
-`engine`: `engine::FrameSource` receives "one already-bound target" and thereby stays
+`engine`: `engine::IFrameSource` receives "one already-bound target" and thereby stays
 platform-independent, while window-title selection, DPI declaration, and Win32 geometry are the
 product's policy for how it obtains that port on Windows.
 
@@ -57,7 +57,8 @@ product's policy for how it obtains that port on Windows.
 
 The `dispatch` in `entry/cli/main.cpp` has only two public product paths:
 
-- Empty arguments: print `k_projectName` and `runUsageText()`, and return `0`.
+- Empty arguments: print generated `application::k_name` and `runUsageText()`, and
+  return `0`.
 - First argument is `run`: hand the remaining arguments to `dispatchRun`.
 
 Any other first argument is treated as an unknown subcommand, prints an error and usage, and
@@ -123,7 +124,7 @@ following order:
    `TargetUnavailable`, without guessing based on enumeration order.
 4. The selected handle constructs a `TargetSelector`, from which `resolveTarget` yields a
    `ResolvedTarget`, reading `ClientSize`, `WindowHandle`, and the current `TargetGeneration`. The
-   current one-shot process uses a fixed `SessionId{1}`.
+   current one-shot process uses a fixed `CaptureSessionId{1}`.
 5. A live `annotation::ProjectFingerprint` is created from the resolved client width/height and the
    candidate window's DPI. It does not replace the manifest fingerprint; the two must be equal in
    recognition and action authorization.
@@ -138,15 +139,15 @@ following order:
 
 `EngineSessionConfig` carries the live fingerprint, the pixel budget, the per-recognition deadline,
 the maximum frame age, and the cancellation token. The three adapters are handed to the session as
-`std::unique_ptr<engine::FrameSource>`, `std::unique_ptr<engine::ActionSink>`, and
-`std::unique_ptr<engine::TraceSink>`; from this point on the session owns the port lifetimes.
+`std::unique_ptr<engine::IFrameSource>`, `std::unique_ptr<engine::IActionSink>`, and
+`std::unique_ptr<engine::ITraceSink>`; from this point on the session owns the port lifetimes.
 
 The execution stage calls `EngineSession::waitForPage(pageId, timeout, pollInterval)` in
 `modules/engine/source/engine/session.hpp`. The returned `PageWait` pairs the matched
 `ResolvedPage` with the same `Observation` that produced it, and the CLI then calls
-`findAction(actionId)` on that observation, without grabbing another frame for the action.
+`EngineSession::findAction(observation, actionId)`, without grabbing another frame for the action.
 
-An absent action is a normal Tier-A outcome: `findAction` returns a successful empty
+An absent action is a normal Tier-A outcome: `EngineSession::findAction` returns a successful empty
 `std::optional<ActionFound>`, and the CLI produces `RunReport{m_actionDelivered = false}`. When the
 action exists, `EngineSession::act` consumes the observation, performs authorization, the
 frame-to-client transform, and delivery, and returns an `ActReceipt`; the CLI writes the actual
@@ -173,7 +174,7 @@ appends context and never masks the original click failure. Both `AuditLog` and 
 owning members of the adapter and never borrow a temporary on the `runProduct` stack.
 
 `FileTraceSink` in `entry/cli/file-trace-sink.hpp` owns a `std::ofstream`. `create` opens the path
-in binary + trunc mode and returns a `std::unique_ptr<engine::TraceSink>`; a failure to open is an
+in binary + trunc mode and returns a `std::unique_ptr<engine::ITraceSink>`; a failure to open is an
 `IoFailure`. Each `emit` uses `engine::serializeTraceEvent` to write one JSONL record, appends a
 newline, and immediately `flush`es; a write or flush failure likewise returns `IoFailure` to the
 engine. This avoids leaving events across emits in the C++ stream buffer, but the code does not
@@ -213,7 +214,7 @@ window substring must be unique; a failure at any step of DPI declaration, geome
 delivery, or trace terminates immediately through `UF_TRY`. When the live fingerprint does not
 match the manifest, `RecognitionRuntime` refuses recognition and `authorizeCoordinateAction` again
 refuses the action. After action authorization, `EngineSession::act` further revalidates the bound
-instance through `FrameSource::validateTargetInstance` before calling the sink, and delivers
+instance through `IFrameSource::validateTargetInstance` before calling the sink, and delivers
 nothing on failure.
 
 **Two-layer stale-observation fence.** The engine layer calls `authorizeCoordinateAction` with the
@@ -236,10 +237,11 @@ registration with RAII; the actual `stop_source` is a module-static process-life
 exit-code boundary can still read the stop state after the handler is unregistered. That source,
 once stopped, is never reset, which is consistent with the "exactly one run per process" contract.
 
-`engine::Observation` internally holds a non-owning back-reference to its `EngineSession` and
-therefore must be shorter-lived than the session; the local scope of `runProduct` satisfies this.
-After an observation is moved, the source object is invalidated, and `act` consumes it by rvalue,
-so the type and a runtime flag together restrict reuse.
+`engine::Observation` does not borrow its `EngineSession`. It shares only a private immutable
+identity token with the session that vended it, so moving the session does not leave a dangling
+back-reference and a foreign session can still reject the handle. After an observation is moved,
+the source object is invalidated, and `act` consumes it by rvalue, so the type and a runtime flag
+together restrict reuse.
 
 **Strict-background.** The CLI never calls focus, activation, or global-input APIs.
 `ControllerActionSink` ultimately enters the `PostMessageW` path in
@@ -248,7 +250,7 @@ messages only to the single resolved HWND, and rejects null and `HWND_BROADCAST`
 becomes inactive, message delivery fails, or compatibility cannot be confirmed, it fails; there is
 no fallback that switches to foreground input "in order to succeed".
 
-**Trace is part of the correctness path.** `engine::TraceSink::emit` returns a `Status`, and the
+**Trace is part of the correctness path.** `engine::ITraceSink::emit` returns a `Status`, and the
 `SessionStarted` of session creation, recognition failures, and authorization- and
 delivery-related events can all fail the operation. `FileTraceSink` likewise does not swallow write
 errors. This makes "unable to leave the required evidence" an explicit product failure rather than
@@ -269,7 +271,8 @@ The outbound edge toward `engine` is established through `${PROJECT_NAME}_cli_su
 
 `engine` never sees the HWND, the console handler, file-selection syntax, or the title substring.
 In the reverse direction, the CLI never interprets recognizer evidence, page outcomes, or
-authorization rules; it only drives the public surface of `waitForPage`, `findAction`, and `act`.
+authorization rules; it only drives the public surface of `waitForPage`, `EngineSession::findAction`,
+and `act`.
 
 The outbound edge toward `controller` exists only in the Windows build. What crosses the boundary
 is the resolved `WindowHandle`, `ClientSize`, `Dpi`, `TargetGeneration`, `ClientGeometry`,
@@ -289,6 +292,12 @@ the executable and `test-cli` link. On Windows the library additionally adds the
 links the controller; on other platforms it adds `run-unsupported.cpp`. As a result, the
 platform-independent contract can be tested in CI without a Windows desktop, while the product
 executable does not need to export internal functions.
+
+As decided on 2026-07-28, the repository-root `manifest.txt` is the canonical source for the
+application name and version. Top-level CMake derives `PROJECT_NAME`/`PROJECT_VERSION` from it, and
+`entry/CMakeLists.txt` configures `application-info.hpp` into the build tree for the CLI executable.
+`main.cpp` therefore prints typed generated metadata without an application constant in `core` or a
+global compile-definition macro.
 
 ## Tests
 
@@ -340,8 +349,8 @@ binding, and should not continue to pile a declarative language into `runProduct
 
 The same plan lists the following seams:
 
-- The P3 second platform is integrated by implementing the same `FrameSource`, `ActionSink`, and
-  `TraceSink`; the CLI host implementation can replace `run-unsupported.cpp`, and the engine need
+- The P3 second platform is integrated by implementing the same `IFrameSource`, `IActionSink`, and
+  `ITraceSink`; the CLI host implementation can replace `run-unsupported.cpp`, and the engine need
   not be aware of the platform.
 - B2 Luau provides a 1:1 binding for `Observation` and observe/find/act/wait; the shape of the
   existing C++ API is retained precisely to avoid refactoring at that time.

@@ -4,6 +4,12 @@ The project uses April2's manifest-driven CMake module loader. Each direct child
 of `modules/` with a `manifest.txt` becomes a CMake library target named
 `${PROJECT_NAME}_<module>`.
 
+The repository-root `manifest.txt` is the separate application manifest. Its
+`[application]` section is the canonical source for the CMake project name and
+application version; CMake generates an entry-only `application-info.hpp` from those
+values. Module manifests continue to own reusable-library metadata and versions
+independently. This boundary was fixed by developer decision on 2026-07-28.
+
 ```text
 entry/${PROJECT_NAME}       -> core, engine; + controller (Windows adapters)
 entry/m0-demo (Windows)     -> controller, vision, image (frozen M0 substrate demo)
@@ -31,6 +37,8 @@ not declare link dependencies. `scripts/check_modules.py` enforces both rules.
 ## Repository layout
 
 - `modules/`: reusable libraries with manifest-declared dependencies.
+- `manifest.txt`: application name and version consumed by the top-level CMake
+  configuration and generated entry metadata.
 - `modules/domain/`: platform-free UmbraFlow frames, coordinates, detections,
   identifiers, leases, and automation errors.
 - `modules/vision/`: platform-free grayscale conversion and SAD template matching.
@@ -60,6 +68,21 @@ not declare link dependencies. `scripts/check_modules.py` enforces both rules.
   sanitizers, and static-analysis policy.
 - `scripts/`: formatting and local CI tools.
 - `.claude/skills/`: repository-local engineering workflows.
+
+## Application manifest
+
+The root manifest uses the same section-based syntax as module manifests:
+
+```ini
+[application]
+name = UmbraFlow
+version = 0.1.0
+```
+
+CMake parses it before `project()`, then configures
+`build/<preset>/entry/generated/application-info.hpp` for the CLI executable.
+Application display metadata does not enter `core`, and it does not become a
+reusable C++ module.
 
 ## Module manifest
 

@@ -22,7 +22,7 @@ It owns four kinds of product semantics:
 - Coordinate action delivery: `EngineSession::act` threads page evidence, action evidence, frame
   identity, lease, live fingerprint, and target-instance recheck into a single fail-closed path.
 - Runtime evidence: `TraceEvent` and `serializeTraceEvent` define a stable, versioned JSON record;
-  `TraceSink` leaves the persistence policy to the composition root.
+  `ITraceSink` leaves the persistence policy to the composition root.
 
 The engine deliberately does not own the following capabilities:
 
@@ -30,7 +30,7 @@ The engine deliberately does not own the following capabilities:
   `modules/engine/manifest.txt` depends only on `core`, `domain`, and `annotation`, not on
   `controller`, so the engine can be built and tested on non-Windows hosts and in offline CI.
 - It does not decide how a specific platform performs strict-background delivery. It records the
-  contract through `ActionSink`; the Windows implementation lives in
+  contract through `IActionSink`; the Windows implementation lives in
   `entry/cli/platform/controller-action-sink.hpp`, and the platform capability is still owned by
   controller.
 - It does not own target selection, DPI awareness, window geometry, or Ctrl-C registration. These
@@ -59,15 +59,15 @@ fakes, while keeping the platform code thin and auditable.
 
 The public ports are concentrated in `modules/engine/source/engine/ports.hpp`.
 
-- `FrameSource::capture() -> Result<Frame>` obtains a frame from an already-bound target.
-- `FrameSource::validateTargetInstance() -> Status` rechecks that what is bound is still the same
+- `IFrameSource::capture() -> Result<Frame>` obtains a frame from an already-bound target.
+- `IFrameSource::validateTargetInstance() -> Status` rechecks that what is bound is still the same
   target instance. The engine calls it once before capture and again before delivery; the latter
   closes the window where "the HWND is reused or the target is replaced after observation".
-- `ActionSink::click(Point<ClientSpace>, ObservationLease const&) -> Status` receives the client
+- `IActionSink::click(Point<ClientSpace>, ObservationLease const&) -> Status` receives the client
   coordinate and the original lease. The lease pass-through is part of the interface; an adapter
   cannot pass only the coordinate, otherwise the controller layer cannot perform the second layer of
   session/generation/age fencing.
-- `TraceSink::emit(TraceEvent const&) -> Status` is a synchronous, fallible evidence port. A failure
+- `ITraceSink::emit(TraceEvent const&) -> Status` is a synchronous, fallible evidence port. A failure
   is not a best-effort warning but aborts the current engine operation.
 
 All three ports are non-copyable and non-movable, with a virtual destructor supporting
@@ -125,10 +125,12 @@ The public runtime surface lives in `modules/engine/source/engine/session.hpp`:
 - `EngineSession::observe() -> Result<Observation>` first checks cancellation, then rechecks the
   target instance, captures, builds a lease via `ObservationLease::forFrame`, extracts
   `annotation::FrameIdentity`, and only after emitting `Observed` hands the handle to the caller.
-- `Observation::resolvePage()` calls the same session's `RecognitionRuntime::evaluatePage` and
-  returns a `PageOutcome` composed of `ResolvedPage`, `UnknownPage`, or `AmbiguousPages`.
-- `Observation::findAction(RecognizerId)` calls `evaluateActionTarget`. A miss is a successful empty
-  value of `Result<std::optional<ActionFound>>`, corresponding to D4 Tier A, and is not an error.
+- `EngineSession::resolvePage(Observation const&)` calls its
+  `RecognitionRuntime::evaluatePage` against the frame held by the supplied observation and returns
+  a `PageOutcome` composed of `ResolvedPage`, `UnknownPage`, or `AmbiguousPages`.
+- `EngineSession::findAction(Observation const&, RecognizerId)` calls
+  `evaluateActionTarget` against that same frame. A miss is a successful empty value of
+  `Result<std::optional<ActionFound>>`, corresponding to D4 Tier A, and is not an error.
 - `ActionFound` stores the original `AnchorEvidence`, an `ActionDetection` bound to the recognizer
   identity, and a deterministic `PixelPoint`. The click point is decided by annotation's
   `resolveClickPixel`; the match rect becomes an authorization-ready `Detection` through
@@ -146,12 +148,12 @@ One product CLI data flow can be read directly in `entry/cli/run-windows.cpp`:
 loadRuntimeProject
   -> resolve page/action names
   -> bind WgcCaptureSession + DeliveryTarget
-  -> create FrameSource/ActionSink/TraceSink adapters
+  -> create IFrameSource/IActionSink/ITraceSink adapters
   -> EngineSession::create
   -> waitForPage
-  -> PageWait::m_observation.findAction
+  -> EngineSession::findAction(PageWait::m_observation, actionId)
   -> EngineSession::act
-  -> ActionSink::click
+  -> IActionSink::click
 ```
 
 The critical ordering inside `act` is:
@@ -161,8 +163,8 @@ The critical ordering inside `act` is:
 3. `annotation::authorizeCoordinateAction`;
 4. emit `ActionAuthorized`;
 5. pixel → frame → client coordinate transform;
-6. delivery-edge `FrameSource::validateTargetInstance`;
-7. `ActionSink::click(clientPoint, observation.m_lease)`;
+6. delivery-edge `IFrameSource::validateTargetInstance`;
+7. `IActionSink::click(clientPoint, observation.m_lease)`;
 8. immediately set `observation.m_invalidated = true`;
 9. emit `ClickDelivered` and `ObservationInvalidated`.
 
@@ -204,7 +206,7 @@ All conditions that would make "what to do where" uncertain fail toward rejectio
 - When the session is missing any port, `EngineSession::create` returns `InvalidResource`.
 - When the live fingerprint differs from the catalog fingerprint, recognition or authorization
   rejects.
-- The `SessionId`, `TargetGeneration`, and `FrameId` of the page evidence, action detection, and
+- The `CaptureSessionId`, `TargetGeneration`, and `FrameId` of the page evidence, action detection, and
   delivery must be identical; the action recognizer must additionally belong to the active catalog,
   be of type `ActionTarget`, and be allowed on the resolved page.
 - `ObservationLease::validate` validates session, generation, frame, and expiration; any mismatch
@@ -233,14 +235,15 @@ D1's Model B is encoded as a handle rather than relying on calling conventions a
   `FrameIdentity`.
 - It is non-copyable and only movable; both the move constructor and move assignment immediately
   mark the source as invalidated, so a moved-from handle behaves identically to a consumed handle.
-- `resolvePage` and `findAction` first check the invalidated flag; after invalidation, any query
-  returns `StaleObservation`.
+- `EngineSession::resolvePage` and `EngineSession::findAction` first check the observation's
+  invalidated flag; after invalidation, either query returns `StaleObservation`.
 - `act` takes `Observation&&` and invalidates the entire observation after a successful delivery.
   The caller must `observe` again, structurally maintaining "one observation, multiple queries on
   the same frame, one coordinate action, observe again".
-- The observation stores a non-owning `EngineSession*`. The header explicitly stipulates that the
-  session must outlive the observations it vends; each `act` additionally checks that the handle was
-  indeed produced by the current session, and cross-session use returns `InternalInvariant`.
+- The observation stores no pointer or borrow to `EngineSession`. Instead, it shares a private,
+  immutable identity token with the session that vended it. The token follows a moved session, so
+  existing observations remain valid after that move; using one with another session returns
+  `InternalInvariant` without dereferencing a moved-from object.
 - The session exclusively owns the runtime and the three ports; `ActionFound`, `PageWait`, and
   `ActReceipt` are all values that clearly own their results and do not return a dangling temporary
   view.
@@ -283,7 +286,7 @@ exception hook but an explicit emit at the engine failure site:
 The emit itself can fail; `UF_TRY` propagates that failure immediately, so a trace infrastructure
 failure is not downgraded into silent operation. Note also the current coverage: loader errors
 before session creation, the pre-condition cancellation of observe/act, `waitForPage`'s own
-timeout/cancellation, and a direct failure of `ActionSink::click` currently do not uniformly
+timeout/cancellation, and a direct failure of `IActionSink::click` currently do not uniformly
 generate a `Failure` event. When extending error paths, you must read the specific emit site and
 cannot assume a central interceptor exists.
 
@@ -302,7 +305,7 @@ lives downstream in the Windows adapter:
   with a release when the click fails.
 
 Thus the engine's platform-freedom does not reduce safety but layers the portable authorization
-timing apart from the non-portable delivery proof. Any new adapter must re-honor `ActionSink`'s
+timing apart from the non-portable delivery proof. Any new adapter must re-honor `IActionSink`'s
 strict-background and lease pass-through contract; merely "implementing the virtual function" does
 not automatically earn that guarantee.
 
@@ -314,7 +317,7 @@ The main inbound edges are as follows:
   timeout, cancellation, and the three ports, then drives `waitForPage -> findAction -> act`.
 - annotation provides the catalog, templates, page signatures, action-target definitions, and the
   allowed-page policy through the runtime manifest.
-- domain provides `Frame`, `CoordinateTransform`, `Detection`, `ObservationLease`, `SessionId`,
+- domain provides `Frame`, `CoordinateTransform`, `Detection`, `ObservationLease`, `CaptureSessionId`,
   `TargetGeneration`, `FrameId`, and `AutomationErrorKind`.
 - core provides `Result`/`Status`, monotonic time, integer types, and contracts.
 
@@ -411,9 +414,9 @@ implementation by `docs/plans/2026-07-21-p0b-luau-hardening-ledger.md`.
 
 ### Platforms and Fakes
 
-`FrameSource`, `ActionSink`, and `TraceSink` are the formal seams for the P3 second platform and for
+`IFrameSource`, `IActionSink`, and `ITraceSink` are the formal seams for the P3 second platform and for
 test fakes. When adding a platform, target discovery and the adapter still go in entry/platform; the
-engine adds no `#ifdef Windows`. A new `ActionSink` must prove the target instance, lease fencing,
+engine adds no `#ifdef Windows`. A new `IActionSink` must prove the target instance, lease fencing,
 and strict-background, not merely transport coordinates.
 
 ### Waiting and D6

@@ -54,6 +54,13 @@ roadmap `docs/plans/2026-07-21-product-form-and-roadmap.md`。
    `session.observe() -> Observation`、`observation.resolvePage()`、
    `observation.findAction(id)`;任一坐标动作后整个 Observation 失效
    (D0/D1 帧作废编进类型)。B2 时 Luau 1:1 绑定,不重构。
+
+   > **修订(2026-07-28):** 保留同帧句柄与作废语义，但 C++ receiver 改为
+   > `session.resolvePage(observation)` / `session.findAction(observation, id)`。
+   > 原形式要求 `Observation` 保存 session back-pointer，`EngineSession` move 后会悬空。
+   > 当前 observation 只共享私有 identity token；token 随 session move，并继续拒绝
+   > 跨 session 使用。未来 Luau binding 仍可把这两个 session 操作投影成 observation
+   > 方法，不要求 C++ 所有权也采用易悬空的形状。
 6. **图像资产**:CI 测试只用 KB 级合成 PNG(入仓);卡厄斯梦境真实截图回归集
    放 gitignore 目录只在本机跑,ctest 检测目录存在才注册。
 7. **ImGui 已批准**:docking 分支最新 release tag,submodule 置于
@@ -77,11 +84,11 @@ controller (Windows)        -> core, domain                    (不变)
 `modules/engine`(namespace `uf::engine`)承载 D10 的 Engine API 语义,内容:
 
 - **ports.hpp** — 三个纯虚端口,只用 domain 类型:
-  - `FrameSource`:`capture() -> Result<Frame>`、`validateTargetInstance() -> Status`
+  - `IFrameSource`:`capture() -> Result<Frame>`、`validateTargetInstance() -> Status`
     (按 `WgcCaptureSession` 表面建模,适配器为薄包装)
-  - `ActionSink`:`click(Point<ClientSpace>) -> Result<DeliveryReceipt>` + 投递前
+  - `IActionSink`:`click(Point<ClientSpace>, ObservationLease const&) -> Status` + 投递前
     revalidate 语义(承接 `TargetMachine::revalidate` + `requireUnchangedTarget`)
-  - `TraceSink`:结构化事件流(observe/resolve/authorize/act/stop),D4 要求
+  - `ITraceSink`:结构化事件流(observe/resolve/authorize/act/stop),D4 要求
     错误在抛出瞬间 emit
 - **runtime-loader** — 全仓第一条读取路径:项目目录 → 读
   `generated/annotations.runtime.toml`(复用 `annotation::parseRuntimeManifest`)+
@@ -89,12 +96,14 @@ controller (Windows)        -> core, domain                    (不变)
   fingerprint 来自 manifest 自身;`project.toml` 读取本任务不做(见 Open items)。
 - **session / loop** — 镜像 D1 Model B 的 Observation 句柄 API:
   - `EngineSession::observe() -> Result<Observation>`:capture → 持有帧 + 租约;
-    `Observation::resolvePage()`(有界 `evaluatePage` → `PageOutcome`)、
-    `Observation::findAction(RecognizerId)`(action_target 评估,缺席=Tier A 返回空)
+    `EngineSession::resolvePage(Observation const&)`
+    (有界 `evaluatePage` → `PageOutcome`)、
+    `EngineSession::findAction(Observation const&, RecognizerId)`
+    (action_target 评估,缺席=Tier A 返回空)
     ——同一帧多查询只抓一次帧
   - `EngineSession::act(...)`:`ResolvedPage` + `ActionDetection` + `ObservationLease`
     → `authorizeCoordinateAction` → 默认点击点(defaultClick 偏移,否则矩形中心,
-    S0 §1.5)→ frame→client 变换 → `ActionSink::click` →
+    S0 §1.5)→ frame→client 变换 → `IActionSink::click` →
     **作废该 Observation 及其派生句柄**(D0/D1 编进类型:已失效句柄的任何取用
     → `StaleObservation` fail-closed)
   - `EngineSession::wait(...)`:有界重观察直到页面命中/超时;
@@ -133,7 +142,7 @@ wait hook→D6/P1 `bot:on`;engine 操作面(capture/find/click/wait)→B2 Luau 1
    模板 PNG 解码在 annotation 内部,loader 只读字节)。
 5. `ports.hpp` / `runtime-loader.{hpp,cpp}` / `trace.{hpp,cpp}` /
    `session.{hpp,cpp}`(observe/act/wait)。
-6. `tests/engine/`:Fake `FrameSource` 回放合成 PNG 帧(KB 级,入仓;即 TODO §2
+6. `tests/engine/`:Fake `IFrameSource` adapter 回放合成 PNG 帧(KB 级,入仓;即 TODO §2
    的 Fake Controller 帧序列,CI 标签)。覆盖:完整 observe→resolve→authorize→act
    happy path;fail-closed 全谱——Unknown/Ambiguous/每个 stop reason/租约过期/
    fingerprint 不符/非 ResolvedPage 动作/动作后复用失效 Observation →
@@ -142,8 +151,8 @@ wait hook→D6/P1 `bot:on`;engine 操作面(capture/find/click/wait)→B2 Luau 1
 ## Phase 3 — 组合根 `umbra-flow run`(Windows)
 
 7. `entry/cli` 扩为真正产品入口:`umbra-flow run --project <dir> --selector <...>`。
-   新增 runner 源:WGC 适配器(`FrameSource` over `WgcCaptureSession`)、
-   输入适配器(`ActionSink` over `DeliveryTarget::click` + revalidate,
+   新增 runner 源:WGC 适配器(`IFrameSource` over `WgcCaptureSession`)、
+   输入适配器(`IActionSink` over `DeliveryTarget::click` + revalidate,
    复用 m0-demo 的 poison/补 Up 模式——**复制语义不链接其代码**,保持冻结)、
    Ctrl-C guard、JSONL trace 落盘。entry 链接 engine+controller:
    第一个同时链接两者的二进制。

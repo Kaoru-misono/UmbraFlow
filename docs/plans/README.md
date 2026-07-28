@@ -29,6 +29,8 @@ Retained reference:
 
 - [M0 demo port deviations](2026-07-20-m0-demo-port-deviations.md) — frozen real-machine
   acceptance reference pending parity and retirement.
+- [Full-project review implementation follow-up](2026-07-28-full-project-review-fixes.md) —
+  completed 2026-07-28 implementation record, including the explicit frozen-target deferrals.
 
 Completed plans are under [`docs/archive/plans/`](../archive/plans/), and closed
 reviews are under [`docs/archive/reviews/`](../archive/reviews/). Historical

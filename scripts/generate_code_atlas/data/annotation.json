@@ -18,12 +18,16 @@
  ],
  "readingOrder": [
   {
+   "path": "modules/annotation/source/annotation/resource.hpp",
+   "why": "先读稳定资源身份、项目指纹、标注分类与整数阈值等公共词汇。"
+  },
+  {
    "path": "modules/annotation/source/annotation/catalog.hpp",
-   "why": "身份、几何、阈值和 RecognitionCatalog 闭包是全模块的地基。"
+   "why": "在公共资源词汇之上理解 recognizer、page signature 与 RecognitionCatalog 闭包。"
   },
   {
    "path": "modules/annotation/source/annotation/authoring-document.hpp",
-   "why": "作者编辑文档的 S0 schema 与 canonical 序列化入口。"
+   "why": "作者编辑文档的 v2 schema、element/placement 模型与 canonical 序列化入口。"
   },
   {
    "path": "modules/annotation/source/annotation/authoring-compiler.hpp",
@@ -46,8 +50,8 @@
   {
    "name": "uf::annotation::ResourceId",
    "kind": "class",
-   "file": "modules/annotation/source/annotation/catalog.hpp",
-   "line": 21,
+   "file": "modules/annotation/source/annotation/resource.hpp",
+   "line": 17,
    "responsibility": "所有资源身份的底层 16 字节 UUID。私有构造强制经 parse/fromBytes 进入，保证 ID 只以受控形式存在并支持 canonical 排序。",
    "members": [
     {
@@ -75,8 +79,8 @@
   {
    "name": "uf::annotation::resource-id-aliases",
    "kind": "functions",
-   "file": "modules/annotation/source/annotation/catalog.hpp",
-   "line": 50,
+   "file": "modules/annotation/source/annotation/resource.hpp",
+   "line": 46,
    "responsibility": "在 ResourceId 之上派生互不通用的 StrongValue，避免把某类资源 ID 误传给另一类。",
    "members": [
     {
@@ -89,11 +93,11 @@
     },
     {
      "sig": "using SourceId = StrongValue<SourceIdTag, ResourceId>",
-     "note": "authoring 源截图身份（authoring-document.hpp:31）。"
+     "note": "authoring 源截图身份（authoring-document.hpp:36）。"
     },
     {
      "sig": "using RegressionId = StrongValue<RegressionIdTag, ResourceId>",
-     "note": "回归用例身份（authoring-document.hpp:32）。"
+     "note": "回归用例身份（authoring-document.hpp:37）。"
     }
    ],
    "related": [
@@ -103,8 +107,8 @@
   {
    "name": "uf::annotation::ProjectId",
    "kind": "class",
-   "file": "modules/annotation/source/annotation/catalog.hpp",
-   "line": 53,
+   "file": "modules/annotation/source/annotation/resource.hpp",
+   "line": 49,
    "responsibility": "项目字符串身份，要求非空有效 UTF-8。用于把 catalog、detection、页面证据绑定到同一 active project。",
    "members": [
     {
@@ -120,8 +124,8 @@
   {
    "name": "uf::annotation::ResourceName",
    "kind": "class",
-   "file": "modules/annotation/source/annotation/catalog.hpp",
-   "line": 68,
+   "file": "modules/annotation/source/annotation/resource.hpp",
+   "line": 64,
    "responsibility": "识别器/页面的人类可读名，要求非空 ASCII identifier 且不是 Luau 保留字，从而可直接作为 host 侧成员 key。",
    "members": [
     {
@@ -137,8 +141,8 @@
   {
    "name": "uf::annotation::AnnotationType",
    "kind": "enum",
-   "file": "modules/annotation/source/annotation/catalog.hpp",
-   "line": 83,
+   "file": "modules/annotation/source/annotation/resource.hpp",
+   "line": 79,
    "responsibility": "标注语义分类，决定一个 recognizer 能否携带 click、能否授权页面、能否被求值。",
    "members": [
     {
@@ -158,8 +162,8 @@
   {
    "name": "uf::annotation::ProjectFingerprint",
    "kind": "class",
-   "file": "modules/annotation/source/annotation/catalog.hpp",
-   "line": 90,
+   "file": "modules/annotation/source/annotation/resource.hpp",
+   "line": 86,
    "responsibility": "非零的 width/height/dpiX/dpiY。S0 把 AnnotationSpace 固定为此 base resolution 下的整数 FrameSpace，是识别兼容性校验的锚。",
    "members": [
     {
@@ -175,8 +179,8 @@
   {
    "name": "uf::annotation::SimilarityThreshold",
    "kind": "class",
-   "file": "modules/annotation/source/annotation/catalog.hpp",
-   "line": 127,
+   "file": "modules/annotation/source/annotation/resource.hpp",
+   "line": 123,
    "responsibility": "以 basis points [0,10000] 表达命中阈值，避免浮点判定。maximumSad 用 checked uint64 算术把阈值翻译成整数 SAD 上界，等号命中是契约。",
    "members": [
     {
@@ -196,8 +200,8 @@
   {
    "name": "uf::annotation::TemplateOffset",
    "kind": "class",
-   "file": "modules/annotation/source/annotation/catalog.hpp",
-   "line": 154,
+   "file": "modules/annotation/source/annotation/resource.hpp",
+   "line": 150,
    "responsibility": "模板局部的默认点击偏移，构造时验证落在模板尺寸内。ActionTarget 的 defaultClick 用它保证 click 不越出模板。",
    "members": [
     {
@@ -214,7 +218,7 @@
    "name": "uf::annotation::RecognizerDefinition",
    "kind": "class",
    "file": "modules/annotation/source/annotation/catalog.hpp",
-   "line": 194,
+   "line": 31,
    "responsibility": "单个已验证识别器，是把 RecognizerSpec 变成可信对象的验证入口。守住 geometry 在项目内、模板放得进 ROI、click 只属于 ActionTarget、page membership 规则等不变量。",
    "members": [
     {
@@ -249,7 +253,7 @@
    "name": "uf::annotation::RecognizerSpec",
    "kind": "struct",
    "file": "modules/annotation/source/annotation/catalog.hpp",
-   "line": 180,
+   "line": 17,
    "responsibility": "RecognizerDefinition::create 的未验证输入 DTO：把 id、name、类型、几何、阈值、可选 click 与 allowedPageIds 聚合成一次校验的入参。",
    "members": [
     {
@@ -277,7 +281,7 @@
    "name": "uf::annotation::PageSignature",
    "kind": "class",
    "file": "modules/annotation/source/annotation/catalog.hpp",
-   "line": 236,
+   "line": 73,
    "responsibility": "一个页面的 required/forbidden 锚点集合。守住 required 与 forbidden 至少一边非空、各自排序去重且互不相交，杜绝空签名成为隐式 fallback page。",
    "members": [
     {
@@ -306,7 +310,7 @@
    "name": "uf::annotation::PageSpec",
    "kind": "struct",
    "file": "modules/annotation/source/annotation/catalog.hpp",
-   "line": 228,
+   "line": 65,
    "responsibility": "PageSignature::create 的输入 DTO：页面 id、name 与 required/forbidden 识别器 ID 列表。",
    "members": [
     {
@@ -326,7 +330,7 @@
    "name": "uf::annotation::RecognitionCatalog",
    "kind": "class",
    "file": "modules/annotation/source/annotation/catalog.hpp",
-   "line": 259,
+   "line": 96,
    "responsibility": "识别器与页面的跨资源闭包 owner。守住 ID/name 全局唯一、page signature 只引用存在的 PageAnchor、allowedPageIds 指向存在页面、无两页签名相同，并固化 pageAnchorOrder 使输入顺序不渗入结果。",
    "members": [
     {
@@ -405,16 +409,16 @@
    "name": "uf::annotation::SourceProvenance",
    "kind": "alias",
    "file": "modules/annotation/source/annotation/authoring-document.hpp",
-   "line": 47,
+   "line": 52,
    "responsibility": "源截图的来路变体。WGC 采集的源保留 generation 与采集时间，导入源则没有伪造的 WGC 字段，让 provenance 只表达真实已知信息。",
    "members": [
     {
      "sig": "struct WgcSourceProvenance { TargetGeneration; string capturedAt }",
-     "note": "WGC 源：generation 与 canonical RFC 3339 时间（line 43）。"
+     "note": "WGC 源：generation 与 canonical RFC 3339 时间（line 39）。"
     },
     {
      "sig": "struct ImportedSourceProvenance {}",
-     "note": "导入源：无 WGC 字段（line 51）。"
+     "note": "导入源：无 WGC 字段（line 47）。"
     },
     {
      "sig": "using SourceProvenance = variant<Wgc..., Imported...>",
@@ -429,7 +433,7 @@
    "name": "uf::annotation::AuthoringSourceSpec",
    "kind": "struct",
    "file": "modules/annotation/source/annotation/authoring-document.hpp",
-   "line": 61,
+   "line": 57,
    "responsibility": "AuthoringSource::create 的未验证输入 DTO：把 SourceId、内容哈希、项目 fingerprint 与 provenance 聚合成一次校验入参，create 再由它派生 assets/sources/<hash>.png 相对路径。",
    "members": [
     {
@@ -450,7 +454,7 @@
    "name": "uf::annotation::AuthoringSource",
    "kind": "class",
    "file": "modules/annotation/source/annotation/authoring-document.hpp",
-   "line": 60,
+   "line": 65,
    "responsibility": "一张源截图的稳定身份与元数据 owner：SourceId、内容哈希、派生的 assets/sources/<hash>.png 路径、项目 fingerprint 与 provenance。由 AuthoringSourceSpec 经 create 校验后构造。",
    "members": [
     {
@@ -479,20 +483,20 @@
    "name": "uf::annotation::ElementKind",
    "kind": "alias",
    "file": "modules/annotation/source/annotation/authoring-document.hpp",
-   "line": 118,
+   "line": 114,
    "responsibility": "一个 element 三选一的语义变体，是 Element::kind 的负载。只有 interactive 一种带 click，把“只有 action target 能定义默认点击”从跨字段规则变成类型事实：anchor 与 info 根本没有可误用的字段。annotationTypeOfKind 把它压回 manifest 的三态 AnnotationType。",
    "members": [
     {
      "sig": "struct AnchorElement {}",
-     "note": "页面锚点，无字段（line 101）。"
+     "note": "页面锚点，无字段（line 97）。"
     },
     {
      "sig": "struct InteractiveElement { optional<TemplateOffset> clickOffset }",
-     "note": "可点击目标，唯一带 click 的一种（line 106）。"
+     "note": "可点击目标，唯一带 click 的一种（line 102）。"
     },
     {
      "sig": "struct InfoElement {}",
-     "note": "信息区域，无字段（line 113）。"
+     "note": "信息区域，无字段（line 109）。"
     },
     {
      "sig": "using ElementKind = variant<AnchorElement, InteractiveElement, InfoElement>",
@@ -500,7 +504,7 @@
     },
     {
      "sig": "annotationTypeOfKind(ElementKind const&) -> AnnotationType",
-     "note": "变体压回 manifest 三态分类（line 126）。"
+     "note": "变体压回 manifest 三态分类（line 125）。"
     }
    ],
    "related": [
@@ -512,12 +516,12 @@
    "name": "uf::annotation::Element",
    "kind": "class",
    "file": "modules/annotation/source/annotation/authoring-document.hpp",
-   "line": 139,
+   "line": 135,
    "responsibility": "v2 作者模型的核心：绘制一次的模板像素，加上只属于 authoring 的两个事实——它绘制所在的 SourceId 与 shared 复用意图。元素放在哪一页不再存这里（那是 AuthoringPlacement 的页面侧事实），锚点仍把 searchRoi 留在元素上。create 用 fingerprint 校验几何后构造。",
    "members": [
     {
      "sig": "struct Spec { RecognizerId id; ResourceName name; SourceId sourceId; PixelRect templateRect, searchRoi; SimilarityThreshold threshold; ElementKind kind; bool shared }",
-     "note": "create 的未验证输入 DTO（line 142）。"
+     "note": "create 的未验证输入 DTO（line 138）。"
     },
     {
      "sig": "static create(ProjectFingerprint, Spec const&) -> Result<Element>",
@@ -546,7 +550,7 @@
    "name": "uf::annotation::AuthoringPlacement",
    "kind": "struct",
    "file": "modules/annotation/source/annotation/authoring-document.hpp",
-   "line": 190,
+   "line": 186,
    "responsibility": "把一个 interactive 或 info 元素放到一页上，并记录运行时在该页应到哪里找它。这是 recognizer 过去反向携带的页面成员关系边；把 pageId 存在这里让整组 placement 序列化成扁平表，可被 canonical TOML reader 解析。",
    "members": [
     {
@@ -564,23 +568,19 @@
    ]
   },
   {
-   "name": "uf::annotation::AuthoringRecognizerSpec",
+   "name": "uf::annotation::AuthoringRecognizerSource",
    "kind": "struct",
    "file": "modules/annotation/source/annotation/authoring-document.hpp",
-   "line": 209,
-   "responsibility": "已验证 RecognizerDefinition 加两个只属于 authoring 的事实：它绘制所在的 SourceId，以及作者意图跨页复用像素的 shared 标志。两者都不进入 runtime manifest。AuthoringRecognizerSource 是其在文档里的持久投影。",
+   "line": 195,
+   "responsibility": "AuthoringDocument 从 v2 element 模型派生的 recognizer→source 只读关系，同时保留作者的 shared 意图，供仍按 runtime recognizer 读取的编译器与 UI 过渡使用。",
    "members": [
     {
-     "sig": "RecognizerDefinition definition; SourceId sourceId; bool shared",
-     "note": "定义、来源截图、共享意图。"
-    },
-    {
-     "sig": "struct AuthoringRecognizerSource { RecognizerId; SourceId; bool shared }",
-     "note": "文档持久化的 recognizer→source 关系（line 216）。"
+     "sig": "RecognizerId recognizerId; SourceId sourceId; bool shared",
+     "note": "运行时 recognizer、来源截图与共享意图。"
     }
    ],
    "related": [
-    "uf::annotation::RecognizerDefinition",
+    "uf::annotation::Element",
     "uf::annotation::AuthoringDocument"
    ]
   },
@@ -588,7 +588,7 @@
    "name": "uf::annotation::RegressionClassification",
    "kind": "enum",
    "file": "modules/annotation/source/annotation/authoring-document.hpp",
-   "line": 223,
+   "line": 202,
    "responsibility": "回归用例的作者分类，独立于其期望结果，使 positive/negative/confusable 不暗改 resolved/unknown/ambiguous 期望。",
    "members": [
     {
@@ -609,20 +609,20 @@
    "name": "uf::annotation::RegressionExpectation",
    "kind": "alias",
    "file": "modules/annotation/source/annotation/authoring-document.hpp",
-   "line": 247,
+   "line": 226,
    "responsibility": "回归用例期望的 page 解析结果变体，与 classification 各自独立保存，只有 resolved 期望携带 PageId。",
    "members": [
     {
      "sig": "struct ResolvedRegression { PageId pageId }",
-     "note": "期望解析到指定页面（line 230）。"
+     "note": "期望解析到指定页面（line 209）。"
     },
     {
      "sig": "struct UnknownRegression {}",
-     "note": "期望 Unknown（line 237）。"
+     "note": "期望 Unknown（line 216）。"
     },
     {
      "sig": "struct AmbiguousRegression {}",
-     "note": "期望 Ambiguous（line 242）。"
+     "note": "期望 Ambiguous（line 221）。"
     }
    ]
   },
@@ -630,7 +630,7 @@
    "name": "uf::annotation::RegressionSpec",
    "kind": "struct",
    "file": "modules/annotation/source/annotation/authoring-document.hpp",
-   "line": 253,
+   "line": 232,
    "responsibility": "RegressionCase 的未验证输入 DTO：把 RegressionId、被测 SourceId、作者 classification 与期望 expectation 聚合成一次构造入参，classification 与 expectation 各自独立保存。",
    "members": [
     {
@@ -651,12 +651,12 @@
    "name": "uf::annotation::RegressionCase",
    "kind": "class",
    "file": "modules/annotation/source/annotation/authoring-document.hpp",
-   "line": 261,
+   "line": 240,
    "responsibility": "文档中的一个回归用例：绑定 RegressionId、被测 SourceId、classification 与 expectation，供 regression runner 逐个重放。",
    "members": [
     {
      "sig": "explicit RegressionCase(RegressionSpec const&)",
-     "note": "从 spec（line 253）构造。"
+     "note": "从 spec（line 232）构造。"
     },
     {
      "sig": "id()/sourceId()/classification() const",
@@ -677,11 +677,11 @@
    "name": "uf::annotation::AuthoringDocument",
    "kind": "class",
    "file": "modules/annotation/source/annotation/authoring-document.hpp",
-   "line": 281,
-   "responsibility": "GUI 编辑文档的顶层 owner 与 document 级 validation gate。拥有 catalog、sources、recognizer-source 关系与 regressions；create 排序、闭合所有 source/recognizer/page/regression 引用并施加每类 4096 条、canonical 16 MiB 上限。",
+   "line": 260,
+   "responsibility": "GUI v2 编辑文档的顶层 owner 与 document 级 validation gate。拥有 sources、elements、page-side placements、regressions，并从它们派生 catalog 与 recognizer-source read model；create 排序并闭合所有引用，施加每类 4096 条与 canonical 16 MiB 上限。",
    "members": [
     {
-     "sig": "static create(ProjectId, ProjectFingerprint, vector<AuthoringSource>, vector<AuthoringRecognizerSpec>, vector<PageSignature>, vector<RegressionCase>) -> Result<AuthoringDocument>",
+     "sig": "static create(ProjectId, ProjectFingerprint, vector<AuthoringSource>, vector<Element>, vector<PageSignature>, vector<AuthoringPlacement>, vector<RegressionCase>) -> Result<AuthoringDocument>",
      "note": "全文档闭包与配额校验。"
     },
     {
@@ -689,15 +689,19 @@
      "note": "拥有的识别 catalog。"
     },
     {
-     "sig": "sources()/recognizerSources()/regressions() const -> span<... const>",
-     "note": "只读 view。"
+     "sig": "sources()/elements()/placements()/recognizerSources()/regressions() const -> span<... const>",
+     "note": "拥有数据及派生关系的只读 view。"
     },
     {
      "sig": "findSource(SourceId) const -> AuthoringSource const*",
-     "note": "non-owning 指针。"
+     "note": "按 SourceId 返回 non-owning 指针。"
+    },
+    {
+     "sig": "findElement(RecognizerId) const -> Element const*",
+     "note": "按 element ID 返回 non-owning 指针。"
     }
    ],
-   "lifetime": "owning value，拥有 catalog/sources/关系/regressions；返回的 span 与指针以文档生命周期为上界。",
+   "lifetime": "owning value，拥有 catalog、sources、elements、placements、派生关系与 regressions；返回的 span 与指针以文档生命周期为上界。",
    "related": [
     "uf::annotation::RecognitionCatalog",
     "uf::annotation::authoring-document-serialization",
@@ -708,7 +712,7 @@
    "name": "uf::annotation::authoring-document-serialization",
    "kind": "functions",
    "file": "modules/annotation/source/annotation/authoring-document.hpp",
-   "line": 216,
+   "line": 333,
    "responsibility": "authoring 文档与其唯一 canonical TOML 字节形式之间的双向入口。parse 走“解析→校验→重新序列化→字节比较”，只接受与 writer 完全相等的字节，从而保证 schema 稳定和可哈希差异。",
    "members": [
     {
@@ -717,7 +721,7 @@
     },
     {
      "sig": "parseAuthoringDocument(string_view) -> Result<AuthoringDocument>",
-     "note": "字节非 canonical 即拒绝加载（line 221）。"
+     "note": "字节非 canonical 即拒绝加载（line 338）。"
     }
    ],
    "related": [
@@ -950,10 +954,10 @@
    "kind": "class",
    "file": "modules/annotation/source/annotation/recognition.hpp",
    "line": 33,
-   "responsibility": "把 SessionId、TargetGeneration、FrameId 三元组捆成一个可比较的帧身份，用于在证据与授权中断言页面、检测、租约都来自同一帧。",
+   "responsibility": "把 CaptureSessionId、TargetGeneration、FrameId 三元组捆成一个可比较的帧身份，用于在证据与授权中断言页面、检测、租约都来自同一帧。",
    "members": [
     {
-     "sig": "FrameIdentity(SessionId, TargetGeneration, FrameId)",
+     "sig": "FrameIdentity(CaptureSessionId, TargetGeneration, FrameId)",
      "note": "constexpr 构造。"
     },
     {
@@ -1203,7 +1207,7 @@
    "name": "uf::annotation::EncodedRuntimeTemplate",
    "kind": "struct",
    "file": "modules/annotation/source/annotation/recognition-runtime.hpp",
-   "line": 24,
+   "line": 25,
    "responsibility": "RecognitionRuntime::create 的模板输入：一个 ContentHash 配它的编码 PNG 字节。engine 从磁盘加载模板资产后按 vector<EncodedRuntimeTemplate> 交给运行时，create 会重算每份 SHA-256 并核对其恰等于 manifest 引用的唯一模板集合。",
    "members": [
     {
@@ -1224,7 +1228,7 @@
    "name": "uf::annotation::RecognitionPolicy",
    "kind": "struct",
    "file": "modules/annotation/source/annotation/recognition-runtime.hpp",
-   "line": 30,
+   "line": 31,
    "responsibility": "识别的有界工作与取消契约：全局 pixel-comparison 预算、可选绝对 deadline 与 stop_token。三者一同按值进入同一个有界 SAD matcher 调用，使 Preview、regression 与 Runtime 共享停止语义。",
    "members": [
     {
@@ -1245,10 +1249,31 @@
    ]
   },
   {
+   "name": "uf::annotation::PageRecognitionStop",
+   "kind": "struct",
+   "file": "modules/annotation/source/annotation/recognition-runtime.hpp",
+   "line": 38,
+   "responsibility": "一次页面或动作模板搜索被控制条件中止时的显式结果，保留中止发生的 recognizer 与 SadSearchStopReason；它不是 miss，也不会生成完成的 PageOutcome。",
+   "members": [
+    {
+     "sig": "RecognizerId recognizerId",
+     "note": "中止时正在求值的识别器。"
+    },
+    {
+     "sig": "SadSearchStopReason reason",
+     "note": "取消、超时或比较预算耗尽等停止原因。"
+    }
+   ],
+   "related": [
+    "uf::annotation::PageRecognitionAttempt",
+    "uf::annotation::ActionTargetAttempt"
+   ]
+  },
+  {
    "name": "uf::annotation::PageRecognitionAttempt",
    "kind": "struct",
    "file": "modules/annotation/source/annotation/recognition-runtime.hpp",
-   "line": 45,
+   "line": 46,
    "responsibility": "一次 evaluatePage 的结果载体：要么携带完整 PageOutcome，要么携带 PageRecognitionStop，同时保留已完成的 anchor 证据与像素比较计数。控制停止永远是失败尝试，不会被伪装成 forbidden-anchor miss。ActionTargetAttempt 是动作侧的对应结构。",
    "members": [
     {
@@ -1258,10 +1283,6 @@
     {
      "sig": "PageAttemptResult result; vector<AnchorEvidence> completedAnchorEvidence; uint64 completedPixelComparisons",
      "note": "结果与已完成工作量。"
-    },
-    {
-     "sig": "struct PageRecognitionStop { RecognizerId; SadSearchStopReason }",
-     "note": "停止发生的识别器与原因（line 37）。"
     }
    ],
    "related": [
@@ -1274,7 +1295,7 @@
    "name": "uf::annotation::ActionTargetAttempt",
    "kind": "struct",
    "file": "modules/annotation/source/annotation/recognition-runtime.hpp",
-   "line": 56,
+   "line": 57,
    "responsibility": "evaluateActionTarget 的结果载体，是 PageRecognitionAttempt 的动作侧对应物：要么携带 AnchorEvidence，要么携带 PageRecognitionStop，并保留像素比较计数。miss 是 hit=false 的证据而非 error，只有控制停止才算失败尝试。",
    "members": [
     {
@@ -1296,7 +1317,7 @@
    "name": "uf::annotation::RecognitionRuntime",
    "kind": "class",
    "file": "modules/annotation/source/annotation/recognition-runtime.hpp",
-   "line": 63,
+   "line": 64,
    "responsibility": "运行时识别的公共表面，拥有 manifest 与解码后的自有灰度模板。create 要求收到的 hash 集合恰等于 manifest 引用的唯一模板集合、重算每份 PNG 的 SHA-256 并核对模板尺寸；每次评估先 ensureCompatibleFrame 校验 fingerprint 与 base resolution，再走有界 SAD。",
    "members": [
     {
@@ -1331,7 +1352,7 @@
    "name": "uf::annotation::resolveClickPixel",
    "kind": "functions",
    "file": "modules/annotation/source/annotation/recognition-runtime.hpp",
-   "line": 148,
+   "line": 149,
    "responsibility": "从 ActionTarget 命中的矩形确定唯一点击像素：有 defaultClick 时用 checked 加法把模板局部偏移加到匹配原点；无偏移时取 origin+extent/2 的截断整数中心，使奇偶尺寸都得到唯一像素。",
    "members": [
     {
@@ -1382,7 +1403,7 @@
      "note": "实时兼容条件比对对象。"
     },
     {
-     "sig": "SessionId sessionId; TargetGeneration targetGeneration; FrameId frameId",
+     "sig": "CaptureSessionId sessionId; TargetGeneration targetGeneration; FrameId frameId",
      "note": "同帧身份三元组。"
     },
     {
@@ -1414,6 +1435,43 @@
    ]
   },
   {
+   "name": "uf::annotation::RegressionCaseReport",
+   "kind": "struct",
+   "file": "modules/annotation/source/annotation/regression-runner.hpp",
+   "line": 13,
+   "responsibility": "一个 authoring regression 的完整执行报告，把用例身份、作者分类与期望、实际 PageRecognitionAttempt 以及最终是否匹配保存在同一 owning value 中。",
+   "members": [
+    {
+     "sig": "RegressionId id",
+     "note": "回归用例身份。"
+    },
+    {
+     "sig": "SourceId sourceId",
+     "note": "被重放的源截图身份。"
+    },
+    {
+     "sig": "RegressionClassification classification",
+     "note": "作者对样本的分类。"
+    },
+    {
+     "sig": "RegressionExpectation expectation",
+     "note": "作者声明的页面解析期望。"
+    },
+    {
+     "sig": "PageRecognitionAttempt attempt",
+     "note": "实际识别结果与已完成工作量。"
+    },
+    {
+     "sig": "bool matchesExpectation",
+     "note": "实际结果是否符合期望。"
+    }
+   ],
+   "related": [
+    "uf::annotation::RegressionSuiteReport",
+    "uf::annotation::PageRecognitionAttempt"
+   ]
+  },
+  {
    "name": "uf::annotation::RegressionSuiteReport",
    "kind": "struct",
    "file": "modules/annotation/source/annotation/regression-runner.hpp",
@@ -1423,10 +1481,6 @@
     {
      "sig": "vector<RegressionCaseReport> cases; bool completedAllCases",
      "note": "逐例报告与整体完成标志。"
-    },
-    {
-     "sig": "struct RegressionCaseReport { id; sourceId; classification; expectation; PageRecognitionAttempt attempt; bool matchesExpectation }",
-     "note": "单例实际结果与期望比对（line 13）。"
     }
    ],
    "related": [
@@ -1483,12 +1537,12 @@
     {
      "text": "RecognitionRuntime::evaluatePage 在一帧上按 pageAnchorOrder 走有界 SAD，先 ensureCompatibleFrame 校验 fingerprint 与 base resolution，返回 PageRecognitionAttempt。",
      "file": "modules/annotation/source/annotation/recognition-runtime.hpp",
-     "line": 121
+     "line": 122
     },
     {
      "text": "PageResolver::resolve 把锚点证据收敛为 PageOutcome；只有唯一候选得到 ResolvedPage，Unknown/Ambiguous 均 fail-closed。",
      "file": "modules/annotation/source/annotation/recognition.hpp",
-     "line": 218
+     "line": 222
     },
     {
      "text": "对命中的 ActionTarget，ActionDetection::create 校验 recognizer 是 ActionTarget 且 label==name，绑定 ProjectId/RecognizerId/Detection。",
@@ -1498,7 +1552,7 @@
     {
      "text": "resolveClickPixel 从匹配矩形派生唯一点击像素（偏移或截断中心）。",
      "file": "modules/annotation/source/annotation/recognition-runtime.hpp",
-     "line": 148
+     "line": 149
     },
     {
      "text": "authorizeCoordinateAction 施加四条件门：实时兼容、同项目 ResolvedPage、同帧 ActionDetection 且页面被授权、ObservationLease 仍有效，返回 Status。",

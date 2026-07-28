@@ -31,7 +31,7 @@
 4. **动作动词:click 为 P0-B 核心,keyPress 为 P0-B 内次优先扩展,拖拽/滑动
    明确推迟**(开发者确认每日大部分为点击,部分可按键,拖动暂不考虑)。
    controller 层按键机械(keyPress/keyDown/keyUp/longPress + 按住账本)已存在,
-   增量在 engine `ActionSink` 端口与授权语义。**硬约束:端口与授权模型按
+   增量在 engine `IActionSink` 端口与授权语义。**硬约束:端口与授权模型按
    action kind 参数化塑形,新增动词是加法,不改造既有链路。**
    非坐标动作(按键)要求的授权证据模型是 key 扩展动工前的前置设计项——
    底线:仍需页面证据 + fingerprint/generation 校验 + 租约,只是不绑定像素。
@@ -52,7 +52,7 @@
 
 ## 二、被「最终形态」原则升级为 P0-B 承诺的项
 
-- **`FrameSource::capture()` 端口补 deadline/stop_token**。「宿主调用必须有界」
+- **`IFrameSource::capture()` 端口补 deadline/stop_token**。「宿主调用必须有界」
   是终态契约(integration-plan §5 Risk #1);不补则 500ms 硬取消永远有一个
   不可抢占的 capture 缺口,且拖得越晚返工面越大。
 - **脚本级 trace 从第一天就是正式版本化 schema**(`task-trace/v1`:seed、脚本
@@ -140,7 +140,7 @@
   Fake Controller + 静态截图 golden——目前不存在,新建)。
 - veto #4 跑通:同 observation trace + seed 1000× 同机复现。
 - `sweepKnownPopups` 从 no-op 变最小 D6 清扫(观察周期边界 + 长 wait 内)。
-- key 动作扩展(若 P0-C 分解确认需要):ActionSink 新 kind + 非坐标授权证据
+- key 动作扩展(若 P0-C 分解确认需要):IActionSink 新 kind + 非坐标授权证据
   设计 + 授权链/trace 词汇扩展。
 - `capture()` deadline/stop_token 端口补齐(可与阶段 1/2 并行,谁先方便谁做)。
 

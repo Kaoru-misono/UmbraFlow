@@ -26,17 +26,19 @@ What it owns are portable, auditable "small mechanisms" that eliminate a class o
 - `numeric/`: explicit failure for integer arithmetic, integer conversion, and float-to-integer
   conversion.
 - `safety/`: static-analysis annotations and checked indexing into contiguous storage.
-- `text/`: UTF-8 validation, Unicode scalar encoding, and isolated code-unit bit conversion.
+- `text/`: UTF-8 validation and scalar decoding/encoding, plus isolated code-unit bit conversion.
 - `types/`: fixed-width integers, strongly typed values, identifiers, generation, non-zero values,
   flags, and explicit enum reflection.
 - `time/`: an in-process monotonic instant and its overflow-safe arithmetic.
 - `utility/`: `std::variant` visitor composition and deterministic scope cleanup.
 
-`modules/core/source/core/project.hpp` additionally provides `k_projectName`, but there is no
-aggregate `core.hpp`. Callers must include the precise facility they need; this keeps the
-dependency surface, compilation cost, and conceptual coupling all visible. Only facilities that
-require a non-template implementation have a matching `.cpp`: `error/contracts.cpp`,
-`error/error.cpp`, and `text/utf8.cpp`.
+There is no aggregate `core.hpp`. Callers must include the precise facility they need; this keeps
+the dependency surface, compilation cost, and conceptual coupling all visible. Application identity
+stays at the entry layer rather than entering this mechanism-only leaf. As decided on 2026-07-28,
+the repository-root `manifest.txt` supplies the application name and version to CMake, which
+generates an entry-only `application-info.hpp`. Only facilities that require a non-template
+implementation have a matching `.cpp`: `error/contracts.cpp`, `error/error.cpp`, and
+`text/utf8.cpp`.
 
 `core` deliberately owns no product semantics. It knows nothing of frame, detection, annotation,
 engine session, Windows handle, Luau, GUI, or any concrete game, and it does not decide whether a
@@ -210,10 +212,11 @@ still a call-scoped borrow that the caller must not retain after the container i
 
 `isValidUtf8()` in `modules/core/source/core/text/utf8.hpp` accepts the empty string and valid 1–4
 byte scalar encodings, and rejects isolated continuations, overlong sequences, truncated
-sequences, surrogates, and values greater than `0x10FFFF`. `appendUtf8Scalar()` covers the four
-encoding widths; if the caller passes a surrogate or an out-of-range code point it triggers a
-`UF_CHECK`, because the function's precondition already states that the parameter must be a
-Unicode scalar.
+sequences, surrogates, and values greater than `0x10FFFF`. `decodeUtf8Scalars()` reuses the same
+state machine and returns the decoded `uint32` scalars, or `std::nullopt` for malformed input.
+`appendUtf8Scalar()` covers the four encoding widths; if the caller passes a surrogate or an
+out-of-range code point it triggers a `UF_CHECK`, because the function's precondition already states
+that the parameter must be a Unicode scalar.
 
 Raw code-unit representation conversions are concentrated in
 `modules/core/source/core/text/unsafe/unicode-code-unit.hpp`: `utf8CodeUnitValue`, `utf8CodeUnit`,
