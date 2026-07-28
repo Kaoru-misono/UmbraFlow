@@ -6,6 +6,14 @@ version = 0.1.0
 [build]
 unity_build = false
 
+# The trusted Luau framework ships inside the binary. scripts/embed_luau.py
+# turns every .luau under this directory into one generated translation unit in
+# the build tree, carrying the source bytes, a per-file SHA-256, a bundle hash,
+# and the version below. The generated file is never committed.
+[embed]
+luau_directory = runtime
+luau_version = 0.1.0
+
 [dependencies]
 public = core domain annotation engine script
 private = Luau.VM Luau.Compiler Luau.Ast

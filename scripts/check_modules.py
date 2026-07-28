@@ -13,6 +13,13 @@ from pathlib import Path
 
 DEPENDENCY_SECTION_PREFIX = "dependencies"
 
+# [embed] declares non-C++ sources compiled into the module. Today the only
+# embeddable kind is Luau: luau_directory names a module-relative tree of .luau
+# files, luau_version the semantic version stamped into the generated bundle.
+# cmake/build.cmake runs scripts/embed_luau.py over that tree at build time.
+EMBED_SECTION = "embed"
+SEMANTIC_VERSION = re.compile(r"^\d+\.\d+\.\d+$")
+
 
 @dataclass(frozen=True)
 class Module:
@@ -20,6 +27,8 @@ class Module:
     directory: str
     manifest: Path
     dependencies: tuple[str, ...]
+    embed_luau_directory: str
+    embed_luau_version: str
 
 
 def split_dependencies(value: str) -> list[str]:
@@ -44,7 +53,43 @@ def load_module(manifest: Path) -> Module:
         directory=directory,
         manifest=manifest,
         dependencies=tuple(dict.fromkeys(dependencies)),
+        embed_luau_directory=parser.get(
+            EMBED_SECTION, "luau_directory", fallback=""
+        ).strip(),
+        embed_luau_version=parser.get(EMBED_SECTION, "luau_version", fallback="").strip(),
     )
+
+
+def embed_errors(module: Module, root: Path) -> list[str]:
+    """Validate an [embed] section, which the build turns into generated C++."""
+    if not module.embed_luau_directory and not module.embed_luau_version:
+        return []
+
+    manifest = module.manifest.relative_to(root)
+    errors: list[str] = []
+
+    if not module.embed_luau_directory:
+        errors.append(f"{manifest}: [embed] declares luau_version without luau_directory")
+    else:
+        directory = module.manifest.parent / module.embed_luau_directory
+        if not directory.is_dir():
+            errors.append(
+                f"{manifest}: [embed].luau_directory {module.embed_luau_directory!r} "
+                "is not a directory"
+            )
+        elif not any(directory.rglob("*.luau")):
+            errors.append(
+                f"{manifest}: [embed].luau_directory {module.embed_luau_directory!r} "
+                "contains no .luau sources"
+            )
+
+    if not SEMANTIC_VERSION.match(module.embed_luau_version):
+        errors.append(
+            f"{manifest}: [embed].luau_version must be MAJOR.MINOR.PATCH, "
+            f"got {module.embed_luau_version!r}"
+        )
+
+    return errors
 
 
 def find_cycle(graph: dict[str, tuple[str, ...]]) -> list[str] | None:
@@ -114,6 +159,8 @@ def main() -> int:
             errors.append(
                 f"{module.manifest.relative_to(root)}: core must not declare link dependencies"
             )
+
+        errors.extend(embed_errors(module, root))
 
     if "core" not in modules_by_name:
         errors.append("required core module is missing")

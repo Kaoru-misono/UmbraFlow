@@ -2,6 +2,67 @@
 
 include(cmake/tools.cmake)
 
+# A module that declares [embed] needs an interpreter to generate its bundle
+# translation unit at build time. Resolve it once here rather than per module.
+find_package(Python3 COMPONENTS Interpreter QUIET)
+
+# Compiles every .luau under LUAU_SOURCE_DIR into one generated translation unit
+# and adds it to TARGET_NAME. The generated file lives only in the build tree, so
+# the .luau sources stay the single source of truth for the embedded bytes and
+# for the hashes recorded alongside them.
+function(cpp_embed_luau_sources TARGET_NAME LUAU_SOURCE_DIR GENERATED_DIR VERSION LABEL)
+    if(NOT IS_DIRECTORY "${LUAU_SOURCE_DIR}")
+        message(FATAL_ERROR
+            "[Embed] ${TARGET_NAME}: [embed].luau_directory does not exist: ${LUAU_SOURCE_DIR}"
+        )
+    endif()
+
+    if(NOT Python3_Interpreter_FOUND)
+        message(FATAL_ERROR
+            "[Embed] ${TARGET_NAME}: embedding .luau sources requires a Python 3 interpreter."
+        )
+    endif()
+
+    set(EMBED_SCRIPT "${CMAKE_SOURCE_DIR}/scripts/embed_luau.py")
+    set(GENERATED_FILE "${GENERATED_DIR}/luau-bundle.generated.cpp")
+    set(INPUT_LIST_FILE "${GENERATED_DIR}/luau-bundle.inputs.txt")
+
+    # CONFIGURE_DEPENDS re-runs this glob at build time, so adding or deleting a
+    # .luau source triggers a reconfigure before the build continues.
+    file(GLOB_RECURSE LUAU_SOURCES CONFIGURE_DEPENDS "${LUAU_SOURCE_DIR}/*.luau")
+
+    # Editing a source is caught by its own entry in DEPENDS. Adding or deleting
+    # one is NOT: after the reconfigure above, the generated file is still newer
+    # than every remaining input, so the build system would consider it current
+    # and silently keep a stale bundle. Record the input set in a file that is
+    # rewritten only when that set changes, and depend on it: its timestamp then
+    # moves exactly when a source appears or disappears.
+    list(JOIN LUAU_SOURCES "\n" INPUT_LIST)
+    string(APPEND INPUT_LIST "\n")
+    set(PREVIOUS_INPUT_LIST "")
+    if(EXISTS "${INPUT_LIST_FILE}")
+        file(READ "${INPUT_LIST_FILE}" PREVIOUS_INPUT_LIST)
+    endif()
+    if(NOT PREVIOUS_INPUT_LIST STREQUAL INPUT_LIST)
+        file(WRITE "${INPUT_LIST_FILE}" "${INPUT_LIST}")
+    endif()
+
+    add_custom_command(
+        OUTPUT "${GENERATED_FILE}"
+        COMMAND ${Python3_EXECUTABLE} "${EMBED_SCRIPT}"
+            --source-dir "${LUAU_SOURCE_DIR}"
+            --output "${GENERATED_FILE}"
+            --version "${VERSION}"
+            --label "${LABEL}"
+        DEPENDS "${EMBED_SCRIPT}" "${INPUT_LIST_FILE}" ${LUAU_SOURCES}
+        COMMENT "[Embed] ${TARGET_NAME}: embedding Luau sources from ${LABEL}"
+        VERBATIM
+    )
+
+    set_source_files_properties("${GENERATED_FILE}" PROPERTIES GENERATED TRUE)
+    target_sources(${TARGET_NAME} PRIVATE "${GENERATED_FILE}")
+endfunction()
+
 function(cpp_define_module MODULE_ROOT_DIR DIR_NAME)
     set(MODULE_PATH "${MODULE_ROOT_DIR}/${DIR_NAME}")
     set(MANIFEST_FILE "${MODULE_PATH}/manifest.txt")
@@ -112,6 +173,21 @@ function(cpp_define_module MODULE_ROOT_DIR DIR_NAME)
             $<BUILD_INTERFACE:${MODULE_PATH}/source/${DIR_NAME}>
             $<INSTALL_INTERFACE:include>
     )
+
+    if(NOT MANIFEST_EMBED_LUAU_DIRECTORY STREQUAL "")
+        set(EMBED_LUAU_DIR "${MODULE_PATH}/${MANIFEST_EMBED_LUAU_DIRECTORY}")
+        # The label is the only path that reaches the generated file's text.
+        # Making it repository-relative is what keeps the output byte-identical
+        # across machines with different checkout locations.
+        file(RELATIVE_PATH EMBED_LUAU_LABEL "${CMAKE_SOURCE_DIR}" "${EMBED_LUAU_DIR}")
+        cpp_embed_luau_sources(
+            "${MODULE_NAME}"
+            "${EMBED_LUAU_DIR}"
+            "${CMAKE_BINARY_DIR}/generated/modules/${DIR_NAME}"
+            "${MANIFEST_EMBED_LUAU_VERSION}"
+            "${EMBED_LUAU_LABEL}"
+        )
+    endif()
 
     if(MANIFEST_BUILD_PCH)
         set(PCH_HEADER "${MANIFEST_BUILD_PCH}")
