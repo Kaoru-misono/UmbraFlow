@@ -24,6 +24,8 @@ Mirrored English and Chinese trees; see the [language guide](knowledge/README.md
   [P0-A Visual Annotation System & Data Model](plans/2026-07-22-annotation-design.md)
 - P0-B script-layer decisions and slicing:
   [P0-B script layer](plans/2026-07-27-p0b-script-layer.md)
+- Draft Luau-first task-system proposal (not yet authoritative):
+  [Luau-first task system design draft](plans/2026-07-28-luau-first-task-system-design-draft.md)
 - Completed full-project review follow-up:
   [Review fix record](plans/2026-07-28-full-project-review-fixes.md)
 - [Plans](plans/README.md)

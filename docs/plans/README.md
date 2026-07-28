@@ -13,6 +13,12 @@ location required by `CLAUDE.md` and `AGENTS.md`.
   S0-locked authority for authoring/runtime schemas, template and search geometry,
   page resolution, action evidence, and the P0-A workbench.
 
+Draft proposals (not authorities):
+
+- [Luau-first task system design draft](2026-07-28-luau-first-task-system-design-draft.md) —
+  proposed three-layer split between the C++ driver kernel, the bundled trusted Luau framework,
+  and project-owned game tasks; pending developer review and not yet an implementation basis.
+
 Active implementation plans (not authorities, executed when entering the phase):
 
 - [Engine architecture](2026-07-23-engine-architecture.md) — platform-free engine boundary and
