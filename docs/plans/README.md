@@ -12,12 +12,19 @@ location required by `CLAUDE.md` and `AGENTS.md`.
 - [P0-A Visual Annotation System & Data Model](2026-07-22-annotation-design.md) — developer-approved,
   S0-locked authority for authoring/runtime schemas, template and search geometry,
   page resolution, action evidence, and the P0-A workbench.
+- [Three-layer task system](2026-07-29-three-layer-task-system.md) — developer-approved
+  2026-07-29 authority for the task system: C++ guarantee layer, bundled trusted Luau
+  framework, and project-owned tasks; the observation-cycle protocol, the `uf` script
+  root, the merged `umbraflow-trace/v1` stream, and the staged implementation. Supersedes
+  the draft below in full and the script-layer rulings of
+  [P0-B script layer](2026-07-27-p0b-script-layer.md).
 
-Draft proposals (not authorities):
+Superseded, retained as history (do not implement from these):
 
 - [Luau-first task system design draft](2026-07-28-luau-first-task-system-design-draft.md) —
   proposed three-layer split between the C++ driver kernel, the bundled trusted Luau framework,
-  and project-owned game tasks; pending developer review and not yet an implementation basis.
+  and project-owned game tasks; superseded in full on 2026-07-29 after
+  [the 2026-07-28 review](../reviews/2026-07-28-luau-first-draft-review.md).
 
 Active implementation plans (not authorities, executed when entering the phase):
 

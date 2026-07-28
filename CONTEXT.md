@@ -8,12 +8,28 @@ task scripts written in Luau drive the loop through a minimal capability API.
 
 ### Scripting
 
-**Capability namespace (`umbra`)**:
-The single read-only global root through which a task script reaches every
-host capability (observation, recognition, pages, actions, waiting). A script
-sees nothing of the host outside this root.
-_Avoid_: `bot` (superseded draft wording in the grill decisions and the S0
-annotation design), `uf` (the C++ namespace, unrelated to the script surface)
+**Capability namespace (`uf`)**:
+The single read-only global root through which a project task script reaches
+the host: `uf.pages`, `uf.recognizers`, `uf.task`, and `uf.errors`. A script
+sees nothing of the host outside this root, and effects reach it only through
+the `ctx` object passed into a task's `run`. `uf` is the same product
+abbreviation as the C++ `uf::` namespace, used deliberately in both languages.
+_Avoid_: `umbra` (the 2026-07-27 spelling of this root; renamed to `uf` on
+2026-07-29, see `docs/plans/2026-07-29-three-layer-task-system.md` §6 and §18 —
+the rename touches only this script root, never the product names `UmbraFlow`
+and `umbra-flow` or the schema ids `umbraflow-authoring/v2`,
+`umbraflow-annotations/v1`, and the planned merged trace schema
+`umbraflow-trace/v1`), `bot` (superseded draft wording in the grill decisions
+and the S0 annotation design)
+
+**Private capability surface**:
+The twelve host primitives (`cycle_open`, `cycle_close`, `cycle_page`,
+`cycle_find`, `cycle_click`, `deadline`, `wait`, `settle`, `raise`, `emit`,
+`terminal`, `random`) that only the trusted Luau framework can reach, held as
+closure upvalues and never as a key of any table. A project task can neither
+name nor reach them; it sees only the `uf` capability namespace and `ctx`.
+Defined in `docs/plans/2026-07-29-three-layer-task-system.md` §5 (2026-07-29).
+_Avoid_: native driver, private native surface, raw verbs
 
 **Task**:
 One automation flow (such as a game's daily routine) authored as a Luau
@@ -46,3 +62,22 @@ The outer component of frame identity. Together with `TargetGeneration` and
 colliding. It is supplied by the composition root and belongs to captured
 frames, not to `engine::EngineSession`.
 _Avoid_: `SessionId` (too generic), engine session id, task session id
+
+**Observation cycle**:
+The explicit open/close scope around exactly one capture, inside which page
+resolution, recognizer lookup, and a single click all read the same frame.
+Opening it costs one capture; closing it releases the frame deterministically
+and is idempotent. It replaces GC-driven frame lifetime, and because a page and
+a hit from one cycle are same-frame by construction, cross-frame evidence
+mismatch stops being checkable state and becomes structurally impossible.
+Defined in `docs/plans/2026-07-29-three-layer-task-system.md` §4 (2026-07-29).
+_Avoid_: frame box, observation lease (the freshness contract on a delivered
+action, not this scope), capture scope
+
+**Ticket**:
+The script-side handle to one open observation cycle. C++ owns the ticket
+ledger and re-checks the ticket on every use; when the cycle closes, the ticket
+is dead and every later operation on it fails. The ticket is the unit the host
+invalidates after an action, and it carries no data the script can read.
+Defined in `docs/plans/2026-07-29-three-layer-task-system.md` §4 (2026-07-29).
+_Avoid_: frame handle, cycle object, token (reserved for `std::stop_token`)

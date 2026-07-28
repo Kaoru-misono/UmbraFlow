@@ -11,6 +11,15 @@
 > (句柄=userdata、错误捕获入口、热加载 P0 范围、任务归属项目等),
 > 见 [`2026-07-27-p0b-script-layer.md`](2026-07-27-p0b-script-layer.md) 与
 > `docs/adr/0001`、`docs/adr/0002`。
+>
+> **2026-07-29 重定向**(不改上面任何一条历史裁决,只给出现在该读作什么):
+> ① capability 根再次改名,**`umbra.*` 一律读作 `uf.*`**,单一全局根不变;
+> ② `docs/adr/0001` 与 `docs/adr/0002` 两份 ADR 已被开发者删除,其论证完整保留在
+> [`2026-07-29-three-layer-task-system.md`](2026-07-29-three-layer-task-system.md):
+> ADR 0001(脚本句柄=进程内 userdata,可序列化 DTO 只约束未来跨进程 worker 接缝)
+> 见该文 §11「为什么句柄不是可序列化 DTO」与 §5;ADR 0002(任务归项目所有、按
+> `(project, taskName)` 寻址,CLI 永不执行游离路径脚本)见该文 §6「任务寻址」。
+> 该文同时取代本文脚本层相关裁决的现行读法,详见其 §1 与 §16。
 
 ---
 

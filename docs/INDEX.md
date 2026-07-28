@@ -18,14 +18,21 @@ Mirrored English and Chinese trees; see the [language guide](knowledge/README.md
 
 - Current product direction:
   [Product form and Roadmap](plans/2026-07-21-product-form-and-roadmap.md)
+- Current task-system architecture (approved 2026-07-29; supersedes the
+  script-layer rulings below):
+  [Three-layer task system](plans/2026-07-29-three-layer-task-system.md)
 - Current task-model decisions:
   [Luau task-model grill decisions](plans/2026-07-21-lua-task-model-grill-decisions.md)
 - Locked S0 annotation contract:
   [P0-A Visual Annotation System & Data Model](plans/2026-07-22-annotation-design.md)
-- P0-B script-layer decisions and slicing:
+- P0-B script-layer decisions and slicing (rulings and API sketch superseded
+  2026-07-29; retained as the record of landed stage work):
   [P0-B script layer](plans/2026-07-27-p0b-script-layer.md)
-- Draft Luau-first task-system proposal (not yet authoritative):
+- Superseded in full on 2026-07-29 by the three-layer task system, retained as
+  history:
   [Luau-first task system design draft](plans/2026-07-28-luau-first-task-system-design-draft.md)
+- Review whose conclusions the three-layer plan adopted:
+  [Luau-first draft review](reviews/2026-07-28-luau-first-draft-review.md)
 - Completed full-project review follow-up:
   [Review fix record](plans/2026-07-28-full-project-review-fixes.md)
 - [Plans](plans/README.md)
@@ -47,7 +54,11 @@ Closed reviews live under `archive/reviews/`:
 ## Repository guidance
 
 - [Domain glossary](../CONTEXT.md)
-- [Architecture decision records](adr/)
+- Architecture decision records: the two ADRs under `adr/` were deleted on
+  2026-07-29 and the directory is empty. Their reasoning is preserved in
+  [Three-layer task system](plans/2026-07-29-three-layer-task-system.md) — script
+  handles as in-process userdata in §11, project-owned name-addressed tasks
+  in §6. Decisions now land in dated plans under `plans/`.
 - [Pitfalls](pitfalls/README.md)
 - [C++ coding skill](../.claude/skills/cpp-coding/SKILL.md)
 - [Safe C++ profile](../.claude/skills/cpp-coding/references/safety-profile.md)

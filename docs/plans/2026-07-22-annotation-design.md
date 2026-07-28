@@ -378,28 +378,39 @@ ambiguity heuristic beyond the provable exact-duplicate check.
 > Amended 2026-07-27: the capability namespace is **`umbra`** (decided in the
 > P0-B script-layer grill, see `CONTEXT.md`). This section originally spelled
 > it `bot`; the semantics are unchanged.
+>
+> Amended 2026-07-29: the capability namespace root is renamed **`umbra` ->
+> `uf`** (developer-approved, see
+> [`2026-07-29-three-layer-task-system.md`](2026-07-29-three-layer-task-system.md)
+> §6 and §18, and `CONTEXT.md`). Semantics are unchanged. What S0 locks here is
+> the resource spelling `uf.pages.<name>` / `uf.recognizers.<name>` and the
+> literal-member-access validation rule below; the bare verb forms shown in the
+> example are the 2026-07-27 script surface, which that plan restructures into a
+> framework-owned `ctx` (§5 and §7). The product names `UmbraFlow` and
+> `umbra-flow` and the schema ids `umbraflow-authoring/v2` and
+> `umbraflow-annotations/v1` are unaffected.
 
 The host creates recursively read-only tables from the validated runtime
 manifest. P0 exposes one canonical spelling only:
 
 ```lua
-local frame = umbra:capture()
+local frame = uf:capture()
 local outcome = frame:resolve_page()
 local page = outcome:resolved() -- ResolvedPage | nil; Unknown/Ambiguous already traced
 
-if page ~= nil and page:is(umbra.pages.home) then
-    local target = frame:find(umbra.recognizers.daily_button)
+if page ~= nil and page:is(uf.pages.home) then
+    local target = frame:find(uf.recognizers.daily_button)
     if target ~= nil then
-        umbra:click(page, target)
+        uf:click(page, target)
     end
 end
 ```
 
-- `umbra.recognizers.<name>` contains opaque recognizer handles.
-- `umbra.pages.<name>` contains opaque page handles.
-- There is no `umbra.templates` alias, path constructor, string-path lookup, or
+- `uf.recognizers.<name>` contains opaque recognizer handles.
+- `uf.pages.<name>` contains opaque page handles.
+- There is no `uf.templates` alias, path constructor, string-path lookup, or
   script-visible ROI/pixel data.
-- `umbra:click` requires `ResolvedPage` and `Detection`; a default click is only a
+- `uf:click` requires `ResolvedPage` and `Detection`; a default click is only a
   host-applied template-local offset on the live Detection.
 
 P0 script validation is deliberately restricted and decidable. Every resource

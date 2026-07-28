@@ -14,7 +14,7 @@ drift at the moment it becomes visible, not in a someday cleanup.
 
 | Class | Example |
 |---|---|
-| **Superseded decision** | Namespace ruled `umbra.*`; older docs still teach `bot.*` |
+| **Superseded decision** | Script root ruled `uf` (2026-07-29); older docs still teach `umbra.*`, older ones still `bot.*` |
 | **Stale blocker wording** | integration-plan said S0 schema "deferred" 4 days after it locked |
 | **Queued-but-unapplied fix** | hardening ledger ordered a veto #2 rewording in the roadmap; nobody applied it |
 | **Doc-vs-code contradiction** | "the engine has no loop" vs `waitForPage`'s internal poll loop |

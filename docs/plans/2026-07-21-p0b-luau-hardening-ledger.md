@@ -20,7 +20,10 @@
 
 ## 沙箱
 
-- [ ] **宿主 `umbra.*` API 表逐层递归 freeze**。`luaL_sandbox` 只冻内置库/内置 metatable/全局表;
+- [ ] **宿主 `uf.*` API 表逐层递归 freeze**(2026-07-29:根由 `umbra` 改名为 `uf`,见
+      [`2026-07-29-three-layer-task-system.md`](2026-07-29-three-layer-task-system.md) §6/§18;
+      同文 §7 把「构造时冻结 + `__metatable` + `__index` 必须是表」定为运行期规则,
+      本条的 boot 期递归 freeze 是其下限)。`luaL_sandbox` 只冻内置库/内置 metatable/全局表;
       "递归 readonly" 要宿主自己遍历每张嵌套表 `table.freeze`/设只读。漏一张嵌套表 = 一个 monkey-patch /
       跨运行泄漏洞。加一条显式沙箱测试覆盖嵌套表不可写。
 - [ ] **显式 nil 掉 `luaL_sandbox` 不移除的 5 个全局**(2026-07-21 spike 实测:0.730 上它们仍存活):

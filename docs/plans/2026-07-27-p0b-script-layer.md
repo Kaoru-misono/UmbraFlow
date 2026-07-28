@@ -1,5 +1,22 @@
 # P0-B 脚本层 — 动工前裁决与执行切片
 
+> **2026-07-29 取代注记**:本文的**脚本层裁决(§一)与阶段 2 API 草图(§四)已被
+> [`2026-07-29-three-layer-task-system.md`](2026-07-29-three-layer-task-system.md)
+> 取代**,不再是实现依据。仍然有效的是**已落地工作的记录**——§三各阶段的「已完成」
+> 注记(阶段 1/2/3 的提交、实测结论、对抗审查发现)是历史事实,照读。
+>
+> 读法要点:
+>
+> - capability 根 `umbra` 已改名为 **`uf`**(新文 §6/§18)。本文正文一律不改写,
+>   凡作为脚本根出现的 `umbra` 读作 `uf`;`umbra-flow` 是 CLI 名字,不改。
+> - 裸动词(`umbra:capture` / `umbra:click` / `umbra:wait_for_page` / `umbra:try` /
+>   `umbra:now`)不再是 project 可见表面:新文 §5 改为 framework 私有的 12 个原语 +
+>   §6 的 `ctx`,project 环境无裸动词(新文 §7、§16)。
+> - 观察寿命不再绑 Lua GC:改为显式观察周期 + 票据(新文 §4),跨帧 seq 校验机械
+>   整体删除。
+> - `task-trace/v1` 与 `engine-trace/v1` 合并为 `umbraflow-trace/v1`(新文 §12)。
+> - §六的五个待裁决项已在 2026-07-29 全部有结论,就地标注于该节。
+>
 > 状态:**已裁决,2026-07-27 grill 完成**。本文补全
 > [`2026-07-21-lua-task-model-grill-decisions.md`](2026-07-21-lua-task-model-grill-decisions.md)
 > 中 D1/D4/D10 的「留待」项,并给出 P0-B 的执行切片。上游权威不变:产品方向看
@@ -19,7 +36,9 @@
    trace、错误消息与全部示例;C++ 命名空间保持 `uf::` 不受影响。旧文档中的
    `bot.*` 均已加注读作 `umbra.*`(annotation-design §4 已改写)。词条见根目录
    `CONTEXT.md`。
-2. **P0 脚本句柄 = 进程内 opaque userdata**([ADR 0001](../adr/0001-script-handles-are-userdata.md))。
+2. **P0 脚本句柄 = 进程内 opaque userdata**(原 ADR 0001 已删除,论证保留于
+   [`2026-07-29-three-layer-task-system.md`](2026-07-29-three-layer-task-system.md)
+   §11「为什么句柄不是可序列化 DTO」及 §5 的四条不变量)。
    `frame`/`page`/`detection` 是宿主拥有、脚本不可窥视的 userdata,一比一包装
    engine 冻结句柄;「`IScriptRuntime` 只传可序列化 DTO」改判为未来跨进程
    worker 接缝的要求(触发 C# worker 重评估条件时兑现)。
@@ -45,7 +64,9 @@
    Tier B 自动化结构化错误,脚本自身 bug 穿透;`pcall` 不删(语言习惯,且
    Tier C 经 `lua_break` 对其免疫)。`wait` 超时归 Tier B 独立 kind,与 Tier C
    的预算耗尽分开,不合并。
-7. **任务归属项目、名字寻址**([ADR 0002](../adr/0002-tasks-are-project-owned.md)):
+7. **任务归属项目、名字寻址**(原 ADR 0002 已删除,论证保留于
+   [`2026-07-29-three-layer-task-system.md`](2026-07-29-three-layer-task-system.md)
+   §6「任务寻址」):
    任务住在项目 `tasks/` 目录,`umbra-flow run --project <dir> --task <name>`,
    宿主载入时算脚本内容 hash、连同 compiler 版本写入 trace。CLI 永不执行游离
    路径脚本。P1 D7 的任务清单与 P2 App 的任务枚举都是这一结构的加法。
@@ -116,7 +137,8 @@
 - Tier A/B/C 映射:空 optional→`nil`;StaleObservation/Timeout/ActionRejected/
   RecognitionFailed→可捕获结构化错误(retryable 默认值在此定表);
   Cancelled/预算耗尽→特判走 Tier C 不可吞路径。`umbra:try` 落地。
-- 任务 sourcing:`tasks/` 目录 + 名字寻址 + hash 入 trace(ADR 0002);
+- 任务 sourcing:`tasks/` 目录 + 名字寻址 + hash 入 trace(原 ADR 0002,现见
+  [`2026-07-29-three-layer-task-system.md`](2026-07-29-three-layer-task-system.md) §6);
   `umbra-flow run` 改为 `--project --task` 形态。
 - API 草图先行:动工前出一版 `umbra.*` 表面签名清单(含 raw find 暴露与命名
   细节)供开发者过目,再写绑定。
@@ -197,21 +219,48 @@ Cancelled / 预算耗尽 → `lua_break` 路径。
 
 ## 六、夜间实现后新增的待裁决项(2026-07-27)
 
+> **五项已于 2026-07-29 全部裁决**,结论就地标注在每项之下,依据是
+> [`2026-07-29-three-layer-task-system.md`](2026-07-29-three-layer-task-system.md)。
+> 原问题文字保留为历史。
+
 1. **`umbra:now()` 的语义**。现在是「每次读取 +1ms」的逻辑序数,完全可复现,但
    与真实时间无关:作者写 `until umbra:now() - t0 > 5000` 得到的是「循环 5000 次」
    而非「等 5 秒」。三条路可选:①保持现状 + 文档强调它不是墙钟(推荐:真正的等待
    一律走 `wait_for_page` 的宿主超时,脚本本就不该自己数时间);②改为随观察事件
    推进(有语义但仍非真实时间);③暴露真实墙钟并显式排除在确定性契约外。
    决定前 `now()` 只适合做单调守卫,不适合做超时。
+   > **裁决(2026-07-29):三条路都不选,动词从脚本表面整体删除。** `now()` 及
+   > `DeterministicClock` 的全部绑定删除,脚本永远读不到任何形式的时钟。替代是
+   > 基于证据的等待 `ctx:wait_for_page(page, { timeout_ms })` 与声明式有界停顿
+   > `ctx:settle(ms)`(后者进 trace、时长是重放输入的一部分)。见新文 §10,
+   > 删除清单见 §16。
 2. **D6 最小清扫的落点**。实现方判断 task 侧钩子位置错误、应留在 engine 的
    `sweepKnownPopups`(但那属 `modules/engine`,本轮禁改)。若认可,P0-C 动工时
    直接改 engine;若认为 task 侧也需要一层,需说明它要看见哪些观察周期。
+   > **裁决(2026-07-29):问题消失——那个接缝整体删除。** 开发者已准许改动
+   > `modules/engine`:`EngineSession::waitForPage`、`PageWait` 与
+   > `sweepKnownPopups` 全部删除(能力层里不该有 policy 循环)。弹窗 interrupt
+   > 注册表迁入 Luau framework,由 framework 在每个观察周期边界跑。见新文 §3、
+   > §16、§17 阶段 3(该阶段的出口即「弹窗-长等待缺口关闭」)。
 3. **veto #4 的轮数**。CI 跑 300;是否需要一个 nightly/手动的 1000 轮门。
+   > **状态(2026-07-29):仍未裁决**,已并入新文 §18「待你裁决」的常数标定项,
+   > 与内存/指令预算/`max_runtime`/轮询节奏/`max_action_frame_age` 一起,由首个
+   > 真日常 + 真机 soak 标定。
 4. **`installer()` 的两个重载**。无参版只装资源表、不装动词,目前只有测试用;
    生产误用会得到一个没有动词的 `umbra` 表。是否收窄为单一重载。
+   > **裁决(2026-07-29):问题消失——能力面整体重构。** 表面拆成 framework 私有
+   > 能力面(12 个原语,只以闭包 upvalue 持有)+ 冻结的 project 环境(`uf.pages` /
+   > `uf.recognizers` / `uf.task` / `uf.errors`),两个环境按 `luau_load` 的 env
+   > 索引隔离,不存在「装不装动词」这个选择。连带:`HostTableInstaller` 必须改成
+   > 返回 `Status`(今天是 `void`,坏 bundle 无法让 generation 失败)。见新文
+   > §5、§7。
 5. **`snakeName` 与 `errorKindWireName` 两处重复的 kind→wire 名映射**(绑定层与
    trace 层各一份,注释要求二者恒等但无共享真相、无一致性测试)。建议补一条断言
    两表相等的测试,或合并到一处。
+   > **裁决(2026-07-29):合并,不是加测试。** 两份映射合并为**一个** C++ 函数,
+   > `AutomationErrorKind` 是唯一真相;Python 生成器解析该 enum 产出 Luau 的
+   > `uf.errors` 表,并加一条断言生成表覆盖 enum 每个取值的测试。不生成 C++ enum。
+   > 见新文 §9,落地在 §17 阶段 1。
 
 ## 五、遗留待定(记账,不阻塞动工)
 

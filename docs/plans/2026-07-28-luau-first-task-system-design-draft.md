@@ -1,5 +1,13 @@
 # Luau-First Task System 详细设计草案
 
+> **已被取代(2026-07-29)。** 本文**全文**由
+> [`2026-07-29-three-layer-task-system.md`](2026-07-29-three-layer-task-system.md)
+> 取代,不再是任何实现的依据。促成该决定的评审是
+> [`docs/reviews/2026-07-28-luau-first-draft-review.md`](../reviews/2026-07-28-luau-first-draft-review.md):
+> 分层判断被采纳,阶段排序与 yield/request driver 论证被落地代码证伪(见新文 §11)。
+> 本文正文原样保留为历史,请勿据此实现;其中的 `umbra` 根、`resources` 根、
+> driver/yield 方案与阶段 A–F 排序均已作废。
+>
 > 状态:草案,等待开发者评审。
 >
 > 日期:2026-07-28。

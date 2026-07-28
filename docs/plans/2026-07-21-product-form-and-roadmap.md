@@ -228,8 +228,11 @@ C# 的强隔离收益主要来自**进程边界**,而不是语言本身。现代
 
 - **每任务独立 VM generation**:独立 allocator 配额、全局环境与执行线程;任务结束即可整体回收。
 - **只接收源码**:由受控 Luau compiler 生成 bytecode 并立即加载;不接受磁盘、网络或用户提供的 bytecode。
-- **最小 capability API**:脚本只看到 `umbra.*`;不暴露文件、网络、进程、环境变量、动态库与真实系统时钟;
+- **最小 capability API**:脚本只看到 `uf.*`;不暴露文件、网络、进程、环境变量、动态库与真实系统时钟;
   宿主 API 表及其嵌套对象递归 readonly。
+  *(2026-07-29 修正:根由 `umbra` 改名为 `uf`,见
+  [`2026-07-29-three-layer-task-system.md`](2026-07-29-three-layer-task-system.md) §6/§18。
+  同文 §5/§7 进一步把 project 环境收窄为「`uf` 资源根 + `ctx`」,裸动词不在其中。)*
 - **取消不可被脚本吞掉**:任务由 coroutine/`lua_resume` 驱动;其他线程只设置 atomic cancel;
   interrupt callback 检测取消后 yield,宿主不再 resume 旧线程。不得以可被 `pcall` 捕获的普通脚本错误作为最终取消信号。
 - **宿主调用必须有界**:interrupt 只能抢占 Luau 执行,不能抢占卡死的 C++ binding。截图、识别、等待与输入 API
@@ -241,7 +244,11 @@ C# 的强隔离收益主要来自**进程边界**,而不是语言本身。现代
 - **为未来 worker 留缝**:`IScriptRuntime` 边界只传可序列化 DTO;截图、识别、输入发送、按键持有账本和 trace
   归 C++ 宿主所有,禁止脚本持有 C++ 裸指针或不可序列化内部对象。
   *(2026-07-27 裁决:本条绑定的是未来跨进程 worker 接缝;P0 进程内脚本句柄用
-  opaque userdata,见 `docs/adr/0001-script-handles-are-userdata.md`。)*
+  opaque userdata。**2026-07-29 修正**:原引用的 `docs/adr/0001-script-handles-are-userdata.md`
+  已被开发者删除,该论证完整保留于
+  [`2026-07-29-three-layer-task-system.md`](2026-07-29-three-layer-task-system.md)
+  §11「为什么句柄不是可序列化 DTO」,四条理由与本条的绑定关系见该节;
+  跨进程 worker 接缝拿到的是同文 §5 的 12 个原语签名。)*
 
 ### 一票否决验证
 

@@ -109,9 +109,20 @@
 > **2026-07-27**:脚本层动工前 grill 已完成,A 类裁决(`umbra.*` 命名空间、
 > `modules/task` 绑定模块、userdata 句柄、任务归属项目、热加载加载边界口径等)
 > 与执行切片见 [`2026-07-27-p0b-script-layer.md`](plans/2026-07-27-p0b-script-layer.md)。
+>
+> **2026-07-29**:脚本层现行权威改为
+> [`2026-07-29-three-layer-task-system.md`](plans/2026-07-29-three-layer-task-system.md)
+> (三层 = C++ 保证层 / 可信 Luau framework / project task)。它取代
+> `2026-07-28-luau-first-task-system-design-draft.md` 全文,以及上条 2026-07-27
+> 裁决中的脚本层部分。**上条的 `umbra.*` 命名空间裁决已被撤销:根改名为 `uf`**
+> (§6/§18);句柄/任务寻址口径不变但改由该文 §11/§6 承载。落地顺序见其 §17,
+> 明确删除清单见其 §16。
 
 - [ ] 固定 Luau 精确版本,接入 compiler/VM 与 `IScriptRuntime` 可序列化边界
-      (边界口径见 `docs/adr/0001`:P0 进程内 userdata,DTO 归未来 worker 接缝)。
+      (边界口径见
+      [`2026-07-29-three-layer-task-system.md`](plans/2026-07-29-three-layer-task-system.md)
+      §11「为什么句柄不是可序列化 DTO」:P0 进程内 userdata,DTO 归未来跨进程
+      worker 接缝——原 `docs/adr/0001` 已删除,论证迁至该节)。
       **进展**:0.730 submodule + RAII `Engine::runNumber` 已落地(2026-07-22);
       沙箱/取消/配额未做,见 `2026-07-21-p0b-luau-hardening-ledger.md`。
 - [ ] 最小 capability API 与 observe/resolve/act/wait 引擎循环;manifest 只读 recognizer/page 句柄,
