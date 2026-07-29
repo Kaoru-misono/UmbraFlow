@@ -18,9 +18,9 @@ _Avoid_: `umbra` (the 2026-07-27 spelling of this root; renamed to `uf` on
 2026-07-29, see `docs/plans/2026-07-29-three-layer-task-system.md` §6 and §18 —
 the rename touches only this script root, never the product names `UmbraFlow`
 and `umbra-flow` or the schema ids `umbraflow-authoring/v2`,
-`umbraflow-annotations/v1`, and the planned merged trace schema
-`umbraflow-trace/v1`), `bot` (superseded draft wording in the grill decisions
-and the S0 annotation design)
+`umbraflow-annotations/v1`, and the merged trace schema `umbraflow-trace/v1`,
+which shipped on 2026-07-29 in `modules/trace`), `bot` (superseded draft
+wording in the grill decisions and the S0 annotation design)
 
 **Private capability surface**:
 The twelve host primitives (`cycle_open`, `cycle_close`, `cycle_page`,
@@ -79,5 +79,10 @@ The script-side handle to one open observation cycle. C++ owns the ticket
 ledger and re-checks the ticket on every use; when the cycle closes, the ticket
 is dead and every later operation on it fails. The ticket is the unit the host
 invalidates after an action, and it carries no data the script can read.
-Defined in `docs/plans/2026-07-29-three-layer-task-system.md` §4 (2026-07-29).
+It names its cycle by two numbers, both re-checked: the ledger's process-wide
+generation stamp and the cycle's ordinal within that ledger. The stamp is what
+makes a ticket left over from a spent generation get rejected rather than
+collide with a live ordinal in the next one.
+Defined in `docs/plans/2026-07-29-three-layer-task-system.md` §4 (2026-07-29);
+implemented in `modules/task/source/task/cycle-ledger.hpp`.
 _Avoid_: frame handle, cycle object, token (reserved for `std::stop_token`)

@@ -563,8 +563,20 @@ framework 是 `.luau`,而本仓库今天对 `.luau` 没有任何管线:模块自
    hash 复用 `annotation::sha256`(`modules/task` 已依赖 annotation),不引第二套。
 3. `modules/task/manifest.txt` 加一个 `embed` 段,`cmake/manifest.cmake` 与
    `scripts/check_modules.py` 认它。
-4. `scripts/check_luau.py`:用 vendored 的 Luau 编译器对 `modules/task/runtime/` 和
-   `tests/task/runtime/` 下所有 `.luau` 做语法门,并入最小验证门。
+4. `.luau` 语法门:`modules/task/source/task/ffi/framework-bundle-syntax.cpp` 里的
+   `checkFrameworkModuleSyntax`(声明在 `framework-bundle.hpp`)直接调 vendored
+   Luau 的 `Parser`,由 doctest `tests/task/test-framework-bundle.cpp` 逐个解析
+   bundle 里的每个模块。它随 `test-task` 带 `CI` 标签,所以已经在最小验证门的
+   `ctest -L CI` 里。
+
+> **修订 2026-07-29(orchestrator,阶段 1a 落地时)**:本项原写「`scripts/check_luau.py`
+> 用 vendored 的 Luau 编译器做语法门」。**这个脚本不会存在。**
+> `modules/script/external/CMakeLists.txt:6` 强制 `LUAU_BUILD_CLI OFF`,构建里根本没有
+> 可供 Python 调用的 `luau` 二进制;打开它等于为一道语法门多编一个 CLI、多一条进程边界。
+> 换成 C++ doctest 直接调 `Luau::Parser`,语法门与 bundle 的 hash/排序断言住在同一个
+> 测试文件里,门的语言也和被门的东西一致。`tests/task/runtime/` 目前不存在,阶段 3 加
+> framework 单测时再一并纳入这个测试的解析范围。
+> 这条写下来是因为「补一个 Python 检查器」否则会被后来的会话当成未完成的工作反复重开。
 
 **关于 SHA-256 要说实话**:它和被它证明的字节编译进同一个二进制,对能改二进制的人
 证明不了任何东西。它的真实作用是给 trace 盖章(一次 run 可归因到确切的 framework
@@ -607,11 +619,15 @@ SLA;一条 trace 足以解释每一步。
 
 放开重构后明确要删的东西。列出来是为了实施时不犹豫。
 
+状态标记(**核对至 `01d0e9a`,2026-07-29**):**已删**的每一项都在当前工作树上 grep
+验证过确实没有残留;未标记的项尚未动。
+
 **modules/engine**
 
 - `EngineSession::waitForPage`、`PageWait`、`sweepKnownPopups`——能力层里不该有 policy
-  循环,那个循环还捎带一个永久 no-op 的弹窗接缝。
-- `pollSleep` 迁移到 task 的 `wait` 原语。
+  循环,那个循环还捎带一个永久 no-op 的弹窗接缝。(**未删**,排在阶段 3——framework
+  接手 wait 之前删掉它,能力缺口就没人补。)
+- `pollSleep` 迁移到 task 的 `wait` 原语。(**未迁**,阶段 3。)
 - 相应测试。
 
 **modules/task**
@@ -619,20 +635,33 @@ SLA;一条 trace 足以解释每一步。
 - frame-box 的 GC 析构释放路径、`guardObservationBudget`、seq 跨帧校验机械
   (`umbra-tables.cpp` 里约 300 行),以及 `TaskContextConfig::maxLiveObservations`
   这个旋钮本身(见 §4 的修订:上限恒为 1)。
-- `DeterministicClock` 及 `now()` 的全部绑定。
-- `task-trace/v1` 作为独立 schema。
-- `uf:try` 的 C 绑定(语义由纯 Luau 承接,`markFatal`/`guardFatal` 保留)。
-- `TaskContext` 作为单个类:拆成票据账本 + 私有能力面。
-- 两份 kind→wire 映射(整体上移到 `modules/domain`)。
-- project 环境里的全部裸动词。
+  (**已删,阶段 2a `01d0e9a`**:`ObservationSeq`、`maxLiveObservations`、
+  `liveObservationCount()`、`guardObservationBudget`、句柄析构器的释放路径全部不再存在;
+  帧的释放时机改由 `cycle_close`、消费周期的 click,或 `CycleLedger` 的析构决定。)
+- `DeterministicClock` 及 `now()` 的全部绑定。(**未删,裁决归入阶段 3a**——见 §17。)
+- `task-trace/v1` 作为独立 schema。(**已删,阶段 1b `408dc90`**:与 `engine-trace/v1`
+  合并为 `modules/trace` 下的 `umbraflow-trace/v1`,源码里只剩解释合并的注释。)
+- `uf:try` 的 C 绑定(语义由纯 Luau 承接,`markFatal`/`guardFatal` 保留)。(**未删,
+  裁决归入阶段 2b-2**——见 §17;`markFatal`/`guardFatal` 按计划仍在 `umbra-tables.cpp`
+  里。)
+- `TaskContext` 作为单个类:拆成票据账本 + 私有能力面。(**部分**:票据账本已析出为
+  `cycle-ledger.hpp`/`.cpp`(阶段 2a);能力面进 upvalue 在阶段 2b-2。)
+- 两份 kind→wire 映射(整体上移到 `modules/domain`)。(**已删,阶段 1c `31ea3af`**:
+  `snakeName` 与 `errorKindWireName` 都不存在了,唯一真相是
+  `domain::automationErrorWireName`,错误 kind 表由宿主从它构建。注意根名还没改:
+  代码里这张表今天挂在 `umbra.errors` 上,`uf.` 拼写要等阶段 2 的根改名。)
+- project 环境里的全部裸动词。(**未删**,阶段 2b-2——见 §17 的拆分说明:裸动词要等
+  `ctx` 存在了才能走。)
 
 **entry/cli**
 
-- `runScriptFlow` 的生命周期部分(搬进 `TaskHost`)。
+- `runScriptFlow` 的生命周期部分(搬进 `TaskHost`)。(**已搬,阶段 1d `e387453`**:
+  `runScriptFlow` 这个符号在 `entry/` 里已不存在。)
 - `runSmokeFlow` 与 `--page`/`--action`(**2026-07-29 开发者裁决:删**)。`--task` 已
   覆盖其用途。连带:`ExitCode::ActionAbsent` 失去唯一来源,随之删除;`args` 的互斥
   校验简化为只认 `--task`;B1 smoke 的真机验证路径改由一个最小 `.luau` 任务承担,
-  在阶段 4 一并落地。
+  在阶段 4 一并落地。(**已删,阶段 1d `e387453`**:退出码 3 在 `entry/cli/run.hpp`
+  里留了一条「此位刻意空着」的注记,不再复用。)
 
 **docs**
 
@@ -647,25 +676,68 @@ SLA;一条 trace 足以解释每一步。
 排序依据不再是「不丢弃任何东西」,而是:先做后面全部依赖的地基,再尽早关闭真正的
 能力缺口,再尽早上真机。
 
-### 阶段 1 — 地基
+### 阶段 1 — 地基(**已完成 2026-07-29**)
 
-- 合并为单条 `umbraflow-trace/v1`(先做,因为之后每个阶段都往里发事件)。
-- `.luau` 构建管线:`embed_luau.py` + manifest key + `check_luau.py`。
-- kind→wire 映射合并为 `modules/domain` 的一份;宿主在能力面安装时构建 `uf.errors`;
-  加覆盖性测试与 trace/脚本拼写一致性测试。
-- `TaskHost` 立起 D10 动词形;CLI 收缩;注入每 run 种子。
+- **1b(`408dc90`)** 合并为单条 `umbraflow-trace/v1`(先做,因为之后每个阶段都往里发
+  事件)。落地时连 `modules/trace` 这个模块一起立起来了,两个 sink 变一个。
+- **1a(`9d9d164`)** `.luau` 构建管线:`embed_luau.py` + `manifest.txt` 的 `[embed]` 段
+  + 语法门。语法门的形态与本文原稿不同,见 §14 的修订——不是 `check_luau.py`,
+  是 `tests/task/test-framework-bundle.cpp` 里的 doctest。
+- **1c(`31ea3af`)** kind→wire 映射合并为 `modules/domain` 的一份
+  (`automationErrorWireName`);宿主在能力面安装时构建错误 kind 表;加覆盖性测试与
+  trace/脚本拼写一致性测试。
+- **1d(`e387453`)** `TaskHost` 立起 D10 动词形;CLI 收缩(`runScriptFlow` 与
+  `runSmokeFlow` 双双消失);注入每 run 种子。
 
-出口:全门绿,现有任务仍按老表面跑通。
+出口:全门绿,现有任务仍按老表面跑通。**已达成。**
 
 ### 阶段 2 — 周期协议 + 两个环境 + `uf` 根
 
-- 票据账本 + 5 个周期原语;删 GC 释放路径、`guardObservationBudget`、seq 机械。
-- `HostTableInstaller` 改返回 `Status`。
-- C++ 白名单 project env + `luau_load` env 分离 + C 侧 `lua_setfenv`;私有能力面进
-  upvalue;裸动词从 project 环境移除。
-- 错误改宿主 mint 的 userdata;删 `uf:try` 的 C 绑定。
-- 根 `umbra` → `uf`:校验器、能力面、错误消息、S0 §4、CONTEXT.md、全部示例。
+> **拆分 2026-07-29(orchestrator)**:本阶段原稿把「私有能力面进 upvalue;裸动词从
+> project 环境移除」和环境机械写在同一条里。做不到:**裸动词不能在有 `ctx` 顶替它们
+> 之前离开 project 环境**,而 `ctx` 要由 framework 模块提供,今天
+> `modules/task/runtime/` 下只有一个不声明任何 API 的 placeholder。硬拆会留下一个
+> 既没有裸动词也没有 `ctx` 的 project 环境,门是红的,没法收工。
+> 因此阶段 2 的后半按下面的 2b-1 / 2b-2 两步走,顺序不可交换。
+
+#### 2a — 观察周期(**已完成,`01d0e9a`**)
+
+- 票据账本(`CycleLedger`)+ 5 个周期原语;删 GC 释放路径、`guardObservationBudget`、
+  seq 机械(详见 §16 的状态标记)。
+- 顺带:trace 的 `observationSeq` / `hitObservationSeq` 改名 `cycleOrdinal` /
+  `hitCycleOrdinal`——同一次提交删掉了 `ObservationSeq` 这个类型,让线上字段继续背着一个
+  已退休概念的名字,会把它写进后面要建的校验状态机;`umbraflow-trace/v1` 目前在仓库外
+  没有消费者,现在改代价为零。
+
+#### 2b-1 — 环境机械就位,能力面暂不搬家
+
+- `HostTableInstaller` 改返回 `Status`(今天仍是 `script/engine.hpp:26` 的 `void`)。
+- C++ 侧环境分离:`luau_load` 的 env 索引 + C 侧 `lua_setfenv`。
+- project 环境的白名单与 §7 那份**完整**否定名单。
 - 运行期冻结规则(构造时冻结、`__metatable`、`__index` 是表)。
+- **能力面仍然装在 project 环境里**,不动裸动词。这一步不改脚本可见的表面,所以门始终
+  是绿的,环境隔离可以单独被对抗套件打。
+
+#### 2b-2 — 能力面搬进 framework 闭包,裸动词下线
+
+- 私有能力面从 project 环境移进 framework 闭包的 upvalue。
+- `modules/task/runtime/placeholder.luau` 长成一个最小 framework,导出一个薄 `ctx`
+  ——只要够顶替被删掉的裸动词,`ctx:step` / `ctx:wait_for_page` / `ctx:retry` 那一整套
+  仍归阶段 3。
+- 裸动词从 project 环境移除。
+- **删 `uf:try` 的 C 绑定**,`ctx:try` 改为纯 Luau 的 `pcall`。
+  *裁决 2026-07-29(orchestrator)*:这一条不必等 §9 的错误 userdata。纯 Luau 的 `try`
+  只需要能认出「这是自动化错误」,而今天的错误表已经带受保护的
+  `__metatable = 'umbra.error'`,Luau 侧一句 `getmetatable(err)` 就够;2c 换成 userdata
+  之后,`try` 的判定从比较那个字符串改成比较 tag,是一处局部替换。反过来若拖到 2c,
+  `ctx` 已经存在却还留着一个做 `lua_pcall` 的 C 闭包,正是 §8 要消灭的形状。
+
+#### 阶段 2 其余项(尚未指派到某一半)
+
+- 错误改宿主 mint 的 userdata(§9)。
+- 根 `umbra` → `uf`:校验器、能力面、错误消息、S0 §4、CONTEXT.md、全部示例。
+  (文档侧已在 `82f8027` 改完;代码侧未动,`lua_setglobal(state, "umbra")` 与
+  校验器的 `k_namespace` 仍是 `umbra`。)
 - 对抗套件扩充。
 
 出口:全门绿 + 对抗套件绿。
@@ -673,6 +745,11 @@ SLA;一条 trace 足以解释每一步。
 ### 阶段 3 — framework 承接 task policy
 
 - `deadline` / `wait` / `settle` 原语;`IFrameSource::capture()` 补 deadline/stop_token。
+  同批**删掉 `DeterministicClock` 与 `now()` 的全部绑定**。
+  *裁决 2026-07-29(orchestrator)*:§16 列了这一条却没排进任何阶段,补在这里。不能更早,
+  因为 `now()` 今天是脚本唯一的时间设施,而 §10 之所以敢删它,前提是 `settle` 与 `wait`
+  已经把「等一等」这件事从脚本手里接管过去;两者不同批,中间会出现一个既不能读时间也不能
+  等待的脚本表面。
 - framework Luau:`ctx:step` / `ctx:cycle` / `ctx:wait_for_page` / `ctx:retry` /
   `ctx:try` / interrupt 注册表。
 - 删 engine 的 `waitForPage` / `PageWait` / `sweepKnownPopups`。
