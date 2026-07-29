@@ -5,52 +5,37 @@
 #include <core/error/result.hpp>
 #include <core/types/integer.hpp>
 
+#include <task/task-host.hpp>
+
 #include <string>
 
 namespace uf::cli
 {
     // Stable process-exit contract for the product CLI. `main` converts this
     // value to int only at the process boundary.
+    //
+    // 3 is deliberately absent. It was ActionAbsent, reported by the removed
+    // single-step smoke path when a page resolved but its action target was not
+    // on screen; a task script decides what an absent target means for itself,
+    // so nothing produces that code any more. The value is left unused rather
+    // than reassigned, because a script or operator reading an old 3 must never
+    // be told it meant something else.
     enum class ExitCode : uint8
     {
         Success                       = 0,
         Failure                       = 1,
         TargetCompatibilityUnverified = 2,
-        ActionAbsent                  = 3,
         Timeout                       = 4,
         Cancelled                     = 5,
     };
 
-    // The product of one `run` invocation. scriptMode selects which fields carry
-    // meaning: the smoke path leaves it false and fills the page, action, and
-    // click fields (actionDelivered true means the click landed and the client
-    // coordinates are meaningful; false means the page resolved but the action
-    // target was absent, mapped to the dedicated absent exit code). The script
-    // path sets it true and fills taskName and scriptHash; the smoke-path fields
-    // stay at their defaults and are not read.
-    struct RunReport final
-    {
-        bool scriptMode{};
-
-        bool actionDelivered{};
-
-        std::string pageName{};
-        std::string actionName{};
-
-        float clickClientX{};
-        float clickClientY{};
-
-        std::string taskName{};
-        std::string scriptHash{};
-
-        std::string tracePath{};
-    };
-
-    // Runs the hardcoded smoke flow: bind the target, wait for the page, find
-    // the action, and act. Implemented per host: the Windows build performs the
-    // full composition; other hosts report the run path as unsupported.
+    // Runs one project-owned task through task::TaskHost and reports how it
+    // ended. Implemented per host: the Windows build binds a live target and
+    // performs the full composition; other hosts report the run path as
+    // unsupported. A failure here is a run that never started -- the report
+    // carries every way a started run can end.
     [[nodiscard]]
-    auto runProduct(RunArgs const& args) -> Result<RunReport>;
+    auto runProduct(RunArgs const& args) -> Result<task::TaskRunReport>;
 
     // True when a cancellation request (Ctrl-C) reached the process during the
     // run. Implemented per host: the Windows composition installs a console
@@ -73,6 +58,17 @@ namespace uf::cli
     [[nodiscard]]
     auto exitCodeForError(
         Error const& error,
+        bool stopRequested
+    ) noexcept -> ExitCode;
+
+    // Maps a completed run's report to its process exit code. This is the single
+    // definition of that mapping: a report with no failure is Success, and every
+    // other report defers to exitCodeForError over the failure that ended it, so
+    // a started run and a run that never started report the same kind the same
+    // way.
+    [[nodiscard]]
+    auto exitCodeForReport(
+        task::TaskRunReport const& report,
         bool stopRequested
     ) noexcept -> ExitCode;
 }

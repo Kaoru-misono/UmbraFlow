@@ -5,6 +5,8 @@
 
 #include <domain/error.hpp>
 
+#include <task/task-host.hpp>
+
 #include <filesystem>
 #include <optional>
 #include <string>
@@ -89,5 +91,23 @@ namespace uf::cli
             return ExitCode::Failure;
         }
         return ExitCode::Failure;
+    }
+
+    auto exitCodeForReport(
+        task::TaskRunReport const& report,
+        bool stopRequested
+    ) noexcept -> ExitCode
+    {
+        // A run that ended cleanly reports success even if a stop arrived while
+        // it was finishing: the task did what it was asked to do. Every other
+        // ending is described by the error that caused it, so the mapping is the
+        // same one a run that never started goes through -- a cancelled run
+        // reports Cancelled because its failure kind is Cancelled, not because
+        // this function knows about cancellation separately.
+        if (!report.failure)
+        {
+            return ExitCode::Success;
+        }
+        return exitCodeForError(*report.failure, stopRequested);
     }
 }

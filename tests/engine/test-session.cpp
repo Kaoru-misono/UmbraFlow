@@ -54,7 +54,7 @@ namespace uf::engine
         constexpr auto k_awayPageId = "00000000-0000-0000-0000-000000000112";
 
         // The identity the session's recorder stamps. The engine never authors it
-        // -- the composition root does -- so any fixed pair proves the same thing:
+        // -- task::TaskHost does -- so any fixed pair proves the same thing:
         // every engine event lands in one identified run.
         constexpr auto k_runId        = TaskRunId{11};
         constexpr auto k_generationId = GenerationId{2};
@@ -581,8 +581,8 @@ namespace uf::engine
         CHECK(under.clicks->lastLease()->frameId() == FrameId{17});
 
         // engine-trace/v1's SessionStarted has no successor: the run's own
-        // run.started, written by the composition root, records the same instant
-        // with the project, task, seed and run identity on it.
+        // run.started, written by task::TaskHost, records the same instant with
+        // the project, task, seed and run identity on it.
         auto const expected = std::vector<trace::TraceEventKind>{
             trace::TraceEventKind::EngineObserved,
             trace::TraceEventKind::EnginePageResolved,

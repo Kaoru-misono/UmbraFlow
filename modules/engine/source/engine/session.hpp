@@ -135,15 +135,16 @@ namespace uf::engine
     // The recognition and action pipeline over one bound capture target.
     //
     // Trace lifetime contract: the session does NOT own its trace sink. It stores
-    // a non-owning borrow of the run's trace::TraceRecorder, which is owned by the
-    // composition root that builds the session -- today `entry/cli/run-windows.cpp`
-    // (`BoundTarget::recorder`), and the TaskHost once stage 1d extracts it. That
-    // owner MUST construct the recorder before the session and destroy it after,
-    // and MUST keep it at a stable address for the session's whole life; the
-    // recorder is non-movable so the address cannot drift. The borrow exists
-    // because the run has exactly one evidence stream and every layer stamps its
-    // events through the same sequence counter, which a per-session owned sink
-    // could not provide.
+    // a non-owning borrow of the run's trace::TraceRecorder, which is owned by
+    // `task::TaskHost::startTask`: that function holds the recorder in a
+    // std::unique_ptr local declared before the session it builds, so the session
+    // is destroyed first on the normal path and on every early return, and the
+    // recorder is non-movable so its address cannot drift while the session
+    // borrows it. Any other owner MUST reproduce both properties -- construct the
+    // recorder before the session, destroy it after, and never relocate it. The
+    // borrow exists because the run has exactly one evidence stream and every
+    // layer stamps its events through the same sequence counter, which a
+    // per-session owned sink could not provide.
     class EngineSession final
     {
         friend class Observation;

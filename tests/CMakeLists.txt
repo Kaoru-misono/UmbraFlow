@@ -103,7 +103,6 @@ cpp_add_test(
 
 set(CLI_TEST_SOURCES
     cli/test-args.cpp
-    cli/test-name-resolution.cpp
 )
 # selectCandidate operates on the controller's TargetCandidate and is compiled
 # into cli_support only on Windows, so its test is registered only there.
@@ -135,6 +134,7 @@ if(TARGET ${PROJECT_NAME}_task)
         SOURCES
             task/test-task.cpp
             task/test-task-binding.cpp
+            task/test-task-host.cpp
             task/test-determinism-harness.cpp
             task/test-framework-bundle.cpp
             task/test-task-loader.cpp

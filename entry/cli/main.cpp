@@ -33,42 +33,28 @@ namespace uf::cli
             auto const report = runProduct(*args);
             if (!report)
             {
+                // The run never started, so there is no report to print: only
+                // the reason it could not begin.
                 std::cerr << formatRunError(report.error()) << '\n';
                 return exitCodeForError(report.error(), runCancellationRequested());
             }
 
-            if (report->scriptMode)
+            // A started run always names what ran and where its evidence went,
+            // whether it completed, was cancelled, or failed; a failure adds the
+            // one rendered line explaining it. This is the CLI's whole remaining
+            // job after argument parsing and target binding.
+            if (report->failure)
             {
-                std::cout << std::format(
-                    "run: task=\"{}\" hash={} trace=\"{}\"\n",
-                    report->taskName,
-                    report->scriptHash,
-                    report->tracePath
-                );
-                return ExitCode::Success;
+                std::cerr << formatRunError(*report->failure) << '\n';
             }
-
-            if (!report->actionDelivered)
-            {
-                std::cerr << std::format(
-                    "run: action absent on resolved page "
-                    "(page=\"{}\" action=\"{}\") trace=\"{}\"\n",
-                    report->pageName,
-                    report->actionName,
-                    report->tracePath
-                );
-                return ExitCode::ActionAbsent;
-            }
-
             std::cout << std::format(
-                "run: page=\"{}\" action=\"{}\" click=({:.1f}, {:.1f}) trace=\"{}\"\n",
-                report->pageName,
-                report->actionName,
-                report->clickClientX,
-                report->clickClientY,
-                report->tracePath
+                "run: task=\"{}\" hash={} seed={} trace=\"{}\"\n",
+                report->taskName,
+                report->sourceHash,
+                report->seed,
+                report->tracePath.string()
             );
-            return ExitCode::Success;
+            return exitCodeForReport(*report, runCancellationRequested());
         }
 
         [[nodiscard]]

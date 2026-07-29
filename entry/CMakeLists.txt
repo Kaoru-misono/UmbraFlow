@@ -9,14 +9,13 @@ configure_file(
 
 set(CLI_LIBRARY ${PROJECT_NAME}_cli_support)
 
-# Platform-free product logic: argument parsing, name resolution, and the
-# error/exit-code boundary. Linked into the executable and tests. The trace file
-# sink lives in modules/trace, which owns the single evidence stream.
+# Platform-free product logic: argument parsing and the error/exit-code
+# boundary. Linked into the executable and tests. The run lifecycle itself lives
+# in modules/task's TaskHost, and the trace file sink in modules/trace, which
+# owns the single evidence stream.
 add_library(${CLI_LIBRARY} STATIC
     cli/args.cpp
     cli/args.hpp
-    cli/name-resolution.cpp
-    cli/name-resolution.hpp
     cli/run.cpp
     cli/run.hpp
 )
@@ -25,9 +24,13 @@ target_include_directories(${CLI_LIBRARY}
     PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}/cli
 )
+# The exit-code boundary maps a task::TaskRunReport, so the task module is part
+# of this library's interface on every host, not only where the run composition
+# builds.
 target_link_libraries(${CLI_LIBRARY}
     PUBLIC
         ${PROJECT_NAME}_engine
+        ${PROJECT_NAME}_task
 )
 target_compile_features(${CLI_LIBRARY} PUBLIC cxx_std_23)
 
@@ -49,7 +52,6 @@ if(WIN32 AND TARGET ${PROJECT_NAME}_controller)
         PUBLIC
             ${PROJECT_NAME}_controller
         PRIVATE
-            ${PROJECT_NAME}_task
             user32
     )
 else()

@@ -326,9 +326,9 @@ namespace uf::task
         }
     };
 
-    // The run identity the task fixtures stamp. modules/task never authors it --
-    // the composition root does -- so a fixed pair is enough to prove every event
-    // of a run lands under one identity.
+    // The run identity these fixtures stamp. The binding layer never authors it
+    // -- TaskHost does -- so a fixed pair is enough to prove every event of a run
+    // lands under one identity.
     inline constexpr auto k_fixtureRunId        = TaskRunId{5};
     inline constexpr auto k_fixtureGenerationId = GenerationId{1};
 

@@ -4,6 +4,8 @@
 #include <core/types/integer.hpp>
 #include <domain/error.hpp>
 
+#include <task/task-host.hpp>
+
 #include <doctest/doctest.h>
 
 #include <array>
@@ -43,10 +45,8 @@ namespace uf::cli
                 "proj",
                 "--selector",
                 "Game",
-                "--page",
-                "home",
-                "--action",
-                "start",
+                "--task",
+                "daily",
             };
         }
 
@@ -54,6 +54,15 @@ namespace uf::cli
         auto errorOfKind(AutomationErrorKind kind) -> Error
         {
             return fail(kind, "boundary test failure").error();
+        }
+
+        [[nodiscard]]
+        auto reportFailedWith(AutomationErrorKind kind) -> task::TaskRunReport
+        {
+            return task::TaskRunReport{
+                .taskName = "daily",
+                .failure  = errorOfKind(kind),
+            };
         }
     }
 
@@ -81,8 +90,7 @@ namespace uf::cli
         auto const raw = std::vector<std::string>{
             "--project",             "proj",
             "--selector",            "Game Window",
-            "--page",                "home",
-            "--action",              "start",
+            "--task",                "daily",
             "--timeout",             "10",
             "--poll",                "100",
             "--budget",              "500",
@@ -95,8 +103,7 @@ namespace uf::cli
         REQUIRE(result.has_value());
         CHECK(result->project == "proj");
         CHECK(result->selector == "Game Window");
-        CHECK(result->page == "home");
-        CHECK(result->action == "start");
+        CHECK(result->task == "daily");
         CHECK(result->timeout == asDuration(std::chrono::seconds{10}));
         CHECK(result->pollInterval == asDuration(std::chrono::milliseconds{100}));
         CHECK(result->budget == uint64{500});
@@ -107,56 +114,29 @@ namespace uf::cli
         CHECK(result->trace == "out.jsonl");
     }
 
-    TEST_CASE("parseRunArguments accepts the script path with --task")
+    TEST_CASE("parseRunArguments no longer accepts the removed smoke-path flags")
     {
-        auto const raw = std::vector<std::string>{
-            "--project",  "proj",
-            "--selector", "Game",
-            "--task",     "daily",
+        // --page and --action selected a single-step run that a task script now
+        // covers. They are not merely ignored: an invocation carrying either is
+        // refused, so a stale script fails loudly instead of running a different
+        // task than its author wrote.
+        auto constexpr removed = std::array<std::string_view, 2>{
+            "--page",
+            "--action",
         };
 
-        auto const result = parse(raw);
-        REQUIRE(result.has_value());
-        CHECK(result->task == "daily");
-        CHECK(result->page.empty());
-        CHECK(result->action.empty());
-        CHECK(result->project == "proj");
-        CHECK(result->selector == "Game");
-    }
-
-    TEST_CASE("parseRunArguments rejects --task combined with the smoke-path flags")
-    {
-        auto constexpr expected =
-            "--task cannot be combined with --page or --action";
-
-        SUBCASE("with --page")
-        {
-            auto const raw = std::vector<std::string>{
-                "--project", "proj", "--selector", "Game",
-                "--task",    "daily", "--page",     "home",
-            };
-            auto const result = parse(raw);
-            REQUIRE_FALSE(result.has_value());
-            CHECK(result.error().message() == expected);
-        }
-        SUBCASE("with --action")
-        {
-            auto const raw = std::vector<std::string>{
-                "--project", "proj",  "--selector", "Game",
-                "--task",    "daily", "--action",   "start",
-            };
-            auto const result = parse(raw);
-            REQUIRE_FALSE(result.has_value());
-            CHECK(result.error().message() == expected);
-        }
-        SUBCASE("with both page and action")
+        for (auto const flag : removed)
         {
             auto raw = minimalArgs();
-            raw.emplace_back("--task");
-            raw.emplace_back("daily");
+            raw.emplace_back(flag);
+            raw.emplace_back("home");
+
             auto const result = parse(raw);
             REQUIRE_FALSE(result.has_value());
-            CHECK(result.error().message() == expected);
+            CHECK(
+                result.error().message()
+                == std::string{"unknown argument \""} + std::string{flag} + "\""
+            );
         }
     }
 
@@ -164,6 +144,8 @@ namespace uf::cli
     {
         auto const usage = runUsageText();
         CHECK(usage.find("--task") != std::string_view::npos);
+        CHECK(usage.find("--page") == std::string_view::npos);
+        CHECK(usage.find("--action") == std::string_view::npos);
     }
 
     TEST_CASE("parseRunArguments applies defaults for omitted optional flags")
@@ -189,8 +171,7 @@ namespace uf::cli
         auto const cases = std::vector<Case>{
             {"--project", "missing required argument --project"},
             {"--selector", "missing required argument --selector"},
-            {"--page", "missing required argument --page"},
-            {"--action", "missing required argument --action"},
+            {"--task", "missing required argument --task"},
         };
 
         for (auto const& testCase : cases)
@@ -307,11 +288,13 @@ namespace uf::cli
 
     TEST_CASE("ExitCode preserves the documented process values")
     {
+        // 3 is deliberately absent and stays absent: it was ActionAbsent, whose
+        // only producer was the removed smoke path. Reassigning it would tell an
+        // operator reading an old 3 that it meant something else.
         auto constexpr cases = std::array{
             std::pair{ExitCode::Success, uint8{0}},
             std::pair{ExitCode::Failure, uint8{1}},
             std::pair{ExitCode::TargetCompatibilityUnverified, uint8{2}},
-            std::pair{ExitCode::ActionAbsent, uint8{3}},
             std::pair{ExitCode::Timeout, uint8{4}},
             std::pair{ExitCode::Cancelled, uint8{5}},
         };
@@ -353,6 +336,73 @@ namespace uf::cli
         for (auto const kind : kinds)
         {
             CHECK(exitCodeForError(errorOfKind(kind), true) == ExitCode::Cancelled);
+        }
+    }
+
+    TEST_CASE("exitCodeForReport maps every run outcome to its process exit code")
+    {
+        // A started run reports through this function alone, so every way a run
+        // can end has to land on a documented code here.
+        SUBCASE("a completed run succeeds")
+        {
+            CHECK(
+                exitCodeForReport(task::TaskRunReport{.taskName = "daily"}, false)
+                == ExitCode::Success
+            );
+        }
+
+        SUBCASE("a cancelled run reports the cancellation code")
+        {
+            CHECK(
+                exitCodeForReport(
+                    reportFailedWith(AutomationErrorKind::Cancelled),
+                    false
+                )
+                == ExitCode::Cancelled
+            );
+        }
+
+        SUBCASE("a failed run reports its own kind's code")
+        {
+            auto constexpr cases = std::array{
+                std::pair{AutomationErrorKind::Timeout, ExitCode::Timeout},
+                std::pair{
+                    AutomationErrorKind::TargetCompatibilityUnverified,
+                    ExitCode::TargetCompatibilityUnverified,
+                },
+                std::pair{AutomationErrorKind::CaptureStalled, ExitCode::Failure},
+                std::pair{AutomationErrorKind::IoFailure, ExitCode::Failure},
+                std::pair{
+                    AutomationErrorKind::InternalInvariant,
+                    ExitCode::Failure,
+                },
+            };
+
+            for (auto const& [kind, code] : cases)
+            {
+                CHECK(exitCodeForReport(reportFailedWith(kind), false) == code);
+            }
+        }
+
+        SUBCASE("a requested stop takes precedence over the failure's own code")
+        {
+            CHECK(
+                exitCodeForReport(
+                    reportFailedWith(AutomationErrorKind::CaptureStalled),
+                    true
+                )
+                == ExitCode::Cancelled
+            );
+        }
+
+        SUBCASE("a run that completed as a stop arrived still succeeds")
+        {
+            // The task did what it was asked to do before the stop landed, so it
+            // is not reported as cancelled.
+            CHECK(
+                exitCodeForReport(task::TaskRunReport{.taskName = "daily"}, true)
+                == ExitCode::Success
+            );
         }
     }
 }

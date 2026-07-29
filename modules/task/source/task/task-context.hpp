@@ -75,9 +75,9 @@ namespace uf::task
         std::stop_token cancellation{};
 
         // Fixed seed for this task's deterministic RNG (umbra:random). Left at the
-        // stable default here; the owning host injects a fresh per-run seed and
-        // records it in run.started so a run reproduces on replay. See
-        // k_defaultRandomSeed.
+        // stable default here; a real run gets a fresh per-run seed from
+        // TaskHost::startTask, which draws it and records it in run.started so
+        // the run reproduces on replay. See k_defaultRandomSeed.
         uint64          randomSeed{k_defaultRandomSeed};
     };
 
@@ -109,14 +109,14 @@ namespace uf::task
     // object. NOT thread-safe: every method runs on the VM's owning thread.
     //
     // Trace lifetime contract: the context does NOT own a trace sink. It stores a
-    // non-owning borrow of the run's trace::TraceRecorder, which is owned by the
-    // composition root that builds the context -- today `entry/cli/run-windows.cpp`
-    // (`BoundTarget::recorder`), and the TaskHost once stage 1d extracts it. That
-    // owner MUST construct the recorder before the context and destroy it after,
-    // and MUST keep it at a stable address; the recorder is non-movable so the
-    // address cannot drift. It is the SAME recorder the owned EngineSession
-    // borrows, which is what puts task.native_call and the engine.* events it
-    // caused into one ordered stream.
+    // non-owning borrow of the run's trace::TraceRecorder, which is owned by
+    // `task::TaskHost::startTask`: that function holds the recorder in a
+    // std::unique_ptr local declared before the context and the VM, so both are
+    // destroyed first on the normal path and on every early return, and the
+    // recorder is non-movable so its address cannot drift while the context
+    // borrows it. Any other owner MUST reproduce both properties. It is the SAME
+    // recorder the owned EngineSession borrows, which is what puts
+    // task.native_call and the engine.* events it caused into one ordered stream.
     class TaskContext final
     {
         engine::EngineSession m_session;

@@ -1,16 +1,11 @@
 #include "binding-fixture.hpp"
 
 #include <task/capability-surface.hpp>
-#include <task/framework-bundle.hpp>
-#include <task/run-trace.hpp>
-#include <task/script-validator.hpp>
 #include <task/task-context.hpp>
-#include <task/task-loader.hpp>
 
 #include <script/engine.hpp>
 #include <script/testing/cancel-probe.hpp>
 
-#include <core/error/error.hpp>
 #include <core/error/result.hpp>
 #include <core/types/integer.hpp>
 
@@ -25,15 +20,11 @@
 
 #include <doctest/doctest.h>
 
-#include <chrono>
 #include <cstddef>
-#include <format>
 #include <memory>
-#include <optional>
 #include <stop_token>
 #include <string>
 #include <string_view>
-#include <system_error>
 #include <utility>
 #include <vector>
 
@@ -126,23 +117,6 @@ namespace uf::task
                 kinds.emplace_back(event.event().kind);
             }
             return kinds;
-        }
-
-        // Every recorded event as the wire line a reader sees, with the non-golden
-        // meta member stripped -- the documented way to compare traces.
-        [[nodiscard]]
-        auto strippedLines(std::vector<trace::StampedTraceEvent> const& events)
-            -> std::vector<std::string>
-        {
-            auto lines = std::vector<std::string>{};
-            lines.reserve(events.size());
-            for (auto const& event : events)
-            {
-                lines.emplace_back(
-                    trace::stripNonGoldenFields(trace::serializeTraceEvent(event))
-                );
-            }
-            return lines;
         }
 
         [[nodiscard]]
@@ -1002,192 +976,6 @@ namespace uf::task
             auto const* p_find = findNativeCall(events, "find");
             REQUIRE(p_find != nullptr);
             CHECK(p_find->outcome == trace::NativeCallOutcome::Empty);
-        }
-
-        TEST_CASE("runFinishedEvent maps how a run ended onto the trace's run outcome")
-        {
-            // The only mapping the composition root used to hold inline, where no
-            // test target could reach it. Each branch is a distinct wire line, and
-            // a run that ends is the one event an operator always reads.
-            SUBCASE("a clean return is Completed and names no error kind")
-            {
-                auto const event = runFinishedEvent(nullptr);
-                CHECK(event.kind == trace::TraceEventKind::RunFinished);
-                CHECK(event.runOutcome == trace::RunOutcome::Completed);
-                CHECK_FALSE(event.errorKind.has_value());
-            }
-
-            SUBCASE("a cancellation spends the generation rather than failing it")
-            {
-                auto const cancelled = fail(
-                    AutomationErrorKind::Cancelled,
-                    "stopped by the single cancel source"
-                );
-                auto const event = runFinishedEvent(&cancelled.error());
-                CHECK(event.runOutcome == trace::RunOutcome::Cancelled);
-                CHECK(event.errorKind == AutomationErrorKind::Cancelled);
-            }
-
-            SUBCASE("every other failure is Failed under its own kind")
-            {
-                auto const timedOut = fail(
-                    AutomationErrorKind::Timeout,
-                    "the page never appeared"
-                );
-                auto const event = runFinishedEvent(&timedOut.error());
-                CHECK(event.runOutcome == trace::RunOutcome::Failed);
-                CHECK(event.errorKind == AutomationErrorKind::Timeout);
-            }
-
-            SUBCASE("an error carrying no automation kind still names one")
-            {
-                auto const unclassified = Error{
-                    std::make_error_code(std::errc::io_error),
-                    "not an automation failure",
-                };
-                auto const event = runFinishedEvent(&unclassified);
-                CHECK(event.runOutcome == trace::RunOutcome::Failed);
-                CHECK(event.errorKind == AutomationErrorKind::InternalInvariant);
-            }
-        }
-
-        TEST_CASE("a run records all three layers as one ordered umbraflow-trace/v1 stream")
-        {
-            // The merge's acceptance criterion, end to end: the host's run-level
-            // events, the engine's recognition and delivery events, and the script
-            // layer's native calls, all under one sequence, run id and generation
-            // id, asserted as the exact wire lines a reader would see.
-            auto frames = std::vector<Frame>{};
-            frames.emplace_back(
-                grayFrame(anno::test::fingerprint(3, 1, 96, 96), resolvingPixels(), FrameId{73})
-            );
-            auto traceSink       = std::make_unique<RecordingTraceSink>();
-            auto* const p_traces = traceSink.get();
-            auto built = buildBindingWith(
-                std::make_unique<FakeFrameSource>(std::move(frames)),
-                std::stop_token{},
-                std::move(traceSink)
-            );
-            REQUIRE(built.session.has_value());
-
-            // The run identity and its validated resource closure open the stream
-            // before any VM exists, exactly as the composition root writes them.
-            REQUIRE(
-                built.recorder
-                    ->emit(
-                        runStartedEvent(
-                            RunStartSpec{
-                                .projectId  = "personal.task_binding",
-                                .taskName   = "daily",
-                                .sourceHash = "abc123",
-                                .seed       = uint64{42},
-                            }
-                        )
-                    )
-                    .has_value()
-            );
-            REQUIRE(
-                built.recorder
-                    ->emit(
-                        runResourcesValidatedEvent(
-                            ScriptResourceReport{
-                                .recognizers = {"action_target"},
-                                .pages       = {"page_a"},
-                            }
-                        )
-                    )
-                    .has_value()
-            );
-
-            TaskContext context{*std::move(built.session), *built.recorder};
-
-            constexpr std::string_view source = R"lua(
-                local frame = umbra:capture()
-                local page = frame:resolve_page():resolved()
-                local hit = frame:find(umbra.recognizers.action_target)
-                umbra:click(page, hit)
-                return 1
-            )lua";
-            CHECK(runBound(context, built, source) == doctest::Approx(1.0));
-
-            REQUIRE(built.recorder->emit(runFinishedEvent(nullptr)).has_value());
-
-            // The framework version, bundle hash and Luau compiler version are
-            // interpolated rather than frozen: they legitimately change when the
-            // framework or the vendored compiler is rebuilt, while their presence
-            // and position in the line is exactly what this pins. A run.started
-            // that omitted them would not match.
-            auto const startedLine = std::format(
-                "{{\"schema\":\"umbraflow-trace/v1\",\"kind\":\"run.started\""
-                ",\"seq\":1,\"runId\":5,\"generationId\":1"
-                ",\"projectId\":\"personal.task_binding\",\"taskName\":\"daily\""
-                ",\"sourceHash\":\"abc123\",\"frameworkVersion\":\"{}\""
-                ",\"frameworkHash\":\"{}\",\"luauVersion\":\"{}\",\"seed\":42}}",
-                frameworkVersion(),
-                frameworkBundleHash(),
-                luauRuntimeVersion()
-            );
-
-            auto const expected = std::vector<std::string>{
-                startedLine,
-                "{\"schema\":\"umbraflow-trace/v1\",\"kind\":\"run.resources_validated\""
-                ",\"seq\":2,\"runId\":5,\"generationId\":1"
-                ",\"recognizers\":[\"action_target\"],\"pages\":[\"page_a\"]}",
-                "{\"schema\":\"umbraflow-trace/v1\",\"kind\":\"engine.observed\""
-                ",\"seq\":3,\"runId\":5,\"generationId\":1"
-                ",\"frameId\":73,\"sessionId\":7,\"targetGeneration\":3}",
-                "{\"schema\":\"umbraflow-trace/v1\",\"kind\":\"task.native_call\""
-                ",\"seq\":4,\"runId\":5,\"generationId\":1"
-                ",\"verb\":\"capture\",\"outcome\":\"Succeeded\"}",
-                "{\"schema\":\"umbraflow-trace/v1\",\"kind\":\"engine.page_resolved\""
-                ",\"seq\":5,\"runId\":5,\"generationId\":1"
-                ",\"frameId\":73,\"sessionId\":7,\"targetGeneration\":3"
-                ",\"pageOutcome\":\"Resolved\""
-                ",\"pageId\":\"00000000-0000-0000-0000-000000000111\""
-                ",\"pageScores\":[{\"pageId\":\"00000000-0000-0000-0000-000000000111\""
-                ",\"candidate\":true"
-                ",\"worstAnchor\":\"00000000-0000-0000-0000-000000000011\""
-                ",\"worstAnchorSad\":0,\"worstAnchorMaximumSad\":0}]}",
-                "{\"schema\":\"umbraflow-trace/v1\",\"kind\":\"task.native_call\""
-                ",\"seq\":6,\"runId\":5,\"generationId\":1"
-                ",\"verb\":\"resolve_page\",\"observationSeq\":1"
-                ",\"outcome\":\"Succeeded\"}",
-                "{\"schema\":\"umbraflow-trace/v1\",\"kind\":\"engine.action_found\""
-                ",\"seq\":7,\"runId\":5,\"generationId\":1"
-                ",\"frameId\":73,\"sessionId\":7,\"targetGeneration\":3"
-                ",\"actionOutcome\":\"Found\",\"sadScore\":0,\"maximumSad\":0"
-                ",\"matchedRect\":{\"x\":1,\"y\":0,\"width\":1,\"height\":1}"
-                ",\"recognizerId\":\"00000000-0000-0000-0000-000000000013\"}",
-                "{\"schema\":\"umbraflow-trace/v1\",\"kind\":\"task.native_call\""
-                ",\"seq\":8,\"runId\":5,\"generationId\":1"
-                ",\"verb\":\"find\",\"observationSeq\":1,\"outcome\":\"Succeeded\""
-                ",\"recognizerId\":\"00000000-0000-0000-0000-000000000013\"}",
-                "{\"schema\":\"umbraflow-trace/v1\",\"kind\":\"engine.action_authorized\""
-                ",\"seq\":9,\"runId\":5,\"generationId\":1"
-                ",\"frameId\":73,\"sessionId\":7,\"targetGeneration\":3}",
-                "{\"schema\":\"umbraflow-trace/v1\",\"kind\":\"engine.action_delivered\""
-                ",\"seq\":10,\"runId\":5,\"generationId\":1"
-                ",\"frameId\":73,\"sessionId\":7,\"targetGeneration\":3"
-                ",\"clickClientX\":1,\"clickClientY\":0}",
-                "{\"schema\":\"umbraflow-trace/v1\""
-                ",\"kind\":\"engine.observation_invalidated\""
-                ",\"seq\":11,\"runId\":5,\"generationId\":1"
-                ",\"frameId\":73,\"sessionId\":7,\"targetGeneration\":3}",
-                "{\"schema\":\"umbraflow-trace/v1\",\"kind\":\"task.native_call\""
-                ",\"seq\":12,\"runId\":5,\"generationId\":1"
-                ",\"verb\":\"click\",\"observationSeq\":1,\"hitObservationSeq\":1"
-                ",\"outcome\":\"Succeeded\"}",
-                "{\"schema\":\"umbraflow-trace/v1\",\"kind\":\"run.finished\""
-                ",\"seq\":13,\"runId\":5,\"generationId\":1"
-                ",\"runOutcome\":\"Completed\"}",
-            };
-
-            auto const actual = strippedLines(p_traces->events());
-            REQUIRE(actual.size() == expected.size());
-            for (auto index = std::size_t{0}; index < expected.size(); ++index)
-            {
-                CHECK(actual[index] == expected[index]);
-            }
         }
 
         TEST_CASE("umbra binding aborts a verb as Tier B io_failure when the trace sink fails")

@@ -258,16 +258,12 @@ namespace uf::engine
     }
 
     // The former engine-trace/v1 SessionStarted event has no successor here. It
-    // carried no fields at all, and on the script path the run's own `run.started`
-    // -- written by the composition root with the project, task, source hash,
-    // framework version and hash, seed, run id and generation id -- records
-    // strictly more about the same instant, since a run binds exactly one engine
-    // session.
-    //
-    // This is a claim about the script path only. entry/cli's runSmokeFlow binds a
-    // session without ever writing a run-level event, so its trace opens on the
-    // first engine.observed. That path is deleted with stage 1d's TaskHost and is
-    // deliberately not given run.* events in the meantime.
+    // carried no fields at all, and the run's own `run.started` -- written by
+    // task::TaskHost with the project, task, source hash, framework version and
+    // hash, seed, run id and generation id -- records strictly more about the same
+    // instant, since a run binds exactly one engine session. Every session a
+    // product run builds now comes from TaskHost, so there is no path left that
+    // opens a trace on the first engine.observed.
     auto EngineSession::create(
         LoadedRuntime loadedRuntime,
         std::unique_ptr<IFrameSource> frameSource,

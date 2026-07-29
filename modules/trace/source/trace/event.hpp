@@ -174,9 +174,9 @@ namespace uf::trace
         // line.
         //
         // The plan's remaining two run.started fields, the resource snapshot hash
-        // and the config digest, are deliberately absent: neither has a producer
-        // until TaskHost owns the run in stage 1d, and recording an empty string
-        // for them would be a false attribution rather than a missing one.
+        // and the config digest, are deliberately absent: task::TaskHost now owns
+        // the run and still computes neither, and recording an empty string for
+        // them would be a false attribution rather than a missing one.
         struct Run final
         {
             std::string projectId{};
