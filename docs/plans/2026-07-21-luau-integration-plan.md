@@ -1,6 +1,17 @@
 # Luau 0.730 integration plan (P0-B foundation)
 
 > 状态:部分完成(2026-07-24)——基础集成已于 2026-07-22 以 `84713e4` 落地并有后续修正；§6 步骤 1–2 已完成，3–5 仍开放。
+>
+> **机制取代 2026-07-29**:§1 的沙箱结论与 §6 步骤 5 教「每个 task 线程
+> `luaL_sandboxthread` 隔离脚本全局」。**这个机制已被否决**,见
+> [`2026-07-29-three-layer-task-system.md`](2026-07-29-three-layer-task-system.md) §7:
+> Luau 的环境隔离按闭包、不按线程(`luau_load` 收 env 索引,新线程的 `gt` 是从父线程
+> **复制**的),所以那个代理形状本身就是 `_G` 逃逸的形状。落地的做法是两张显式 env 表
+> ——framework 环境与无 `__index` 链的 project 白名单环境——见
+> `modules/script/source/script/ffi/environment.{hpp,cpp}`(阶段 2b-1,`67e7e63`)。
+> **§1 的实测数据仍然有效**,本文的价值也在那里:`lua_break` 与 `luaL_error` 的对比、
+> 不可 yield 上下文的清单、0.730 上 `luaL_sandbox` 的残留全局,都是这台机器上量出来的,
+> 不因机制换掉而失真。按测量记录读,不要按实施指南读。
 > The two load-bearing claims and the integration mechanics were **empirically
 > verified** on this machine (MSVC 14.44, Luau 0.730) with a throwaway spike;
 > results below are measured, not assumed. This plan is schema-independent P0-B

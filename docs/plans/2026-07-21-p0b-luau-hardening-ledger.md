@@ -31,8 +31,15 @@
       interrupt 取消,D5 依赖)与 **debug**(卸钩子/越界,D9)。`io`/`package`/`require`/`load*`/`dofile`/
       `loadfile`/`collectgarbage` 与 `os.execute/getenv/remove/exit` 已被 `luaL_sandbox` 移除、`os.time` 保留,
       无需再处理。见 [`2026-07-21-luau-integration-plan.md`](2026-07-21-luau-integration-plan.md) §1/§4。
-- [ ] 只收源码、`luaL_sandboxthread` 隔离脚本全局、移除 bytecode 摄取(`string.dump`/load-bytecode)——
+- [x] 只收源码、隔离脚本全局、移除 bytecode 摄取(`string.dump`/load-bytecode)——
       已在裁决内,实现时确认(spike 已确认 sandbox 下无 `load`/`loadstring`,脚本侧无法喂 bytecode)。
+      (**2026-07-29 修正**:本条原写「`luaL_sandboxthread` 隔离脚本全局」,那个机制已被否决——
+      Luau 的环境隔离按闭包、不按线程,新线程的 `gt` 是从父线程复制的,所以那个代理形状正是
+      `_G` 逃逸的形状。落地形态是两张显式 env 表:framework 环境,以及**不带任何 metatable、
+      因而没有 `__index` 链**的 project 白名单环境。见
+      [`2026-07-29-three-layer-task-system.md`](2026-07-29-three-layer-task-system.md) §7 与
+      `modules/script/source/script/ffi/environment.{hpp,cpp}`(阶段 2b-1,`67e7e63`)。
+      按原文写法这个复选框永远勾不上,故就地改述后勾选。)
 - [ ] 记账 allocator 必装:Luau **默认无内存上限**,靠宿主装记账 allocator 才能兑现"无限分配只终止该任务"。
 
 ## 硬取消 / interrupt
