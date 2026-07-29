@@ -123,7 +123,7 @@ namespace uf::script::testing
         }
 
         auto const ran =
-            runNumberInProjectEnvironment(state, source, chunkName, &control);
+            runNumberInProjectEnvironment(state, source, chunkName, &control, nullptr);
         bool const cancelled =
             !ran.has_value()
             && automationErrorKind(ran.error()) == AutomationErrorKind::Cancelled;

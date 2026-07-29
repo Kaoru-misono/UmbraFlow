@@ -90,6 +90,12 @@ namespace uf::script
         // and address-stable because Impl is heap-pinned behind unique_ptr.
         InterruptState m_control;
 
+        // The host's decoder for a raised value nobody caught. Copied from the
+        // config rather than borrowed: create() takes the config by const
+        // reference and the caller is free to destroy it, while this is read on
+        // every failing run for the Engine's whole life.
+        RaisedErrorClassifier m_classifyRaisedError;
+
         // Set once a task thread has been hard-cancelled (the interrupt issued
         // lua_break): the VM generation is spent, so every later runNumber
         // refuses with Cancelled instead of resuming an abandoned VM.
@@ -103,6 +109,7 @@ namespace uf::script
                   .budgetTicks  = config.interruptBudgetTicks,
                   .deadline     = std::chrono::steady_clock::now() + config.maxRuntime,
               }
+            , m_classifyRaisedError{config.classifyRaisedError}
         {
         }
 
@@ -183,7 +190,8 @@ namespace uf::script
             m_impl->m_state.get(),
             source,
             chunkName,
-            &m_impl->m_control
+            &m_impl->m_control,
+            &m_impl->m_classifyRaisedError
         );
 
         // runNumberOnThread already reported the cancel; this only spends the

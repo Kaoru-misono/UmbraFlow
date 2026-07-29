@@ -298,6 +298,21 @@ namespace uf::task
             return *result;
         }
 
+        // The same run, without requiring it to succeed. A test that asks how
+        // the HOST classified a value the script let escape needs the failure
+        // itself, which runBound deliberately refuses to hand back.
+        [[nodiscard]]
+        auto runBoundResult(
+            TaskContext& context,
+            Built& built,
+            std::string_view source
+        ) -> Result<double>
+        {
+            auto engine = script::Engine::create(taskVmConfig(built.surface, context));
+            REQUIRE(engine.has_value());
+            return engine->runNumber(source, "task-binding");
+        }
+
 
         // Outcome of a discriminator run: the run result (an error on a
         // cancellation) and how many times the host mark() ran.
@@ -788,14 +803,14 @@ namespace uf::task
             CHECK(built.clicks->clickCount() == 0);
         }
 
-        TEST_CASE("ctx:try catches a Tier B automation error and returns its table")
+        TEST_CASE("ctx:try catches a Tier B automation error and returns the carrier")
         {
             auto built = buildBinding(resolvingFrames(FrameId{30}));
             REQUIRE(built.session.has_value());
             TaskContext context{*std::move(built.session), *built.recorder};
 
             // The first click consumes the cycle; a second click inside try is a
-            // Tier B stale_observation, returned as (false, errorTable). A plainly
+            // Tier B stale_observation, returned as (false, carrier). A plainly
             // successful function returns (true, nil).
             constexpr std::string_view source = R"lua(
                 local cycle = ctx:cycle_open()
@@ -807,6 +822,9 @@ namespace uf::task
                 if ok ~= false then return 0 end
                 if err == nil or err.kind ~= 'stale_observation' then return 0 end
                 if err.retryable ~= true then return 0 end
+                -- The carrier is host-minted userdata, not a table: that is what
+                -- a project script has no way to produce.
+                if type(err) ~= 'userdata' then return 0 end
                 if getmetatable(err) ~= 'uf.error' then return 0 end
 
                 local okDone, errDone = ctx:try(function() return 7 end)
@@ -818,27 +836,161 @@ namespace uf::task
             CHECK(built.clicks->clickCount() == 1);
         }
 
-        TEST_CASE("A Tier B error rejects writes and cannot be cloned into a forgery")
+        TEST_CASE("A project script cannot forge a Tier B error that ctx:try accepts")
         {
             auto built = buildBinding(resolvingFrames(FrameId{33}));
             REQUIRE(built.session.has_value());
             TaskContext context{*std::move(built.session), *built.recorder};
 
-            // The error table is the project-visible frozen object whose identity
-            // the host actually consults: ctx:try classifies a caught value by
-            // its metatable, so a mutable copy that kept that metatable would be
-            // a working forgery. Three things close that off, and each is checked
-            // against a control that would pass if the property were missing:
+            // Forgery is not a check to defeat any more: the carrier is a
+            // userdata under a host tag, and a project script has no way to mint
+            // a userdata at all. Every route it does have is exercised here,
+            // each against the control that the GENUINE carrier is accepted by
+            // the same path -- so a try that classified nothing would fail the
+            // control rather than pass this vacuously.
             //
-            //   - the table is read-only, so it cannot be edited in place;
-            //   - table.clone refuses it, because __metatable protects it, so
-            //     there is no mutable copy to edit at all;
-            //   - getmetatable yields a label rather than the metatable, so a
-            //     hand-built look-alike has nothing to be given.
+            // The second route is the one that matters most: it is the forgery
+            // the frozen error TABLE could not refuse. With identity resting on
+            // the __metatable label, a hand-built table wearing that label was
+            // accepted; with identity resting on being userdata, it is not.
+            constexpr std::string_view source = R"lua(
+                local cycle = ctx:cycle_open()
+                local page = ctx:cycle_page(cycle)
+                local hit = ctx:cycle_find(cycle, uf.recognizers.action_target)
+                ctx:cycle_click(cycle, hit)
+
+                local ok, real = ctx:try(function() ctx:cycle_click(cycle, hit) end)
+                if ok ~= false or real == nil then return 0 end
+                if real.kind ~= 'stale_observation' then return 0 end
+
+                -- Control: re-raised, the genuine carrier comes back as a Tier B
+                -- result, unchanged.
+                local okReal, sameErr = ctx:try(function() error(real) end)
+                if okReal ~= false or sameErr ~= real then return 0 end
+
+                local fields = function()
+                    return {
+                        kind = real.kind,
+                        message = real.message,
+                        retryable = real.retryable,
+                    }
+                end
+
+                -- 1. A plain table carrying the same fields.
+                local plain = fields()
+                -- 2. The same table wearing a metatable that answers
+                --    getmetatable with exactly the host's own label.
+                local labelled = setmetatable(
+                    fields(),
+                    { __metatable = getmetatable(real) }
+                )
+                -- Control: the disguise really is complete on the axis the old
+                -- carrier was identified by.
+                if getmetatable(labelled) ~= getmetatable(real) then return 0 end
+
+                -- 3. table.clone of a real one yields no value to dress up.
+                if pcall(table.clone, real) then return 0 end
+                -- 4. newproxy, the one base-library way to mint a userdata, is
+                --    absent from the project environment.
+                if newproxy ~= nil then return 0 end
+
+                for _, forgery in ipairs({ plain, labelled }) do
+                    -- try refuses to classify it and re-raises it, so the OUTER
+                    -- pcall is what catches, and it catches the forgery itself
+                    -- rather than a Tier B result.
+                    local through, back = pcall(function()
+                        ctx:try(function() error(forgery) end)
+                    end)
+                    if through then return 0 end
+                    if back ~= forgery then return 0 end
+                end
+                return 1
+            )lua";
+
+            CHECK(runBound(context, built, source) == doctest::Approx(1.0));
+            CHECK(built.clicks->clickCount() == 1);
+        }
+
+        TEST_CASE("The host names an uncaught Tier B error by its tag, never by its fields")
+        {
+            // The C++ half of the same guarantee. A value that escapes a run
+            // uncaught is classified by the carrier's userdata tag, so the kind
+            // in the run report -- and so in run.finished -- is the one that
+            // really failed. A forged look-alike carries no tag and therefore
+            // cannot choose the kind its run is reported under.
+            SUBCASE("a genuine carrier names its kind")
+            {
+                auto built = buildBinding(resolvingFrames(FrameId{38}));
+                REQUIRE(built.session.has_value());
+                TaskContext context{*std::move(built.session), *built.recorder};
+
+                constexpr std::string_view source = R"lua(
+                    local cycle = ctx:cycle_open()
+                    local page = ctx:cycle_page(cycle)
+                    local hit = ctx:cycle_find(cycle, uf.recognizers.action_target)
+                    ctx:cycle_click(cycle, hit)
+                    -- Unguarded: the stale click raises and nothing catches it.
+                    ctx:cycle_click(cycle, hit)
+                    return 1
+                )lua";
+
+                auto const result = runBoundResult(context, built, source);
+                REQUIRE_FALSE(result.has_value());
+                CHECK(
+                    automationErrorKind(result.error())
+                    == AutomationErrorKind::StaleObservation
+                );
+            }
+
+            SUBCASE("a forged look-alike names nothing")
+            {
+                auto built = buildBinding(resolvingFrames(FrameId{39}));
+                REQUIRE(built.session.has_value());
+                TaskContext context{*std::move(built.session), *built.recorder};
+
+                // Same fields and the same label, read off a real error so the
+                // disguise cannot go stale, raised the same way -- and the host
+                // reports the script's own failure instead of the claimed kind.
+                constexpr std::string_view source = R"lua(
+                    local cycle = ctx:cycle_open()
+                    local page = ctx:cycle_page(cycle)
+                    local hit = ctx:cycle_find(cycle, uf.recognizers.action_target)
+                    ctx:cycle_click(cycle, hit)
+
+                    local ok, real = ctx:try(function() ctx:cycle_click(cycle, hit) end)
+                    if ok ~= false or real == nil then return 1 end
+                    error(setmetatable(
+                        {
+                            kind = real.kind,
+                            message = real.message,
+                            retryable = real.retryable,
+                        },
+                        { __metatable = getmetatable(real) }
+                    ))
+                )lua";
+
+                auto const result = runBoundResult(context, built, source);
+                REQUIRE_FALSE(result.has_value());
+                CHECK(
+                    automationErrorKind(result.error())
+                    == AutomationErrorKind::InvalidResource
+                );
+            }
+        }
+
+        TEST_CASE("A Tier B error is immutable and hands out nothing a forgery could wear")
+        {
+            auto built = buildBinding(resolvingFrames(FrameId{40}));
+            REQUIRE(built.session.has_value());
+            TaskContext context{*std::move(built.session), *built.recorder};
+
+            // The carrier a script catches is the host's own object and stays
+            // the host's: its fields are readable and every write route is
+            // refused, its metatable can neither be replaced nor obtained, and
+            // its printed form names the kind rather than an address.
             //
-            // The last four lines are the discriminator: the genuine table is
-            // classified by the host, the look-alike is not, and the difference
-            // is observable from the script.
+            // The read controls are load-bearing. Without them an object that
+            // simply answered nothing would pass every refusal below.
             constexpr std::string_view source = R"lua(
                 local cycle = ctx:cycle_open()
                 local page = ctx:cycle_page(cycle)
@@ -847,35 +999,31 @@ namespace uf::task
 
                 local ok, err = ctx:try(function() ctx:cycle_click(cycle, hit) end)
                 if ok ~= false or err == nil then return 0 end
-                if err.kind ~= 'stale_observation' then return 0 end
 
+                -- Control: the fields ARE readable.
+                if err.kind ~= 'stale_observation' then return 0 end
+                if err.retryable ~= true then return 0 end
+                if type(err.message) ~= 'string' then return 0 end
+                if string.find(tostring(err), 'stale_observation', 1, true) == nil then
+                    return 0
+                end
+
+                -- Every write route fails ...
                 if pcall(function() err.kind = 'timeout' end) then return 0 end
                 if pcall(function() err.injected = 1 end) then return 0 end
+                if pcall(rawset, err, 'kind', 'timeout') then return 0 end
+                -- ... and none of them took.
+                if err.kind ~= 'stale_observation' then return 0 end
+                if err.injected ~= nil then return 0 end
 
-                local cloned, cloneError = pcall(table.clone, err)
-                if cloned then return 0 end
-                if string.find(cloneError, 'protected metatable') == nil then return 0 end
-
-                if getmetatable(err) ~= 'uf.error' then return 0 end
-                local forged = {
-                    kind = err.kind,
-                    message = err.message,
-                    retryable = err.retryable,
-                }
-                if pcall(setmetatable, forged, getmetatable(err)) then return 0 end
-
-                -- Control: the host DOES classify the genuine table it minted.
-                local okReal, sameErr = ctx:try(function() error(err) end)
-                if okReal ~= false or sameErr ~= err then return 0 end
-
-                -- And it does not classify the look-alike: try re-raises it, so
-                -- the outer pcall is what catches it and the value comes back
-                -- unchanged rather than as a Tier B result.
-                local caught = nil
-                local okOuter = pcall(function()
-                    ctx:try(function() error(forged) end)
-                end)
-                if okOuter then return 0 end
+                -- The metatable cannot be replaced ...
+                if pcall(setmetatable, err, {}) then return 0 end
+                -- ... and cannot be read either: getmetatable hands back the
+                -- label, so the fields table behind __index is unreachable and
+                -- the value handed out is not something setmetatable accepts.
+                local exposed = getmetatable(err)
+                if type(exposed) ~= 'string' then return 0 end
+                if pcall(setmetatable, {}, exposed) then return 0 end
                 return 1
             )lua";
 

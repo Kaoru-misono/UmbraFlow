@@ -467,6 +467,7 @@ namespace uf::task
                     CapabilitySurface::privateCapabilities(context),
                 .projectGlobals          = CapabilitySurface::projectGlobals(),
                 .frameworkProjectGlobals = frameworkProjectGlobals(),
+                .classifyRaisedError     = CapabilitySurface::raisedErrorClassifier(),
             }
         );
         if (!vm)

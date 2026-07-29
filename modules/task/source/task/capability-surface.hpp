@@ -100,6 +100,21 @@ namespace uf::task
         [[nodiscard]]
         static auto projectGlobals() -> std::vector<std::string>;
 
+        // The decoder script::EngineConfig::classifyRaisedError takes: it reads
+        // the automation kind out of a Tier B error carrier a run raised and
+        // nobody caught, so the run is reported and traced under the kind that
+        // actually failed rather than as a malformed script.
+        //
+        // It decides on the carrier's userdata tag alone. That is the whole
+        // reason the carrier is host-minted userdata: a table forged by a
+        // project script carries no tag, so it can name no kind here however
+        // exactly it copies a real error's fields.
+        //
+        // Static for the same reason projectGlobals() is -- the carrier's shape
+        // is a property of the host, not of one catalog.
+        [[nodiscard]]
+        static auto raisedErrorClassifier() -> script::RaisedErrorClassifier;
+
         // A host-table installer suitable for script::EngineConfig::installHostTables.
         // Invoked once per task VM before the sandbox freezes the globals, it
         // builds the frozen global uf table: uf.recognizers, uf.pages and
@@ -118,8 +133,9 @@ namespace uf::task
         // cycle_click, plus wait_for_page, now and random), each bound to
         // `context`'s EngineSession and its cycle ledger. It also registers the
         // handle metatables only a bound session can mint -- the cycle ticket,
-        // the hit, the resolved page and its page:is method, and the Tier B
-        // error guard.
+        // the hit, and the resolved page with its page:is method -- and carries
+        // the Tier B error label to the framework, which is the only piece of
+        // the surface that is data rather than capability.
         //
         // The returned installer captures a raw pointer to `context`. The caller
         // MUST keep `context` alive for at least as long as the script::Engine the

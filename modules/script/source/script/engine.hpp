@@ -3,9 +3,12 @@
 #include <core/error/result.hpp>
 #include <core/types/integer.hpp>
 
+#include <domain/error.hpp>
+
 #include <chrono>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <stop_token>
 #include <string>
 #include <string_view>
@@ -45,6 +48,27 @@ namespace uf::script
     // generation with InternalInvariant instead of silently booting a framework
     // whose capability argument is a stray value.
     using PrivateCapabilityInstaller = std::function<Status(lua_State* state)>;
+
+    // Reads the automation kind out of the raised value at stack `index` of the
+    // thread that failed, or nullopt when that value is not one the host minted.
+    //
+    // The script module cannot answer that question itself: it owns no error
+    // vocabulary of its own, and the carrier is minted by modules/task, which
+    // sits above it. Without this seam an uncaught Tier B failure reaches the
+    // host as InvalidResource with the message "(non-string error value)", so a
+    // task that timed out and did not catch it would be reported -- and traced
+    // in run.finished -- as a malformed script rather than as a timeout.
+    //
+    // The classifier must decide by the carrier's host tag, never by reading
+    // fields off the value: a project script can build a table with any fields
+    // it likes, and duck-typing here would let it choose the kind its own
+    // failure is reported under.
+    //
+    // It runs on the thread that failed, so it must leave that thread's stack as
+    // it found it. The runner grows the stack before the call, because a thread
+    // unwound by an error has no spare slots of its own.
+    using RaisedErrorClassifier =
+        std::function<std::optional<AutomationErrorKind>(lua_State* state, int index)>;
 
     // Recursively marks the table at stack `index`, every table reachable from
     // its values, and every metatable on the way, read-only, and enforces the
@@ -171,6 +195,16 @@ namespace uf::script
         // A name listed here that no framework module bound fails the
         // generation, exactly as an unregistered projectGlobals name does.
         std::vector<std::string> frameworkProjectGlobals{};
+
+        // Optional decoder for a value a run raised and nobody caught. Empty by
+        // default, which reports every uncaught raise as InvalidResource --
+        // correct for a VM with no host error carrier, which is every VM the
+        // script module boots on its own. modules/task supplies the Tier B
+        // decoder here.
+        //
+        // A cancellation is classified before this runs and never reaches it, so
+        // a classifier cannot downgrade a hard cancel into a catchable kind.
+        RaisedErrorClassifier classifyRaisedError{};
     };
 
     // Owns one embedded Luau VM (lua_State) for a single task generation: create

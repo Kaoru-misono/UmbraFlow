@@ -101,6 +101,7 @@ namespace uf::script::testing
                 state,
                 source,
                 "probe-project",
+                nullptr,
                 nullptr
             );
         }
@@ -119,6 +120,7 @@ namespace uf::script::testing
             lua_gettop(state),
             source,
             "probe-framework",
+            nullptr,
             nullptr
         );
     }

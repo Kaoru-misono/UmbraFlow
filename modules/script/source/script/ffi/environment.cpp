@@ -148,7 +148,8 @@ namespace uf::script
             std::optional<int> argumentIndex,
             std::string_view source,
             std::string_view chunkName,
-            InterruptState const* control
+            InterruptState const* control,
+            RaisedErrorClassifier const* classify
         ) -> Result<lua_State*>
         {
             int const environment = lua_absindex(mainState, environmentIndex);
@@ -273,8 +274,27 @@ namespace uf::script
             }
             if (runStatus != LUA_OK)
             {
+                // Reached only after the cancellation branch above, so a hard
+                // cancel is never handed to the classifier. What is left is a
+                // raise nobody caught: the host's own carrier names its kind,
+                // and anything else -- a project string, a project table -- is
+                // the script's own failure and stays InvalidResource.
+                //
+                // The stack is grown first. A thread that has just failed is
+                // unwound to exactly the error value, with no spare slots, so a
+                // classifier that pushes even one temporary would run off the
+                // end -- measured, not assumed: a classifier calling
+                // luaL_getmetafield here crashed the process until this line
+                // existed. Growing it costs nothing on the success path, which
+                // never reaches this branch.
+                static_cast<void>(lua_checkstack(thread, LUA_MINSTACK));
+                auto kind = std::optional<AutomationErrorKind>{};
+                if (classify != nullptr && *classify)
+                {
+                    kind = (*classify)(thread, -1);
+                }
                 return fail(
-                    AutomationErrorKind::InvalidResource,
+                    kind.value_or(AutomationErrorKind::InvalidResource),
                     "script error: " + topError(thread)
                 );
             }
@@ -345,7 +365,8 @@ namespace uf::script
                     privateCapabilities,
                     module.source,
                     module.name,
-                    control
+                    control,
+                    nullptr
                 )
             );
             if (lua_gettop(thread) < 1)
@@ -489,7 +510,8 @@ namespace uf::script
         int environmentIndex,
         std::string_view source,
         std::string_view chunkName,
-        InterruptState const* control
+        InterruptState const* control,
+        RaisedErrorClassifier const* classify
     ) -> Result<double>
     {
         // The thread lua_newthread pushes onto the main state's stack, and every
@@ -512,7 +534,8 @@ namespace uf::script
                 std::nullopt,
                 source,
                 chunkName,
-                control
+                control,
+                classify
             )
         );
 
@@ -525,7 +548,8 @@ namespace uf::script
         lua_State* mainState,
         std::string_view source,
         std::string_view chunkName,
-        InterruptState const* control
+        InterruptState const* control,
+        RaisedErrorClassifier const* classify
     ) -> Result<double>
     {
         int const stackBase = lua_gettop(mainState);
@@ -542,7 +566,8 @@ namespace uf::script
             lua_gettop(mainState),
             source,
             chunkName,
-            control
+            control,
+            classify
         );
     }
 }

@@ -25,6 +25,7 @@
 #include <ratio>
 #include <string>
 #include <string_view>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -55,12 +56,18 @@ namespace uf::task
 {
     namespace
     {
-        // Every handle kind's shared metatable is registered in the VM registry
-        // under one of these keys, and the same string is the kind's __metatable
-        // and __tostring label -- the only string a script can obtain from a
-        // handle, naming the kind and nothing else (no id, no address). Every
+        // Each of these strings is one host object kind's __metatable and
+        // __tostring label -- the only string a script can obtain from such an
+        // object, naming the kind and nothing else (no id, no address). Every
         // label is rooted at `uf`, the same script-visible root the DATA table is
-        // registered under, so a handle names the surface it came from.
+        // registered under, so an object names the surface it came from.
+        //
+        // The first five are also VM registry keys: a handle kind's metatable is
+        // shared by every handle of that kind and is registered under its label.
+        // k_errorType is not, because a Tier B error carrier's metatable holds
+        // that one error's fields and so exists per instance; the label is still
+        // what a script sees, and the label is what the framework compares
+        // against, but the carrier's identity to C++ is its userdata tag.
         constexpr auto k_recognizerType   = "uf.recognizer";
         constexpr auto k_pageRefType      = "uf.page";
         constexpr auto k_cycleType        = "uf.cycle";
@@ -74,6 +81,31 @@ namespace uf::task
         // private surface has no counterpart here on purpose: it is registered
         // under no name at all.
         constexpr auto k_ufRoot = "uf";
+
+        // The field of the private capability surface carrying k_errorType to
+        // the framework. It is data, not capability, and it is on the surface
+        // for one reason: it is the only table the framework is handed and no
+        // project script can name, so the label reaches ctx:try without ever
+        // being spelled in Luau. The C++ constant above is then the single
+        // source of that string -- rename it and the mint, the __metatable, and
+        // the framework's comparison all move together, because the framework
+        // compares against whatever this hands it.
+        constexpr auto k_errorTagField = "error_tag";
+
+        // The Luau userdata tag every Tier B error carrier is minted under, and
+        // the whole of how C++ recognizes one. A tag is a property of the object
+        // the VM itself stores, so it cannot be copied onto a script-built value:
+        // table.clone takes tables, setmetatable takes tables, and newproxy --
+        // the one base-library way to mint a userdata -- is removed from both
+        // environments. That is what the frozen error TABLE could not offer,
+        // where identity rested on a metatable a clone could carry along.
+        //
+        // Any value below LUA_UTAG_LIMIT would do. Zero is what plain
+        // lua_newuserdata stamps, so the first non-default tag is used instead;
+        // the handle kinds are minted by lua_newuserdatadtor, which stamps
+        // UTAG_IDTOR (== LUA_UTAG_LIMIT) and can therefore never collide.
+        constexpr auto k_errorUserdataTag = 1;
+        static_assert(k_errorUserdataTag > 0 && k_errorUserdataTag < LUA_UTAG_LIMIT);
 
         // Pushes an error kind's wire spelling as a Lua string. The domain returns
         // a view rather than a C string, so push it with its length instead of
@@ -127,8 +159,12 @@ namespace uf::task
             std::destroy_at(static_cast<T*>(storage));
         }
 
-        // Bound as every handle metatable's __newindex: rejects every write with a
-        // clear error so a handle can never be mutated from a script.
+        // Bound as the __newindex of every handle metatable and of every Tier B
+        // error carrier's: rejects every write with a clear error so a host
+        // object can never be mutated from a script. It is belt over braces --
+        // a userdata with no __newindex already refuses a write -- and it is
+        // here for the message, so an author sees why rather than "attempt to
+        // index".
         auto denyWrite(lua_State* state) -> int
         {
             // luaL_error is l_noret: it longjmps out of this frame and never
@@ -193,11 +229,62 @@ namespace uf::task
             return same;
         }
 
-        // Builds a frozen Tier B error table { kind, message, retryable } under the
-        // shared protected uf.error metatable and raises it. The framework's
-        // pure-Luau ctx:try identifies these by that metatable -- getmetatable
-        // yields the label string k_errorType, which is the whole test -- and
-        // scripts can neither forge nor mutate them. Never returns.
+        // What a Tier B error carrier stores in its own userdata block. The kind
+        // is the whole payload: it is the one field the host has to be able to
+        // read back out of a value a script handed around, and reading it here
+        // -- rather than off the script-visible `kind` string -- is what keeps
+        // the decode structural. Trivially destructible, so the carrier needs no
+        // destructor and can be minted with a plain tagged userdata.
+        struct TierBError final
+        {
+            AutomationErrorKind kind{};
+        };
+
+        // The automation kind of the Tier B error carrier at `index`, or nullopt
+        // when that value is not one. The test is the userdata tag and nothing
+        // else: no field is read, so a script-built look-alike carrying `kind`,
+        // `message` and `retryable` is not a Tier B error here however faithfully
+        // it copies one.
+        [[nodiscard]]
+        auto tierBErrorKind(
+            lua_State* state,
+            int index
+        ) -> std::optional<AutomationErrorKind>
+        {
+            if (lua_type(state, index) != LUA_TUSERDATA)
+            {
+                return std::nullopt;
+            }
+            if (lua_userdatatag(state, index) != k_errorUserdataTag)
+            {
+                return std::nullopt;
+            }
+            // SAFETY: the tag is stamped by the VM at creation and cannot be set
+            // from script, and raiseTierB below is the only place that stamps
+            // this one, so the block holds exactly one live TierBError.
+            auto const* p_error =
+                static_cast<TierBError const*>(lua_touserdata(state, index));
+            return p_error->kind;
+        }
+
+        // Mints one Tier B error carrier and raises it. Never returns.
+        //
+        // The carrier is a host-minted userdata under k_errorUserdataTag, not a
+        // table. The three fields a script reads -- kind, message, retryable --
+        // live in a frozen table behind the carrier's own protected metatable's
+        // __index, which is a TABLE and never a function (that rule is what keeps
+        // a future move to a yield protocol from acquiring an unyieldable hole,
+        // and it is checked by deepFreezeMetatable rather than trusted here).
+        //
+        // The metatable is per instance because the fields are: with __index
+        // restricted to a table there is nowhere else per-error data could live.
+        // That costs two small tables per raised error, which is the right side
+        // of the trade -- errors are exceptional, and the alternative is a
+        // function __index the design rules out.
+        //
+        // Identity does not rest on that metatable. C++ reads the tag, and the
+        // framework's ctx:try asks whether the value is a userdata wearing this
+        // label; a project script can produce neither.
         [[noreturn]]
         auto raiseTierB(
             lua_State* state,
@@ -205,21 +292,74 @@ namespace uf::task
             std::string const& message
         ) -> void
         {
+            // SAFETY: lua_newuserdatatagged allocates sizeof(TierBError) VM-owned
+            // bytes, aligned as lua_newuserdatadtor's blocks are (see pushBoxed),
+            // and TierBError is trivially destructible, so no destructor has to be
+            // registered for the tag and nothing leaks when the VM frees the
+            // block. No Lua allocation runs between the allocation and the
+            // construction, so a collection can never see the block uninitialised.
+            static_assert(std::is_trivially_destructible_v<TierBError>);
+            void* storage = lua_newuserdatatagged(
+                state,
+                sizeof(TierBError),
+                k_errorUserdataTag
+            );
+            std::construct_at(static_cast<TierBError*>(storage), TierBError{.kind = kind});
+            int const carrier = lua_gettop(state);
+
             lua_createtable(state, 0, 3);
-            int const table = lua_gettop(state);
-
+            int const fields = lua_gettop(state);
             pushWireName(state, kind);
-            lua_setfield(state, table, "kind");
-            lua_pushstring(state, message.c_str());
-            lua_setfield(state, table, "message");
+            lua_setfield(state, fields, "kind");
+            lua_pushlstring(state, message.data(), message.size());
+            lua_setfield(state, fields, "message");
             lua_pushboolean(state, retryableOf(kind) ? 1 : 0);
-            lua_setfield(state, table, "retryable");
+            lua_setfield(state, fields, "retryable");
 
-            luaL_getmetatable(state, k_errorType);
-            lua_setmetatable(state, table);
-            lua_setreadonly(state, table, 1);
+            lua_createtable(state, 0, 4);
+            int const metatable = lua_gettop(state);
 
-            // lua_error takes the value on top of the stack (the frozen table) and
+            lua_pushvalue(state, fields);
+            lua_setfield(state, metatable, "__index");
+
+            lua_pushcfunction(state, &denyWrite, "uf_error_newindex");
+            lua_setfield(state, metatable, "__newindex");
+
+            // tostring() names the kind and the message and nothing else, so an
+            // error that reaches the host uncaught still carries its cause into
+            // the run report. It is a fixed string built here rather than a
+            // formatter reading the carrier, so it stays deterministic and leaks
+            // no address.
+            auto label = std::string{k_errorType};
+            label += "(";
+            label += automationErrorWireName(kind);
+            label += "): ";
+            label += message;
+            lua_pushlstring(state, label.data(), label.size());
+            lua_pushcclosure(state, &handleToString, "uf_error_tostring", 1);
+            lua_setfield(state, metatable, "__tostring");
+
+            lua_pushstring(state, k_errorType);
+            lua_setfield(state, metatable, "__metatable");
+
+            if (!script::deepFreezeMetatable(state, metatable))
+            {
+                // Unreachable while the metatable is the one built directly
+                // above: it carries __metatable and a table __index by
+                // construction. Raising a plain string rather than a half-frozen
+                // carrier keeps a broken host from handing a script a mutable
+                // object that answers to the Tier B label.
+                lua_pushstring(
+                    state,
+                    "uf: a Tier B error carrier could not be frozen"
+                );
+                lua_error(state);
+            }
+
+            lua_setmetatable(state, carrier);
+            lua_settop(state, carrier);
+
+            // lua_error takes the value on top of the stack (the carrier) and
             // longjmps; it is l_noret, so control never returns here.
             lua_error(state);
         }
@@ -912,22 +1052,6 @@ namespace uf::task
             return ok();
         }
 
-        // The Tier B error metatable is a data table's guard, not a handle's: it
-        // needs only __metatable protection (the table itself is frozen readonly),
-        // no __index, __newindex, or __tostring. That one field is load-bearing:
-        // table.clone refuses a table whose metatable is protected, so an error a
-        // script catches cannot be cloned into a mutable copy that still passes
-        // the host's metatable-identity check.
-        [[nodiscard]]
-        auto installErrorMetatable(lua_State* state) -> Status
-        {
-            lua_newtable(state);
-            int const metatable = lua_gettop(state);
-            lua_pushstring(state, k_errorType);
-            lua_setfield(state, metatable, "__metatable");
-            return finishMetatable(state, k_errorType);
-        }
-
         // Registers the metatables of the handle kinds the DATA surface mints:
         // the recognizer and page references named under uf.recognizers and
         // uf.pages. Both exist whether or not a session is bound, because a
@@ -943,10 +1067,14 @@ namespace uf::task
         }
 
         // Registers the metatables only a bound session can ever mint: the cycle
-        // ticket, the hit, the resolved page, and the Tier B error guard. They
-        // belong to the private capability installer because every one of them is
-        // produced by a primitive, so a VM with no session has nothing that could
-        // wear them.
+        // ticket, the hit and the resolved page. They belong to the private
+        // capability installer because every one of them is produced by a
+        // primitive, so a VM with no session has nothing that could wear them.
+        //
+        // The Tier B error carrier is absent on purpose. Its metatable is per
+        // instance -- it holds that error's own kind, message and retryable
+        // behind a table __index -- so there is nothing shared to register here,
+        // and its identity is the userdata tag rather than a registry entry.
         //
         // Only the resolved page carries a method. A ticket and a hit are pure
         // names the host hands back to itself, so every operation on a cycle is a
@@ -954,8 +1082,6 @@ namespace uf::task
         [[nodiscard]]
         auto installSessionMetatables(lua_State* state) -> Status
         {
-            UF_TRY(installErrorMetatable(state));
-
             beginMetatable(state, k_cycleType);
             UF_TRY(finishMetatable(state, k_cycleType));
 
@@ -1143,6 +1269,12 @@ namespace uf::task
                 context
             );
 
+            // The one non-primitive entry: the Tier B label, so ctx:try can ask
+            // whether a caught value wears it without the framework spelling the
+            // string itself. See k_errorTagField.
+            lua_pushstring(state, k_errorType);
+            lua_setfield(state, surface, k_errorTagField);
+
             return script::deepFreeze(state, surface);
         }
     }
@@ -1150,6 +1282,14 @@ namespace uf::task
     auto CapabilitySurface::projectGlobals() -> std::vector<std::string>
     {
         return std::vector<std::string>{std::string{k_ufRoot}};
+    }
+
+    auto CapabilitySurface::raisedErrorClassifier() -> script::RaisedErrorClassifier
+    {
+        return [](lua_State* state, int index) -> std::optional<AutomationErrorKind>
+        {
+            return tierBErrorKind(state, index);
+        };
     }
 
     auto CapabilitySurface::installer() const -> script::HostTableInstaller

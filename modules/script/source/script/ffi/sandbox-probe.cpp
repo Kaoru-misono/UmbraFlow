@@ -112,6 +112,12 @@ namespace uf::script::testing
 
         // No interrupt is armed on this sandbox-only probe, hence the null
         // control block.
-        return runNumberInProjectEnvironment(state, source, chunkName, nullptr);
+        return runNumberInProjectEnvironment(
+            state,
+            source,
+            chunkName,
+            nullptr,
+            nullptr
+        );
     }
 }

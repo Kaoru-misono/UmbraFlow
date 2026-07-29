@@ -70,6 +70,7 @@ namespace uf::script::testing
                     state,
                     source,
                     chunkName,
+                    nullptr,
                     nullptr
                 );
                 (void)ran;

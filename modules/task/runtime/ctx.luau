@@ -21,6 +21,17 @@
 -- call rather than at load.
 local native = ...
 
+-- The label the host stamps on every Tier B error carrier it mints, handed over
+-- on the private surface rather than written out here. Spelling it in this file
+-- would make it two strings that have to stay equal with nothing checking that;
+-- taking it from the host leaves one, and a rename on the C++ side moves the
+-- mint and this comparison together. Nil on a VM with no bound session, which
+-- also mints no errors.
+local errorTag = nil
+if native ~= nil then
+    errorTag = native.error_tag
+end
+
 -- A value that exists only inside the framework environment. It is assigned as
 -- a framework global rather than exported on purpose: the exports below are
 -- published into the project environment, so anything reachable from them is by
@@ -67,13 +78,18 @@ end
 -- inside `fn` breaks the thread instead of degrading into a catchable
 -- across-C-call error.
 --
--- A Tier B automation error is the one value the host minted: its metatable is
--- protected, so getmetatable yields the label string and a project script can
--- neither forge that nor clone its way to one. Anything else is the script's
--- own failure -- including the Tier C cancellation sentinel, which carries no
--- such metatable -- and is re-raised unchanged, so try never masks a bug and
--- never swallows a cancel. Level 0 keeps the value byte-identical instead of
--- prefixing a second source position onto a string error.
+-- A Tier B automation error is a value only the host can mint: a userdata,
+-- carrying the host tag, wearing this label behind a protected metatable. Both
+-- halves of the test do work. Userdata is what a project script cannot produce
+-- at all -- setmetatable and table.clone take tables, and newproxy is removed
+-- from both environments -- and the label is what tells a Tier B error apart
+-- from the other host userdata a script can hold, a page or a recognizer.
+--
+-- Anything else is the script's own failure -- including the Tier C
+-- cancellation sentinel, which is a plain string -- and is re-raised unchanged,
+-- so try never masks a bug and never swallows a cancel. Level 0 keeps the value
+-- byte-identical instead of prefixing a second source position onto a string
+-- error.
 --
 -- Swallowing the sentinel would still not buy a script anything: every
 -- primitive checks the host's terminal latch on entry, so the next call
@@ -83,7 +99,7 @@ function ctx:try(fn)
     if ok then
         return true, nil
     end
-    if getmetatable(err) == "uf.error" then
+    if type(err) == "userdata" and getmetatable(err) == errorTag then
         return false, err
     end
     error(err, 0)

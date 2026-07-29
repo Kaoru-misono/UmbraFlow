@@ -99,13 +99,19 @@ namespace uf::script
     // surfaces as an ordinary runtime error rather than LUA_BREAK, and only
     // `control->broken` distinguishes it from a genuine script error. A null
     // `control` means no cancellation is armed on this VM.
+    //
+    // `classify` observes the config's classifier for the raised value of a run
+    // that failed; null, or an empty classifier, reports every raise as
+    // InvalidResource. It is borrowed for the call only -- the EngineConfig-owned
+    // std::function it names outlives every call the Engine makes.
     [[nodiscard]]
     auto runNumberInEnvironment(
         lua_State* mainState,
         int environmentIndex,
         std::string_view source,
         std::string_view chunkName,
-        InterruptState const* control
+        InterruptState const* control,
+        RaisedErrorClassifier const* classify
     ) -> Result<double>;
 
     // Runs `source` under a project environment freshly built for this call, and
@@ -118,6 +124,7 @@ namespace uf::script
         lua_State* mainState,
         std::string_view source,
         std::string_view chunkName,
-        InterruptState const* control
+        InterruptState const* control,
+        RaisedErrorClassifier const* classify
     ) -> Result<double>;
 }
