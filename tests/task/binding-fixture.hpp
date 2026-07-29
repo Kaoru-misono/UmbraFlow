@@ -30,6 +30,7 @@
 #include <image/png.hpp>
 
 #include <script/engine.hpp>
+#include <script/testing/cancel-probe.hpp>
 
 #include <trace/event.hpp>
 #include <trace/recorder.hpp>
@@ -43,15 +44,18 @@
 #include <cstddef>
 #include <memory>
 #include <optional>
+#include <stop_token>
+#include <string_view>
 #include <utility>
 #include <vector>
 
-// Shared test fixture for the modules/task binding and determinism suites: the
-// single-page recognition runtime, the grey frame builders, the fake frame
-// source, and the recording sinks. Both test-task-binding.cpp and
-// test-determinism-harness.cpp build sessions from these, so they live here once
-// rather than being copied into each translation unit. Everything is inline or a
-// header-defined type, so including it in more than one TU is safe.
+// Shared test fixture for the modules/task binding, adversarial and determinism
+// suites: the single-page recognition runtime, the grey frame builders, the fake
+// frame sources, the recording sinks, and the bound-VM runners every suite drives
+// a real task VM through. test-task-binding.cpp, test-adversarial-surface.cpp and
+// test-determinism-harness.cpp all build sessions from these, so they live here
+// once rather than being copied into each translation unit. Everything is inline
+// or a header-defined type, so including it in more than one TU is safe.
 namespace uf::task
 {
     namespace anno = annotation;
@@ -377,6 +381,203 @@ namespace uf::task
             .recognitionTimeout      = std::chrono::duration_cast<
                 MonotonicInstant::Duration
             >(std::chrono::seconds{5}),
+        };
+    }
+
+    // Fails the FIRST capture with Cancelled and serves a good frame on every
+    // one after it, with no stop token armed anywhere.
+    //
+    // That combination is what isolates the terminal latch. In a real cancel
+    // the VM interrupt also breaks the thread, so a test cannot tell which
+    // layer refused the next call. Here the interrupt never fires and the
+    // engine would happily capture again, so the only thing that can refuse
+    // the second primitive is the fatal latch the first one set -- which is
+    // exactly the guarantee that has to survive a script that swallowed the
+    // Tier C sentinel and kept running.
+    class CancelOnceFrameSource final : public engine::IFrameSource
+    {
+        Frame       m_frame;
+        std::size_t m_captureCount{0};
+
+    public:
+        explicit CancelOnceFrameSource(Frame frame) noexcept
+            : m_frame{std::move(frame)}
+        {
+        }
+
+        [[nodiscard]] auto capture() -> Result<Frame> override
+        {
+            ++m_captureCount;
+            if (m_captureCount == 1U)
+            {
+                return fail(AutomationErrorKind::Cancelled, "capture cancelled once");
+            }
+            return m_frame;
+        }
+
+        [[nodiscard]] auto validateTargetInstance() -> Status override
+        {
+            return ok();
+        }
+
+        // How many captures this source served. A refusal that still spent a
+        // frame would be a weaker guarantee than the one under test.
+        [[nodiscard]] auto captureCount() const noexcept -> std::size_t
+        {
+            return m_captureCount;
+        }
+    };
+
+    // The run's recorder, a constructed EngineSession over it, the surface
+    // built from its own catalog, and a non-owning observer of the click sink.
+    // The surface is captured before the runtime moves into the session, so
+    // both name the same recognizer and page identities.
+    //
+    // The recorder is declared first and held through a unique_ptr: the
+    // session borrows it (see engine/session.hpp), so it must outlive the
+    // session and keep a stable address when this struct is moved.
+    struct Built final
+    {
+        std::unique_ptr<trace::TraceRecorder> recorder;
+        Result<engine::EngineSession>         session;
+        CapabilitySurface                     surface;
+        CountingActionSink*                   clicks;
+    };
+
+    // Builds the session from `frameSource` with `cancellation` armed on the
+    // engine config, recording into `traceSink`. One recorder serves both the
+    // engine session and the TaskContext built over it, which is what puts
+    // their events into a single ordered stream.
+    [[nodiscard]]
+    inline auto buildBindingWith(
+        std::unique_ptr<engine::IFrameSource> frameSource,
+        std::stop_token cancellation,
+        std::unique_ptr<trace::ITraceSink> traceSink
+    ) -> Built
+    {
+        auto parts   = singlePageRuntime();
+        auto surface = CapabilitySurface::create(
+            parts.loaded.runtime.manifest().catalog()
+        );
+        REQUIRE(surface.has_value());
+
+        auto actionSink      = std::make_unique<CountingActionSink>();
+        auto* const p_clicks = actionSink.get();
+        auto config         = baseConfig(parts.fingerprint);
+        config.cancellation = std::move(cancellation);
+        auto recorder        = std::make_unique<trace::TraceRecorder>(
+            std::move(traceSink),
+            k_fixtureRunId,
+            k_fixtureGenerationId
+        );
+        auto session = engine::EngineSession::create(
+            std::move(parts.loaded),
+            std::move(frameSource),
+            std::move(actionSink),
+            *recorder,
+            config
+        );
+        return Built{
+            .recorder = std::move(recorder),
+            .session  = std::move(session),
+            .surface  = *std::move(surface),
+            .clicks   = p_clicks,
+        };
+    }
+
+    [[nodiscard]]
+    inline auto buildBinding(std::vector<Frame> frames) -> Built
+    {
+        return buildBindingWith(
+            std::make_unique<FakeFrameSource>(std::move(frames)),
+            std::stop_token{},
+            std::make_unique<DiscardingTraceSink>()
+        );
+    }
+
+    // One frame that resolves page_a and hits the action target.
+    [[nodiscard]]
+    inline auto resolvingFrames(FrameId frameId) -> std::vector<Frame>
+    {
+        auto frames = std::vector<Frame>{};
+        frames.emplace_back(
+            grayFrame(anno::test::fingerprint(3, 1, 96, 96), resolvingPixels(), frameId)
+        );
+        return frames;
+    }
+
+    // Runs `source` on a real task VM bound to `built`'s session and returns
+    // the script's numeric result. The VM is created and destroyed inside
+    // this call, so anything the host still holds afterwards is held by the
+    // host, not by a live Lua handle.
+    [[nodiscard]]
+    inline auto runBound(TaskContext& context, Built& built, std::string_view source)
+        -> double
+    {
+        auto engine = script::Engine::create(taskVmConfig(built.surface, context));
+        REQUIRE(engine.has_value());
+        auto const result = engine->runNumber(source, "task-binding");
+        REQUIRE(result.has_value());
+        return *result;
+    }
+
+    // The same run, without requiring it to succeed. A test that asks how
+    // the HOST classified a value the script let escape needs the failure
+    // itself, which runBound deliberately refuses to hand back.
+    [[nodiscard]]
+    inline auto runBoundResult(
+        TaskContext& context,
+        Built& built,
+        std::string_view source
+    ) -> Result<double>
+    {
+        auto engine = script::Engine::create(taskVmConfig(built.surface, context));
+        REQUIRE(engine.has_value());
+        return engine->runNumber(source, "task-binding");
+    }
+
+    // Outcome of a discriminator run: the run result (an error on a
+    // cancellation) and how many times the host mark() ran.
+    struct DiscriminatorRun final
+    {
+        Result<double> result;
+        uint64         markCount{0};
+    };
+
+    // Runs `source` on a task VM bound to `built` with `cancellation` armed on
+    // the VM interrupt (the session already shares the same token), plus a host
+    // mark() the script can call. Returns the run result and how many times
+    // mark() reached. markCount is declared before the Engine, so it outlives
+    // the VM and the closure's pointer into it stays valid for every call.
+    [[nodiscard]]
+    inline auto runWithMark(
+        TaskContext& context,
+        Built& built,
+        std::stop_token cancellation,
+        std::string_view source
+    ) -> DiscriminatorRun
+    {
+        uint64 markCount        = 0;
+        auto   config           = taskVmConfig(built.surface, context);
+        auto   surfaceInstaller = std::move(config.installHostTables);
+        config.cancellation     = std::move(cancellation);
+        config.installHostTables =
+            [surfaceInstaller = std::move(surfaceInstaller), &markCount](
+                lua_State* state
+            ) -> Status
+        {
+            UF_TRY(surfaceInstaller(state));
+            script::testing::installMarkCounter(state, &markCount);
+            return ok();
+        };
+        config.projectGlobals.emplace_back("mark");
+
+        auto engine = script::Engine::create(config);
+        REQUIRE(engine.has_value());
+        auto result = engine->runNumber(source, "task-tier-c");
+        return DiscriminatorRun{
+            .result    = std::move(result),
+            .markCount = markCount,
         };
     }
 }

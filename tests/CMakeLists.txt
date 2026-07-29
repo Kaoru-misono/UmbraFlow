@@ -122,6 +122,7 @@ if(TARGET ${PROJECT_NAME}_script)
         NAME test-script
         SOURCES
             script/test-script.cpp
+            script/test-adversarial-substrate.cpp
             script/test-environments.cpp
             script/test-veto-suite.cpp
         LIBS
@@ -134,6 +135,7 @@ if(TARGET ${PROJECT_NAME}_task)
         NAME test-task
         SOURCES
             task/test-task.cpp
+            task/test-adversarial-surface.cpp
             task/test-task-binding.cpp
             task/test-task-host.cpp
             task/test-determinism-harness.cpp

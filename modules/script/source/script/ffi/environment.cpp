@@ -259,7 +259,11 @@ namespace uf::script
                 // raised inside a non-yieldable C frame surfaces as an ordinary
                 // runtime error (LUA_ERRRUN, "attempt to break across C-call
                 // boundary") instead. Classifying that as a recoverable script
-                // error would misreport a host control signal as a Tier B failure.
+                // error would misreport a host control signal as a Tier B
+                // failure, and it is this disjunct alone that prevents it:
+                // removing it turns six of the seven non-yieldable forms in
+                // tests/script/test-adversarial-substrate.cpp, plus veto #6's own
+                // two cases, from Cancelled into InvalidResource.
                 return fail(
                     AutomationErrorKind::Cancelled,
                     "task hard-cancelled (lua_break); the task thread is abandoned"
@@ -279,6 +283,24 @@ namespace uf::script
                 // raise nobody caught: the host's own carrier names its kind,
                 // and anything else -- a project string, a project table -- is
                 // the script's own failure and stays InvalidResource.
+                //
+                // That ordering is the fail-closed default and NOT the mechanism
+                // that stops a cancel being downgraded, because the state it
+                // would rule on cannot arise: `broken` is set only inside the
+                // interrupt, which then calls lua_break, and every trigger it
+                // reads is monotone. Once it is set, the next interrupt breaks
+                // again -- and Luau's interrupt sites are the call, return and
+                // loop-back ops, all of which run BEFORE the op completes. So no
+                // host C function can be entered to mint a carrier afterwards,
+                // and a carrier already in hand can only be raised through
+                // error(), which is itself a call. Measured, not assumed: moving
+                // this block above the cancellation branch reddens nothing, even
+                // against the script in
+                // tests/task/test-adversarial-surface.cpp that holds a real
+                // carrier and re-raises it from inside a cancelled sort
+                // comparator. Keep the ordering anyway -- it costs one branch and
+                // it is what a future yield protocol, or a Luau that adds an
+                // interrupt site, would need.
                 //
                 // The stack is grown first. A thread that has just failed is
                 // unwound to exactly the error value, with no spare slots, so a
