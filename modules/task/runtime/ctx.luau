@@ -20,6 +20,25 @@
 -- the global `ctx`; it is the whole of what a project task can reach besides
 -- the `uf` data tables and the `task` declaration surface.
 --
+-- The `native.emit` calls below are how the structure this file maintains --
+-- which step is open, which retry attempt this is, which interrupt matched --
+-- reaches the run's evidence stream. Two things about them are worth stating
+-- once, here, rather than at each call site.
+--
+-- They are an AUDIT LOG, not a replay log. Replaying a run rests on the seed the
+-- host recorded in run.started plus the observation sequence a test feeds its
+-- fake frame source; nothing emitted here can reconstruct a run, and nothing
+-- should ever be added on the theory that it could.
+--
+-- `emit` is not a passthrough. The host runs a state machine over the requests
+-- and refuses one that does not fit: a finish that does not name the innermost
+-- open step, an attempt beyond its policy's declared total, an interrupt closed
+-- that no match opened. A refusal that names a framework bug spends the
+-- generation before it raises, so no `pcall` in this file or above it can
+-- swallow one and carry on -- which is why every cleanup path below asks
+-- `native.terminal()` before emitting its closing event rather than raising a
+-- second time over the failure that spent it.
+--
 -- `native` is nil on a VM booted with no bound task session (the data-only
 -- surface, used where only the resource name closure matters). That is
 -- intended: this module must still load there, and a method then fails at the
@@ -207,8 +226,16 @@ local function runInterrupts(state, page)
     for index = 1, #interrupts do
         local entry = interrupts[index]
         if page:is(entry.when) then
+            -- The match is recorded before the budget is consulted, so the
+            -- stream shows a popup that WAS recognised and then declined rather
+            -- than a popup that was never seen. Both closing events are
+            -- reachable from here and exactly one of them fires, which is what
+            -- the host's matched/handled/exhausted rule checks.
+            native.emit("interrupt_matched", entry.id)
+
             local hits = interruptHits[entry.id] or 0
             if hits >= entry.max_hits then
+                native.emit("interrupt_exhausted", entry.id)
                 return false
             end
 
@@ -216,6 +243,13 @@ local function runInterrupts(state, page)
             handlingInterrupt = true
             local ok, err = pcall(entry.handle, ctx, state.view)
             handlingInterrupt = false
+
+            -- Closed on both exits: a handler that raised still matched, and a
+            -- match left open would be the framework failing to close what it
+            -- opened -- which the host refuses at run.finished.
+            if not native.terminal() then
+                native.emit("interrupt_handled", entry.id)
+            end
             if not ok then
                 error(err, 0)
             end
@@ -259,12 +293,27 @@ function ctx:step(name, fn)
         error("ctx:step needs a function to run", 2)
     end
 
+    -- The host owns everything about the NAME -- its length, its character set,
+    -- and how deep the open path may go -- because the name is a project string
+    -- literal and this file has no reason to hold a second copy of those rules.
+    -- It is emitted before the stack grows, so a refused name opens no step here
+    -- either and the two sides never disagree about what is open.
+    native.emit("step_started", name)
+
     local depth = #stepStack + 1
     stepStack[depth] = name
 
     local ok, result = pcall(fn)
     for index = #stepStack, depth, -1 do
         stepStack[index] = nil
+    end
+
+    -- Skipped on a spent generation, and only there: the close would raise over
+    -- whatever spent it and replace the real cause with its consequence. The
+    -- host then sees a step still open at run.finished, which is the correct
+    -- reading -- the run did end inside this step.
+    if not native.terminal() then
+        native.emit("step_finished", name)
     end
 
     if not ok then
@@ -424,8 +473,15 @@ function ctx:retry(policy, fn)
     if attempts == nil then
         attempts = k_defaultRetryAttempts
     end
-    if type(attempts) ~= "number" or attempts < 1 then
-        error("ctx:retry policy.attempts must be at least one attempt", 2)
+    -- Whole numbers only. A fractional total would make "attempt 3 of 2.5" a
+    -- sentence the host's monotone check has to refuse as a framework bug, when
+    -- the only thing wrong is the number a project wrote.
+    if type(attempts) ~= "number" or attempts < 1 or attempts % 1 ~= 0 then
+        error(
+            "ctx:retry policy.attempts must be a whole number of attempts, at "
+            .. "least one",
+            2
+        )
     end
 
     local on = policy.on
@@ -440,6 +496,13 @@ function ctx:retry(policy, fn)
 
     local attempt = 1
     while true do
+        -- Every pass is announced, including the first: "attempt 1 of 3" is what
+        -- makes a later "attempt 2 of 3" readable as a repeat rather than as the
+        -- start of something. The host checks the pair -- never beyond the
+        -- declared total, never skipping a number -- so the count in the stream
+        -- is the count this loop actually took.
+        native.emit("retry_attempt", attempt, attempts)
+
         local ok, result = pcall(fn)
         if ok then
             return result
@@ -456,7 +519,14 @@ function ctx:retry(policy, fn)
 
         attempt += 1
         if backoffMillis ~= nil then
+            -- The pause between two attempts is the retry policy's, so it is
+            -- recorded as one. It settles through the primitive directly rather
+            -- than through ctx:settle, which would record a second,
+            -- project-shaped pause for the same wait. Taken first and recorded
+            -- after, so a pause the host refused or a cancel cut short leaves no
+            -- record of a wait that did not happen.
             native.settle(backoffMillis)
+            native.emit("retry_backoff", backoffMillis)
         end
     end
 end
@@ -501,8 +571,14 @@ function ctx:wait(deadline, intervalMilliseconds)
     return native.wait(deadline, intervalMilliseconds)
 end
 
+-- The pause is taken first and recorded after, so a duration the host refused
+-- leaves no record of a pause that never happened. The primitive already writes
+-- its own task.native_call; this adds the framework's reading of it, which is
+-- that a project declared a pause of its own rather than a retry policy taking
+-- one between attempts.
 function ctx:settle(milliseconds)
-    return native.settle(milliseconds)
+    native.settle(milliseconds)
+    native.emit("settled", milliseconds)
 end
 
 function ctx:random(low, high)

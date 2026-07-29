@@ -330,6 +330,15 @@ namespace uf::task
                  "rawget(ctx, 'frameworkSentinel') == nil"
                  " and rawget(ctx, 'native') == nil"
                  " and rawget(ctx, 'error_tag') == nil"},
+                // The semantic-event primitives are the framework's alone. A
+                // project that could name emit could write a history of a run
+                // that never happened -- steps it never entered, retries it never
+                // took -- into the same stream the host writes, and the
+                // validation state machine would accept it because the sequence
+                // would be well formed. So they are absent from ctx, and the only
+                // route to them is the closure upvalue no project can name.
+                {"the semantic-event primitives are not on ctx",
+                 "rawget(ctx, 'emit') == nil and rawget(ctx, 'terminal') == nil"},
             };
 
             expectEveryAttackHolds(context, built, attacks);

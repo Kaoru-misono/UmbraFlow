@@ -2,6 +2,7 @@
 
 #include "event.hpp"
 #include "sink.hpp"
+#include "stream-validator.hpp"
 
 #include <core/error/result.hpp>
 #include <core/types/integer.hpp>
@@ -14,9 +15,15 @@ namespace uf::trace
 {
     // The single writer of one run's evidence stream. It owns the sink and holds
     // the run identity every event must carry: a monotonic sequence, the run id
-    // and the generation id. emit() stamps those onto the event, adds the wall
-    // clock, and forwards; nothing else can reach the sink, so no emitter can
-    // forget the stamp.
+    // and the generation id. emit() validates the event against the stream
+    // protocol, stamps those onto it, adds the wall clock and the open step
+    // scope, and forwards; nothing else can reach the sink, so no emitter can
+    // forget the stamp or go around the protocol.
+    //
+    // The validator lives here for the same structural reason the sequence
+    // counter does. Its rules span the whole stream -- the run bracket the host
+    // writes, the native calls the binding writes, the semantic events the Luau
+    // framework requests -- and this is the one object that sees all three.
     //
     // One recorder per run. It is non-copyable and non-movable because engine and
     // task store a borrow of it (see their lifetime contracts), so its address
@@ -24,6 +31,7 @@ namespace uf::trace
     class TraceRecorder final
     {
         std::unique_ptr<ITraceSink> m_sink;
+        TraceStreamValidator        m_validator{};
         TaskRunId                   m_runId;
         GenerationId                m_generationId;
         uint64                      m_nextSequence{1};
@@ -46,11 +54,24 @@ namespace uf::trace
 
         ~TraceRecorder() = default;
 
-        // Stamps `event` with the next sequence number, the run identity and the
-        // current wall clock, then forwards it to the sink. The sequence advances
-        // whether or not the sink succeeds, so a gap in the stream is visible as
-        // a missing number rather than silently closed up.
+        // Admits `event` into the stream, then stamps it with the next sequence
+        // number, the run identity, the current wall clock and the framework step
+        // scope open at this instant, and forwards it to the sink.
+        //
+        // The sequence advances whether or not the SINK succeeds, so a gap in the
+        // stream is visible as a missing number rather than silently closed up.
+        // It does NOT advance for an event the validator refused: that event
+        // never entered the stream, so a number spent on it would report a line
+        // that was never written. The refusal's own error carries which rule
+        // broke and whether it was a request the stream declines (InvalidResource)
+        // or a protocol breach (InternalInvariant); see stream-validator.hpp.
         [[nodiscard]] auto emit(TraceEvent const& event) -> Status;
+
+        // Whether the framework left a step or an interrupt match open. The run
+        // owner asks before writing run.finished, so an unclosed scope becomes
+        // the run's reported failure instead of a bracket that quietly closed
+        // over a framework bug.
+        [[nodiscard]] auto requireScopesClosed() const -> Status;
 
         [[nodiscard]] auto runId() const noexcept -> TaskRunId;
         [[nodiscard]] auto generationId() const noexcept -> GenerationId;

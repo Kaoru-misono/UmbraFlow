@@ -20,6 +20,8 @@
 #include <engine/runtime-loader.hpp>
 #include <engine/session.hpp>
 
+#include <trace/event.hpp>
+
 #include <doctest/doctest.h>
 
 #include <array>
@@ -180,23 +182,52 @@ namespace uf::task
         // weaker guarantee than the one under test.
         struct FrameworkBuild final
         {
-            Built            built;
-            FakeFrameSource* frames{};
+            Built               built;
+            FakeFrameSource*    frames{};
+            RecordingTraceSink* traces{};
         };
 
+        // Every case records its trace rather than discarding it. Most read only
+        // the counts below, but the framework's semantic events pass the host's
+        // validation state machine on their way to this sink, so a run that
+        // completes here is also a run whose step, retry and interrupt sequence
+        // the host accepted -- and the interrupt case reads the sink directly.
         [[nodiscard]]
         auto buildOver(RuntimeParts parts, std::vector<Frame> frames)
             -> FrameworkBuild
         {
             auto frameSource     = std::make_unique<FakeFrameSource>(std::move(frames));
             auto* const p_frames = frameSource.get();
+            auto traceSink       = std::make_unique<RecordingTraceSink>();
+            auto* const p_traces = traceSink.get();
             auto built           = buildBindingOver(
                 std::move(parts),
                 std::move(frameSource),
                 std::stop_token{},
-                std::make_unique<DiscardingTraceSink>()
+                std::move(traceSink)
             );
-            return FrameworkBuild{.built = std::move(built), .frames = p_frames};
+            return FrameworkBuild{
+                .built  = std::move(built),
+                .frames = p_frames,
+                .traces = p_traces,
+            };
+        }
+
+        // The kinds of the framework semantic events a run recorded, in order.
+        [[nodiscard]]
+        auto semanticKinds(
+            std::vector<trace::StampedTraceEvent> const& events
+        ) -> std::vector<trace::TraceEventKind>
+        {
+            auto kinds = std::vector<trace::TraceEventKind>{};
+            for (auto const& event : events)
+            {
+                if (event.event().framework.has_value())
+                {
+                    kinds.emplace_back(event.event().kind);
+                }
+            }
+            return kinds;
         }
 
         [[nodiscard]]
@@ -503,6 +534,18 @@ namespace uf::task
             CHECK(framework.built.clicks->clickCount() == 2);
             CHECK(framework.frames->captureCount() == 3U);
             CHECK_FALSE(context.hasOpenCycle());
+
+            // And it is in the record as a match that was handled. The pair is
+            // what the host's state machine checks -- a close must follow a match
+            // of the same id -- so a framework that emitted one without the other
+            // would have failed this run rather than reaching these lines.
+            CHECK(
+                semanticKinds(framework.traces->events())
+                == std::vector<trace::TraceEventKind>{
+                    trace::TraceEventKind::FrameworkInterruptMatched,
+                    trace::TraceEventKind::FrameworkInterruptHandled,
+                }
+            );
         }
 
         TEST_CASE("An interrupt stops firing once its hit budget is spent")
@@ -557,6 +600,16 @@ namespace uf::task
             CHECK(runBound(context, framework.built, source) == doctest::Approx(1.0));
             CHECK(framework.built.clicks->clickCount() == 0);
             CHECK_FALSE(context.hasOpenCycle());
+
+            // A popup that keeps matching after its budget is spent is recorded
+            // as matched-and-exhausted rather than silently skipped, which is the
+            // whole difference between "the handler is not working" and "the
+            // popup went away".
+            auto const kinds = semanticKinds(framework.traces->events());
+            REQUIRE(kinds.size() >= 3U);
+            CHECK(kinds[0] == trace::TraceEventKind::FrameworkInterruptMatched);
+            CHECK(kinds[1] == trace::TraceEventKind::FrameworkInterruptHandled);
+            CHECK(kinds.back() == trace::TraceEventKind::FrameworkInterruptExhausted);
         }
 
         TEST_CASE("ctx:retry follows the on list over retryable, and retryable without one")

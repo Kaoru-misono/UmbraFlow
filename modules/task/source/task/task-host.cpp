@@ -484,6 +484,41 @@ namespace uf::task
             }
         }
 
+        // Two verdicts the script's own return cannot express, folded in before
+        // the closing line is built so run.finished reports the run that actually
+        // happened.
+        //
+        // A generation the host spent terminally -- a cancellation, or a framework
+        // bug the trace state machine caught -- ended there whatever the script
+        // did afterwards. Design section 9's rule 5 latches that in C++ precisely
+        // so a project pcall cannot turn it into a completed run, and this is
+        // where the latch is read back.
+        //
+        // A step or an interrupt match still open at run.finished is the framework
+        // failing to close what it opened, which section 12 makes a
+        // Failed(InternalInvariant) run. Both defer to a failure the run already
+        // has: an unclosed step under a cancelled run is the cancel's consequence,
+        // not a second cause.
+        if (!report.failure)
+        {
+            auto const terminal = context.terminalKind();
+            if (terminal.has_value())
+            {
+                report.failure = fail(
+                    *terminal,
+                    "the task generation was spent before the script returned"
+                ).error();
+            }
+        }
+        if (!report.failure)
+        {
+            auto scopes = recorder->requireScopesClosed();
+            if (!scopes)
+            {
+                report.failure = std::move(scopes).error();
+            }
+        }
+
         auto finishStatus = recorder->emit(runFinishedEvent(report));
         if (!report.failure && !finishStatus)
         {

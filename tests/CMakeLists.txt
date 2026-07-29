@@ -87,6 +87,7 @@ cpp_add_test(
     NAME test-trace
     SOURCES
         trace/test-trace.cpp
+        trace/test-stream-validator.cpp
     LIBS
         ${PROJECT_NAME}_trace
 )
@@ -141,6 +142,7 @@ if(TARGET ${PROJECT_NAME}_task)
             task/test-determinism-harness.cpp
             task/test-framework-bundle.cpp
             task/test-framework-context.cpp
+            task/test-semantic-events.cpp
             task/test-task-loader.cpp
             task/test-script-validator.cpp
             task/test-deterministic.cpp

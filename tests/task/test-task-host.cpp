@@ -564,6 +564,47 @@ namespace uf::task
         CHECK(lines.back().contains(R"("runOutcome":"Failed")"));
     }
 
+    TEST_CASE("TaskHost reports a run whose terminal verdict the script swallowed")
+    {
+        // Design section 9's rule 5, read back at the host boundary. The first
+        // capture fails Cancelled, which latches the generation terminal; the
+        // task catches the raise and returns normally. Nothing else marks the
+        // run, so without the latch being folded into the report this would be
+        // indistinguishable from a task that ran to completion.
+        //
+        // No stop token is armed anywhere: the VM interrupt never fires and the
+        // engine would happily capture again, so the latch is the only thing
+        // that can decide this run's outcome.
+        auto const temp = TemporaryDir{"swallowed-terminal"};
+        publishProject(
+            temp.path(),
+            "swallow",
+            "local ok = pcall(function() return ctx:cycle_open() end)\n"
+            "if ok then return 0 end\n"
+            "return 1\n"
+        );
+
+        auto host = TaskHost{};
+        auto const generation = host.loadProject(temp.path());
+        REQUIRE(generation.has_value());
+
+        auto config = runConfig(temp.path() / "swallowed.jsonl");
+        config.frameSource =
+            std::make_unique<CancelOnceFrameSource>(sourceFrame(FrameId{92}));
+
+        auto const report = host.startTask(*generation, "swallow", std::move(config));
+        REQUIRE(report.has_value());
+        CHECK(report->outcome() == TaskRunOutcome::Cancelled);
+        REQUIRE(report->failure.has_value());
+        CHECK(
+            automationErrorKind(*report->failure) == AutomationErrorKind::Cancelled
+        );
+
+        auto const lines = traceLines(temp.path() / "swallowed.jsonl");
+        REQUIRE_FALSE(lines.empty());
+        CHECK(lines.back().contains(R"("runOutcome":"Cancelled")"));
+    }
+
     TEST_CASE("TaskHost rejects a missing task before opening a trace file")
     {
         auto const temp = TemporaryDir{"missing-task"};

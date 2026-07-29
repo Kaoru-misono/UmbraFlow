@@ -13,6 +13,7 @@
 #include <vision/sad.hpp>
 
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -40,10 +41,26 @@ namespace uf::trace
     // outside `meta` is therefore part of the reproducible record.
     inline constexpr auto k_nonGoldenMember = std::string_view{"meta"};
 
-    // Every event the host writes. All of them are host-authoritative: a script
-    // or the Luau framework can never request one. The framework.* semantic
-    // events arrive with the validation state machine in a later stage and are
-    // deliberately absent here.
+    // WHAT THIS STREAM IS, AND WHAT IT IS NOT.
+    //
+    // It is an AUDIT LOG: what a run did, in order, with enough identity on each
+    // line to attribute it. It is NOT a replay log. Replaying a run rests on the
+    // seed recorded in run.started plus the observation sequence a test supplies
+    // to its fake frame source -- never on a production trace. Nothing here
+    // records a frame's pixels, a page's full anchor evidence, or the arguments
+    // of a project call, so no reader can reconstruct a run from these lines and
+    // nobody should build a replayer that tries. The task.* and framework.*
+    // events below are the part most likely to be mistaken for one, because they
+    // read like a program transcript; they are a record of the framework's own
+    // decisions, kept so a failure can be explained after the fact.
+    //
+    // Every event is host-authoritative in the sense that only the host writes a
+    // line and only the host stamps it. The run.*, engine.* and task.* events
+    // additionally cannot be REQUESTED from Luau at all. The framework.* events
+    // can: the trusted Luau framework asks for one through the private `emit`
+    // primitive, and the host validates the request against the state machine in
+    // stream-validator.hpp before any of it reaches a sink. A project script can
+    // request none of them -- it cannot name the primitive.
     //
     // This enum and the four outcome enums below deliberately leave 0 without an
     // enumerator, and the members holding them carry no in-class initializer. A
@@ -54,6 +71,10 @@ namespace uf::trace
     // dropping the initializer alone cannot make that a compile error; leaving 0
     // outside the domain makes it a loud one instead, at the serializer's
     // UF_UNREACHABLE, before the bogus line reaches a sink.
+    //
+    // framework.subtask_entered / subtask_exited are P1 and deliberately absent:
+    // cross-file reuse does not exist yet, so a subtask event could only ever be
+    // written by nothing.
     enum class TraceEventKind : uint8
     {
         RunStarted = 1,
@@ -67,6 +88,14 @@ namespace uf::trace
         EngineActionDelivered,
         EngineObservationInvalidated,
         TaskNativeCall,
+        FrameworkStepStarted,
+        FrameworkStepFinished,
+        FrameworkRetryAttempt,
+        FrameworkRetryBackoff,
+        FrameworkInterruptMatched,
+        FrameworkInterruptHandled,
+        FrameworkInterruptExhausted,
+        FrameworkSettled,
     };
 
     // How one page-resolution attempt ended. Resolved / Unknown / Ambiguous were
@@ -230,6 +259,35 @@ namespace uf::trace
             std::optional<uint64> durationMillis{};
         };
 
+        // One framework semantic event's payload. The framework asks for these
+        // through `emit`, so this is the only group whose contents originate
+        // outside the host -- which is exactly why every field of it is checked
+        // at the request boundary (see stream-validator.hpp) rather than trusted.
+        //
+        // One struct serves all eight framework kinds rather than eight, because
+        // the fields are the same two questions asked of different scopes: what
+        // is this scope called, and how many of something does it count. Which
+        // members a kind carries is fixed by the validator, so an absent member
+        // is a refused event rather than a silently empty line.
+        struct Framework final
+        {
+            // A step's name or an interrupt's id. Length, character set and the
+            // total open-step budget are enforced before the event is admitted;
+            // an over-budget label is REJECTED, never truncated, because a
+            // truncated name silently addresses a different step.
+            std::string label{};
+
+            // The retry attempt this pass is, and the total the policy declared.
+            // Both are present on framework.retry_attempt and absent everywhere
+            // else.
+            std::optional<uint64> attempt{};
+            std::optional<uint64> attempts{};
+
+            // The pause a framework.retry_backoff or framework.settled declared,
+            // in whole milliseconds.
+            std::optional<uint64> durationMillis{};
+        };
+
         TraceEventKind kind;
 
         // The capture this event belongs to. Present on every engine.* event, and
@@ -245,6 +303,7 @@ namespace uf::trace
         std::optional<Run>        run{};
         std::optional<Resources>  resources{};
         std::optional<NativeCall> nativeCall{};
+        std::optional<Framework>  framework{};
 
         // Fields that cut across the groups above: the recognizer a page stop, an
         // action search or an authorization refusal names; why a recognition
@@ -266,14 +325,16 @@ namespace uf::trace
     {
         friend class TraceRecorder;
 
-        TraceEvent   m_event;
-        uint64       m_sequence;
-        TaskRunId    m_runId;
-        GenerationId m_generationId;
-        int64        m_wallClockUnixMillis;
+        TraceEvent               m_event;
+        std::vector<std::string> m_openSteps;
+        uint64                   m_sequence;
+        TaskRunId                m_runId;
+        GenerationId             m_generationId;
+        int64                    m_wallClockUnixMillis;
 
         StampedTraceEvent(
             TraceEvent event,
+            std::vector<std::string> openSteps,
             uint64 sequence,
             TaskRunId runId,
             GenerationId generationId,
@@ -283,6 +344,18 @@ namespace uf::trace
     public:
         [[nodiscard]]
         auto event() const noexcept UF_LIFETIME_BOUND -> TraceEvent const&;
+
+        // The framework step scope that was open when this event was written,
+        // outermost first, as the validation state machine knew it. It is part
+        // of the STAMP rather than of the event, for the same reason the sequence
+        // is: an emitter does not get to say which steps it is inside. That is
+        // what makes design section 12's "every task.native_call falls inside the
+        // step scope open at the time" true by construction -- the scope is read
+        // off the state machine at the instant the line is written, so a call can
+        // neither claim a step that is not open nor omit one that is.
+        [[nodiscard]]
+        auto openSteps() const noexcept UF_LIFETIME_BOUND
+            -> std::span<std::string const>;
 
         [[nodiscard]] auto sequence() const noexcept -> uint64;
         [[nodiscard]] auto runId() const noexcept -> TaskRunId;

@@ -1,6 +1,7 @@
 #include "recorder.hpp"
 
 #include "event.hpp"
+#include "stream-validator.hpp"
 
 #include <core/error/contracts.hpp>
 #include <core/error/result.hpp>
@@ -48,17 +49,25 @@ namespace uf::trace
 
     auto TraceRecorder::emit(TraceEvent const& event) -> Status
     {
+        UF_TRY_VALUE(openSteps, m_validator.admit(event));
+
         auto const sequence = m_nextSequence;
         ++m_nextSequence;
 
         auto const stamped = StampedTraceEvent{
             event,
+            std::move(openSteps),
             sequence,
             m_runId,
             m_generationId,
             wallClockUnixMillis(),
         };
         return m_sink->emit(stamped);
+    }
+
+    auto TraceRecorder::requireScopesClosed() const -> Status
+    {
+        return m_validator.requireScopesClosed();
     }
 
     auto TraceRecorder::runId() const noexcept -> TaskRunId { return m_runId; }

@@ -10,6 +10,8 @@
 #include <annotation/resource.hpp>
 #include <annotation/recognition.hpp>
 
+#include <domain/error.hpp>
+
 #include <engine/session.hpp>
 
 #include <trace/event.hpp>
@@ -112,7 +114,8 @@ namespace uf::task
 
         CycleLedger m_cycles{};
 
-        bool m_fatal{false};
+        std::optional<AutomationErrorKind> m_terminal{};
+
         bool m_traceFailed{false};
 
     public:
@@ -224,17 +227,31 @@ namespace uf::task
         [[nodiscard]]
         auto hasOpenCycle() const noexcept -> bool;
 
-        // Latches that an unrecoverable cancellation was observed. The binding
-        // layer sets this before raising its non-catchable sentinel, and gates
-        // every primitive on it at the C guard entry, so a spent VM cannot resume
-        // automation even if a script swallowed the sentinel. Since ctx:try is
-        // pure Luau and consults nothing, this latch is the whole of the terminal
-        // guarantee on the Luau side. The owning host reads it after the run to
-        // tell a cancelled generation from a merely errored one.
-        void markFatal() noexcept;
+        // Latches that this generation is spent, under the kind that spent it.
+        // The binding layer sets it BEFORE raising, and gates every primitive on
+        // it at the C guard entry, so a spent VM cannot resume automation even if
+        // a script swallowed what was raised. Since ctx:try is pure Luau and
+        // consults nothing, this latch is the whole of the terminal guarantee on
+        // the Luau side.
+        //
+        // Two kinds reach it, and both need the same before-raising order for the
+        // same reason. Cancelled is the host's own verdict on the generation.
+        // InternalInvariant is a framework bug the trace state machine caught --
+        // design section 9's rule 5 says latching first is what stops a project
+        // pcall from swallowing it and driving one more primitive. Latching is
+        // idempotent and keeps the FIRST kind: what spent the generation is what
+        // ended it, and a later refusal is a consequence rather than a cause.
+        void markTerminal(AutomationErrorKind kind) noexcept;
 
         [[nodiscard]]
         auto fatal() const noexcept -> bool;
+
+        // The kind that spent the generation, or empty while it is still live.
+        // The owning host reads it after the run so a generation that ended
+        // terminally is still reported that way when the script caught the raise
+        // and returned normally.
+        [[nodiscard]]
+        auto terminalKind() const noexcept -> std::optional<AutomationErrorKind>;
 
         // Latches that a trace event could not be recorded. A verb that is
         // already failing cannot raise the sink's failure instead of its own --

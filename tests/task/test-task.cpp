@@ -157,29 +157,31 @@ namespace uf::task
         // order, reduced to the errorKind each one wrote.
         auto tracedErrorKindSpellings() -> std::vector<std::string>
         {
-            auto sink          = std::make_unique<LineRecordingSink>();
-            auto* const p_sink = sink.get();
-            auto recorder      = trace::TraceRecorder{
-                std::move(sink),
-                TaskRunId{1},
-                GenerationId{1},
-            };
+            auto spellings = std::vector<std::string>{};
+            spellings.reserve(enumEntries<AutomationErrorKind>().size());
 
             for (auto const& entry : enumEntries<AutomationErrorKind>())
             {
+                // One recorder per line. A run's bracket closes at its first
+                // run.finished and the stream validator accepts nothing after
+                // it, so writing every kind through a single recorder would be
+                // writing a dozen runs into one bracket.
+                auto sink          = std::make_unique<LineRecordingSink>();
+                auto* const p_sink = sink.get();
+                auto recorder      = trace::TraceRecorder{
+                    std::move(sink),
+                    TaskRunId{1},
+                    GenerationId{1},
+                };
+
                 auto const status = recorder.emit(trace::TraceEvent{
                     .kind       = trace::TraceEventKind::RunFinished,
                     .runOutcome = trace::RunOutcome::Failed,
                     .errorKind  = entry.value,
                 });
                 REQUIRE(status.has_value());
-            }
-
-            auto spellings = std::vector<std::string>{};
-            spellings.reserve(p_sink->lines().size());
-            for (auto const& line : p_sink->lines())
-            {
-                spellings.emplace_back(errorKindField(line));
+                REQUIRE(p_sink->lines().size() == 1U);
+                spellings.emplace_back(errorKindField(p_sink->lines().front()));
             }
             return spellings;
         }

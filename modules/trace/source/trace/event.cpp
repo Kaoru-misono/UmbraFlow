@@ -84,6 +84,17 @@ namespace uf::trace
             case TraceEventKind::EngineObservationInvalidated:
                 return "engine.observation_invalidated";
             case TraceEventKind::TaskNativeCall: return "task.native_call";
+            case TraceEventKind::FrameworkStepStarted: return "framework.step_started";
+            case TraceEventKind::FrameworkStepFinished: return "framework.step_finished";
+            case TraceEventKind::FrameworkRetryAttempt: return "framework.retry_attempt";
+            case TraceEventKind::FrameworkRetryBackoff: return "framework.retry_backoff";
+            case TraceEventKind::FrameworkInterruptMatched:
+                return "framework.interrupt_matched";
+            case TraceEventKind::FrameworkInterruptHandled:
+                return "framework.interrupt_handled";
+            case TraceEventKind::FrameworkInterruptExhausted:
+                return "framework.interrupt_exhausted";
+            case TraceEventKind::FrameworkSettled: return "framework.settled";
             }
 
             UF_UNREACHABLE_MSG("Unknown TraceEventKind value");
@@ -497,12 +508,14 @@ namespace uf::trace
 
     StampedTraceEvent::StampedTraceEvent(
         TraceEvent event,
+        std::vector<std::string> openSteps,
         uint64 sequence,
         TaskRunId runId,
         GenerationId generationId,
         int64 wallClockUnixMillis
     )
         : m_event{std::move(event)}
+        , m_openSteps{std::move(openSteps)}
         , m_sequence{sequence}
         , m_runId{runId}
         , m_generationId{generationId}
@@ -511,6 +524,11 @@ namespace uf::trace
     }
 
     auto StampedTraceEvent::event() const noexcept -> TraceEvent const& { return m_event; }
+
+    auto StampedTraceEvent::openSteps() const noexcept -> std::span<std::string const>
+    {
+        return m_openSteps;
+    }
 
     auto StampedTraceEvent::sequence() const noexcept -> uint64 { return m_sequence; }
 
@@ -539,6 +557,14 @@ namespace uf::trace
             "generationId",
             std::format("{}", stamped.generationId().value())
         );
+
+        // Part of the stamp, so it sits with the identity triple rather than
+        // among the event's own fields. Omitted when no step is open, which is
+        // every line of a task that never called ctx:step.
+        if (!stamped.openSteps().empty())
+        {
+            builder.addStringArray("steps", stamped.openSteps());
+        }
 
         if (event.frame.has_value())
         {
@@ -594,6 +620,32 @@ namespace uf::trace
                 );
             }
             builder.addString("outcome", nativeCallOutcomeName(event.nativeCall->outcome));
+        }
+
+        if (event.framework.has_value())
+        {
+            if (!event.framework->label.empty())
+            {
+                builder.addString("label", event.framework->label);
+            }
+            if (event.framework->attempt.has_value())
+            {
+                builder.addLiteral("attempt", std::format("{}", *event.framework->attempt));
+            }
+            if (event.framework->attempts.has_value())
+            {
+                builder.addLiteral(
+                    "attempts",
+                    std::format("{}", *event.framework->attempts)
+                );
+            }
+            if (event.framework->durationMillis.has_value())
+            {
+                builder.addLiteral(
+                    "durationMillis",
+                    std::format("{}", *event.framework->durationMillis)
+                );
+            }
         }
 
         if (event.recognizerId.has_value())

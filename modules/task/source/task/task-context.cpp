@@ -163,14 +163,22 @@ namespace uf::task
         return m_cycles.isOpen();
     }
 
-    void TaskContext::markFatal() noexcept
+    void TaskContext::markTerminal(AutomationErrorKind kind) noexcept
     {
-        m_fatal = true;
+        if (!m_terminal.has_value())
+        {
+            m_terminal = kind;
+        }
     }
 
     auto TaskContext::fatal() const noexcept -> bool
     {
-        return m_fatal;
+        return m_terminal.has_value();
+    }
+
+    auto TaskContext::terminalKind() const noexcept -> std::optional<AutomationErrorKind>
+    {
+        return m_terminal;
     }
 
     void TaskContext::latchTraceFailure() noexcept

@@ -20,6 +20,7 @@
 #include <trace/event.hpp>
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cstddef>
 #include <memory>
@@ -394,9 +395,10 @@ namespace uf::task
             return static_cast<T*>(lua_touserdata(state, index));
         }
 
-        // Tier C: latch the fatal flag so the host discards this VM generation,
-        // then raise a plain non-table sentinel. It carries no uf.error
-        // metatable, so ctx:try refuses to swallow it and re-raises it unchanged.
+        // Tier C: latch the terminal kind so the host discards this VM
+        // generation, then raise a plain non-table sentinel. It carries no
+        // uf.error metatable, so ctx:try refuses to swallow it and re-raises it
+        // unchanged.
         //
         // A project pcall CAN catch this value, and that is accepted: control is
         // not what the sentinel protects. The latch is. Every primitive enters
@@ -406,9 +408,34 @@ namespace uf::task
         [[noreturn]]
         auto raiseCancelled(lua_State* state, TaskContext* context) -> void
         {
-            context->markFatal();
+            context->markTerminal(AutomationErrorKind::Cancelled);
             lua_pushstring(state, "uf: task cancelled");
             lua_error(state);
+        }
+
+        // A framework bug the host caught: latch the generation terminal FIRST,
+        // then raise an InternalInvariant carrier. Never returns.
+        //
+        // The order is the whole point, and it is design section 9's rule 5: a
+        // project pcall or ctx:try can catch the value -- it is an ordinary Tier
+        // B carrier and there is no way to make a Lua raise uncatchable -- but
+        // the latch is already set, so the next primitive refuses at guardFatal
+        // before it reaches the engine. Control is protected even though the
+        // value is catchable, which is exactly the Tier C position.
+        //
+        // The kind is a real one rather than a private sentinel because a run
+        // that ends on it must SAY so: the host's raised-error classifier reads
+        // the carrier's tag, so an uncaught framework bug is reported and traced
+        // as internal_invariant rather than as a malformed script.
+        [[noreturn]]
+        auto raiseInvariant(
+            lua_State* state,
+            TaskContext* context,
+            std::string const& message
+        ) -> void
+        {
+            context->markTerminal(AutomationErrorKind::InternalInvariant);
+            raiseTierB(state, AutomationErrorKind::InternalInvariant, message);
         }
 
         // Maps an engine failure to a raised Lua error: Cancelled takes the Tier C
@@ -429,15 +456,30 @@ namespace uf::task
             raiseTierB(state, kind, std::string{error.message()});
         }
 
-        // Re-raises the Tier C sentinel if a prior verb already latched a fatal
-        // cancellation, so a script that swallowed the sentinel cannot drive one
-        // more engine verb before the host tears the generation down.
+        // Refuses the call outright when a prior verb already latched the
+        // generation terminal, so a script that swallowed what was raised cannot
+        // drive one more engine verb before the host tears the generation down.
+        //
+        // It re-raises under the kind that spent the generation rather than one
+        // fixed value: a cancelled run and a run stopped by a framework bug are
+        // different verdicts, and reporting either as the other would send a
+        // reader looking in the wrong place.
         auto guardFatal(lua_State* state, TaskContext* context) -> void
         {
-            if (context->fatal())
+            auto const terminal = context->terminalKind();
+            if (!terminal.has_value())
+            {
+                return;
+            }
+            if (*terminal == AutomationErrorKind::Cancelled)
             {
                 raiseCancelled(state, context);
             }
+            raiseInvariant(
+                state,
+                context,
+                "the task generation is spent after a framework invariant failure"
+            );
         }
 
         // Reads the TaskContext bound as upvalue 1 of a primitive.
@@ -863,8 +905,9 @@ namespace uf::task
         // would claim a stop nobody requested and would be catchable besides.
         // `internal_invariant` must latch the generation terminal BEFORE it is
         // raised, or a project pcall could swallow a framework bug; this
-        // primitive deliberately does not latch, so that kind gets its own door
-        // when the framework needs one rather than a catchable impostor here.
+        // primitive deliberately does not latch, so that kind keeps its own door
+        // -- raiseInvariant, reached only when the host itself caught the bug --
+        // rather than a catchable impostor here.
         auto raiseFn(lua_State* state) -> int
         {
             auto* context = boundContext(state);
@@ -1041,6 +1084,225 @@ namespace uf::task
 
             traceHostCall(state, context, call, trace::NativeCallOutcome::Succeeded);
             return 0;
+        }
+
+        // One spelling the framework may pass to `emit`, and the stream event it
+        // names. The framework writes the bare verb ("step_started") and the wire
+        // name carries the layer ("framework.step_started"), so the layer prefix
+        // is spelled once, in the trace schema, and cannot drift from what a
+        // reader sees.
+        struct SemanticEventName final
+        {
+            std::string_view      verb;
+            trace::TraceEventKind kind;
+        };
+
+        // The whole semantic vocabulary the framework may request. Anything else
+        // is a framework bug rather than a bad argument: this table and the Luau
+        // call sites are the same binary, so a name that is not here was never
+        // written by a framework this host shipped.
+        //
+        // framework.subtask_entered / subtask_exited are absent because cross-file
+        // reuse is P1: there is no ctx:call to emit them.
+        constexpr auto k_semanticEventNames = std::array{
+            SemanticEventName{
+                .verb = "step_started",
+                .kind = trace::TraceEventKind::FrameworkStepStarted,
+            },
+            SemanticEventName{
+                .verb = "step_finished",
+                .kind = trace::TraceEventKind::FrameworkStepFinished,
+            },
+            SemanticEventName{
+                .verb = "retry_attempt",
+                .kind = trace::TraceEventKind::FrameworkRetryAttempt,
+            },
+            SemanticEventName{
+                .verb = "retry_backoff",
+                .kind = trace::TraceEventKind::FrameworkRetryBackoff,
+            },
+            SemanticEventName{
+                .verb = "interrupt_matched",
+                .kind = trace::TraceEventKind::FrameworkInterruptMatched,
+            },
+            SemanticEventName{
+                .verb = "interrupt_handled",
+                .kind = trace::TraceEventKind::FrameworkInterruptHandled,
+            },
+            SemanticEventName{
+                .verb = "interrupt_exhausted",
+                .kind = trace::TraceEventKind::FrameworkInterruptExhausted,
+            },
+            SemanticEventName{
+                .verb = "settled",
+                .kind = trace::TraceEventKind::FrameworkSettled,
+            },
+        };
+
+        // Reads the scope label at `index`. A non-string is a framework bug: every
+        // call site has already checked its own argument -- ctx:step refuses a
+        // non-string name and task.interrupt refuses a non-string id -- so a
+        // non-string arriving here means the framework, not the project, is wrong.
+        // Length and character set are the stream validator's, because they are
+        // the same rules for every label whatever asked for one.
+        [[nodiscard]]
+        auto checkScopeLabel(
+            lua_State* state,
+            TaskContext* context,
+            int index
+        ) -> std::string
+        {
+            if (lua_type(state, index) != LUA_TSTRING)
+            {
+                raiseInvariant(state, context, "emit needs a string scope label");
+            }
+
+            // SAFETY: the value was just confirmed to be a string, so
+            // lua_tolstring performs no conversion and returns the VM-owned bytes
+            // with their length. It stays on the stack for the whole call, so the
+            // copy is taken from live storage.
+            std::size_t length = 0;
+            char const* p_text = lua_tolstring(state, index, &length);
+            return std::string{p_text, length};
+        }
+
+        // Reads a whole non-negative count at `index`.
+        //
+        // Tier B rather than an invariant failure, because every count `emit`
+        // takes originates in a project's own policy table -- retry attempts and
+        // backoff milliseconds -- so a value out of range is a project error the
+        // author can catch and correct.
+        [[nodiscard]]
+        auto checkCount(lua_State* state, int index, std::string const& what) -> uint64
+        {
+            if (lua_type(state, index) != LUA_TNUMBER)
+            {
+                raiseTierB(
+                    state,
+                    AutomationErrorKind::InvalidResource,
+                    what + " requires a number"
+                );
+            }
+            auto const value = checkedIntegralCast<uint64>(lua_tonumber(state, index));
+            if (!value)
+            {
+                raiseTierB(
+                    state,
+                    AutomationErrorKind::InvalidResource,
+                    what + " must be a whole, non-negative number within range"
+                );
+            }
+            return *value;
+        }
+
+        // Builds the framework payload the named event carries.
+        [[nodiscard]]
+        auto readSemanticPayload(
+            lua_State* state,
+            TaskContext* context,
+            trace::TraceEventKind kind
+        ) -> trace::TraceEvent::Framework
+        {
+            if (kind == trace::TraceEventKind::FrameworkRetryAttempt)
+            {
+                return trace::TraceEvent::Framework{
+                    .attempt  = checkCount(state, 2, "a retry attempt number"),
+                    .attempts = checkCount(state, 3, "a retry policy's attempts"),
+                };
+            }
+            if (
+                kind == trace::TraceEventKind::FrameworkRetryBackoff
+                || kind == trace::TraceEventKind::FrameworkSettled
+            )
+            {
+                return trace::TraceEvent::Framework{
+                    .durationMillis = checkCount(state, 2, "a declared pause"),
+                };
+            }
+            return trace::TraceEvent::Framework{
+                .label = checkScopeLabel(state, context, 2),
+            };
+        }
+
+        // emit(name, ...) -> (). Requests one framework semantic event.
+        //
+        // It is admitted under the design's primitive rule as a safety primitive,
+        // for the same shape of reason `raise` is: the framework's own structure
+        // -- which step is open, which attempt this is, which interrupt matched --
+        // is not observable from anywhere else, and a trace that records only what
+        // the host did cannot explain a run the framework shaped. Nothing about
+        // page selection, looping or game decisions crosses here; the caller
+        // decided all of it and is only saying what it decided.
+        //
+        // The design writes this primitive as emit(event) taking a table. It takes
+        // a name and scalars instead, because section 5's second invariant admits
+        // only host-minted handles and scalars as arguments, and a Luau table is
+        // neither. Nothing is lost: the vocabulary is closed (see above), so the
+        // positional shape is decided by the name.
+        //
+        // It is deliberately NOT a passthrough. The host validates the request
+        // against the stream state machine and records nothing that fails, which
+        // is what keeps this from being a hole through which a buggy framework
+        // writes a plausible history of a run that did not happen that way.
+        //
+        // It writes no task.native_call of its own. The event IS the record, and a
+        // second line saying a trace call happened would double every framework
+        // event for no evidence.
+        auto emitFn(lua_State* state) -> int
+        {
+            auto* context = boundContext(state);
+            guardFatal(state, context);
+
+            auto const verb = checkScopeLabel(state, context, 1);
+            auto const named = std::ranges::find(
+                k_semanticEventNames,
+                verb,
+                &SemanticEventName::verb
+            );
+            if (named == k_semanticEventNames.end())
+            {
+                raiseInvariant(state, context, "emit does not know the event '" + verb + "'");
+            }
+
+            auto const kind = named->kind;
+            auto const status = context->emitTrace(
+                trace::TraceEvent{
+                    .kind      = kind,
+                    .framework = readSemanticPayload(state, context, kind),
+                }
+            );
+            if (!status)
+            {
+                // The validator's own classification decides the tier: a request
+                // it declines is the project's to fix and stays catchable, while
+                // a protocol breach is a framework bug and spends the generation.
+                auto const failureKind = kindOf(status.error());
+                auto const message     = std::string{status.error().message()};
+                if (failureKind == AutomationErrorKind::InternalInvariant)
+                {
+                    raiseInvariant(state, context, message);
+                }
+                raiseTierB(state, failureKind, message);
+            }
+            return 0;
+        }
+
+        // terminal() -> bool. Whether this generation is already spent.
+        //
+        // It is the one primitive that does NOT enter through guardFatal, and
+        // that is its entire purpose: the framework's cleanup paths have to ask
+        // whether the generation is still live before they emit a closing event,
+        // and a question that raised when the answer is "no" could never be
+        // asked. Without it, a step whose body was cancelled would raise a second
+        // time on the way out and bury the cause under its own consequence.
+        //
+        // It confers nothing: the answer is already observable to a script as
+        // "the last primitive refused".
+        auto terminalFn(lua_State* state) -> int
+        {
+            auto* context = boundContext(state);
+            lua_pushboolean(state, context->fatal() ? 1 : 0);
+            return 1;
         }
 
         // The largest magnitude a random bound may take. Beyond 2^53 a Lua
@@ -1417,6 +1679,15 @@ namespace uf::task
                 "settle",
                 &settleFn,
                 "uf_settle",
+                context
+            );
+            installPrimitive(state, surface, "emit", &emitFn, "uf_emit", context);
+            installPrimitive(
+                state,
+                surface,
+                "terminal",
+                &terminalFn,
+                "uf_terminal",
                 context
             );
             installPrimitive(
