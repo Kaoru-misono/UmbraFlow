@@ -93,9 +93,15 @@ Luau 的环境隔离是**按闭包，不按线程**：`luau_load` 收的是 chun
 
 - `Engine::create(EngineConfig const& = {}) -> Result<Engine>` 是命名工厂；VM 分配可能失败，
   所以没有 public constructor。`EngineConfig` 携带 stop token、内存与指令预算、
-  `maxRuntime`、`frameworkModules` bundle、两个 installer 接缝（`HostTableInstaller` 与
-  `PrivateCapabilityInstaller`，都返回 `Status`），以及两张白名单 `projectGlobals` 与
-  `frameworkProjectGlobals`。
+  `maxRuntime`、`frameworkModules` bundle、**三个**宿主接缝（`HostTableInstaller` 与
+  `PrivateCapabilityInstaller`，都返回 `Status`；外加 2026-07-29 `c37ee5b` 新增的
+  `RaisedErrorClassifier`），以及两张白名单 `projectGlobals` 与 `frameworkProjectGlobals`。
+- `RaisedErrorClassifier` 从「一次 run 抛出而无人捕获」的值里读出 automation kind，
+  **只按载体的宿主 userdata tag 判定**。`script` 自己没有错误词汇表，所以没有它时每个
+  未捕获的宿主错误在边界上都变成 `InvalidResource`——一个超时没被 catch 的任务会在报告和
+  `run.finished` 里被记成「脚本格式不对」。它由 `modules/task` 的
+  `CapabilitySurface::raisedErrorClassifier()` 提供。硬取消在它之前分类且永不进它，
+  所以 classifier 无法把一次取消降级成可捕获的 kind。
 - `deepFreeze(lua_State*, int index) -> Status` 递归把一张表、从它的值可达的一切，以及沿途
   每张 metatable 标为只读，顺序是先 metatable 后表。它同时强制 project 可见宿主对象必须
   满足的两条结构规则：每张 metatable 都带 `__metatable` 字段（没有它，`table.clone` 会返回
@@ -177,8 +183,11 @@ C++ 侧 setfenv 路径——Lua 自己的 `setfenv` 已被移除——而且它�
 - VM 或 compiler buffer 分配失败返回 `InternalInvariant`。
 - 语法错误由 Luau 编码进 error bytecode，并在 `luau_load()` 阶段变成
   `InvalidResource`。
-- load error、runtime error 和未被宿主支持的 yield 都返回
-  `InvalidResource`。
+- load error、未被宿主支持的 yield，以及**未装 `RaisedErrorClassifier` 时的**每一种
+  runtime error，都返回 `InvalidResource`。装了 classifier（产品路径上由 `modules/task`
+  装）之后，一个无人捕获的宿主 Tier B 载体报的是它自己的 kind，只有 classifier 认不出的
+  值——脚本自己抛的串或表——才留在 `InvalidResource`。硬取消在这一分支之前就已归为
+  `Cancelled`，永远不进 classifier。
 - 只有 `lua_resume()` 返回 `LUA_OK` 才读取结果。
 
 这里的 fail-closed 只覆盖“能否完成一次 `runNumber()`”。它不等价于产品的
@@ -323,10 +332,22 @@ composition 设计决定，不能仅为方便让 `script` 与 `engine` 相互依
 
 ## 测试
 
-宿主测试住在三个文件里：`tests/script/test-script.cpp`（底座）、
+宿主测试住在四个文件里：`tests/script/test-script.cpp`（底座）、
 `tests/script/test-environments.cpp`（双环境拆分）、`tests/script/test-veto-suite.cpp`
-（roadmap 一票否决）。`tests/CMakeLists.txt` 的 `test-script` target 链接
+（roadmap 一票否决），以及 2026-07-29 `2ebcf0c` 新增的
+`tests/script/test-adversarial-substrate.cpp`（底座侧对抗套件）。
+`tests/CMakeLists.txt` 的 `test-script` target 链接
 `${PROJECT_NAME}_script`，仅在模块存在时注册，并继承 60 秒 timeout 和 `CI` label。
+
+`test-adversarial-substrate.cpp` 固定的是「一次 `lua_break` 落在任何一种不可 yield 的
+C 帧里，run 仍然报 `Cancelled`」：七种形态（`table.sort` 比较器、`string.gsub` 回调、
+generic-for 迭代器、`__index`、`__newindex`、`__tostring`、`xpcall` 错误处理函数）各跑一遍，
+每遍都带一个「什么都不 break 时七种形态都跑到 mark()」的控制组。`xpcall` 那种是历史上
+**静默**失败的一种：Luau 把错误处理函数里的失败折成 `LUA_ERRERR`，调用方只拿到
+`(false, "error in error handling")`。它在这里仍然静默，但被关住了——`resumeChunkOnThread`
+判定终局时看的是 `runStatus == LUA_BREAK || control->broken`，删掉 `broken` 那一半，
+七种形态里有六种当场从 `Cancelled` 变成 `InvalidResource`。
+原语与脚本表面侧的对抗套件在 `tests/task/test-adversarial-surface.cpp`。
 
 `test-environments.cpp` 固定本文赖以成立的隔离论断：project 环境不持有否定名单上的任何
 名字、它够不到 framework 环境、失败的 host-table installer 会带着自己的错误让 `create`

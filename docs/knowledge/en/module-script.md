@@ -106,9 +106,17 @@ configuration and freezing vocabulary it needs:
 
 - `Engine::create(EngineConfig const& = {}) -> Result<Engine>` is the named factory; VM allocation
   may fail, so there is no public constructor. `EngineConfig` carries the stop token, the memory and
-  instruction budgets, `maxRuntime`, the `frameworkModules` bundle, the two installer seams
-  (`HostTableInstaller` and `PrivateCapabilityInstaller`, both returning `Status`), and the two
-  whitelists `projectGlobals` and `frameworkProjectGlobals`.
+  instruction budgets, `maxRuntime`, the `frameworkModules` bundle, the **three** host seams
+  (`HostTableInstaller` and `PrivateCapabilityInstaller`, both returning `Status`, plus
+  `RaisedErrorClassifier`, added on 2026-07-29 in `c37ee5b`), and the two whitelists
+  `projectGlobals` and `frameworkProjectGlobals`.
+- `RaisedErrorClassifier` reads the automation kind out of a value a run raised and nobody caught,
+  deciding by the carrier's host userdata tag alone. The script module owns no error vocabulary of
+  its own, so without it every uncaught host error reaches the boundary as `InvalidResource` — a
+  task that timed out and did not catch it would be reported, and traced in `run.finished`, as a
+  malformed script. `modules/task` supplies it through
+  `CapabilitySurface::raisedErrorClassifier()`. A hard cancel is classified before it runs and never
+  reaches it, so a classifier cannot downgrade a cancel into a catchable kind.
 - `deepFreeze(lua_State*, int index) -> Status` recursively marks a table, everything reachable from
   its values, and every metatable on the way read-only, metatable-first. It also enforces the two
   structural rules a project-visible host object must satisfy: every metatable carries a
@@ -199,7 +207,12 @@ For the existing narrow API, a failure does not masquerade as a valid number:
 - A VM or compiler buffer allocation failure returns `InternalInvariant`.
 - A syntax error is encoded into error bytecode by Luau and becomes `InvalidResource` at the
   `luau_load()` stage.
-- Load errors, runtime errors, and a yield unsupported by the host all return `InvalidResource`.
+- Load errors, a yield unsupported by the host, and — **when no `RaisedErrorClassifier` is
+  installed** — every runtime error return `InvalidResource`. With a classifier installed (which
+  the product path does, from `modules/task`), an uncaught host Tier B carrier is reported under its
+  own kind, and only a value the classifier does not recognize — a string or table the script raised
+  itself — stays `InvalidResource`. A hard cancel is classified as `Cancelled` before this branch
+  and never reaches the classifier.
 - Only when `lua_resume()` returns `LUA_OK` is the result read.
 
 The fail-closed behavior here covers only "whether a single `runNumber()` can complete." It is not
@@ -357,11 +370,24 @@ depend on each other.
 
 ## Tests
 
-Host tests live in three files: `tests/script/test-script.cpp` (the substrate),
-`tests/script/test-environments.cpp` (the two-environment split), and
-`tests/script/test-veto-suite.cpp` (the roadmap vetoes). The `test-script` target in
+Host tests live in four files: `tests/script/test-script.cpp` (the substrate),
+`tests/script/test-environments.cpp` (the two-environment split),
+`tests/script/test-veto-suite.cpp` (the roadmap vetoes), and
+`tests/script/test-adversarial-substrate.cpp` (the substrate-side adversarial suite, added
+2026-07-29 in `2ebcf0c`). The `test-script` target in
 `tests/CMakeLists.txt` links `${PROJECT_NAME}_script`, registers only when the module exists, and
 inherits the 60-second timeout and the `CI` label.
+
+`test-adversarial-substrate.cpp` pins that a `lua_break` landing in any non-yieldable C frame still
+ends the run `Cancelled`: seven forms (`table.sort` comparator, `string.gsub` callback, generic-for
+iterator, `__index`, `__newindex`, `__tostring`, and the `xpcall` error handler), each paired with a
+control that every form runs to `mark()` when nothing breaks. The `xpcall` form is the one that
+historically failed **silently**: Luau folds a failure inside an error handler into `LUA_ERRERR` and
+hands the caller a plain `(false, "error in error handling")`. It is still silent here, but it is
+contained — `resumeChunkOnThread` decides terminality on `runStatus == LUA_BREAK ||
+control->broken`, and removing the `broken` disjunct turns six of the seven forms from `Cancelled`
+into `InvalidResource`. The primitive- and script-surface side of the suite is
+`tests/task/test-adversarial-surface.cpp`.
 
 `test-environments.cpp` pins the isolation claims this page rests on: that the project environment
 holds no name on the denial list, that it cannot reach the framework environment, that a failing

@@ -117,6 +117,12 @@
 > 裁决中的脚本层部分。**上条的 `umbra.*` 命名空间裁决已被撤销:根改名为 `uf`**
 > (§6/§18);句柄/任务寻址口径不变但改由该文 §11/§6 承载。落地顺序见其 §17,
 > 明确删除清单见其 §16。
+>
+> **进度(2026-07-29,核对至 `2ebcf0c`)**:该文 §17 的**阶段 1(地基)与阶段 2
+> (观察周期 + 两个环境 + `uf` 根 + Tier B userdata + 对抗套件)均已完成**。
+> 下面这几条 checkbox 尚未按它重述,读时以该文 §16/§17 的状态标记为准。
+> 仍未落地且值得单独盯的是一票否决第 6 条本体(人为阻塞每个注册的宿主 C binding),
+> 排在该文的阶段 3。
 
 - [ ] 固定 Luau 精确版本,接入 compiler/VM 与 `IScriptRuntime` 可序列化边界
       (边界口径见
@@ -124,7 +130,10 @@
       §11「为什么句柄不是可序列化 DTO」:P0 进程内 userdata,DTO 归未来跨进程
       worker 接缝——原 `docs/adr/0001` 已删除,论证迁至该节)。
       **进展**:0.730 submodule + RAII `Engine::runNumber` 已落地(2026-07-22);
-      沙箱/取消/配额未做,见 `2026-07-21-p0b-luau-hardening-ledger.md`。
+      沙箱、记账 allocator 配额与 interrupt 硬取消也都已落地
+      (2026-07-29 核对:`installSandbox` / `createStateWithQuota` /
+      `ffi/cancellation.cpp`),此前这里写的「沙箱/取消/配额未做」已过时。
+      历史记录见 `2026-07-21-p0b-luau-hardening-ledger.md`。
 - [ ] 最小 capability API 与 observe/resolve/act/wait 引擎循环;manifest 只读 recognizer/page 句柄,
       `ResolvedPage` + Detection + lease 才能授权坐标动作。
 - [ ] 每任务 VM generation、allocator 配额、interrupt 硬取消、逻辑时钟/RNG 与 generation 热加载

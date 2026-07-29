@@ -175,6 +175,19 @@ terminal()                        -> bool                generation 是否已终
 random(...)                       -> number
 ```
 
+> **补记 2026-07-29(阶段 2c `c37ee5b`)**:这张表上还有**一个不是原语的字段**:
+> `error_tag`,值就是 Tier B 载体 metatable 上那个受保护的标签串 `"uf.error"`
+> (`uf-tables.cpp` 的 `k_errorTagField` / `k_errorType`)。它**不是能力**——同一个串
+> 任何脚本对捕获到的错误调 `getmetatable` 都能读到。它住在这里只因为这张表是
+> framework 唯一拿得到、而任何 project 都无法命名的东西,于是 `ctx:try` 能拿到那个标签
+> 而不必在 `.luau` 里把串再写一遍(写第二遍就有两份要保持相等的真相,而没有任何东西
+> 检查它们相等)。所以本节标题的「12 个原语」描述的是能力,不是表的全部键。
+>
+> 同一批还要说清今天树上的实际形状:表上是**八个**原语——五个周期原语、
+> `wait_for_page`、`now`、`random`——外加 `error_tag`。`deadline` / `wait` / `settle` /
+> `raise` / `emit` / `terminal` 尚未存在(阶段 3),而 `wait_for_page` 与 `now` 是要在
+> 阶段 3 分别搬进 framework Luau 与删除的过渡项。上面那 12 个是**目标**表面。
+
 四条不变量(它们同时是 §11 可逆性的条件):
 
 1. 纯粹:只有效果,不回调进 Lua。
@@ -358,6 +371,24 @@ os.time  os.clock  os.date  math.random  math.randomseed
 - `__index` 一律是**表**,不是函数(见 §11 的可 yield 矩阵,这条同时保证未来转 yield
   不会踩坑)。
 
+> **补记 2026-07-29(阶段 2c `c37ee5b`)——「构造时」也包括运行中构造的对象**:
+> 句柄的 metatable 在 boot 期建一次并存进 registry,而 **Tier B 错误载体的 metatable
+> 是每抛一次错建一份**。原因是每个错误的 `kind` / `message` / `retryable` 不同,而
+> `__index` 又被上面那条规则限定为表,于是 per-error 数据没有别处可住;代价是每个抛出
+> 的错误多两张小表,而错误本来就是例外路径。承重的是它走的是同一道门:
+> `script::deepFreezeMetatable` 在挂到载体之前检查并冻结它,所以「构造时冻结 + 两条形状
+> 规则」对**运行中新铸的对象**同样成立,而不只对 boot 期建的那六张。冻结失败时宿主抛
+> 一个纯字符串,绝不把半冻结的载体交给脚本。
+>
+> **同时要说清一件本节读起来像不存在的事**:有一张宿主相邻的 metatable 是 project
+> 脚本**读得到**的。`luaL_sandbox`(`linit.cpp:65-91`)把字符串 metatable 设为只读,
+> 却**没有**给它加 `__metatable`,所以 `getmetatable("")` 在 project 环境里返回真表。
+> 这是无害的:它已冻结、改不动、`table.clone` 出来的副本也挂不到任何值上,而它的
+> `__index` 就是白名单里那张 `string` 表——脚本从它那里到不了任何新东西。写下来是因为
+> 「没有任何 metatable 可读」这句话若被当成不变量,以后会有人按它推理。
+> 对抗断言在 `tests/task/test-adversarial-surface.cpp` 的
+> 「The standard library a project shares with the framework is immutable」。
+
 `HostTableInstaller` 必须改成返回 `Status`。今天是 `void`(`engine.hpp:26`),
 坏 bundle 只能 longjmp 或被静默忽略,generation 无法因此失败。
 
@@ -374,6 +405,25 @@ os.time  os.clock  os.date  math.random  math.randomseed
 - `ctx:try` 是**纯 Luau** 的 `pcall`,错误不是可解码的错误 userdata 就重抛。
   调用路径上不存在做 `lua_pcall` 的 C 闭包。
 
+> **补记 2026-07-29(阶段 2e `2ebcf0c`)——闩不是唯一那道拦截,而且不是更强的那道**:
+> 上面那条写的是「下一次原语调用即拒绝」,而对**取消**这条路,Luau 的源码给的保证更强:
+> `InterruptState::broken` 一旦置上,**下一次原语调用根本发生不了**。
+> 三个触发条件(stop token、指令预算、deadline)全部单调:token 请求过就不会撤回,
+> `ticks` 只增,过了的 deadline 不会退回去。所以中断回调下一次进来仍然命中,仍然
+> `lua_break`。而 Luau 的中断点是 call、return 与回边三类指令
+> (`lvmexecute.cpp` 的 `VM_INTERRUPT()`,`LOP_CALL` 那一处在 `VM_CASE(LOP_CALL)` 的
+> **第一行**,指令都还没取),命中即 `savedpc--` 后 `goto exit`——那次调用没有发生过。
+> 于是脚本连「再进一个宿主 C 函数」都做不到,更不用说在里面铸一个新载体;手上已经握着
+> 的载体也只能靠 `error()` 抛,而 `error()` 本身就是一次 call。闩是保险带,中断是那道
+> 结构性的拦阻,**而且它先到**。取消保证不建立在闩上,这一点值得写进文档而不是靠记忆。
+>
+> 反过来也要说清,免得读成「闩是多余的」:闩覆盖的是**中断根本没有触发**的那一类终局。
+> 一次被取消的 capture 会让原语走 Tier C 并 `markFatal`,而此时可以完全没有 armed 的
+> stop token——VM 中断从头到尾没响过,能拒绝下一次原语的**只有**闩。
+> `tests/task/test-adversarial-surface.cpp` 的「The terminal latch refuses a primitive
+> called from any context」正是按这个条件构造的。两道拦截各管一类终局来源,不是同一件事
+> 的两层。
+
 删掉的是 `uf:try` 的 C 绑定,不是 `markFatal`/`guardFatal` 的语义。
 
 verto 第 6 条(人为阻塞每个长耗时 binding,验证总退出仍在预算内)进 CI:12 个原语
@@ -383,6 +433,17 @@ verto 第 6 条(人为阻塞每个长耗时 binding,验证总退出仍在预算�
 
 **载体是宿主 mint 的 userdata,不是表。** project 伪造不了、改不了;C++ 按 tag 解码而
 不是鸭子类型。`table.clone` 伪造问题被结构性解决,不依赖 `__metatable` 兜底。
+
+> **精确化 2026-07-29(阶段 2c `c37ee5b` 落地后)**:「不依赖 `__metatable` 兜底」说的是
+> **身份不再落在它身上**,不是它没了。载体的 per-raise metatable 上 `__metatable` 仍在,
+> 而且是两条独立要求同时要的:§7 的 deepFreeze 形状规则**强制**每张 metatable 都带它
+> (缺了 `deepFreezeMetatable` 直接失败),而它的值 `"uf.error"` 仍然是脚本可见的那个
+> 标签——`ctx:try` 现在的判定是 `type(err) == "userdata" and getmetatable(err) == errorTag`,
+> 两半都在做事。变的是**承重点**:userdata tag 是 VM 自己存在对象上的属性,
+> `table.clone` 只吃表、`setmetatable` 只吃表、`newproxy` 两个环境都没有,所以 project
+> 拿不出任何带 tag 的值;C++ 侧(`tierBErrorKind`)**只看 tag**,不看标签、不看字段。
+> 标签今天回答的是「宿主的这些 userdata 里,哪一个是错误」——把错误和 page / hit 之类
+> 句柄分开——而不是「这是不是宿主造的」。
 
 **kind 表只有一份真相。** `AutomationErrorKind`(C++)是真相:
 
@@ -460,11 +521,33 @@ trace 边界、取消不可吞),细节见评审文档。这里只记结论性的
 序列化续体(不要)、把 effect 扔到别的线程(明确非目标)、挂起态不占线程(P2 是两三个
 任务,不构成理由)。
 
-**二、它引入一个静默失败模式。** 实测的不可 yield 位置:`__index` 是函数、
-`__tostring`、`table.sort` 比较器、`string.gsub` 回调、generic-for 迭代器函数、
-**`xpcall` 错误处理函数**。最后一种不报错——run 返回 OK,值是
-`"error in error handling"`,原始错误和请求一起消失。直接绑定可以从任何地方调用,
-没有这一类。
+**二、它引入一个静默失败模式。** 实测的不可 yield 位置(七种,即 §15 对抗套件里的那张
+矩阵):`__index` 是函数、`__newindex` 是函数、`__tostring`、`table.sort` 比较器、
+`string.gsub` 回调、generic-for 迭代器函数、**`xpcall` 错误处理函数**。在 driver 设计里
+最后一种不报错:Luau 把错误处理函数内部的失败折成 `LUA_ERRERR`,交给**调用方**一个平平
+无奇的 `(false, "error in error handling")`,原始错误和那个请求一起消失,run 一路跑完
+返回 OK。直接绑定可以从任何地方调用,没有这一类。
+
+> **更正 + 补记 2026-07-29(阶段 2e `2ebcf0c`)**:上面「run 返回 OK」这句**只对被否决的
+> driver 成立**,不要读成对本设计成立的事实——照字面搬用会得出「取消能在 `xpcall` 处理
+> 函数里被静默吃掉」的错误结论。同一个位置在**本设计**下的实测结果是:
+>
+> - `__newindex` 原来漏在这张表外,现已补上。它和 `__index` 同一类,而且它才是宿主句柄
+>   实际用的那个(`uf-tables.cpp` 的 `denyWrite` 挂在每张句柄与错误 metatable 上)。
+> - `xpcall` 的静默确实发生:一次落在错误处理函数里的 `lua_break` 退化成普通错误,又被
+>   `LUA_ERRERR` 折掉,调用方拿到的就是那句 `(false, "error in error handling")`。
+> - **但它被关住了。** run **不**返回 OK:脚本继续跑,下一个 VM 安全点干净地 break,
+>   engine 边界报 `Cancelled`。买下这份关押的正是那一条
+>   **`runStatus == LUA_BREAK || control->broken`** 的析取
+>   (`modules/script/source/script/ffi/environment.cpp`):`lua_break` 在 C 帧里退化时
+>   `lua_resume` 返回的是 `LUA_ERRRUN` 而不是 `LUA_BREAK`,只认状态码会把宿主的控制信号
+>   报成一次可恢复的脚本失败。删掉 `broken` 这一半,七种形态里有六种当场从 `Cancelled`
+>   变成 `InvalidResource`。
+>
+> 结论对 §11 的论证方向没有影响:driver 会把这一类从罕见变成常态,而直接绑定加
+> `broken` 闩把它压成「一次被吞掉的错误值」,而不是「一次被吞掉的取消」。整张矩阵的正反
+> 两侧都在 `tests/script/test-adversarial-substrate.cpp`(含全绿控制组),
+> 原语侧在 `tests/task/test-adversarial-surface.cpp`。
 
 **可逆性**:§5 的四条不变量满足时,这 12 个签名**已经是**一份 request/response 协议。
 以后转 yield 是把 12 个 `lua_CFunction` 拆成 mint + executor 分支,framework 原语层
@@ -521,6 +604,18 @@ engine.action_delivered  client 坐标 / receipt
 engine.observation_invalidated
 task.native_call         序号 / 原语 / 入参身份 / outcome / error kind
 ```
+
+> **补记 2026-07-29(阶段 2c `c37ee5b`)——`run.finished` 的 error kind 是真 kind 了**:
+> 在此之前,一个**没人捕获**的 Tier B 错误穿出脚本时,`script` 只知道「栈顶是个非字符串
+> 的值」,于是整类失败一律报 `InvalidResource`——一个超时没被 catch 的任务会在报告和
+> `run.finished` 里被记成「脚本格式不对」。修法是给 `script::EngineConfig` 加第三个接缝
+> `RaisedErrorClassifier`(`classifyRaisedError`),由 `modules/task` 的
+> `CapabilitySurface::raisedErrorClassifier()` 提供,**只按载体的 userdata tag 判定**,
+> 绝不读字段——鸭子类型会让 project 自己挑一个 kind 来背自己的锅。
+> 硬取消在它之前分类且永不进它,所以 classifier 无法把一次硬取消降级成可捕获的 kind。
+>
+> 因此凡是枚举 script 模块接缝的叙述都要数三个,不是两个:`installHostTables`、
+> `installPrivateCapabilities`、`classifyRaisedError`。
 
 **framework 语义**(经 `emit` 请求,C++ 校验并盖章):
 
@@ -648,6 +743,23 @@ project env 的 `__index` 链遍历、`_G` 的 7 种绕过形态(平移到 `uf` 
 project 取不到私有能力面、`pcall`/`ctx:try` 吞不掉终局、无限循环在 SLA 内停、
 **每个原语人为阻塞后总退出仍在预算内**(roadmap 一票否决第 6 条)。
 
+> **状态 2026-07-29(阶段 2e `2ebcf0c`)**:除最后一条外**已落地**,分两个文件,
+> 按被攻击的层分:
+>
+> - `tests/script/test-adversarial-substrate.cpp` — 底座侧。§11 的整张七形态不可 yield
+>   矩阵(含全绿控制组)、主动扛住指令预算与墙钟上限的脚本、跨 run 的种植路径
+>   (库表与字符串 metatable)。
+> - `tests/task/test-adversarial-surface.cpp` — 原语与脚本表面侧。`ctx` 的可达面封闭性、
+>   从 project 出发到 framework-only 值的路径扫描(带控制组证明扫描器真的会找)、
+>   共享标准库不可变、Tier B 载体伪造、冒名者被归为脚本自身失败、宿主对象在每条路径上
+>   拒绝改写、原语从不可 yield 上下文调用仍守协议、终局闩在任意上下文拒绝原语、
+>   任何嵌套的捕获都换不回控制权、硬取消换不到 Tier B、不调原语的死循环仍被停。
+>
+> **未落地的是「每个原语人为阻塞」这一条(一票否决第 6 条本体)**,仍排在阶段 3。
+> `tests/script/test-veto-suite.cpp` 今天只覆盖它的底座切片(不可 yield C 帧里的死循环),
+> 真正「阻塞一个注册的宿主 C binding」要等阶段 3 的 `deadline` / `wait` 原语与
+> `IFrameSource::capture()` 的 deadline/stop_token 一起做。
+
 ### 真机验收
 
 完整一轮日常;全程严格后台;click 后旧票必死;**长等待中弹窗被处理**;Ctrl-C 达
@@ -657,7 +769,7 @@ SLA;一条 trace 足以解释每一步。
 
 放开重构后明确要删的东西。列出来是为了实施时不犹豫。
 
-状态标记(**核对至 `2f4af93`,2026-07-29**):**已删**的每一项都在当前工作树上 grep
+状态标记(**核对至 `2ebcf0c`,2026-07-29**):**已删**的每一项都在当前工作树上 grep
 验证过确实没有残留;未标记的项尚未动。
 
 > **文件改名注记(阶段 2d `2f4af93`)**:下面提到的 `umbra-tables.cpp` 已随根改名成为
@@ -685,9 +797,13 @@ SLA;一条 trace 足以解释每一步。
   合并为 `modules/trace` 下的 `umbraflow-trace/v1`,源码里只剩解释合并的注释。)
 - `uf:try` 的 C 绑定(语义由纯 Luau 承接,`markFatal`/`guardFatal` 保留)。(**已删,
   阶段 2b-2 `e89bc53`**:`tryFn` 这个 C 闭包不再存在,`ctx:try` 是
-  `modules/task/runtime/ctx.luau` 里的纯 Luau `pcall`,按受保护的
-  `__metatable == 'uf.error'` 认自动化错误,其余原样重抛;`markFatal`/`guardFatal`
-  按计划保留在 `uf-tables.cpp` 里,每个原语入口仍先过 `guardFatal`。)
+  `modules/task/runtime/ctx.luau` 里的纯 Luau `pcall`,其余原样重抛;
+  `markFatal`/`guardFatal` 按计划保留在 `uf-tables.cpp` 里,每个原语入口仍先过
+  `guardFatal`。**判定形状已随阶段 2c `c37ee5b` 收紧**:2b-2 时是「受保护的
+  `__metatable == 'uf.error'`」,今天是
+  `type(err) == "userdata" and getmetatable(err) == errorTag`——多出的 `userdata` 那一半
+  才是 project 造不出来的东西,标签只负责把错误和 page / hit 之类宿主句柄分开;
+  `errorTag` 由私有能力面的 `error_tag` 字段交进来,`.luau` 里不重写那个串。)
 - `TaskContext::cancelled()`。(**已删,阶段 2b-2 `e89bc53`**。这一项**不在本清单原稿
   里**,补记于此:它唯一的消费者就是那个 C `try` 绑定——`try` 需要在捕获后问一句
   「是不是已经终局」。绑定删掉之后它没有调用者,而它想表达的保证已经由「每个原语入口
@@ -744,7 +860,12 @@ SLA;一条 trace 足以解释每一步。
 
 出口:全门绿,现有任务仍按老表面跑通。**已达成。**
 
-### 阶段 2 — 周期协议 + 两个环境 + `uf` 根
+### 阶段 2 — 周期协议 + 两个环境 + `uf` 根(**已完成 2026-07-29,`2ebcf0c`**)
+
+> **落地顺序**:`2a` `01d0e9a` → `2b-1` `67e7e63` → `2b-2` `e89bc53` → `2d` `2f4af93`
+> → `2c` `c37ee5b` → `2e` `2ebcf0c`。**2d 先于 2c 落地**,下面的小节按落地顺序排,
+> 不按字母序——2c 的错误载体改造要在 `uf` 根改名之后做才只改一遍标签串。
+> 出口两条(全门绿 + 对抗套件绿)均已达成。
 
 > **拆分 2026-07-29(orchestrator)**:本阶段原稿把「私有能力面进 upvalue;裸动词从
 > project 环境移除」和环境机械写在同一条里。做不到:**裸动词不能在有 `ctx` 顶替它们
@@ -790,6 +911,12 @@ SLA;一条 trace 足以解释每一步。
   2c 换成 userdata 之后,`try` 的判定从比较那个字符串改成比较 tag,是一处局部替换。
   反过来若拖到 2c,`ctx` 已经存在却还留着一个做 `lua_pcall` 的 C 闭包,正是 §8 要消灭
   的形状。
+  *落地更正(2c `c37ee5b`)*:上面这句预判只对了一半。**Luau 侧比不了 tag**——
+  `lua_userdatatag` 没有脚本入口——所以 `ctx:try` 今天是
+  `type(err) == "userdata" and getmetatable(err) == errorTag`:仍然比那个标签串,
+  只是前面多了一道 `userdata` 类型闸。改成比 tag 的是 **C++ 侧**的 `tierBErrorKind`。
+  「一处局部替换」这个判断本身成立(改的只有 `ctx.luau` 里那一行),
+  换的东西不是原话说的那样。
 - 顺带删掉 `TaskContext::cancelled()`——见 §16 的补记,它唯一的消费者就是那个 C 绑定。
 - 落地时把 boot 顺序改了:危险全局的剥除提前到 framework 加载**之前**。理由与那条测试
   见 §7 的修订注。
@@ -805,12 +932,25 @@ SLA;一条 trace 足以解释每一步。
   `umbraflow-trace/v1`,全部保持原样。改的是**脚本能力根**这一个词,不是产品的名字,
   也不是任何线上契约的 id。文档若把这两件事混在一起,以此条为准。
 
-#### 阶段 2 其余项(尚未指派到某一半)
+#### 2c — 错误改宿主 mint 的 userdata(**已完成,`c37ee5b`**)
 
-- 错误改宿主 mint 的 userdata(§9)。
-- 对抗套件扩充。
+- Tier B 载体从冻结表换成 `lua_newuserdatatagged` 铸的 tagged userdata(§9)。C++ 侧
+  `tierBErrorKind` **只读 tag**;`ctx:try` 改成先验 `type(err) == "userdata"` 再比标签,
+  标签由私有能力面新增的 `error_tag` 字段交给 framework(§5 的补记)。
+- 每抛一次错现建一份 per-raise metatable,走 `script::deepFreezeMetatable` 同一道形状门
+  (§7 的补记)。
+- `script::EngineConfig` 加第三个接缝 `RaisedErrorClassifier`,于是没人捕获的 Tier B
+  错误在报告和 `run.finished` 里报**真 kind**,不再一律 `InvalidResource`(§12 的补记)。
 
-出口:全门绿 + 对抗套件绿。
+#### 2e — 对抗套件扩充(**已完成,`2ebcf0c`**)
+
+- 两个新文件按被攻击的层分:`tests/script/test-adversarial-substrate.cpp` 与
+  `tests/task/test-adversarial-surface.cpp`。覆盖清单与仍未落地的那一条见 §15 的状态注。
+- 副产物是三处文档更正,都已就地写回:§11 的不可 yield 矩阵漏了 `__newindex`、
+  它的「run 返回 OK」只对 driver 成立(§11 的更正注),以及 §8 的取消保证并不建立在
+  终局闩上——VM 中断先于 call 指令完成就已经拦住了(§8 的补记)。
+
+出口:全门绿 + 对抗套件绿。**已达成。**
 
 ### 阶段 3 — framework 承接 task policy
 
