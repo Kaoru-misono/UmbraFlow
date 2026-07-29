@@ -41,8 +41,9 @@
   （等待一个页面、寻找一个 action target、存在时点击一次）已于 2026-07-29 删除
   （`docs/plans/2026-07-29-three-layer-task-system.md` 第十六节）。`runProduct`
   绑定目标后调用 `TaskHost::startTask`，run 内部发生什么由项目的 task 脚本决定。
-- 不做资源名称翻译。脚本直接以 `umbra.pages.NAME` 与 `umbra.recognizers.NAME`
-  命名资源，`modules/task/source/task/script-validator.hpp` 的
+- 不做资源名称翻译。脚本直接以 `uf.pages.NAME` 与 `uf.recognizers.NAME`
+  命名资源（根已于 2026-07-29 由 `umbra` 改名为 `uf`，`2f4af93`），
+  `modules/task/source/task/script-validator.hpp` 的
   `task::validateScriptResources` 在 VM 存在之前就把每处引用对能力面闭合。
   `entry/cli/name-resolution.{hpp,cpp}` 只为翻译那两个已删除 flag 而存在，
   已随它们一并删除。

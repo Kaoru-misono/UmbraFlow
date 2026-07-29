@@ -41,7 +41,7 @@ depend on one another.
 | `annotation` | Annotation model, page recognition, evidence, authorization, and deterministic compilation | Window capture and input delivery |
 | `engine` | Published-artifact loading, same-frame decisions, port orchestration, and trace events | Win32, target selection, and the Luau host |
 | `controller` | Window discovery, target continuity, WGC, DPI, and strict-background input | Page recognition and action selection |
-| `script` | Minimal Luau embedding | The product task runtime; sandboxing, cancellation, and quotas remain incomplete |
+| `script` | The Luau substrate: VM, sandbox, quotas, instruction and time budgets, interrupt cancellation, and the two-environment split | Task policy — waiting, retry, steps, and interrupts, which live in the Luau framework under `modules/task/runtime/` |
 
 `controller` is the only reusable module restricted to Windows. The real adapters used by
 `umbra-workbench` and `umbra-flow run` are also Windows-only, but platform code remains under
@@ -187,7 +187,7 @@ are all forbidden.
 | Gray8/SAD, PNG, and pixel layouts | [`module-vision-image.md`](module-vision-image.md) |
 | Authoring documents, compilation, page recognition, and authorization | [`module-annotation.md`](module-annotation.md) |
 | Runtime ports, Observation, actions, and tracing | [`module-engine.md`](module-engine.md) |
-| Current Luau embedding and its security gaps | [`module-script.md`](module-script.md) |
+| The Luau substrate: sandbox, budgets, cancellation, and the two environments | [`module-script.md`](module-script.md) |
 | WGC, target continuity, DPI, and input | [`module-controller.md`](module-controller.md) |
 | Editing, preview, and publication in the annotation tool | [`entry-workbench.md`](entry-workbench.md) |
 | Product CLI and Windows composition | [`entry-cli.md`](entry-cli.md) |

@@ -48,7 +48,8 @@ This directory deliberately does not own the following responsibilities:
   `runProduct` binds a target and calls `TaskHost::startTask`; what happens inside the run is the
   project's task script.
 - It does not translate resource names. A script names its resources directly as
-  `umbra.pages.NAME` and `umbra.recognizers.NAME`, and `task::validateScriptResources` in
+  `uf.pages.NAME` and `uf.recognizers.NAME` (the root was renamed from `umbra` to `uf` on
+  2026-07-29, `2f4af93`), and `task::validateScriptResources` in
   `modules/task/source/task/script-validator.hpp` closes every such reference against the
   capability surface before a VM exists. `entry/cli/name-resolution.{hpp,cpp}` existed only to
   translate the two deleted flags and was deleted with them.

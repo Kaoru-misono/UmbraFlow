@@ -1,8 +1,16 @@
 # `modules/script` 架构知识
 
-`modules/script` 是 UmbraFlow 当前的最小 Luau 嵌入层。C++23 宿主已经可以运行固定
-在 0.730 的 Luau，但现有代码只支持创建 VM、同步执行源码和返回错误，尚未具备
-无人值守运行所需的沙箱、取消和资源配额。
+> **DIRTY（2026-07-29）**：本文写作时 `modules/script` 还只是一层 VM 包装。此后该模块
+> 陆续拿到沙箱、记账 allocator、interrupt 取消，以及（`67e7e63` / `e89bc53`）双环境
+> 拆分（`environment.{hpp,cpp}`）。下文中已明确错误的论断已就地更正，但逐步数据流叙述
+> 与测试清单尚未重新推导。以实际代码与
+> `docs/plans/2026-07-29-three-layer-task-system.md` 为准，待重新同步。
+
+`modules/script` 是 UmbraFlow 的 Luau 底座。C++23 宿主运行固定在 0.730 的 Luau，外面包着
+沙箱、记账 allocator 和 interrupt 驱动的取消，并且每个 VM 都以**两个环境**启动：一个受信
+framework 环境，和一个没有任何 `__index` 链能到达它的 project 环境。该模块仍然不拥有的是
+task policy——等待、重试、step、interrupt——那属于 `modules/task/runtime/` 下的 Luau
+framework。
 
 ## 当前能力与限制
 
@@ -30,36 +38,71 @@
 - 不做 Luau offline analysis、JIT、CLI、Web 或 Luau 自带测试。构建只链接
   `Luau.VM` 与 `Luau.Compiler`；`Luau.CodeGen`、`Luau.Analysis`、
   `Luau.Config`、`Luau.Require` 均不在模块依赖中。
-- 最关键的是，它当前不提供安全沙箱、记账 allocator、interrupt cancellation、
-  指令预算或时间预算。`Engine::create()` 会调用 `luaL_openlibs()`，没有调用
-  `luaL_sandbox()` 或 `luaL_sandboxthread()`。
+- 不拥有 task policy。等待、重试、step 嵌套和 interrupt 注册表住在
+  `modules/task/runtime/` 下的受信 Luau framework 里，不在这里。`script` 提供那些策略
+  运行其上的底座：环境、冻结、预算，以及宿主装自己表的接缝。
 
-这只是当前阶段的实现范围，不代表运行时已经安全。具体状态记录在
-`docs/plans/2026-07-21-p0b-luau-hardening-ledger.md`：其中未勾选的条目必须在
-模块进入产品执行路径前完成。`docs/plans/2026-07-21-luau-integration-plan.md`
-也把现有实现标为步骤 1–2 完成，而 sandbox/cancellation、veto suite 和
-observe/act/wait host handles 仍开放。
+本文初稿写作时没有、而今天**已经拥有**的，是整套安全底座：
 
-模块今天不进入任何可执行文件。唯一外部 include 是 `tests/script/test-script.cpp`。
-`entry/CMakeLists.txt` 中的三个 executable 链接闭包分别是：
+- `installSandbox`（`modules/script/source/script/ffi/sandbox.cpp`）剥掉 `luaL_sandbox`
+  留下的危险全局（`getfenv`、`setfenv`、`newproxy`、`gcinfo`、`coroutine`、`debug` 和
+  `_G`）以及残余的时钟与 RNG 入口（`os.time`、`os.clock`、`os.date`、`math.random`、
+  `math.randomseed`），然后执行 `luaL_sandbox()`。
+- `createStateWithQuota`（`ffi/allocator.hpp`）安装记账 allocator，强制每任务内存硬上限；
+  超配额的增长表现为可捕获的 `LUA_ERRMEM`，而不是把宿主一起拖垮。
+- `ffi/cancellation.cpp` 装一个由 stop token、指令预算和 `maxRuntime` deadline 驱动的
+  interrupt callback。它的 GC 上下文守卫（`if (gc >= 0) return;`）是 callback 的第一条
+  语句，符合 hardening ledger 的硬红线。
+- `ffi/environment.{hpp,cpp}` 构造下面说的两个环境。
 
-- `umbra-flow` 经 `${PROJECT_NAME}_cli_support` 连接 `engine`，Windows 下再连接 `controller`；
-- `m0-demo` 经 support library 连接 `controller`、`vision` 和 `image`；
-- `umbra-workbench` 连接 workbench support、`engine`、`controller`、`image` 和 Dear ImGui。
+`docs/plans/2026-07-21-p0b-luau-hardening-ledger.md` 与
+`docs/plans/2026-07-21-luau-integration-plan.md` 是这批工作的历史记录。两者都早于双环境
+设计，且仍在教用 `luaL_sandboxthread` 隔离脚本全局；那个机制为何被否决，见下文「两个
+环境」。
 
-三者都没有链接 `${PROJECT_NAME}_script`，`modules/engine/manifest.txt` 也没有
-依赖 `script`。因此当前静态库只在 `test-script` 中被实例化。这样可以保留已经
-验证的嵌入底座，同时避免把一个明确“未沙箱、不可取消、无配额”的 VM 误接进
-严格后台无人值守产品。
+模块已经在产品链接闭包内。`modules/task/manifest.txt` 把 `script` 声明为 public 依赖，
+`entry/CMakeLists.txt` 又把 `${PROJECT_NAME}_task` 链进 `umbra-flow` 的 CLI support
+library，所以底座经由 `task` 进入发布可执行文件。`script/engine.hpp` 的入站 include 来自
+`modules/task`（`capability-surface.hpp`、`framework-bundle.{hpp,cpp}`、`task-host.cpp`）
+以及 `tests/script/` 与 `tests/task/`。
+
+### 两个环境
+
+Luau 的环境隔离是**按闭包，不按线程**：`luau_load` 收的是 chunk 闭包携带的 env 表，而新
+线程的 globals 表是从父线程复制的。所以 `luaL_sandboxthread` 那套代理形状**不能**在同一
+个 VM 上分开两个信任层级——那个代理形状正是设计要排除的 `_G` 逃逸形状。它在这里是**已被
+否决**的机制，不是待办项。两张显式 env 表可以做到它做不到的事：
+
+- **framework 环境**是一张可写的表，其冻结的 metatable 把 `__index` 链到主 globals。受信
+  framework 模块在它下面加载，自己的全局不落到主表上。
+- **project 环境**是显式白名单，**完全没有 metatable**。这个「没有」就是隔离性质本身：
+  没有 `__index` 就没有通往 framework 环境或主 globals 的链，于是否定名单由结构成立，而
+  不是靠逐条枚举。白名单里点名却在来源表中缺失的名字会让整个 generation 失败，而不是悄悄
+  产生一个更薄的环境。
+
+两张表都只住在 VM registry 里，因此从任何全局表都不可达。project 环境注册的是一张**冻结
+的原型**，`pushProjectEnvironment` 给每次 run 一份新的可写浅拷贝——一次 run 写下的全局随
+那份拷贝一起死，而它与原型共享的值仍然是冻结的。
 
 ## 执行流程
 
 ### 公开表面
 
-`modules/script/source/script/engine.hpp` 中实际存在的公开表面只有
-`uf::script::Engine`：
+`modules/script/source/script/engine.hpp` 的公开表面是 `uf::script::Engine`，以及它需要的
+配置与冻结词汇：
 
-- `Engine::create() -> Result<Engine>` 是命名工厂；VM 分配可能失败，所以没有 public constructor。
+- `Engine::create(EngineConfig const& = {}) -> Result<Engine>` 是命名工厂；VM 分配可能失败，
+  所以没有 public constructor。`EngineConfig` 携带 stop token、内存与指令预算、
+  `maxRuntime`、`frameworkModules` bundle、两个 installer 接缝（`HostTableInstaller` 与
+  `PrivateCapabilityInstaller`，都返回 `Status`），以及两张白名单 `projectGlobals` 与
+  `frameworkProjectGlobals`。
+- `deepFreeze(lua_State*, int index) -> Status` 递归把一张表、从它的值可达的一切，以及沿途
+  每张 metatable 标为只读，顺序是先 metatable 后表。它同时强制 project 可见宿主对象必须
+  满足的两条结构规则：每张 metatable 都带 `__metatable` 字段（没有它，`table.clone` 会返回
+  **可变副本、带同一个 metatable**，于是「用 metatable 证明身份」可被伪造），且 `__index`
+  一律是表、绝不是函数。
+- `deepFreezeMetatable(lua_State*, int index) -> Status` 把一张表**当作 metatable** 检查并
+  冻结，用于「metatable 先构造并注册、之后才挂到对象上」这个常见情形。
 - `Engine::runNumber(std::string_view source, std::string_view chunkName)
   -> Result<double>` 是唯一执行入口。
 - `Engine(Engine&&)`、move assignment 和析构函数公开；`std::unique_ptr<Impl>` 使 copy 不可用。
@@ -117,11 +160,13 @@ observe/act/wait host handles 仍开放。
 `lua_tostring(..., -1)` 返回 null，它使用固定文本
 `(non-string error value)`，避免错误报告本身依赖一个必然为字符串的假设。
 
-“每次新 coroutine”不等于“每次新 VM”。同一个 `Engine` 的多次
-`runNumber()` 共享主 `lua_State` 和 global table；当前
-`luaL_openlibs()` 打开的全局修改可以跨调用保留。新 coroutine 目前只隔离
-执行栈，并配合 stack guard 防止线程对象在主栈累积。每个任务独立的 environment
-尚未实现。
+“每次新 coroutine”不等于“每次新 VM”：同一个 `Engine` 的多次 `runNumber()` 共享主
+`lua_State`。但全局已经不再跨 run 泄漏。`runNumber` 走
+`runNumberInProjectEnvironment`，它为本次调用从冻结原型建一份新的 project 环境、用完丢弃，
+并在 `luau_load` 之前用 `lua_setfenv` 把它绑到本次 run 的线程上。绑线程正是沙箱需要的
+C++ 侧 setfenv 路径——Lua 自己的 `setfenv` 已被移除——而且它有两重意义：不绑的话，该线程上
+的 `LUA_GLOBALSINDEX` 会够到主 globals；而且 `luau_load` 会针对已冻结（因而被标记
+`safeenv`）的主 globals 预解析 import 常量。
 
 ## 必须保持的约束
 
@@ -167,17 +212,18 @@ observe/act/wait host handles 仍开放。
 
 ### 确定性现状
 
-当前仅固定 compiler 的 optimization/debug level，并同步执行单个 coroutine。
-这不足以形成 roadmap 要求的 determinism：
+compiler 的 optimization/debug level 已固定，确定性下限现在是被强制的，而不是计划中的：
 
-- 完整标准库仍开放，真实时间与默认随机能力尚未替换；
-- 同一 `Engine` 的 globals 可跨 `runNumber()` 泄漏；
-- 没有 host-controlled logical clock、固定算法 RNG、state hash 或 action
-  trace；
-- 没有限制 dictionary 迭代结果进入决策或序列化。
+- 残余的真实时间与随机入口已被移除——`os.time`、`os.clock`、`os.date`、`math.random`、
+  `math.randomseed`——所以脚本唯一的随机来自宿主的 seeded RNG，而且完全读不到任何时钟；
+- globals 不再跨 `runNumber()` 泄漏：每次 run 拿到一份新的 project 环境；
+- host-controlled seeded RNG 在 `modules/task` 里，seed 每 run 注入并写进 `run.started`。
+  按 `docs/plans/2026-07-29-three-layer-task-system.md` §10，逻辑时钟是要**删掉**而不是保留
+  的——阶段 3 由基于证据的等待（`ctx:wait_for_page`）与声明式停顿（`ctx:settle`）取代它。
+- 仍然没有机制限制 dictionary 迭代结果进入决策或序列化；那一条目前只是约定。
 
-所以“同一 observation trace + seed 运行 1000 次结果完全一致”目前是 veto
-gate，不是现有保证。具体 gate 见
+所以“同一 observation trace + seed 运行 1000 次结果完全一致”仍是 veto gate 而非已兑现的
+保证，但底座本身已经不再与它冲突。具体 gate 见
 `docs/plans/2026-07-21-product-form-and-roadmap.md` 第五节，确定性加固细节见
 `docs/plans/2026-07-21-p0b-luau-hardening-ledger.md`。
 
@@ -191,35 +237,44 @@ gate，不是现有保证。具体 gate 见
 未来 host binding 接入时，Luau 只能获得受限 capability，不得绕过 observation lease、target generation
 或 controller 兼容性门；roadmap 还要求在 VM state 创建前验证 backend capability 与 target compatibility。
 
-### 尚未成立的资源与取消不变量
+### 资源与取消不变量
 
-以下机制在代码中不存在，不能从 `Engine` 当前形态推导：
+以下机制现在都已在代码中存在（本节此前把它们列为「尚未成立」）：
 
-- accounting allocator 与每任务内存硬配额；
-- instruction budget 与 `max_runtime` 时间预算；
-- atomic cancel flag、interrupt callback、`lua_break()` 和 abandon protocol；
-- `gc >= 0` 时禁止中断的 GC guard；
-- `luaL_sandbox()`、`luaL_sandboxthread()`、递归 readonly host tables；
-- 对 `getfenv`、`setfenv`、`newproxy`、`coroutine`、`debug` 的显式移除。
+- accounting allocator 与每任务内存硬配额（`ffi/allocator.{hpp,cpp}`）；
+- instruction budget 与 `maxRuntime` 时间预算，均由 interrupt callback 读取；
+- atomic cancel flag、interrupt callback、`lua_break()` 和 abandon protocol
+  （`ffi/cancellation.{hpp,cpp}`）；
+- `gc >= 0` 时禁止中断的 GC guard，作为 callback 的第一条语句；
+- `luaL_sandbox()`，以及经 `deepFreeze` 实现的递归 readonly host tables；
+- 对 `getfenv`、`setfenv`、`newproxy`、`gcinfo`、`coroutine`、`debug`、`_G` 的显式移除，
+  外加残余时钟与 RNG 入口。
 
-hardening ledger 的硬红线要求最终取消使用 interrupt 中的 `lua_break()` 后
-abandon coroutine，绝不能使用可被 `pcall` 吞掉的 `luaL_error()`。它还要求
-长耗时 C++ binding 自己遵守 deadline/stop token；VM interrupt 无法抢占卡死的
-C++ 调用。两者共同构成“500ms 总退出”而不是单一 VM 技巧。
+`luaL_sandboxthread()` **不在**这份清单上，而且永远不会在：见上文「两个环境」。
+
+有一处代码已经编码、读者不该丢掉的细节：`lua_break()` 在 `nCcalls > baseCcalls` 时抛出的是
+**普通可捕获错误**，不是 `LUA_BREAK`。所以「是否发生了硬取消」的真相是
+`InterruptState::broken`，而不是 resume 状态码，`resumeChunkOnThread` 两者都查。把那种退化
+的 break 归类成脚本错误，等于把宿主控制信号误报成可恢复失败。
+
+hardening ledger 的硬红线要求取消使用 interrupt 中的 `lua_break()` 后 abandon coroutine，
+绝不能使用可被 `pcall` 吞掉的 `luaL_error()`。它还要求长耗时 C++ binding 自己遵守
+deadline/stop token；VM interrupt 无法抢占卡死的 C++ 调用。两者共同构成“500ms 总退出”而不是
+单一 VM 技巧。其中「逐个 binding」那一半（一票否决第 6 条，人为阻塞每个原语）排在
+`docs/plans/2026-07-29-three-layer-task-system.md` 的阶段 3，至今没跑过。
 
 ## 与产品运行时的关系
 
 ### 当前调用方
 
-当前唯一实际入站边是 `tests/script/test-script.cpp`：
+入站边是 `modules/task` 与测试。`modules/task` 是唯一的非测试消费方：它从
+`capability-surface.hpp`、`framework-bundle.{hpp,cpp}` 和 `task-host.cpp` include
+`<script/engine.hpp>`，经 `HostTableInstaller` 提供 `uf` 数据表，经
+`PrivateCapabilityInstaller` 提供观察周期原语，经 `frameworkModules` 提供 `.luau` bundle。
 
-- 通过 `<script/engine.hpp>` 创建 `Engine`；
-- 传入内存中的源码与 chunk name；
-- 消费 `Result<double>`；
-- 通过 `automationErrorKind(...)` 检查领域错误分类。
-
-没有 entry、`engine`、`annotation` 或 `controller` 源文件 include
-`script/engine.hpp`。这是一条可由仓库引用搜索直接验证的边界。
+没有 `entry/`、`engine`、`annotation` 或 `controller` 源文件直接 include
+`script/engine.hpp`——`script` 是经由 `task` 传递地进入 CLI 的。这是一条可由仓库引用搜索
+直接验证的边界。
 
 ### 当前依赖
 
@@ -268,10 +323,17 @@ composition 设计决定，不能仅为方便让 `script` 与 `engine` 相互依
 
 ## 测试
 
-当前宿主测试集中在 `tests/script/test-script.cpp`；`tests/CMakeLists.txt` 的 `test-script` target 链接
+宿主测试住在三个文件里：`tests/script/test-script.cpp`（底座）、
+`tests/script/test-environments.cpp`（双环境拆分）、`tests/script/test-veto-suite.cpp`
+（roadmap 一票否决）。`tests/CMakeLists.txt` 的 `test-script` target 链接
 `${PROJECT_NAME}_script`，仅在模块存在时注册，并继承 60 秒 timeout 和 `CI` label。
 
-现有六个 doctest case 固定以下行为：
+`test-environments.cpp` 固定本文赖以成立的隔离论断：project 环境不持有否定名单上的任何
+名字、它够不到 framework 环境、失败的 host-table installer 会带着自己的错误让 `create`
+失败，以及——**从 framework 环境内部**断言——framework 模块无法在加载期捕获危险全局。最后
+这条正是 `installSandbox` 把危险全局的剥除放在 bundle 加载**之前**而非之后的原因。
+
+`test-script.cpp` 最初的六个 doctest case 固定以下行为：
 
 - `Engine runs a Luau script and returns its numeric result`：验证
   `create()` 成功、compile/load/resume 正常路径和 `1 + 2 -> 3.0`。
@@ -286,9 +348,11 @@ composition 设计决定，不能仅为方便让 `script` 与 `engine` 相互依
 - `Engine is move-only and usable after a move`：验证所有权移动后，目标
   `Engine` 仍能执行脚本。
 
-当前测试没有固定 sandbox、内存配额、取消、预算、逻辑时钟/RNG、globals
-隔离、yield 恢复、host binding 或 strict-background 行为。Luau upstream
-测试也因 `LUAU_BUILD_TESTS=OFF` 不进入项目 CI。
+sandbox、内存配额、取消、预算、globals 隔离和 `deepFreeze` 现在都已被固定——由
+`test-script.cpp` 的后续 case 和覆盖一票否决第 1–5 条的 `test-veto-suite.cpp` 承担。这里仍
+未固定的是一票否决第 6 条（人为阻塞每个长耗时 binding、总退出仍在预算内）、host binding
+和 strict-background 行为；第一项排在阶段 3，后两项不由本模块证明。Luau upstream 测试也因
+`LUAU_BUILD_TESTS=OFF` 不进入项目 CI。
 
 roadmap 的六条 veto 必须补成 host regression suite：
 
@@ -311,8 +375,10 @@ hardening ledger 进一步要求覆盖 nested host table freeze、sandbox 后仍
 扩展顺序由 `docs/plans/2026-07-21-p0b-luau-hardening-ledger.md` 管辖，而不是
 由当前 `Engine` 的便利性决定。现有底座完成后，应按以下顺序继续：
 
-1. 在 `modules/script/source/script/ffi/` 内补 sandbox setup：注册最小 host tables、递归 freeze、移除五个残余 globals，
-   再执行 `luaL_sandbox()`；每任务 coroutine 执行 `luaL_sandboxthread()`，且只接受源码。
+1. ~~在 `modules/script/source/script/ffi/` 内补 sandbox setup~~——**已完成**，但形状与本条
+   所述不同。host tables 已注册并递归 freeze，残余 globals 已移除，`luaL_sandbox()` 已执行；
+   而每任务隔离用的是**两张显式环境表**，不是 `luaL_sandboxthread()`——后者已被否决，理由见
+   「两个环境」。
 2. 安装 accounting allocator，使内存配额成为 task-owned policy。OOM 本身是
    可被脚本捕获的普通错误；强制停机必须依赖 allocator hard quota 与宿主停止
    语义，不能把 `LUA_ERRMEM` 误当成不可吞取消。

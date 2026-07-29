@@ -38,7 +38,7 @@ entry/workbench      -> annotation + engine + controller + image
 | `annotation` | 标注模型、页面识别、证据、授权和确定性编译 | 捕获窗口和投递输入 |
 | `engine` | 加载发布物、保持同帧决策、编排端口和记录追踪 | Win32、目标选择和 Luau 宿主 |
 | `controller` | 窗口发现、目标连续性、WGC、DPI 和严格后台输入 | 页面识别和动作选择 |
-| `script` | 最小 Luau 嵌入能力 | 产品任务运行时；沙箱、取消和配额尚未完成 |
+| `script` | Luau 底座：VM、沙箱、配额、指令与时间预算、interrupt 取消，以及双环境拆分 | task policy——等待、重试、step 和 interrupt，它们住在 `modules/task/runtime/` 下的 Luau framework 里 |
 
 `controller` 是唯一限定为 Windows 的可复用模块。`umbra-workbench` 和
 `umbra-flow run` 的实际适配器也只支持 Windows，但平台代码都留在 `entry/`，
@@ -165,7 +165,7 @@ controller 或 `entry/` 的平台目录。
 | Gray8/SAD、PNG 和像素布局 | [`module-vision-image.md`](module-vision-image.md) |
 | 标注文档、编译、页面识别和授权 | [`module-annotation.md`](module-annotation.md) |
 | 运行时端口、Observation、动作和追踪 | [`module-engine.md`](module-engine.md) |
-| Luau 嵌入层的现状和安全缺口 | [`module-script.md`](module-script.md) |
+| Luau 底座：沙箱、预算、取消和两个环境 | [`module-script.md`](module-script.md) |
 | WGC、目标连续性、DPI 和输入 | [`module-controller.md`](module-controller.md) |
 | 标注工具的编辑、预览和发布流程 | [`entry-workbench.md`](entry-workbench.md) |
 | 产品命令行和 Windows 组合流程 | [`entry-cli.md`](entry-cli.md) |

@@ -17,8 +17,8 @@ responsibilities, key entry points, and tests. Module dependencies are governed 
    resolution, and action authorization.
 6. [`module-engine.md`](module-engine.md) — Published-artifact loading, same-frame decisions, port
    orchestration, action execution, and tracing.
-7. [`module-script.md`](module-script.md) — The current Luau embedding and what remains before
-   product integration.
+7. [`module-script.md`](module-script.md) — The Luau substrate: sandbox, budgets, interrupt
+   cancellation, and the framework/project environment split.
 8. [`module-controller.md`](module-controller.md) — WGC, target continuity, DPI, and
    strict-background input.
 9. [`entry-workbench.md`](entry-workbench.md) — GUI editing, capture, preview, compilation, and

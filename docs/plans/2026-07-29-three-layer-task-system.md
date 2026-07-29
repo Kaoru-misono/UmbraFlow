@@ -145,7 +145,15 @@ C++ 兜底释放账本里的一切。
 
 ## 五、私有能力面(12 个原语)
 
-只有 framework 能拿到,以闭包 upvalue 形式持有,**永不作为任何表的键**。
+只有 framework 能拿到,以闭包 upvalue 形式持有,**永不作为任何 project 脚本能命名的
+表的键**。
+
+> **收紧 2026-07-29(orchestrator)**:初稿写的是「永不作为任何表的键」,太绝对了。
+> 这 12 个原语**正是**那张私有表的键——宿主构造它、把它作为 chunk 实参交给 framework
+> bundle(`local native = ...`),§6 的 `wait_for_page` 草图里那一串 `native.cycle_open`
+> 就是在读这些键。承重的不变量是**那张表不在任何环境里有名字**:宿主交出去之后就丢掉
+> 自己的引用,于是唯一能拿到它的办法是当初被交到手里的那个闭包。按字面读初稿会得出
+> 「代码违反了自己的设计」,所以在此改成实际成立的那一句。
 
 ```text
 -- 观察周期
@@ -190,6 +198,13 @@ uf.errors.<kind>         -- 错误 kind 常量,由 AutomationErrorKind 生成
 ```
 
 project 环境**没有**裸动词。`ctx` 作为参数传入 `run`。
+
+> **过渡状态 2026-07-29(阶段 2b-2,`e89bc53`)**:`run(ctx)` 是**目标**形状,今天还
+> 没有 task runner 来传这个参数。所以 2b-2 先把 `ctx` 当作 **project 全局**发布——
+> `modules/task/source/task/framework-bundle.cpp` 的 `frameworkProjectGlobals()` 这个
+> 接缝把 framework 模块 `ctx` 的冻结 exports 按同名拷进 project 环境。阶段 3 建起
+> `uf.task.define{ run = function(ctx) … }` 之后,这个全局就退掉。**不要把它读成最终
+> 形态**:它存在只是为了在 `run(ctx)` 出现之前顶替被删掉的裸动词。
 
 ### Task
 
@@ -291,14 +306,36 @@ boot 顺序:
 ```text
 建配额 VM
 -> 开放准入的基础库
--> C++ 构造 framework env 表,把私有能力面装进 framework 闭包的 upvalue
--> luau_load(framework bundle, env = framework env),执行,冻结 exports
--> nil 掉危险全局,luaL_sandbox
--> C++ 构造 project env 表:显式白名单,【没有】__index 链指向 framework env 或主 globals
--> 把 uf.pages / uf.recognizers / uf.task / uf.errors 装进 project env 并冻结
--> luau_load(project module, env = project env)
+-> nil 掉危险全局(含 os/math 上的残余时钟与 RNG 字段)
+-> C++ 构造 framework env 表(冻结的 metatable 把 __index 链到主 globals)
+-> C++ 构造私有能力面,留在栈上
+-> luau_load(framework bundle, env = framework env, arg = 私有能力面),执行,
+   冻结每个模块的 exports 并按模块名绑进 framework env;随后丢掉宿主自己那份引用
+-> 装宿主数据表(uf.recognizers / uf.pages / uf.errors)为普通全局并递归冻结
+-> luaL_sandbox
+-> C++ 构造 project env 原型:显式白名单,【没有】metatable,因而没有 __index 链
+   指向 framework env 或主 globals;白名单含 projectGlobals(`uf`)与
+   frameworkProjectGlobals(framework 模块导出,今天是 `ctx`)
+-> 每次 run 从原型浅拷一份可写的 project env
+-> luau_load(project module, env = 该 project env)
 -> 把 descriptor 交给 framework runner
 ```
+
+> **修订 2026-07-29(orchestrator,阶段 2b-1/2b-2 落地时)**:本节初稿把「nil 掉危险
+> 全局」排在 framework 加载**之后**,并且没有「构造私有能力面」这一步。两处都改了,
+> 上面是代码实际实现的顺序(`modules/script/source/script/ffi/sandbox.{hpp,cpp}`)。
+>
+> 顺序必须换,理由是一个捕获窗口:framework env 的 `__index` 链到主 globals,所以
+> 先加载 framework 就允许某个模块在**加载期**写下 `local getfenv = getfenv`,把那个
+> 引用握住整个 generation,nil 掉之后依然有效。只要 framework 什么都不导出给 project,
+> 这个窗口是无害的;而它导出 `ctx` 的那一刻起就不是了。bundle 里没有任何东西正当地需要
+> 这些名字——时间与随机都走私有能力面——所以关掉窗口不花任何代价,却把「framework 代码
+> 不会去拿它们」这句承诺换成了一条结构性事实。`tests/script/test-environments.cpp` 有一条
+> 「A framework module cannot capture a dangerous global at load time」,**从 framework
+> 环境内部**断言模块运行时这些名字已经不在了。
+>
+> 私有能力面那一步不是遗漏了细节,而是缺了一个真实步骤:它必须在 framework 加载**之前**
+> 构造完成,因为它就是每个 framework 模块的 chunk 实参(`local native = ...`)。
 
 project 环境的否定名单(**完整**,不是示例):
 
@@ -351,7 +388,8 @@ verto 第 6 条(人为阻塞每个长耗时 binding,验证总退出仍在预算�
 
 - C++ 侧的 kind→wire 名映射**合并为一个函数,住在 `modules/domain`**。domain 拥有
   这个 enum,而 task 与 trace 都依赖它,所以那是唯一一个两边都不必互相依赖的家。
-  合并前有两份(`umbra-tables.cpp` 的 `snakeName` 与 `trace/event.cpp` 的
+  合并前有两份(`uf-tables.cpp`——当时还叫 `umbra-tables.cpp`——的 `snakeName` 与
+  `trace/event.cpp` 的
   `errorKindWireName`),注释要求二者恒等但无共享真相、无一致性测试(p0b §6 第 5 项)。
 - `uf.errors` 由**宿主在装能力面时用 C++ 直接构建**,与 `uf.pages` / `uf.recognizers`
   并列,递归只读。
@@ -619,8 +657,12 @@ SLA;一条 trace 足以解释每一步。
 
 放开重构后明确要删的东西。列出来是为了实施时不犹豫。
 
-状态标记(**核对至 `01d0e9a`,2026-07-29**):**已删**的每一项都在当前工作树上 grep
+状态标记(**核对至 `2f4af93`,2026-07-29**):**已删**的每一项都在当前工作树上 grep
 验证过确实没有残留;未标记的项尚未动。
+
+> **文件改名注记(阶段 2d `2f4af93`)**:下面提到的 `umbra-tables.cpp` 已随根改名成为
+> `modules/task/source/task/ffi/uf-tables.cpp`,本节与全文按新名书写;引用旧名的历史
+> 文档(评审记录、被取代的草案)不回改。行号也随之整体位移,不再逐条引用。
 
 **modules/engine**
 
@@ -633,7 +675,7 @@ SLA;一条 trace 足以解释每一步。
 **modules/task**
 
 - frame-box 的 GC 析构释放路径、`guardObservationBudget`、seq 跨帧校验机械
-  (`umbra-tables.cpp` 里约 300 行),以及 `TaskContextConfig::maxLiveObservations`
+  (`uf-tables.cpp` 里约 300 行),以及 `TaskContextConfig::maxLiveObservations`
   这个旋钮本身(见 §4 的修订:上限恒为 1)。
   (**已删,阶段 2a `01d0e9a`**:`ObservationSeq`、`maxLiveObservations`、
   `liveObservationCount()`、`guardObservationBudget`、句柄析构器的释放路径全部不再存在;
@@ -641,17 +683,28 @@ SLA;一条 trace 足以解释每一步。
 - `DeterministicClock` 及 `now()` 的全部绑定。(**未删,裁决归入阶段 3a**——见 §17。)
 - `task-trace/v1` 作为独立 schema。(**已删,阶段 1b `408dc90`**:与 `engine-trace/v1`
   合并为 `modules/trace` 下的 `umbraflow-trace/v1`,源码里只剩解释合并的注释。)
-- `uf:try` 的 C 绑定(语义由纯 Luau 承接,`markFatal`/`guardFatal` 保留)。(**未删,
-  裁决归入阶段 2b-2**——见 §17;`markFatal`/`guardFatal` 按计划仍在 `umbra-tables.cpp`
-  里。)
-- `TaskContext` 作为单个类:拆成票据账本 + 私有能力面。(**部分**:票据账本已析出为
-  `cycle-ledger.hpp`/`.cpp`(阶段 2a);能力面进 upvalue 在阶段 2b-2。)
+- `uf:try` 的 C 绑定(语义由纯 Luau 承接,`markFatal`/`guardFatal` 保留)。(**已删,
+  阶段 2b-2 `e89bc53`**:`tryFn` 这个 C 闭包不再存在,`ctx:try` 是
+  `modules/task/runtime/ctx.luau` 里的纯 Luau `pcall`,按受保护的
+  `__metatable == 'uf.error'` 认自动化错误,其余原样重抛;`markFatal`/`guardFatal`
+  按计划保留在 `uf-tables.cpp` 里,每个原语入口仍先过 `guardFatal`。)
+- `TaskContext::cancelled()`。(**已删,阶段 2b-2 `e89bc53`**。这一项**不在本清单原稿
+  里**,补记于此:它唯一的消费者就是那个 C `try` 绑定——`try` 需要在捕获后问一句
+  「是不是已经终局」。绑定删掉之后它没有调用者,而它想表达的保证已经由「每个原语入口
+  过 `guardFatal` 检查终局闩」结构性承担,所以是随 `try` 一起走的,不是独立裁决。)
+- `TaskContext` 作为单个类:拆成票据账本 + 私有能力面。(**已完成**:票据账本析出为
+  `cycle-ledger.hpp`/`.cpp`(阶段 2a `01d0e9a`);能力面进 framework 闭包 upvalue
+  (阶段 2b-2 `e89bc53`),`CapabilitySurface` 由此分成两个接缝——`installer()` 装
+  project 可见的数据表,`privateCapabilities()` 建那张只交给 framework 的私有表。
+  `TaskContext` 本身作为宿主侧 session 对象保留:它是那些原语闭包背后的持有者,
+  不是要被解散的东西。)
 - 两份 kind→wire 映射(整体上移到 `modules/domain`)。(**已删,阶段 1c `31ea3af`**:
   `snakeName` 与 `errorKindWireName` 都不存在了,唯一真相是
-  `domain::automationErrorWireName`,错误 kind 表由宿主从它构建。注意根名还没改:
-  代码里这张表今天挂在 `umbra.errors` 上,`uf.` 拼写要等阶段 2 的根改名。)
-- project 环境里的全部裸动词。(**未删**,阶段 2b-2——见 §17 的拆分说明:裸动词要等
-  `ctx` 存在了才能走。)
+  `domain::automationErrorWireName`,错误 kind 表由宿主从它构建。根改名已于阶段 2d
+  `2f4af93` 落地,这张表今天挂在 `uf.errors` 上。)
+- project 环境里的全部裸动词。(**已删,阶段 2b-2 `e89bc53`**:project 全局 `uf` 只剩
+  数据——`uf.recognizers` / `uf.pages` / `uf.errors`,`buildUfData` 里没有任何能观察或
+  动作的东西;原来的动词由 `ctx` 顶替。)
 
 **entry/cli**
 
@@ -695,9 +748,10 @@ SLA;一条 trace 足以解释每一步。
 
 > **拆分 2026-07-29(orchestrator)**:本阶段原稿把「私有能力面进 upvalue;裸动词从
 > project 环境移除」和环境机械写在同一条里。做不到:**裸动词不能在有 `ctx` 顶替它们
-> 之前离开 project 环境**,而 `ctx` 要由 framework 模块提供,今天
-> `modules/task/runtime/` 下只有一个不声明任何 API 的 placeholder。硬拆会留下一个
-> 既没有裸动词也没有 `ctx` 的 project 环境,门是红的,没法收工。
+> 之前离开 project 环境**,而 `ctx` 要由 framework 模块提供,而拆分写下时
+> `modules/task/runtime/` 下只有一个不声明任何 API 的 placeholder(2b-2 已把它换成
+> `ctx.luau`)。硬拆会留下一个既没有裸动词也没有 `ctx` 的 project 环境,门是红的,
+> 没法收工。
 > 因此阶段 2 的后半按下面的 2b-1 / 2b-2 两步走,顺序不可交换。
 
 #### 2a — 观察周期(**已完成,`01d0e9a`**)
@@ -709,35 +763,51 @@ SLA;一条 trace 足以解释每一步。
   已退休概念的名字,会把它写进后面要建的校验状态机;`umbraflow-trace/v1` 目前在仓库外
   没有消费者,现在改代价为零。
 
-#### 2b-1 — 环境机械就位,能力面暂不搬家
+#### 2b-1 — 环境机械就位,能力面暂不搬家(**已完成,`67e7e63`**)
 
-- `HostTableInstaller` 改返回 `Status`(今天仍是 `script/engine.hpp:26` 的 `void`)。
+- `HostTableInstaller` 改返回 `Status`(原为 `script/engine.hpp` 的 `void`)。
 - C++ 侧环境分离:`luau_load` 的 env 索引 + C 侧 `lua_setfenv`。
 - project 环境的白名单与 §7 那份**完整**否定名单。
 - 运行期冻结规则(构造时冻结、`__metatable`、`__index` 是表)。
 - **能力面仍然装在 project 环境里**,不动裸动词。这一步不改脚本可见的表面,所以门始终
   是绿的,环境隔离可以单独被对抗套件打。
+- 落地形态:`modules/script/source/script/ffi/environment.{hpp,cpp}` 新立,两张 env 表
+  住在 VM registry 里(两个环境都不从任何全局表可达);project env 是**冻结的原型 +
+  每次 run 一份浅拷贝**,所以脚本写的全局随那份拷贝一起死。
 
-#### 2b-2 — 能力面搬进 framework 闭包,裸动词下线
+#### 2b-2 — 能力面搬进 framework 闭包,裸动词下线(**已完成,`e89bc53`**)
 
 - 私有能力面从 project 环境移进 framework 闭包的 upvalue。
 - `modules/task/runtime/placeholder.luau` 长成一个最小 framework,导出一个薄 `ctx`
   ——只要够顶替被删掉的裸动词,`ctx:step` / `ctx:wait_for_page` / `ctx:retry` 那一整套
-  仍归阶段 3。
+  仍归阶段 3。(落地时该文件**改名为 `modules/task/runtime/ctx.luau`**,`placeholder`
+  这个名字在树上已不存在。)
 - 裸动词从 project 环境移除。
 - **删 `uf:try` 的 C 绑定**,`ctx:try` 改为纯 Luau 的 `pcall`。
   *裁决 2026-07-29(orchestrator)*:这一条不必等 §9 的错误 userdata。纯 Luau 的 `try`
   只需要能认出「这是自动化错误」,而今天的错误表已经带受保护的
-  `__metatable = 'umbra.error'`,Luau 侧一句 `getmetatable(err)` 就够;2c 换成 userdata
-  之后,`try` 的判定从比较那个字符串改成比较 tag,是一处局部替换。反过来若拖到 2c,
-  `ctx` 已经存在却还留着一个做 `lua_pcall` 的 C 闭包,正是 §8 要消灭的形状。
+  `__metatable`(阶段 2d 起是 `'uf.error'`),Luau 侧一句 `getmetatable(err)` 就够;
+  2c 换成 userdata 之后,`try` 的判定从比较那个字符串改成比较 tag,是一处局部替换。
+  反过来若拖到 2c,`ctx` 已经存在却还留着一个做 `lua_pcall` 的 C 闭包,正是 §8 要消灭
+  的形状。
+- 顺带删掉 `TaskContext::cancelled()`——见 §16 的补记,它唯一的消费者就是那个 C 绑定。
+- 落地时把 boot 顺序改了:危险全局的剥除提前到 framework 加载**之前**。理由与那条测试
+  见 §7 的修订注。
+
+#### 2d — 根 `umbra` → `uf`(**已完成,`2f4af93`**)
+
+- `lua_setglobal` 的根名与校验器的 `k_namespace` 都改成 `uf`;六张句柄 metatable 的标签
+  改成 `uf.recognizer` / `uf.page` / `uf.cycle` / `uf.resolved_page` / `uf.hit` /
+  `uf.error`;Tier C 哨兵串改成 `"uf: task cancelled"`;错误消息与示例一并改。
+  `umbra-tables.cpp` 随之改名为 `uf-tables.cpp`。
+- **刻意不动的边界**:产品名 `UmbraFlow` / `umbra-flow` / `umbra-workbench`,以及
+  schema id `umbraflow-authoring/v2` / `umbraflow-annotations/v1` /
+  `umbraflow-trace/v1`,全部保持原样。改的是**脚本能力根**这一个词,不是产品的名字,
+  也不是任何线上契约的 id。文档若把这两件事混在一起,以此条为准。
 
 #### 阶段 2 其余项(尚未指派到某一半)
 
 - 错误改宿主 mint 的 userdata(§9)。
-- 根 `umbra` → `uf`:校验器、能力面、错误消息、S0 §4、CONTEXT.md、全部示例。
-  (文档侧已在 `82f8027` 改完;代码侧未动,`lua_setglobal(state, "umbra")` 与
-  校验器的 `k_namespace` 仍是 `umbra`。)
 - 对抗套件扩充。
 
 出口:全门绿 + 对抗套件绿。

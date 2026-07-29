@@ -1,9 +1,17 @@
 # `modules/script` Architecture Knowledge
 
-`modules/script` is UmbraFlow's current minimal Luau embedding layer. A C++23 host can run Luau
-pinned to 0.730, but the existing code only creates a VM, executes source synchronously, and returns
-errors. It does not yet have the sandboxing, cancellation, or resource quotas required for
-unattended execution.
+> **DIRTY (2026-07-29)**: This document was written against a `modules/script` that
+> was only a VM wrapper. Since then the module gained the sandbox, the accounting
+> allocator, interrupt cancellation, and — in `67e7e63` / `e89bc53` — the two-environment
+> split (`environment.{hpp,cpp}`). The claims flagged below have been corrected in place,
+> but the per-step narratives and the tests inventory have not been re-derived. Trust the
+> code and `docs/plans/2026-07-29-three-layer-task-system.md` until resynced.
+
+`modules/script` is UmbraFlow's Luau substrate. A C++23 host runs Luau pinned to 0.730 behind a
+sandbox, an accounting allocator, and interrupt-driven cancellation, and boots each VM with **two
+environments**: a trusted framework environment and a project environment that has no `__index`
+chain reaching it. What the module still does not own is task policy — waiting, retry, steps,
+interrupts — which belongs to the Luau framework in `modules/task/runtime/`.
 
 ## Current Capabilities and Limits
 
@@ -37,39 +45,78 @@ It deliberately does not own the following responsibilities:
 - It does no Luau offline analysis, JIT, CLI, Web, or Luau's own tests. The build links only
   `Luau.VM` and `Luau.Compiler`; `Luau.CodeGen`, `Luau.Analysis`, `Luau.Config`, and `Luau.Require`
   are all absent from the module's dependencies.
-- Most critically, it currently provides no security sandbox, accounting allocator, interrupt
-  cancellation, instruction budget, or time budget. `Engine::create()` calls `luaL_openlibs()` and
-  does not call `luaL_sandbox()` or `luaL_sandboxthread()`.
+- It does not own task policy. Waiting, retry, step nesting, and the interrupt registry live in the
+  trusted Luau framework under `modules/task/runtime/`, not here. `script` supplies the substrate
+  those policies run on: environments, freezing, budgets, and the seam through which a host installs
+  its own tables.
 
-This boundary is an intentional staging split, not a security promise. The authoritative status is
-recorded in `docs/plans/2026-07-21-p0b-luau-hardening-ledger.md`: the unchecked items there must be
-completed before the module enters the product execution path.
-`docs/plans/2026-07-21-luau-integration-plan.md` likewise marks the existing implementation as steps
-1-2 complete, while sandbox/cancellation, the veto suite, and observe/act/wait host handles remain
-open.
+What it *does* own, and did not when this page was first written, is the safety substrate:
 
-The module enters no executable today. Its only external include is `tests/script/test-script.cpp`.
-The three executable link closures in `entry/CMakeLists.txt` are:
+- `installSandbox` (`modules/script/source/script/ffi/sandbox.cpp`) strips the dangerous globals
+  `luaL_sandbox` leaves behind (`getfenv`, `setfenv`, `newproxy`, `gcinfo`, `coroutine`, `debug`,
+  and `_G`) plus the residual clock and RNG entry points (`os.time`, `os.clock`, `os.date`,
+  `math.random`, `math.randomseed`), then runs `luaL_sandbox()`.
+- `createStateWithQuota` (`ffi/allocator.hpp`) installs an accounting allocator enforcing a
+  per-task hard memory ceiling; over-quota growth surfaces as a catchable `LUA_ERRMEM` rather than
+  dragging the host down.
+- `ffi/cancellation.cpp` arms an interrupt callback driven by a stop token, an instruction budget,
+  and a `maxRuntime` deadline. Its GC-context guard (`if (gc >= 0) return;`) is the first statement
+  in the callback, per the hardening ledger's hard red line.
+- `ffi/environment.{hpp,cpp}` builds the two environments described below.
 
-- `umbra-flow` links `engine` through `${PROJECT_NAME}_cli_support`, and additionally links
-  `controller` on Windows;
-- `m0-demo` links `controller`, `vision`, and `image` through the support library;
-- `umbra-workbench` links the workbench support, `engine`, `controller`, `image`, and Dear ImGui.
+`docs/plans/2026-07-21-p0b-luau-hardening-ledger.md` and
+`docs/plans/2026-07-21-luau-integration-plan.md` are the historical records of this work. Both
+predate the two-environment design and still teach `luaL_sandboxthread` for script-global isolation;
+see "Two Environments" below for why that mechanism was rejected.
 
-None of the three links `${PROJECT_NAME}_script`, and `modules/engine/manifest.txt` does not depend on
-`script` either. As a result, the static library today is instantiated only in `test-script`. This
-preserves the already-validated embedding foundation while avoiding wiring a VM that is explicitly
-"unsandboxed, non-cancellable, and quota-free" into a strict-background unattended product.
+The module is in the product link closure. `modules/task/manifest.txt` declares `script` a public
+dependency, and `entry/CMakeLists.txt` links `${PROJECT_NAME}_task` into the `umbra-flow` CLI
+support library, so the substrate reaches the shipped executable through `task`. Inbound includes of
+`script/engine.hpp` come from `modules/task` (`capability-surface.hpp`, `framework-bundle.{hpp,cpp}`,
+`task-host.cpp`) and from `tests/script/` and `tests/task/`.
+
+### Two Environments
+
+Environment isolation in Luau is **per-closure, not per-thread**: `luau_load` takes the env table a
+chunk's closure carries, and a new thread's globals table is copied from its parent. So
+`luaL_sandboxthread`'s proxy shape cannot separate two trust levels on one VM — that proxy shape is
+exactly the `_G` escape the design rules out. It is a **rejected** mechanism here, not a pending one.
+Two explicit env tables can do what it cannot:
+
+- The **framework environment** is a writable table whose frozen metatable chains `__index` to the
+  main globals. Trusted framework modules load under it and keep their own globals off the main
+  table.
+- The **project environment** is an explicit whitelist with **no metatable at all**. That absence is
+  the isolation property: with no `__index` there is no chain to the framework environment or to the
+  main globals, so the denial list holds structurally rather than by enumeration. A whitelisted name
+  missing from its source table fails the generation instead of silently producing a thinner
+  environment.
+
+Both live only in the VM registry, so neither is reachable from any global table. The project
+environment is registered as a **frozen prototype**, and `pushProjectEnvironment` gives each run a
+fresh writable shallow copy — globals a run writes die with that copy, while the values it shares
+with the prototype stay frozen.
 
 ## Execution Flow
 
 ### Public Surface
 
-The only public surface that actually exists in `modules/script/source/script/engine.hpp` is
-`uf::script::Engine`:
+The public surface in `modules/script/source/script/engine.hpp` is `uf::script::Engine` plus the
+configuration and freezing vocabulary it needs:
 
-- `Engine::create() -> Result<Engine>` is the named factory; VM allocation may fail, so there is no
-  public constructor.
+- `Engine::create(EngineConfig const& = {}) -> Result<Engine>` is the named factory; VM allocation
+  may fail, so there is no public constructor. `EngineConfig` carries the stop token, the memory and
+  instruction budgets, `maxRuntime`, the `frameworkModules` bundle, the two installer seams
+  (`HostTableInstaller` and `PrivateCapabilityInstaller`, both returning `Status`), and the two
+  whitelists `projectGlobals` and `frameworkProjectGlobals`.
+- `deepFreeze(lua_State*, int index) -> Status` recursively marks a table, everything reachable from
+  its values, and every metatable on the way read-only, metatable-first. It also enforces the two
+  structural rules a project-visible host object must satisfy: every metatable carries a
+  `__metatable` field (without it `table.clone` returns a **mutable** copy carrying the **same**
+  metatable, so identity-by-metatable could be forged), and `__index` is a table, never a function.
+- `deepFreezeMetatable(lua_State*, int index) -> Status` checks and freezes a table *as* a
+  metatable, for the common case where a metatable is built and registered before it is attached to
+  anything.
 - `Engine::runNumber(std::string_view source, std::string_view chunkName)
   -> Result<double>` is the only execution entry point.
 - `Engine(Engine&&)`, move assignment, and the destructor are public; `std::unique_ptr<Impl>` makes
@@ -134,11 +181,14 @@ The error text is read from the top of the stack by the in-file helper `topError
 `lua_tostring(..., -1)` returns null, it uses the fixed text `(non-string error value)`, so that error
 reporting does not itself rely on the assumption that the value is necessarily a string.
 
-"A new coroutine per run" is not "a new VM per run." Multiple `runNumber()` calls on the same `Engine`
-share the main `lua_State` and the global table; global modifications opened by the current
-`luaL_openlibs()` can persist across calls. The new coroutine currently isolates only the execution
-stack, and works together with the stack guard to prevent thread objects from accumulating on the main
-stack. True per-task environment isolation is not yet implemented.
+"A new coroutine per run" is not "a new VM per run": multiple `runNumber()` calls on the same
+`Engine` share the main `lua_State`. But globals no longer leak between runs. `runNumber` goes
+through `runNumberInProjectEnvironment`, which builds a fresh project environment for that call from
+the frozen prototype and discards it afterwards, and binds it to the run's thread with `lua_setfenv`
+before `luau_load`. Binding the thread is the C++-side setfenv path the sandbox needs — Lua's own
+`setfenv` was removed — and it matters twice: without it `LUA_GLOBALSINDEX` on that thread would
+reach the main globals, and `luau_load` would pre-resolve import constants against the frozen (and
+therefore `safeenv`-marked) main globals.
 
 ## Constraints That Must Remain True
 
@@ -185,17 +235,23 @@ concurrently calls the same `Engine` is already outside the contract.
 
 ### Current State of Determinism
 
-Currently only the compiler's optimization/debug level is pinned, and a single coroutine is executed
-synchronously. This is not enough to form the determinism the roadmap requires:
+The compiler's optimization/debug level is pinned, and the determinism floor is now enforced rather
+than planned:
 
-- The full standard library remains open, and real time and default randomness capabilities have not
-  yet been replaced;
-- Globals of the same `Engine` can leak across `runNumber()` calls;
-- There is no host-controlled logical clock, fixed-algorithm RNG, state hash, or action trace;
-- There is nothing restricting dictionary iteration results from entering decisions or serialization.
+- The residual real-time and randomness entry points are removed — `os.time`, `os.clock`,
+  `os.date`, `math.random`, `math.randomseed` — so a script's only randomness is the host's seeded
+  RNG and it can read no clock at all;
+- Globals no longer leak across `runNumber()` calls: each run gets a fresh project environment;
+- A host-controlled seeded RNG exists in `modules/task`; the seed is injected per run and recorded
+  in `run.started`. Per `docs/plans/2026-07-29-three-layer-task-system.md` §10 the logical clock is
+  being **deleted** rather than kept — evidence-based waiting (`ctx:wait_for_page`) and declarative
+  pauses (`ctx:settle`) replace it in stage 3.
+- Nothing yet restricts dictionary iteration results from entering decisions or serialization; that
+  remains a convention.
 
 So "running 1000 times with the same observation trace + seed yields fully identical results" is
-currently a veto gate, not an existing guarantee. See section five of
+still a veto gate rather than a discharged guarantee, but the substrate no longer contradicts it.
+See section five of
 `docs/plans/2026-07-21-product-form-and-roadmap.md` for the specific gate, and
 `docs/plans/2026-07-21-p0b-luau-hardening-ledger.md` for determinism-hardening details.
 
@@ -211,36 +267,46 @@ When host binding is wired in the future, Luau may obtain only a restricted capa
 bypass the observation lease, target generation, or controller compatibility gate; the roadmap also
 requires validating backend capability and target compatibility before the VM state is created.
 
-### Resource and Cancellation Invariants That Do Not Yet Hold
+### Resource and Cancellation Invariants
 
-The following mechanisms do not exist in the code and cannot be inferred from `Engine`'s current form:
+These mechanisms now exist in the code (this section previously listed them as absent):
 
-- an accounting allocator and a per-task hard memory quota;
-- an instruction budget and a `max_runtime` time budget;
-- an atomic cancel flag, an interrupt callback, `lua_break()`, and an abandon protocol;
-- a GC guard forbidding interrupts when `gc >= 0`;
-- `luaL_sandbox()`, `luaL_sandboxthread()`, and recursive readonly host tables;
-- explicit removal of `getfenv`, `setfenv`, `newproxy`, `coroutine`, and `debug`.
+- an accounting allocator and a per-task hard memory quota (`ffi/allocator.{hpp,cpp}`);
+- an instruction budget and a `maxRuntime` time budget, both read by the interrupt callback;
+- an atomic cancel flag, the interrupt callback, `lua_break()`, and the abandon protocol
+  (`ffi/cancellation.{hpp,cpp}`);
+- the GC guard forbidding interrupts when `gc >= 0`, as the callback's first statement;
+- `luaL_sandbox()` and recursive readonly host tables via `deepFreeze`;
+- explicit removal of `getfenv`, `setfenv`, `newproxy`, `gcinfo`, `coroutine`, `debug`, and `_G`,
+  plus the residual clock and RNG entry points.
 
-The hardening ledger's hard red line requires that cancellation ultimately abandon the coroutine after
-using `lua_break()` in the interrupt, and must never use `luaL_error()`, which can be swallowed by
-`pcall`. It also requires long-running C++ bindings to honor their own deadline/stop token; a VM
-interrupt cannot preempt a stuck C++ call. Together the two form a "500ms total exit" rather than a
-single VM trick.
+`luaL_sandboxthread()` is **not** on that list and never will be: see "Two Environments" above.
+
+One subtlety the code encodes and a reader should not lose: `lua_break()` raised while
+`nCcalls > baseCcalls` surfaces as an **ordinary catchable error**, not `LUA_BREAK`. So
+`InterruptState::broken` — not the resume status — is the truth about whether a hard cancel
+happened, and `resumeChunkOnThread` checks both. Classifying that degraded break as a script error
+would misreport a host control signal as a recoverable failure.
+
+The hardening ledger's hard red line requires that cancellation abandon the coroutine after using
+`lua_break()` in the interrupt, and never use `luaL_error()`, which `pcall` can swallow. It also
+requires long-running C++ bindings to honor their own deadline/stop token; a VM interrupt cannot
+preempt a stuck C++ call. Together the two form a "500ms total exit" rather than a single VM trick.
+The per-binding half of that (veto 6, artificially blocking each primitive) is scheduled for stage 3
+of `docs/plans/2026-07-29-three-layer-task-system.md` and has not run yet.
 
 ## Relationship to the Product Runtime
 
 ### Current Callers
 
-The only actual inbound edge today is `tests/script/test-script.cpp`:
+The inbound edges are `modules/task` and the tests. `modules/task` is the only non-test consumer: it
+includes `<script/engine.hpp>` from `capability-surface.hpp`, `framework-bundle.{hpp,cpp}`, and
+`task-host.cpp`, supplying the `uf` data tables through `HostTableInstaller`, the observation-cycle
+primitives through `PrivateCapabilityInstaller`, and the `.luau` bundle through `frameworkModules`.
 
-- it creates an `Engine` through `<script/engine.hpp>`;
-- it passes in-memory source and a chunk name;
-- it consumes `Result<double>`;
-- it checks the domain error classification via `automationErrorKind(...)`.
-
-No entry, `engine`, `annotation`, or `controller` source file includes `script/engine.hpp`. This is a
-boundary that can be verified directly by a repository reference search.
+No `entry/`, `engine`, `annotation`, or `controller` source file includes `script/engine.hpp`
+directly — `script` reaches the CLI transitively through `task`. This is a boundary that can be
+verified directly by a repository reference search.
 
 ### Current Dependencies
 
@@ -291,11 +357,19 @@ depend on each other.
 
 ## Tests
 
-The current host tests are concentrated in `tests/script/test-script.cpp`; the `test-script` target in
+Host tests live in three files: `tests/script/test-script.cpp` (the substrate),
+`tests/script/test-environments.cpp` (the two-environment split), and
+`tests/script/test-veto-suite.cpp` (the roadmap vetoes). The `test-script` target in
 `tests/CMakeLists.txt` links `${PROJECT_NAME}_script`, registers only when the module exists, and
 inherits the 60-second timeout and the `CI` label.
 
-The existing six doctest cases pin the following behavior:
+`test-environments.cpp` pins the isolation claims this page rests on: that the project environment
+holds no name on the denial list, that it cannot reach the framework environment, that a failing
+host-table installer fails `create` with its own error, and — asserted **from inside the framework
+environment** — that a framework module cannot capture a dangerous global at load time. That last
+case is why `installSandbox` strips those globals *before* the bundle loads rather than after.
+
+`test-script.cpp`'s original six doctest cases pin the following behavior:
 
 - `Engine runs a Luau script and returns its numeric result`: verifies that `create()` succeeds, the
   compile/load/resume happy path, and `1 + 2 -> 3.0`.
@@ -311,9 +385,12 @@ The existing six doctest cases pin the following behavior:
 - `Engine is move-only and usable after a move`: verifies that after ownership moves, the target
   `Engine` can still execute a script.
 
-The current tests do not pin sandbox, memory quota, cancellation, budget, logical clock/RNG, globals
-isolation, yield resumption, host binding, or strict-background behavior. Luau upstream tests also do
-not enter the project CI because of `LUAU_BUILD_TESTS=OFF`.
+Sandbox, memory quota, cancellation, budgets, globals isolation, and `deepFreeze` are all pinned now
+— by `test-script.cpp`'s later cases and by `test-veto-suite.cpp`, which covers vetoes 1-5. What is
+still unpinned here is veto 6 (each long-running binding artificially blocked, total exit still
+within budget), host binding, and strict-background behavior; the first is scheduled for stage 3 and
+the other two are not this module's to prove. Luau upstream tests do not enter the project CI because
+of `LUAU_BUILD_TESTS=OFF`.
 
 The roadmap's six vetoes must be filled in as a host regression suite:
 
@@ -342,9 +419,10 @@ The extension order is governed by `docs/plans/2026-07-21-p0b-luau-hardening-led
 convenience of the current `Engine`. It is recommended to understand the work after the existing
 two-step foundation as the following seams:
 
-1. Add sandbox setup inside `modules/script/source/script/ffi/`: register minimal host tables,
-   recursively freeze, remove the five residual globals, then run `luaL_sandbox()`; each task coroutine
-   runs `luaL_sandboxthread()` and accepts only source.
+1. ~~Add sandbox setup inside `modules/script/source/script/ffi/`~~ — **done**, but not in the shape
+   this step described. Host tables are registered and recursively frozen, the residual globals are
+   removed, and `luaL_sandbox()` runs; the per-task isolation is **two explicit environments**, not
+   `luaL_sandboxthread()`, which was rejected for the reason given under "Two Environments".
 2. Install an accounting allocator so that the memory quota becomes a task-owned policy. OOM itself is
    an ordinary error that the script can catch; a true halt must rely on the allocator's hard quota and
    the host's stop semantics, and must not mistake `LUA_ERRMEM` for a non-swallowable cancel.

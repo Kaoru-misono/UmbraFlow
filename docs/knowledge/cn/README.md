@@ -12,7 +12,8 @@
 4. [`module-vision-image.md`](module-vision-image.md) — Gray8/SAD 识别、PNG、像素布局和模板资产。
 5. [`module-annotation.md`](module-annotation.md) — 编辑文档、运行时清单、页面解析和动作授权。
 6. [`module-engine.md`](module-engine.md) — 发布物加载、同帧决策、端口编排、动作执行和追踪记录。
-7. [`module-script.md`](module-script.md) — Luau 嵌入层的现状，以及接入产品前还缺什么。
+7. [`module-script.md`](module-script.md) — Luau 底座：沙箱、预算、interrupt 取消，以及
+   framework/project 双环境拆分。
 8. [`module-controller.md`](module-controller.md) — WGC、目标连续性、DPI 和严格后台输入。
 9. [`entry-workbench.md`](entry-workbench.md) — GUI 编辑、采集、预览、编译和发布。
 10. [`entry-cli.md`](entry-cli.md) — 参数解析、离线加载、Windows 适配和退出码。
