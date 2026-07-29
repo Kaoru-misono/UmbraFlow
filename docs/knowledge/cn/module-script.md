@@ -272,8 +272,12 @@ compiler 的 optimization/debug level 已固定，确定性下限现在是被强
 hardening ledger 的硬红线要求取消使用 interrupt 中的 `lua_break()` 后 abandon coroutine，
 绝不能使用可被 `pcall` 吞掉的 `luaL_error()`。它还要求长耗时 C++ binding 自己遵守
 deadline/stop token；VM interrupt 无法抢占卡死的 C++ 调用。两者共同构成“500ms 总退出”而不是
-单一 VM 技巧。其中「逐个 binding」那一半（一票否决第 6 条，人为阻塞每个原语）排在
-`docs/plans/2026-07-29-three-layer-task-system.md` 的阶段 3，至今没跑过。
+单一 VM 技巧。其中「逐个 binding」那一半（一票否决第 6 条，人为阻塞每个原语）**已于
+2026-07-29 `1fb41a7` 落地并进入 CI**：`tests/task/test-veto-blocking.cpp`，因为被阻塞的是
+task 自己的原语，不在本模块。八个能阻塞的原语逐个阻塞，八个都在 2 秒预算内退出；
+`deadline` / `random` / `terminal` / `raise` 四个豁免且写明理由——`raise` 用 VM 分配铸出
+载体然后 longjmp，够不到任何宿主调用。名单与理由见
+`docs/plans/2026-07-29-three-layer-task-system.md` §8 的落地更正。
 
 ## 与产品运行时的关系
 
@@ -373,10 +377,11 @@ generic-for 迭代器、`__index`、`__newindex`、`__tostring`、`xpcall` 错�
   `Engine` 仍能执行脚本。
 
 sandbox、内存配额、取消、预算、globals 隔离和 `deepFreeze` 现在都已被固定——由
-`test-script.cpp` 的后续 case 和覆盖一票否决第 1–5 条的 `test-veto-suite.cpp` 承担。这里仍
-未固定的是一票否决第 6 条（人为阻塞每个长耗时 binding、总退出仍在预算内）、host binding
-和 strict-background 行为；第一项排在阶段 3，后两项不由本模块证明。Luau upstream 测试也因
-`LUAU_BUILD_TESTS=OFF` 不进入项目 CI。
+`test-script.cpp` 的后续 case 和覆盖一票否决第 1–5 条的 `test-veto-suite.cpp` 承担。
+一票否决第 6 条（人为阻塞每个长耗时 binding、总退出仍在预算内）也已在 CI，但**不在本模块**：
+它是 `tests/task/test-veto-blocking.cpp`（2026-07-29 `1fb41a7`），因为要阻塞的是 task 的原语
+和它们背后的端口。这里仍未固定的是 host binding 与 strict-background 行为，两者都不由本模块
+证明。Luau upstream 测试也因 `LUAU_BUILD_TESTS=OFF` 不进入项目 CI。
 
 roadmap 的六条 veto 必须补成 host regression suite：
 

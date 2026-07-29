@@ -32,8 +32,20 @@ responsibilities, key entry points, and tests. Module dependencies are governed 
 
 `modules/task` and `modules/trace` have no page of their own, and since stage 3 of 2026-07-29 moved
 task policy wholesale into those two layers, the engine and CLI pages have been explaining things
-that are not theirs. The suggested scope is below. Write them once stage 3d (semantic events plus
-the validation state machine) has landed, so they are not stale on arrival:
+that are not theirs.
+
+> **Timing updated (2026-07-29, `1fb41a7`)**: this used to say "write them once stage 3d has
+> landed". **Stage 3 is now complete in full** (3d `4030ffd` semantic events plus the validation
+> state machine; 3e/3f `1fb41a7` the framework unit tests and veto 6), so that condition is met.
+> Write them **now, rather than waiting for stage 4's on-hardware run**: finishing stage 3 is what
+> made these two layers' surface stable — all twelve primitives present, `umbraflow-trace/v1`'s
+> event families fixed, the validation state machine landed in
+> `modules/trace/source/trace/stream-validator.{hpp,cpp}`. Stage 4 *uses* that surface to write the
+> first real daily and calibrate constants; it changes numbers, not shapes. Waiting for it only
+> guarantees the pages are missing at the exact moment they are most needed — reading an
+> on-hardware failure off a trace.
+
+The suggested scope:
 
 - **`module-task.md`** — `TaskHost`'s D10 verb shape and the run lifecycle; the capability surface's
   two seams (`installer()` for the data tables, `privateCapabilities()` for the primitive table) and
@@ -42,6 +54,13 @@ the validation state machine) has landed, so they are not stale on arrival:
   owns, and exactly where the "C++ owns guarantees, Luau owns policy" line falls. It must **not**
   restate the sandbox, budgets, and dual environments that `module-script.md` already covers.
 - **`module-trace.md`** — schema ownership of `umbraflow-trace/v1`; the event families (`run.*`,
-  `engine.*`, `task.native_call`, and `framework.*` after 3d); field ordering and the rules for
-  golden comparison; the documented non-golden field set; `ITraceSink`'s synchronous fallible
-  contract and the failure-precedence rules; and the "audit log, not a replay log" positioning.
+  `engine.*`, `task.native_call`, and the eight `framework.*` events from 3d on); field ordering and
+  the rules for golden comparison; the documented non-golden field set; `ITraceSink`'s synchronous
+  fallible contract and the failure-precedence rules; and the "audit log, not a replay log"
+  positioning. **Since 3d it must also cover the validation state machine**: why
+  `TraceStreamValidator` is owned by `TraceRecorder` (the recorder is the only path to a sink in the
+  codebase, so it cannot be gone around), where the two failure kinds divide (Tier B
+  `InvalidResource` for a request a project caused, `InternalInvariant` for a protocol breach, which
+  spends the generation), and that the step scope is **stamped rather than checked** — from which it
+  follows that a step path is **not** a unique address within a run, and `retry_attempt` is what
+  distinguishes a repeat.

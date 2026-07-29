@@ -125,3 +125,34 @@ collide with a live ordinal in the next one.
 Defined in `docs/plans/2026-07-29-three-layer-task-system.md` §4 (2026-07-29);
 implemented in `modules/task/source/task/cycle-ledger.hpp`.
 _Avoid_: frame handle, cycle object, token (reserved for `std::stop_token`)
+
+**Trace stream validator (`trace::TraceStreamValidator`)**:
+The state machine one run's evidence stream must pass. It exists because the
+`framework.*` events are the only ones the trusted Luau framework *requests*
+rather than the host authoring, so `emit` is not a passthrough: a framework
+whose step nesting, retry counting, or interrupt matching had drifted would
+otherwise write a plausible audit log of a run that did not happen that way.
+`TraceRecorder` owns one and runs it on every event before the stamp, and the
+recorder is the only path to a sink in the codebase, so it cannot be gone
+around. Its refusals carry two kinds, and the split is the point: a request it
+declines because a project caused it (an over-long or ill-encoded step name, a
+depth or payload ceiling) is Tier B `InvalidResource` and the generation lives,
+while a protocol breach only this binary can produce is `InternalInvariant` and
+spends it.
+Defined in `docs/plans/2026-07-29-three-layer-task-system.md` §12 (2026-07-29);
+implemented in `modules/trace/source/trace/stream-validator.hpp`.
+_Avoid_: trace schema validator (the schema is the wire format; this validates
+the sequence), emit guard, event sanitizer (nothing is sanitized — a refused
+event is rejected at the request boundary, never truncated)
+
+**Open step path**:
+The framework step scope that was open when a trace line was written, stamped
+onto that line by the validator rather than supplied by the emitter — part of
+the stamp for the same reason `seq` is, because an emitter does not get to say
+which steps it is inside. It appears on the wire as a `steps` array, present
+only when non-empty. It is **not** a unique address within a run: a `for` loop,
+a `ctx:retry` body, and an interrupt firing up to `max_hits` all legitimately
+reopen a sibling name under one parent, so the same path recurs and
+`retry_attempt` is what distinguishes a repeat.
+_Avoid_: step id, step address, step key (all three imply the uniqueness the
+2026-07-29 draft asked for and `4030ffd` dropped as unenforceable)

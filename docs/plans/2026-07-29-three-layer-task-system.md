@@ -210,6 +210,32 @@ random(...)                       -> number
 >
 > `now` 也不在表上:阶段 3a(`f146329`)随 `deadline` / `wait` / `settle` 一起删掉了
 > 它与 `DeterministicClock` 的全部绑定(§10)。
+>
+> (这段形状快照停在阶段 3c,已被下一条取代。)
+
+> **形状快照 2026-07-29(阶段 3d `4030ffd`)——表面到齐了**:私有表上是**十二个**原语
+> 加 `error_tag` 那一个数据字段,共十三个键(`uf-tables.cpp` 的 `buildPrivateSurface`):
+>
+> ```text
+> cycle_open  cycle_close  cycle_page  cycle_find  cycle_click
+> deadline    wait         settle      raise       emit
+> terminal    random
+> error_tag                                            -- 非能力,Tier B 标签串
+> ```
+>
+> 与本节开头那张目标表**逐项相等**,只有一处签名不同:
+>
+> - **`emit` 落地为 `emit(name, ...)`,不是 `emit(event)`**。收的是一个动词串加若干
+>   标量(`step_started` 收 name、`retry_attempt` 收 attempt + attempts、
+>   `retry_backoff` / `settled` 收毫秒数),不是一张事件表。理由就是下面第 2 条不变量:
+>   入参只有宿主 mint 的句柄和标量,而一张 Luau 表两者都不是。C++ 侧按动词查
+>   `k_semanticEventNames` 得到 kind,再按 kind 读该事件自己的标量。
+> - `terminal` 是**唯一不过 `guardFatal`** 的原语,这是它存在的全部意义:framework 的
+>   收尾路径要先问「这个 generation 还活着吗」再决定发不发闭合事件,而一个在答案是「否」
+>   时就抛的问题永远问不出来。它不授予任何东西——同一个答案脚本从「上一次原语被拒了」
+>   也读得到。
+>
+> 至此 §5 的十二个原语全部存在,本节不再有「尚未落地」的项。
 
 四条不变量(它们同时是 §11 可逆性的条件):
 
@@ -355,6 +381,22 @@ ctx:call(subtask, ...)                   -- P1
 > descriptor 而不是宿主执行的 chunk,它们和 `ctx` 这个 project 全局一起退掉。
 >
 > `ctx:call` 仍是 P1,未落地。
+
+> **行为补记 2026-07-29(阶段 3d `4030ffd`)——三处以后一定会被重新踩的**:
+>
+> - **`ctx:retry` 的 `policy.attempts` 必须是 ≥ 1 的整数。** 分数会让「第 3 次,共 2.5 次」
+>   成为宿主那台单调检查必须当作 framework bug 拒绝的句子,而实际出错的只是 project
+>   写下的那个数。所以在 Luau 侧就挡掉,报的是一句写给作者看的话。
+> - **`ctx:step` 现在需要一个绑定的 task session。** 它开始发语义事件了,而
+>   `native` 在没有绑定 session 的 VM 上(那张只有数据的表面,只关心资源名闭包的地方)
+>   是 `nil`。这是有意的:`ctx.luau` 在那种 VM 上仍然要能**加载**,方法则在**被调用时**
+>   才失败。3b 之前 `ctx:step` 是纯 Luau,在那种 VM 上跑得通;现在跑不通了。
+> - **发闭合事件之前先问 `native.terminal()`。** 全文件只有两处这样问,也只有这两处
+>   发闭合事件:`ctx:step` 的 `step_finished`,和 interrupt 的 `interrupt_handled`。
+>   generation 已经花掉时不发——那次闭合会盖在花掉它的原因上面,把真正的原因换成它的
+>   后果。宿主于是在 `run.finished` 看到一个仍然打开的 step,而这正是正确的读法:
+>   这次 run 确实结束在这个 step 里面。(`ctx:cycle` 不在此列:它根本没有语义事件,
+>   周期的开关只落在 `task.native_call` 上。)
 
 ### `wait_for_page` 的 framework 实现
 
@@ -535,8 +577,35 @@ os.time  os.clock  os.date  math.random  math.randomseed
 
 删掉的是 `uf:try` 的 C 绑定,不是 `markFatal`/`guardFatal` 的语义。
 
-verto 第 6 条(人为阻塞每个长耗时 binding,验证总退出仍在预算内)进 CI:12 个原语
-逐个注入阻塞。这条 roadmap 一票否决至今没跑过。
+> **改名注记 2026-07-29(阶段 3d `4030ffd`)**:`markFatal` 今天叫
+> **`markTerminal(AutomationErrorKind)`**——它不再只是置一个布尔,而是把那个 **kind**
+> 一并闩住,`TaskHost` 在写 `run.finished` 之前读回来(见 §12 的落地更正)。
+> `guardFatal` 名字不变。本文其余各节(§16)提到 `markFatal` 处一并按此读。
+
+veto 第 6 条(人为阻塞每个长耗时 binding,验证总退出仍在预算内)进 CI。~~这条 roadmap
+一票否决至今没跑过。~~(**2026-07-29 `1fb41a7` 起它跑了**,见下。)
+
+> **落地更正 2026-07-29(阶段 3f `1fb41a7`)——它现在跑了,而且不是 12 个,是 8 个**:
+> `tests/task/test-veto-blocking.cpp`,在 CI 里。八个能阻塞的原语逐个阻塞,八个都在
+> 2 秒预算内退出(实测 0.11–0.25 秒,24 核满载下仍留 8–18 倍余量)。
+>
+> | 原语 | 阻塞在哪 |
+> |---|---|
+> | `cycle_open` | `IFrameSource::capture`——真截图,也是唯一自带取消通道(`CaptureBudget`)的端口,所以这里阻塞在**那个** token 上,session 若不转发 run 的 stop 就挂 |
+> | `cycle_close` / `cycle_page` / `cycle_find` / `emit` | trace recorder——这四个动词里唯一能等的宿主调用 |
+> | `cycle_click` | `IActionSink::click`——真投递 |
+> | `wait` / `settle` | 自己那段切片睡眠(`core::pollSleep`) |
+>
+> **四个豁免,写了理由而不是留白**:`deadline` 是一次 `MonotonicInstant::now()` 加一次
+> 受检加法;`random` 是一次 RNG 抽取;`terminal` 读一个 bool(它连 `guardFatal` 都不过);
+> **`raise` 用 VM 分配铸出 Tier B 载体然后 longjmp——没有端口、不进 recorder、根本够不到
+> 任何宿主调用**。所以本节原话「12 个原语逐个注入阻塞」隐含的「十二个都可能阻塞」这个
+> 假设对 `raise` 不成立,按此更正。
+>
+> 套件头部还钉了两条自身边界,免得被读成比实际更强:`ITraceSink::emit` 与
+> `IActionSink::click` **不带取消通道**,所以那四个用例证明的只有宿主这半边——阻塞调用
+> 一返回,run 就在预算内终局结束。那两个 sink 的有界性是 sink 自己的性质;给它们任一
+> 加取消通道会改变「宿主总能取消」这句话的含义,是设计问题,不是测试切片能改的。
 
 ## 九、错误
 
@@ -793,6 +862,78 @@ C++ 在每条事件上盖:`seq`(单调)、`runId`、`generationId`,以及 `wallC
 - 每事件字段长度、字符集、总载荷有上限,**在请求边界拒绝,不静默截断**。
   step 名来自 project 字符串字面量,长度/字符集/同父唯一性是 C++ 的责任。
 
+> **落地更正 2026-07-29(阶段 3d `4030ffd`)——上面这份规则集有两条没能原样活下来,
+> 一条改了形态,还多出一个必须写清的分类。** 状态机落在
+> `modules/trace/source/trace/stream-validator.{hpp,cpp}`,由 `TraceRecorder` 持有并在
+> 每条事件上跑——recorder 是全仓唯一通向 sink 的路径,所以绕不过去。
+>
+> **1. 「同父唯一性」删除,因为不可执行。** 有三种完全正常的形状会在同一个父下重开一个
+> 同名兄弟:一个 `for` 循环、一个 `ctx:retry` 的 body、一个最多打 `max_hits` 次的
+> interrupt——而 retry 这个形状正是 §9 存在的理由。把规则收窄成「**同时打开**的兄弟唯一」
+> 又是空话:严格良嵌套决定了一个父任何时刻至多有一个打开的子。
+>
+> 由此得到一个必须写下来、否则以后一定被重新踩的推论:**step path 不是一个 run 内的
+> 唯一地址**。同一条 path 会在一次 run 里出现多次,区分一次重复的是 `retry_attempt`
+> 那对 (attempt, attempts),不是 path。任何按「path 唯一」去 join 或去重的读法都是错的。
+>
+> **2. 「每条 `task.native_call` 必须落在当时打开的 step 作用域内」实现为盖章,不是检查。**
+> 按字面读它禁止一个从不调 `ctx:step` 的任务,而那是完全合法的任务。落地的做法是:
+> 状态机在**每一行写下的当时**把打开的 step path 盖上去,于是一次调用既无法声称一个没打开
+> 的作用域,也无法漏掉一个打开的作用域——**没有任何东西留给检查去抓**,这条规则由构造成立。
+>
+> 机制上是 `StampedTraceEvent` 多了一个 `openSteps()`,与 `seq` / `runId` / `generationId`
+> 一样属于**图章而不是事件本身**(发事件的人不能自己说他在哪几个 step 里);线上多了一个
+> `steps` 数组,**只在非空时出现**,所以一个从不调 `ctx:step` 的任务写出的每一行都跟以前
+> 一样。`framework.step_started` 携带的是它**父**的 path,配对的 `step_finished` 携带的是
+> 含它自己的 path——因为图章读的是事件**应用之前**的作用域。
+>
+> **3. 拒绝分两个 kind,不是一个。** 分界线就是 §9 的那条:谁造成的。
+>
+> - **Tier B `InvalidResource`,generation 活着**:step 名为空、超长、非法 UTF-8、含控制
+>   字节、嵌套超过上限、把打开的 path 顶过总载荷预算,以及 interrupt id 的同一组检查。
+>   这些全部源自 project 的字符串字面量或 project 自己的嵌套,作者能 catch、能改。
+>   把一个 65 字节的 step 名报成 framework bug 是错的。
+> - **`InternalInvariant`,花掉 generation**:第二条 `run.started`;`run.finished` 之后
+>   还来事件;finish 指名的不是最内层未闭 step;`retry_attempt` 超过其声明的 attempts、
+>   或接不上任何打开的 retry 作用域、或 attempt/attempts 为 0;`interrupt_handled` /
+>   `interrupt_exhausted` 前面没有 match、或指名的不是最内层那次 match;
+>   `interrupt_matched` 嵌套了一个同 id 的 match。这些只有 framework 或宿主造得出来。
+>
+> 一次 `InternalInvariant` 在**抛出之前**先 `markTerminal`,否则 project 的一个 `pcall`
+> 就把 framework 的 bug 吞了、继续驱动引擎。
+>
+> 具体的上限,四个都是待标定占位(已进 §18):
+>
+> | 常数 | 值 | 管什么 |
+> |---|---|---|
+> | `k_maxScopeLabelBytes` | 64 字节 | 一个 step 名或 interrupt id 的长度 |
+> | `k_maxScopeDepth` | 16 | step 嵌套深度上限,interrupt match 嵌套另算一份同值 |
+> | `k_maxStepPathBytes` | 256 字节 | 整条打开的 step path(名字 + 每层一个分隔符)的总载荷 |
+> | `k_maxTrackedRetryScopes` | 32 | 同时追踪的嵌套 retry 作用域数 |
+>
+> 字符集判的是 **UTF-8 而不是 ASCII**,这是刻意的:`ctx:step("日常", ...)` 必须能用。
+> 拒的是会**弄坏一行**的东西(非法序列会让 trace 文件本身不是合法 UTF-8;控制字节会让
+> 读者的终端去执行而不是打印),不是「不眼熟」的东西。
+>
+> **4. 「`run.finished` 时仍有未闭 step ⇒ `Failed(InternalInvariant)`」是一道前置检查,
+> 不是把那一行拦掉。** `TaskHost` 在**构造闭合行之前**调
+> `TraceRecorder::requireScopesClosed()`,把失败折进报告,**然后照样把 `run.finished`
+> 写出去**并让它报告这次失败。别指望看到「少了一行」——一个从来没闭合的 bracket 是比
+> 「在失败上闭合」更差的证据。同一处还折进另一件脚本的返回值表达不了的事:
+> 宿主闩住的终局 kind(`TaskContext::terminalKind()`),所以**一个被 project 吞掉的终局
+> 报不出 `Completed`**。两者都让位于 run 已经有的失败——一次被取消的 run 里未闭的 step
+> 是取消的后果,不是第二个原因。
+>
+> **5. `framework.*` 今天落地八条**:`step_started` / `step_finished` /
+> `retry_attempt` / `retry_backoff` / `interrupt_matched` / `interrupt_handled` /
+> `interrupt_exhausted` / `settled`,全部由 `modules/task/runtime/ctx.luau` 发出。
+> `subtask_entered` / `subtask_exited` 照原计划留给 P1,`TraceEventKind` 里还没有它们,
+> 所以上面那条「与 step 的交错一致」的规则今天没有对应实现。
+>
+> `emit` **自己不写 `task.native_call`**:事件本身就是记录,再写一行「发生过一次 trace
+> 调用」会把每条 framework 事件翻倍而不增加任何证据。所以读一条流时,`framework.*` 与
+> `task.native_call` 是不重叠的两套行,不要按「每个原语调用都有一行 native_call」去数。
+
 ### 定位
 
 **task 与 framework 事件是审计日志,不是重放日志。** 重放靠 seed + 测试里记录的观察
@@ -877,6 +1018,27 @@ bundle + 测试 `.luau` → 断言原语调用序列与语义 trace。
 interrupt first-match/不重入/max_hits、周期开关配对、确定性顺序、framework 内部错误
 分类。
 
+> **落地更正 2026-07-29(阶段 3e `1fb41a7`)——机制不是上面这个,`tests/task/runtime/`
+> 不存在**:假能力面和它那个转发模块都是**测试 TU 里的 C++ 字符串字面量**
+> (`tests/task/test-framework-surface.cpp`),沿用 `test-semantic-events.cpp` 已有的先例。
+> 这样更便宜:不新增生成器输入,不动构建图,`manifest.txt` 的 `[embed]` 段不变。
+>
+> 接缝是新增的 **`script::testing::scriptedPrivateCapabilities`**
+> (`modules/script/source/script/testing/capability-probe.hpp`,实现在
+> `script/ffi/capability-probe.cpp`):它把一段 Luau chunk 装成
+> `EngineConfig::installPrivateCapabilities` 的产物,于是真的 framework bundle 跑在一张
+> **测试自己写的**原语表上。两个细节值得记:
+>
+> - 它收一个 `inner`,即假面收到的唯一实参,让假面把不想假造的原语**转发**下去——
+>   尤其是 `raise`,它的 Tier B 载体是宿主 mint 的 userdata,Luau chunk 伪造不出来。
+> - 那张假表**不冻结**(真的那张冻结):假面记录调用序列,那是它必须继续写的状态。
+>   私有性仍由老理由成立——boot 在把表交给每个 framework 模块之后就丢掉宿主的引用。
+>
+> 它关的缺口用一句可证伪的话说明了自己:把 framework 的默认轮询间隔从 500 改成 501,
+> 恰好红一个用例(共 124 个);在这一片之前,那处改动对**整个仓库**都是不可见的。
+> 同批删掉一个 engine 层的 retry-policy 用例——它断言的 engine 事实,能力面版本用一份
+> 真实的 attempt 日志作对照复现得更精确。
+
 ### C++ 侧
 
 票据校验(死票、跨 generation 票、错误 kind 的票)、周期消费后一切操作失败、
@@ -906,6 +1068,14 @@ project 取不到私有能力面、`pcall`/`ctx:try` 吞不掉终局、无限循
 > `tests/script/test-veto-suite.cpp` 今天只覆盖它的底座切片(不可 yield C 帧里的死循环),
 > 真正「阻塞一个注册的宿主 C binding」要等阶段 3 的 `deadline` / `wait` 原语与
 > `IFrameSource::capture()` 的 deadline/stop_token 一起做。
+
+> **状态更新 2026-07-29(阶段 3f `1fb41a7`)——最后那一条也落地了,但不在对抗套件里**:
+> 它没有成为第三个 adversarial 文件,而是进了 **task 套件**——
+> `tests/task/test-veto-blocking.cpp`,因为被阻塞的是 task 自己的原语和它们背后的端口,
+> 而不是底座的一条攻击面。上面「除最后一条外已落地」这句就此作废:三条线索
+> (底座对抗、表面对抗、逐原语阻塞)现在都在 CI 里。八阻塞四豁免的名单与理由见 §8 的
+> 落地更正。`tests/script/test-veto-suite.cpp` 的头部注释也已改成指向它,不再写
+> 「等第一个 uf.* binding」。
 
 ### 真机验收
 
@@ -1111,14 +1281,15 @@ SLA;一条 trace 足以解释每一步。
 #### 2e — 对抗套件扩充(**已完成,`2ebcf0c`**)
 
 - 两个新文件按被攻击的层分:`tests/script/test-adversarial-substrate.cpp` 与
-  `tests/task/test-adversarial-surface.cpp`。覆盖清单与仍未落地的那一条见 §15 的状态注。
+  `tests/task/test-adversarial-surface.cpp`。覆盖清单见 §15 的状态注(当时还缺的第三条
+  ——逐原语阻塞——已于阶段 3f `1fb41a7` 落地,落在 task 套件而不是第三个对抗文件)。
 - 副产物是三处文档更正,都已就地写回:§11 的不可 yield 矩阵漏了 `__newindex`、
   它的「run 返回 OK」只对 driver 成立(§11 的更正注),以及 §8 的取消保证并不建立在
   终局闩上——VM 中断先于 call 指令完成就已经拦住了(§8 的补记)。
 
 出口:全门绿 + 对抗套件绿。**已达成。**
 
-### 阶段 3 — framework 承接 task policy
+### 阶段 3 — framework 承接 task policy(**已完成 2026-07-29,`1fb41a7`**)
 
 - **3a(`f146329`,已完成)** `deadline` / `wait` / `settle` 原语;
   `IFrameSource::capture()` 补 deadline/stop_token(落地为 `CaptureBudget`,期限由
@@ -1137,18 +1308,27 @@ SLA;一条 trace 足以解释每一步。
   而不是像旧的 no-op 接缝那样只在一次等待的开头响一次。
 - **3c(`8b16f2d`,已完成)** 删 engine 的 `waitForPage` / `PageWait` /
   `sweepKnownPopups`。**engine 从此完全不轮询**,每个动词都是单次的。
-- **3d(进行中)** 语义事件 + C++ 校验状态机 + 载荷上限;`emit` 与 `terminal` 两个原语
-  随这一批落地(§5 的形状快照按 `8b16f2d` 写,不含它们)。
-- **未做** framework Luau 单测的 fake 能力面形态。§15 要的是「装一个脚本化的假能力面」;
-  今天 `tests/task/test-framework-context.cpp` 覆盖的是同一张清单
-  (step 嵌套、wait 成功/超时、on 覆盖 retryable、interrupt first-match / max_hits、
-  周期开关配对、等待中取消),但驱动方式是**假 engine 端口**而不是假能力面。差别在于
-  它仍然要过真的识别与 `CycleLedger`,所以「framework 恰好调了哪几个原语、什么顺序」
-  这件事今天断言不到——要断言它,那张假能力面还是得建。
-- **未做** 一票否决第 6 条进 CI(人为阻塞每个原语)。§15 已注明它等 3a 的 `deadline` /
-  `wait` 与 `capture()` 的 budget,这两样现在都有了,阻塞点齐了。
+- **3d(`4030ffd`,已完成)** 语义事件 + C++ 校验状态机 + 载荷上限;`emit` 与 `terminal`
+  两个原语随这一批落地,§5 的表面至此到齐(见 §5 的新形状快照)。状态机是
+  `modules/trace/source/trace/stream-validator.{hpp,cpp}`,由 `TraceRecorder` 持有。
+  同批 `markFatal` 改名 `markTerminal(kind)`。**§12 的规则集有两条没能原样活下来**——
+  同父唯一性删除、native_call 的作用域规则改为盖章——外加拒绝分成 Tier B / 不变量两个
+  kind,全部见 §12 的落地更正。
+- **3e(`1fb41a7`,已完成)** framework 作为一个单元被测:
+  `tests/task/test-framework-surface.cpp`,经新增的
+  `script::testing::scriptedPrivateCapabilities` 接缝把一张脚本化的假能力面注入
+  `installPrivateCapabilities`。形态与 §15 原稿不同(没有 `tests/task/runtime/`,
+  假面是测试 TU 里的 C++ 字符串字面量),见 §15 的落地更正。
+- **3f(`1fb41a7`,已完成)** 一票否决第 6 条进 CI:`tests/task/test-veto-blocking.cpp`,
+  八个能阻塞的原语逐个阻塞、四个豁免写明理由。见 §8 的落地更正。
 
-出口:**弹窗-长等待缺口关闭(3b 已达成)**;全门绿。
+出口:**弹窗-长等待缺口关闭(3b `d1a0685` 已达成——interrupt 在等待循环的每一轮都有
+机会匹配,`ctx.luau` 的 `observeCycle` 每轮先跑 `runInterrupts`,而不是像旧的 no-op
+接缝那样只在一次等待的开头响一次)**;全门绿(**2026-07-29 在 `1fb41a7` 的干净工作树上
+实跑 `ctest -L CI`:16/16 通过**)。**两条均已达成,本阶段完成。**
+
+> 本阶段之后仍在推进的只剩阶段 4(第一个真日常 + 真机验收)与条件性的阶段 5。
+> 阶段 4 是开发者的裁决,不由实现批次推动。
 
 ### 阶段 4 — 第一个真日常(P0-C)
 
@@ -1207,6 +1387,28 @@ pause 的实现(只留 §13 的签名,以及「framework 的观察周期边界�
    不是就近,是 3b 之后**宿主已经没有任何代码读它们**:等待循环在 Luau,framework
    读不到的默认值就是 framework 拥有不了的 policy。标定时也按这张表分两批——宿主那三个
    要真机 soak 的分布数据,framework 那四个靠第一个真日常的手感。
+
+   **阶段 3d(`4030ffd`)又多四个**,全在宿主侧,全住
+   `modules/trace/source/trace/stream-validator.hpp`,全是待标定占位:
+
+   | 常数 | 值 | 符号 | 为什么在宿主这一侧 |
+   |---|---|---|---|
+   | step 名 / interrupt id 长度上限 | 64 字节 | `k_maxScopeLabelBytes` | 名字来自 project 字面量,长度是宿主对一行证据的封顶 |
+   | 嵌套深度上限 | 16 | `k_maxScopeDepth` | step 与 interrupt match 各一份;超过它的任务是结构有问题,trace 不该绕着记 |
+   | 打开的 step path 总载荷 | 256 字节 | `k_maxStepPathBytes` | 这条 path 盖在其后每一行上,是真正决定写入量的预算 |
+   | 同时追踪的 retry 作用域数 | 32 | `k_maxTrackedRetryScopes` | 界定一串短 retry 能占多少内存;超出只损失外层作用域的匹配触达 |
+
+   标定口径与上面 framework 那四个一样:靠第一个真日常的手感——64 字节能不能装下一个
+   中文 step 名(约二十字)、256 字节会不会被一条正常的三层 path 顶掉。前三个还有一个
+   宿主侧的看点,要等真机 soak 才有数据:本节最后一条风险(单条 trace 的写入量)
+   就是靠 `k_maxStepPathBytes` 兜的。
+
+   同一批要一起标的还有一处**已知的、有意的错位**:`task.interrupt` 在**声明时不检查
+   id 长度**(`task.luau` 只要求非空字符串),超长的 id 要等到**第一次匹配**、
+   `interrupt_matched` 进校验状态机时才按 Tier B `InvalidResource` 拒绝。这是 §12
+   那条边界的直接后果——上限住在 C++,而 `task.luau` 不该持有第二份要保持相等的真相——
+   代价是错误报得晚:一个从不触发的 interrupt 带着非法 id 也不会有人说什么。
+   第一个真日常时一并看:要么接受这个延迟,要么给 framework 一个查上限的原语。
 
 2. workbench 共享元素展开名(`back_<page>`)直接成为 `uf.recognizers.back_main`
    这类 member key,可读性是否接受(p0b 遗留项)。
@@ -1289,3 +1491,33 @@ pause 的实现(只留 §13 的签名,以及「framework 的观察周期边界�
 `.claude/skills/correct-doc-drift/SKILL.md` 拿「`waitForPage` 的内层轮询循环」当
 doc-vs-code 矛盾的范例,而今天矛盾的方向反过来了(代码没有循环、文档还写着),
 那是技能文件,属治理范围。
+
+### 第三批(阶段 3d–3f 落地后,2026-07-29,核对至 `1fb41a7`)
+
+阶段 3 收尾。这一批的重点不是又搬了什么,而是**设计里有两条规则没能原样活下来**——
+那是本文自己要改的部分,不是外围文档的转述问题。
+
+- 本文 §5 / §6 / §8 / §12 / §15 / §17 / §18 — 见各节的落地更正与形状快照。
+  §12 的两条(同父唯一性删除、native_call 作用域改为盖章)是这一批最承重的更正。
+- `docs/knowledge/{cn,en}/module-script.md` — 一票否决第 6 条从「排在阶段 3 / 至今没跑过」
+  改为已在 CI(`tests/task/test-veto-blocking.cpp`),两处/每个镜像。
+- `docs/knowledge/{cn,en}/README.md` — 「待补的两页」的写作时点从「等阶段 3d」改为
+  给出建议:阶段 3 已完成、表面已稳定,现在写。
+- `docs/TODO.md` — 进度注记从「核对至 `2ebcf0c`,阶段 1/2 完成」改为阶段 1/2/3 全部完成;
+  「仍未落地的一票否决第 6 条」一句作废。
+- `CONTEXT.md` — 新增两条词条:`Trace stream validator`(校验的是**序列**,不是 schema;
+  两个失败 kind 的分界)与 `Open step path`(它**不是**唯一地址,`_Avoid_` 里钉掉
+  step id / step address / step key 三种会重新引入唯一性假设的叫法)。私有能力面那条
+  的名单已经列了 `emit` 与 `terminal`,核对后与 `buildPrivateSurface` 一致,不动。
+
+未做、留给后续:
+
+- **`module-task.md` / `module-trace.md` 那两页**。上一批把它们的时点定在「等阶段 3d」,
+  那个条件现在满足了。建议**现在写,不等阶段 4**:阶段 3 完成意味着这两层的表面
+  (十二个原语、`umbraflow-trace/v1` 的事件族、校验状态机)已经稳定,而阶段 4 是**用**
+  这个表面写第一个真日常、标定常数,改的是数值不是形状;等阶段 4 只会让这两页在最需要
+  它们的那个时候(照着 trace 读一次真机失败)刚好还不存在。
+- `scripts/generate_code_atlas/data/*.json` 与 `tour_content.py` 仍在讲被删的
+  `waitForPage` 循环。阶段 3 已完成,**现在值得跑一次 `generate-code-atlas`**——
+  代码地图集重建的成本只在架构稳定时才划算,而它现在稳定了。
+- `.claude/skills/correct-doc-drift/SKILL.md` 的反向范例,同上一批,仍未处理(技能文件)。

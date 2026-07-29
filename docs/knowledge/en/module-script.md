@@ -309,8 +309,13 @@ The hardening ledger's hard red line requires that cancellation abandon the coro
 `lua_break()` in the interrupt, and never use `luaL_error()`, which `pcall` can swallow. It also
 requires long-running C++ bindings to honor their own deadline/stop token; a VM interrupt cannot
 preempt a stuck C++ call. Together the two form a "500ms total exit" rather than a single VM trick.
-The per-binding half of that (veto 6, artificially blocking each primitive) is scheduled for stage 3
-of `docs/plans/2026-07-29-three-layer-task-system.md` and has not run yet.
+The per-binding half of that (veto 6, artificially blocking each primitive) **landed on 2026-07-29
+in `1fb41a7` and now runs in CI**: `tests/task/test-veto-blocking.cpp`, which lives outside this
+module because what gets blocked is the task layer's own primitives. Eight blockable primitives are
+blocked in turn and all eight exit inside a 2 s budget; `deadline`, `random`, `terminal`, and
+`raise` are exempt with stated reasons — `raise` mints its carrier out of VM allocations and
+longjmps, so it reaches no host call at all. The roster and the reasoning are in
+`docs/plans/2026-07-29-three-layer-task-system.md` §8.
 
 ## Relationship to the Product Runtime
 
@@ -416,11 +421,12 @@ case is why `installSandbox` strips those globals *before* the bundle loads rath
   `Engine` can still execute a script.
 
 Sandbox, memory quota, cancellation, budgets, globals isolation, and `deepFreeze` are all pinned now
-— by `test-script.cpp`'s later cases and by `test-veto-suite.cpp`, which covers vetoes 1-5. What is
-still unpinned here is veto 6 (each long-running binding artificially blocked, total exit still
-within budget), host binding, and strict-background behavior; the first is scheduled for stage 3 and
-the other two are not this module's to prove. Luau upstream tests do not enter the project CI because
-of `LUAU_BUILD_TESTS=OFF`.
+— by `test-script.cpp`'s later cases and by `test-veto-suite.cpp`, which covers vetoes 1-5. Veto 6
+(each long-running binding artificially blocked, total exit still within budget) is in CI too, but
+**not in this module**: it is `tests/task/test-veto-blocking.cpp` (2026-07-29, `1fb41a7`), because
+what has to be blocked is the task layer's primitives and the ports behind them. What is still
+unpinned here is host binding and strict-background behavior, neither of which is this module's to
+prove. Luau upstream tests do not enter the project CI because of `LUAU_BUILD_TESTS=OFF`.
 
 The roadmap's six vetoes must be filled in as a host regression suite:
 
