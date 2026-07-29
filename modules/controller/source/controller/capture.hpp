@@ -11,6 +11,7 @@
 
 #include <chrono>
 #include <memory>
+#include <stop_token>
 
 namespace uf
 {
@@ -141,6 +142,20 @@ namespace uf
         ) -> Result<WgcCaptureSession>;
 
         [[nodiscard]] auto capture() -> Result<Frame>;
+
+        // The bounded form: waits at most `frameWaitTimeout` for the next frame,
+        // clamped by the session's own stall fuse, and abandons the wait as soon
+        // as `cancellation` is requested. The no-argument overload above is this
+        // one at the configured stall timeout with nothing to cancel it; the
+        // engine's IFrameSource adapter uses this one, because a caller holding a
+        // deadline must be able to impose it on the compositor wait rather than
+        // discover it a whole stall period late.
+        [[nodiscard]]
+        auto capture(
+            MonotonicInstant::Duration frameWaitTimeout,
+            std::stop_token const& cancellation
+        ) -> Result<Frame>;
+
         [[nodiscard]] auto validateTargetInstance() -> Status;
         [[nodiscard]] auto close() -> Status;
 

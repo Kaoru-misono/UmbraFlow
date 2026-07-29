@@ -143,6 +143,7 @@ if(TARGET ${PROJECT_NAME}_task)
             task/test-task-loader.cpp
             task/test-script-validator.cpp
             task/test-deterministic.cpp
+            task/test-time-primitives.cpp
         LIBS
             ${PROJECT_NAME}_task
             ${PROJECT_NAME}_image

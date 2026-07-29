@@ -586,6 +586,13 @@ namespace uf::trace
                     std::format("{}", *event.nativeCall->hitCycleOrdinal)
                 );
             }
+            if (event.nativeCall->durationMillis.has_value())
+            {
+                builder.addLiteral(
+                    "durationMillis",
+                    std::format("{}", *event.nativeCall->durationMillis)
+                );
+            }
             builder.addString("outcome", nativeCallOutcomeName(event.nativeCall->outcome));
         }
 

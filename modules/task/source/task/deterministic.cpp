@@ -1,7 +1,6 @@
 #include <task/deterministic.hpp>
 
 #include <core/error/contracts.hpp>
-#include <core/numeric/checked-arithmetic.hpp>
 #include <core/types/integer.hpp>
 
 namespace uf::task
@@ -15,28 +14,6 @@ namespace uf::task
         // exactly like the Luau compiler tag.
         constexpr auto k_pcgMultiplier     = uint64{6364136223846793005};
         constexpr auto k_pcgStreamSelector = uint64{1442695040888963407};
-
-        // One read of the logical clock advances it by this many whole logical
-        // milliseconds. It is a logical tick, not a real duration: its only job is
-        // to keep ctx:now() a strictly increasing, fully reproducible ordinal. A
-        // tick of one keeps consecutive reads one millisecond apart, honoring the
-        // whole-millisecond contract, and by construction cannot introduce any
-        // run-to-run variation.
-        constexpr auto k_logicalTickMillis = int64{1};
-    }
-
-    auto DeterministicClock::readMillis() noexcept -> int64
-    {
-        auto const current = m_logicalMillis;
-
-        // Advance by one logical tick. checkedAdd guards the (practically
-        // unreachable) 2^63-read overflow so the counter can never wrap and hand a
-        // later call a smaller reading than an earlier one; at saturation the clock
-        // simply stops advancing, staying monotone. No wall clock is consulted, so
-        // the returned value depends only on how many times the clock was read.
-        m_logicalMillis =
-            checkedAdd(m_logicalMillis, k_logicalTickMillis).value_or(m_logicalMillis);
-        return current;
     }
 
     DeterministicRng::DeterministicRng(uint64 seed) noexcept

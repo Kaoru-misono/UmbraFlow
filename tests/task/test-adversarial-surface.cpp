@@ -63,7 +63,8 @@ namespace uf::task
             {
             }
 
-            [[nodiscard]] auto capture() -> Result<Frame> override
+            [[nodiscard]]
+            auto capture(CaptureBudget const& /*budget*/) -> Result<Frame> override
             {
                 m_stop.request_stop();
                 return fail(
@@ -104,7 +105,8 @@ namespace uf::task
             {
             }
 
-            [[nodiscard]] auto capture() -> Result<Frame> override
+            [[nodiscard]]
+            auto capture(CaptureBudget const& /*budget*/) -> Result<Frame> override
             {
                 ++m_captureCount;
                 if (m_stopAt != 0 && m_captureCount >= m_stopAt)
@@ -128,7 +130,8 @@ namespace uf::task
         class StallOnlyFrameSource final : public engine::IFrameSource
         {
         public:
-            [[nodiscard]] auto capture() -> Result<Frame> override
+            [[nodiscard]]
+            auto capture(CaptureBudget const& /*budget*/) -> Result<Frame> override
             {
                 return fail(
                     AutomationErrorKind::CaptureStalled,

@@ -1,10 +1,13 @@
 #pragma once
 
 #include <core/error/result.hpp>
+#include <core/time/monotonic-time.hpp>
 
 #include <domain/detection.hpp>
 #include <domain/frame.hpp>
 #include <domain/space.hpp>
+
+#include <stop_token>
 
 namespace uf::engine
 {
@@ -20,6 +23,25 @@ namespace uf::engine
     class IFrameSource
     {
     public:
+        // The bound on one capture call. It is nested because nothing names it
+        // except capture(), and it exists because a capture is the one engine
+        // operation that can block on an external producer: without it an
+        // adapter waiting on a compositor decides for itself how long a caller
+        // waits, and a cancelled run stays blocked in a frame pool.
+        //
+        // Both members are load-bearing and an implementation MUST honour both.
+        // The deadline is absolute rather than a duration so a caller that
+        // already spent part of its budget cannot silently renew it, and it has
+        // no default because MonotonicInstant refuses to invent one -- every
+        // construction site states the bound it is imposing. Returning at the
+        // deadline, or promptly once the stop is requested, is the contract; a
+        // capture that outlives either is a defect in that adapter.
+        struct CaptureBudget final
+        {
+            MonotonicInstant deadline;
+            std::stop_token  cancellation{};
+        };
+
         IFrameSource() = default;
 
         IFrameSource(IFrameSource const&) = delete;
@@ -29,7 +51,9 @@ namespace uf::engine
 
         virtual ~IFrameSource() = default;
 
-        [[nodiscard]] virtual auto capture() -> Result<Frame> = 0;
+        [[nodiscard]]
+        virtual auto capture(CaptureBudget const& budget) -> Result<Frame> = 0;
+
         [[nodiscard]] virtual auto validateTargetInstance() -> Status = 0;
     };
 

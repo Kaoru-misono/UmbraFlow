@@ -3,6 +3,7 @@
 #include <core/error/contracts.hpp>
 #include <core/error/result.hpp>
 #include <core/time/monotonic-time.hpp>
+#include <core/time/poll-sleep.hpp>
 #include <core/types/integer.hpp>
 
 #include <annotation/authorization.hpp>
@@ -19,13 +20,9 @@
 #include <trace/event.hpp>
 #include <trace/recorder.hpp>
 
-#include <algorithm>
-#include <chrono>
 #include <format>
 #include <optional>
-#include <stop_token>
 #include <string>
-#include <thread>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -116,42 +113,6 @@ namespace uf::engine
                 scores.emplace_back(std::move(score));
             }
             return scores;
-        }
-
-        // The longest a single poll sleep blocks before it re-checks cancellation
-        // and the deadline. It bounds cancellation latency when the poll interval
-        // is large, without changing the effective poll cadence.
-        constexpr auto k_maxPollSleepSlice = std::chrono::milliseconds{100};
-
-        // Sleeps for up to `interval`, in slices no longer than k_maxPollSleepSlice,
-        // and stops early once cancellation is requested or the deadline has
-        // passed. Sleeping is its only effect: the caller re-checks both conditions
-        // and decides the outcome, so this only bounds latency.
-        auto pollSleep(
-            MonotonicInstant::Duration interval,
-            MonotonicInstant deadline,
-            std::stop_token const& cancellation
-        ) -> void
-        {
-            using Duration   = MonotonicInstant::Duration;
-            auto const slice = std::chrono::duration_cast<Duration>(
-                k_maxPollSleepSlice
-            );
-            auto remaining = interval;
-            while (remaining > Duration::zero())
-            {
-                if (
-                    cancellation.stop_requested()
-                    || MonotonicInstant::now() >= deadline
-                )
-                {
-                    return;
-                }
-
-                auto const step = std::min(remaining, slice);
-                std::this_thread::sleep_for(step);
-                remaining -= step;
-            }
         }
     }
 
@@ -303,7 +264,33 @@ namespace uf::engine
         }
 
         UF_TRY(m_frameSource->validateTargetInstance());
-        UF_TRY_VALUE(frame, m_frameSource->capture());
+
+        // Every capture is bounded. The deadline is minted here, from the one
+        // configured capture timeout, so no adapter decides for itself how long
+        // an observation may block, and the session's own cancel source travels
+        // with it so a stop requested while a frame pool is empty ends the wait
+        // instead of being noticed one whole capture later. A timeout that
+        // overflows the monotonic clock is a configuration error rather than a
+        // licence to wait forever, so it fails closed here.
+        auto const captureDeadline = MonotonicInstant::now().checkedAdd(
+            m_config.captureTimeout
+        );
+        if (!captureDeadline)
+        {
+            return fail(
+                AutomationErrorKind::InvalidResource,
+                "capture timeout overflows the monotonic clock"
+            );
+        }
+        UF_TRY_VALUE(
+            frame,
+            m_frameSource->capture(
+                IFrameSource::CaptureBudget{
+                    .deadline     = *captureDeadline,
+                    .cancellation = m_config.cancellation,
+                }
+            )
+        );
 
         UF_TRY_VALUE(
             lease,

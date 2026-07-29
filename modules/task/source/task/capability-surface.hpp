@@ -130,12 +130,13 @@ namespace uf::task
         // The private capability surface for a live task, suitable for
         // script::EngineConfig::installPrivateCapabilities: the observation-cycle
         // primitives (cycle_open / cycle_close / cycle_page / cycle_find /
-        // cycle_click, plus wait_for_page, now and random), each bound to
-        // `context`'s EngineSession and its cycle ledger. It also registers the
-        // handle metatables only a bound session can mint -- the cycle ticket,
-        // the hit, and the resolved page with its page:is method -- and carries
-        // the Tier B error label to the framework, which is the only piece of
-        // the surface that is data rather than capability.
+        // cycle_click, plus wait_for_page), the time primitives (deadline / wait
+        // / settle) and random, each bound to `context`'s EngineSession and its
+        // cycle ledger. It also registers the handle metatables only a bound
+        // session can mint -- the cycle ticket, the hit, the deadline, and the
+        // resolved page with its page:is method -- and carries the Tier B error
+        // label to the framework, which is the only piece of the surface that is
+        // data rather than capability.
         //
         // The returned installer captures a raw pointer to `context`. The caller
         // MUST keep `context` alive for at least as long as the script::Engine the

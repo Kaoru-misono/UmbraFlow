@@ -45,6 +45,7 @@
 #include <memory>
 #include <optional>
 #include <stop_token>
+#include <string>
 #include <string_view>
 #include <utility>
 #include <vector>
@@ -221,6 +222,13 @@ namespace uf::task
     }
 
     // Replays a fixed sequence of frames, repeating the last once exhausted.
+    //
+    // It returns without blocking, which is how it honours the capture budget:
+    // a source that never waits cannot outlive a deadline and has no wait for a
+    // stop to interrupt. Every fake below that ignores its budget does so for
+    // this reason; the one that does not is DeadlineHonouringFrameSource in
+    // tests/engine/test-session.cpp, which is where the budget's own contract is
+    // exercised.
     class FakeFrameSource final : public engine::IFrameSource
     {
         std::vector<Frame> m_frames;
@@ -232,7 +240,8 @@ namespace uf::task
         {
         }
 
-        [[nodiscard]] auto capture() -> Result<Frame> override
+        [[nodiscard]]
+        auto capture(CaptureBudget const& /*budget*/) -> Result<Frame> override
         {
             if (m_frames.empty())
             {
@@ -341,6 +350,44 @@ namespace uf::task
         }
     };
 
+    // The verb of every native call a run recorded, in order. Two suites read
+    // it -- the binding suite for the cycle verbs, the time-primitive suite for
+    // settle -- so it lives here rather than in either.
+    [[nodiscard]]
+    inline auto nativeCallVerbs(std::vector<trace::StampedTraceEvent> const& events)
+        -> std::vector<std::string>
+    {
+        auto verbs = std::vector<std::string>{};
+        for (auto const& event : events)
+        {
+            if (event.event().nativeCall.has_value())
+            {
+                verbs.emplace_back(event.event().nativeCall->verb);
+            }
+        }
+        return verbs;
+    }
+
+    // The first native call recorded for `verb`, or null when the run made
+    // none. The returned pointer observes storage owned by the recording sink
+    // behind `events`, which the annotation on that parameter states.
+    [[nodiscard]]
+    inline auto findNativeCall(
+        std::vector<trace::StampedTraceEvent> const& events UF_LIFETIME_BOUND,
+        std::string_view verb
+    ) noexcept -> trace::TraceEvent::NativeCall const*
+    {
+        for (auto const& event : events)
+        {
+            auto const& call = event.event().nativeCall;
+            if (call.has_value() && call->verb == verb)
+            {
+                return &*call;
+            }
+        }
+        return nullptr;
+    }
+
     // The run identity these fixtures stamp. The binding layer never authors it
     // -- TaskHost does -- so a fixed pair is enough to prove every event of a run
     // lands under one identity.
@@ -405,7 +452,8 @@ namespace uf::task
         {
         }
 
-        [[nodiscard]] auto capture() -> Result<Frame> override
+        [[nodiscard]]
+        auto capture(CaptureBudget const& /*budget*/) -> Result<Frame> override
         {
             ++m_captureCount;
             if (m_captureCount == 1U)

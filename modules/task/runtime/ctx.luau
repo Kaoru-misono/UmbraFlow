@@ -65,8 +65,21 @@ function ctx:wait_for_page(page, options)
     return native.wait_for_page(page, options)
 end
 
-function ctx:now()
-    return native.now()
+-- The three time primitives, forwarded as thinly as the rest. There is no
+-- ctx:now: a script reads no clock, so the only shapes waiting can take are a
+-- host-minted deadline polled by ctx:wait, and the declarative ctx:settle.
+-- The loop that decides WHAT to re-observe between two ctx:wait calls is the
+-- framework's own policy layer and lands with ctx:step and ctx:cycle.
+function ctx:deadline(milliseconds)
+    return native.deadline(milliseconds)
+end
+
+function ctx:wait(deadline, intervalMilliseconds)
+    return native.wait(deadline, intervalMilliseconds)
+end
+
+function ctx:settle(milliseconds)
+    return native.settle(milliseconds)
 end
 
 function ctx:random(low, high)

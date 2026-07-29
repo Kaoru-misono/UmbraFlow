@@ -5,7 +5,6 @@
 #include <doctest/doctest.h>
 
 #include <array>
-#include <chrono>
 #include <cstddef>
 #include <vector>
 
@@ -99,58 +98,6 @@ namespace uf::task
                 CHECK(static_cast<double>(count) > expected * 0.85);
                 CHECK(static_cast<double>(count) < expected * 1.15);
             }
-        }
-
-        TEST_CASE("The logical clock ignores wall time and reproduces across runs")
-        {
-            // Regression for the veto #4 hole where ctx:now() returned wall time
-            // elapsed since construction. That reading varied run to run with
-            // execution speed, so a now()-branching script diverged even at the same
-            // seed. The virtualized clock advances by a fixed logical tick per read
-            // and consults no wall clock, so the real time a run happens to take can
-            // never enter a reading.
-            //
-            // Two clocks are built at the same instant. Only `a` observes real wall
-            // time pass between its reads. A wall-derived clock would fold that gap
-            // into `a`'s second reading and disagree with `b`; the virtualized clock
-            // must not.
-            auto a = DeterministicClock{};
-            auto b = DeterministicClock{};
-
-            int64 const a0 = a.readMillis();
-
-            // Force well over a millisecond of real wall time to elapse, seen only
-            // between `a`'s two reads. A busy wait on steady_clock guarantees a lower
-            // bound on the elapsed time and, because each iteration calls now(),
-            // cannot be optimized away.
-            constexpr auto k_gapMillis = int64{25};
-            auto const     spinStart   = std::chrono::steady_clock::now();
-            while (
-                std::chrono::steady_clock::now() - spinStart
-                < std::chrono::milliseconds{k_gapMillis}
-            )
-            {
-            }
-
-            int64 const a1 = a.readMillis();
-            int64 const b0 = b.readMillis();
-            int64 const b1 = b.readMillis();
-
-            // The contract ctx:now() still promises: non-negative and monotone.
-            CHECK(a0 >= 0);
-            CHECK(a1 >= a0);
-
-            // The ~25 ms of real time did NOT enter the reading: two reads differ by
-            // a single logical tick, not by ~25. The old wall-clock implementation
-            // fails this line (its delta would be about k_gapMillis).
-            CHECK(a1 - a0 < k_gapMillis);
-
-            // Reproducibility across runs: `b`, which saw none of that wall time,
-            // yields the exact same first two readings as `a`. A wall-derived clock
-            // would have b0 already near k_gapMillis (its construction predates the
-            // spin), diverging from a0.
-            CHECK(a0 == b0);
-            CHECK(a1 == b1);
         }
     }
 }

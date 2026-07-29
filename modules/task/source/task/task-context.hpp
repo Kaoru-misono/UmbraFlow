@@ -30,6 +30,34 @@ namespace uf::task
     // sequence.
     inline constexpr auto k_defaultRandomSeed = uint64{0x9E3779B97F4A7C15};
 
+    // The longest a single ctx:settle may declare. A settle is a declarative
+    // pause a task asks for, so a request beyond this ceiling is a project
+    // error rather than a framework bug (design section 9 reserves the invariant
+    // kind for failures a project cannot cause), and the binding refuses it as a
+    // Tier B InvalidResource the author can catch and correct.
+    //
+    // CALIBRATION: thirty seconds is a conservative placeholder awaiting the
+    // first real daily. It is deliberately far above any settle a UI transition
+    // needs and far below the max-runtime budget, so it catches an author who
+    // meant minutes without capping anything a real animation waits for. Waiting
+    // longer than this is what ctx:wait plus a deadline is for -- that loop
+    // re-observes, where a settle only sleeps.
+    inline constexpr auto k_maxSettleDuration = MonotonicInstant::Duration{
+        std::chrono::seconds{30}
+    };
+
+    // The floor a ctx:wait poll interval is clamped up to. Without it a
+    // framework loop could ask for a zero interval and spin the observation
+    // cycle as fast as captures complete, burning the instruction budget and the
+    // target's CPU for no extra evidence.
+    //
+    // CALIBRATION: ten milliseconds is a conservative placeholder awaiting the
+    // first real daily. It is low enough to be invisible next to a capture and
+    // high enough that a degenerate loop cannot become a busy wait.
+    inline constexpr auto k_minWaitPollInterval = MonotonicInstant::Duration{
+        std::chrono::milliseconds{10}
+    };
+
     // Host-side configuration for one TaskContext: the wait budgets a script's
     // ctx:wait_for_page falls back to when it omits them, plus the single
     // cancellation source shared with the owned EngineSession and the VM
@@ -97,7 +125,6 @@ namespace uf::task
     {
         engine::EngineSession m_session;
         TaskContextConfig     m_config;
-        DeterministicClock    m_clock{};
         DeterministicRng      m_rng;
         trace::TraceRecorder& m_recorder;
 
@@ -189,6 +216,40 @@ namespace uf::task
             std::optional<MonotonicInstant::Duration> pollInterval
         ) -> Result<CycleWait>;
 
+        // Sleeps until `deadline`, or for `interval`, whichever comes first, and
+        // reports whether budget remains afterwards -- false means the deadline
+        // has passed and the caller's wait loop is over. It backs the `wait`
+        // primitive, which is why it decides nothing else: the framework owns
+        // what is polled between two calls, and this owns only the pause and the
+        // verdict on the deadline.
+        //
+        // The sleep is the shared core::pollSleep, so it wakes at a slice
+        // boundary once the run's cancel source is requested. The caller then
+        // asks cancellationRequested() and takes the terminal path; this reports
+        // budget, never cancellation.
+        [[nodiscard]]
+        auto waitUntil(
+            MonotonicInstant deadline,
+            MonotonicInstant::Duration interval
+        ) const -> bool;
+
+        // Sleeps for `duration`, returning early once the run's cancel source is
+        // requested. It backs the `settle` primitive: a declarative bounded pause
+        // whose length is part of the replayable record, which is why the binding
+        // traces it. The caller enforces the k_maxSettleDuration ceiling and
+        // re-checks cancellationRequested() afterwards.
+        auto settle(MonotonicInstant::Duration duration) const -> void;
+
+        // Whether the run's single cancel source has requested a stop.
+        //
+        // The observation and action primitives never need this: they reach the
+        // engine, which already fails closed on the same token. The time
+        // primitives do, because they reach nothing -- a sleep that ignored the
+        // token would be the one place a cancelled generation could still burn
+        // its whole wait -- so they consult it before pausing and again after.
+        [[nodiscard]]
+        auto cancellationRequested() const noexcept -> bool;
+
         // Whether an observation cycle is open, and so whether the host is still
         // holding a frame. This is the host-side truth a test asserts release
         // against; nothing about it involves the Lua collector.
@@ -227,15 +288,6 @@ namespace uf::task
         // same recorder.
         [[nodiscard]]
         auto emitTrace(trace::TraceEvent const& event) -> Status;
-
-        // The next reading of the task's logical clock, in whole milliseconds,
-        // backing ctx:now(). Monotone and non-decreasing across calls, and
-        // identical across runs of the same script: the clock is virtualized (a
-        // fixed logical tick per read, no wall clock), so reading it advances the
-        // clock -- hence non-const. See DeterministicClock for why now() is a
-        // reproducible logical ordinal and not real elapsed time.
-        [[nodiscard]]
-        auto nowMillis() noexcept -> int64;
 
         // The next uniform double in [0, 1) from the task's seeded RNG, backing the
         // no-argument ctx:random(). Deterministic for a given seed and draw order.

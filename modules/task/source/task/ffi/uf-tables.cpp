@@ -19,6 +19,7 @@
 
 #include <trace/event.hpp>
 
+#include <algorithm>
 #include <chrono>
 #include <memory>
 #include <optional>
@@ -62,7 +63,7 @@ namespace uf::task
         // label is rooted at `uf`, the same script-visible root the DATA table is
         // registered under, so an object names the surface it came from.
         //
-        // The first five are also VM registry keys: a handle kind's metatable is
+        // The first six are also VM registry keys: a handle kind's metatable is
         // shared by every handle of that kind and is registered under its label.
         // k_errorType is not, because a Tier B error carrier's metatable holds
         // that one error's fields and so exists per instance; the label is still
@@ -73,6 +74,7 @@ namespace uf::task
         constexpr auto k_cycleType        = "uf.cycle";
         constexpr auto k_resolvedPageType = "uf.resolved_page";
         constexpr auto k_hitType          = "uf.hit";
+        constexpr auto k_deadlineType     = "uf.deadline";
         constexpr auto k_errorType        = "uf.error";
 
         // The single global name the DATA installer registers, and therefore the
@@ -475,6 +477,11 @@ namespace uf::task
             std::optional<uint64>                   cycleOrdinal{};
             std::optional<uint64>                   hitCycleOrdinal{};
             std::optional<annotation::RecognizerId> recognizerId{};
+
+            // The pause a settle declared, in whole milliseconds. It is the only
+            // argument of a primitive that carries no handle at all, and a replay
+            // cannot reconstruct the run without it.
+            std::optional<uint64> durationMillis{};
         };
 
         [[nodiscard]]
@@ -491,6 +498,7 @@ namespace uf::task
                     .outcome         = outcome,
                     .cycleOrdinal    = call.cycleOrdinal,
                     .hitCycleOrdinal = call.hitCycleOrdinal,
+                    .durationMillis  = call.durationMillis,
                 },
                 .recognizerId = call.recognizerId,
                 .errorKind    = errorKind,
@@ -749,6 +757,73 @@ namespace uf::task
             return 1;
         }
 
+        // Converts a script's millisecond count into the monotonic Duration the
+        // host times with. `what` names the script-facing spelling the count
+        // came from, because that is what the author wrote to get here.
+        //
+        // The Duration is steady_clock's tick -- nanoseconds on every supported
+        // standard library -- so the conversion multiplies by the ms-to-tick
+        // ratio. A raw duration_cast would overflow the signed tick rep
+        // (undefined behaviour) far below the millisecond count's own int64
+        // limit, and before any monotonic-overflow guard downstream could run.
+        // Build the Duration through the checked helpers instead: a NaN,
+        // negative, non-finite, or out-of-range count -- or one whose tick
+        // product would not fit -- is a Tier B InvalidResource here rather than
+        // silent wraparound.
+        [[nodiscard]]
+        auto millisToDuration(
+            lua_State* state,
+            double millis,
+            std::string const& what
+        ) -> MonotonicInstant::Duration
+        {
+            using Duration  = MonotonicInstant::Duration;
+            using MsToTicks = std::ratio_divide<std::milli, Duration::period>;
+            static_assert(MsToTicks::den == 1, "Duration must be no coarser than a millisecond");
+
+            auto ticks = std::optional<Duration::rep>{};
+            if (millis >= 0.0)
+            {
+                if (auto const count = checkedIntegralCast<Duration::rep>(millis))
+                {
+                    ticks = checkedMultiply<Duration::rep>(
+                        *count,
+                        static_cast<Duration::rep>(MsToTicks::num)
+                    );
+                }
+            }
+            if (!ticks)
+            {
+                raiseTierB(
+                    state,
+                    AutomationErrorKind::InvalidResource,
+                    what + " must be a finite, non-negative millisecond count within range"
+                );
+            }
+            return Duration{*ticks};
+        }
+
+        // Reads a required millisecond argument at `index`. A missing or
+        // non-numeric argument is a Tier B InvalidResource, keeping the
+        // script-facing failure model single-shaped.
+        [[nodiscard]]
+        auto checkMillisDuration(
+            lua_State* state,
+            int index,
+            std::string const& what
+        ) -> MonotonicInstant::Duration
+        {
+            if (lua_type(state, index) != LUA_TNUMBER)
+            {
+                raiseTierB(
+                    state,
+                    AutomationErrorKind::InvalidResource,
+                    what + " requires a number of milliseconds"
+                );
+            }
+            return millisToDuration(state, lua_tonumber(state, index), what);
+        }
+
         // Reads an optional millisecond field from the wait options table at
         // `optsIndex`. Returns nullopt when the options are absent (nil/none) or
         // the named field is nil, so the caller applies the TaskContext default. A
@@ -774,6 +849,8 @@ namespace uf::task
                 );
             }
 
+            auto const what = std::string{"wait_for_page option '"} + field + "'";
+
             lua_getfield(state, optsIndex, field);
             if (lua_isnil(state, -1))
             {
@@ -786,47 +863,13 @@ namespace uf::task
                 raiseTierB(
                     state,
                     AutomationErrorKind::InvalidResource,
-                    std::string{"wait_for_page option '"} + field
-                        + "' must be a number of milliseconds"
+                    what + " must be a number of milliseconds"
                 );
             }
             double const millis = lua_tonumber(state, -1);
             lua_pop(state, 1);
 
-            // The wait Duration is steady_clock's tick -- nanoseconds on every
-            // supported standard library -- so turning a millisecond count into it
-            // multiplies by the ms-to-tick ratio. A raw duration_cast would overflow
-            // the signed tick rep (undefined behaviour) far below the millisecond
-            // count's own int64 limit, and before waitForPage's monotonic-overflow
-            // guard could ever run. Build the Duration through the checked helpers
-            // instead: a NaN, negative, non-finite, or out-of-range count -- or one
-            // whose tick product would not fit -- is a Tier B InvalidResource here
-            // rather than silent wraparound.
-            using Duration  = MonotonicInstant::Duration;
-            using MsToTicks = std::ratio_divide<std::milli, Duration::period>;
-            static_assert(MsToTicks::den == 1, "Duration must be no coarser than a millisecond");
-
-            auto ticks = std::optional<Duration::rep>{};
-            if (millis >= 0.0)
-            {
-                if (auto const count = checkedIntegralCast<Duration::rep>(millis))
-                {
-                    ticks = checkedMultiply<Duration::rep>(
-                        *count,
-                        static_cast<Duration::rep>(MsToTicks::num)
-                    );
-                }
-            }
-            if (!ticks)
-            {
-                raiseTierB(
-                    state,
-                    AutomationErrorKind::InvalidResource,
-                    std::string{"wait_for_page option '"} + field
-                        + "' must be a finite, non-negative millisecond count within range"
-                );
-            }
-            return Duration{*ticks};
+            return millisToDuration(state, millis, what);
         }
 
         // wait_for_page(pageReference, options) -> { page = resolved-page,
@@ -882,18 +925,140 @@ namespace uf::task
             return 1;
         }
 
-        // now() -> number. The task's virtualized logical clock in whole
-        // milliseconds: a strictly increasing, fully reproducible ordinal, not real
-        // elapsed time (see DeterministicClock). It has no engine effect, so unlike
-        // the automation verbs it is not gated on the cancellation/fatal latch: it
-        // neither drives nor observes the session, and the armed VM interrupt
-        // already stops a cancelled generation on its own. Reading advances the
-        // logical clock, which is why nowMillis is a non-const context call.
-        auto nowFn(lua_State* state) -> int
+        // Raises the Tier C sentinel when the run's cancel source has already
+        // requested a stop. The three time primitives below reach no engine
+        // verb, so nothing downstream would fail closed for them: this is where
+        // they do it, and it runs both before a pause and after one, so a stop
+        // that lands mid-sleep ends the primitive on the terminal path rather
+        // than as a normal return. Every later primitive is then refused by
+        // guardFatal, before any capture.
+        auto guardCancelled(lua_State* state, TaskContext* context) -> void
+        {
+            if (context->cancellationRequested())
+            {
+                raiseCancelled(state, context);
+            }
+        }
+
+        // deadline(ms) -> deadline handle. Mints the absolute instant `ms` from
+        // now as an opaque host handle.
+        //
+        // The instant is absolute and host-minted for the same reason a cycle
+        // ticket is: a script that could name the value could also renew it, and
+        // a wait budget a script can extend is not a budget. It reads no clock
+        // back to Lua -- `now()` was deleted with this primitive's arrival --
+        // so the only thing a script can do with a deadline is hand it to wait.
+        auto deadlineFn(lua_State* state) -> int
         {
             auto* context = boundContext(state);
-            lua_pushnumber(state, static_cast<double>(context->nowMillis()));
+            guardFatal(state, context);
+            guardCancelled(state, context);
+
+            auto const duration = checkMillisDuration(state, 1, "ctx:deadline");
+            auto const instant  = MonotonicInstant::now().checkedAdd(duration);
+            if (!instant)
+            {
+                raiseTierB(
+                    state,
+                    AutomationErrorKind::InvalidResource,
+                    "ctx:deadline overflows the monotonic clock"
+                );
+            }
+
+            pushBoxed<MonotonicInstant>(
+                state,
+                *instant,
+                &destroyBox<MonotonicInstant>,
+                k_deadlineType
+            );
             return 1;
+        }
+
+        // wait(deadline, interval_ms) -> bool. Pauses for one poll interval and
+        // reports whether the deadline still has budget: false means it expired
+        // and the framework's wait loop is over.
+        //
+        // It polls nothing itself. What is re-observed between two calls is the
+        // framework's business, which is what keeps this an indivisible effect
+        // rather than a policy loop smuggled into C++ (design section 18's
+        // primitive admission rule). Bounded by min(interval, time to deadline),
+        // and it never sleeps at all once the deadline has passed.
+        //
+        // The interval is clamped up to k_minWaitPollInterval so a framework bug
+        // asking for zero cannot turn the observation cycle into a busy wait.
+        auto waitFn(lua_State* state) -> int
+        {
+            auto* context = boundContext(state);
+            guardFatal(state, context);
+
+            auto* deadline =
+                checkBox<MonotonicInstant>(state, 1, k_deadlineType, "deadline");
+            auto const requested =
+                checkMillisDuration(state, 2, "ctx:wait poll interval");
+            auto const interval = std::max(requested, k_minWaitPollInterval);
+
+            guardCancelled(state, context);
+            bool const budgetRemains = context->waitUntil(*deadline, interval);
+            guardCancelled(state, context);
+
+            lua_pushboolean(state, budgetRemains ? 1 : 0);
+            return 1;
+        }
+
+        // settle(ms) -> (). A declarative bounded pause, and the only one: it
+        // reaches no engine verb, so its whole content is the duration, which is
+        // why it is traced. Design section 10 makes that duration part of the
+        // replay input -- a run cannot be reproduced from a pause nobody wrote
+        // down.
+        //
+        // A request beyond k_maxSettleDuration is Tier B rather than a framework
+        // invariant failure: a project asking to settle for ten minutes is a
+        // project error, and section 9 reserves the invariant kind for failures a
+        // project cannot cause. It is refused before the pause and untraced, like
+        // every other argument rejection.
+        auto settleFn(lua_State* state) -> int
+        {
+            auto* context = boundContext(state);
+            guardFatal(state, context);
+
+            auto const duration = checkMillisDuration(state, 1, "ctx:settle");
+            if (duration > k_maxSettleDuration)
+            {
+                raiseTierB(
+                    state,
+                    AutomationErrorKind::InvalidResource,
+                    "ctx:settle exceeds the host's settle ceiling; wait against a "
+                    "deadline instead of sleeping"
+                );
+            }
+
+            // The duration came from a whole millisecond count and is capped far
+            // below any tick-count ceiling, so the round trip back to
+            // milliseconds is exact and non-negative.
+            auto const call = NativeCallIdentity{
+                .verb           = "settle",
+                .durationMillis = static_cast<uint64>(
+                    std::chrono::duration_cast<std::chrono::milliseconds>(duration)
+                        .count()
+                ),
+            };
+
+            guardCancelled(state, context);
+            context->settle(duration);
+            if (context->cancellationRequested())
+            {
+                // Record the abandoned settle before taking the terminal path,
+                // so the trace shows the pause that was cut short rather than
+                // ending on a verb that never reported anything.
+                auto const cancelled = fail(
+                    AutomationErrorKind::Cancelled,
+                    "cancelled while settling"
+                );
+                traceHostCallFailure(state, context, call, cancelled.error());
+            }
+
+            traceHostCall(state, context, call, trace::NativeCallOutcome::Succeeded);
+            return 0;
         }
 
         // The largest magnitude a random bound may take. Beyond 2^53 a Lua
@@ -1067,8 +1232,8 @@ namespace uf::task
         }
 
         // Registers the metatables only a bound session can ever mint: the cycle
-        // ticket, the hit and the resolved page. They belong to the private
-        // capability installer because every one of them is produced by a
+        // ticket, the hit, the resolved page and the deadline. They belong to the
+        // private capability installer because every one of them is produced by a
         // primitive, so a VM with no session has nothing that could wear them.
         //
         // The Tier B error carrier is absent on purpose. Its metatable is per
@@ -1087,6 +1252,9 @@ namespace uf::task
 
             beginMetatable(state, k_hitType);
             UF_TRY(finishMetatable(state, k_hitType));
+
+            beginMetatable(state, k_deadlineType);
+            UF_TRY(finishMetatable(state, k_deadlineType));
 
             beginMetatable(state, k_resolvedPageType);
             {
@@ -1259,7 +1427,23 @@ namespace uf::task
                 "uf_wait_for_page",
                 context
             );
-            installPrimitive(state, surface, "now", &nowFn, "uf_now", context);
+            installPrimitive(
+                state,
+                surface,
+                "deadline",
+                &deadlineFn,
+                "uf_deadline",
+                context
+            );
+            installPrimitive(state, surface, "wait", &waitFn, "uf_wait", context);
+            installPrimitive(
+                state,
+                surface,
+                "settle",
+                &settleFn,
+                "uf_settle",
+                context
+            );
             installPrimitive(
                 state,
                 surface,

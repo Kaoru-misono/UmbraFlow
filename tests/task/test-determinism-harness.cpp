@@ -46,19 +46,19 @@ namespace uf::task
         // The representative script. It walks a PageUnknown -> PageResolved
         // transition (cycle 1 then cycle 2), records a find that misses on the
         // unknown frame and a successful recognition + click on the resolved one,
-        // and reads ctx:now / ctx:random -- the two host facilities that make
+        // and reads ctx:settle / ctx:random -- the two host facilities that make
         // determinism a real risk rather than a triviality.
         //
-        // now() is the logical clock: it is fully virtualized (a fixed tick per
-        // read, no wall clock), so its readings are reproducible run to run and
-        // could safely shape the output; the script still uses it only for a
-        // monotonic guard, keeping this suite's focus on the RNG path. random() is
-        // the seeded RNG: the tail loop draws a fixed number of values and lets each
-        // decide whether to run one extra observation cycle, so the emitted native
-        // call sequence encodes the random stream and depends on the seed and
-        // nothing else.
+        // settle() is the declarative pause, and a zero-millisecond one is still
+        // a traced native call: its line carries the duration the script asked
+        // for, so a pause that changed length would change the canonical string.
+        // That is exactly the property the deleted ctx:now could not offer -- a
+        // reading nothing recorded. random() is the seeded RNG: the tail loop
+        // draws a fixed number of values and lets each decide whether to run one
+        // extra observation cycle, so the emitted native call sequence encodes
+        // the random stream and depends on the seed and nothing else.
         constexpr std::string_view k_harnessScript = R"lua(
-            local t0 = ctx:now()
+            ctx:settle(0)
 
             -- Cycle 1: an unknown page and a find that completes with no match.
             local c1 = ctx:cycle_open()
@@ -89,8 +89,6 @@ namespace uf::task
                 end
             end
 
-            local t1 = ctx:now()
-            if t1 < t0 then error("now went backwards") end
             return 1
         )lua";
 

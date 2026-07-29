@@ -50,7 +50,8 @@ namespace uf::task
             {
             }
 
-            [[nodiscard]] auto capture() -> Result<Frame> override
+            [[nodiscard]]
+            auto capture(CaptureBudget const& /*budget*/) -> Result<Frame> override
             {
                 m_stop.request_stop();
                 return m_frame;
@@ -118,41 +119,6 @@ namespace uf::task
                 kinds.emplace_back(event.event().kind);
             }
             return kinds;
-        }
-
-        [[nodiscard]]
-        auto nativeCallVerbs(std::vector<trace::StampedTraceEvent> const& events)
-            -> std::vector<std::string>
-        {
-            auto verbs = std::vector<std::string>{};
-            for (auto const& event : events)
-            {
-                if (event.event().nativeCall.has_value())
-                {
-                    verbs.emplace_back(event.event().nativeCall->verb);
-                }
-            }
-            return verbs;
-        }
-
-        // The first native call recorded for `verb`, or null when the run made
-        // none. The returned pointer observes storage owned by the recording sink
-        // behind `events`, which the annotation on that parameter states.
-        [[nodiscard]]
-        auto findNativeCall(
-            std::vector<trace::StampedTraceEvent> const& events UF_LIFETIME_BOUND,
-            std::string_view verb
-        ) noexcept -> trace::TraceEvent::NativeCall const*
-        {
-            for (auto const& event : events)
-            {
-                auto const& call = event.event().nativeCall;
-                if (call.has_value() && call->verb == verb)
-                {
-                    return &*call;
-                }
-            }
-            return nullptr;
         }
 
         // Builds a context seeded with `seed` and draws `count` values from its
@@ -1075,12 +1041,14 @@ namespace uf::task
                 if cycle_open ~= nil or cycle_close ~= nil then return 0 end
                 if cycle_page ~= nil or cycle_find ~= nil then return 0 end
                 if cycle_click ~= nil or wait_for_page ~= nil then return 0 end
-                if now ~= nil or random ~= nil or try ~= nil then return 0 end
+                if deadline ~= nil or wait ~= nil or settle ~= nil then return 0 end
+                if random ~= nil or try ~= nil then return 0 end
 
                 -- Nor a field of uf, by index or by rawget.
                 local names = {
                     'cycle_open', 'cycle_close', 'cycle_page', 'cycle_find',
-                    'cycle_click', 'wait_for_page', 'now', 'random', 'try',
+                    'cycle_click', 'wait_for_page', 'deadline', 'wait',
+                    'settle', 'random', 'try',
                 }
                 for _, name in ipairs(names) do
                     if uf[name] ~= nil then return 0 end
@@ -1154,27 +1122,6 @@ namespace uf::task
             CHECK(runBound(context, built, source) == doctest::Approx(1.0));
             CHECK(context.traceFailed());
             CHECK(built.clicks->clickCount() == 1);
-        }
-
-        TEST_CASE("ctx:now returns a non-negative, non-decreasing whole millisecond count")
-        {
-            auto built = buildBinding(resolvingFrames(FrameId{60}));
-            REQUIRE(built.session.has_value());
-            TaskContext context{*std::move(built.session), *built.recorder};
-
-            // now() is a number, never negative, never runs backwards between two
-            // calls, and carries no fractional millisecond tail.
-            constexpr std::string_view source = R"lua(
-                local a = ctx:now()
-                local b = ctx:now()
-                if type(a) ~= 'number' or type(b) ~= 'number' then return 0 end
-                if a < 0 or b < 0 then return 0 end
-                if b < a then return 0 end
-                if a ~= math.floor(a) or b ~= math.floor(b) then return 0 end
-                return 1
-            )lua";
-
-            CHECK(runBound(context, built, source) == doctest::Approx(1.0));
         }
 
         TEST_CASE("ctx:random is the task's only RNG, covers its interval, and rejects empty ones")

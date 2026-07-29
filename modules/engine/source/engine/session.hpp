@@ -21,6 +21,7 @@
 #include <trace/event.hpp>
 #include <trace/recorder.hpp>
 
+#include <chrono>
 #include <memory>
 #include <optional>
 #include <stop_token>
@@ -34,6 +35,16 @@ namespace uf::engine
 
     class EngineSession;
 
+    // The longest one capture may block before observe() gives up on it. It is a
+    // conservative placeholder awaiting the first real daily and a real-machine
+    // soak: the WGC adapter's own stall fuse is a second, and a compositor that
+    // has produced nothing for twice that is not going to produce a frame this
+    // cycle either. Calibrate it here -- it is the only place the bound is
+    // spelled -- once measured capture latencies exist.
+    inline constexpr auto k_defaultCaptureTimeout = MonotonicInstant::Duration{
+        std::chrono::seconds{2}
+    };
+
     // The read-only configuration a session captures once at construction. It is
     // a transport aggregate: build it with designated initializers. The live
     // fingerprint has no default state, so it must be supplied at every
@@ -45,6 +56,7 @@ namespace uf::engine
         uint64                     maximumPixelComparisons{};
         MonotonicInstant::Duration recognitionTimeout{};
         MonotonicInstant::Duration maxActionFrameAge{k_defaultMaxActionFrameAge};
+        MonotonicInstant::Duration captureTimeout{k_defaultCaptureTimeout};
 
         std::stop_token cancellation{};
     };

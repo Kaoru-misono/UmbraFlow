@@ -4,6 +4,8 @@
 
 #include <core/error/contracts.hpp>
 #include <core/error/result.hpp>
+#include <core/time/monotonic-time.hpp>
+#include <core/time/poll-sleep.hpp>
 #include <core/types/integer.hpp>
 
 #include <annotation/resource.hpp>
@@ -150,6 +152,45 @@ namespace uf::task
         return CycleWait{.ticket = ticket, .page = std::move(wait.page)};
     }
 
+    auto TaskContext::waitUntil(
+        MonotonicInstant deadline,
+        MonotonicInstant::Duration interval
+    ) const -> bool
+    {
+        // Report the expiry without sleeping when the deadline has already
+        // passed: a wait whose budget is spent must not first spend an interval.
+        if (MonotonicInstant::now() >= deadline)
+        {
+            return false;
+        }
+
+        pollSleep(interval, deadline, m_config.cancellation);
+        return MonotonicInstant::now() < deadline;
+    }
+
+    auto TaskContext::settle(MonotonicInstant::Duration duration) const -> void
+    {
+        // The settle's own end is its deadline, so the shared poll sleep bounds
+        // it by the same instant its interval would reach and no separate
+        // ceiling has to be reconciled with it.
+        auto const until = MonotonicInstant::now().checkedAdd(duration);
+        if (!until)
+        {
+            // Unreachable while the binding enforces k_maxSettleDuration, which
+            // is far below any monotonic overflow. Sleeping for nothing is the
+            // fail-closed answer: a pause the host cannot bound is one it must
+            // not take.
+            return;
+        }
+
+        pollSleep(duration, *until, m_config.cancellation);
+    }
+
+    auto TaskContext::cancellationRequested() const noexcept -> bool
+    {
+        return m_config.cancellation.stop_requested();
+    }
+
     auto TaskContext::hasOpenCycle() const noexcept -> bool
     {
         return m_cycles.isOpen();
@@ -178,11 +219,6 @@ namespace uf::task
     auto TaskContext::emitTrace(trace::TraceEvent const& event) -> Status
     {
         return m_recorder.emit(event);
-    }
-
-    auto TaskContext::nowMillis() noexcept -> int64
-    {
-        return m_clock.readMillis();
     }
 
     auto TaskContext::nextRandomUnitDouble() noexcept -> double

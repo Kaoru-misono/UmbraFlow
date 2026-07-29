@@ -12,6 +12,7 @@
 #include <core/numeric/checked-arithmetic.hpp>
 #include <core/numeric/checked-cast.hpp>
 #include <core/time/monotonic-time.hpp>
+#include <core/time/poll-sleep.hpp>
 #include <core/types/integer.hpp>
 
 #include <domain/detection.hpp>
@@ -334,7 +335,8 @@ namespace uf::engine
                 m_targetValid = false;
             }
 
-            [[nodiscard]] auto capture() -> Result<Frame> override
+            [[nodiscard]]
+            auto capture(CaptureBudget const& /*budget*/) -> Result<Frame> override
             {
                 if (m_frames.empty())
                 {
@@ -359,6 +361,64 @@ namespace uf::engine
                     );
                 }
                 return ok();
+            }
+        };
+
+        // Blocks until the deadline its budget carries, then reports the expiry,
+        // and records what it was handed.
+        //
+        // It is the one frame source in the suite that HONOURS its budget rather
+        // than satisfying it vacuously. Every other fake returns at once, which
+        // says nothing about a deadline, because it would return without one:
+        // only a source that actually waits can show that the wait ends where the
+        // session said it would, and only a source that keeps the budget can show
+        // the session minted a real one rather than an instant an adapter would
+        // be free to ignore.
+        class DeadlineHonouringFrameSource final : public IFrameSource
+        {
+            std::optional<MonotonicInstant> m_deadline{};
+            bool                            m_cancellable{false};
+
+        public:
+            [[nodiscard]]
+            auto capture(CaptureBudget const& budget) -> Result<Frame> override
+            {
+                m_deadline    = budget.deadline;
+                m_cancellable = budget.cancellation.stop_possible();
+
+                // An hour of requested sleep, so the deadline -- and nothing
+                // else -- is what ends the wait.
+                pollSleep(
+                    std::chrono::duration_cast<MonotonicInstant::Duration>(
+                        std::chrono::hours{1}
+                    ),
+                    budget.deadline,
+                    budget.cancellation
+                );
+
+                return fail(
+                    AutomationErrorKind::Timeout,
+                    "no frame arrived before the capture deadline"
+                );
+            }
+
+            [[nodiscard]] auto validateTargetInstance() -> Status override
+            {
+                return ok();
+            }
+
+            [[nodiscard]]
+            auto deadline() const noexcept -> std::optional<MonotonicInstant>
+            {
+                return m_deadline;
+            }
+
+            // Whether the token that arrived could ever request a stop. A default
+            // std::stop_token cannot, so this tells a session that forwarded its
+            // own cancel source from one that forwarded nothing.
+            [[nodiscard]] auto cancellable() const noexcept -> bool
+            {
+                return m_cancellable;
             }
         };
 
@@ -1146,6 +1206,69 @@ namespace uf::engine
         REQUIRE_FALSE(observation.has_value());
         anno::test::requireErrorKind(observation.error(), AutomationErrorKind::Cancelled);
         CHECK(under.clicks->clickCount() == 0);
+    }
+
+    TEST_CASE("engine session bounds a blocking capture with the configured deadline")
+    {
+        auto parts             = singlePageRuntime();
+        auto const fingerprint = parts.fingerprint;
+
+        auto cancellation   = std::stop_source{};
+        auto config         = baseConfig(fingerprint);
+        config.cancellation = cancellation.get_token();
+        config.captureTimeout = std::chrono::duration_cast<
+            MonotonicInstant::Duration
+        >(std::chrono::milliseconds{50});
+        auto const captureTimeout = config.captureTimeout;
+
+        auto frameSource     = std::make_unique<DeadlineHonouringFrameSource>();
+        auto* const p_source = frameSource.get();
+        auto recorder        = std::make_unique<trace::TraceRecorder>(
+            std::make_unique<CollectingTraceSink>(),
+            k_runId,
+            k_generationId
+        );
+        auto under = EngineSession::create(
+            std::move(parts.loaded),
+            std::move(frameSource),
+            std::make_unique<CountingActionSink>(),
+            *recorder,
+            std::move(config)
+        );
+        REQUIRE(under.has_value());
+
+        // A source that waits for a frame that never arrives returns at the
+        // deadline instead of hanging, which is the whole content of the port's
+        // new contract.
+        auto const start       = MonotonicInstant::now();
+        auto const observation = under->observe();
+        auto const elapsed     = MonotonicInstant::now().saturatingDurationSince(start);
+
+        REQUIRE_FALSE(observation.has_value());
+        anno::test::requireErrorKind(observation.error(), AutomationErrorKind::Timeout);
+        CHECK(
+            elapsed < std::chrono::duration_cast<MonotonicInstant::Duration>(
+                std::chrono::seconds{5}
+            )
+        );
+
+        // What reached the port was the configured budget, not a placeholder an
+        // adapter could satisfy by returning immediately: the deadline is at
+        // least the configured timeout away and nowhere near the five-second
+        // recognition timeout, and the token can actually request a stop.
+        auto const floor = start.checkedAdd(captureTimeout);
+        REQUIRE(floor.has_value());
+        auto const ceiling = start.checkedAdd(
+            captureTimeout
+            + std::chrono::duration_cast<MonotonicInstant::Duration>(
+                std::chrono::seconds{2}
+            )
+        );
+        REQUIRE(ceiling.has_value());
+        REQUIRE(p_source->deadline().has_value());
+        CHECK(*p_source->deadline() >= *floor);
+        CHECK(*p_source->deadline() <= *ceiling);
+        CHECK(p_source->cancellable());
     }
 
     TEST_CASE("engine session waitForPage returns promptly when cancelled mid-sleep")

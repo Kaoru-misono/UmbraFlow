@@ -209,10 +209,10 @@ namespace uf::task
             // resource literals inside its arguments are still enumerated, which
             // is what the report below proves.
             auto const report = validateScriptResources(
-                "local t = ctx:now()\n"
+                "local d = ctx:deadline(1000)\n"
                 "local r = ctx:random(1, 6)\n"
                 "local w = ctx:wait_for_page(uf.pages.home, {})\n"
-                "return t + r",
+                "return r",
                 "context-calls",
                 surface
             );

@@ -30,6 +30,7 @@
 #include <winrt/base.h>
 #pragma warning(pop)
 
+#include <algorithm>
 #include <atomic>
 #include <bit>
 #include <concepts>
@@ -41,6 +42,7 @@
 #include <mutex>
 #include <optional>
 #include <span>
+#include <stop_token>
 #include <string>
 #include <string_view>
 #include <type_traits>
@@ -635,8 +637,12 @@ namespace uf
             // The FrameArrived callback and capture consumer share this state. Every
             // m_latest access is serialized by m_mutex; m_arrived only publishes changes
             // made while that mutex is held.
+            //
+            // condition_variable_any rather than condition_variable so a waiter
+            // can pass a std::stop_token: a cancelled run must leave the frame
+            // wait when the stop is requested, not one stall period later.
             std::mutex                     mutex{};
-            std::condition_variable        arrived{};
+            std::condition_variable_any    arrived{};
             std::optional<CapturedArrival> latest{};
             bool                           acceptingFrames{true};
             std::atomic_bool               itemClosed{false};
@@ -941,13 +947,15 @@ namespace uf
     private:
         [[nodiscard]]
         auto waitForFrame(
-            MonotonicInstant::Duration timeout
+            MonotonicInstant::Duration timeout,
+            std::stop_token const& cancellation
         ) -> Result<CapturedArrival>
         {
             auto lock = std::unique_lock{m_frameSlot->mutex};
             static_cast<void>(
                 m_frameSlot->arrived.wait_for(
                     lock,
+                    cancellation,
                     timeout,
                     [this]
                     {
@@ -990,6 +998,18 @@ namespace uf
             }
 
             lock.unlock();
+
+            // A stop requested during the wait is why no frame is in hand, and it
+            // outranks the stall verdict: reporting CaptureStalled would tell the
+            // operator the target went quiet when the run was cancelled.
+            if (cancellation.stop_requested())
+            {
+                return fail(
+                    AutomationErrorKind::Cancelled,
+                    "capture cancelled while waiting for the next frame"
+                );
+            }
+
             UF_TRY(m_stall.check(MonotonicInstant::now()));
             return fail(
                 AutomationErrorKind::CaptureStalled,
@@ -1557,7 +1577,11 @@ namespace uf
             }
         }
 
-        [[nodiscard]] auto capture() -> Result<Frame>
+        [[nodiscard]]
+        auto capture(
+            MonotonicInstant::Duration frameWaitTimeout,
+            std::stop_token const& cancellation
+        ) -> Result<Frame>
         {
             auto operationLock = std::lock_guard{m_operationMutex};
             if (m_closed)
@@ -1565,10 +1589,28 @@ namespace uf
                 return captureUnavailable("capture called on a closed session");
             }
 
+            // Fail closed before any frame work when the run is already
+            // cancelled, so a stop that landed between two captures never costs
+            // one more compositor round trip.
+            if (cancellation.stop_requested())
+            {
+                return fail(
+                    AutomationErrorKind::Cancelled,
+                    "capture cancelled before a frame was requested"
+                );
+            }
+
             UF_TRY(m_geometry.ensureActive());
+
+            // The caller's budget only ever shortens the wait: the stall fuse
+            // stays the ceiling, so a caller cannot ask this session to sit on an
+            // empty frame pool longer than its own configuration allows.
             UF_TRY_VALUE(
                 arrival,
-                waitForFrame(m_options.captureStallTimeout())
+                waitForFrame(
+                    std::min(frameWaitTimeout, m_options.captureStallTimeout()),
+                    cancellation
+                )
             );
             auto frame = std::move(arrival.frame);
             auto frameClose = scopeExit(
@@ -1713,6 +1755,13 @@ namespace uf
 
         [[nodiscard]] auto hygiene() const noexcept -> CaptureHygiene { return m_hygiene; }
         [[nodiscard]] auto sessionId() const noexcept -> CaptureSessionId { return m_sessionId; }
+
+        [[nodiscard]]
+        auto captureStallTimeout() const noexcept -> MonotonicInstant::Duration
+        {
+            return m_options.captureStallTimeout();
+        }
+
         [[nodiscard]]
         auto targetGeneration() const noexcept -> TargetGeneration
         {
@@ -1755,7 +1804,22 @@ namespace uf
         {
             return captureUnavailable("capture called on a moved-from session");
         }
-        return m_impl->capture();
+        return m_impl->capture(
+            m_impl->captureStallTimeout(),
+            std::stop_token{}
+        );
+    }
+
+    auto WgcCaptureSession::capture(
+        MonotonicInstant::Duration frameWaitTimeout,
+        std::stop_token const& cancellation
+    ) -> Result<Frame>
+    {
+        if (!m_impl)
+        {
+            return captureUnavailable("capture called on a moved-from session");
+        }
+        return m_impl->capture(frameWaitTimeout, cancellation);
     }
 
     auto WgcCaptureSession::validateTargetInstance() -> Status

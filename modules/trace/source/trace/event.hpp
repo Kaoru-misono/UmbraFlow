@@ -221,6 +221,13 @@ namespace uf::trace
             // when a hit from a spent cycle was refused -- which is that
             // refusal's entire content, so both reach the wire.
             std::optional<uint64> hitCycleOrdinal{};
+
+            // The pause a settle declared, in whole milliseconds. A settle
+            // reaches no engine verb, so this line is the only evidence it
+            // happened, and the duration is part of the replay input rather than
+            // a detail: a run that paused two seconds and one that paused ten are
+            // different runs. Absent on every other verb.
+            std::optional<uint64> durationMillis{};
         };
 
         TraceEventKind kind;

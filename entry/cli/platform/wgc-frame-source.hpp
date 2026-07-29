@@ -2,7 +2,9 @@
 
 #include <controller/capture.hpp>
 #include <core/error/result.hpp>
+#include <core/time/monotonic-time.hpp>
 
+#include <domain/error.hpp>
 #include <domain/frame.hpp>
 #include <engine/ports.hpp>
 
@@ -23,9 +25,25 @@ namespace uf::cli::platform
         {
         }
 
-        [[nodiscard]] auto capture() -> Result<Frame> override
+        // Honours the budget by turning the caller's absolute deadline into the
+        // remaining wall time the compositor wait may consume, and by handing the
+        // stop token to that wait rather than only testing it here. An expired
+        // deadline is a Timeout before any frame work: waiting past it would be
+        // the exact defect the budget exists to prevent.
+        [[nodiscard]]
+        auto capture(CaptureBudget const& budget) -> Result<Frame> override
         {
-            return m_session.capture();
+            auto const remaining = budget.deadline.saturatingDurationSince(
+                MonotonicInstant::now()
+            );
+            if (remaining <= MonotonicInstant::Duration::zero())
+            {
+                return fail(
+                    AutomationErrorKind::Timeout,
+                    "capture deadline expired before a frame was requested"
+                );
+            }
+            return m_session.capture(remaining, budget.cancellation);
         }
 
         [[nodiscard]] auto validateTargetInstance() -> Status override
