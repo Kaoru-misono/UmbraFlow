@@ -1,19 +1,24 @@
 -- ctx: the trusted Luau framework's project-facing context object.
 --
+-- One rule decides what lives here: C++ owns every GUARANTEE, this file owns
+-- every POLICY. How long to wait, how often to re-observe, which popup is
+-- handled and how often, when a failure is worth another attempt, how steps
+-- nest -- all of it is Luau, and none of it is C++.
+--
+-- It is Luau for a structural reason rather than for hot reloading. step,
+-- cycle, wait_for_page, retry and every interrupt handler take a PROJECT
+-- function. Written in C++ each of them would be a C callback into Lua with a
+-- deep C stack underneath project code, which is exactly the narrow case where
+-- a hard cancel degrades from an uncatchable break into an ordinary catchable
+-- error -- turning a rare accident into the normal shape. Luau calling Luau
+-- has none of that.
+--
 -- The host builds the private capability surface in C++ and hands it to this
 -- chunk as its one argument, so the primitives live in a closure upvalue and
 -- are never a key of any table a project script can name. The table returned
 -- below is frozen by the loader and published into the project environment as
 -- the global `ctx`; it is the whole of what a project task can reach besides
--- the `uf` data tables.
---
--- Deliberately thin. Every method here forwards one call and decides nothing:
--- the policy layer -- ctx:step, ctx:cycle, ctx:retry, a real wait loop over
--- cycle_open/cycle_page, and the interrupt registry -- is stage 3 of
--- docs/plans/2026-07-29-three-layer-task-system.md and must not be started
--- here. What exists today is exactly the set of bare verbs that used to hang
--- off the `uf` root, so removing them from the project environment costs a
--- project script nothing but a rename.
+-- the `uf` data tables and the `task` declaration surface.
 --
 -- `native` is nil on a VM booted with no bound task session (the data-only
 -- surface, used where only the resource name closure matters). That is
@@ -39,8 +44,432 @@ end
 -- that is, or their claim decays from a difference into an absence.
 frameworkSentinel = "uf-framework-sentinel-6b21f0"
 
+-- CALIBRATION: every constant below is a conservative placeholder awaiting the
+-- first real daily, and every one of them is policy -- which is why they are
+-- here and not in the host's config. The host used to carry the wait defaults
+-- so its own wait loop could apply them; that loop is gone, and a default the
+-- framework cannot see is a default the framework cannot own.
+local k_defaultTimeoutMillis = 600000
+local k_defaultPollMillis    = 500
+
+-- How many attempts a retry policy takes when it names none, and how many times
+-- one interrupt may fire in a single run before it is treated as not working.
+-- The max_hits ceiling is the reason an interrupt cannot spend a whole wait
+-- budget re-handling a popup its handler never actually dismisses.
+local k_defaultRetryAttempts = 3
+local k_defaultMaxHits       = 3
+
+-- The two messages this file owns rather than letting C++ answer for.
+--
+-- Opening a second cycle is a real error and it must fail, but the host's
+-- InternalInvariant is a backstop for a framework bug, not an author-facing
+-- diagnostic: a project that nests two waits should be told what it did and
+-- what to do, in a sentence, on its own line. The layering is the design's --
+-- the framework owns the good message, C++ owns the guarantee -- so this
+-- sentence reaching an author means the framework caught it first, and the
+-- host's invariant firing means the framework has a bug.
+local k_nestedCycleMessage =
+    "cannot open an observation cycle while one is open; consume or close the "
+    .. "outer cycle first"
+local k_closedCycleMessage =
+    "this observation cycle is closed; a cycle ends when its block returns, and "
+    .. "a click consumes it"
+
+-- Framework state for one VM, and therefore for one run: the host builds a
+-- fresh VM per task run and destroys it afterwards, so none of this outlives
+-- the run that wrote it and no reset path is needed (or possible to get wrong).
+--
+-- `openCycle` is the framework's own record of the generation's single open
+-- cycle. It is not a second source of truth for the ledger C++ keeps -- it
+-- cannot be, since the host refuses a second open either way -- it is what lets
+-- the refusal happen HERE, with the sentence above, before a capture is spent.
+local openCycle         = nil
+local stepStack         = {}
+local interrupts        = {}
+local interruptHits     = {}
+local handlingInterrupt = false
+
 local ctx = {}
 
+-- Raises the closed-cycle message at the caller of the view method that asked,
+-- so an author reads their own line rather than a line of this file.
+local function requireLive(state)
+    if not state.live then
+        error(k_closedCycleMessage, 3)
+    end
+end
+
+-- The project-facing view of one observation cycle: what `ctx:cycle`,
+-- `ctx:wait_for_page` and an interrupt handler are handed.
+--
+-- The ticket itself never reaches a project. That is not secrecy -- a ticket
+-- confers nothing without the primitives, which no project can name -- it is so
+-- that a cycle a project holds past its close fails with the sentence above
+-- instead of a StaleObservation from the ledger, because using a finished cycle
+-- is a script bug and not an automation failure.
+--
+-- The view is frozen and carries no metatable. The freeze is the design's rule
+-- for a project-visible framework object; the absence of a metatable is why
+-- `table.freeze` accepts it at all (it refuses a table with a protected
+-- metatable), and it costs nothing here because this object proves no identity:
+-- its methods are closures over the real ticket, so a `table.clone` of it is
+-- exactly as powerful as the original and no more.
+local function newCycleView(state)
+    local view = {}
+
+    -- The page this cycle's frame resolved, or nil for Unknown/Ambiguous. The
+    -- resolution is memoized because it is an engine call with a trace event
+    -- behind it: the wait loop needs the page to match interrupts and to test
+    -- the target, and a project block may want it again, and resolving one
+    -- frame twice would put two engine.page_resolved lines on the wire for one
+    -- observation.
+    function view:page()
+        requireLive(state)
+        if not state.resolved then
+            state.page     = native.cycle_page(state.ticket)
+            state.resolved = true
+        end
+        return state.page
+    end
+
+    function view:find(recognizer)
+        requireLive(state)
+        return native.cycle_find(state.ticket, recognizer)
+    end
+
+    -- A delivered click CONSUMES the cycle, so the view goes dead here rather
+    -- than at the enclosing block's exit. `consumed` is set only after the
+    -- primitive returned: a click that failed may or may not have spent the
+    -- ledger entry, and `cycle_close` is idempotent, so the close on the way
+    -- out is the safe answer for that case.
+    function view:click(hit)
+        requireLive(state)
+        native.cycle_click(state.ticket, hit)
+        state.consumed = true
+        state.live     = false
+    end
+
+    return table.freeze(view)
+end
+
+-- Opens the generation's one observation cycle and records it as the
+-- framework's. `level` is where the nested-cycle message should point: every
+-- caller is a public method called directly by a project, so every caller
+-- passes 3 (error -> this function -> the method -> the author's line).
+local function beginCycle(level)
+    if openCycle ~= nil then
+        error(k_nestedCycleMessage, level)
+    end
+
+    local state = {
+        live     = true,
+        consumed = false,
+        resolved = false,
+    }
+    state.ticket = native.cycle_open()
+    state.view   = newCycleView(state)
+    openCycle    = state
+    return state
+end
+
+-- Ends a cycle, and is the whole of the framework's side of the design's
+-- "framework is responsible for closing". The bookkeeping is dropped BEFORE the
+-- primitive runs: cycle_close can itself raise (a cancelled generation, a trace
+-- sink that failed), and a raise that left `openCycle` set would turn one
+-- failure into a framework that believes a cycle is open forever.
+local function endCycle(state)
+    state.live = false
+    if openCycle == state then
+        openCycle = nil
+    end
+    if not state.consumed then
+        native.cycle_close(state.ticket)
+    end
+end
+
+-- Runs the first registered interrupt whose page matches this cycle, and
+-- reports whether one ran.
+--
+-- First match wins, registration order decides, and an interrupt that has
+-- already fired max_hits times matches nothing further -- returning false
+-- rather than falling through to a later interrupt, because "first match" is
+-- about which interrupt owns this page, not about finding one that still has
+-- budget.
+--
+-- Handlers do not re-enter: a handler is called with the CURRENT cycle, so an
+-- interrupt firing inside an interrupt would be a second handler acting on a
+-- frame the first one is already acting on.
+local function runInterrupts(state, page)
+    if handlingInterrupt or page == nil then
+        return false
+    end
+
+    for index = 1, #interrupts do
+        local entry = interrupts[index]
+        if page:is(entry.when) then
+            local hits = interruptHits[entry.id] or 0
+            if hits >= entry.max_hits then
+                return false
+            end
+
+            interruptHits[entry.id] = hits + 1
+            handlingInterrupt = true
+            local ok, err = pcall(entry.handle, ctx, state.view)
+            handlingInterrupt = false
+            if not ok then
+                error(err, 0)
+            end
+            return true
+        end
+    end
+    return false
+end
+
+-- One turn of the wait loop, run under pcall so the cycle is closed whatever
+-- happens inside it. Returns whether the target page was reached, and what the
+-- project block returned when it was.
+local function observeCycle(state, target, fn)
+    local page = state.view:page()
+    if runInterrupts(state, page) then
+        -- The handler acted on the screen, so this frame no longer describes
+        -- it. Re-observe rather than testing a target against evidence a click
+        -- just invalidated.
+        return false
+    end
+    if page == nil or not page:is(target) then
+        return false
+    end
+    return true, fn(state.view)
+end
+
+-- ctx:step(name, fn) -> whatever fn returned.
+--
+-- A step is the named unit of task structure and nothing else: it decides no
+-- policy, it only records where in the task the work below it belongs. The
+-- stack is truncated to the depth this call opened, on the normal path and on a
+-- raise alike, so steps are strictly well nested by construction -- which is
+-- the property the host's coming validation state machine requires, and which
+-- makes "a step left open at run.finished" a framework bug rather than an
+-- ordinary script outcome.
+function ctx:step(name, fn)
+    if type(name) ~= "string" or name == "" then
+        error("ctx:step needs a non-empty name", 2)
+    end
+    if type(fn) ~= "function" then
+        error("ctx:step needs a function to run", 2)
+    end
+
+    local depth = #stepStack + 1
+    stepStack[depth] = name
+
+    local ok, result = pcall(fn)
+    for index = #stepStack, depth, -1 do
+        stepStack[index] = nil
+    end
+
+    if not ok then
+        error(result, 0)
+    end
+    return result
+end
+
+-- The names of the steps currently open, outermost first. A fresh copy, so a
+-- project reading it cannot reach the framework's own stack.
+--
+-- It exists because "steps are well nested" has to be observable to be worth
+-- anything: without it the property is a claim about code nobody can check from
+-- outside, and the state machine that will enforce it in C++ would be the first
+-- thing to notice a leak.
+function ctx:step_path()
+    return table.clone(stepStack)
+end
+
+-- ctx:cycle(fn) -> whatever fn returned.
+--
+-- Opens one observation cycle, hands its view to fn, and closes it on every
+-- exit path including a raise. The callback shape is what makes both halves
+-- structural rather than conventional: a cycle cannot escape the block, so
+-- "always closed" and "at most one open" are properties of the API rather than
+-- of the author's discipline.
+--
+-- The block's own failure outranks a failure from the close, so an author is
+-- told why their work failed rather than being handed the second-order
+-- consequence.
+function ctx:cycle(fn)
+    if type(fn) ~= "function" then
+        error("ctx:cycle needs a function to run with the cycle", 2)
+    end
+
+    local state = beginCycle(3)
+    local ok, result          = pcall(fn, state.view)
+    local closed, closeError  = pcall(endCycle, state)
+
+    if not ok then
+        error(result, 0)
+    end
+    if not closed then
+        error(closeError, 0)
+    end
+    return result
+end
+
+-- ctx:wait_for_page(page, options, fn) -> whatever fn returned.
+--
+-- The real wait loop, and the reason this whole layer exists. Every turn opens
+-- one cycle, resolves it once, offers it to the interrupt registry, and either
+-- hands it to the project block or closes it and sleeps one poll interval
+-- against a host-minted deadline.
+--
+-- What that buys is the one capability the previous architecture could not
+-- deliver: a popup that appears in the middle of a long wait is handled, and
+-- the wait then CONTINUES. The wait loop used to live in C++ (an engine-side
+-- poll with a permanently no-op popup seam), where the interrupt registry could
+-- not reach it -- the sweep would have fired once at the start of a wait and
+-- never on the polls that matter.
+--
+-- Options are policy and default here: timeout_ms and poll_ms. There is no host
+-- fallback behind them any more.
+function ctx:wait_for_page(target, options, fn)
+    if type(target) ~= "userdata" then
+        error("ctx:wait_for_page needs a uf.pages.<name> handle", 2)
+    end
+    if type(fn) ~= "function" then
+        error("ctx:wait_for_page needs a function to run on the page", 2)
+    end
+
+    local timeoutMillis = k_defaultTimeoutMillis
+    local pollMillis    = k_defaultPollMillis
+    if options ~= nil then
+        if type(options) ~= "table" then
+            error("ctx:wait_for_page options must be a table", 2)
+        end
+        if options.timeout_ms ~= nil then
+            timeoutMillis = options.timeout_ms
+        end
+        if options.poll_ms ~= nil then
+            pollMillis = options.poll_ms
+        end
+    end
+
+    local deadline = native.deadline(timeoutMillis)
+    while true do
+        local state = beginCycle(3)
+        local ok, matched, result = pcall(observeCycle, state, target, fn)
+        local closed, closeError  = pcall(endCycle, state)
+
+        if not ok then
+            error(matched, 0)
+        end
+        if not closed then
+            error(closeError, 0)
+        end
+        if matched then
+            return result
+        end
+
+        -- The deadline is the host's, absolute and unforgeable, and `wait` is
+        -- the only thing that consults it. A false is the budget running out,
+        -- and the timeout is minted by the host so it is a real Tier B error a
+        -- project can catch and a retry can act on -- an `error("timeout")`
+        -- from here would be a plain string and would reach the host as a
+        -- malformed script.
+        if not native.wait(deadline, pollMillis) then
+            native.raise(
+                "timeout",
+                "the page did not resolve before the wait deadline"
+            )
+        end
+    end
+end
+
+-- Whether `err` is worth another attempt under `on`.
+--
+-- The design's correction to its own draft, and the reason it matters: `on`
+-- OVERRIDES `retryable` for the kinds it names, and `retryable` is the default
+-- only when `on` is absent. `retryable` is derived from the domain's unwind
+-- axis, where only CaptureStalled and StaleObservation are Retry while Timeout
+-- and TargetUnavailable are Abort. If `retryable` were a hard filter, "wait for
+-- a page, and if the game was slow do the whole step again" -- the single most
+-- common shape a daily script takes -- could never retry at all.
+local function retryAllowed(on, err)
+    if on == nil then
+        return err.retryable == true
+    end
+    for index = 1, #on do
+        if on[index] == err.kind then
+            return true
+        end
+    end
+    return false
+end
+
+-- ctx:retry(policy, fn) -> whatever fn returned.
+--
+-- policy.attempts is the total number of tries, policy.on an optional list of
+-- uf.errors.<kind> constants, policy.backoff_ms an optional pause between them.
+--
+-- Only a Tier B automation error is ever retried. Anything else is re-raised
+-- unchanged and immediately: a project's own bug is not an automation failure,
+-- and the Tier C cancellation sentinel is a plain string, so a retry loop can
+-- never turn a cancelled run into three more attempts.
+function ctx:retry(policy, fn)
+    if type(policy) ~= "table" then
+        error("ctx:retry needs a policy table", 2)
+    end
+    if type(fn) ~= "function" then
+        error("ctx:retry needs a function to run", 2)
+    end
+
+    local attempts = policy.attempts
+    if attempts == nil then
+        attempts = k_defaultRetryAttempts
+    end
+    if type(attempts) ~= "number" or attempts < 1 then
+        error("ctx:retry policy.attempts must be at least one attempt", 2)
+    end
+
+    local on = policy.on
+    if on ~= nil and type(on) ~= "table" then
+        error("ctx:retry policy.on must be a list of uf.errors.<kind>", 2)
+    end
+
+    local backoffMillis = policy.backoff_ms
+    if backoffMillis ~= nil and type(backoffMillis) ~= "number" then
+        error("ctx:retry policy.backoff_ms must be a number of milliseconds", 2)
+    end
+
+    local attempt = 1
+    while true do
+        local ok, result = pcall(fn)
+        if ok then
+            return result
+        end
+
+        local automation =
+            type(result) == "userdata" and getmetatable(result) == errorTag
+        if not automation
+            or attempt >= attempts
+            or not retryAllowed(on, result)
+        then
+            error(result, 0)
+        end
+
+        attempt += 1
+        if backoffMillis ~= nil then
+            native.settle(backoffMillis)
+        end
+    end
+end
+
+-- The primitive-level surface: one forward each, deciding nothing.
+--
+-- These are what the policy methods above are built out of, left reachable so
+-- the host's primitive contracts can be driven directly. Mixing them with the
+-- policy methods is legal but pointless: a cycle opened with ctx:cycle_open is
+-- invisible to the framework's own bookkeeping, so a ctx:cycle after one is
+-- refused by the host's InternalInvariant instead of by the sentence above.
+-- They retire together with the `ctx` project global, once a task is a
+-- descriptor the host runs rather than a chunk the host executes.
 function ctx:cycle_open()
     return native.cycle_open()
 end
@@ -61,15 +490,9 @@ function ctx:cycle_click(ticket, hit)
     return native.cycle_click(ticket, hit)
 end
 
-function ctx:wait_for_page(page, options)
-    return native.wait_for_page(page, options)
-end
-
--- The three time primitives, forwarded as thinly as the rest. There is no
--- ctx:now: a script reads no clock, so the only shapes waiting can take are a
--- host-minted deadline polled by ctx:wait, and the declarative ctx:settle.
--- The loop that decides WHAT to re-observe between two ctx:wait calls is the
--- framework's own policy layer and lands with ctx:step and ctx:cycle.
+-- There is no ctx:now: a script reads no clock, so the only shapes waiting can
+-- take are a host-minted deadline polled by ctx:wait, and the declarative
+-- ctx:settle.
 function ctx:deadline(milliseconds)
     return native.deadline(milliseconds)
 end
@@ -117,5 +540,20 @@ function ctx:try(fn)
     end
     error(err, 0)
 end
+
+-- The framework-only channel between the task declaration module and this one.
+--
+-- It is a framework global rather than an export because the exports below are
+-- published into the project environment: a project must not be able to install
+-- its own interrupt list behind the declaration surface's validation. Modules
+-- load in bundle order and this one sorts first, so `task` finds this already
+-- bound; a load-order change is caught there, at load, rather than here.
+frameworkTaskRegistry = table.freeze({
+    setInterrupts = function(list)
+        interrupts    = list
+        interruptHits = {}
+    end,
+    defaultMaxHits = k_defaultMaxHits,
+})
 
 return ctx

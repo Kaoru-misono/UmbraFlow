@@ -26,12 +26,10 @@ namespace uf::cli
         [[nodiscard]]
         auto isRunValueFlag(std::string_view flag) noexcept -> bool
         {
-            auto constexpr flags = std::array<std::string_view, 9>{
+            auto constexpr flags = std::array<std::string_view, 7>{
                 "--project",
                 "--selector",
                 "--task",
-                "--timeout",
-                "--poll",
                 "--budget",
                 "--recognition-timeout",
                 "--max-frame-age",
@@ -95,38 +93,6 @@ namespace uf::cli
             return std::chrono::duration_cast<Duration>(Unit{*unitCount});
         }
 
-        // --poll bounds. 0 would spin the wait loop with no delay between frames;
-        // a value above a minute would leave a Ctrl-C unacknowledged for longer
-        // than an operator will tolerate, since the wait only re-checks the token
-        // across poll sleeps.
-        constexpr auto k_minPollMilliseconds = uint64{1};
-        constexpr auto k_maxPollMilliseconds = uint64{60'000};
-
-        [[nodiscard]]
-        auto parsePollInterval(
-            std::string_view value,
-            std::string_view flag
-        ) -> Result<MonotonicInstant::Duration>
-        {
-            UF_TRY_VALUE(milliseconds, parseUnsigned(value, flag));
-            if (
-                milliseconds < k_minPollMilliseconds
-                || milliseconds > k_maxPollMilliseconds
-            )
-            {
-                return invalid(
-                    std::format(
-                        "{} must be between {} and {} ms, got {}",
-                        flag,
-                        k_minPollMilliseconds,
-                        k_maxPollMilliseconds,
-                        milliseconds
-                    )
-                );
-            }
-            return parseDurationCount<std::chrono::milliseconds>(milliseconds, flag);
-        }
-
         template <typename Value>
         [[nodiscard]]
         auto require(
@@ -148,8 +114,6 @@ namespace uf::cli
         auto selector = std::optional<std::string>{};
         auto task     = std::optional<std::string>{};
 
-        auto timeout            = k_defaultRunTimeout;
-        auto pollInterval       = k_defaultRunPollInterval;
         auto budget             = k_defaultPixelComparisonBudget;
         auto recognitionTimeout = k_defaultRunRecognitionTimeout;
         auto maxFrameAge        = k_defaultRunMaxFrameAge;
@@ -180,20 +144,6 @@ namespace uf::cli
             else if (flag == "--task")
             {
                 task = value;
-            }
-            else if (flag == "--timeout")
-            {
-                UF_TRY_VALUE(count, parseUnsigned(value, flag));
-                UF_TRY_VALUE(
-                    parsed,
-                    parseDurationCount<std::chrono::seconds>(count, flag)
-                );
-                timeout = parsed;
-            }
-            else if (flag == "--poll")
-            {
-                UF_TRY_VALUE(parsed, parsePollInterval(value, flag));
-                pollInterval = parsed;
             }
             else if (flag == "--budget")
             {
@@ -233,8 +183,6 @@ namespace uf::cli
             .project            = std::move(requiredProject),
             .selector           = std::move(requiredSelector),
             .task               = std::move(requiredTask),
-            .timeout            = timeout,
-            .pollInterval       = pollInterval,
             .budget             = budget,
             .recognitionTimeout = recognitionTimeout,
             .maxFrameAge        = maxFrameAge,
@@ -255,9 +203,6 @@ namespace uf::cli
             "  --task NAME                  Run project task tasks/NAME.luau\n"
             "\n"
             "Options:\n"
-            "  --timeout SEC                Script page-wait timeout; default: 30\n"
-            "  --poll MS                    Script page-wait poll interval; "
-            "default: 250\n"
             "  --budget N                   Pixel comparison ceiling per recognition\n"
             "  --recognition-timeout MS     Per-recognition deadline; default: 2000\n"
             "  --max-frame-age MS           Action frame age ceiling; default: 750\n"

@@ -336,12 +336,6 @@ namespace uf::task
                 .maxActionFrameAge = std::chrono::duration_cast<
                     MonotonicInstant::Duration
                 >(std::chrono::seconds{5}),
-                .defaultWaitTimeout = std::chrono::duration_cast<
-                    MonotonicInstant::Duration
-                >(std::chrono::seconds{5}),
-                .defaultWaitPollInterval = std::chrono::duration_cast<
-                    MonotonicInstant::Duration
-                >(std::chrono::milliseconds{50}),
                 .tracePath = tracePath,
             };
         }

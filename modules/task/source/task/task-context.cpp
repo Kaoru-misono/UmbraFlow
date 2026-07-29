@@ -36,24 +36,20 @@ namespace uf::task
     {
     }
 
-    // D6 known-popup sweep -- landing note (deliberately not a live hook).
+    // D6 known-popup sweep -- landing note (deliberately not a hook here).
     //
-    // openCycle() and waitForPage() are the task-side observation-cycle
-    // boundaries, so a known-popup sweep that runs "once per observation cycle"
-    // would attach here. It is left as this note rather than a stored callback
-    // for two reasons. First, there is nothing to sweep yet: the real sweep needs
-    // the concrete per-daily popup list, which is P0-C work; a nullable no-op
-    // callback with no caller and no list would be speculative generality (an
-    // untested branch and a stored-callback lifetime surface for zero present
-    // benefit). Second, and decisively, a task-side hook is positioned wrong: the
-    // tight poll loop that re-captures while waiting for a page lives inside
-    // engine::EngineSession::waitForPage, which already calls its own
-    // sweepKnownPopups() once per inner cycle (session.cpp). A hook here would
-    // fire only at the START of a task-level wait, never on those inner polls, so
-    // it could not replicate the per-cycle sweep. The architecturally correct
-    // home for the real sweep is the engine's existing no-op seam (D6 replaces it
-    // with the bot:on registry in P1); this note records that the task side owns
-    // no part of that mechanism.
+    // The sweep has a home now, and it is neither this file nor the engine: it
+    // is the framework's interrupt registry. A task declares the popups it knows
+    // through task.interrupt, and the Luau wait loop offers every cycle it opens
+    // to that registry before testing the target page. That is the per-cycle
+    // sweep the design asked for, and it fires on the polls that matter -- the
+    // ones in the middle of a long wait -- which is exactly what neither
+    // candidate C++ position could do. A task-side callback would have fired
+    // once at the start of a wait; the engine's own seam sat inside a poll loop
+    // the registry could not reach.
+    //
+    // What stays true: the task side owns no part of that mechanism. This note
+    // records where it went so the absence is not read as an omission.
     auto TaskContext::openCycle() -> Result<CycleTicket>
     {
         // Refuse before observing. The ledger holds one cycle, and a capture
@@ -121,35 +117,6 @@ namespace uf::task
             consumed.page,
             action
         );
-    }
-
-    auto TaskContext::waitForPage(
-        annotation::PageId pageId,
-        std::optional<MonotonicInstant::Duration> timeout,
-        std::optional<MonotonicInstant::Duration> pollInterval
-    ) -> Result<CycleWait>
-    {
-        // The per-poll observation cycle is inside engine::EngineSession::
-        // waitForPage, which runs its own sweepKnownPopups() each iteration; the
-        // task side adds no sweep hook here. See the note above openCycle() for
-        // why the D6 sweep stays on the engine seam rather than a task-side
-        // callback.
-        UF_TRY(m_cycles.requireClosed());
-        UF_TRY_VALUE(
-            wait,
-            m_session.waitForPage(
-                pageId,
-                timeout.value_or(m_config.defaultWaitTimeout),
-                pollInterval.value_or(m_config.defaultWaitPollInterval)
-            )
-        );
-
-        // The wait's observation opens the generation's one cycle exactly as a
-        // bare open would, and the page the wait already resolved becomes that
-        // cycle's authorization evidence, so a click needs no second resolution.
-        auto const ticket = m_cycles.open(std::move(wait.observation));
-        m_cycles.rememberPage(wait.page);
-        return CycleWait{.ticket = ticket, .page = std::move(wait.page)};
     }
 
     auto TaskContext::waitUntil(

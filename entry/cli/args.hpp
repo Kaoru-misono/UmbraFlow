@@ -12,16 +12,6 @@
 
 namespace uf::cli
 {
-    inline constexpr auto k_defaultRunTimeout = (
-        std::chrono::duration_cast<MonotonicInstant::Duration>(
-            std::chrono::seconds{30}
-        )
-    );
-    inline constexpr auto k_defaultRunPollInterval = (
-        std::chrono::duration_cast<MonotonicInstant::Duration>(
-            std::chrono::milliseconds{250}
-        )
-    );
     inline constexpr auto k_defaultRunRecognitionTimeout = (
         std::chrono::duration_cast<MonotonicInstant::Duration>(
             std::chrono::milliseconds{2000}
@@ -48,14 +38,18 @@ namespace uf::cli
     // project-owned task addressed as (project, task): the single-step
     // --page/--action smoke path is gone, so there is one mode and nothing to
     // choose between.
+    //
+    // How long a task waits for a page, and how often it re-observes while
+    // waiting, are deliberately absent. The wait loop is the framework's Luau,
+    // so those two numbers are written in the task that waits -- a CLI flag for
+    // them would be an operator overriding a decision the script owns, and
+    // after the loop moved there was nothing left for such a flag to reach.
     struct RunArgs final
     {
         std::filesystem::path project{};
         std::string           selector{};
         std::string           task{};
 
-        MonotonicInstant::Duration timeout{k_defaultRunTimeout};
-        MonotonicInstant::Duration pollInterval{k_defaultRunPollInterval};
         uint64                     budget{k_defaultPixelComparisonBudget};
         MonotonicInstant::Duration recognitionTimeout{k_defaultRunRecognitionTimeout};
         MonotonicInstant::Duration maxFrameAge{k_defaultRunMaxFrameAge};

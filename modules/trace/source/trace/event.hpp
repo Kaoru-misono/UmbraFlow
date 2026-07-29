@@ -204,9 +204,9 @@ namespace uf::trace
         // cycle_click and cycle_close -- fails the call before the engine is
         // reached, so its task.native_call is the only line the failure produces
         // and nothing else would say which cycle the script tried to use.
-        // cycle_open and wait_for_page mint their own ordinal rather than
-        // receiving one, so they carry none. The recognizer a find was handed
-        // travels on TraceEvent::recognizerId.
+        // cycle_open mints its own ordinal rather than receiving one, so it
+        // carries none. The recognizer a find was handed travels on
+        // TraceEvent::recognizerId.
         struct NativeCall final
         {
             std::string       verb{};

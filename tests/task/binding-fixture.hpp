@@ -492,18 +492,21 @@ namespace uf::task
         CountingActionSink*                   clicks;
     };
 
-    // Builds the session from `frameSource` with `cancellation` armed on the
-    // engine config, recording into `traceSink`. One recorder serves both the
-    // engine session and the TaskContext built over it, which is what puts
-    // their events into a single ordered stream.
+    // Builds the session over `parts` from `frameSource` with `cancellation`
+    // armed on the engine config, recording into `traceSink`. One recorder
+    // serves both the engine session and the TaskContext built over it, which is
+    // what puts their events into a single ordered stream.
+    //
+    // `parts` is taken by value because this is a move-in ownership boundary:
+    // the recognition runtime ends up inside the session.
     [[nodiscard]]
-    inline auto buildBindingWith(
+    inline auto buildBindingOver(
+        RuntimeParts parts,
         std::unique_ptr<engine::IFrameSource> frameSource,
         std::stop_token cancellation,
         std::unique_ptr<trace::ITraceSink> traceSink
     ) -> Built
     {
-        auto parts   = singlePageRuntime();
         auto surface = CapabilitySurface::create(
             parts.loaded.runtime.manifest().catalog()
         );
@@ -531,6 +534,23 @@ namespace uf::task
             .surface  = *std::move(surface),
             .clicks   = p_clicks,
         };
+    }
+
+    // The same, over the one-page runtime every suite but the interrupt cases
+    // uses.
+    [[nodiscard]]
+    inline auto buildBindingWith(
+        std::unique_ptr<engine::IFrameSource> frameSource,
+        std::stop_token cancellation,
+        std::unique_ptr<trace::ITraceSink> traceSink
+    ) -> Built
+    {
+        return buildBindingOver(
+            singlePageRuntime(),
+            std::move(frameSource),
+            std::move(cancellation),
+            std::move(traceSink)
+        );
     }
 
     [[nodiscard]]

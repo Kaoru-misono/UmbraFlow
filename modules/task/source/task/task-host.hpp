@@ -77,11 +77,10 @@ namespace uf::task
         MonotonicInstant::Duration recognitionTimeout{};
         MonotonicInstant::Duration maxActionFrameAge{k_defaultMaxActionFrameAge};
 
-        // Fallbacks a script's page wait uses when it names neither. They are the
-        // task layer's policy knobs, not the engine's, and are forwarded verbatim
-        // to the TaskContext this run builds.
-        MonotonicInstant::Duration defaultWaitTimeout{};
-        MonotonicInstant::Duration defaultWaitPollInterval{};
+        // There is no page-wait budget here. How long a task waits for a page
+        // and how often it re-observes are decided by the task, in Luau, where
+        // the wait loop now lives; a host-side fallback would be a value nothing
+        // reads.
 
         // Where this run's umbraflow-trace/v1 stream is written. One run writes
         // one file; the host opens it only after the task has loaded and

@@ -462,12 +462,13 @@ namespace uf::task
                 end
 
                 scan({
-                    -- The framework's own global, and the module name the loader
-                    -- binds the bundle's exports under: `ctx` on a real task VM,
-                    -- `probe` when the same source is loaded through the
-                    -- script-layer probe. All three are listed so one scan serves
-                    -- both sides.
-                    frameworkSentinel, uf, ctx, probe,
+                    -- The framework's own globals, and the module names the
+                    -- loader binds the bundle's exports under: `ctx` and `task`
+                    -- on a real task VM, `probe` when the same source is loaded
+                    -- through the script-layer probe. All of them are listed so
+                    -- one scan serves both sides.
+                    frameworkSentinel, frameworkTaskRegistry,
+                    uf, ctx, task, probe,
                     _G, getfenv, setfenv, newproxy, gcinfo, coroutine, debug,
                     _VERSION, assert, error, getmetatable, ipairs, next, pairs,
                     pcall, print, rawequal, rawget, rawlen, rawset, select,
@@ -528,12 +529,19 @@ namespace uf::task
                 REQUIRE(found.has_value());
                 CHECK(*found == doctest::Approx(0.0));
 
-                // What the project DOES see of the framework is exactly the one
-                // published export, named rather than searched for: ctx is there,
-                // and the framework global beside it is not.
+                // What the project DOES see of the framework is exactly the two
+                // published exports, named rather than searched for: ctx and
+                // task are there, and the framework globals beside them -- the
+                // sentinel and the registry channel the two modules talk over --
+                // are not.
                 CHECK(truthy(*engine, "type(ctx) == 'table'") == doctest::Approx(1.0));
+                CHECK(truthy(*engine, "type(task) == 'table'") == doctest::Approx(1.0));
                 CHECK(
                     truthy(*engine, "frameworkSentinel == nil") == doctest::Approx(1.0)
+                );
+                CHECK(
+                    truthy(*engine, "frameworkTaskRegistry == nil")
+                    == doctest::Approx(1.0)
                 );
             }
         }

@@ -73,13 +73,14 @@ namespace uf::task
     auto frameworkScriptModules() -> std::vector<script::FrameworkModule>;
 
     // The framework module names a project script may name, in the shape
-    // script::EngineConfig::frameworkProjectGlobals takes. Today that is `ctx`
-    // alone: the module of that name returns the context object, and publishing
-    // it is what lets the bare verbs leave the project environment.
+    // script::EngineConfig::frameworkProjectGlobals takes: `ctx`, the context
+    // object a task uses while it runs, and `task`, the declaration surface it
+    // registers its interrupts through. Publishing them is what let the bare
+    // verbs leave the project environment.
     //
-    // The name is spelled here rather than derived, because the generator takes
-    // it from a file stem and a C++ constant cannot read one. A rename that
-    // missed this list fails VM creation with InternalInvariant naming the
+    // The names are spelled here rather than derived, because the generator
+    // takes them from file stems and a C++ constant cannot read one. A rename
+    // that missed this list fails VM creation with InternalInvariant naming the
     // missing entry, so the two cannot drift apart silently.
     [[nodiscard]]
     auto frameworkProjectGlobals() -> std::vector<std::string>;

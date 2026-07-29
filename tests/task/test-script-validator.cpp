@@ -102,26 +102,43 @@ namespace uf::task
         {
             auto const surface = buildSurface();
 
-            // A task the way one is written now that the capability surface is
-            // private: the framework's ctx drives everything, and the uf root
-            // appears only as the two-level resource literals -- inside a ctx
-            // argument, inside a handle method's argument, and once repeated.
+            // A task the way one is written now that the framework owns policy:
+            // an interrupt declared against a page, a step around a wait, and
+            // the uf root appearing only as the two-level resource literals --
+            // inside a declaration field, inside a ctx argument, inside a handle
+            // method's argument, and once repeated.
             constexpr std::string_view source = R"lua(
-                local cycle = ctx:cycle_open()
-                local page = ctx:cycle_page(cycle)
-                if page ~= nil and page:is(uf.pages.home) then
-                    local hit = ctx:cycle_find(cycle, uf.recognizers.battle)
-                    if hit ~= nil then
-                        ctx:cycle_click(cycle, hit)
-                    end
-                end
-                local another = ctx:cycle_find(cycle, uf.recognizers.daily_button)
-                ctx:cycle_close(cycle)
-                local wait = ctx:wait_for_page(uf.pages.home, { timeout_ms = 1000 })
-                ctx:try(function()
-                    ctx:cycle_click(wait.cycle, another)
-                end)
-                return 0
+                local popup = task.interrupt {
+                    id = "battle_prompt",
+                    when = uf.pages.home,
+                    handle = function(ctx, cycle)
+                        local close = cycle:find(uf.recognizers.battle)
+                        if close ~= nil then
+                            cycle:click(close)
+                        end
+                    end,
+                }
+
+                return task.define {
+                    interrupts = { popup },
+                    run = function(ctx)
+                        ctx:step("daily", function()
+                            ctx:retry({ attempts = 2 }, function()
+                                ctx:wait_for_page(
+                                    uf.pages.home,
+                                    { timeout_ms = 1000 },
+                                    function(home)
+                                        local hit =
+                                            home:find(uf.recognizers.daily_button)
+                                        if hit ~= nil then
+                                            home:click(hit)
+                                        end
+                                    end
+                                )
+                            end)
+                        end)
+                    end,
+                }
             )lua";
 
             auto const report = validateScriptResources(source, "daily", surface);
@@ -211,7 +228,7 @@ namespace uf::task
             auto const report = validateScriptResources(
                 "local d = ctx:deadline(1000)\n"
                 "local r = ctx:random(1, 6)\n"
-                "local w = ctx:wait_for_page(uf.pages.home, {})\n"
+                "ctx:wait_for_page(uf.pages.home, {}, function() end)\n"
                 "return r",
                 "context-calls",
                 surface

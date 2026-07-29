@@ -421,9 +421,9 @@ namespace uf::task
                         -- it here, and no walk from any value would: the chain
                         -- hangs off the environment table itself, which a
                         -- project script has no name for.
-                        frameworkSentinel,
-                        ctx, uf, uf.pages, uf.recognizers, uf.errors,
-                        table.clone(ctx), table.clone(uf),
+                        frameworkSentinel, frameworkTaskRegistry,
+                        ctx, task, uf, uf.pages, uf.recognizers, uf.errors,
+                        table.clone(ctx), table.clone(task), table.clone(uf),
                         cycle, page, hit,
                         uf.pages.page_a, uf.recognizers.action_target,
                         -- library indirection, including the string metatable a
@@ -845,9 +845,10 @@ namespace uf::task
                 -- single further primitive: they all still refuse.
                 if pcall(open) then return 0 end
                 if pcall(function() return ctx:cycle_close(nil) end) then return 0 end
-                if pcall(function() return ctx:wait_for_page(uf.pages.page_a) end) then
-                    return 0
-                end
+                local waited = pcall(function()
+                    ctx:wait_for_page(uf.pages.page_a, nil, function() end)
+                end)
+                if waited then return 0 end
                 return 1
             )lua";
 

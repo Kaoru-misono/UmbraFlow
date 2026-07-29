@@ -24,27 +24,37 @@ namespace uf::task
         }
     }
 
-    TEST_CASE("the embedded bundle carries the ctx module the project environment names")
+    TEST_CASE("the embedded bundle carries the modules the project environment names")
     {
         auto const entries = frameworkBundleEntries();
         REQUIRE(!entries.empty());
 
-        // The module name and the published project global are the same string,
+        // Each module name and its published project global are the same string,
         // and nothing derives one from the other: the generator takes the name
         // from a file stem while frameworkProjectGlobals() is a C++ constant. A
         // rename that touched only one side fails here rather than at VM boot.
+        auto const published = frameworkProjectGlobals();
         CHECK(
-            frameworkProjectGlobals() == std::vector<std::string>{std::string{"ctx"}}
+            published
+            == std::vector<std::string>{std::string{"ctx"}, std::string{"task"}}
         );
 
-        auto const context = std::ranges::find(
-            entries,
-            std::string_view{"ctx"},
-            &FrameworkBundleEntry::name
-        );
-        REQUIRE(context != entries.end());
-        CHECK(context->source.contains("function ctx:cycle_open()"));
-        CHECK(context->sourceHash.size() == 64U);
+        for (auto const& name : published)
+        {
+            auto const module = std::ranges::find(
+                entries,
+                std::string_view{name},
+                &FrameworkBundleEntry::name
+            );
+            REQUIRE(module != entries.end());
+            CHECK(module->sourceHash.size() == 64U);
+        }
+
+        // The declaration module reaches the context module's registry channel,
+        // which only holds because modules load in bundle order and `ctx` sorts
+        // first. Asserting the order here keeps a rename that reverses it from
+        // failing later as a nil index inside task.define.
+        CHECK(std::string_view{entries.front().name} == "ctx");
 
         CHECK(!frameworkVersion().empty());
         CHECK(frameworkBundleHash().size() == 64U);

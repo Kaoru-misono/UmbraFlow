@@ -481,79 +481,24 @@ namespace uf::task
             CHECK_FALSE(context.hasOpenCycle());
         }
 
-        TEST_CASE("ctx:wait_for_page hands back a page and the open cycle behind it")
-        {
-            auto built = buildBinding(resolvingFrames(FrameId{27}));
-            REQUIRE(built.session.has_value());
-            TaskContext context{*std::move(built.session), *built.recorder};
-
-            // wait_for_page resolves page_a on the first capture and leaves the
-            // cycle open over the frame that resolved it, with that page already
-            // recorded as the cycle's authorization evidence -- which is why the
-            // click below needs no cycle_page of its own.
-            constexpr std::string_view source = R"lua(
-                local wait = ctx:wait_for_page(uf.pages.page_a, {})
-                if wait == nil or wait.page == nil or wait.cycle == nil then return 0 end
-                if not wait.page:is(uf.pages.page_a) then return 0 end
-                local hit = ctx:cycle_find(wait.cycle, uf.recognizers.action_target)
-                if hit == nil then return 0 end
-                ctx:cycle_click(wait.cycle, hit)
-                return 1
-            )lua";
-
-            CHECK(runBound(context, built, source) == doctest::Approx(1.0));
-            CHECK(built.clicks->clickCount() == 1);
-            CHECK_FALSE(context.hasOpenCycle());
-        }
-
-        TEST_CASE("ctx:wait_for_page raises a Tier B timeout when the page never resolves")
-        {
-            auto frames = std::vector<Frame>{};
-            frames.emplace_back(grayFrame(anno::test::fingerprint(3, 1, 96, 96), unknownPixels(), FrameId{28}));
-            auto built = buildBinding(std::move(frames));
-            REQUIRE(built.session.has_value());
-            TaskContext context{*std::move(built.session), *built.recorder};
-
-            // A short explicit budget keeps the poll loop brief; the unknown frame
-            // never resolves page_a, so the wait times out as a Tier B error whose
-            // kind is the domain Timeout spelling, whose retryable is false, and
-            // which carries the protected uf.error metatable. A timed-out wait
-            // opened no cycle, so the next open still succeeds.
-            constexpr std::string_view source = R"lua(
-                local ok, err = pcall(function()
-                    return ctx:wait_for_page(
-                        uf.pages.page_a,
-                        { timeout_ms = 30, poll_interval_ms = 5 }
-                    )
-                end)
-                if ok then return 0 end
-                if err.kind ~= 'timeout' then return 0 end
-                if err.retryable ~= false then return 0 end
-                if getmetatable(err) ~= 'uf.error' then return 0 end
-
-                local cycle = ctx:cycle_open()
-                ctx:cycle_close(cycle)
-                return 1
-            )lua";
-
-            CHECK(runBound(context, built, source) == doctest::Approx(1.0));
-            CHECK(built.clicks->clickCount() == 0);
-            CHECK_FALSE(context.hasOpenCycle());
-        }
-
-        TEST_CASE("ctx:wait_for_page rejects an out-of-range timeout instead of overflowing")
+        TEST_CASE("A deadline out of the host's range is refused before any capture")
         {
             auto built = buildBinding(resolvingFrames(FrameId{29}));
             REQUIRE(built.session.has_value());
             TaskContext context{*std::move(built.session), *built.recorder};
 
             // 1e15 ms cleared the old <= 1e15 bound yet overflowed the nanosecond
-            // tick rep inside duration_cast (undefined behaviour). It is now a clean
-            // Tier B InvalidResource raised while reading the options, before any
-            // capture, so the frame source is never touched.
+            // tick rep inside duration_cast (undefined behaviour). It is now a
+            // clean Tier B InvalidResource raised while the framework mints its
+            // deadline, before the wait loop opens anything, so the frame source
+            // is never touched.
             constexpr std::string_view source = R"lua(
                 local ok, err = pcall(function()
-                    return ctx:wait_for_page(uf.pages.page_a, { timeout_ms = 1e15 })
+                    ctx:wait_for_page(
+                        uf.pages.page_a,
+                        { timeout_ms = 1e15 },
+                        function() end
+                    )
                 end)
                 if ok then return 0 end
                 if err.kind ~= 'invalid_resource' then return 0 end
@@ -563,6 +508,7 @@ namespace uf::task
 
             CHECK(runBound(context, built, source) == doctest::Approx(1.0));
             CHECK(built.clicks->clickCount() == 0);
+            CHECK_FALSE(context.hasOpenCycle());
         }
 
         TEST_CASE("ctx:try catches a Tier B automation error and returns the carrier")
@@ -1040,14 +986,14 @@ namespace uf::task
                 -- No primitive is a project global.
                 if cycle_open ~= nil or cycle_close ~= nil then return 0 end
                 if cycle_page ~= nil or cycle_find ~= nil then return 0 end
-                if cycle_click ~= nil or wait_for_page ~= nil then return 0 end
+                if cycle_click ~= nil or raise ~= nil then return 0 end
                 if deadline ~= nil or wait ~= nil or settle ~= nil then return 0 end
                 if random ~= nil or try ~= nil then return 0 end
 
                 -- Nor a field of uf, by index or by rawget.
                 local names = {
                     'cycle_open', 'cycle_close', 'cycle_page', 'cycle_find',
-                    'cycle_click', 'wait_for_page', 'deadline', 'wait',
+                    'cycle_click', 'raise', 'deadline', 'wait',
                     'settle', 'random', 'try',
                 }
                 for _, name in ipairs(names) do
@@ -1064,7 +1010,7 @@ namespace uf::task
                 -- No walk from anything nameable reaches one, uf's clone and
                 -- the framework's own ctx included.
                 if scan({
-                    uf, ctx, table.clone(uf), getmetatable(uf),
+                    uf, ctx, task, table.clone(uf), getmetatable(uf),
                     _G, getfenv, setfenv, newproxy, gcinfo, coroutine, debug,
                     _VERSION, assert, error, getmetatable, ipairs, next, pairs,
                     pcall, print, rawequal, rawget, rawlen, rawset, select,

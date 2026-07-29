@@ -91,8 +91,6 @@ namespace uf::cli
             "--project",             "proj",
             "--selector",            "Game Window",
             "--task",                "daily",
-            "--timeout",             "10",
-            "--poll",                "100",
             "--budget",              "500",
             "--recognition-timeout", "1500",
             "--max-frame-age",       "600",
@@ -104,8 +102,6 @@ namespace uf::cli
         CHECK(result->project == "proj");
         CHECK(result->selector == "Game Window");
         CHECK(result->task == "daily");
-        CHECK(result->timeout == asDuration(std::chrono::seconds{10}));
-        CHECK(result->pollInterval == asDuration(std::chrono::milliseconds{100}));
         CHECK(result->budget == uint64{500});
         CHECK(
             result->recognitionTimeout == asDuration(std::chrono::milliseconds{1500})
@@ -114,15 +110,19 @@ namespace uf::cli
         CHECK(result->trace == "out.jsonl");
     }
 
-    TEST_CASE("parseRunArguments no longer accepts the removed smoke-path flags")
+    TEST_CASE("parseRunArguments no longer accepts the removed run-shape flags")
     {
         // --page and --action selected a single-step run that a task script now
-        // covers. They are not merely ignored: an invocation carrying either is
-        // refused, so a stale script fails loudly instead of running a different
-        // task than its author wrote.
-        auto constexpr removed = std::array<std::string_view, 2>{
+        // covers. --timeout and --poll set the host's page-wait budget, which no
+        // longer exists: the wait loop is the framework's Luau and a task writes
+        // its own timeout_ms and poll_ms. None of the four is merely ignored --
+        // an invocation carrying one is refused, so a stale script fails loudly
+        // instead of quietly running under a budget nobody applies.
+        auto constexpr removed = std::array<std::string_view, 4>{
             "--page",
             "--action",
+            "--timeout",
+            "--poll",
         };
 
         for (auto const flag : removed)
@@ -152,8 +152,6 @@ namespace uf::cli
     {
         auto const result = parse(minimalArgs());
         REQUIRE(result.has_value());
-        CHECK(result->timeout == k_defaultRunTimeout);
-        CHECK(result->pollInterval == k_defaultRunPollInterval);
         CHECK(result->budget == k_defaultPixelComparisonBudget);
         CHECK(result->recognitionTimeout == k_defaultRunRecognitionTimeout);
         CHECK(result->maxFrameAge == k_defaultRunMaxFrameAge);
@@ -218,12 +216,15 @@ namespace uf::cli
     TEST_CASE("parseRunArguments rejects a non-integer duration")
     {
         auto raw = minimalArgs();
-        raw.emplace_back("--timeout");
+        raw.emplace_back("--recognition-timeout");
         raw.emplace_back("soon");
 
         auto const result = parse(raw);
         REQUIRE_FALSE(result.has_value());
-        CHECK(result.error().message() == "--timeout expects an integer, got \"soon\"");
+        CHECK(
+            result.error().message()
+            == "--recognition-timeout expects an integer, got \"soon\""
+        );
     }
 
     TEST_CASE("parseRunArguments rejects a non-integer budget")
@@ -235,55 +236,6 @@ namespace uf::cli
         auto const result = parse(raw);
         REQUIRE_FALSE(result.has_value());
         CHECK(result.error().message() == "--budget expects an integer, got \"lots\"");
-    }
-
-    TEST_CASE("parseRunArguments rejects a zero poll interval")
-    {
-        auto raw = minimalArgs();
-        raw.emplace_back("--poll");
-        raw.emplace_back("0");
-
-        auto const result = parse(raw);
-        REQUIRE_FALSE(result.has_value());
-        CHECK(result.error().message() == "--poll must be between 1 and 60000 ms, got 0");
-    }
-
-    TEST_CASE("parseRunArguments rejects a poll interval above the maximum")
-    {
-        auto raw = minimalArgs();
-        raw.emplace_back("--poll");
-        raw.emplace_back("60001");
-
-        auto const result = parse(raw);
-        REQUIRE_FALSE(result.has_value());
-        CHECK(
-            result.error().message() == "--poll must be between 1 and 60000 ms, got 60001"
-        );
-    }
-
-    TEST_CASE("parseRunArguments accepts the poll interval boundary values")
-    {
-        struct Case final
-        {
-            std::string_view           value;
-            MonotonicInstant::Duration expected;
-        };
-
-        auto const cases = std::vector<Case>{
-            {"1", asDuration(std::chrono::milliseconds{1})},
-            {"60000", asDuration(std::chrono::milliseconds{60'000})},
-        };
-
-        for (auto const& testCase : cases)
-        {
-            auto raw = minimalArgs();
-            raw.emplace_back("--poll");
-            raw.emplace_back(testCase.value);
-
-            auto const result = parse(raw);
-            REQUIRE(result.has_value());
-            CHECK(result->pollInterval == testCase.expected);
-        }
     }
 
     TEST_CASE("ExitCode preserves the documented process values")

@@ -58,27 +58,19 @@ namespace uf::task
         std::chrono::milliseconds{10}
     };
 
-    // Host-side configuration for one TaskContext: the wait budgets a script's
-    // ctx:wait_for_page falls back to when it omits them, plus the single
-    // cancellation source shared with the owned EngineSession and the VM
-    // interrupt. The wait defaults are conservative placeholders pending
-    // calibration against the first real daily (the plan's example waits ten
-    // minutes for a page); the poll cadence bounds capture churn while waiting. A
-    // default-constructed stop token never requests a stop, so an unconfigured
-    // context is never cancelled -- preserving the resource-only and Fake-driven
-    // paths that build a context without wiring a cancel source.
+    // Host-side configuration for one TaskContext: the single cancellation
+    // source shared with the owned EngineSession and the VM interrupt, plus this
+    // run's RNG seed. A default-constructed stop token never requests a stop, so
+    // an unconfigured context is never cancelled -- preserving the
+    // resource-only and Fake-driven paths that build a context without wiring a
+    // cancel source.
+    //
+    // There are deliberately no wait budgets here. How long to wait for a page
+    // and how often to re-observe are policy, and policy lives in the framework:
+    // the wait loop is Luau now, so a default the framework cannot read would be
+    // a default nothing applies.
     struct TaskContextConfig final
     {
-        MonotonicInstant::Duration defaultWaitTimeout{
-            std::chrono::duration_cast<MonotonicInstant::Duration>(
-                std::chrono::minutes{10}
-            )
-        };
-        MonotonicInstant::Duration defaultWaitPollInterval{
-            std::chrono::duration_cast<MonotonicInstant::Duration>(
-                std::chrono::milliseconds{500}
-            )
-        };
         std::stop_token cancellation{};
 
         // Fixed seed for this task's deterministic RNG (ctx:random). Left at the
@@ -86,16 +78,6 @@ namespace uf::task
         // TaskHost::startTask, which draws it and records it in run.started so
         // the run reproduces on replay. See k_defaultRandomSeed.
         uint64          randomSeed{k_defaultRandomSeed};
-    };
-
-    // The product of ctx:wait_for_page: the observation cycle now open over
-    // the frame that resolved the page, and the page itself. The wait already
-    // resolved it, so the ledger holds it as that cycle's click authorization
-    // evidence and the script never resolves the same frame twice.
-    struct CycleWait final
-    {
-        CycleTicket              ticket{};
-        annotation::ResolvedPage page;
     };
 
     // Host-owned bridge between one task VM and one EngineSession. It owns the
@@ -201,20 +183,6 @@ namespace uf::task
             uint64 hitCycleOrdinal,
             engine::ActionFound const& action
         ) -> Result<engine::ActReceipt>;
-
-        // Polls captures until `pageId` resolves, then opens the cycle over the
-        // resolving observation and records the page the wait already resolved as
-        // that cycle's authorization evidence. A nullopt timeout or poll interval
-        // falls back to the configured default. An already-open cycle fails
-        // InternalInvariant exactly as openCycle does; a timeout is Timeout and a
-        // cancellation is Cancelled, both propagating unchanged for the binding
-        // layer's Tier mapping.
-        [[nodiscard]]
-        auto waitForPage(
-            annotation::PageId pageId,
-            std::optional<MonotonicInstant::Duration> timeout,
-            std::optional<MonotonicInstant::Duration> pollInterval
-        ) -> Result<CycleWait>;
 
         // Sleeps until `deadline`, or for `interval`, whichever comes first, and
         // reports whether budget remains afterwards -- false means the deadline

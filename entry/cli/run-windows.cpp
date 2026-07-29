@@ -151,8 +151,6 @@ namespace uf::cli
                 .maximumPixelComparisons = args.budget,
                 .recognitionTimeout      = args.recognitionTimeout,
                 .maxActionFrameAge       = args.maxFrameAge,
-                .defaultWaitTimeout      = args.timeout,
-                .defaultWaitPollInterval = args.pollInterval,
                 .tracePath               = args.trace,
             }
         );

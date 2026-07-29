@@ -432,10 +432,8 @@ namespace uf::task
             std::move(session),
             *recorder,
             TaskContextConfig{
-                .defaultWaitTimeout      = config.defaultWaitTimeout,
-                .defaultWaitPollInterval = config.defaultWaitPollInterval,
-                .cancellation            = p_generation->cancellation(),
-                .randomSeed              = seed,
+                .cancellation = p_generation->cancellation(),
+                .randomSeed   = seed,
             },
         };
 

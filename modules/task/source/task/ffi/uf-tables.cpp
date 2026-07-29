@@ -21,6 +21,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cstddef>
 #include <memory>
 #include <optional>
 #include <ratio>
@@ -824,105 +825,86 @@ namespace uf::task
             return millisToDuration(state, lua_tonumber(state, index), what);
         }
 
-        // Reads an optional millisecond field from the wait options table at
-        // `optsIndex`. Returns nullopt when the options are absent (nil/none) or
-        // the named field is nil, so the caller applies the TaskContext default. A
-        // present-but-non-numeric or out-of-range value is a Tier B
-        // InvalidResource, keeping the script-facing failure model single-shaped.
+        // The automation kind whose domain wire spelling is `wireName`, or
+        // nullopt when no kind carries it. The scan is over the reflected
+        // entries and compares against the same domain function that produces
+        // uf.errors, a Tier B carrier's `kind` field, and the trace, so a
+        // spelling the framework passes here is checked against the one truth
+        // rather than against a second copy of it.
         [[nodiscard]]
-        auto readWaitDuration(
-            lua_State* state,
-            int optsIndex,
-            char const* field
-        ) -> std::optional<MonotonicInstant::Duration>
+        auto kindOfWireName(std::string_view wireName) noexcept
+            -> std::optional<AutomationErrorKind>
         {
-            if (lua_isnoneornil(state, optsIndex))
+            for (auto const& entry : enumEntries<AutomationErrorKind>())
             {
-                return std::nullopt;
+                if (automationErrorWireName(entry.value) == wireName)
+                {
+                    return entry.value;
+                }
             }
-            if (lua_type(state, optsIndex) != LUA_TTABLE)
-            {
-                raiseTierB(
-                    state,
-                    AutomationErrorKind::InvalidResource,
-                    "wait_for_page options must be a table"
-                );
-            }
-
-            auto const what = std::string{"wait_for_page option '"} + field + "'";
-
-            lua_getfield(state, optsIndex, field);
-            if (lua_isnil(state, -1))
-            {
-                lua_pop(state, 1);
-                return std::nullopt;
-            }
-            if (lua_type(state, -1) != LUA_TNUMBER)
-            {
-                lua_pop(state, 1);
-                raiseTierB(
-                    state,
-                    AutomationErrorKind::InvalidResource,
-                    what + " must be a number of milliseconds"
-                );
-            }
-            double const millis = lua_tonumber(state, -1);
-            lua_pop(state, 1);
-
-            return millisToDuration(state, millis, what);
+            return std::nullopt;
         }
 
-        // wait_for_page(pageReference, options) -> { page = resolved-page,
-        // cycle = ticket }. A timeout raises a Tier B error; a cancellation takes
-        // the Tier C sentinel.
+        // raise(kind, message) -> never. Mints a Tier B error carrier of the
+        // named kind and raises it.
         //
-        // The wait leaves the generation's one cycle OPEN over the frame that
-        // resolved the page, with that page already recorded as the cycle's
-        // authorization evidence. The caller therefore finds and clicks on the
-        // returned ticket and must close it, exactly as if it had opened the
-        // cycle itself. This engine-side wait loop is deleted in stage 3, when
-        // the Luau framework polls cycle_open / cycle_page itself.
-        auto waitForPageFn(lua_State* state) -> int
+        // It is admitted under the design's primitive rule -- an indivisible
+        // effect or a safety primitive -- as the second of those. A Tier B
+        // carrier is tagged userdata that only the host can produce, so a
+        // framework policy that fails on its own terms (a wait whose deadline
+        // expired) has no other way to fail as a real automation error: an
+        // error() from Luau is a plain string, which reaches the host as a
+        // malformed script and which neither ctx:try nor ctx:retry will treat
+        // as an automation failure. Nothing about page selection, looping,
+        // retry or game decision-making is here; the caller decided all of it.
+        //
+        // Two kinds are refused. `cancelled` is the host's own terminal verdict
+        // and arrives with the fatal latch already set, so a Tier B carrying it
+        // would claim a stop nobody requested and would be catchable besides.
+        // `internal_invariant` must latch the generation terminal BEFORE it is
+        // raised, or a project pcall could swallow a framework bug; this
+        // primitive deliberately does not latch, so that kind gets its own door
+        // when the framework needs one rather than a catchable impostor here.
+        auto raiseFn(lua_State* state) -> int
         {
             auto* context = boundContext(state);
             guardFatal(state, context);
 
-            auto* reference =
-                checkBox<annotation::PageId>(state, 1, k_pageRefType, "page reference");
-            auto const timeout      = readWaitDuration(state, 2, "timeout_ms");
-            auto const pollInterval = readWaitDuration(state, 2, "poll_interval_ms");
-
-            // wait_for_page mints the ordinal its own cycle opens under, so like
-            // cycle_open it is handed none.
-            auto const call = NativeCallIdentity{.verb = "wait_for_page"};
-
-            auto result = context->waitForPage(*reference, timeout, pollInterval);
-            if (!result)
+            if (lua_type(state, 1) != LUA_TSTRING
+                || lua_type(state, 2) != LUA_TSTRING)
             {
-                traceHostCallFailure(state, context, call, result.error());
+                raiseTierB(
+                    state,
+                    AutomationErrorKind::InvalidResource,
+                    "raise takes an error kind and a message, both strings"
+                );
             }
-            traceHostCall(state, context, call, trace::NativeCallOutcome::Succeeded);
 
-            auto wait = *std::move(result);
-            lua_createtable(state, 0, 2);
-            int const table = lua_gettop(state);
+            // SAFETY: both values were just confirmed to be strings, so
+            // lua_tolstring performs no conversion and returns the VM-owned
+            // bytes with their length. Both stay on the stack for the whole
+            // call, so the view and the copy below are taken from live storage.
+            std::size_t kindLength = 0;
+            char const* p_kindText = lua_tolstring(state, 1, &kindLength);
+            auto const  wireName   = std::string_view{p_kindText, kindLength};
 
-            pushBoxed<annotation::ResolvedPage>(
-                state,
-                std::move(wait.page),
-                &destroyBox<annotation::ResolvedPage>,
-                k_resolvedPageType
-            );
-            lua_setfield(state, table, "page");
+            std::size_t messageLength = 0;
+            char const* p_messageText = lua_tolstring(state, 2, &messageLength);
+            auto const  message       = std::string{p_messageText, messageLength};
 
-            pushBoxed<CycleTicket>(
-                state,
-                wait.ticket,
-                &destroyBox<CycleTicket>,
-                k_cycleType
-            );
-            lua_setfield(state, table, "cycle");
-            return 1;
+            auto const kind = kindOfWireName(wireName);
+            if (!kind
+                || *kind == AutomationErrorKind::Cancelled
+                || *kind == AutomationErrorKind::InternalInvariant)
+            {
+                raiseTierB(
+                    state,
+                    AutomationErrorKind::InvalidResource,
+                    "raise cannot mint the error kind '" + std::string{wireName}
+                        + "'"
+                );
+            }
+            raiseTierB(state, *kind, message);
         }
 
         // Raises the Tier C sentinel when the run's cancel source has already
@@ -1419,14 +1401,7 @@ namespace uf::task
                 "uf_cycle_click",
                 context
             );
-            installPrimitive(
-                state,
-                surface,
-                "wait_for_page",
-                &waitForPageFn,
-                "uf_wait_for_page",
-                context
-            );
+            installPrimitive(state, surface, "raise", &raiseFn, "uf_raise", context);
             installPrimitive(
                 state,
                 surface,

@@ -140,6 +140,7 @@ if(TARGET ${PROJECT_NAME}_task)
             task/test-task-host.cpp
             task/test-determinism-harness.cpp
             task/test-framework-bundle.cpp
+            task/test-framework-context.cpp
             task/test-task-loader.cpp
             task/test-script-validator.cpp
             task/test-deterministic.cpp
