@@ -1,6 +1,7 @@
 #include "binding-fixture.hpp"
 
 #include <task/capability-surface.hpp>
+#include <task/cycle-ledger.hpp>
 #include <task/task-context.hpp>
 
 #include <script/engine.hpp>
@@ -221,8 +222,25 @@ namespace uf::task
             );
         }
 
+        // One frame that resolves page_a and hits the action target.
+        [[nodiscard]]
+        auto resolvingFrames(FrameId frameId) -> std::vector<Frame>
+        {
+            auto frames = std::vector<Frame>{};
+            frames.emplace_back(
+                grayFrame(
+                    anno::test::fingerprint(3, 1, 96, 96),
+                    resolvingPixels(),
+                    frameId
+                )
+            );
+            return frames;
+        }
+
         // Runs `source` on a task VM whose only host capability is the umbra table
-        // bound to `built`'s session, and returns the script's numeric result.
+        // bound to `built`'s session, and returns the script's numeric result. The
+        // VM is created and destroyed inside this call, so anything the host still
+        // holds afterwards is held by the host, not by a live Lua handle.
         [[nodiscard]]
         auto runBound(TaskContext& context, Built& built, std::string_view source) -> double
         {
@@ -284,11 +302,7 @@ namespace uf::task
         [[nodiscard]]
         auto drawContextDoubles(uint64 seed, std::size_t count) -> std::vector<double>
         {
-            auto frames = std::vector<Frame>{};
-            frames.emplace_back(
-                grayFrame(anno::test::fingerprint(3, 1, 96, 96), resolvingPixels(), FrameId{50})
-            );
-            auto built = buildBinding(std::move(frames));
+            auto built = buildBinding(resolvingFrames(FrameId{50}));
             REQUIRE(built.session.has_value());
             TaskContext context{
                 *std::move(built.session),
@@ -318,23 +332,99 @@ namespace uf::task
             CHECK(other != first);
         }
 
-        TEST_CASE("umbra binding runs capture resolve find click into one delivered click")
+        TEST_CASE("umbra binding runs one observation cycle into one delivered click")
         {
-            auto frames = std::vector<Frame>{};
-            frames.emplace_back(grayFrame(anno::test::fingerprint(3, 1, 96, 96), resolvingPixels(), FrameId{17}));
-            auto built = buildBinding(std::move(frames));
+            auto built = buildBinding(resolvingFrames(FrameId{17}));
             REQUIRE(built.session.has_value());
             TaskContext context{*std::move(built.session), *built.recorder};
 
             constexpr std::string_view source = R"lua(
-                local frame = umbra:capture()
-                local outcome = frame:resolve_page()
-                local page = outcome:resolved()
+                local cycle = umbra:cycle_open()
+                local page = umbra:cycle_page(cycle)
                 if page == nil then return 0 end
                 if not page:is(umbra.pages.page_a) then return 0 end
-                local hit = frame:find(umbra.recognizers.action_target)
+                local hit = umbra:cycle_find(cycle, umbra.recognizers.action_target)
                 if hit == nil then return 0 end
-                umbra:click(page, hit)
+                umbra:cycle_click(cycle, hit)
+                return 1
+            )lua";
+
+            CHECK(runBound(context, built, source) == doctest::Approx(1.0));
+            CHECK(built.clicks->clickCount() == 1);
+            // The click consumed the cycle, so the host holds no frame afterwards.
+            CHECK_FALSE(context.hasOpenCycle());
+        }
+
+        TEST_CASE("umbra binding refuses to open a second cycle while one is open")
+        {
+            // The one-cycle rule. It is a framework bug rather than a script
+            // error -- the framework opens and closes one cycle per poll -- so it
+            // is InternalInvariant, not a Tier B failure a retry policy would
+            // treat as recoverable. The refusal also lands BEFORE the capture, so
+            // the second open costs no frame, and the first cycle is untouched.
+            auto frameSource = std::make_unique<FakeFrameSource>(
+                resolvingFrames(FrameId{18})
+            );
+            auto* const p_frames = frameSource.get();
+            auto built = buildBindingWith(
+                std::move(frameSource),
+                std::stop_token{},
+                std::make_unique<DiscardingTraceSink>()
+            );
+            REQUIRE(built.session.has_value());
+            TaskContext context{*std::move(built.session), *built.recorder};
+
+            constexpr std::string_view source = R"lua(
+                local first = umbra:cycle_open()
+
+                local ok, err = pcall(function() return umbra:cycle_open() end)
+                if ok then return 0 end
+                if err.kind ~= 'internal_invariant' then return 0 end
+                if err.retryable ~= false then return 0 end
+                if getmetatable(err) ~= 'umbra.error' then return 0 end
+
+                -- The refused open left the first cycle whole: it still resolves,
+                -- finds and clicks.
+                local page = umbra:cycle_page(first)
+                if page == nil then return 0 end
+                local hit = umbra:cycle_find(first, umbra.recognizers.action_target)
+                if hit == nil then return 0 end
+                umbra:cycle_click(first, hit)
+                return 1
+            )lua";
+
+            CHECK(runBound(context, built, source) == doctest::Approx(1.0));
+            CHECK(built.clicks->clickCount() == 1);
+            CHECK(p_frames->captureCount() == 1U);
+        }
+
+        TEST_CASE("umbra binding refuses a click on a cycle that resolved no page")
+        {
+            // The structural authorization guarantee. cycle_click takes no page:
+            // the host uses the page THIS cycle resolved, so a script cannot hand
+            // over evidence from another frame. A cycle that never resolved one
+            // has no evidence at all and the click is refused -- and refused
+            // without spending the cycle, which the successful click afterwards
+            // proves.
+            auto built = buildBinding(resolvingFrames(FrameId{19}));
+            REQUIRE(built.session.has_value());
+            TaskContext context{*std::move(built.session), *built.recorder};
+
+            constexpr std::string_view source = R"lua(
+                local cycle = umbra:cycle_open()
+                local hit = umbra:cycle_find(cycle, umbra.recognizers.action_target)
+                if hit == nil then return 0 end
+
+                local ok, err = pcall(function() return umbra:cycle_click(cycle, hit) end)
+                if ok then return 0 end
+                if err.kind ~= 'action_rejected' then return 0 end
+                if getmetatable(err) ~= 'umbra.error' then return 0 end
+
+                -- Resolving the page gives the cycle its evidence, and the very
+                -- same ticket and hit now deliver.
+                local page = umbra:cycle_page(cycle)
+                if page == nil then return 0 end
+                umbra:cycle_click(cycle, hit)
                 return 1
             )lua";
 
@@ -342,89 +432,179 @@ namespace uf::task
             CHECK(built.clicks->clickCount() == 1);
         }
 
-        TEST_CASE("umbra binding fails every method on a frame whose click consumed it")
+        TEST_CASE("umbra binding fails every operation on a consumed or closed cycle")
         {
-            auto frames = std::vector<Frame>{};
-            frames.emplace_back(grayFrame(anno::test::fingerprint(3, 1, 96, 96), resolvingPixels(), FrameId{17}));
-            auto built = buildBinding(std::move(frames));
+            auto built = buildBinding(resolvingFrames(FrameId{20}));
             REQUIRE(built.session.has_value());
             TaskContext context{*std::move(built.session), *built.recorder};
 
-            // After the click consumes the observation, resolve_page, find, and a
-            // second click all fail with a frozen, protected stale_observation
-            // error table that a script cannot mutate.
+            // After the click consumes the cycle, cycle_page, cycle_find and a
+            // second cycle_click all fail with a frozen, protected
+            // stale_observation error table a script cannot mutate. A closed
+            // cycle's ticket is just as dead.
             constexpr std::string_view source = R"lua(
-                local frame = umbra:capture()
-                local page = frame:resolve_page():resolved()
-                local hit = frame:find(umbra.recognizers.action_target)
-                umbra:click(page, hit)
+                local cycle = umbra:cycle_open()
+                local page = umbra:cycle_page(cycle)
+                local hit = umbra:cycle_find(cycle, umbra.recognizers.action_target)
+                umbra:cycle_click(cycle, hit)
 
-                local okResolve, errResolve = pcall(function() return frame:resolve_page() end)
-                if okResolve or errResolve.kind ~= 'stale_observation' then return 0 end
+                local okPage, errPage = pcall(function() return umbra:cycle_page(cycle) end)
+                if okPage or errPage.kind ~= 'stale_observation' then return 0 end
                 -- The kind a raised error carries is a key of umbra.errors whose
                 -- value is that same string: both come from the one domain
                 -- mapping, so a script's comparison can never silently miss.
-                if umbra.errors[errResolve.kind] ~= errResolve.kind then return 0 end
-                if errResolve.retryable ~= true then return 0 end
-                if getmetatable(errResolve) ~= 'umbra.error' then return 0 end
-                if pcall(function() errResolve.kind = 'tampered' end) then return 0 end
+                if umbra.errors[errPage.kind] ~= errPage.kind then return 0 end
+                if errPage.retryable ~= true then return 0 end
+                if getmetatable(errPage) ~= 'umbra.error' then return 0 end
+                if pcall(function() errPage.kind = 'tampered' end) then return 0 end
 
                 local okFind, errFind = pcall(function()
-                    return frame:find(umbra.recognizers.action_target)
+                    return umbra:cycle_find(cycle, umbra.recognizers.action_target)
                 end)
                 if okFind or errFind.kind ~= 'stale_observation' then return 0 end
 
-                local okClick, errClick = pcall(function() return umbra:click(page, hit) end)
+                local okClick, errClick = pcall(function()
+                    return umbra:cycle_click(cycle, hit)
+                end)
                 if okClick or errClick.kind ~= 'stale_observation' then return 0 end
 
+                -- A closed cycle is equally dead, and its hit is refused even
+                -- against a cycle that IS open.
+                local closed = umbra:cycle_open()
+                local staleHit = umbra:cycle_find(closed, umbra.recognizers.action_target)
+                umbra:cycle_close(closed)
+                local okClosed, errClosed = pcall(function()
+                    return umbra:cycle_page(closed)
+                end)
+                if okClosed or errClosed.kind ~= 'stale_observation' then return 0 end
+
+                local reopened = umbra:cycle_open()
+                if umbra:cycle_page(reopened) == nil then return 0 end
+                local okStale, errStale = pcall(function()
+                    return umbra:cycle_click(reopened, staleHit)
+                end)
+                if okStale or errStale.kind ~= 'stale_observation' then return 0 end
+                umbra:cycle_close(reopened)
                 return 1
             )lua";
 
             CHECK(runBound(context, built, source) == doctest::Approx(1.0));
             CHECK(built.clicks->clickCount() == 1);
+            CHECK_FALSE(context.hasOpenCycle());
         }
 
-        TEST_CASE("umbra binding rejects a click that mixes objects from two frames")
+        TEST_CASE("umbra cycle_close is idempotent and closing a consumed cycle is a no-op")
         {
-            auto frames = std::vector<Frame>{};
-            frames.emplace_back(grayFrame(anno::test::fingerprint(3, 1, 96, 96), resolvingPixels(), FrameId{17}));
-            frames.emplace_back(grayFrame(anno::test::fingerprint(3, 1, 96, 96), resolvingPixels(), FrameId{18}));
-            auto built = buildBinding(std::move(frames));
+            auto built = buildBinding(resolvingFrames(FrameId{21}));
             REQUIRE(built.session.has_value());
             TaskContext context{*std::move(built.session), *built.recorder};
 
-            // p1 belongs to the first capture, h2 to the second. The binding layer
-            // rejects the mix before the engine, and neither frame is consumed.
+            // Every close below is unguarded: a raise anywhere would abort the
+            // script and never reach the return, which is the assertion. This is
+            // what lets a framework cleanup path close unconditionally.
             constexpr std::string_view source = R"lua(
-                local f1 = umbra:capture()
-                local p1 = f1:resolve_page():resolved()
-                local f2 = umbra:capture()
-                local h2 = f2:find(umbra.recognizers.action_target)
-                if p1 == nil or h2 == nil then return 0 end
+                local first = umbra:cycle_open()
+                umbra:cycle_close(first)
+                umbra:cycle_close(first)
 
-                local ok, err = pcall(function() return umbra:click(p1, h2) end)
-                if ok or err.kind ~= 'action_rejected' then return 0 end
+                local second = umbra:cycle_open()
+                local page = umbra:cycle_page(second)
+                local hit = umbra:cycle_find(second, umbra.recognizers.action_target)
+                umbra:cycle_click(second, hit)
+                umbra:cycle_close(second)
 
-                local h1 = f1:find(umbra.recognizers.action_target)
-                if h1 == nil then return 0 end
+                -- The first ticket is still dead after all of that, and closing it
+                -- once more still does nothing.
+                umbra:cycle_close(first)
                 return 1
             )lua";
 
             CHECK(runBound(context, built, source) == doctest::Approx(1.0));
-            CHECK(built.clicks->clickCount() == 0);
+            CHECK(built.clicks->clickCount() == 1);
+            CHECK_FALSE(context.hasOpenCycle());
+        }
+
+        TEST_CASE("Closing a cycle is what releases the frame, and only closing does")
+        {
+            // The whole point of the protocol: the frame's lifetime is the
+            // ledger's, not the collector's. Both halves run with the VM already
+            // destroyed, so every Lua handle has been finalised either way -- the
+            // only difference is whether the script closed the cycle.
+            SUBCASE("a cycle left open still holds its frame after the VM is gone")
+            {
+                auto built = buildBinding(resolvingFrames(FrameId{22}));
+                REQUIRE(built.session.has_value());
+                TaskContext context{*std::move(built.session), *built.recorder};
+
+                constexpr std::string_view source = R"lua(
+                    local cycle = umbra:cycle_open()
+                    return 1
+                )lua";
+
+                CHECK(runBound(context, built, source) == doctest::Approx(1.0));
+                CHECK(context.hasOpenCycle());
+            }
+
+            SUBCASE("a closed cycle holds nothing")
+            {
+                auto built = buildBinding(resolvingFrames(FrameId{23}));
+                REQUIRE(built.session.has_value());
+                TaskContext context{*std::move(built.session), *built.recorder};
+
+                constexpr std::string_view source = R"lua(
+                    local cycle = umbra:cycle_open()
+                    umbra:cycle_close(cycle)
+                    return 1
+                )lua";
+
+                CHECK(runBound(context, built, source) == doctest::Approx(1.0));
+                CHECK_FALSE(context.hasOpenCycle());
+            }
+        }
+
+        TEST_CASE("A ticket minted by one generation is rejected by another")
+        {
+            // Two contexts, so two ledgers and two generation stamps. Both open
+            // their first cycle, so both hold ordinal 1 and only the generation
+            // stamp tells the two tickets apart.
+            auto firstBuilt = buildBinding(resolvingFrames(FrameId{24}));
+            REQUIRE(firstBuilt.session.has_value());
+            TaskContext first{*std::move(firstBuilt.session), *firstBuilt.recorder};
+
+            auto secondBuilt = buildBinding(resolvingFrames(FrameId{25}));
+            REQUIRE(secondBuilt.session.has_value());
+            TaskContext second{*std::move(secondBuilt.session), *secondBuilt.recorder};
+
+            auto const firstTicket = first.openCycle();
+            REQUIRE(firstTicket.has_value());
+            auto const secondTicket = second.openCycle();
+            REQUIRE(secondTicket.has_value());
+            REQUIRE(firstTicket->ordinal == secondTicket->ordinal);
+
+            auto const crossed = second.cyclePage(*firstTicket);
+            REQUIRE_FALSE(crossed.has_value());
+            CHECK(
+                automationErrorKind(crossed.error())
+                == AutomationErrorKind::StaleObservation
+            );
+
+            // The rejection is the stamp and not a dead ledger: the second
+            // generation's own ticket of the same ordinal still resolves.
+            CHECK(second.cyclePage(*secondTicket).has_value());
         }
 
         TEST_CASE("umbra binding returns nil for a find that completes without a match")
         {
             auto frames = std::vector<Frame>{};
-            frames.emplace_back(grayFrame(anno::test::fingerprint(3, 1, 96, 96), unknownPixels(), FrameId{17}));
+            frames.emplace_back(grayFrame(anno::test::fingerprint(3, 1, 96, 96), unknownPixels(), FrameId{26}));
             auto built = buildBinding(std::move(frames));
             REQUIRE(built.session.has_value());
             TaskContext context{*std::move(built.session), *built.recorder};
 
             constexpr std::string_view source = R"lua(
-                local frame = umbra:capture()
-                local hit = frame:find(umbra.recognizers.action_target)
+                local cycle = umbra:cycle_open()
+                local hit = umbra:cycle_find(cycle, umbra.recognizers.action_target)
+                umbra:cycle_close(cycle)
                 return (hit == nil) and 1 or 0
             )lua";
 
@@ -432,35 +612,79 @@ namespace uf::task
             CHECK(built.clicks->clickCount() == 0);
         }
 
-        TEST_CASE("umbra wait_for_page returns a paired page and frame that click together")
+        TEST_CASE("umbra binding runs a poll loop that opens and closes one cycle a turn")
         {
-            auto frames = std::vector<Frame>{};
-            frames.emplace_back(grayFrame(anno::test::fingerprint(3, 1, 96, 96), resolvingPixels(), FrameId{21}));
+            // Twenty frames that resolve nothing, then one that resolves page_a.
+            // The loop opens a cycle, inspects it and closes it every turn, so it
+            // runs far past anything a retention cap once allowed -- and needs no
+            // forced collection to do it, because nothing is ever pinned past the
+            // close.
+            auto const fingerprint = anno::test::fingerprint(3, 1, 96, 96);
+            auto       frames      = std::vector<Frame>{};
+            for (int index = 0; index < 20; ++index)
+            {
+                frames.emplace_back(grayFrame(fingerprint, unknownPixels(), FrameId{40}));
+            }
+            frames.emplace_back(grayFrame(fingerprint, resolvingPixels(), FrameId{41}));
             auto built = buildBinding(std::move(frames));
             REQUIRE(built.session.has_value());
             TaskContext context{*std::move(built.session), *built.recorder};
 
-            // wait_for_page resolves page_a on the first capture and hands back a
-            // { page, frame } sharing one observation sequence, so find on the frame
-            // and click on the page consume the same wait and deliver one click.
             constexpr std::string_view source = R"lua(
-                local wait = umbra:wait_for_page(umbra.pages.page_a, {})
-                if wait == nil or wait.page == nil or wait.frame == nil then return 0 end
-                if not wait.page:is(umbra.pages.page_a) then return 0 end
-                local hit = wait.frame:find(umbra.recognizers.action_target)
-                if hit == nil then return 0 end
-                umbra:click(wait.page, hit)
+                local target = umbra.pages.page_a
+                while true do
+                    local cycle = umbra:cycle_open()
+                    local page = umbra:cycle_page(cycle)
+                    if page ~= nil and page:is(target) then
+                        local hit = umbra:cycle_find(cycle, umbra.recognizers.action_target)
+                        if hit ~= nil then
+                            umbra:cycle_click(cycle, hit)
+                        else
+                            umbra:cycle_close(cycle)
+                        end
+                        break
+                    end
+                    umbra:cycle_close(cycle)
+                end
                 return 1
             )lua";
 
             CHECK(runBound(context, built, source) == doctest::Approx(1.0));
             CHECK(built.clicks->clickCount() == 1);
+            // The last cycle was consumed by the click and every earlier one was
+            // closed, so nothing stays pinned in the host.
+            CHECK_FALSE(context.hasOpenCycle());
+        }
+
+        TEST_CASE("umbra wait_for_page hands back a page and the open cycle behind it")
+        {
+            auto built = buildBinding(resolvingFrames(FrameId{27}));
+            REQUIRE(built.session.has_value());
+            TaskContext context{*std::move(built.session), *built.recorder};
+
+            // wait_for_page resolves page_a on the first capture and leaves the
+            // cycle open over the frame that resolved it, with that page already
+            // recorded as the cycle's authorization evidence -- which is why the
+            // click below needs no cycle_page of its own.
+            constexpr std::string_view source = R"lua(
+                local wait = umbra:wait_for_page(umbra.pages.page_a, {})
+                if wait == nil or wait.page == nil or wait.cycle == nil then return 0 end
+                if not wait.page:is(umbra.pages.page_a) then return 0 end
+                local hit = umbra:cycle_find(wait.cycle, umbra.recognizers.action_target)
+                if hit == nil then return 0 end
+                umbra:cycle_click(wait.cycle, hit)
+                return 1
+            )lua";
+
+            CHECK(runBound(context, built, source) == doctest::Approx(1.0));
+            CHECK(built.clicks->clickCount() == 1);
+            CHECK_FALSE(context.hasOpenCycle());
         }
 
         TEST_CASE("umbra wait_for_page raises a Tier B timeout when the page never resolves")
         {
             auto frames = std::vector<Frame>{};
-            frames.emplace_back(grayFrame(anno::test::fingerprint(3, 1, 96, 96), unknownPixels(), FrameId{22}));
+            frames.emplace_back(grayFrame(anno::test::fingerprint(3, 1, 96, 96), unknownPixels(), FrameId{28}));
             auto built = buildBinding(std::move(frames));
             REQUIRE(built.session.has_value());
             TaskContext context{*std::move(built.session), *built.recorder};
@@ -468,7 +692,8 @@ namespace uf::task
             // A short explicit budget keeps the poll loop brief; the unknown frame
             // never resolves page_a, so the wait times out as a Tier B error whose
             // kind is the domain Timeout spelling, whose retryable is false, and
-            // which carries the protected umbra.error metatable.
+            // which carries the protected umbra.error metatable. A timed-out wait
+            // opened no cycle, so the next open still succeeds.
             constexpr std::string_view source = R"lua(
                 local ok, err = pcall(function()
                     return umbra:wait_for_page(
@@ -480,18 +705,20 @@ namespace uf::task
                 if err.kind ~= 'timeout' then return 0 end
                 if err.retryable ~= false then return 0 end
                 if getmetatable(err) ~= 'umbra.error' then return 0 end
+
+                local cycle = umbra:cycle_open()
+                umbra:cycle_close(cycle)
                 return 1
             )lua";
 
             CHECK(runBound(context, built, source) == doctest::Approx(1.0));
             CHECK(built.clicks->clickCount() == 0);
+            CHECK_FALSE(context.hasOpenCycle());
         }
 
         TEST_CASE("umbra wait_for_page rejects an out-of-range timeout instead of overflowing")
         {
-            auto frames = std::vector<Frame>{};
-            frames.emplace_back(grayFrame(anno::test::fingerprint(3, 1, 96, 96), resolvingPixels(), FrameId{24}));
-            auto built = buildBinding(std::move(frames));
+            auto built = buildBinding(resolvingFrames(FrameId{29}));
             REQUIRE(built.session.has_value());
             TaskContext context{*std::move(built.session), *built.recorder};
 
@@ -515,22 +742,20 @@ namespace uf::task
 
         TEST_CASE("umbra try catches a Tier B automation error and returns its table")
         {
-            auto frames = std::vector<Frame>{};
-            frames.emplace_back(grayFrame(anno::test::fingerprint(3, 1, 96, 96), resolvingPixels(), FrameId{23}));
-            auto built = buildBinding(std::move(frames));
+            auto built = buildBinding(resolvingFrames(FrameId{30}));
             REQUIRE(built.session.has_value());
             TaskContext context{*std::move(built.session), *built.recorder};
 
-            // The first click consumes the frame; a second click inside try is a
+            // The first click consumes the cycle; a second click inside try is a
             // Tier B stale_observation, returned as (false, errorTable). A plainly
             // successful function returns (true, nil).
             constexpr std::string_view source = R"lua(
-                local frame = umbra:capture()
-                local page = frame:resolve_page():resolved()
-                local hit = frame:find(umbra.recognizers.action_target)
-                umbra:click(page, hit)
+                local cycle = umbra:cycle_open()
+                local page = umbra:cycle_page(cycle)
+                local hit = umbra:cycle_find(cycle, umbra.recognizers.action_target)
+                umbra:cycle_click(cycle, hit)
 
-                local ok, err = umbra:try(function() umbra:click(page, hit) end)
+                local ok, err = umbra:try(function() umbra:cycle_click(cycle, hit) end)
                 if ok ~= false then return 0 end
                 if err == nil or err.kind ~= 'stale_observation' then return 0 end
                 if err.retryable ~= true then return 0 end
@@ -547,9 +772,7 @@ namespace uf::task
 
         TEST_CASE("umbra try lets a script's own error propagate instead of swallowing it")
         {
-            auto frames = std::vector<Frame>{};
-            frames.emplace_back(grayFrame(anno::test::fingerprint(3, 1, 96, 96), resolvingPixels(), FrameId{24}));
-            auto built = buildBinding(std::move(frames));
+            auto built = buildBinding(resolvingFrames(FrameId{31}));
             REQUIRE(built.session.has_value());
             TaskContext context{*std::move(built.session), *built.recorder};
 
@@ -584,7 +807,7 @@ namespace uf::task
             auto const cancelledRun = [](std::string_view guarded) -> void
             {
                 auto stop  = std::stop_source{};
-                auto frame = grayFrame(anno::test::fingerprint(3, 1, 96, 96), resolvingPixels(), FrameId{25});
+                auto frame = grayFrame(anno::test::fingerprint(3, 1, 96, 96), resolvingPixels(), FrameId{32});
                 auto built = buildBindingWith(
                     std::make_unique<StopOnCaptureFrameSource>(std::move(frame), stop),
                     stop.get_token(),
@@ -610,7 +833,7 @@ namespace uf::task
             SUBCASE("wrapped in the native pcall")
             {
                 cancelledRun(R"lua(
-                    pcall(function() umbra:capture() end)
+                    pcall(function() umbra:cycle_open() end)
                     mark()
                     return 1
                 )lua");
@@ -618,7 +841,7 @@ namespace uf::task
             SUBCASE("wrapped in umbra:try")
             {
                 cancelledRun(R"lua(
-                    umbra:try(function() umbra:capture() end)
+                    umbra:try(function() umbra:cycle_open() end)
                     mark()
                     return 1
                 )lua");
@@ -627,19 +850,18 @@ namespace uf::task
 
         TEST_CASE("A failing verb reports its own cause, not the trace sink's failure")
         {
-            // A failing verb records its HostCall before it raises. If that record
-            // raised the sink's own IoFailure instead, an author debugging a failed
-            // click would be told the trace file was unwritable rather than why the
-            // click failed. The verb's cause wins; the lost evidence is latched on
-            // the context so the host still learns the trace is incomplete.
+            // A failing verb records its native call before it raises. If that
+            // record raised the sink's own IoFailure instead, an author debugging a
+            // failed click would be told the trace file was unwritable rather than
+            // why the click failed. The verb's cause wins; the lost evidence is
+            // latched on the context so the host still learns the trace is
+            // incomplete.
             //
-            // Clicking consumes the observation, so the second click fails
+            // Clicking consumes the cycle, so the second click fails
             // StaleObservation -- a Tier B failure umbra:try hands back rather than
             // re-raising, which is what makes the substitution observable.
-            auto frames = std::vector<Frame>{};
-            frames.emplace_back(grayFrame(anno::test::fingerprint(3, 1, 96, 96), resolvingPixels(), FrameId{88}));
             auto built = buildBindingWith(
-                std::make_unique<FakeFrameSource>(std::move(frames)),
+                std::make_unique<FakeFrameSource>(resolvingFrames(FrameId{88})),
                 std::stop_token{},
                 std::make_unique<FailOnFailedTraceSink>()
             );
@@ -647,13 +869,13 @@ namespace uf::task
             TaskContext context{*std::move(built.session), *built.recorder};
 
             constexpr std::string_view source = R"lua(
-                local frame = umbra:capture()
-                local page = frame:resolve_page():resolved()
-                local hit = frame:find(umbra.recognizers.action_target)
+                local cycle = umbra:cycle_open()
+                local page = umbra:cycle_page(cycle)
+                local hit = umbra:cycle_find(cycle, umbra.recognizers.action_target)
                 if page == nil or hit == nil then return 0 end
-                umbra:click(page, hit)
+                umbra:cycle_click(cycle, hit)
 
-                local ok, err = umbra:try(function() umbra:click(page, hit) end)
+                local ok, err = umbra:try(function() umbra:cycle_click(cycle, hit) end)
                 if ok then return 0 end
                 if err.kind ~= 'stale_observation' then return 0 end
                 return 1
@@ -664,145 +886,9 @@ namespace uf::task
             CHECK(built.clicks->clickCount() == 1);
         }
 
-        TEST_CASE("umbra binding reclaims the observation a dropped frame handle pinned")
-        {
-            auto frames = std::vector<Frame>{};
-            frames.emplace_back(grayFrame(anno::test::fingerprint(3, 1, 96, 96), resolvingPixels(), FrameId{31}));
-            auto built = buildBinding(std::move(frames));
-            REQUIRE(built.session.has_value());
-
-            // Cap disabled so the guardrail never forces a mid-run collection:
-            // this isolates the ownership fix -- a frame handle releasing its
-            // retained observation when it dies -- from the guardrail that
-            // backstops it. The VM (created and destroyed inside runBound)
-            // finalises every frame userdata on teardown, so each of the fifty
-            // captures must have released its observation for the map to drain.
-            TaskContext context{
-                *std::move(built.session),
-                *built.recorder,
-                TaskContextConfig{.maxLiveObservations = 0},
-            };
-
-            // Fifty captures, none retained. Before the fix the observations
-            // lingered in the host map for the whole run (only a click erased
-            // one), so this stayed at fifty; a frame handle that releases on
-            // collection drains it to zero.
-            constexpr std::string_view source = R"lua(
-                for i = 1, 50 do
-                    umbra:capture()
-                end
-                return 1
-            )lua";
-
-            CHECK(runBound(context, built, source) == doctest::Approx(1.0));
-            CHECK(context.liveObservationCount() == 0);
-        }
-
-        TEST_CASE("umbra binding fails Tier B when a script pins too many frames at once")
-        {
-            auto frames = std::vector<Frame>{};
-            frames.emplace_back(grayFrame(anno::test::fingerprint(3, 1, 96, 96), resolvingPixels(), FrameId{32}));
-            auto built = buildBinding(std::move(frames));
-            REQUIRE(built.session.has_value());
-
-            // A small explicit cap makes the guardrail observable without pinning
-            // many frames. The script stashes every frame in a table, so the
-            // frames stay reachable and the forced collection reclaims nothing:
-            // the capture that would exceed the cap raises a Tier B
-            // InvalidResource, and the table holds exactly `cap` frames then.
-            TaskContext context{
-                *std::move(built.session),
-                *built.recorder,
-                TaskContextConfig{.maxLiveObservations = 3},
-            };
-
-            constexpr std::string_view source = R"lua(
-                local frames = {}
-                local ok, err = pcall(function()
-                    while true do
-                        frames[#frames + 1] = umbra:capture()
-                    end
-                end)
-                if ok then return 0 end
-                if err.kind ~= 'invalid_resource' then return 0 end
-                if err.retryable ~= false then return 0 end
-                if getmetatable(err) ~= 'umbra.error' then return 0 end
-                if #frames ~= 3 then return 0 end
-                return 1
-            )lua";
-
-            CHECK(runBound(context, built, source) == doctest::Approx(1.0));
-            CHECK(built.clicks->clickCount() == 0);
-        }
-
-        TEST_CASE("umbra binding lets a polling loop run past the retention cap")
-        {
-            // Twenty frames that resolve nothing, then one that resolves page_a.
-            // A capture-resolve poll loop drops each frame as it advances, so it
-            // runs well past the default retention cap; the guardrail's forced
-            // collection reclaims the dropped frames every time, so the loop is
-            // never falsely failed and reaches the resolving frame to click.
-            auto const fingerprint = anno::test::fingerprint(3, 1, 96, 96);
-            auto       frames      = std::vector<Frame>{};
-            for (int index = 0; index < 20; ++index)
-            {
-                frames.emplace_back(grayFrame(fingerprint, unknownPixels(), FrameId{40}));
-            }
-            frames.emplace_back(grayFrame(fingerprint, resolvingPixels(), FrameId{41}));
-            auto built = buildBinding(std::move(frames));
-            REQUIRE(built.session.has_value());
-            TaskContext context{*std::move(built.session), *built.recorder};
-
-            constexpr std::string_view source = R"lua(
-                local target = umbra.pages.page_a
-                while true do
-                    local frame = umbra:capture()
-                    local page = frame:resolve_page():resolved()
-                    if page ~= nil and page:is(target) then
-                        local hit = frame:find(umbra.recognizers.action_target)
-                        if hit ~= nil then
-                            umbra:click(page, hit)
-                        end
-                        break
-                    end
-                end
-                return 1
-            )lua";
-
-            CHECK(runBound(context, built, source) == doctest::Approx(1.0));
-            CHECK(built.clicks->clickCount() == 1);
-            // The loop's last frame was consumed by the click and every earlier
-            // frame was reclaimed, so nothing stays pinned in the host.
-            CHECK(context.liveObservationCount() == 0);
-        }
-
-        TEST_CASE("TaskContext release drops a live observation and is a no-op after consume")
-        {
-            auto frames = std::vector<Frame>{};
-            frames.emplace_back(grayFrame(anno::test::fingerprint(3, 1, 96, 96), resolvingPixels(), FrameId{33}));
-            auto built = buildBinding(std::move(frames));
-            REQUIRE(built.session.has_value());
-            TaskContext context{*std::move(built.session), *built.recorder};
-
-            auto const seq = context.capture();
-            REQUIRE(seq.has_value());
-            CHECK(context.liveObservationCount() == 1);
-
-            context.release(*seq);
-            CHECK(context.liveObservationCount() == 0);
-
-            // Releasing again -- the path a frame handle's collection takes after
-            // a click already consumed the observation -- is a harmless no-op,
-            // never a double-erase, and leaves the count at zero.
-            context.release(*seq);
-            CHECK(context.liveObservationCount() == 0);
-        }
-
         TEST_CASE("umbra:now returns a non-negative, non-decreasing whole millisecond count")
         {
-            auto frames = std::vector<Frame>{};
-            frames.emplace_back(grayFrame(anno::test::fingerprint(3, 1, 96, 96), resolvingPixels(), FrameId{60}));
-            auto built = buildBinding(std::move(frames));
+            auto built = buildBinding(resolvingFrames(FrameId{60}));
             REQUIRE(built.session.has_value());
             TaskContext context{*std::move(built.session), *built.recorder};
 
@@ -823,9 +909,7 @@ namespace uf::task
 
         TEST_CASE("umbra:random is the task's only RNG, covers its interval, and rejects empty ones")
         {
-            auto frames = std::vector<Frame>{};
-            frames.emplace_back(grayFrame(anno::test::fingerprint(3, 1, 96, 96), resolvingPixels(), FrameId{61}));
-            auto built = buildBinding(std::move(frames));
+            auto built = buildBinding(resolvingFrames(FrameId{61}));
             REQUIRE(built.session.has_value());
             TaskContext context{*std::move(built.session), *built.recorder};
 
@@ -861,14 +945,12 @@ namespace uf::task
             CHECK(runBound(context, built, source) == doctest::Approx(1.0));
         }
 
-        TEST_CASE("a capture-to-click run produces one ordered stream both layers wrote")
+        TEST_CASE("an open-to-click cycle produces one ordered stream both layers wrote")
         {
-            auto frames = std::vector<Frame>{};
-            frames.emplace_back(grayFrame(anno::test::fingerprint(3, 1, 96, 96), resolvingPixels(), FrameId{70}));
             auto traceSink       = std::make_unique<RecordingTraceSink>();
             auto* const p_traces = traceSink.get();
             auto built = buildBindingWith(
-                std::make_unique<FakeFrameSource>(std::move(frames)),
+                std::make_unique<FakeFrameSource>(resolvingFrames(FrameId{70})),
                 std::stop_token{},
                 std::move(traceSink)
             );
@@ -876,10 +958,11 @@ namespace uf::task
             TaskContext context{*std::move(built.session), *built.recorder};
 
             constexpr std::string_view source = R"lua(
-                local frame = umbra:capture()
-                local page = frame:resolve_page():resolved()
-                local hit = frame:find(umbra.recognizers.action_target)
-                umbra:click(page, hit)
+                local cycle = umbra:cycle_open()
+                local page = umbra:cycle_page(cycle)
+                local hit = umbra:cycle_find(cycle, umbra.recognizers.action_target)
+                umbra:cycle_click(cycle, hit)
+                umbra:cycle_close(cycle)
                 return 1
             )lua";
 
@@ -899,9 +982,12 @@ namespace uf::task
             }
 
             // The engine event and the task.native_call it caused sit adjacent in
-            // one stream, so a reader can correlate them: each verb's native call
-            // immediately follows the engine work it drove, and the click's
-            // engine.action_delivered names the frame the capture observed.
+            // one stream, so a reader can correlate them: each primitive's native
+            // call immediately follows the engine work it drove, and the click's
+            // engine.action_delivered names the frame the open observed. The
+            // trailing cycle_close reached the host and found nothing to release,
+            // which is the deterministic-release path being audited rather than
+            // inferred.
             auto const kinds = kindsOf(events);
             auto const expected = std::vector<trace::TraceEventKind>{
                 trace::TraceEventKind::EngineObserved,
@@ -914,6 +1000,7 @@ namespace uf::task
                 trace::TraceEventKind::EngineActionDelivered,
                 trace::TraceEventKind::EngineObservationInvalidated,
                 trace::TraceEventKind::TaskNativeCall,
+                trace::TraceEventKind::TaskNativeCall,
             };
             CHECK(kinds == expected);
 
@@ -924,24 +1011,31 @@ namespace uf::task
             REQUIRE(delivered.frame.has_value());
             CHECK(delivered.frame->frameId() == FrameId{70});
 
-            // capture, resolve_page, find and click each emit exactly one native
-            // call, in call order; the pure handle reads resolved() and is() emit
-            // nothing.
+            // Each primitive emits exactly one native call, in call order; the pure
+            // handle read page:is emits nothing.
             auto const verbs = nativeCallVerbs(events);
             CHECK(
                 verbs
-                == std::vector<std::string>{"capture", "resolve_page", "find", "click"}
-            );
-            for (auto const& event : events)
-            {
-                if (event.event().nativeCall.has_value())
-                {
-                    CHECK(
-                        event.event().nativeCall->outcome
-                        == trace::NativeCallOutcome::Succeeded
-                    );
+                == std::vector<std::string>{
+                    "cycle_open",
+                    "cycle_page",
+                    "cycle_find",
+                    "cycle_click",
+                    "cycle_close",
                 }
-            }
+            );
+
+            auto const* p_click = findNativeCall(events, "cycle_click");
+            REQUIRE(p_click != nullptr);
+            CHECK(p_click->outcome == trace::NativeCallOutcome::Succeeded);
+            // Both ordinals name the one open cycle, which is what a delivered
+            // click always looks like now.
+            CHECK(p_click->cycleOrdinal == p_click->hitCycleOrdinal);
+
+            // The close after a consuming click had nothing left to release.
+            auto const* p_close = findNativeCall(events, "cycle_close");
+            REQUIRE(p_close != nullptr);
+            CHECK(p_close->outcome == trace::NativeCallOutcome::Empty);
         }
 
         TEST_CASE("umbra binding emits an Empty native call for a find that finds nothing")
@@ -958,44 +1052,60 @@ namespace uf::task
             REQUIRE(built.session.has_value());
             TaskContext context{*std::move(built.session), *built.recorder};
 
-            // The frame resolves nothing, so find completes without a match; its
-            // native call records Empty (Tier A) rather than Succeeded or Failed.
+            // The frame resolves nothing, so cycle_page completes Unknown and
+            // cycle_find completes without a match; both record Empty (Tier A)
+            // rather than Succeeded or Failed.
             constexpr std::string_view source = R"lua(
-                local frame = umbra:capture()
-                local hit = frame:find(umbra.recognizers.action_target)
-                return (hit == nil) and 1 or 0
+                local cycle = umbra:cycle_open()
+                local page = umbra:cycle_page(cycle)
+                local hit = umbra:cycle_find(cycle, umbra.recognizers.action_target)
+                umbra:cycle_close(cycle)
+                return (page == nil and hit == nil) and 1 or 0
             )lua";
 
             CHECK(runBound(context, built, source) == doctest::Approx(1.0));
 
             auto const& events = p_traces->events();
             CHECK(
-                nativeCallVerbs(events) == std::vector<std::string>{"capture", "find"}
+                nativeCallVerbs(events)
+                == std::vector<std::string>{
+                    "cycle_open",
+                    "cycle_page",
+                    "cycle_find",
+                    "cycle_close",
+                }
             );
 
-            auto const* p_find = findNativeCall(events, "find");
+            auto const* p_page = findNativeCall(events, "cycle_page");
+            REQUIRE(p_page != nullptr);
+            CHECK(p_page->outcome == trace::NativeCallOutcome::Empty);
+
+            auto const* p_find = findNativeCall(events, "cycle_find");
             REQUIRE(p_find != nullptr);
             CHECK(p_find->outcome == trace::NativeCallOutcome::Empty);
+
+            // The close DID release a frame, so it is the one Succeeded call here.
+            auto const* p_close = findNativeCall(events, "cycle_close");
+            REQUIRE(p_close != nullptr);
+            CHECK(p_close->outcome == trace::NativeCallOutcome::Succeeded);
         }
 
         TEST_CASE("umbra binding aborts a verb as Tier B io_failure when the trace sink fails")
         {
-            auto frames = std::vector<Frame>{};
-            frames.emplace_back(grayFrame(anno::test::fingerprint(3, 1, 96, 96), resolvingPixels(), FrameId{72}));
             auto built = buildBindingWith(
-                std::make_unique<FakeFrameSource>(std::move(frames)),
+                std::make_unique<FakeFrameSource>(resolvingFrames(FrameId{72})),
                 std::stop_token{},
                 std::make_unique<FailOnNativeCallTraceSink>()
             );
             REQUIRE(built.session.has_value());
             TaskContext context{*std::move(built.session), *built.recorder};
 
-            // capture succeeds in the engine, but recording its native call fails;
-            // losing the trace evidence aborts the verb as a Tier B io_failure
-            // carrying the protected umbra.error metatable, rather than dropping
-            // the record silently (the trace's throw-instant discipline).
+            // cycle_open succeeds in the engine, but recording its native call
+            // fails; losing the trace evidence aborts the primitive as a Tier B
+            // io_failure carrying the protected umbra.error metatable, rather than
+            // dropping the record silently (the trace's throw-instant discipline).
             constexpr std::string_view source = R"lua(
-                local ok, err = pcall(function() return umbra:capture() end)
+                local ok, err = pcall(function() return umbra:cycle_open() end)
                 if ok then return 0 end
                 if err.kind ~= 'io_failure' then return 0 end
                 if getmetatable(err) ~= 'umbra.error' then return 0 end

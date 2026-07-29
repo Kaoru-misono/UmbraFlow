@@ -1,5 +1,6 @@
 #pragma once
 
+#include <task/cycle-ledger.hpp>
 #include <task/deterministic.hpp>
 
 #include <core/error/result.hpp>
@@ -15,21 +16,11 @@
 #include <trace/recorder.hpp>
 
 #include <chrono>
-#include <map>
-#include <memory>
 #include <optional>
 #include <stop_token>
 
 namespace uf::task
 {
-    // A monotonically increasing tag identifying one capture. Every script-facing
-    // frame / outcome / page / hit handle records the sequence of the observation
-    // it descends from, so the binding layer can reject a click that mixes objects
-    // from two different captures before they ever reach the engine. A plain
-    // integer would work; the alias documents that the value is an observation
-    // identity and not an array index or a count.
-    using ObservationSeq = uint64;
-
     // The default seed for a task's deterministic RNG (umbra:random). A real run
     // overrides it with a host-chosen seed recorded in the run.started trace
     // event, so a run can be replayed by re-supplying the same seed; this constant
@@ -60,18 +51,6 @@ namespace uf::task
                 std::chrono::milliseconds{500}
             )
         };
-        // Guardrail on how many observations one script may keep retained at
-        // once. Every live frame handle pins a whole-frame Observation
-        // (megabytes of BGRA pixels) in host memory, outside the Lua accounting
-        // allocator's view, so an unbounded backlog can exhaust the host long
-        // before a Lua instruction or time budget trips. Under Model B a running
-        // script holds only the single frame it is inspecting, so this is a
-        // guard against pathological retention, not a working limit; the binding
-        // layer forces a full VM collection to reclaim dead frame handles before
-        // it trips, so this bound counts only frames the script still references.
-        // The conservative placeholder awaits calibration against the first real
-        // daily. 0 disables the guard.
-        uint64          maxLiveObservations{8};
         std::stop_token cancellation{};
 
         // Fixed seed for this task's deterministic RNG (umbra:random). Left at the
@@ -81,30 +60,27 @@ namespace uf::task
         uint64          randomSeed{k_defaultRandomSeed};
     };
 
-    // The completed product of umbra:wait_for_page after the engine's move-only
-    // PageWait has been split: the resolved page (copied into the returned page
-    // handle) and the sequence under which the wait's own observation is now
-    // retained. The returned frame and page handles both carry this seq, so they
-    // can be handed to umbra:click together -- the cross-frame guard applies to a
-    // wait's paired page and frame exactly as it does to a capture's.
-    struct WaitResolved final
+    // The product of umbra:wait_for_page: the observation cycle now open over
+    // the frame that resolved the page, and the page itself. The wait already
+    // resolved it, so the ledger holds it as that cycle's click authorization
+    // evidence and the script never resolves the same frame twice.
+    struct CycleWait final
     {
-        ObservationSeq           seq;
+        CycleTicket              ticket{};
         annotation::ResolvedPage page;
     };
 
     // Host-owned bridge between one task VM and one EngineSession. It owns the
     // session (moved in by the caller, who is responsible for constructing the WGC
-    // / controller ports) and the live observations the running script has
-    // captured but not yet consumed, each keyed by a monotonic sequence. The Luau
-    // binding layer reaches this object through a lightuserdata upvalue and never
-    // sees engine types: every engine call, and all ownership of the move-only
-    // Observation, stays here in host C++.
+    // / controller ports) and the ledger holding the generation's single open
+    // observation cycle. The Luau binding layer reaches this object through a
+    // lightuserdata upvalue and never sees engine types: every engine call, and
+    // all ownership of the move-only Observation, stays here in host C++.
     //
     // Lifetime contract: the caller MUST keep the TaskContext alive for at least
     // as long as the script::Engine (task VM) that binds it, because the VM's host
     // functions hold a raw pointer to it. The context is therefore non-movable so
-    // that pointer stays stable. Retained Observations carry only the engine
+    // that pointer stays stable. The retained Observation carries only the engine
     // session's stable immutable identity token, never a borrow into the session
     // object. NOT thread-safe: every method runs on the VM's owning thread.
     //
@@ -125,10 +101,10 @@ namespace uf::task
         DeterministicRng      m_rng;
         trace::TraceRecorder& m_recorder;
 
-        std::map<ObservationSeq, engine::Observation> m_observations{};
-        ObservationSeq m_nextSeq{1};
-        bool           m_fatal{false};
-        bool           m_traceFailed{false};
+        CycleLedger m_cycles{};
+
+        bool m_fatal{false};
+        bool m_traceFailed{false};
 
     public:
         explicit TaskContext(
@@ -144,72 +120,80 @@ namespace uf::task
 
         ~TaskContext() = default;
 
-        // Observes a fresh frame and retains it under a new sequence, returned to
-        // the binding layer to bake into the frame handle. A capture failure
-        // propagates unchanged for the binding layer's Tier mapping.
+        // Observes one frame and opens the generation's single observation cycle
+        // over it, returning the ticket that names it. A cycle that is already
+        // open fails InternalInvariant BEFORE the capture runs, so a framework
+        // bug never costs a whole screenshot.
         [[nodiscard]]
-        auto capture() -> Result<ObservationSeq>;
+        auto openCycle() -> Result<CycleTicket>;
 
-        // Resolves the page of the retained observation `seq`. A sequence with no
-        // live observation -- already consumed by a click, or never captured --
-        // fails StaleObservation, so a frame handle used after its click reports
-        // exactly the engine's own post-consume contract.
+        // Releases the frame the cycle `ticket` names retains and reports whether
+        // there was one to release. Idempotent: closing twice, closing a ticket a
+        // click already consumed, and closing a ticket from another generation
+        // are all no-ops. This is the only release path a running script can
+        // drive -- the Lua collector has no part in it.
         [[nodiscard]]
-        auto resolvePage(ObservationSeq seq) -> Result<annotation::PageOutcome>;
+        auto closeCycle(CycleTicket ticket) noexcept -> bool;
 
-        // Searches the retained observation `seq` for one action target. An empty
-        // optional is a completed miss (the caller maps it to nil), not a failure.
+        // Resolves the page of the frame `ticket`'s cycle retains and records it
+        // in the ledger as that cycle's click authorization evidence. An empty
+        // optional is Unknown or Ambiguous -- a completed resolution the engine
+        // already traced, not a failure. A ticket naming no open cycle fails
+        // StaleObservation.
         [[nodiscard]]
-        auto findAction(
-            ObservationSeq seq,
+        auto cyclePage(
+            CycleTicket ticket
+        ) -> Result<std::optional<annotation::ResolvedPage>>;
+
+        // Searches the frame `ticket`'s cycle retains for one action target. An
+        // empty optional is a completed miss (the caller maps it to nil), not a
+        // failure.
+        [[nodiscard]]
+        auto cycleFind(
+            CycleTicket ticket,
             annotation::RecognizerId recognizerId
         ) -> Result<std::optional<engine::ActionFound>>;
 
-        // Consumes the observation shared by `page` and `hit` and delivers the
-        // click. A cross-frame mix (pageSeq != hitSeq) is rejected here, before the
-        // engine, so mismatched evidence never reaches authorization. Consuming the
-        // observation -- on success or failure, because act takes it by rvalue --
-        // makes every later use of that frame fail StaleObservation.
+        // Spends the cycle `ticket` names and delivers the click.
+        //
+        // It takes no page. The authorization evidence is the page that cycle
+        // itself resolved, which the ledger holds, so a script cannot supply a
+        // page drawn from another frame: there is no parameter to supply one
+        // through, and under the one-cycle rule there is no other frame to draw
+        // one from. The four-requisite authorization is therefore satisfied by
+        // construction rather than checked. A cycle that resolved no page has no
+        // evidence and fails ActionRejected.
+        //
+        // `hitCycleOrdinal` is the ordinal the hit handle carries and must be the
+        // open cycle's own; anything else names a cycle that no longer exists and
+        // fails StaleObservation. The cycle is spent whatever the click's
+        // outcome, because act consumes the frame by rvalue.
         [[nodiscard]]
-        auto click(
-            ObservationSeq pageSeq,
-            ObservationSeq hitSeq,
-            annotation::ResolvedPage const& page,
+        auto cycleClick(
+            CycleTicket ticket,
+            uint64 hitCycleOrdinal,
             engine::ActionFound const& action
         ) -> Result<engine::ActReceipt>;
 
-        // Polls captures until `pageId` resolves, then retains the resolving
-        // observation under a fresh sequence and returns it alongside the resolved
-        // page, so the binding layer can build the paired frame and page handles
-        // that share that seq. A nullopt timeout or poll interval falls back to the
-        // configured default. A timeout is Timeout; a cancellation is Cancelled;
-        // both propagate unchanged for the binding layer's Tier mapping.
+        // Polls captures until `pageId` resolves, then opens the cycle over the
+        // resolving observation and records the page the wait already resolved as
+        // that cycle's authorization evidence. A nullopt timeout or poll interval
+        // falls back to the configured default. An already-open cycle fails
+        // InternalInvariant exactly as openCycle does; a timeout is Timeout and a
+        // cancellation is Cancelled, both propagating unchanged for the binding
+        // layer's Tier mapping.
         [[nodiscard]]
         auto waitForPage(
             annotation::PageId pageId,
             std::optional<MonotonicInstant::Duration> timeout,
             std::optional<MonotonicInstant::Duration> pollInterval
-        ) -> Result<WaitResolved>;
+        ) -> Result<CycleWait>;
 
-        // Drops the observation retained under `seq`, freeing the frame it pins,
-        // when one is still live. A seq with no live observation -- already
-        // consumed by a click, or released once already -- is a harmless no-op,
-        // so a frame handle's garbage collection can release unconditionally
-        // without racing click's own erase or double-freeing a consumed frame.
-        // noexcept: erasing a std::map entry by key does not throw.
-        void release(ObservationSeq seq) noexcept;
-
-        // The number of observations currently retained -- captured or waited but
-        // not yet consumed or released. The binding layer's frame-retention
-        // guardrail reads it before retaining one more, and tests assert that a
-        // dropped frame handle actually reclaimed its observation.
+        // Whether an observation cycle is open, and so whether the host is still
+        // holding a frame. This is the host-side truth a test asserts release
+        // against; nothing about it involves the Lua collector.
         [[nodiscard]]
-        auto liveObservationCount() const noexcept -> uint64;
-
-        // The configured ceiling on live observations the binding layer enforces
-        // (see TaskContextConfig::maxLiveObservations). 0 means unbounded.
-        [[nodiscard]]
-        auto maxLiveObservations() const noexcept -> uint64;
+        auto hasOpenCycle() const noexcept -> bool;
 
         // True once the shared cancellation source has requested a stop. The
         // binding layer's umbra:try consults this after a protected call so a

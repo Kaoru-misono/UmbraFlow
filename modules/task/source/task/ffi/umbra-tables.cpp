@@ -1,4 +1,5 @@
 #include <task/capability-surface.hpp>
+#include <task/cycle-ledger.hpp>
 #include <task/task-context.hpp>
 
 #include <core/error/error.hpp>
@@ -26,7 +27,6 @@
 #include <string_view>
 #include <unordered_set>
 #include <utility>
-#include <variant>
 #include <vector>
 
 // Luau's C headers are third-party and do not build clean under the project's
@@ -64,8 +64,7 @@ namespace uf::task
         // wave so existing scripts and tests keep observing them.
         constexpr auto k_recognizerType   = "umbra.recognizer";
         constexpr auto k_pageRefType      = "umbra.page";
-        constexpr auto k_frameType        = "umbra.frame";
-        constexpr auto k_outcomeType      = "umbra.outcome";
+        constexpr auto k_cycleType        = "umbra.cycle";
         constexpr auto k_resolvedPageType = "umbra.resolved_page";
         constexpr auto k_hitType          = "umbra.hit";
         constexpr auto k_errorType        = "umbra.error";
@@ -88,44 +87,30 @@ namespace uf::task
             return failureResponse(kind) == FailureResponse::Retry;
         }
 
-        // The payloads carried by the observation and action handles. Each is
-        // placement-constructed into a host-owned full userdata and destroyed by
-        // destroyBox at GC. The move-only Observation is never stored here: it
-        // lives in the TaskContext, keyed by `seq`, so every handle carries only
-        // the sequence of the capture it descends from -- enough to reject a
-        // cross-frame mix and to fail closed once its frame has been consumed.
-        struct FrameBox final
-        {
-            ObservationSeq seq;
-            // SAFETY: a non-owning observation of the host TaskContext that
-            // retains this frame's Observation. The installer's lifetime contract
-            // (see task-context.hpp) guarantees the context outlives the VM, so
-            // this pointer stays valid until the last frame handle is collected.
-            // It is never an owner; destroyFrameBox uses it only to release the
-            // observation this handle pins when the handle dies.
-            TaskContext* context;
-        };
-
-        struct OutcomeBox final
-        {
-            ObservationSeq          seq;
-            annotation::PageOutcome outcome;
-        };
-
-        struct ResolvedPageBox final
-        {
-            ObservationSeq           seq;
-            annotation::ResolvedPage page;
-        };
-
+        // The payload an action handle carries. It is placement-constructed into
+        // a host-owned full userdata and destroyed by destroyBox at GC.
+        //
+        // The move-only Observation is never stored in a handle: it lives in the
+        // TaskContext's CycleLedger, and the only handle that names it is the
+        // ticket. A hit therefore carries just the ordinal of the cycle that
+        // found it, which is the whole of its staleness check -- with at most one
+        // cycle open, an ordinal that is not the open one names a cycle that no
+        // longer exists, and there is no second cycle it could have come from.
         struct HitBox final
         {
-            ObservationSeq      seq;
+            uint64              cycleOrdinal{};
             engine::ActionFound action;
         };
 
         // Runs at VM garbage collection to destroy the value placement-constructed
         // into a handle by pushBoxed.
+        //
+        // No handle's destructor releases a frame. Collecting a ticket, a page or
+        // a hit frees only the few bytes of the box: the frame behind them is
+        // released by umbra:cycle_close or by the click that consumes the cycle,
+        // and by the ledger's own destructor when the generation is torn down.
+        // That is the point of the cycle protocol -- host memory whose release
+        // timing was decided by the Lua collector was wrong by design.
         template <typename T>
         auto destroyBox(void* storage) -> void
         {
@@ -134,25 +119,6 @@ namespace uf::task
             // std::construct_at. Destroy it once here; the VM frees the block
             // afterwards.
             std::destroy_at(static_cast<T*>(storage));
-        }
-
-        // Runs at VM garbage collection for a frame handle: releases the
-        // observation the frame pins in its TaskContext, then destroys the box.
-        // This is what binds the observation's lifetime to its Lua handle. A
-        // frame whose click already consumed the observation releases a seq that
-        // is no longer live, which TaskContext::release treats as a no-op, so a
-        // consumed frame's later collection never double-frees.
-        auto destroyFrameBox(void* storage) -> void
-        {
-            // SAFETY: `storage` is the userdata block lua_newuserdatadtor handed
-            // pushBoxed, holding exactly one FrameBox placement-constructed via
-            // std::construct_at. Its `context` observes the host TaskContext,
-            // which the installer's lifetime contract keeps alive past the VM
-            // (see task-context.hpp), so releasing through it here is valid.
-            // Destroy the box once; the VM frees the block afterwards.
-            auto* const box = static_cast<FrameBox*>(storage);
-            box->context->release(box->seq);
-            std::destroy_at(box);
         }
 
         // Recursively marks the table at `index`, every table reachable from its
@@ -402,39 +368,6 @@ namespace uf::task
             );
         }
 
-        // Enforces the frame-retention guardrail before a verb retains one more
-        // observation. A script that keeps only the frame it is inspecting never
-        // reaches the cap. A polling loop that drops each frame reaches it only
-        // with dead frame handles still awaiting collection, so a full VM
-        // collection runs their finalisers -- each releasing the observation it
-        // pinned -- and the verb proceeds. A cap that still stands after the
-        // collection means the script genuinely holds that many frames at once,
-        // each pinning a whole screenshot in host memory; that is a Tier B
-        // InvalidResource naming the cause rather than a silent memory blowup. A
-        // zero cap disables the guard.
-        auto guardObservationBudget(lua_State* state, TaskContext* context) -> void
-        {
-            auto const cap = context->maxLiveObservations();
-            if (cap == 0 || context->liveObservationCount() < cap)
-            {
-                return;
-            }
-
-            lua_gc(state, LUA_GCCOLLECT, 0);
-            if (context->liveObservationCount() < cap)
-            {
-                return;
-            }
-
-            raiseTierB(
-                state,
-                AutomationErrorKind::InvalidResource,
-                "too many live frames retained at once; each frame pins a whole "
-                "screenshot in host memory until it is clicked or goes out of "
-                "scope, so keep only the frame you are inspecting"
-            );
-        }
-
         // The automation kind of an engine failure, defaulting an unclassified
         // error to InternalInvariant. Mirrors raiseFromError's own mapping so the
         // HostCall trace records exactly the kind the Tier ladder will raise.
@@ -445,17 +378,18 @@ namespace uf::task
                 .value_or(AutomationErrorKind::InternalInvariant);
         }
 
-        // Which verb ran and what it was handed. Every task.native_call carries
-        // it, so a verb the host fails before the engine is reached -- a stale or
-        // cross-frame observation, which is the only failure that produces no
-        // engine event at all -- still names the frame the script tried to use.
-        // A call-scoped parameter type: `verb` views a string literal and the
-        // struct never outlives the call that builds it.
+        // Which primitive ran and what it was handed. Every task.native_call
+        // carries it, so a primitive the host fails before the engine is reached
+        // -- a ticket or a hit naming a cycle that is no longer open, which is
+        // the only failure that produces no engine event at all -- still names
+        // the cycle the script tried to use. A call-scoped parameter type: `verb`
+        // views a string literal and the struct never outlives the call that
+        // builds it.
         struct NativeCallIdentity final
         {
             std::string_view                        verb;
-            std::optional<uint64>                   observationSeq{};
-            std::optional<uint64>                   hitObservationSeq{};
+            std::optional<uint64>                   cycleOrdinal{};
+            std::optional<uint64>                   hitCycleOrdinal{};
             std::optional<annotation::RecognizerId> recognizerId{};
         };
 
@@ -469,10 +403,10 @@ namespace uf::task
             return trace::TraceEvent{
                 .kind       = trace::TraceEventKind::TaskNativeCall,
                 .nativeCall = trace::TraceEvent::NativeCall{
-                    .verb              = std::string{call.verb},
-                    .outcome           = outcome,
-                    .observationSeq    = call.observationSeq,
-                    .hitObservationSeq = call.hitObservationSeq,
+                    .verb            = std::string{call.verb},
+                    .outcome         = outcome,
+                    .cycleOrdinal    = call.cycleOrdinal,
+                    .hitCycleOrdinal = call.hitCycleOrdinal,
                 },
                 .recognizerId = call.recognizerId,
                 .errorKind    = errorKind,
@@ -537,77 +471,126 @@ namespace uf::task
             raiseFromError(state, context, error);
         }
 
-        // umbra:capture() -> frame handle. A capture failure maps through the Tier
-        // ladder (Tier B, or Tier C for a cancellation).
-        auto captureFn(lua_State* state) -> int
+        // umbra:cycle_open() -> ticket. Observes one frame and opens the
+        // generation's single observation cycle over it. A capture failure maps
+        // through the Tier ladder (Tier B, or Tier C for a cancellation);
+        // opening while a cycle is already open is a framework bug and fails
+        // InternalInvariant rather than becoming a Tier B failure a script could
+        // catch and retry.
+        //
+        // It takes no deadline yet. The plan's cycle_open(deadline) needs
+        // IFrameSource::capture() to accept one, which is stage 3 work; a
+        // parameter parsed and discarded here would tell a script its capture is
+        // bounded when nothing bounds it.
+        auto cycleOpenFn(lua_State* state) -> int
         {
             auto* context = boundContext(state);
             guardFatal(state, context);
-            guardObservationBudget(state, context);
 
-            // capture mints its own sequence rather than being handed one, so its
-            // identity is the verb alone.
-            auto const call = NativeCallIdentity{.verb = "capture"};
+            // cycle_open mints the ordinal rather than being handed one, so its
+            // identity is the primitive alone.
+            auto const call = NativeCallIdentity{.verb = "cycle_open"};
 
-            auto result = context->capture();
+            auto result = context->openCycle();
             if (!result)
             {
                 traceHostCallFailure(state, context, call, result.error());
             }
             traceHostCall(state, context, call, trace::NativeCallOutcome::Succeeded);
-            pushBoxed<FrameBox>(
+            pushBoxed<CycleTicket>(
                 state,
-                FrameBox{.seq = *result, .context = context},
-                &destroyFrameBox,
-                k_frameType
+                *result,
+                &destroyBox<CycleTicket>,
+                k_cycleType
             );
             return 1;
         }
 
-        // frame:resolve_page() -> outcome handle carrying the PageOutcome.
-        auto resolvePageFn(lua_State* state) -> int
+        // umbra:cycle_close(ticket) -> (). Releases the frame the cycle retains,
+        // deterministically and at a moment the host chose. Idempotent: a ticket
+        // that names no open cycle -- closed already, consumed by a click, or
+        // minted by another generation -- records an Empty call and returns.
+        // umbra:cycle_close desugars to umbra.cycle_close(umbra, ticket), so the
+        // ticket is argument 2.
+        auto cycleCloseFn(lua_State* state) -> int
         {
             auto* context = boundContext(state);
             guardFatal(state, context);
 
-            auto* frame = checkBox<FrameBox>(state, 1, k_frameType, "frame");
+            auto* ticket = checkBox<CycleTicket>(state, 2, k_cycleType, "cycle");
             auto const call = NativeCallIdentity{
-                .verb           = "resolve_page",
-                .observationSeq = frame->seq,
+                .verb           = "cycle_close",
+                .cycleOrdinal = ticket->ordinal,
             };
 
-            auto result = context->resolvePage(frame->seq);
-            if (!result)
-            {
-                traceHostCallFailure(state, context, call, result.error());
-            }
-            traceHostCall(state, context, call, trace::NativeCallOutcome::Succeeded);
-            pushBoxed<OutcomeBox>(
+            bool const released = context->closeCycle(*ticket);
+            traceHostCall(
                 state,
-                OutcomeBox{.seq = frame->seq, .outcome = *std::move(result)},
-                &destroyBox<OutcomeBox>,
-                k_outcomeType
+                context,
+                call,
+                released ? trace::NativeCallOutcome::Succeeded
+                         : trace::NativeCallOutcome::Empty
             );
-            return 1;
+            return 0;
         }
 
-        // frame:find(recognizer) -> hit handle, or nil for a completed miss
-        // (Tier A). A non-recognizer argument is a Tier B InvalidResource.
-        auto findFn(lua_State* state) -> int
+        // umbra:cycle_page(ticket) -> resolved-page handle, or nil when the frame
+        // resolved to Unknown or Ambiguous (both already traced by the engine, so
+        // neither raises). A successful resolution is also recorded in the ledger
+        // as this cycle's click authorization evidence, which is the only way a
+        // click can ever be authorized.
+        auto cyclePageFn(lua_State* state) -> int
         {
             auto* context = boundContext(state);
             guardFatal(state, context);
 
-            auto* frame = checkBox<FrameBox>(state, 1, k_frameType, "frame");
-            auto* recognizer =
-                checkBox<annotation::RecognizerId>(state, 2, k_recognizerType, "recognizer");
+            auto* ticket = checkBox<CycleTicket>(state, 2, k_cycleType, "cycle");
             auto const call = NativeCallIdentity{
-                .verb           = "find",
-                .observationSeq = frame->seq,
+                .verb           = "cycle_page",
+                .cycleOrdinal = ticket->ordinal,
+            };
+
+            auto result = context->cyclePage(*ticket);
+            if (!result)
+            {
+                traceHostCallFailure(state, context, call, result.error());
+            }
+
+            auto resolved = *std::move(result);
+            if (!resolved.has_value())
+            {
+                traceHostCall(state, context, call, trace::NativeCallOutcome::Empty);
+                lua_pushnil(state);
+                return 1;
+            }
+            traceHostCall(state, context, call, trace::NativeCallOutcome::Succeeded);
+            pushBoxed<annotation::ResolvedPage>(
+                state,
+                *std::move(resolved),
+                &destroyBox<annotation::ResolvedPage>,
+                k_resolvedPageType
+            );
+            return 1;
+        }
+
+        // umbra:cycle_find(ticket, recognizer) -> hit handle, or nil for a
+        // completed miss (Tier A). A non-recognizer argument is a Tier B
+        // InvalidResource.
+        auto cycleFindFn(lua_State* state) -> int
+        {
+            auto* context = boundContext(state);
+            guardFatal(state, context);
+
+            auto* ticket = checkBox<CycleTicket>(state, 2, k_cycleType, "cycle");
+            auto* recognizer =
+                checkBox<annotation::RecognizerId>(state, 3, k_recognizerType, "recognizer");
+            auto const call = NativeCallIdentity{
+                .verb           = "cycle_find",
+                .cycleOrdinal = ticket->ordinal,
                 .recognizerId   = *recognizer,
             };
 
-            auto result = context->findAction(frame->seq, *recognizer);
+            auto result = context->cycleFind(*ticket, *recognizer);
             if (!result)
             {
                 traceHostCallFailure(state, context, call, result.error());
@@ -623,55 +606,43 @@ namespace uf::task
             traceHostCall(state, context, call, trace::NativeCallOutcome::Succeeded);
             pushBoxed<HitBox>(
                 state,
-                HitBox{.seq = frame->seq, .action = *std::move(found)},
+                HitBox{
+                    .cycleOrdinal = ticket->ordinal,
+                    .action       = *std::move(found),
+                },
                 &destroyBox<HitBox>,
                 k_hitType
             );
             return 1;
         }
 
-        // outcome:resolved() -> resolved-page handle when the outcome resolved a
-        // page, otherwise nil. Unknown/Ambiguous were already traced by the engine,
-        // so this never raises.
-        auto resolvedFn(lua_State* state) -> int
-        {
-            auto* outcome = checkBox<OutcomeBox>(state, 1, k_outcomeType, "outcome");
-            if (auto const* resolved =
-                    std::get_if<annotation::ResolvedPage>(&outcome->outcome))
-            {
-                pushBoxed<ResolvedPageBox>(
-                    state,
-                    ResolvedPageBox{.seq = outcome->seq, .page = *resolved},
-                    &destroyBox<ResolvedPageBox>,
-                    k_resolvedPageType
-                );
-                return 1;
-            }
-            lua_pushnil(state);
-            return 1;
-        }
-
-        // umbra:click(page, hit) -> consumes the shared observation and delivers
-        // the click. umbra:click desugars to umbra.click(umbra, page, hit), so the
-        // page is argument 2 and the hit argument 3.
-        auto clickFn(lua_State* state) -> int
+        // umbra:cycle_click(ticket, hit) -> (). Consumes the cycle and delivers
+        // the click.
+        //
+        // There is deliberately NO page argument. The host requires that this
+        // ticket already resolved a page and uses that as the authorization
+        // evidence, so a script cannot hand over evidence from another frame:
+        // there is no parameter to hand it through, and with at most one cycle
+        // open there is no other frame to take it from. A cycle that never
+        // resolved a page fails ActionRejected.
+        //
+        // Both ordinals reach the wire: they agree on every delivered click, and
+        // differ exactly when a hit from a spent cycle was refused.
+        auto cycleClickFn(lua_State* state) -> int
         {
             auto* context = boundContext(state);
             guardFatal(state, context);
 
-            auto* page = checkBox<ResolvedPageBox>(state, 2, k_resolvedPageType, "page");
-            auto* hit  = checkBox<HitBox>(state, 3, k_hitType, "hit");
+            auto* ticket = checkBox<CycleTicket>(state, 2, k_cycleType, "cycle");
+            auto* hit    = checkBox<HitBox>(state, 3, k_hitType, "hit");
 
-            // Both sequences are recorded because click's first guard rejects a
-            // page and a hit drawn from different captures, and the two numbers
-            // are that rejection's entire content.
             auto const call = NativeCallIdentity{
-                .verb              = "click",
-                .observationSeq    = page->seq,
-                .hitObservationSeq = hit->seq,
+                .verb              = "cycle_click",
+                .cycleOrdinal    = ticket->ordinal,
+                .hitCycleOrdinal = hit->cycleOrdinal,
             };
 
-            auto result = context->click(page->seq, hit->seq, page->page, hit->action);
+            auto result = context->cycleClick(*ticket, hit->cycleOrdinal, hit->action);
             if (!result)
             {
                 traceHostCallFailure(state, context, call, result.error());
@@ -683,10 +654,11 @@ namespace uf::task
         // page:is(pageReference) -> bool. page:is desugars to page.is(page, ref).
         auto isFn(lua_State* state) -> int
         {
-            auto* page = checkBox<ResolvedPageBox>(state, 1, k_resolvedPageType, "page");
+            auto* page =
+                checkBox<annotation::ResolvedPage>(state, 1, k_resolvedPageType, "page");
             auto* reference =
                 checkBox<annotation::PageId>(state, 2, k_pageRefType, "page reference");
-            lua_pushboolean(state, page->page.pageId() == *reference ? 1 : 0);
+            lua_pushboolean(state, page->pageId() == *reference ? 1 : 0);
             return 1;
         }
 
@@ -771,24 +743,29 @@ namespace uf::task
         }
 
         // umbra:wait_for_page(pageReference, options) -> { page = resolved-page,
-        // frame = frame }. It desugars to umbra.wait_for_page(umbra, ref, opts), so
-        // the page reference is argument 2 and the optional options table argument
-        // 3. A timeout raises a Tier B error; a cancellation takes the Tier C
-        // sentinel. The returned page and frame share one observation sequence, so
-        // find on the frame and click on the page consume the same wait.
+        // cycle = ticket }. It desugars to umbra.wait_for_page(umbra, ref, opts),
+        // so the page reference is argument 2 and the optional options table
+        // argument 3. A timeout raises a Tier B error; a cancellation takes the
+        // Tier C sentinel.
+        //
+        // The wait leaves the generation's one cycle OPEN over the frame that
+        // resolved the page, with that page already recorded as the cycle's
+        // authorization evidence. The caller therefore finds and clicks on the
+        // returned ticket and must close it, exactly as if it had opened the
+        // cycle itself. This engine-side wait loop is deleted in stage 3, when
+        // the Luau framework polls cycle_open / cycle_page itself.
         auto waitForPageFn(lua_State* state) -> int
         {
             auto* context = boundContext(state);
             guardFatal(state, context);
-            guardObservationBudget(state, context);
 
             auto* reference =
                 checkBox<annotation::PageId>(state, 2, k_pageRefType, "page reference");
             auto const timeout      = readWaitDuration(state, 3, "timeout_ms");
             auto const pollInterval = readWaitDuration(state, 3, "poll_interval_ms");
 
-            // wait_for_page mints the sequence its own observation is retained
-            // under, so like capture it is handed none.
+            // wait_for_page mints the ordinal its own cycle opens under, so like
+            // cycle_open it is handed none.
             auto const call = NativeCallIdentity{.verb = "wait_for_page"};
 
             auto result = context->waitForPage(*reference, timeout, pollInterval);
@@ -802,21 +779,21 @@ namespace uf::task
             lua_createtable(state, 0, 2);
             int const table = lua_gettop(state);
 
-            pushBoxed<ResolvedPageBox>(
+            pushBoxed<annotation::ResolvedPage>(
                 state,
-                ResolvedPageBox{.seq = wait.seq, .page = std::move(wait.page)},
-                &destroyBox<ResolvedPageBox>,
+                std::move(wait.page),
+                &destroyBox<annotation::ResolvedPage>,
                 k_resolvedPageType
             );
             lua_setfield(state, table, "page");
 
-            pushBoxed<FrameBox>(
+            pushBoxed<CycleTicket>(
                 state,
-                FrameBox{.seq = wait.seq, .context = context},
-                &destroyFrameBox,
-                k_frameType
+                wait.ticket,
+                &destroyBox<CycleTicket>,
+                k_cycleType
             );
-            lua_setfield(state, table, "frame");
+            lua_setfield(state, table, "cycle");
             return 1;
         }
 
@@ -1051,8 +1028,13 @@ namespace uf::task
         }
 
         // Registers every handle kind's shared, frozen, protected metatable in the
-        // VM registry. The resource kinds are always registered; the observation
-        // and action kinds, and the error guard, only when a session is bound.
+        // VM registry. The resource kinds are always registered; the cycle and
+        // action kinds, and the error guard, only when a session is bound.
+        //
+        // Only the resolved page carries a method. A ticket and a hit are pure
+        // names the host hands back to itself, so every operation on a cycle is a
+        // root primitive taking the ticket -- which is also the shape the private
+        // capability surface takes once the Luau framework owns these calls.
         auto installMetatables(lua_State* state, TaskContext* context) -> void
         {
             beginMetatable(state, k_recognizerType);
@@ -1068,6 +1050,9 @@ namespace uf::task
 
             installErrorMetatable(state);
 
+            beginMetatable(state, k_cycleType);
+            finishMetatable(state, k_cycleType);
+
             beginMetatable(state, k_hitType);
             finishMetatable(state, k_hitType);
 
@@ -1077,21 +1062,6 @@ namespace uf::task
                 addMethod(state, metatable, "is", &isFn, nullptr);
             }
             finishMetatable(state, k_resolvedPageType);
-
-            beginMetatable(state, k_outcomeType);
-            {
-                int const metatable = lua_gettop(state);
-                addMethod(state, metatable, "resolved", &resolvedFn, nullptr);
-            }
-            finishMetatable(state, k_outcomeType);
-
-            beginMetatable(state, k_frameType);
-            {
-                int const metatable = lua_gettop(state);
-                addMethod(state, metatable, "resolve_page", &resolvePageFn, context);
-                addMethod(state, metatable, "find", &findFn, context);
-            }
-            finishMetatable(state, k_frameType);
         }
 
         // Populates `umbra[fieldName]` with a name table of opaque handles, one per
@@ -1158,7 +1128,7 @@ namespace uf::task
 
         // Assembles the whole frozen global umbra table. With a null context it is
         // the resource-only surface (recognizers and pages, no verbs); with a
-        // context it also wires the observation and action verbs to the session.
+        // context it also wires the observation-cycle primitives to the session.
         auto buildUmbra(
             lua_State* state,
             std::vector<RecognizerHandleSpec> const& recognizers,
@@ -1193,8 +1163,46 @@ namespace uf::task
 
             if (context != nullptr)
             {
-                installUmbraVerb(state, umbra, "capture", &captureFn, "umbra_capture", context);
-                installUmbraVerb(state, umbra, "click", &clickFn, "umbra_click", context);
+                installUmbraVerb(
+                    state,
+                    umbra,
+                    "cycle_open",
+                    &cycleOpenFn,
+                    "umbra_cycle_open",
+                    context
+                );
+                installUmbraVerb(
+                    state,
+                    umbra,
+                    "cycle_close",
+                    &cycleCloseFn,
+                    "umbra_cycle_close",
+                    context
+                );
+                installUmbraVerb(
+                    state,
+                    umbra,
+                    "cycle_page",
+                    &cyclePageFn,
+                    "umbra_cycle_page",
+                    context
+                );
+                installUmbraVerb(
+                    state,
+                    umbra,
+                    "cycle_find",
+                    &cycleFindFn,
+                    "umbra_cycle_find",
+                    context
+                );
+                installUmbraVerb(
+                    state,
+                    umbra,
+                    "cycle_click",
+                    &cycleClickFn,
+                    "umbra_cycle_click",
+                    context
+                );
                 installUmbraVerb(
                     state,
                     umbra,

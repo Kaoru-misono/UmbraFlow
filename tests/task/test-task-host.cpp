@@ -70,17 +70,18 @@ namespace uf::task
 
         constexpr auto k_projectId = std::string_view{"personal.task_host"};
 
-        // The task every run in this file drives: one capture, one page check,
-        // one action search, one click. It names both a page and a recognizer, so
-        // the run.resources_validated line carries a non-empty closure of each.
+        // The task every run in this file drives: one observation cycle, one page
+        // check, one action search, one click. It names both a page and a
+        // recognizer, so the run.resources_validated line carries a non-empty
+        // closure of each.
         constexpr auto k_taskSource = std::string_view{
-            "local frame = umbra:capture()\n"
-            "local page = frame:resolve_page():resolved()\n"
-            "if page == nil then return 0 end\n"
-            "if not page:is(umbra.pages.home) then return 0 end\n"
-            "local hit = frame:find(umbra.recognizers.daily_button)\n"
-            "if hit == nil then return 0 end\n"
-            "umbra:click(page, hit)\n"
+            "local cycle = umbra:cycle_open()\n"
+            "local page = umbra:cycle_page(cycle)\n"
+            "if page == nil then umbra:cycle_close(cycle) return 0 end\n"
+            "if not page:is(umbra.pages.home) then umbra:cycle_close(cycle) return 0 end\n"
+            "local hit = umbra:cycle_find(cycle, umbra.recognizers.daily_button)\n"
+            "if hit == nil then umbra:cycle_close(cycle) return 0 end\n"
+            "umbra:cycle_click(cycle, hit)\n"
             "return 1\n"
         };
 

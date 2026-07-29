@@ -572,18 +572,18 @@ namespace uf::trace
         if (event.nativeCall.has_value())
         {
             builder.addString("verb", event.nativeCall->verb);
-            if (event.nativeCall->observationSeq.has_value())
+            if (event.nativeCall->cycleOrdinal.has_value())
             {
                 builder.addLiteral(
-                    "observationSeq",
-                    std::format("{}", *event.nativeCall->observationSeq)
+                    "cycleOrdinal",
+                    std::format("{}", *event.nativeCall->cycleOrdinal)
                 );
             }
-            if (event.nativeCall->hitObservationSeq.has_value())
+            if (event.nativeCall->hitCycleOrdinal.has_value())
             {
                 builder.addLiteral(
-                    "hitObservationSeq",
-                    std::format("{}", *event.nativeCall->hitObservationSeq)
+                    "hitCycleOrdinal",
+                    std::format("{}", *event.nativeCall->hitCycleOrdinal)
                 );
             }
             builder.addString("outcome", nativeCallOutcomeName(event.nativeCall->outcome));

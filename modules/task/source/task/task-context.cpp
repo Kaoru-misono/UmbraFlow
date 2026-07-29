@@ -1,5 +1,7 @@
 #include <task/task-context.hpp>
 
+#include <task/cycle-ledger.hpp>
+
 #include <core/error/contracts.hpp>
 #include <core/error/result.hpp>
 #include <core/types/integer.hpp>
@@ -16,6 +18,7 @@
 
 #include <optional>
 #include <utility>
+#include <variant>
 
 namespace uf::task
 {
@@ -33,104 +36,103 @@ namespace uf::task
 
     // D6 known-popup sweep -- landing note (deliberately not a live hook).
     //
-    // capture() and waitForPage() are the task-side observation-cycle boundaries,
-    // so a known-popup sweep that runs "once per observation cycle" would attach
-    // here. It is left as this note rather than a stored callback for two reasons.
-    // First, there is nothing to sweep yet: the real sweep needs the concrete
-    // per-daily popup list, which is P0-C work; a nullable no-op callback with no
-    // caller and no list would be speculative generality (an untested branch and a
-    // stored-callback lifetime surface for zero present benefit). Second, and
-    // decisively, a task-side hook is positioned wrong: the tight poll loop that
-    // re-captures while waiting for a page lives inside engine::EngineSession::
-    // waitForPage, which already calls its own sweepKnownPopups() once per inner
-    // cycle (session.cpp). A hook here would fire only at the START of a
-    // task-level wait, never on those inner polls, so it could not replicate the
-    // per-cycle sweep. The architecturally correct home for the real sweep is the
-    // engine's existing no-op seam (D6 replaces it with the bot:on registry in
-    // P1); this note records that the task side owns no part of that mechanism.
-    auto TaskContext::capture() -> Result<ObservationSeq>
+    // openCycle() and waitForPage() are the task-side observation-cycle
+    // boundaries, so a known-popup sweep that runs "once per observation cycle"
+    // would attach here. It is left as this note rather than a stored callback
+    // for two reasons. First, there is nothing to sweep yet: the real sweep needs
+    // the concrete per-daily popup list, which is P0-C work; a nullable no-op
+    // callback with no caller and no list would be speculative generality (an
+    // untested branch and a stored-callback lifetime surface for zero present
+    // benefit). Second, and decisively, a task-side hook is positioned wrong: the
+    // tight poll loop that re-captures while waiting for a page lives inside
+    // engine::EngineSession::waitForPage, which already calls its own
+    // sweepKnownPopups() once per inner cycle (session.cpp). A hook here would
+    // fire only at the START of a task-level wait, never on those inner polls, so
+    // it could not replicate the per-cycle sweep. The architecturally correct
+    // home for the real sweep is the engine's existing no-op seam (D6 replaces it
+    // with the bot:on registry in P1); this note records that the task side owns
+    // no part of that mechanism.
+    auto TaskContext::openCycle() -> Result<CycleTicket>
     {
+        // Refuse before observing. The ledger holds one cycle, and a capture
+        // whose frame it could not hold would spend a whole screenshot only to
+        // produce an error.
+        UF_TRY(m_cycles.requireClosed());
         UF_TRY_VALUE(observation, m_session.observe());
-
-        auto const seq = m_nextSeq;
-        ++m_nextSeq;
-        m_observations.try_emplace(seq, std::move(observation));
-        return seq;
+        return m_cycles.open(std::move(observation));
     }
 
-    auto TaskContext::resolvePage(ObservationSeq seq) -> Result<annotation::PageOutcome>
+    auto TaskContext::closeCycle(CycleTicket ticket) noexcept -> bool
     {
-        auto const it = m_observations.find(seq);
-        if (it == m_observations.end())
+        return m_cycles.close(ticket);
+    }
+
+    auto TaskContext::cyclePage(
+        CycleTicket ticket
+    ) -> Result<std::optional<annotation::ResolvedPage>>
+    {
+        UF_TRY(m_cycles.requireOpen(ticket));
+        UF_TRY_VALUE(outcome, m_session.resolvePage(m_cycles.observation()));
+
+        auto const* const p_resolved =
+            std::get_if<annotation::ResolvedPage>(&outcome);
+        if (p_resolved == nullptr)
         {
-            return fail(
-                AutomationErrorKind::StaleObservation,
-                "the observation for this frame was already consumed"
-            );
+            // Unknown or Ambiguous: a completed resolution the engine already
+            // traced, and the cycle keeps no evidence, so a later click on it
+            // has nothing to authorize against.
+            return std::nullopt;
         }
 
-        return m_session.resolvePage(it->second);
+        m_cycles.rememberPage(*p_resolved);
+        return *p_resolved;
     }
 
-    auto TaskContext::findAction(
-        ObservationSeq seq,
+    auto TaskContext::cycleFind(
+        CycleTicket ticket,
         annotation::RecognizerId recognizerId
     ) -> Result<std::optional<engine::ActionFound>>
     {
-        auto const it = m_observations.find(seq);
-        if (it == m_observations.end())
-        {
-            return fail(
-                AutomationErrorKind::StaleObservation,
-                "the observation for this frame was already consumed"
-            );
-        }
-
-        return m_session.findAction(it->second, recognizerId);
+        UF_TRY(m_cycles.requireOpen(ticket));
+        return m_session.findAction(m_cycles.observation(), recognizerId);
     }
 
-    auto TaskContext::click(
-        ObservationSeq pageSeq,
-        ObservationSeq hitSeq,
-        annotation::ResolvedPage const& page,
+    auto TaskContext::cycleClick(
+        CycleTicket ticket,
+        uint64 hitCycleOrdinal,
         engine::ActionFound const& action
     ) -> Result<engine::ActReceipt>
     {
-        if (pageSeq != hitSeq)
-        {
-            return fail(
-                AutomationErrorKind::ActionRejected,
-                "click received a page and a target from different observations"
-            );
-        }
+        // Both the ticket and the hit are checked against the one open cycle
+        // before it is spent, so a stale hit leaves the cycle open for the
+        // framework to close rather than destroying a frame the script still
+        // has a live ticket for.
+        UF_TRY(m_cycles.requireOpen(ticket));
+        UF_TRY(m_cycles.requireOpenOrdinal(hitCycleOrdinal));
+        UF_TRY_VALUE(consumed, m_cycles.consume(ticket));
 
-        auto const it = m_observations.find(pageSeq);
-        if (it == m_observations.end())
-        {
-            return fail(
-                AutomationErrorKind::StaleObservation,
-                "the observation for this frame was already consumed"
-            );
-        }
-
-        // act consumes the observation by rvalue, so the frame is spent whatever
-        // the outcome: extract it first and drop the map entry, so any later use
-        // of this frame fails StaleObservation above.
-        auto observation = std::move(it->second);
-        m_observations.erase(it);
-        return m_session.act(std::move(observation), page, action);
+        // act consumes the frame by rvalue, so the cycle is spent whatever the
+        // outcome; consume already dropped the ledger entry, which is what makes
+        // every later use of this ticket fail StaleObservation.
+        return m_session.act(
+            std::move(consumed.observation),
+            consumed.page,
+            action
+        );
     }
 
     auto TaskContext::waitForPage(
         annotation::PageId pageId,
         std::optional<MonotonicInstant::Duration> timeout,
         std::optional<MonotonicInstant::Duration> pollInterval
-    ) -> Result<WaitResolved>
+    ) -> Result<CycleWait>
     {
         // The per-poll observation cycle is inside engine::EngineSession::
         // waitForPage, which runs its own sweepKnownPopups() each iteration; the
-        // task side adds no sweep hook here. See the note above capture() for why
-        // the D6 sweep stays on the engine seam rather than a task-side callback.
+        // task side adds no sweep hook here. See the note above openCycle() for
+        // why the D6 sweep stays on the engine seam rather than a task-side
+        // callback.
+        UF_TRY(m_cycles.requireClosed());
         UF_TRY_VALUE(
             wait,
             m_session.waitForPage(
@@ -140,33 +142,17 @@ namespace uf::task
             )
         );
 
-        // The wait's observation joins the same retained-observation map a capture
-        // uses, under a fresh sequence, so the paired frame and page returned to
-        // the script are consumed and cross-checked exactly like a captured frame.
-        auto const seq = m_nextSeq;
-        ++m_nextSeq;
-        m_observations.try_emplace(seq, std::move(wait.observation));
-        return WaitResolved{.seq = seq, .page = std::move(wait.page)};
+        // The wait's observation opens the generation's one cycle exactly as a
+        // bare open would, and the page the wait already resolved becomes that
+        // cycle's authorization evidence, so a click needs no second resolution.
+        auto const ticket = m_cycles.open(std::move(wait.observation));
+        m_cycles.rememberPage(wait.page);
+        return CycleWait{.ticket = ticket, .page = std::move(wait.page)};
     }
 
-    void TaskContext::release(ObservationSeq seq) noexcept
+    auto TaskContext::hasOpenCycle() const noexcept -> bool
     {
-        // Erase by key: a seq already consumed by click, or released by an
-        // earlier collection of the same frame handle, is simply absent, so this
-        // is a no-op rather than a double-erase.
-        m_observations.erase(seq);
-    }
-
-    auto TaskContext::liveObservationCount() const noexcept -> uint64
-    {
-        // size_t is never wider than uint64 on any supported platform, so this
-        // widening conversion cannot lose a count.
-        return static_cast<uint64>(m_observations.size());
-    }
-
-    auto TaskContext::maxLiveObservations() const noexcept -> uint64
-    {
-        return m_config.maxLiveObservations;
+        return m_cycles.isOpen();
     }
 
     auto TaskContext::cancelled() const noexcept -> bool

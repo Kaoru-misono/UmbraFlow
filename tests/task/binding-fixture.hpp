@@ -243,6 +243,14 @@ namespace uf::task
         {
             return ok();
         }
+
+        // How many captures this source served. A test that must prove the host
+        // refused an operation BEFORE observing reads it: a refusal that still
+        // spent a frame is a different, weaker guarantee.
+        [[nodiscard]] auto captureCount() const noexcept -> std::size_t
+        {
+            return m_index;
+        }
     };
 
     // Counts delivered clicks so fail-closed cases can assert none escaped.

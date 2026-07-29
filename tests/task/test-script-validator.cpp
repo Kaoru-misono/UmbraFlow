@@ -102,24 +102,25 @@ namespace uf::task
         {
             auto const surface = buildSurface();
 
-            // Every approved shape at once: verb method calls (umbra:capture,
-            // frame:resolve_page, outcome:resolved, page:is, frame:find,
-            // umbra:click, umbra:wait_for_page, umbra:try) and two-level resource
-            // literals, including one used inside a verb argument and one repeated.
+            // Every approved shape at once: verb method calls (umbra:cycle_open,
+            // umbra:cycle_page, umbra:cycle_find, umbra:cycle_click,
+            // umbra:cycle_close, umbra:wait_for_page, umbra:try) plus the handle
+            // method page:is, and two-level resource literals, including ones used
+            // inside a verb argument and one repeated.
             constexpr std::string_view source = R"lua(
-                local frame = umbra:capture()
-                local outcome = frame:resolve_page()
-                local page = outcome:resolved()
+                local cycle = umbra:cycle_open()
+                local page = umbra:cycle_page(cycle)
                 if page ~= nil and page:is(umbra.pages.home) then
-                    local hit = frame:find(umbra.recognizers.battle)
+                    local hit = umbra:cycle_find(cycle, umbra.recognizers.battle)
                     if hit ~= nil then
-                        umbra:click(page, hit)
+                        umbra:cycle_click(cycle, hit)
                     end
                 end
-                local another = frame:find(umbra.recognizers.daily_button)
+                local another = umbra:cycle_find(cycle, umbra.recognizers.daily_button)
+                umbra:cycle_close(cycle)
                 local wait = umbra:wait_for_page(umbra.pages.home, { timeout_ms = 1000 })
                 umbra:try(function()
-                    umbra:click(page, another)
+                    umbra:cycle_click(wait.cycle, another)
                 end)
                 return 0
             )lua";
@@ -213,7 +214,7 @@ namespace uf::task
             auto const surface = buildSurface();
             expectRejected(
                 surface,
-                "return umbra:capture():find(umbra.recognizers.does_not_exist)",
+                "return umbra:cycle_find(cycle, umbra.recognizers.does_not_exist)",
                 {"does_not_exist", "recognizer"}
             );
         }

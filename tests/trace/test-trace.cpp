@@ -245,10 +245,10 @@ namespace uf::trace
                 .pages       = {"home"},
             },
             .nativeCall = TraceEvent::NativeCall{
-                .verb              = "click",
-                .outcome           = NativeCallOutcome::Succeeded,
-                .observationSeq    = uint64{4},
-                .hitObservationSeq = uint64{5},
+                .verb            = "click",
+                .outcome         = NativeCallOutcome::Succeeded,
+                .cycleOrdinal    = uint64{4},
+                .hitCycleOrdinal = uint64{5},
             },
             .recognizerId = annotation::RecognizerId{
                 resourceId("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
@@ -278,7 +278,7 @@ namespace uf::trace
             ",\"sourceHash\":\"abc123\",\"frameworkVersion\":\"0.1.0\""
             ",\"frameworkHash\":\"def456\",\"luauVersion\":\"6\",\"seed\":42"
             ",\"recognizers\":[\"accept\"],\"pages\":[\"home\"]"
-            ",\"verb\":\"click\",\"observationSeq\":4,\"hitObservationSeq\":5"
+            ",\"verb\":\"click\",\"cycleOrdinal\":4,\"hitCycleOrdinal\":5"
             ",\"outcome\":\"Succeeded\""
             ",\"recognizerId\":\"aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee\""
             ",\"stopReason\":\"TimedOut\",\"runOutcome\":\"Completed\""
@@ -443,9 +443,9 @@ namespace uf::trace
             auto const event = TraceEvent{
                 .kind       = TraceEventKind::TaskNativeCall,
                 .nativeCall = TraceEvent::NativeCall{
-                    .verb           = "find",
-                    .outcome        = NativeCallOutcome::Empty,
-                    .observationSeq = uint64{2},
+                    .verb         = "find",
+                    .outcome      = NativeCallOutcome::Empty,
+                    .cycleOrdinal = uint64{2},
                 },
                 .recognizerId = annotation::RecognizerId{
                     resourceId("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
@@ -456,7 +456,7 @@ namespace uf::trace
                 goldenLine(event)
                 == "{\"schema\":\"umbraflow-trace/v1\",\"kind\":\"task.native_call\""
                    ",\"seq\":1,\"runId\":7,\"generationId\":3"
-                   ",\"verb\":\"find\",\"observationSeq\":2,\"outcome\":\"Empty\""
+                   ",\"verb\":\"find\",\"cycleOrdinal\":2,\"outcome\":\"Empty\""
                    ",\"recognizerId\":\"aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee\"}"
             );
         }
@@ -470,10 +470,10 @@ namespace uf::trace
             auto const event = TraceEvent{
                 .kind       = TraceEventKind::TaskNativeCall,
                 .nativeCall = TraceEvent::NativeCall{
-                    .verb              = "click",
-                    .outcome           = NativeCallOutcome::Failed,
-                    .observationSeq    = uint64{3},
-                    .hitObservationSeq = uint64{4},
+                    .verb            = "click",
+                    .outcome         = NativeCallOutcome::Failed,
+                    .cycleOrdinal    = uint64{3},
+                    .hitCycleOrdinal = uint64{4},
                 },
                 .errorKind  = AutomationErrorKind::StaleObservation,
             };
@@ -482,7 +482,7 @@ namespace uf::trace
                 goldenLine(event)
                 == "{\"schema\":\"umbraflow-trace/v1\",\"kind\":\"task.native_call\""
                    ",\"seq\":1,\"runId\":7,\"generationId\":3"
-                   ",\"verb\":\"click\",\"observationSeq\":3,\"hitObservationSeq\":4"
+                   ",\"verb\":\"click\",\"cycleOrdinal\":3,\"hitCycleOrdinal\":4"
                    ",\"outcome\":\"Failed\",\"errorKind\":\"stale_observation\"}"
             );
         }

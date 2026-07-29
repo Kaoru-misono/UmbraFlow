@@ -198,25 +198,29 @@ namespace uf::trace
         };
 
         // One call from the script layer into the host capability surface, with
-        // the argument identity the verb was handed. The identity is what makes a
-        // native call joinable without relying on position: a host-side guard --
-        // the retained-observation lookup behind resolve_page, find and click --
-        // fails the verb before the engine is reached, so its task.native_call is
-        // the only line the failure produces and nothing else would say which
-        // frame the script tried to use. capture and wait_for_page mint their own
-        // sequence rather than receiving one, so they carry none. The recognizer
-        // a find was handed travels on TraceEvent::recognizerId.
+        // the argument identity the primitive was handed. The identity is what
+        // makes a native call joinable without relying on position: a host-side
+        // guard -- the cycle-ledger lookup behind cycle_page, cycle_find,
+        // cycle_click and cycle_close -- fails the call before the engine is
+        // reached, so its task.native_call is the only line the failure produces
+        // and nothing else would say which cycle the script tried to use.
+        // cycle_open and wait_for_page mint their own ordinal rather than
+        // receiving one, so they carry none. The recognizer a find was handed
+        // travels on TraceEvent::recognizerId.
         struct NativeCall final
         {
-            std::string           verb{};
-            NativeCallOutcome     outcome;
-            std::optional<uint64> observationSeq{};
+            std::string       verb{};
+            NativeCallOutcome outcome;
 
-            // The second observation a two-frame verb was handed: umbra:click
-            // takes a page and a hit, and its first guard rejects a pair drawn
-            // from different captures -- a failure whose entire content is the
-            // two sequences, so both reach the wire.
-            std::optional<uint64> hitObservationSeq{};
+            // The ordinal of the cycle whose ticket the primitive was handed.
+            std::optional<uint64> cycleOrdinal{};
+
+            // The cycle ordinal the hit handed to cycle_click carries. A hit is
+            // usable only while the cycle that found it is still the open one, so
+            // the two ordinals agree on every delivered click and differ exactly
+            // when a hit from a spent cycle was refused -- which is that
+            // refusal's entire content, so both reach the wire.
+            std::optional<uint64> hitCycleOrdinal{};
         };
 
         TraceEventKind kind;

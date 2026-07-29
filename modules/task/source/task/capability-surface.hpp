@@ -93,8 +93,9 @@ namespace uf::task
         auto installer() const -> script::HostTableInstaller;
 
         // The full installer for a live task: the data tables plus the
-        // umbra:capture / frame:resolve_page / outcome:resolved / frame:find /
-        // umbra:click / page:is verbs, each bound to `context`'s EngineSession.
+        // observation-cycle primitives (umbra:cycle_open / cycle_close /
+        // cycle_page / cycle_find / cycle_click, plus umbra:wait_for_page) and
+        // page:is, each bound to `context`'s EngineSession and its cycle ledger.
         //
         // The returned installer captures a raw pointer to `context`. The caller
         // MUST keep `context` alive for at least as long as the script::Engine the
