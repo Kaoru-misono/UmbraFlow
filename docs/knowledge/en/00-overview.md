@@ -54,7 +54,7 @@ fake ports.
 | Entry point | Purpose | Current status |
 | --- | --- | --- |
 | `umbra-workbench` | Edit annotation projects, capture source images, preview, compile, and publish | A1 annotation tool |
-| `umbra-flow run` | Load a published project, wait for a page, find one action, and click once | B1 C++ smoke flow |
+| `umbra-flow run` | Load a published project and run the Luau task named by `--task NAME` | P0 single-task runner |
 | `m0-demo` | Verify WGC capture and strict-background input | Frozen; no longer carries product features |
 
 These three paths must not be mixed:

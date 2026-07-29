@@ -85,10 +85,6 @@ The `RunArgs` in `entry/cli/args.hpp` corresponds to the following real CLI surf
 
 - `--project DIR`, `--selector TITLE-SUBSTRING`, and `--task NAME` are required. `--task` names
   `tasks/NAME.luau` inside the published project.
-- `--timeout SEC` defaults to 30 seconds and `--poll MS` defaults to 250 ms, accepting only 1 to
-  60000 ms. Neither is a deadline the CLI enforces: they are the script page-wait defaults, forwarded
-  through `task::TaskRunConfig` into `TaskContextConfig::defaultWaitTimeout` and
-  `TaskContextConfig::defaultWaitPollInterval`, where a script that names neither falls back to them.
 - `--budget N` defaults to `1 << 28` and bounds the number of pixel comparisons in a single
   recognition.
 - `--recognition-timeout MS` defaults to 2000 ms and is the deadline for each recognition.
@@ -101,6 +97,16 @@ representation range before conversion. Flags are read as "flag immediately foll
 pairs; unknown flags, missing values, non-integers, and out-of-range values all return
 `InvalidResource`. As a result, the later composition only deals with typed values and never
 re-parses strings.
+
+**The two page-wait flags are gone.** `--timeout SEC` and `--poll MS` used to be the host-side
+defaults for a script's page wait, forwarded through `task::TaskRunConfig` into `TaskContextConfig`.
+Once the wait loop moved wholesale into the trusted Luau framework on 2026-07-29 (`d1a0685`), no
+host code read those values any more, so they went along with both config fields; today the
+unknown-flag rule above **refuses them as unknown arguments**. How long to wait and how often to
+re-observe now live in `modules/task/runtime/ctx.luau` as `k_defaultTimeoutMillis` (600000 ms) and
+`k_defaultPollMillis` (500 ms), which a script overrides through `{ timeout_ms, poll_ms }`. The
+surviving `--recognition-timeout` is the deadline for one recognition and has nothing to do with a
+page wait.
 
 ### Project Loading
 
@@ -158,8 +164,10 @@ target first made a bad `--project` report a window error instead of the manifes
 `TaskRunConfig` is a move-in ownership boundary rather than an ordinary config: it carries
 `std::unique_ptr<engine::IFrameSource>` and `std::unique_ptr<engine::IActionSink>`, so the caller's
 copy is left empty and the run owns the port lifetimes. Alongside them it carries the live
-fingerprint, the pixel budget, the per-recognition deadline, the maximum frame age, the two
-page-wait defaults, and the trace path.
+fingerprint, the pixel budget, the per-recognition deadline, the maximum frame age, and the trace
+path. **It carries no page-wait budget**: how long a task waits and how often it re-observes are
+decided by the task in Luau, and a host-side fallback the framework cannot read would be a value
+nothing reads.
 
 `startTask` is where the run happens. It loads and validates the task, opens the trace, and builds
 the `trace::TraceRecorder`, the `engine::EngineSession`, the `task::TaskContext`, and the VM for
@@ -306,15 +314,15 @@ where the Windows composition does not build. `${PROJECT_NAME}_engine` stays PUB
 because the two adapters implement engine ports. What crosses the boundary is:
 
 - the two owning port implementations plus the live `annotation::ProjectFingerprint`, moved in as a
-  `task::TaskRunConfig`, together with the pixel budget, the recognition deadline, the maximum frame
-  age, and the two page-wait defaults;
+  `task::TaskRunConfig`, together with the pixel budget, the recognition deadline, and the maximum
+  frame age;
 - the project path, the task name, and the trace path;
 - `GenerationId`, `task::TaskRunReport`, and structured `Error`.
 
 `task` and `engine` never see the HWND, the console handler, file-selection syntax, or the title
 substring. In the reverse direction, the CLI never interprets recognizer evidence, page outcomes, or
-authorization rules, and no longer drives `waitForPage`, `EngineSession::findAction`, or `act`: it
-calls `loadProject` and `startTask` and reads the report.
+authorization rules, and no longer drives any `EngineSession` verb: it calls `loadProject` and
+`startTask` and reads the report.
 
 The outbound edge toward `controller` exists only in the Windows build. What crosses the boundary
 is the resolved `WindowHandle`, `ClientSize`, `Dpi`, `TargetGeneration`, `ClientGeometry`,
@@ -365,7 +373,8 @@ The safety semantics of the CLI adapters are fixed in layers by downstream tests
 
 - `tests/engine/test-session.cpp` covers the full observe→resolve→find→act, fingerprint mismatch,
   an unauthorized action, an expired lease, invalidated/cross-session observations, delivery-edge
-  target revalidation, cancellation, and `waitForPage` timeout.
+  target revalidation, cancellation, and whether the `CaptureBudget` `observe` hands out is a real
+  deadline.
 - `tests/engine/test-runtime-loader.cpp` covers published-project loading, a bad manifest, a
   missing template, hash mismatch, and the manifest size limit.
 - `tests/controller/test-input-revalidation.cpp` covers lease session/generation/age, the
@@ -404,8 +413,11 @@ composition itself, and lists the following seams:
   not be aware of the platform.
 - B2 Luau provides a 1:1 binding for `Observation` and observe/find/act/wait; the shape of the
   existing C++ API is retained precisely to avoid refactoring at that time.
-- D6/P1 popup handling attaches to the existing no-op hook `EngineSession::sweepKnownPopups`,
-  rather than being stuffed into window discovery or CLI argument parsing.
+- D6/P1 popup handling **is no longer in the engine**: the `sweepKnownPopups` no-op hook was deleted
+  along with `waitForPage` on 2026-07-29 (`8b16f2d`), and popups are now handled by the trusted Luau
+  framework's interrupt registry (declared with `task.interrupt`, matched on every turn of
+  `ctx:wait_for_page`). The conclusion for the CLI is unchanged: it still does not belong in window
+  discovery or argument parsing.
 - P0-C: if on-hardware UIPI verification requires a separate elevated process, the plan requires
   copying the protocol semantics of the m0-demo input-agent into the runner adapter layer, rather
   than linking the already-frozen m0-demo.

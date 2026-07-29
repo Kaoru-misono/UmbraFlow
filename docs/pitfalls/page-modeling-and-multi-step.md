@@ -9,8 +9,8 @@ close-up) and chaining the two clicks that navigate between them.
 
 ### Symptom
 
-A page never resolves. The trace is `PageUnknown` on every frame until
-`waitForPage` times out, and no click is delivered — even though each anchor is
+A page never resolves. The trace is `PageUnknown` on every frame until the task's
+page wait times out, and no click is delivered — even though each anchor is
 known-good and matches its own captured source exactly. The workbench Preview
 reports `page: Unknown` for both sources.
 
@@ -61,49 +61,82 @@ sat at 2.85x–4.15x the threshold, which settled the "do these two top-left
 anchors need `forbidden` to stay unambiguous?" question with a measurement
 instead of a guess — they did not.
 
-## Multi-step navigation is a chain of `umbra-flow run` invocations
+## Every step must re-resolve the page it expects to be standing on
 
-> **Superseded 2026-07-29**: `--page` / `--action` and the single-step smoke flow
-> they drove were deleted (`docs/plans/2026-07-29-three-layer-task-system.md`
-> section 16, commit `e387453`). The shell chain below no longer parses -- both
-> flags are now refused as unknown arguments. A multi-step flow is one
-> `--task NAME` Luau script run through `task::TaskHost`. The modeling insight
-> this entry records -- each step re-observes and re-resolves the page it expects
-> to be standing on, so a step that did not navigate fail-closes instead of
-> clicking blind -- carries over to the script's page waits unchanged, and is why
-> the entry is kept rather than deleted.
+> **Mechanism updated 2026-07-29** (was: "Multi-step navigation is a chain of
+> `umbra-flow run` invocations"). The shell chain this entry originally described
+> no longer exists: `--page` / `--action` and the single-step smoke flow they
+> drove were deleted
+> (`docs/plans/2026-07-29-three-layer-task-system.md` section 16, commit
+> `e387453`), and `--timeout` / `--poll` went with the wait loop (`d1a0685`) —
+> all four are now refused as unknown arguments. A multi-step flow is one
+> `--task NAME` Luau script. **The lesson is unchanged and is why the entry is
+> kept**: it is only self-verifying if every step re-resolves the page before it
+> clicks.
 
 ### Symptom
 
-Not a failure. The engine deliberately has no loop: `EngineSession::act`
-invalidates the observation it was authorized by, and `umbra-flow run` performs
-exactly one `waitForPage → findAction → act` before exiting. Scripted
-multi-step flows are the interim answer until the Luau engine (P0-B) lands.
+Not a failure — a property to preserve. The engine has no loop at all: every verb
+is single-shot, and `EngineSession::act` invalidates the observation it was
+authorized by. So "navigate, then click the next thing" is never one operation;
+it is always observe → resolve → find → click, again, from scratch.
 
 ### How
 
-One invocation per step, each naming the page it expects to be standing on:
+Each step waits for the page it expects, and only clicks inside that wait's
+block:
 
+```lua
+return task.define {
+    run = function(ctx)
+        ctx:step("open_character", function()
+            -- The block receives the observation CYCLE that resolved the page,
+            -- so the find and the click both read the same frame.
+            ctx:wait_for_page(uf.pages.main, { timeout_ms = 30000 }, function(cycle)
+                local hit = cycle:find(uf.recognizers.battleCharacter)
+                if hit then cycle:click(hit) end
+            end)
+        end)
+
+        ctx:step("open_closeup", function()
+            ctx:wait_for_page(uf.pages.character, { timeout_ms = 30000 }, function(cycle)
+                local hit = cycle:find(uf.recognizers.meiling)
+                if hit then cycle:click(hit) end
+            end)
+        end)
+    end,
+}
 ```
-umbra-flow run --project DIR --selector TITLE --page page   --action battleCharacter
-umbra-flow run --project DIR --selector TITLE --page page_1 --action meiling
-```
 
-Each invocation re-discovers the window, re-observes, and re-resolves the page
-before it will click, so no step can act on a stale belief about where it is.
-Step N+1's `waitForPage` polls (`--timeout`, default 30 s) for the page step N
-was supposed to navigate to, which makes the chain self-verifying: if step N's
-click did not land, step N+1 times out and fail-closes rather than clicking
-blind. Nothing needs to be inserted between steps — a settle delay only avoids
-spending the first observations on a transition animation.
+`ctx:wait_for_page` re-observes and re-resolves on every turn, so no step can act
+on a stale belief about where it is. Step N+1 waiting for the page step N was
+supposed to navigate to is what makes the chain self-verifying: if step N's click
+did not land, step N+1's wait expires and raises a Tier B `timeout` rather than
+clicking blind. Nothing needs to be inserted between steps — a `ctx:settle` only
+avoids spending the first observations on a transition animation.
 
-What the chain does not give you is anything conditional: retries, branches, and
-loops have to live in the shell until the Luau capability API exists.
+Two things the script buys that the old shell chain could not:
+
+- **Conditionals.** `ctx:retry({ attempts = 3, on = { uf.errors.timeout } }, fn)`
+  around a step, branches, and loops are ordinary Luau now. Note the strict
+  reading of `on`: when it is present, a kind it does not name is **not**
+  retried, even if that kind is retryable by default.
+- **Popups during a wait.** An interrupt declared with `task.interrupt{ when =
+  uf.pages.some_popup, ... }` is offered every resolved page on every turn of
+  every wait, so a dialog that appears mid-wait is dismissed and the wait
+  continues. That was the capability gap the old engine-side poll loop could not
+  close.
+
+The defaults, if you name none, are 600000 ms for `timeout_ms` and 500 ms for
+`poll_ms` (`modules/task/runtime/ctx.luau`). They are policy and live in Luau
+deliberately — there is no host-side fallback behind them.
 
 ### Regression check
 
-Real-machine (2026-07-25, release build, production 750 ms lease): the two-step
-chain above navigated main screen → character detail → character close-up.
+Real-machine (2026-07-25, release build, production 750 ms lease, recorded when
+this was still a two-invocation shell chain; the evidence about page modeling is
+what carries over, not the invocation shape): the two steps navigated main screen
+→ character detail → character close-up.
 Step 1 traced 11 `PageUnknown` frames while the screen was still settling, then
 `PageResolved` → `ActionFound sadScore=9780/maximumSad=299880` → `ActionAuthorized`
 → `ClickDelivered (1469,558)` → `ObservationInvalidated`. Step 2 resolved
@@ -116,6 +149,57 @@ at 0, while the live main screen matched at 9780 — 3.3 % of the 9000 bp budget
 Real frames drift from the captured still (highlights, counters, animation), so a
 threshold that only passes at ~0 is over-fitted; the margin is the number to
 watch.
+
+## `ctx:try` catches automation failures only — your own `error()` goes straight through
+
+### Symptom
+
+A step body raises a plain Luau `error("...")`, the author wrapped it in
+`ctx:try`, and the run still fails. `ctx:try` returned nothing — it never
+returned at all, because the error went past it.
+
+### Root cause
+
+`ctx:try(fn)` returns `(false, err)` for exactly one class of value: a Tier B
+automation error, which is host-minted userdata carrying the host's error tag.
+Its test is both halves of that sentence:
+
+```lua
+if type(err) == "userdata" and getmetatable(err) == errorTag then
+    return false, err
+end
+error(err, 0)     -- everything else is re-raised unchanged
+```
+
+A project script cannot produce such a value — `setmetatable` and `table.clone`
+take tables, and `newproxy` is removed from both environments — so anything a
+script raises itself is, by construction, in the `error(err, 0)` branch. That
+includes a string, a table, and the Tier C cancellation sentinel (also a plain
+string).
+
+This is deliberate, and it is the reason `try` exists rather than an oversight:
+a project's own bug is not an automation failure. Folding both into one return
+value would make a misspelled field name look like a retryable timeout, and would
+let a script swallow a cancel. `ctx:retry` uses the same test, so a retry loop
+can never turn a cancelled run into three more attempts either.
+
+### Fix
+
+- To catch an automation failure (a wait that expired, a stale observation, a
+  rejected click): `ctx:try`, and read `err.kind` against `uf.errors.<kind>`.
+- To catch your **own** raise: a bare `pcall`. `ctx:try` will not do it.
+- To let a bug fail the run, which is usually right: write neither.
+
+Note that neither one is a way to keep running after a cancel. Every primitive
+checks the host's terminal latch on entry, so a script that swallowed the
+sentinel is refused at its next primitive call, before any capture or click.
+
+### Regression check
+
+`tests/task/test-framework-context.cpp`, "ctx:step nests strictly and leaves no
+step open behind a raise", asserts both halves against each other in one script:
+a bare `pcall` catches `error('boom', 0)` while `ctx:try` catches the Tier B
+raise from a primitive.
 
 ## Re-pointing an action target at another page: authorize before withdrawing
 

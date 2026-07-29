@@ -18,3 +18,20 @@
 9. [`entry-workbench.md`](entry-workbench.md) — GUI 编辑、采集、预览、编译和发布。
 10. [`entry-cli.md`](entry-cli.md) — 参数解析、离线加载、Windows 适配和退出码。
 11. [`entry-m0-demo.md`](entry-m0-demo.md) — 已冻结的真机验收程序，以及它和产品代码的边界。
+
+## 待补的两页（2026-07-29）
+
+`modules/task` 与 `modules/trace` 至今没有自己的页，而 2026-07-29 的阶段 3 把任务
+policy 整个搬进这两层之后，engine 页与 CLI 页已经在替它们解释一些不属于自己的东西。
+建议范围如下，等阶段 3d（语义事件 + 校验状态机）落地后一并写，免得写完立刻过期：
+
+- **`module-task.md`** — `TaskHost` 的 D10 动词形与 run 生命周期；私有能力面的两道
+  接缝（`installer()` 的数据表 / `privateCapabilities()` 的原语表）与它为什么私有；
+  观察周期协议与 `CycleLedger`；Tier A/B/C 的载体形状；受信任 Luau framework
+  （`runtime/ctx.luau` + `runtime/task.luau`）承担哪些 policy，以及「C++ 拥有保证、
+  Luau 拥有 policy」这条边界线具体划在哪。**不重复** `module-script.md` 已经写清的沙箱、
+  预算与双环境机制。
+- **`module-trace.md`** — `umbraflow-trace/v1` 的 schema 所有权、事件族
+  （`run.*` / `engine.*` / `task.native_call`，以及 3d 之后的 `framework.*`）、
+  字段顺序与 golden 比较的规则、非 golden 字段集、`ITraceSink` 的同步可失败契约与
+  失败优先级，以及「审计日志而非重放日志」这条定位。

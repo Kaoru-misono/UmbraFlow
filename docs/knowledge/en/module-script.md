@@ -256,9 +256,13 @@ than planned:
   RNG and it can read no clock at all;
 - Globals no longer leak across `runNumber()` calls: each run gets a fresh project environment;
 - A host-controlled seeded RNG exists in `modules/task`; the seed is injected per run and recorded
-  in `run.started`. Per `docs/plans/2026-07-29-three-layer-task-system.md` §10 the logical clock is
-  being **deleted** rather than kept — evidence-based waiting (`ctx:wait_for_page`) and declarative
-  pauses (`ctx:settle`) replace it in stage 3.
+  in `run.started`. Per `docs/plans/2026-07-29-three-layer-task-system.md` §10 the logical clock has
+  been **deleted** (stage 3a, `f146329`): `DeterministicClock`, `ctx:now`, and that primitive are
+  all gone. Three host facilities replace it — `ctx:deadline(ms)` mints an absolute instant a script
+  cannot read back, `ctx:wait(deadline, interval)` pauses one turn against it and reports whether
+  budget remains, and `ctx:settle(ms)` is a declarative bounded pause. A script therefore still
+  reads **no clock at all**, but "wait a while" changed from counting loop iterations into actually
+  waiting.
 - Nothing yet restricts dictionary iteration results from entering decisions or serialization; that
   remains a convention.
 

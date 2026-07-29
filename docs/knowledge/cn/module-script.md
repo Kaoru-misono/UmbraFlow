@@ -227,8 +227,11 @@ compiler 的 optimization/debug level 已固定，确定性下限现在是被强
   `math.randomseed`——所以脚本唯一的随机来自宿主的 seeded RNG，而且完全读不到任何时钟；
 - globals 不再跨 `runNumber()` 泄漏：每次 run 拿到一份新的 project 环境；
 - host-controlled seeded RNG 在 `modules/task` 里，seed 每 run 注入并写进 `run.started`。
-  按 `docs/plans/2026-07-29-three-layer-task-system.md` §10，逻辑时钟是要**删掉**而不是保留
-  的——阶段 3 由基于证据的等待（`ctx:wait_for_page`）与声明式停顿（`ctx:settle`）取代它。
+  逻辑时钟按 `docs/plans/2026-07-29-three-layer-task-system.md` §10 **已删除**（阶段 3a
+  `f146329`）：`DeterministicClock`、`ctx:now` 与那个原语都不存在了。取代它的是三样宿主
+  设施——`ctx:deadline(ms)` 铸一个脚本读不回来的绝对时刻、`ctx:wait(deadline, interval)`
+  对着它停一轮并报告预算是否还在、`ctx:settle(ms)` 声明式有界停顿。脚本因此仍然**读不到
+  任何时钟**，但「等一等」这件事从「数循环次数」变成了真的等。
 - 仍然没有机制限制 dictionary 迭代结果进入决策或序列化；那一条目前只是约定。
 
 所以“同一 observation trace + seed 运行 1000 次结果完全一致”仍是 veto gate 而非已兑现的

@@ -36,7 +36,7 @@ engine 不负责以下工作：
 
 公开端口集中在 `modules/engine/source/engine/ports.hpp`。
 
-- `IFrameSource::capture() -> Result<Frame>` 从一个已经绑定的目标取得帧。
+- `IFrameSource::capture(CaptureBudget const&) -> Result<Frame>` 从一个已经绑定的目标取得帧。`CaptureBudget` 是嵌套在该端口里的 `{ deadline, cancellation }`：capture 是 engine 唯一可能阻塞在外部生产者上的操作，没有这个界限，一个等合成器的适配器就自己决定了调用方要等多久，而一次被取消的 run 会卡在帧池里。两个成员都承重，适配器必须都兑现。deadline 是**绝对时刻**而不是时长，所以一个已经花掉一部分预算的调用方无法悄悄续期；它没有默认值，每个构造点都得说出自己施加的界限。
 - `IFrameSource::validateTargetInstance() -> Status` 复核绑定的仍是同一个目标实例。engine 在 capture 前调用一次，在 delivery 前再调用一次，后者用于关闭“观察后 HWND 被复用或目标被替换”的窗口。
 - `IActionSink::click(Point<ClientSpace>, ObservationLease const&) -> Status` 接收 client 坐标和原始 lease。lease pass-through 是接口的一部分，适配器不能只传坐标，否则 controller 层无法执行第二层 session/generation/age fencing。
 - `ITraceSink::emit(TraceEvent const&) -> Status` 是同步、可失败的证据端口。失败不是 best-effort warning，而会中止当前 engine 操作。
@@ -69,7 +69,7 @@ Windows 产品入口使用两个薄适配器：
 
 - `EngineSessionConfig` 固定 live `ProjectFingerprint`、每次识别的 pixel comparison budget、recognition timeout、最大动作帧龄和共享 `std::stop_token`。
 - `EngineSession::create` 要求三个端口都非空，保存 `LoadedRuntime` 与配置，并首先 emit `SessionStarted`。首条 trace 写入失败时 session 不会创建成功。
-- `EngineSession::observe() -> Result<Observation>` 先检查 cancellation，再复核目标实例、capture、由 `ObservationLease::forFrame` 建 lease、提取 `annotation::FrameIdentity`，emit `Observed` 后才把句柄交给调用者。
+- `EngineSession::observe() -> Result<Observation>` 先检查 cancellation，再复核目标实例、capture、由 `ObservationLease::forFrame` 建 lease、提取 `annotation::FrameIdentity`，emit `Observed` 后才把句柄交给调用者。**capture 的 deadline 在这里铸**：由配置里那一个 `captureTimeout`（`k_defaultCaptureTimeout = 2s`）加上当前时刻算出，连同 session 自己的 cancel 源一起装进 `CaptureBudget`。所以没有任何适配器自行决定一次观察能阻塞多久，也没有任何脚本能放大它——溢出单调时钟是配置错误，当场 fail closed。
 - `EngineSession::resolvePage(Observation const&)` 对传入 observation 持有的 frame
   调用自身 `RecognitionRuntime::evaluatePage`，返回由 `ResolvedPage`、
   `UnknownPage` 或 `AmbiguousPages` 组成的 `PageOutcome`。
@@ -78,20 +78,29 @@ Windows 产品入口使用两个薄适配器：
   对应 D4 Tier A，不是错误。
 - `ActionFound` 保存原始 `AnchorEvidence`、绑定 recognizer identity 的 `ActionDetection` 和确定性的 `PixelPoint`。点击点由 annotation 的 `resolveClickPixel` 决定；match rect 经 `pixelRectToFrameRect` 变成 authorization-ready `Detection`。
 - `EngineSession::act(Observation&&, ResolvedPage const&, ActionFound const&)` 消费 observation，成功返回记录被授权 `FrameId` 与 client-space 坐标的 `ActReceipt`。
-- `EngineSession::waitForPage(PageId, timeout, pollInterval)` 重复 observe/resolve，命中后返回成对的 `Observation` 与同帧 `ResolvedPage`，调用方无需、也不应重新识别。
+**engine 没有任何循环。** 上面五个动词全是单次的：观察一帧、在那一帧上解析、在那一帧上找、点一次。
+2026-07-29(`8b16f2d`)删掉了 `EngineSession::waitForPage`、它的成对返回类型 `PageWait` 和那个永远
+no-op 的 `sweepKnownPopups`；「等到某页出现」现在是受信任 Luau framework 里的
+`ctx:wait_for_page`（`modules/task/runtime/ctx.luau`）。理由见
+[`docs/plans/2026-07-29-three-layer-task-system.md`](../../plans/2026-07-29-three-layer-task-system.md)
+§1 与 §16：能力层里不该有 policy 循环，而那个循环还捎带一个弹窗接缝——接缝在循环里，
+弹窗策略在 Luau 里，两边永远接不上。
 
-一次产品 CLI 数据流可在 `entry/cli/run-windows.cpp` 直接跟读：
+一次产品数据流现在从 `modules/task` 那侧读起，`entry/cli/run-windows.cpp` 只负责装配：
 
 ```text
 loadRuntimeProject
   -> resolve page/action names
   -> bind WgcCaptureSession + DeliveryTarget
   -> create IFrameSource/IActionSink/ITraceSink adapters
+  -> task::TaskHost::loadProject / startTask
   -> EngineSession::create
-  -> waitForPage
-  -> EngineSession::findAction(PageWait::m_observation, actionId)
-  -> EngineSession::act
-  -> IActionSink::click
+  -> (ctx.luau 的等待循环，每轮一次)
+       EngineSession::observe
+       -> EngineSession::resolvePage
+       -> EngineSession::findAction(observation, recognizerId)
+       -> EngineSession::act
+       -> IActionSink::click
 ```
 
 `act` 内部的关键顺序是：
@@ -178,8 +187,8 @@ D1 的 Model B 被编码为句柄，而非仅靠调用约定：
   共享一个私有、不可变的 identity token。token 会随 session move 到新对象，既有
   observation 因而仍然有效；把它交给其他 session 会返回 `InternalInvariant`，过程中
   不会解引用 moved-from 对象。
-- session 独占 runtime 与三个端口；`ActionFound`、`PageWait`、`ActReceipt` 都是
-  明确拥有其结果的值，不返回悬空的临时 view。
+- session 独占 runtime 与三个端口；`ActionFound` 与 `ActReceipt` 都是明确拥有其结果的
+  值，不返回悬空的临时 view。
 
 ### 确定性与有界执行
 
@@ -192,12 +201,16 @@ container 的迭代顺序。点击 pixel 由 annotation 规则确定，坐标变
 frame 自带的 `CoordinateTransform`。trace 字段顺序和 wire names 也固定，便于 golden
 比较与下游拒绝未知 schema。
 
-墙钟只参与 recognition deadline、lease 陈旧保险丝和 wait deadline。这些路径的
+墙钟只参与 recognition deadline、lease 陈旧保险丝和 capture deadline。这些路径的
 偏差只会缩短可操作窗口或返回停止/超时，不会把未知状态转成允许动作。
 
-`waitForPage` 的 sleep 被 `k_maxPollSleepSlice = 100ms` 切片。即使调用者给出 10 秒
-poll interval，每片之间也检查 cancellation 和 deadline，因此等待不会把取消响应
-绑死在完整 poll interval 上。`sweepKnownPopups` 每轮先调用一次，但当前是明确的 no-op。
+engine 自己不睡。切片睡眠 `core::pollSleep`（`modules/core/source/core/time/poll-sleep.hpp`，
+按 `k_maxPollSleepSlice = 100ms` 切片，每片之间重查 cancellation 与 deadline）今天的生产
+调用方是 task 的 `wait` 与 `settle` 原语，engine 一个都没有——它随 2026-07-29 的等待循环
+重构从 engine 升进 core，理由是「对着 deadline 停一下」是通用时间设施，下一个需要它的模块
+不该再长出第二份切片逻辑。engine 侧唯一还会阻塞的地方是 `IFrameSource::capture`，
+而它被 `CaptureBudget` 界住：套件里的 `DeadlineHonouringFrameSource`
+（`tests/engine/test-session.cpp`）就是靠真的阻塞到 deadline 来证明这一点。
 
 ### 在失败发生时记录追踪
 
@@ -212,9 +225,10 @@ D4 要求错误在向上层传播的瞬间记录，而不是期待未来脚本�
 
 emit 自身可失败；`UF_TRY` 会立即传播该失败，因此 trace 基础设施故障不会被降级成
 无声运行。还应注意当前覆盖范围：session 创建前的 loader 错误、observe/act 的前置
-cancellation、`waitForPage` 自身 timeout/cancellation，以及 `IActionSink::click`
+cancellation、capture 自身的 deadline/cancellation，以及 `IActionSink::click`
 直接失败，目前没有统一生成 `Failure` 事件。扩展错误路径时必须阅读具体 emit site，
-不能假设存在中央拦截器。
+不能假设存在中央拦截器。（页面等待的超时不在这张表上了：它现在是 `ctx.luau` 里的
+`native.raise("timeout", ...)`，落在 `task.native_call` 那条流上。）
 
 ### 严格后台
 
@@ -237,7 +251,8 @@ pass-through 契约；仅仅“实现了虚函数”并不自动获得该保证�
 主要 inbound edges 如下：
 
 - `entry/cli/run-windows.cpp` 提供已选择目标、live fingerprint、预算、超时、
-  cancellation 与三个端口，然后驱动 `waitForPage -> findAction -> act`。
+  cancellation 与两个端口，交给 `task::TaskHost`；驱动 observe/resolve/find/act 的是
+  受信任 Luau framework，CLI 自己不再调用任何 engine 动词。
 - annotation 通过 runtime manifest 提供 catalog、模板、page signatures、
   action-target 定义与 allowed-page policy。
 - domain 提供 `Frame`、`CoordinateTransform`、`Detection`、`ObservationLease`、
@@ -297,8 +312,9 @@ include controller。否则 fake 端口无法在平台无关测试中替代桌�
   `RecognitionStopped`。
 - observe 前 cancellation、observe 后 act cancellation 都是零投递。
 - target instance 在观察后失效时，delivery-edge guard 阻止 sink call。
-- 10 秒 poll sleep 中途取消能因 100 ms slicing 在测试上限内返回；另有立即 timeout
-  与第二帧成功命中的测试。
+- `observe` 交给 `IFrameSource::capture` 的 `CaptureBudget` 携带真期限与可用的 stop
+  token：`DeadlineHonouringFrameSource` 真的阻塞到那个时刻才返回，是套件里唯一一个
+  不是凭空满足 budget 的帧源。
 
 这些测试有意把 engine 的顺序与 Windows 分离：engine fake 固定 lease pass-through，CLI
 sink 测试固定 JSONL durability，controller 的 lease、窗口 identity、message encoding
@@ -317,7 +333,9 @@ sink 测试固定 JSONL durability，controller 的 lease、窗口 identity、me
 - Tier A miss 对应成功的空 optional；Tier B/C 的 Luau 表达仍需按 D4 与 hardening
   ledger 实现，不能把所有 C++ `Error` 简单变成可被 `pcall` 吞掉的普通 error。
 - click 对应 `act`，成功后整个 handle invalidated。
-- wait 对应 `waitForPage`，并直接携带命中它的 observation。
+- 等待**不对应任何 engine 动词**：它是 framework Luau 里 observe/resolve 加一次
+  `wait` 原语的循环。这是 2026-07-29 的更正——原文写「wait 对应 `waitForPage`」，而那个
+  动词已经不存在了。
 
 当前 `modules/script` 与 `modules/engine` 之间没有 manifest edge，B2 尚未实现。绑定层
 应依赖稳定的 engine 操作面，不应把 `lua_State`、userdata 或 scheduler 概念反向放入
@@ -331,12 +349,20 @@ P3 第二平台和测试替身都通过 `IFrameSource`、`IActionSink`、`ITrace
 新 `IActionSink` 必须证明目标实例、lease fencing 与 strict-background，而不是只做
 坐标传输。
 
-### 等待与 D6
+### 等待与 D6（已迁出 engine）
 
-`EngineSession::sweepKnownPopups` 已位于每个 `waitForPage` cycle 的开头。
-`docs/plans/2026-07-23-engine-architecture.md` 把 P0-C 的最小 known-popup sweep 和
-P1 的 `bot:on` registry 放在这里。当前 no-op 只锁住调用时机，不代表 popup policy
-已经存在；未来实现还要服从 grill D6 的周期边界、声明顺序 first-match 和有界命中。
+弹窗处理**不再是 engine 的扩展点**。`sweepKnownPopups` 那个 no-op 接缝随
+`waitForPage` 一起在 2026-07-29(`8b16f2d`)删除，D6 的能力落在受信任 Luau framework 的
+interrupt 注册表上：`task.interrupt{ id, when, max_hits, handle }` 声明，
+`ctx:wait_for_page` 的每一轮解析出页面后交给注册表匹配。
+
+这次搬迁本身就是那个能力缺口的答案。旧接缝在 engine 的轮询循环里，而弹窗策略在 Luau 里，
+两边够不着——真接上去也只会在一次等待的开头响一次，中途冒出来的弹窗仍然处理不了。
+现在 grill D6 要的三条都成立且可读：周期边界（handler 拿到的是**当前**这个观察周期，
+点击消费它，循环随即重新观察）、声明顺序 first-match（`task.define` 的列表序）、
+有界命中（`max_hits`，缺省 3）。详见
+[`docs/plans/2026-07-29-three-layer-task-system.md`](../../plans/2026-07-29-three-layer-task-system.md)
+§6。
 
 ### 生命周期与 D10
 

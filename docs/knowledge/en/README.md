@@ -27,3 +27,21 @@ responsibilities, key entry points, and tests. Module dependencies are governed 
     codes.
 11. [`entry-m0-demo.md`](entry-m0-demo.md) — The frozen on-hardware acceptance program and its
     boundary with product code.
+
+## Two pages still missing (2026-07-29)
+
+`modules/task` and `modules/trace` have no page of their own, and since stage 3 of 2026-07-29 moved
+task policy wholesale into those two layers, the engine and CLI pages have been explaining things
+that are not theirs. The suggested scope is below. Write them once stage 3d (semantic events plus
+the validation state machine) has landed, so they are not stale on arrival:
+
+- **`module-task.md`** — `TaskHost`'s D10 verb shape and the run lifecycle; the capability surface's
+  two seams (`installer()` for the data tables, `privateCapabilities()` for the primitive table) and
+  why the second is private; the observation-cycle protocol and `CycleLedger`; the carrier shapes of
+  Tier A/B/C; which policy the trusted Luau framework (`runtime/ctx.luau` plus `runtime/task.luau`)
+  owns, and exactly where the "C++ owns guarantees, Luau owns policy" line falls. It must **not**
+  restate the sandbox, budgets, and dual environments that `module-script.md` already covers.
+- **`module-trace.md`** — schema ownership of `umbraflow-trace/v1`; the event families (`run.*`,
+  `engine.*`, `task.native_call`, and `framework.*` after 3d); field ordering and the rules for
+  golden comparison; the documented non-golden field set; `ITraceSink`'s synchronous fallible
+  contract and the failure-precedence rules; and the "audit log, not a replay log" positioning.

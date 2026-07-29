@@ -69,6 +69,11 @@
       (observe→session.resolvePage/findAction→act,动作即失效;取消与目标失活在投递边拦截)。
 - [x] `umbra-flow run`:第一个同时链接 engine+controller 的组合根;
       发现→指纹→会话→waitForPage→findAction→act,区分退出码,Ctrl-C 进 stop_token。
+      **注(2026-07-29,`8b16f2d`)**:这条流水线记的是 B1 当时的形状。`waitForPage` 已随
+      `PageWait` / `sweepKnownPopups` 一起删除,engine 现在完全不轮询;CLI 也不再调用任何
+      engine 动词,而是把端口交给 `task::TaskHost`,由受信任 Luau framework 的
+      `ctx:wait_for_page` 驱动 observe→resolve→find→act。见
+      [`plans/2026-07-29-three-layer-task-system.md`](plans/2026-07-29-three-layer-task-system.md) §16。
 - [x] Fake IFrameSource 合成帧回放 + fail-closed 全谱(Unknown/Ambiguous/stop reasons/
       租约过期/指纹不符/失效句柄复用 → 全部零投递)进 CI。
 - [x] **真机冒烟(2026-07-25 通过,release + 生产 750ms 租约)**:手写最小 manifest,

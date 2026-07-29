@@ -75,10 +75,6 @@
 
 - `--project DIR`、`--selector TITLE-SUBSTRING`、`--task NAME` 必填；`--task` 指名
   已发布项目里的 `tasks/NAME.luau`。
-- `--timeout SEC` 默认 30 秒，`--poll MS` 默认 250 ms 且只接受 1 到 60000 ms。两者都
-  不是 CLI 自己执行的期限：它们是脚本页面等待的默认值，经 `task::TaskRunConfig`
-  转发进 `TaskContextConfig::defaultWaitTimeout` 与
-  `TaskContextConfig::defaultWaitPollInterval`，供两者都未指名的脚本回退使用。
 - `--budget N` 默认 `1 << 28`，限制一次识别的像素比较数。
 - `--recognition-timeout MS` 默认 2000 ms，是每次识别的 deadline。
 - `--max-frame-age MS` 默认 750 ms，决定 observation lease 可用于动作的时长。
@@ -87,6 +83,14 @@
 整数使用 `std::from_chars` 完整消费输入，duration 在转换前检查目标表示范围。
 flag 以“flag 后紧跟 value”的二元组读取；未知 flag、缺值、非整数和越界值都
 返回 `InvalidResource`。因此后续组合只处理类型化值，不重复解析字符串。
+
+**页面等待的两个 flag 已删。** `--timeout SEC` 与 `--poll MS` 曾经是脚本页面等待的宿主
+默认值，经 `task::TaskRunConfig` 转发进 `TaskContextConfig`。2026-07-29(`d1a0685`)
+等待循环整个搬进受信任 Luau framework 之后，宿主没有任何代码再读这两个值，它们连同两个
+config 字段一起删除；今天它们会被上面那条未知 flag 规则**当作未知参数拒绝**。等多久、
+多久重看一次现在是 `modules/task/runtime/ctx.luau` 里的 `k_defaultTimeoutMillis`
+（600000 ms）与 `k_defaultPollMillis`（500 ms），脚本按 `{ timeout_ms, poll_ms }` 覆盖。
+保留的 `--recognition-timeout` 是每次识别的 deadline，与页面等待无关。
 
 ### 项目加载
 
@@ -141,7 +145,8 @@ DPI、枚举窗口或创建捕获资源。该顺序是承重的，并于 2026-07
 `TaskRunConfig` 不是普通 config，而是一条移入式所有权边界：它携带
 `std::unique_ptr<engine::IFrameSource>` 与 `std::unique_ptr<engine::IActionSink>`，
 调用方那一份因此被置空，端口生命周期归这次 run。除端口外它还携带 live fingerprint、
-像素预算、单次识别期限、最大帧年龄、两个页面等待默认值和 trace 路径。
+像素预算、单次识别期限、最大帧年龄和 trace 路径。**它不带页面等待预算**：等多久、多久
+重看一次由 task 在 Luau 里决定，宿主留一份读不到的回退值只会是一个没人读的字段。
 
 真正的运行发生在 `startTask`：它加载并校验 task、打开 trace，再依次构造
 `trace::TraceRecorder`、`engine::EngineSession`、`task::TaskContext` 和 VM，只在这次
@@ -277,15 +282,13 @@ substring、名称和退出码；CLI 在这一层负责可读诊断与默认值�
 PUBLIC，因为两个 adapter 实现的是 engine 端口。跨边界的是：
 
 - 两个拥有型 port implementation 与实时 `annotation::ProjectFingerprint`，以
-  `task::TaskRunConfig` 移入，另带像素预算、识别期限、最大帧年龄和两个页面等待
-  默认值；
+  `task::TaskRunConfig` 移入，另带像素预算、识别期限和最大帧年龄；
 - 项目路径、task 名称与 trace 路径；
 - `GenerationId`、`task::TaskRunReport` 和结构化 `Error`。
 
 `task` 与 `engine` 都不看到 HWND、console handler、文件选择语法或标题 substring。
 反方向，CLI 不解释 recognizer evidence、page outcome 或授权规则，也不再驱动
-`waitForPage`、`EngineSession::findAction` 或 `act`：它只调用 `loadProject` 与
-`startTask`，然后读报告。
+`EngineSession` 的任何动词：它只调用 `loadProject` 与 `startTask`，然后读报告。
 
 向 `controller` 的出站边只存在于 Windows build。跨边界的是 resolved
 `WindowHandle`、`ClientSize`、`Dpi`、`TargetGeneration`、`ClientGeometry`、
@@ -331,7 +334,8 @@ CLI adapter 的安全语义由下游测试分层固定：
 
 - `tests/engine/test-session.cpp` 覆盖完整 observe→resolve→find→act、
   fingerprint mismatch、未授权 action、过期 lease、失效/跨 session
-  observation、投递边缘 target revalidation、取消和 `waitForPage` 超时。
+  observation、投递边缘 target revalidation、取消，以及 `observe` 交出去的
+  `CaptureBudget` 是不是一个真期限。
 - `tests/engine/test-runtime-loader.cpp` 覆盖发布项目加载、坏 manifest、缺模板、
   hash mismatch 与 manifest 大小上限。
 - `tests/controller/test-input-revalidation.cpp` 覆盖 lease session/generation/age、
@@ -367,8 +371,10 @@ Windows 上追加 `cli/test-candidate-selection.cpp`（`selectCandidate` 也只�
   CLI host implementation 可以替换 `run-unsupported.cpp`，engine 无需感知平台。
 - B2 Luau 对 `Observation`、observe/find/act/wait 做 1:1 binding；现有 C++
   API 形状就是为避免届时重构而保留。
-- D6/P1 弹窗处理接在 `EngineSession::sweepKnownPopups` 的现有 no-op hook，
-  而不是塞进窗口发现或 CLI argument parsing。
+- D6/P1 弹窗处理**已不在 engine**：`sweepKnownPopups` 那个 no-op hook 随
+  `waitForPage` 于 2026-07-29(`8b16f2d`)删除，弹窗现在由受信任 Luau framework 的
+  interrupt 注册表处理（`task.interrupt` 声明，`ctx:wait_for_page` 每轮匹配）。这一条
+  对 CLI 的结论不变：它仍然不该塞进窗口发现或 argument parsing。
 - P0-C 若 UIPI 真机验证要求分进程提权，计划要求把 m0-demo input-agent 的协议
   语义复制到 runner adapter 层，而不是链接已经冻结的 m0-demo。
 

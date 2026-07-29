@@ -59,7 +59,14 @@ fakes, while keeping the platform code thin and auditable.
 
 The public ports are concentrated in `modules/engine/source/engine/ports.hpp`.
 
-- `IFrameSource::capture() -> Result<Frame>` obtains a frame from an already-bound target.
+- `IFrameSource::capture(CaptureBudget const&) -> Result<Frame>` obtains a frame from an
+  already-bound target. `CaptureBudget` is `{ deadline, cancellation }`, nested inside the port
+  because nothing else names it: a capture is the one engine operation that can block on an external
+  producer, and without the bound an adapter waiting on a compositor decides for itself how long a
+  caller waits while a cancelled run stays stuck in a frame pool. Both members are load-bearing and
+  an implementation MUST honour both. The deadline is **absolute** rather than a duration, so a
+  caller that already spent part of its budget cannot silently renew it, and it has no default —
+  every construction site states the bound it is imposing.
 - `IFrameSource::validateTargetInstance() -> Status` rechecks that what is bound is still the same
   target instance. The engine calls it once before capture and again before delivery; the latter
   closes the window where "the HWND is reused or the target is replaced after observation".
@@ -125,6 +132,11 @@ The public runtime surface lives in `modules/engine/source/engine/session.hpp`:
 - `EngineSession::observe() -> Result<Observation>` first checks cancellation, then rechecks the
   target instance, captures, builds a lease via `ObservationLease::forFrame`, extracts
   `annotation::FrameIdentity`, and only after emitting `Observed` hands the handle to the caller.
+  **The capture deadline is minted here**, from the one configured `captureTimeout`
+  (`k_defaultCaptureTimeout = 2s`) plus the current instant, and travels in the `CaptureBudget`
+  together with the session's own cancel source. So no adapter decides for itself how long an
+  observation may block, and no script can widen it — a timeout that overflows the monotonic clock
+  is a configuration error and fails closed on the spot.
 - `EngineSession::resolvePage(Observation const&)` calls its
   `RecognitionRuntime::evaluatePage` against the frame held by the supplied observation and returns
   a `PageOutcome` composed of `ResolvedPage`, `UnknownPage`, or `AmbiguousPages`.
@@ -138,22 +150,31 @@ The public runtime surface lives in `modules/engine/source/engine/session.hpp`:
 - `EngineSession::act(Observation&&, ResolvedPage const&, ActionFound const&)` consumes the
   observation and on success returns an `ActReceipt` recording the authorized `FrameId` and the
   client-space coordinate.
-- `EngineSession::waitForPage(PageId, timeout, pollInterval)` repeats observe/resolve, and on a hit
-  returns a paired `Observation` and same-frame `ResolvedPage`; the caller need not, and should not,
-  recognize again.
+**The engine has no loop.** All five verbs above are single-shot: observe one frame, resolve on that
+frame, find on that frame, click once. 2026-07-29 (`8b16f2d`) deleted `EngineSession::waitForPage`,
+its paired return type `PageWait`, and the permanently no-op `sweepKnownPopups`; "wait until page X
+appears" is now `ctx:wait_for_page` in the trusted Luau framework
+(`modules/task/runtime/ctx.luau`). The reasoning is in
+[`docs/plans/2026-07-29-three-layer-task-system.md`](../../plans/2026-07-29-three-layer-task-system.md)
+sections 1 and 16: a capability layer must hold no policy loop, and that loop also carried a popup
+seam that could never be reached — the seam was in the loop and the popup policy was in Luau.
 
-One product CLI data flow can be read directly in `entry/cli/run-windows.cpp`:
+One product data flow now starts on the `modules/task` side; `entry/cli/run-windows.cpp` only
+assembles the parts:
 
 ```text
 loadRuntimeProject
   -> resolve page/action names
   -> bind WgcCaptureSession + DeliveryTarget
   -> create IFrameSource/IActionSink/ITraceSink adapters
+  -> task::TaskHost::loadProject / startTask
   -> EngineSession::create
-  -> waitForPage
-  -> EngineSession::findAction(PageWait::m_observation, actionId)
-  -> EngineSession::act
-  -> IActionSink::click
+  -> (one turn of ctx.luau's wait loop)
+       EngineSession::observe
+       -> EngineSession::resolvePage
+       -> EngineSession::findAction(observation, recognizerId)
+       -> EngineSession::act
+       -> IActionSink::click
 ```
 
 The critical ordering inside `act` is:
@@ -249,9 +270,8 @@ D1's Model B is encoded as a handle rather than relying on calling conventions a
   immutable identity token with the session that vended it. The token follows a moved session, so
   existing observations remain valid after that move; using one with another session returns
   `InternalInvariant` without dereferencing a moved-from object.
-- The session exclusively owns the runtime and the three ports; `ActionFound`, `PageWait`, and
-  `ActReceipt` are all values that clearly own their results and do not return a dangling temporary
-  view.
+- The session exclusively owns the runtime and the three ports; `ActionFound` and `ActReceipt` are
+  values that clearly own their results and do not return a dangling temporary view.
 
 ### Determinism and Bounded Execution
 
@@ -266,14 +286,19 @@ pixel is determined by annotation rules, and the coordinate transform comes from
 `CoordinateTransform` that the captured frame carries. The trace field order and wire names are also
 fixed, which makes golden comparison easy and lets downstream reject unknown schemas.
 
-The wall clock participates only in the recognition deadline, the lease staleness fuse, and the wait
-deadline. Deviations on these paths only shorten the actionable window or return a stop/timeout, and
-never turn an unknown state into an allowed action.
+The wall clock participates only in the recognition deadline, the lease staleness fuse, and the
+capture deadline. Deviations on these paths only shorten the actionable window or return a
+stop/timeout, and never turn an unknown state into an allowed action.
 
-`waitForPage`'s sleep is sliced by `k_maxPollSleepSlice = 100ms`. Even if the caller provides a
-10-second poll interval, cancellation and the deadline are checked between each slice, so a wait
-does not tie the cancellation response to a full poll interval. `sweepKnownPopups` is called once at
-the start of each round, but is currently an explicit no-op.
+The engine never sleeps. The sliced sleep `core::pollSleep`
+(`modules/core/source/core/time/poll-sleep.hpp`, sliced by `k_maxPollSleepSlice = 100ms`, rechecking
+cancellation and the deadline between slices) has the task layer's `wait` and `settle` primitives as
+its production callers today, and the engine has none — it moved up from engine into core with the
+2026-07-29 wait-loop refactor, because pausing against a deadline is a general time facility and the
+next module that needs one must not grow a second copy of the slicing. The one place the engine can
+still block is `IFrameSource::capture`, and it is bounded by `CaptureBudget`:
+`DeadlineHonouringFrameSource` in `tests/engine/test-session.cpp` proves it by actually blocking
+until that deadline.
 
 ### Tracing at the Failure Site
 
@@ -290,10 +315,11 @@ exception hook but an explicit emit at the engine failure site:
 
 The emit itself can fail; `UF_TRY` propagates that failure immediately, so a trace infrastructure
 failure is not downgraded into silent operation. Note also the current coverage: loader errors
-before session creation, the pre-condition cancellation of observe/act, `waitForPage`'s own
-timeout/cancellation, and a direct failure of `IActionSink::click` currently do not uniformly
+before session creation, the pre-condition cancellation of observe/act, the capture's own
+deadline/cancellation, and a direct failure of `IActionSink::click` currently do not uniformly
 generate a `Failure` event. When extending error paths, you must read the specific emit site and
-cannot assume a central interceptor exists.
+cannot assume a central interceptor exists. (A page-wait timeout is no longer on this list: it is
+now `native.raise("timeout", ...)` in `ctx.luau` and lands on the `task.native_call` stream.)
 
 ### Strict-Background
 
@@ -319,7 +345,8 @@ not automatically earn that guarantee.
 The main inbound edges are as follows:
 
 - `entry/cli/run-windows.cpp` provides the selected target, the live fingerprint, the budget, the
-  timeout, cancellation, and the three ports, then drives `waitForPage -> findAction -> act`.
+  timeout, cancellation, and two ports to `task::TaskHost`; what drives observe/resolve/find/act is
+  the trusted Luau framework, and the CLI itself no longer calls any engine verb.
 - annotation provides the catalog, templates, page signatures, action-target definitions, and the
   allowed-page policy through the runtime manifest.
 - domain provides `Frame`, `CoordinateTransform`, `Detection`, `ObservationLease`, `CaptureSessionId`,
@@ -386,9 +413,9 @@ The same file pins the JSONL transport of `trace::FileTraceSink`:
 - Cancellation before observe and act cancellation after observe are both zero delivery.
 - When the target instance becomes invalid after observation, the delivery-edge guard blocks the
   sink call.
-- A mid-way cancellation during a 10-second poll sleep can return within the test's upper bound
-  thanks to the 100 ms slicing; there are also tests for an immediate timeout and a successful hit
-  on the second frame.
+- The `CaptureBudget` `observe` hands to `IFrameSource::capture` carries a real deadline and a usable
+  stop token: `DeadlineHonouringFrameSource` actually blocks until that instant, making it the one
+  frame source in the suite that does not satisfy its budget vacuously.
 
 These tests deliberately separate the engine's ordering from Windows: the engine fakes pin the lease
 pass-through, the CLI sink tests pin the JSONL durability, and the controller's lease, window
@@ -409,7 +436,9 @@ Model B, precisely so that B2 can bind without refactoring the domain surface:
   still be implemented per D4 and the hardening ledger, and cannot simply turn every C++ `Error`
   into a plain error that `pcall` can swallow.
 - click corresponds to `act`, and the whole handle is invalidated on success.
-- wait corresponds to `waitForPage`, and directly carries the observation that hit it.
+- Waiting corresponds to **no engine verb at all**: it is a loop in framework Luau over
+  observe/resolve plus one `wait` primitive. This is a 2026-07-29 correction — the original text read
+  "wait corresponds to `waitForPage`", and that verb no longer exists.
 
 There is currently no manifest edge between `modules/script` and `modules/engine`, and B2 is not yet
 implemented. The binding layer should depend on the stable engine operation surface and should not
@@ -424,13 +453,21 @@ test fakes. When adding a platform, target discovery and the adapter still go in
 engine adds no `#ifdef Windows`. A new `IActionSink` must prove the target instance, lease fencing,
 and strict-background, not merely transport coordinates.
 
-### Waiting and D6
+### Waiting and D6 (moved out of the engine)
 
-`EngineSession::sweepKnownPopups` already sits at the start of every `waitForPage` cycle.
-`docs/plans/2026-07-23-engine-architecture.md` places P0-C's minimal known-popup sweep and P1's
-`bot:on` registry here. The current no-op only locks in the call timing and does not mean a popup
-policy already exists; a future implementation must also obey grill D6's cycle boundary,
-declaration-order first-match, and bounded hits.
+Popup handling is **no longer an engine extension point**. The `sweepKnownPopups` no-op seam was
+deleted together with `waitForPage` on 2026-07-29 (`8b16f2d`), and the D6 capability now lives in the
+trusted Luau framework's interrupt registry: `task.interrupt{ id, when, max_hits, handle }` declares
+one, and every turn of `ctx:wait_for_page` offers its resolved page to the registry.
+
+The move is itself the answer to that capability gap. The old seam sat inside the engine's poll loop
+while the popup policy sat in Luau, so the two could never meet — and even wired up it would have
+fired once at the start of a wait, never on the polls that matter. All three of grill D6's
+requirements now hold and are readable: the cycle boundary (a handler is given the **current**
+observation cycle, a click consumes it, and the loop re-observes), declaration-order first-match (the
+order of `task.define`'s list), and bounded hits (`max_hits`, defaulting to 3). See
+[`docs/plans/2026-07-29-three-layer-task-system.md`](../../plans/2026-07-29-three-layer-task-system.md)
+section 6.
 
 ### Lifetime and D10
 

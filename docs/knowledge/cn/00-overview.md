@@ -50,7 +50,7 @@ entry/workbench      -> annotation + engine + controller + image
 | 入口 | 用途 | 当前状态 |
 | --- | --- | --- |
 | `umbra-workbench` | 编辑标注项目、采集源图、预览、编译和发布 | A1 标注工具 |
-| `umbra-flow run` | 加载已发布项目，等待页面，寻找一个动作并点击一次 | B1 C++ smoke flow |
+| `umbra-flow run` | 加载已发布项目，运行 `--task NAME` 指名的 Luau 任务 | P0 单任务 runner |
 | `m0-demo` | 验证 WGC 捕获和严格后台输入 | 已冻结，不再承载产品功能 |
 
 三条路径不能混用：
