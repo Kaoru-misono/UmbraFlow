@@ -2,6 +2,7 @@
 
 #include "allocator.hpp"
 #include "cancellation.hpp"
+#include "environment.hpp"
 #include "sandbox.hpp"
 
 #include <core/numeric/checked-cast.hpp>
@@ -142,14 +143,23 @@ namespace uf::script
             );
         }
         luaL_openlibs(state);
-        // Install the caller's host tables (empty by default) in the sandbox
-        // build order: openlibs -> register+freeze host tables -> nil the
-        // dangerous survivors -> luaL_sandbox. modules/task passes its umbra.*
-        // installer through EngineConfig::installHostTables.
-        installSandbox(state, config.installHostTables);
-        // Arm hard cancellation before any task thread can run. m_control lives
-        // in the heap-pinned Impl, so the userdata pointer stays valid.
+
+        // Arm hard cancellation before ANY Lua code runs, the framework bundle
+        // included. m_control lives in the heap-pinned Impl, so the userdata
+        // pointer stays valid. Arming it here rather than after the sandbox is
+        // what puts the framework's own boot under the same stop token,
+        // instruction budget and deadline a task run answers to; with no
+        // framework modules configured no Lua code runs during the boot at all,
+        // so nothing is charged against the budget.
         installInterrupt(state, &impl->m_control);
+
+        // Boot the two environments. installSandbox owns the whole ordered
+        // sequence -- framework environment and bundle, host tables, the global
+        // strippings, luaL_sandbox, project environment prototype -- because an
+        // ordering this security-relevant belongs in one place rather than
+        // spread across its callers. A failure returns the reason its own step
+        // gave, and `impl` closes the VM it had already allocated.
+        UF_TRY(installSandbox(state, config, &impl->m_control));
 
         return Engine{std::move(impl)};
     }
@@ -169,7 +179,7 @@ namespace uf::script
             );
         }
 
-        auto result = runNumberOnThread(
+        auto result = runNumberInProjectEnvironment(
             m_impl->m_state.get(),
             source,
             chunkName,

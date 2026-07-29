@@ -2,8 +2,11 @@
 
 #include <core/error/result.hpp>
 
+#include <script/engine.hpp>
+
 #include <span>
 #include <string_view>
+#include <vector>
 
 namespace uf::task
 {
@@ -57,6 +60,16 @@ namespace uf::task
     // modules/task/manifest.txt and stamped into the bundle at build time.
     [[nodiscard]]
     auto frameworkVersion() noexcept -> std::string_view;
+
+    // The same bundle, in the shape script::EngineConfig::frameworkModules
+    // takes, so every VM that boots this framework builds the list one way.
+    //
+    // The views it carries are the bundle's own, so they live for the whole
+    // process and the returned vector may be handed to a config that outlives
+    // this call. Only the vector itself is fresh, and each call makes one --
+    // this runs once per VM, not once per script call.
+    [[nodiscard]]
+    auto frameworkScriptModules() -> std::vector<script::FrameworkModule>;
 
     // Parses one framework module with the same vendored Luau parser the host
     // uses at load time, and reports the first syntax error together with its

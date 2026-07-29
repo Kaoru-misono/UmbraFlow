@@ -82,6 +82,20 @@ namespace uf::task
             annotation::RecognitionCatalog const& catalog
         ) -> Result<CapabilitySurface>;
 
+        // The global names either installer registers, in the shape
+        // script::EngineConfig::projectGlobals takes. It is what carries the
+        // umbra root across the boundary the project environment draws: that
+        // environment is an explicit whitelist with no __index chain to the main
+        // globals, so a name the installer wrote as a global is invisible to a
+        // project script until it is listed here.
+        //
+        // Static because it describes the installer, not one catalog, and it is
+        // needed at the same call site that builds the EngineConfig. A name
+        // listed here that the installer did not register fails VM creation, so
+        // the two statements cannot silently disagree.
+        [[nodiscard]]
+        static auto projectGlobals() -> std::vector<std::string>;
+
         // A host-table installer suitable for script::EngineConfig::installHostTables.
         // Invoked once per task VM before the sandbox freezes the globals, it
         // builds the frozen global umbra table. The returned installer owns its

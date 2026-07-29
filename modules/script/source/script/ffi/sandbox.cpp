@@ -1,10 +1,10 @@
 #include "sandbox.hpp"
 
+#include "environment.hpp"
+
 #include <core/utility/scope-exit.hpp>
 #include <domain/error.hpp>
 
-#include <cstddef>
-#include <cstdlib>
 #include <string>
 #include <unordered_set>
 
@@ -24,7 +24,6 @@
 #endif
 #include <lua.h>
 #include <lualib.h>
-#include <luacode.h>
 #if defined(_MSC_VER)
 #pragma warning(pop)
 #elif defined(__clang__)
@@ -37,15 +36,6 @@ namespace uf::script
 {
     namespace
     {
-        [[nodiscard]]
-        auto topError(lua_State* thread) -> std::string
-        {
-            char const* text = lua_tostring(thread, -1);
-            return text != nullptr
-                ? std::string{text}
-                : std::string{"(non-string error value)"};
-        }
-
         // Remove a global name outright (script sees nil). Must run while the
         // global table is still writable, i.e. before luaL_sandbox.
         auto nilGlobal(lua_State* state, char const* name) -> void
@@ -71,16 +61,51 @@ namespace uf::script
             lua_pop(state, 1);
         }
 
+        // Checks the metatable at `metatable` against the two rules deepFreeze
+        // enforces. Both are stated at deepFreeze's declaration; the short form
+        // is that a metatable without __metatable can be cloned away, and a
+        // function __index is a hole the yield protocol could not survive.
+        [[nodiscard]]
+        auto checkMetatableShape(lua_State* state, int metatable) -> Status
+        {
+            lua_rawgetfield(state, metatable, "__metatable");
+            bool const protectedMetatable = !lua_isnil(state, -1);
+            lua_pop(state, 1);
+            if (!protectedMetatable)
+            {
+                return fail(
+                    AutomationErrorKind::InternalInvariant,
+                    "a frozen host object has a metatable with no __metatable "
+                    "field, so table.clone could copy it into a mutable forgery "
+                    "carrying the same metatable"
+                );
+            }
+
+            lua_rawgetfield(state, metatable, "__index");
+            bool const indexIsCallable = lua_isfunction(state, -1);
+            lua_pop(state, 1);
+            if (indexIsCallable)
+            {
+                return fail(
+                    AutomationErrorKind::InternalInvariant,
+                    "a frozen host object has a function __index; host object "
+                    "__index must be a table"
+                );
+            }
+            return ok();
+        }
+
+        [[nodiscard]]
         auto deepFreezeInto(
             lua_State* state,
             int index,
             std::unordered_set<void const*>& visited
-        ) -> void
+        ) -> Status
         {
             int const table = lua_absindex(state, index);
             if (!visited.insert(lua_topointer(state, table)).second)
             {
-                return;
+                return ok();
             }
 
             // Freeze the metatable BEFORE the table itself: lua_getmetatable
@@ -89,7 +114,8 @@ namespace uf::script
             // frozen table it guards.
             if (lua_getmetatable(state, table) != 0)
             {
-                deepFreezeInto(state, -1, visited);
+                UF_TRY(checkMetatableShape(state, lua_gettop(state)));
+                UF_TRY(deepFreezeInto(state, -1, visited));
                 lua_pop(state, 1);
             }
 
@@ -102,41 +128,84 @@ namespace uf::script
                 // pop the value and keep the key for the next lua_next.
                 if (lua_istable(state, -1))
                 {
-                    deepFreezeInto(state, -1, visited);
+                    UF_TRY(deepFreezeInto(state, -1, visited));
                 }
                 lua_pop(state, 1);
             }
+            return ok();
         }
     }
 
-    auto deepFreeze(lua_State* state, int index) -> void
+    auto deepFreeze(lua_State* state, int index) -> Status
     {
+        // A rule violation returns from the middle of a metatable check or of a
+        // lua_next walk, both of which leave values on the stack. Restoring the
+        // top here keeps the failure path as balanced as the success path, so a
+        // caller that reports the error does not also inherit stack garbage.
+        int const stackBase = lua_gettop(state);
+        auto stackGuard = scopeExit(
+            [state, stackBase]() noexcept
+            {
+                lua_settop(state, stackBase);
+            }
+        );
+
         auto visited = std::unordered_set<void const*>{};
-        deepFreezeInto(state, index, visited);
+        return deepFreezeInto(state, index, visited);
+    }
+
+    auto deepFreezeMetatable(lua_State* state, int index) -> Status
+    {
+        int const stackBase = lua_gettop(state);
+        auto stackGuard = scopeExit(
+            [state, stackBase]() noexcept
+            {
+                lua_settop(state, stackBase);
+            }
+        );
+
+        int const metatable = lua_absindex(state, index);
+        UF_TRY(checkMetatableShape(state, metatable));
+
+        auto visited = std::unordered_set<void const*>{};
+        return deepFreezeInto(state, metatable, visited);
     }
 
     auto installSandbox(
         lua_State* state,
-        HostTableInstaller const& installHostTables
-    ) -> void
+        EngineConfig const& config,
+        InterruptState const* control
+    ) -> Status
     {
-        if (installHostTables)
+        // The framework loads first, and under its own environment, because the
+        // whole point of the split is that trusted code never shares a global
+        // table with a project script. It runs before the dangerous globals are
+        // nilled, which is the design's order; nothing in the bundle needs them,
+        // and the framework's runtime lookups go through the same main globals
+        // the steps below strip, so the window closes with everything else.
+        installFrameworkEnvironment(state);
+        UF_TRY(loadFrameworkModules(state, config.frameworkModules, control));
+
+        if (config.installHostTables)
         {
-            installHostTables(state);
+            UF_TRY(config.installHostTables(state));
         }
 
         // Nil the globals luaL_sandbox does NOT remove (verified on 0.730). A
         // script that spawns its own coroutine escapes the interrupt-driven
         // cancel; debug can uninstall hooks and read outside the sandbox;
-        // getfenv/setfenv/newproxy are environment escapes. `_G` is luaopen_base's
-        // self-reference to the global table (lbaselib.cpp) -- a live alias door
-        // that reaches `umbra` (and every other global) around the AST resource
-        // closure, e.g. `_G.umbra:capture()` or `rawget(_G, 'umbra')`; luaL_sandbox
-        // only freezes it, so it stays a readable handle unless removed here. A
-        // task needs only `umbra`, never `_G`. Nilling the `_G` name leaves the
-        // underlying global table (LUA_GLOBALSINDEX) and every real global intact;
-        // only the reflexive handle is gone. The host uses coroutines and debug
-        // only from C, never through these globals.
+        // getfenv/setfenv/newproxy are environment escapes. getfenv is the
+        // precise counterpart of `_G` once two environments exist: for a Lua
+        // closure luaB_getfenv returns THAT closure's env table (lbaselib.cpp),
+        // so calling it on any framework value would hand back the entire
+        // framework environment. `_G` is luaopen_base's self-reference to the
+        // global table -- a live alias door that reaches every global around the
+        // AST resource closure, e.g. `_G.umbra:capture()` or
+        // `rawget(_G, 'umbra')`; luaL_sandbox only freezes it, so it stays a
+        // readable handle unless removed here. Nilling the `_G` name leaves the
+        // underlying global table (LUA_GLOBALSINDEX) and every real global
+        // intact; only the reflexive handle is gone. The host uses coroutines and
+        // debug only from C, never through these globals.
         nilGlobal(state, "getfenv");
         nilGlobal(state, "setfenv");
         nilGlobal(state, "newproxy");
@@ -160,117 +229,9 @@ namespace uf::script
         nilLibraryField(state, "math", "randomseed");
 
         luaL_sandbox(state);
-    }
 
-    auto runNumberOnThread(
-        lua_State* mainState,
-        std::string_view source,
-        std::string_view chunkName,
-        InterruptState const* control
-    ) -> Result<double>
-    {
-        auto options              = lua_CompileOptions{};
-        options.optimizationLevel = 1;
-        options.debugLevel        = 1;
-
-        std::size_t bytecodeSize = 0;
-        // SAFETY: luau_compile allocates the bytecode buffer with malloc; the
-        // caller owns it. The scope guard frees it on every exit path (safe
-        // after load, which copies the bytecode into the VM). A SYNTAX error
-        // does NOT return null — it is encoded as error bytecode and surfaces at
-        // luau_load below; null is returned ONLY on allocation failure, hence
-        // InternalInvariant.
-        char* bytecode = luau_compile(
-            source.data(),
-            source.size(),
-            &options,
-            &bytecodeSize
-        );
-        if (bytecode == nullptr)
-        {
-            return fail(
-                AutomationErrorKind::InternalInvariant,
-                "luau_compile allocation failed (returned null)"
-            );
-        }
-        auto bytecodeGuard = scopeExit(
-            [bytecode]() noexcept
-            {
-                // SAFETY: pairs the malloc inside luau_compile; freeing a
-                // caller-owned C buffer at the FFI boundary is intentional here.
-                // NOLINTNEXTLINE(cppcoreguidelines-no-malloc,cppcoreguidelines-owning-memory)
-                std::free(bytecode);
-            }
-        );
-
-        // lua_newthread pushes the coroutine onto the main state's stack. A
-        // scope guard restores the stack top on EVERY exit — including a throw
-        // from the std::string allocations below — so the thread is always
-        // popped and can never accumulate across repeated calls.
-        int const stackBase = lua_gettop(mainState);
-        lua_State* thread = lua_newthread(mainState);
-        auto threadGuard = scopeExit(
-            [mainState, stackBase]() noexcept
-            {
-                lua_settop(mainState, stackBase);
-            }
-        );
-
-        // Give the task its own global table (proxying reads to the frozen main
-        // globals) so writes stay isolated to this run.
-        luaL_sandboxthread(thread);
-
-        auto const name = std::string{chunkName};
-        int const loadStatus = luau_load(
-            thread,
-            name.c_str(),
-            bytecode,
-            bytecodeSize,
-            0
-        );
-        if (loadStatus != LUA_OK)
-        {
-            return fail(
-                AutomationErrorKind::InvalidResource,
-                "luau_load failed: " + topError(thread)
-            );
-        }
-
-        int const runStatus = lua_resume(thread, nullptr, 0);
-        if (runStatus == LUA_BREAK || (control != nullptr && control->broken))
-        {
-            // The interrupt hard-cancelled this thread (stop token, instruction
-            // budget, or deadline). The thread is abandoned — the scope guard
-            // pops it and it is never resumed. A break is not a script-level
-            // error and cannot be caught by pcall.
-            //
-            // The broken flag is checked alongside LUA_BREAK because a break
-            // raised inside a non-yieldable C frame surfaces as an ordinary
-            // runtime error (LUA_ERRRUN, "attempt to break across C-call
-            // boundary") instead. Classifying that as a recoverable script
-            // error would misreport a host control signal as a Tier B failure.
-            return fail(
-                AutomationErrorKind::Cancelled,
-                "task hard-cancelled (lua_break); the task thread is abandoned"
-            );
-        }
-        if (runStatus == LUA_YIELD)
-        {
-            return fail(
-                AutomationErrorKind::InvalidResource,
-                "script yielded; the substrate does not resume yields"
-            );
-        }
-        if (runStatus != LUA_OK)
-        {
-            return fail(
-                AutomationErrorKind::InvalidResource,
-                "script error: " + topError(thread)
-            );
-        }
-
-        return lua_gettop(thread) >= 1
-            ? lua_tonumber(thread, -1)
-            : 0.0;
+        // Built last, from what the steps above left standing, so a name this
+        // function removed can never reappear in the project environment.
+        return installProjectEnvironmentPrototype(state, config.projectGlobals);
     }
 }

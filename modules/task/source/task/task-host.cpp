@@ -439,30 +439,46 @@ namespace uf::task
             },
         };
 
-        UF_TRY_VALUE(
-            vm,
-            script::Engine::create(
-                script::EngineConfig{
-                    .cancellation      = p_generation->cancellation(),
-                    .installHostTables = p_generation->surface().installer(context),
-                }
-            )
-        );
-
-        // The script's numeric return carries no success meaning of its own, so
-        // it is discarded: a Tier B or Tier C failure surfaces as an error here,
-        // and a clean return means the task ran to completion.
-        auto runResult = vm.runNumber(loadedTask.source, loadedTask.name);
-
         auto report = TaskRunReport{
             .taskName   = loadedTask.name,
             .sourceHash = loadedTask.hash.hex(),
             .seed       = seed,
             .tracePath  = config.tracePath,
         };
-        if (!runResult)
+
+        // The VM boots two environments. The trusted framework bundle loads
+        // under the framework environment; the task script below runs under a
+        // project environment that is an explicit whitelist and holds no route
+        // back to the framework's, so the capability surface named here is the
+        // whole of what the script can reach.
+        //
+        // A VM that cannot be built at all -- a generation already cancelled, so
+        // the interrupt breaks the framework boot, or a framework module that
+        // will not load -- ends this RUN, not this call. run.started is already
+        // in the trace by now, so the run happened and has to be described; a
+        // bare Result failure here would leave a run bracket that never closed.
+        auto vm = script::Engine::create(
+            script::EngineConfig{
+                .cancellation      = p_generation->cancellation(),
+                .frameworkModules  = frameworkScriptModules(),
+                .installHostTables = p_generation->surface().installer(context),
+                .projectGlobals    = CapabilitySurface::projectGlobals(),
+            }
+        );
+        if (!vm)
         {
-            report.failure = std::move(runResult).error();
+            report.failure = std::move(vm).error();
+        }
+        else
+        {
+            // The script's numeric return carries no success meaning of its own,
+            // so it is discarded: a Tier B or Tier C failure surfaces as an error
+            // here, and a clean return means the task ran to completion.
+            auto runResult = vm->runNumber(loadedTask.source, loadedTask.name);
+            if (!runResult)
+            {
+                report.failure = std::move(runResult).error();
+            }
         }
 
         auto finishStatus = recorder->emit(runFinishedEvent(report));

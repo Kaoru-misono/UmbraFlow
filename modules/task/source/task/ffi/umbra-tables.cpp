@@ -25,7 +25,6 @@
 #include <ratio>
 #include <string>
 #include <string_view>
-#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -68,6 +67,11 @@ namespace uf::task
         constexpr auto k_resolvedPageType = "umbra.resolved_page";
         constexpr auto k_hitType          = "umbra.hit";
         constexpr auto k_errorType        = "umbra.error";
+
+        // The single global name this installer registers, and therefore the one
+        // host name the project environment whitelists. Spelled once here so the
+        // registration and the whitelist entry cannot drift apart.
+        constexpr auto k_umbraRoot = "umbra";
 
         // Pushes an error kind's wire spelling as a Lua string. The domain returns
         // a view rather than a C string, so push it with its length instead of
@@ -119,51 +123,6 @@ namespace uf::task
             // std::construct_at. Destroy it once here; the VM frees the block
             // afterwards.
             std::destroy_at(static_cast<T*>(storage));
-        }
-
-        // Recursively marks the table at `index`, every table reachable from its
-        // values, and every metatable on the way, read-only. This mirrors
-        // modules/script's internal deepFreeze (ffi/sandbox.hpp), reimplemented
-        // here because that routine lives behind script's ffi boundary rather than
-        // as a public capability. Cycle-safe: each table once.
-        auto freezeInto(
-            lua_State* state,
-            int index,
-            std::unordered_set<void const*>& visited
-        ) -> void
-        {
-            int const table = lua_absindex(state, index);
-            if (!visited.insert(lua_topointer(state, table)).second)
-            {
-                return;
-            }
-
-            // Freeze the metatable BEFORE the table: a still-writable metatable
-            // would let a script rewrite __index/__newindex and monkey-patch
-            // around the frozen table it guards.
-            if (lua_getmetatable(state, table) != 0)
-            {
-                freezeInto(state, -1, visited);
-                lua_pop(state, 1);
-            }
-
-            lua_setreadonly(state, table, 1);
-
-            lua_pushnil(state);
-            while (lua_next(state, table) != 0)
-            {
-                if (lua_istable(state, -1))
-                {
-                    freezeInto(state, -1, visited);
-                }
-                lua_pop(state, 1);
-            }
-        }
-
-        auto freezeRecursive(lua_State* state, int index) -> void
-        {
-            auto visited = std::unordered_set<void const*>{};
-            freezeInto(state, index, visited);
         }
 
         // Bound as every handle metatable's __newindex: rejects every write with a
@@ -1009,22 +968,39 @@ namespace uf::task
 
         // Freezes the metatable on the stack top and stores it in the registry
         // under `registryType`, popping it.
-        auto finishMetatable(lua_State* state, char const* registryType) -> void
+        //
+        // The freeze is script::deepFreezeMetatable, the sandbox's own walk in
+        // its metatable-checking form, so the design's runtime rules -- a
+        // __metatable field on every metatable, an __index that is a table and
+        // never a function, frozen before anything wears it -- are enforced on
+        // these at construction rather than restated here as a convention.
+        //
+        // The metatable-checking form is the one that applies: a handle kind's
+        // metatable is registered here and attached to each handle later, so the
+        // plain deepFreeze would only ever see it as an ordinary table and would
+        // never check it as the metatable it is about to become.
+        [[nodiscard]]
+        auto finishMetatable(lua_State* state, char const* registryType) -> Status
         {
-            freezeRecursive(state, -1);
+            UF_TRY(script::deepFreezeMetatable(state, -1));
             lua_setfield(state, LUA_REGISTRYINDEX, registryType);
+            return ok();
         }
 
         // The Tier B error metatable is a data table's guard, not a handle's: it
         // needs only __metatable protection (the table itself is frozen readonly),
-        // no __index, __newindex, or __tostring.
-        auto installErrorMetatable(lua_State* state) -> void
+        // no __index, __newindex, or __tostring. That one field is load-bearing:
+        // table.clone refuses a table whose metatable is protected, so an error a
+        // script catches cannot be cloned into a mutable copy that still passes
+        // the host's metatable-identity check.
+        [[nodiscard]]
+        auto installErrorMetatable(lua_State* state) -> Status
         {
             lua_newtable(state);
             int const metatable = lua_gettop(state);
             lua_pushstring(state, k_errorType);
             lua_setfield(state, metatable, "__metatable");
-            finishMetatable(state, k_errorType);
+            return finishMetatable(state, k_errorType);
         }
 
         // Registers every handle kind's shared, frozen, protected metatable in the
@@ -1035,33 +1011,34 @@ namespace uf::task
         // names the host hands back to itself, so every operation on a cycle is a
         // root primitive taking the ticket -- which is also the shape the private
         // capability surface takes once the Luau framework owns these calls.
-        auto installMetatables(lua_State* state, TaskContext* context) -> void
+        [[nodiscard]]
+        auto installMetatables(lua_State* state, TaskContext* context) -> Status
         {
             beginMetatable(state, k_recognizerType);
-            finishMetatable(state, k_recognizerType);
+            UF_TRY(finishMetatable(state, k_recognizerType));
 
             beginMetatable(state, k_pageRefType);
-            finishMetatable(state, k_pageRefType);
+            UF_TRY(finishMetatable(state, k_pageRefType));
 
             if (context == nullptr)
             {
-                return;
+                return ok();
             }
 
-            installErrorMetatable(state);
+            UF_TRY(installErrorMetatable(state));
 
             beginMetatable(state, k_cycleType);
-            finishMetatable(state, k_cycleType);
+            UF_TRY(finishMetatable(state, k_cycleType));
 
             beginMetatable(state, k_hitType);
-            finishMetatable(state, k_hitType);
+            UF_TRY(finishMetatable(state, k_hitType));
 
             beginMetatable(state, k_resolvedPageType);
             {
                 int const metatable = lua_gettop(state);
                 addMethod(state, metatable, "is", &isFn, nullptr);
             }
-            finishMetatable(state, k_resolvedPageType);
+            return finishMetatable(state, k_resolvedPageType);
         }
 
         // Populates `umbra[fieldName]` with a name table of opaque handles, one per
@@ -1129,14 +1106,15 @@ namespace uf::task
         // Assembles the whole frozen global umbra table. With a null context it is
         // the resource-only surface (recognizers and pages, no verbs); with a
         // context it also wires the observation-cycle primitives to the session.
+        [[nodiscard]]
         auto buildUmbra(
             lua_State* state,
             std::vector<RecognizerHandleSpec> const& recognizers,
             std::vector<PageHandleSpec> const& pages,
             TaskContext* context
-        ) -> void
+        ) -> Status
         {
-            installMetatables(state, context);
+            UF_TRY(installMetatables(state, context));
 
             lua_newtable(state);
             int const umbra = lua_gettop(state);
@@ -1223,9 +1201,15 @@ namespace uf::task
                 );
             }
 
-            freezeRecursive(state, umbra);
-            lua_setglobal(state, "umbra");
+            UF_TRY(script::deepFreeze(state, umbra));
+            lua_setglobal(state, k_umbraRoot);
+            return ok();
         }
+    }
+
+    auto CapabilitySurface::projectGlobals() -> std::vector<std::string>
+    {
+        return std::vector<std::string>{std::string{k_umbraRoot}};
     }
 
     auto CapabilitySurface::installer() const -> script::HostTableInstaller
@@ -1236,9 +1220,9 @@ namespace uf::task
         auto pages       = m_pages;
         return [recognizers = std::move(recognizers), pages = std::move(pages)](
                    lua_State* state
-               ) -> void
+               ) -> Status
         {
-            buildUmbra(state, recognizers, pages, nullptr);
+            return buildUmbra(state, recognizers, pages, nullptr);
         };
     }
 
@@ -1255,9 +1239,9 @@ namespace uf::task
         TaskContext* const contextPtr = &context;
         return [recognizers = std::move(recognizers),
                 pages = std::move(pages),
-                contextPtr](lua_State* state) -> void
+                contextPtr](lua_State* state) -> Status
         {
-            buildUmbra(state, recognizers, pages, contextPtr);
+            return buildUmbra(state, recognizers, pages, contextPtr);
         };
     }
 }

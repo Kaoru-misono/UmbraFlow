@@ -1,9 +1,12 @@
 #include <script/testing/sandbox-probe.hpp>
 
+#include "environment.hpp"
 #include "sandbox.hpp"
 
 #include <core/utility/scope-exit.hpp>
 #include <domain/error.hpp>
+
+#include <string>
 
 // Luau's C headers are third-party and do not build clean under the project's
 // /W4 /WX profile; wrap the includes exactly as the repo's other vendored FFI
@@ -33,13 +36,20 @@ namespace uf::script::testing
     namespace
     {
         // Build `host = { flat = 7, nested = { value = 1 } }` behind a metatable
-        // `{ __index = { inherited = 5 } }`, deep-freeze the whole shape
-        // (recursively read-only, metatable included), then bind it as a global.
-        // Registered before luaL_sandbox, so the global binding itself is frozen
-        // with the rest. The metatable is what makes the walk's metatable arm
-        // testable: without it, a script could reach `getmetatable(host)` and
-        // rewrite `__index` to shadow the frozen table underneath.
-        auto installSyntheticHostTable(lua_State* state) -> void
+        // `{ __index = { inherited = 5 }, __metatable = "probe.host" }`,
+        // deep-freeze the whole shape (recursively read-only, metatable
+        // included), then bind it as a global. Registered before luaL_sandbox, so
+        // the global binding itself is frozen with the rest.
+        //
+        // The metatable carries every property deepFreeze now demands of a
+        // project-visible host object: a table __index (so a script inheriting
+        // through it reads a frozen table rather than running host code) and a
+        // __metatable field (so getmetatable hands back a label, and table.clone
+        // refuses the object outright). It is therefore both the fixture for the
+        // walk's metatable arm and the fixture proving the rules are enforced --
+        // dropping either field makes deepFreeze reject this table.
+        [[nodiscard]]
+        auto installSyntheticHostTable(lua_State* state) -> Status
         {
             lua_newtable(state);
             lua_pushnumber(state, 7.0);
@@ -55,10 +65,13 @@ namespace uf::script::testing
             lua_pushnumber(state, 5.0);
             lua_setfield(state, -2, "inherited");
             lua_setfield(state, -2, "__index");
+            lua_pushstring(state, "probe.host");
+            lua_setfield(state, -2, "__metatable");
             lua_setmetatable(state, -2);
 
-            deepFreeze(state, -1);
+            UF_TRY(deepFreeze(state, -1));
             lua_setglobal(state, "host");
+            return ok();
         }
     }
 
@@ -86,10 +99,19 @@ namespace uf::script::testing
         );
 
         luaL_openlibs(state);
-        installSandbox(state, installSyntheticHostTable);
+        UF_TRY(
+            installSandbox(
+                state,
+                EngineConfig{
+                    .installHostTables = &installSyntheticHostTable,
+                    .projectGlobals    = {std::string{"host"}},
+                },
+                nullptr
+            )
+        );
 
         // No interrupt is armed on this sandbox-only probe, hence the null
         // control block.
-        return runNumberOnThread(state, source, chunkName, nullptr);
+        return runNumberInProjectEnvironment(state, source, chunkName, nullptr);
     }
 }

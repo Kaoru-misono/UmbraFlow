@@ -287,11 +287,25 @@ namespace uf::script
                 REQUIRE(result.has_value());
                 CHECK(*result == doctest::Approx(5.0));
             }
+            SUBCASE("the metatable is not handed out at all")
+            {
+                // deepFreeze requires a __metatable field on every metatable it
+                // walks, so getmetatable returns that label instead of the real
+                // table. This is the outer of the two guards on the monkey-patch
+                // hole a values-only walk would leave open, and the reason the
+                // write below fails.
+                auto const isLabel = runWithFrozenHostTable(
+                    "return getmetatable(host) == 'probe.host' and 1 or 0",
+                    "probe-meta-label-value"
+                );
+                REQUIRE(isLabel.has_value());
+                CHECK(*isLabel == doctest::Approx(1.0));
+            }
             SUBCASE("rewriting the host metatable is rejected")
             {
-                // The monkey-patch hole a values-only walk would leave open:
-                // freezing `host` alone still lets a script swap __index on its
-                // metatable and shadow every frozen field underneath.
+                // The inner guard: even reached directly, the metatable is
+                // read-only, so a script cannot swap __index on it and shadow
+                // every frozen field underneath.
                 auto const result = runWithFrozenHostTable(
                     "getmetatable(host).__index = { inherited = 99 }\nreturn 0",
                     "probe-meta-write"

@@ -122,6 +122,7 @@ if(TARGET ${PROJECT_NAME}_script)
         NAME test-script
         SOURCES
             script/test-script.cpp
+            script/test-environments.cpp
             script/test-veto-suite.cpp
         LIBS
             ${PROJECT_NAME}_script

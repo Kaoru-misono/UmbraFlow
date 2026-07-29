@@ -1,8 +1,10 @@
 #include "../annotation/test-helpers.hpp"
 
 #include <task/capability-surface.hpp>
+#include <task/framework-bundle.hpp>
 
 #include <script/engine.hpp>
+#include <script/testing/environment-probe.hpp>
 
 #include <annotation/catalog.hpp>
 
@@ -88,6 +90,7 @@ namespace uf::task
         {
             auto config              = script::EngineConfig{};
             config.installHostTables = surface.installer();
+            config.projectGlobals    = CapabilitySurface::projectGlobals();
             return script::Engine::create(config);
         }
 
@@ -419,6 +422,112 @@ namespace uf::task
                 )
                 == doctest::Approx(1.0)
             );
+        }
+
+        // The distinctive value modules/task/runtime/placeholder.luau exports so
+        // the isolation claim below has something concrete to be about. It is
+        // spelled here as well as in the .luau, and the bundle-side check makes
+        // that duplication self-policing: renaming it on one side alone turns
+        // the claim vacuous, and the check reddens first.
+        constexpr auto k_frameworkSentinel =
+            std::string_view{"uf-framework-sentinel-6b21f0"};
+
+        // A bounded, cycle-safe reachability search for the sentinel over
+        // everything a project script can name on a real task VM -- the umbra
+        // root included -- following table values, table keys, and metatables.
+        [[nodiscard]]
+        auto sentinelScan() -> std::string
+        {
+            return "local target = '" + std::string{k_frameworkSentinel} + "'\n"
+                   R"lua(
+                local found = false
+                local seen = {}
+
+                local function scan(value, depth)
+                    if found or depth > 8 then return end
+                    local kind = type(value)
+                    if kind == 'string' then
+                        if value == target then found = true end
+                        return
+                    end
+                    if kind ~= 'table' or seen[value] then return end
+                    seen[value] = true
+                    for key, entry in pairs(value) do
+                        scan(key, depth + 1)
+                        scan(entry, depth + 1)
+                    end
+                    scan(getmetatable(value), depth + 1)
+                end
+
+                scan({
+                    -- The module name the loader binds the bundle's exports
+                    -- under: `placeholder` on a real task VM, `probe` when the
+                    -- same source is loaded through the script-layer probe. Both
+                    -- are listed so one scan serves both sides.
+                    umbra, placeholder, probe,
+                    _G, getfenv, setfenv, newproxy, gcinfo, coroutine, debug,
+                    _VERSION, assert, error, getmetatable, ipairs, next, pairs,
+                    pcall, print, rawequal, rawget, rawlen, rawset, select,
+                    setmetatable, tonumber, tostring, type, typeof, unpack,
+                    xpcall, bit32, buffer, math, os, string, table, utf8, vector,
+                }, 0)
+
+                return found and 1 or 0
+            )lua";
+        }
+
+        TEST_CASE("A task VM's project environment cannot reach the real framework bundle")
+        {
+            auto const catalog = buildCatalog();
+            auto surface       = CapabilitySurface::create(catalog);
+            REQUIRE(surface.has_value());
+
+            auto const entries = frameworkBundleEntries();
+            REQUIRE_FALSE(entries.empty());
+            auto const placeholder = entries.front();
+
+            SUBCASE("control: the bundle really carries the sentinel")
+            {
+                CHECK(placeholder.name == "placeholder");
+                CHECK(
+                    placeholder.source.find(k_frameworkSentinel)
+                    != std::string_view::npos
+                );
+            }
+
+            SUBCASE("control: the sentinel is reachable inside a framework environment")
+            {
+                // The real bundle source, loaded under a framework environment by
+                // the same loader a task VM uses. Without this the case below
+                // would also pass on a VM where the framework never ran.
+                auto const found = script::testing::runInEnvironment(
+                    placeholder.source,
+                    sentinelScan(),
+                    script::testing::ProbeEnvironment::Framework
+                );
+                REQUIRE(found.has_value());
+                CHECK(*found == doctest::Approx(1.0));
+            }
+
+            SUBCASE("no route out of a real task's project environment reaches it")
+            {
+                auto engine = script::Engine::create(
+                    script::EngineConfig{
+                        .frameworkModules  = frameworkScriptModules(),
+                        .installHostTables = surface->installer(),
+                        .projectGlobals    = CapabilitySurface::projectGlobals(),
+                    }
+                );
+                REQUIRE(engine.has_value());
+
+                auto const found = engine->runNumber(sentinelScan(), "task-env-scan");
+                REQUIRE(found.has_value());
+                CHECK(*found == doctest::Approx(0.0));
+
+                // The module name the loader binds in the framework environment
+                // is not a project global either, named rather than searched for.
+                CHECK(truthy(*engine, "placeholder == nil") == doctest::Approx(1.0));
+            }
         }
     }
 }

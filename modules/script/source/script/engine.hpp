@@ -7,7 +7,9 @@
 #include <functional>
 #include <memory>
 #include <stop_token>
+#include <string>
 #include <string_view>
+#include <vector>
 
 // Luau's opaque VM handle, forward-declared so this public header never pulls in
 // the Luau C headers (they compile only behind the pragma-wrapped includes in
@@ -23,7 +25,68 @@ namespace uf::script
     // supplies the umbra.* capability tables through this seam. Luau types never
     // cross this boundary: the installer receives only the opaque lua_State the
     // ffi layer knows how to drive. An empty installer registers nothing.
-    using HostTableInstaller = std::function<void(lua_State* state)>;
+    //
+    // It returns Status because a host table the installer cannot build is a
+    // reason for the whole VM generation to fail. A void installer left only two
+    // ways out: longjmp through the C++ boot with luaL_error, or register
+    // nothing and let the generation come up silently crippled. Engine::create
+    // now propagates the installer's own error unchanged and closes the VM it
+    // had already allocated.
+    using HostTableInstaller = std::function<Status(lua_State* state)>;
+
+    // Recursively marks the table at stack `index`, every table reachable from
+    // its values, and every metatable on the way, read-only, and enforces the
+    // two structural rules a project-visible host object must satisfy. Freezing
+    // runs metatable-first: a still-writable metatable would let a script
+    // rewrite __index/__newindex and monkey-patch around the frozen table it
+    // guards. Cycle-safe: each table is visited once.
+    //
+    // The rules, and why each is a rule rather than a convention:
+    //
+    //   - Every metatable carries a __metatable field. table.clone refuses a
+    //     table whose metatable is protected (ltablib.cpp tclone); without the
+    //     field it returns a MUTABLE copy carrying the SAME metatable, so any
+    //     table that proves its identity by its metatable could be forged.
+    //   - __index is a table, never a function. A function __index cannot yield,
+    //     so it would silently become an unyieldable hole if the primitive layer
+    //     ever moves to a yield protocol, and it is one more place a host object
+    //     could run script-reachable code.
+    //
+    // A violation is InternalInvariant: the host builds these objects, so it is
+    // a broken host rather than bad user input. The stack is restored on every
+    // path, including a failing one.
+    [[nodiscard]]
+    auto deepFreeze(lua_State* state, int index) -> Status;
+
+    // Deep-freezes the table at stack `index` AS a metatable: it is checked
+    // against the two rules above in its own right, then frozen exactly as
+    // deepFreeze would freeze it.
+    //
+    // It exists because a metatable is usually built and frozen before it is
+    // attached to anything -- the umbra handle kinds register theirs in the VM
+    // registry and hang it on each handle later -- and deepFreeze can only check
+    // a metatable it reaches through an object already wearing it. Checking at
+    // construction is what makes the rules hold for every object that metatable
+    // will ever guard, including ones minted mid-run.
+    [[nodiscard]]
+    auto deepFreezeMetatable(lua_State* state, int index) -> Status;
+
+    // One module of the trusted Luau framework, loaded under the framework
+    // environment while the VM boots.
+    //
+    // Lifetime contract: both views must outlive the Engine::create call that
+    // consumes them. modules/task satisfies this with string literals in the
+    // generated bundle translation unit, which live for the whole process.
+    struct FrameworkModule final
+    {
+        // The Luau module name: a bare identifier, never a path. It is the key
+        // the module's frozen exports are bound under in the framework
+        // environment, so a later module can reach an earlier one.
+        std::string_view name{};
+
+        // The module's UTF-8 source text.
+        std::string_view source{};
+    };
 
     // Tunables for one task VM generation. Every field is live: the cancellation
     // source and the instruction/time budgets drive the interrupt callback, and
@@ -53,12 +116,29 @@ namespace uf::script
         // (later wave). Placeholder default.
         std::chrono::steady_clock::duration maxRuntime{std::chrono::minutes{30}};
 
+        // The trusted Luau framework, loaded in order under the framework
+        // environment during create(). Empty by default, which boots a VM whose
+        // framework environment exists but holds no modules. A module that fails
+        // to compile or raises while running fails the whole generation.
+        std::vector<FrameworkModule> frameworkModules{};
+
         // Optional host-table installer invoked once during create(), after the
-        // standard libraries open and before the sandbox freezes the globals
-        // (this is installSandbox's first step). Empty by default, which yields a
+        // framework bundle has loaded and before the sandbox freezes the globals
+        // (this is installSandbox's order). Empty by default, which yields a
         // bare sandboxed VM with no host capabilities. modules/task supplies the
         // umbra.* installer here.
         HostTableInstaller installHostTables{};
+
+        // The global names `installHostTables` registers that a project script
+        // must see. They are copied by name into the project environment, which
+        // is otherwise an explicit whitelist of the deterministic standard
+        // library and has no __index chain to reach anything else.
+        //
+        // The host names them because create() cannot ask an opaque
+        // std::function what it registered. The pairing is not left to
+        // discipline: a name listed here that the installer did not register
+        // fails the generation, so the two cannot drift apart silently.
+        std::vector<std::string> projectGlobals{};
     };
 
     // Owns one embedded Luau VM (lua_State) for a single task generation: create
@@ -79,20 +159,29 @@ namespace uf::script
         auto operator=(Engine&&) noexcept -> Engine&;
         ~Engine();
 
-        // Create a task VM with the standard libraries opened and sandboxed per
-        // the hardening ledger: the dangerous survivors luaL_sandbox leaves
-        // (getfenv/setfenv/newproxy/coroutine/debug) are removed, the residual
-        // clock/random globals are removed, and the base libraries are frozen.
-        // Fails if the VM cannot be allocated.
+        // Create a task VM and boot its two environments in the order the
+        // three-layer design fixes: open the admitted base libraries, build the
+        // framework environment and load the framework bundle under it, install
+        // the host tables, remove the dangerous survivors luaL_sandbox leaves
+        // (getfenv/setfenv/newproxy/gcinfo/coroutine/debug/_G) together with the
+        // residual clock and RNG entry points, freeze the base libraries, and
+        // finally build the project environment as an explicit whitelist with no
+        // __index chain back to the framework environment or the main globals.
+        //
+        // Fails if the VM cannot be allocated, if a framework module does not
+        // load or run, if the installer reports a failure (its error propagates
+        // unchanged), or if a whitelisted global is missing. Every failure path
+        // closes the VM it had already allocated.
         [[nodiscard]]
         static auto create(EngineConfig const& config = {}) -> Result<Engine>;
 
-        // Compile, load, and run `source` on a fresh sandboxed task thread;
-        // return the script's sole numeric result (the LAST value if it returns
-        // several; 0.0 if it returns nothing numeric). Each call runs on its own
-        // luaL_sandboxthread, so mutable globals never leak between calls. A
-        // compile, load, or runtime error is a recoverable failure. Retained as
-        // the substrate's test entry point.
+        // Compile, load, and run `source` under a fresh project environment on
+        // its own task thread; return the script's sole numeric result (the LAST
+        // value if it returns several; 0.0 if it returns nothing numeric). The
+        // environment is rebuilt per call from the frozen prototype, so globals
+        // a run writes never reach the next one. A compile, load, or runtime
+        // error is a recoverable failure. Retained as the substrate's test entry
+        // point.
         [[nodiscard]]
         auto runNumber(
             std::string_view source,

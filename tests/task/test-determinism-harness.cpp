@@ -215,6 +215,7 @@ namespace uf::task
             auto vm = script::Engine::create(
                 script::EngineConfig{
                     .installHostTables = built.surface.installer(context),
+                    .projectGlobals    = CapabilitySurface::projectGlobals(),
                 }
             );
             REQUIRE(vm.has_value());

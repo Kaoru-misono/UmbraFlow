@@ -1,6 +1,7 @@
 #include <script/testing/memory-probe.hpp>
 
 #include "allocator.hpp"
+#include "environment.hpp"
 #include "sandbox.hpp"
 
 #include <core/utility/scope-exit.hpp>
@@ -57,15 +58,22 @@ namespace uf::script::testing
             );
 
             luaL_openlibs(state);
-            installSandbox(state, {});
 
-            // The run's own success is not under test here: a failure (an
+            // Neither the boot nor the run is under test here: a failure (an
             // over-quota breach, say) still leaves the ledger to be checked once
-            // the VM is closed, so the result is discarded deliberately.
-            // No interrupt is armed on this quota-only probe, hence the null
-            // control block.
-            auto const ran = runNumberOnThread(state, source, chunkName, nullptr);
-            (void)ran;
+            // the VM is closed, so both results are consumed and discarded
+            // deliberately. No interrupt is armed on this quota-only probe,
+            // hence the null control block.
+            if (installSandbox(state, EngineConfig{}, nullptr))
+            {
+                auto const ran = runNumberInProjectEnvironment(
+                    state,
+                    source,
+                    chunkName,
+                    nullptr
+                );
+                (void)ran;
+            }
         }
         // The close guard has run: every byte the VM held was returned through
         // the allocator, so `used` is the post-close residual and `peak` is the

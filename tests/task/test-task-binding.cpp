@@ -245,7 +245,10 @@ namespace uf::task
         auto runBound(TaskContext& context, Built& built, std::string_view source) -> double
         {
             auto engine = script::Engine::create(
-                script::EngineConfig{.installHostTables = built.surface.installer(context)}
+                script::EngineConfig{
+                    .installHostTables = built.surface.installer(context),
+                    .projectGlobals    = CapabilitySurface::projectGlobals(),
+                }
             );
             REQUIRE(engine.has_value());
             auto const result = engine->runNumber(source, "task-binding");
@@ -281,11 +284,14 @@ namespace uf::task
             config.installHostTables =
                 [surfaceInstaller = std::move(surfaceInstaller), &markCount](
                     lua_State* state
-                ) -> void
+                ) -> Status
             {
-                surfaceInstaller(state);
+                UF_TRY(surfaceInstaller(state));
                 script::testing::installMarkCounter(state, &markCount);
+                return ok();
             };
+            config.projectGlobals = CapabilitySurface::projectGlobals();
+            config.projectGlobals.emplace_back("mark");
 
             auto engine = script::Engine::create(config);
             REQUIRE(engine.has_value());
@@ -763,6 +769,71 @@ namespace uf::task
 
                 local okDone, errDone = umbra:try(function() return 7 end)
                 if okDone ~= true or errDone ~= nil then return 0 end
+                return 1
+            )lua";
+
+            CHECK(runBound(context, built, source) == doctest::Approx(1.0));
+            CHECK(built.clicks->clickCount() == 1);
+        }
+
+        TEST_CASE("A Tier B error rejects writes and cannot be cloned into a forgery")
+        {
+            auto built = buildBinding(resolvingFrames(FrameId{33}));
+            REQUIRE(built.session.has_value());
+            TaskContext context{*std::move(built.session), *built.recorder};
+
+            // The error table is the project-visible frozen object whose identity
+            // the host actually consults: umbra:try classifies a caught value by
+            // its metatable, so a mutable copy that kept that metatable would be
+            // a working forgery. Three things close that off, and each is checked
+            // against a control that would pass if the property were missing:
+            //
+            //   - the table is read-only, so it cannot be edited in place;
+            //   - table.clone refuses it, because __metatable protects it, so
+            //     there is no mutable copy to edit at all;
+            //   - getmetatable yields a label rather than the metatable, so a
+            //     hand-built look-alike has nothing to be given.
+            //
+            // The last four lines are the discriminator: the genuine table is
+            // classified by the host, the look-alike is not, and the difference
+            // is observable from the script.
+            constexpr std::string_view source = R"lua(
+                local cycle = umbra:cycle_open()
+                local page = umbra:cycle_page(cycle)
+                local hit = umbra:cycle_find(cycle, umbra.recognizers.action_target)
+                umbra:cycle_click(cycle, hit)
+
+                local ok, err = umbra:try(function() umbra:cycle_click(cycle, hit) end)
+                if ok ~= false or err == nil then return 0 end
+                if err.kind ~= 'stale_observation' then return 0 end
+
+                if pcall(function() err.kind = 'timeout' end) then return 0 end
+                if pcall(function() err.injected = 1 end) then return 0 end
+
+                local cloned, cloneError = pcall(table.clone, err)
+                if cloned then return 0 end
+                if string.find(cloneError, 'protected metatable') == nil then return 0 end
+
+                if getmetatable(err) ~= 'umbra.error' then return 0 end
+                local forged = {
+                    kind = err.kind,
+                    message = err.message,
+                    retryable = err.retryable,
+                }
+                if pcall(setmetatable, forged, getmetatable(err)) then return 0 end
+
+                -- Control: the host DOES classify the genuine table it minted.
+                local okReal, sameErr = umbra:try(function() error(err) end)
+                if okReal ~= false or sameErr ~= err then return 0 end
+
+                -- And it does not classify the look-alike: try re-raises it, so
+                -- the outer pcall is what catches it and the value comes back
+                -- unchanged rather than as a Tier B result.
+                local caught = nil
+                local okOuter = pcall(function()
+                    umbra:try(function() error(forged) end)
+                end)
+                if okOuter then return 0 end
                 return 1
             )lua";
 

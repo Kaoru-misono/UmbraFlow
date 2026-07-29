@@ -2,11 +2,15 @@
 
 #include "allocator.hpp"
 #include "cancellation.hpp"
+#include "environment.hpp"
 #include "sandbox.hpp"
 
+#include <core/error/result.hpp>
 #include <core/types/integer.hpp>
 #include <core/utility/scope-exit.hpp>
 #include <domain/error.hpp>
+
+#include <string>
 
 // Luau's C headers are third-party and do not build clean under the project's
 // /W4 /WX profile; wrap the includes exactly as the repo's other vendored FFI
@@ -99,16 +103,27 @@ namespace uf::script::testing
         );
 
         luaL_openlibs(state);
-        installSandbox(
-            state,
-            [&markCount](lua_State* s) -> void
-            {
-                installMarkCounter(s, &markCount);
-            }
-        );
         installInterrupt(state, &control);
+        auto const sandboxed = installSandbox(
+            state,
+            EngineConfig{
+                .installHostTables =
+                    [&markCount](lua_State* s) -> Status
+                    {
+                        installMarkCounter(s, &markCount);
+                        return ok();
+                    },
+                .projectGlobals = {std::string{"mark"}},
+            },
+            &control
+        );
+        if (!sandboxed)
+        {
+            return CancellationProbe{};
+        }
 
-        auto const ran = runNumberOnThread(state, source, chunkName, &control);
+        auto const ran =
+            runNumberInProjectEnvironment(state, source, chunkName, &control);
         bool const cancelled =
             !ran.has_value()
             && automationErrorKind(ran.error()) == AutomationErrorKind::Cancelled;

@@ -10,7 +10,15 @@
 --
 -- It declares no framework API on purpose. Nothing should start depending on
 -- this table; stage 3 deletes the file.
+--
+-- The one exception is `sentinel`. It is a distinctive value that exists only
+-- inside the framework environment, so the environment-isolation tests can
+-- state their claim as a concrete difference -- the framework side finds this
+-- exact string, the project side must not find it by any route -- instead of
+-- asserting a vacuous absence. Stage 3 keeps a value with this role even when
+-- the rest of this file goes.
 
 return {
     stage = "placeholder",
+    sentinel = "uf-framework-sentinel-6b21f0",
 }
