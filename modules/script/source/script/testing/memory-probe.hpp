@@ -21,7 +21,7 @@ namespace uf::script::testing
     // disables the ceiling), run `source` on a sandboxed task thread with its
     // result discarded, close the VM, and report the ledger's peak and post-close
     // residual. Luau-free so tests may include it; exercises the accounting
-    // allocator before the real umbra.* host tables exist (phase 2). Not part of
+    // allocator before the real uf.* host tables exist (phase 2). Not part of
     // the public Engine surface.
     [[nodiscard]]
     auto measureMemory(

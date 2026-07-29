@@ -21,17 +21,17 @@
 
 namespace uf::task
 {
-    // The default seed for a task's deterministic RNG (umbra:random). A real run
+    // The default seed for a task's deterministic RNG (ctx:random). A real run
     // overrides it with a host-chosen seed recorded in the run.started trace
     // event, so a run can be replayed by re-supplying the same seed; this constant
     // only gives tests and unconfigured contexts a stable, non-zero starting point.
-    // Because the sandbox removed math.random, umbra:random seeded from this value
+    // Because the sandbox removed math.random, ctx:random seeded from this value
     // is a script's only randomness, so nothing outside the host can perturb the
     // sequence.
     inline constexpr auto k_defaultRandomSeed = uint64{0x9E3779B97F4A7C15};
 
     // Host-side configuration for one TaskContext: the wait budgets a script's
-    // umbra:wait_for_page falls back to when it omits them, plus the single
+    // ctx:wait_for_page falls back to when it omits them, plus the single
     // cancellation source shared with the owned EngineSession and the VM
     // interrupt. The wait defaults are conservative placeholders pending
     // calibration against the first real daily (the plan's example waits ten
@@ -53,14 +53,14 @@ namespace uf::task
         };
         std::stop_token cancellation{};
 
-        // Fixed seed for this task's deterministic RNG (umbra:random). Left at the
+        // Fixed seed for this task's deterministic RNG (ctx:random). Left at the
         // stable default here; a real run gets a fresh per-run seed from
         // TaskHost::startTask, which draws it and records it in run.started so
         // the run reproduces on replay. See k_defaultRandomSeed.
         uint64          randomSeed{k_defaultRandomSeed};
     };
 
-    // The product of umbra:wait_for_page: the observation cycle now open over
+    // The product of ctx:wait_for_page: the observation cycle now open over
     // the frame that resolved the page, and the page itself. The wait already
     // resolved it, so the ledger holds it as that cycle's click authorization
     // evidence and the script never resolves the same frame twice.
@@ -229,7 +229,7 @@ namespace uf::task
         auto emitTrace(trace::TraceEvent const& event) -> Status;
 
         // The next reading of the task's logical clock, in whole milliseconds,
-        // backing umbra:now(). Monotone and non-decreasing across calls, and
+        // backing ctx:now(). Monotone and non-decreasing across calls, and
         // identical across runs of the same script: the clock is virtualized (a
         // fixed logical tick per read, no wall clock), so reading it advances the
         // clock -- hence non-const. See DeterministicClock for why now() is a
@@ -238,12 +238,12 @@ namespace uf::task
         auto nowMillis() noexcept -> int64;
 
         // The next uniform double in [0, 1) from the task's seeded RNG, backing the
-        // no-argument umbra:random(). Deterministic for a given seed and draw order.
+        // no-argument ctx:random(). Deterministic for a given seed and draw order.
         [[nodiscard]]
         auto nextRandomUnitDouble() noexcept -> double;
 
         // A uniform integer in [lowInclusive, highInclusive] from the task's seeded
-        // RNG, backing umbra:random(m) and umbra:random(m, n). The mapping is
+        // RNG, backing ctx:random(m) and ctx:random(m, n). The mapping is
         // unbiased (rejection sampling in DeterministicRng). Precondition, enforced
         // by the binding that parses the script arguments: lowInclusive <=
         // highInclusive and both within +/-2^53, so the result is an exact integer.

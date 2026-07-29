@@ -422,7 +422,7 @@
      "line": 359
     },
     {
-     "text": "script path 在绑定桌面和创建 VM 前构造 CapabilitySurface、加载 task 并预验证全部 umbra 资源引用",
+     "text": "script path 在绑定桌面和创建 VM 前构造 CapabilitySurface、加载 task 并预验证全部 uf 资源引用",
      "file": "entry/cli/run-windows.cpp",
      "line": 226
     },
@@ -447,7 +447,7 @@
      "line": 191
     },
     {
-     "text": "script path 创建独立 task-trace/v1 sink 和拥有 EngineSession 的 TaskContext，再把受限 umbra host table 安装进新 VM",
+     "text": "script path 创建独立 task-trace/v1 sink 和拥有 EngineSession 的 TaskContext，再把受限 uf host table 安装进新 VM",
      "file": "entry/cli/run-windows.cpp",
      "line": 267
     },

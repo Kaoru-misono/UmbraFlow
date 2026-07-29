@@ -63,7 +63,7 @@ namespace uf::task
             -- Cycle 1: an unknown page and a find that completes with no match.
             local c1 = ctx:cycle_open()
             local page1 = ctx:cycle_page(c1)
-            local miss = ctx:cycle_find(c1, umbra.recognizers.action_target)
+            local miss = ctx:cycle_find(c1, uf.recognizers.action_target)
             if page1 ~= nil then error("frame 1 must be an unknown page") end
             if miss ~= nil then error("frame 1 find must miss") end
             ctx:cycle_close(c1)
@@ -71,10 +71,10 @@ namespace uf::task
             -- Cycle 2: resolves page_a, the target hits, one click is delivered.
             local c2 = ctx:cycle_open()
             local page2 = ctx:cycle_page(c2)
-            if page2 == nil or not page2:is(umbra.pages.page_a) then
+            if page2 == nil or not page2:is(uf.pages.page_a) then
                 error("frame 2 must resolve page_a")
             end
-            local hit = ctx:cycle_find(c2, umbra.recognizers.action_target)
+            local hit = ctx:cycle_find(c2, uf.recognizers.action_target)
             if hit == nil then error("frame 2 target must hit") end
             ctx:cycle_click(c2, hit)
 

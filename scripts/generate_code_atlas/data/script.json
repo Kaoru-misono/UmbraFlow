@@ -1,7 +1,7 @@
 {
  "module": "script",
  "title": "modules/script — Luau 任务 VM 与安全边界",
- "summary": "modules/script 为每个任务 generation 创建并独占一个 Luau VM，提供同步源码执行、沙箱、记账内存配额和不可吞的 interrupt 取消。公开头文件只暴露 Engine、EngineConfig 与 opaque lua_State installer seam；Luau C API、allocator、sandbox 和 interrupt 都留在 ffi/ 边界。entry/cli 通过 modules/task 安装 umbra.* capability tables 后使用它，测试 seam 则直接验证冻结、配额和取消证据。",
+ "summary": "modules/script 为每个任务 generation 创建并独占一个 Luau VM，提供同步源码执行、沙箱、记账内存配额和不可吞的 interrupt 取消。公开头文件只暴露 Engine、EngineConfig 与 opaque lua_State installer seam；Luau C API、allocator、sandbox 和 interrupt 都留在 ffi/ 边界。entry/cli 通过 modules/task 安装 uf.* capability tables 后使用它，测试 seam 则直接验证冻结、配额和取消证据。",
  "notOwned": [
   "不拥有 observation、page resolution、recognition、action 或 lease；modules/task 通过 HostTableInstaller 注入窄 capability。",
   "不拥有 Windows capture/input，也不绕过 engine/controller 的 strict-background 与授权门。",
@@ -46,7 +46,7 @@
    "kind": "alias",
    "file": "modules/script/source/script/engine.hpp",
    "line": 26,
-   "responsibility": "在主 state 被 sandbox 冻结前安装 host-facing globals 的组合 seam。script 本身不注册产品 capability；modules/task 用它安装已深冻结的 umbra.* tables。",
+   "responsibility": "在主 state 被 sandbox 冻结前安装 host-facing globals 的组合 seam。script 本身不注册产品 capability；modules/task 用它安装已深冻结的 uf.* tables。",
    "members": [
     {
      "sig": "using HostTableInstaller = std::function<void(lua_State* state)>",

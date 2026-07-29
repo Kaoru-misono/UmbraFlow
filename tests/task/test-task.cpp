@@ -83,9 +83,9 @@ namespace uf::task
             );
         }
 
-        // Builds an engine whose only host capability is the umbra table for the
+        // Builds an engine whose only host capability is the uf table for the
         // catalog above.
-        auto engineWithUmbra(CapabilitySurface const& surface)
+        auto engineWithUfRoot(CapabilitySurface const& surface)
             -> Result<script::Engine>
         {
             auto config              = script::EngineConfig{};
@@ -98,7 +98,7 @@ namespace uf::task
         auto truthy(script::Engine& engine, std::string_view expr) -> double
         {
             auto const source = "return (" + std::string{expr} + ") and 1 or 0";
-            auto const result = engine.runNumber(source, "umbra-expr");
+            auto const result = engine.runNumber(source, "uf-expr");
             REQUIRE(result.has_value());
             return *result;
         }
@@ -107,7 +107,7 @@ namespace uf::task
         // metatable, and so on surface as InvalidResource).
         auto expectRejected(script::Engine& engine, std::string_view source) -> void
         {
-            auto const result = engine.runNumber(std::string{source}, "umbra-reject");
+            auto const result = engine.runNumber(std::string{source}, "uf-reject");
             REQUIRE_FALSE(result.has_value());
             CHECK(
                 automationErrorKind(result.error())
@@ -215,13 +215,13 @@ namespace uf::task
             auto surface       = CapabilitySurface::create(catalog);
             REQUIRE(surface.has_value());
 
-            auto engine = engineWithUmbra(*surface);
+            auto engine = engineWithUfRoot(*surface);
             REQUIRE(engine.has_value());
 
             constexpr std::string_view present[] = {
-                "umbra.recognizers.daily_button ~= nil",
-                "umbra.recognizers.battle ~= nil",
-                "umbra.pages.home ~= nil",
+                "uf.recognizers.daily_button ~= nil",
+                "uf.recognizers.battle ~= nil",
+                "uf.pages.home ~= nil",
             };
             for (std::string_view const expr : present)
             {
@@ -231,10 +231,10 @@ namespace uf::task
 
             constexpr std::string_view absent[] = {
                 // A page anchor is page-internal evidence, never a findable handle.
-                "umbra.recognizers.home_marker == nil",
+                "uf.recognizers.home_marker == nil",
                 // Names that do not exist resolve to nil, not an error.
-                "umbra.recognizers.does_not_exist == nil",
-                "umbra.pages.does_not_exist == nil",
+                "uf.recognizers.does_not_exist == nil",
+                "uf.pages.does_not_exist == nil",
             };
             for (std::string_view const expr : absent)
             {
@@ -243,66 +243,66 @@ namespace uf::task
             }
         }
 
-        TEST_CASE("The umbra tables and handles reject every write")
+        TEST_CASE("The uf tables and handles reject every write")
         {
             auto const catalog = buildCatalog();
             auto surface       = CapabilitySurface::create(catalog);
             REQUIRE(surface.has_value());
 
-            auto engine = engineWithUmbra(*surface);
+            auto engine = engineWithUfRoot(*surface);
             REQUIRE(engine.has_value());
 
-            SUBCASE("a new key on the umbra root is rejected")
+            SUBCASE("a new key on the uf root is rejected")
             {
-                expectRejected(*engine, "umbra.injected = 1\nreturn 0");
+                expectRejected(*engine, "uf.injected = 1\nreturn 0");
             }
-            SUBCASE("a new key on umbra.recognizers is rejected")
+            SUBCASE("a new key on uf.recognizers is rejected")
             {
-                expectRejected(*engine, "umbra.recognizers.injected = 1\nreturn 0");
+                expectRejected(*engine, "uf.recognizers.injected = 1\nreturn 0");
             }
             SUBCASE("overwriting an existing recognizer handle is rejected")
             {
-                expectRejected(*engine, "umbra.recognizers.daily_button = 1\nreturn 0");
+                expectRejected(*engine, "uf.recognizers.daily_button = 1\nreturn 0");
             }
-            SUBCASE("a new key on umbra.pages is rejected")
+            SUBCASE("a new key on uf.pages is rejected")
             {
-                expectRejected(*engine, "umbra.pages.injected = 1\nreturn 0");
+                expectRejected(*engine, "uf.pages.injected = 1\nreturn 0");
             }
             SUBCASE("writing a field on a handle is rejected")
             {
                 expectRejected(
                     *engine,
-                    "umbra.recognizers.daily_button.x = 1\nreturn 0"
+                    "uf.recognizers.daily_button.x = 1\nreturn 0"
                 );
             }
-            SUBCASE("a new key on umbra.errors is rejected")
+            SUBCASE("a new key on uf.errors is rejected")
             {
-                expectRejected(*engine, "umbra.errors.injected = 1\nreturn 0");
+                expectRejected(*engine, "uf.errors.injected = 1\nreturn 0");
             }
             SUBCASE("overwriting an error kind constant is rejected")
             {
-                expectRejected(*engine, "umbra.errors.timeout = 'other'\nreturn 0");
+                expectRejected(*engine, "uf.errors.timeout = 'other'\nreturn 0");
             }
         }
 
-        TEST_CASE("umbra.errors holds exactly one constant per automation error kind")
+        TEST_CASE("uf.errors holds exactly one constant per automation error kind")
         {
             auto const catalog = buildCatalog();
             auto surface       = CapabilitySurface::create(catalog);
             REQUIRE(surface.has_value());
 
-            auto engine = engineWithUmbra(*surface);
+            auto engine = engineWithUfRoot(*surface);
             REQUIRE(engine.has_value());
 
             // None missing, and every constant is its own key, so a script writes
-            // err.kind == umbra.errors.timeout and compares the exact string the
+            // err.kind == uf.errors.timeout and compares the exact string the
             // host raised. The table is built by iterating the reflected kinds at
             // install time, which is why a kind added to the enum appears here
             // with no edit to the surface -- and cannot compile at all until the
             // domain has given it a wire spelling.
             for (auto const& wire : expectedErrorKindSpellings())
             {
-                auto const expression = "umbra.errors." + wire + " == '" + wire + "'";
+                auto const expression = "uf.errors." + wire + " == '" + wire + "'";
                 INFO("kind: ", wire);
                 CHECK(truthy(*engine, expression) == doctest::Approx(1.0));
             }
@@ -311,8 +311,8 @@ namespace uf::task
             // key, or a duplicate spelling that collapsed two kinds onto one key,
             // fails here rather than passing every lookup above.
             auto const count = engine->runNumber(
-                "local n = 0\nfor _ in pairs(umbra.errors) do n = n + 1 end\nreturn n",
-                "umbra-errors-count"
+                "local n = 0\nfor _ in pairs(uf.errors) do n = n + 1 end\nreturn n",
+                "uf-errors-count"
             );
             REQUIRE(count.has_value());
             CHECK(
@@ -323,13 +323,13 @@ namespace uf::task
             );
         }
 
-        TEST_CASE("A trace line and umbra.errors spell every error kind identically")
+        TEST_CASE("A trace line and uf.errors spell every error kind identically")
         {
             auto const catalog = buildCatalog();
             auto surface       = CapabilitySurface::create(catalog);
             REQUIRE(surface.has_value());
 
-            auto engine = engineWithUmbra(*surface);
+            auto engine = engineWithUfRoot(*surface);
             REQUIRE(engine.has_value());
 
             // The invariant the two deleted copies of this mapping asserted in
@@ -343,7 +343,7 @@ namespace uf::task
 
             for (auto const& wire : traced)
             {
-                auto const expression = "umbra.errors." + wire + " == '" + wire + "'";
+                auto const expression = "uf.errors." + wire + " == '" + wire + "'";
                 INFO("traced kind: ", wire);
                 CHECK(truthy(*engine, expression) == doctest::Approx(1.0));
             }
@@ -355,23 +355,23 @@ namespace uf::task
             auto surface       = CapabilitySurface::create(catalog);
             REQUIRE(surface.has_value());
 
-            auto engine = engineWithUmbra(*surface);
+            auto engine = engineWithUfRoot(*surface);
             REQUIRE(engine.has_value());
 
             // A handle is userdata, and its metatable and tostring reveal only the
             // fixed kind label -- never the internal id or an address.
             constexpr std::string_view opaque[] = {
-                "type(umbra.recognizers.daily_button) == 'userdata'",
-                "type(umbra.pages.home) == 'userdata'",
-                "tostring(umbra.recognizers.daily_button) == 'umbra.recognizer'",
-                "tostring(umbra.pages.home) == 'umbra.page'",
-                "getmetatable(umbra.recognizers.daily_button) == 'umbra.recognizer'",
-                "getmetatable(umbra.pages.home) == 'umbra.page'",
+                "type(uf.recognizers.daily_button) == 'userdata'",
+                "type(uf.pages.home) == 'userdata'",
+                "tostring(uf.recognizers.daily_button) == 'uf.recognizer'",
+                "tostring(uf.pages.home) == 'uf.page'",
+                "getmetatable(uf.recognizers.daily_button) == 'uf.recognizer'",
+                "getmetatable(uf.pages.home) == 'uf.page'",
                 // A field read of a handle yields nil (the method table is empty
                 // this wave), never any internal state.
-                "umbra.recognizers.daily_button.id == nil",
+                "uf.recognizers.daily_button.id == nil",
                 // pairs() cannot enumerate a userdata's contents.
-                "pcall(function() for _ in pairs(umbra.recognizers.daily_button) do end end) == false",
+                "pcall(function() for _ in pairs(uf.recognizers.daily_button) do end end) == false",
             };
             for (std::string_view const expr : opaque)
             {
@@ -386,14 +386,14 @@ namespace uf::task
             auto surface       = CapabilitySurface::create(catalog);
             REQUIRE(surface.has_value());
 
-            auto engine = engineWithUmbra(*surface);
+            auto engine = engineWithUfRoot(*surface);
             REQUIRE(engine.has_value());
 
             // setmetatable on a handle is refused: the guard cannot be lifted to
             // reopen the handle for indexing or writing.
             expectRejected(
                 *engine,
-                "setmetatable(umbra.recognizers.daily_button, {})\nreturn 0"
+                "setmetatable(uf.recognizers.daily_button, {})\nreturn 0"
             );
         }
 
@@ -403,7 +403,7 @@ namespace uf::task
             auto surface       = CapabilitySurface::create(catalog);
             REQUIRE(surface.has_value());
 
-            auto engine = engineWithUmbra(*surface);
+            auto engine = engineWithUfRoot(*surface);
             REQUIRE(engine.has_value());
 
             // Each named handle is one shared userdata object, so repeated lookups
@@ -411,14 +411,14 @@ namespace uf::task
             CHECK(
                 truthy(
                     *engine,
-                    "umbra.recognizers.daily_button == umbra.recognizers.daily_button"
+                    "uf.recognizers.daily_button == uf.recognizers.daily_button"
                 )
                 == doctest::Approx(1.0)
             );
             CHECK(
                 truthy(
                     *engine,
-                    "umbra.recognizers.daily_button ~= umbra.recognizers.battle"
+                    "uf.recognizers.daily_button ~= uf.recognizers.battle"
                 )
                 == doctest::Approx(1.0)
             );
@@ -434,7 +434,7 @@ namespace uf::task
             std::string_view{"uf-framework-sentinel-6b21f0"};
 
         // A bounded, cycle-safe reachability search for the sentinel over
-        // everything a project script can name on a real task VM -- the umbra
+        // everything a project script can name on a real task VM -- the uf
         // root and the published ctx included -- following table values, table
         // keys, and metatables.
         [[nodiscard]]
@@ -467,7 +467,7 @@ namespace uf::task
                     -- `probe` when the same source is loaded through the
                     -- script-layer probe. All three are listed so one scan serves
                     -- both sides.
-                    frameworkSentinel, umbra, ctx, probe,
+                    frameworkSentinel, uf, ctx, probe,
                     _G, getfenv, setfenv, newproxy, gcinfo, coroutine, debug,
                     _VERSION, assert, error, getmetatable, ipairs, next, pairs,
                     pcall, print, rawequal, rawget, rawlen, rawset, select,

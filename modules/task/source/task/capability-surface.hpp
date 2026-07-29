@@ -17,17 +17,17 @@ namespace uf::task
     class TaskContext;
 
     // One action target the catalog exposes to scripts under
-    // umbra.recognizers.<name>. It pairs the recognizer's validated Luau
-    // member-key name with its stable identity; the name becomes the table key
-    // and the id is baked opaquely into the userdata handle. A plain value type,
-    // freely copyable, so the installer can own its own snapshot.
+    // uf.recognizers.<name>. It pairs the recognizer's validated Luau member-key
+    // name with its stable identity; the name becomes the table key and the id
+    // is baked opaquely into the userdata handle. A plain value type, freely
+    // copyable, so the installer can own its own snapshot.
     struct RecognizerHandleSpec final
     {
         std::string              name;
         annotation::RecognizerId id;
     };
 
-    // One page the catalog exposes to scripts under umbra.pages.<name>, with the
+    // One page the catalog exposes to scripts under uf.pages.<name>, with the
     // same shape and role as RecognizerHandleSpec.
     struct PageHandleSpec final
     {
@@ -38,8 +38,8 @@ namespace uf::task
     // Builds and owns the two surfaces one project's recognition catalog gives a
     // task VM, and keeps them apart.
     //
-    // The PUBLIC one is data: the recursively read-only umbra.recognizers and
-    // umbra.pages name tables of opaque handles, plus the umbra.errors table of
+    // The PUBLIC one is data: the recursively read-only uf.recognizers and
+    // uf.pages name tables of opaque handles, plus the uf.errors table of
     // error-kind constants. It is a global a project script may name, because
     // naming a recognizer confers nothing -- a handle is an identity, not a
     // capability.
@@ -52,7 +52,7 @@ namespace uf::task
     // Construction validates every exposed name (fail-closed) and captures the
     // {name, id} pairs.
     //
-    // umbra.errors takes no catalog input: it is one string constant per
+    // uf.errors takes no catalog input: it is one string constant per
     // AutomationErrorKind, keyed and valued by that kind's domain wire spelling,
     // built at install time from the same function the trace and a Tier B error
     // use.
@@ -77,10 +77,10 @@ namespace uf::task
         // already valid direct Luau member keys by annotation::ResourceName's
         // construction invariant, so the surface never observes an illegal key.
         //
-        // Page anchors never enter umbra.recognizers: scripts reference anchors
+        // Page anchors never enter uf.recognizers: scripts reference anchors
         // only through pages, and frame:find authorizes action targets alone. An
         // info_region recognizer has no script verb in this wave, so it is not
-        // exposed either; it joins umbra.recognizers when its read verb lands.
+        // exposed either; it joins uf.recognizers when its read verb lands.
         [[nodiscard]]
         static auto create(
             annotation::RecognitionCatalog const& catalog
@@ -88,7 +88,7 @@ namespace uf::task
 
         // The global names either installer registers, in the shape
         // script::EngineConfig::projectGlobals takes. It is what carries the
-        // umbra root across the boundary the project environment draws: that
+        // uf root across the boundary the project environment draws: that
         // environment is an explicit whitelist with no __index chain to the main
         // globals, so a name the installer wrote as a global is invisible to a
         // project script until it is listed here.
@@ -102,10 +102,9 @@ namespace uf::task
 
         // A host-table installer suitable for script::EngineConfig::installHostTables.
         // Invoked once per task VM before the sandbox freezes the globals, it
-        // builds the frozen global umbra table: umbra.recognizers, umbra.pages
-        // and umbra.errors. The returned installer owns its own copy of the
-        // handle specs, so it stays valid independently of this surface's
-        // lifetime.
+        // builds the frozen global uf table: uf.recognizers, uf.pages and
+        // uf.errors. The returned installer owns its own copy of the handle
+        // specs, so it stays valid independently of this surface's lifetime.
         //
         // It takes no TaskContext because none of what it builds can act. That
         // is the point of the split: the data surface is the same table whether
@@ -143,8 +142,8 @@ namespace uf::task
         auto pageCount() const noexcept -> std::size_t;
 
         // The action-target recognizer handles this surface exposes under
-        // umbra.recognizers, in catalog order. These are exactly the names an
-        // umbra.recognizers.<name> literal may resolve against, so the pre-VM
+        // uf.recognizers, in catalog order. These are exactly the names a
+        // uf.recognizers.<name> literal may resolve against, so the pre-VM
         // script validator (script-validator.hpp) checks every reference here
         // rather than against the wider catalog, which also holds page anchors
         // that never become findable handles. The returned span borrows this
@@ -153,8 +152,8 @@ namespace uf::task
         auto recognizers() const noexcept UF_LIFETIME_BOUND
             -> std::span<RecognizerHandleSpec const>;
 
-        // The page handles this surface exposes under umbra.pages, the resolution
-        // set for every umbra.pages.<name> literal, with the same borrow contract
+        // The page handles this surface exposes under uf.pages, the resolution
+        // set for every uf.pages.<name> literal, with the same borrow contract
         // as recognizers().
         [[nodiscard]]
         auto pages() const noexcept UF_LIFETIME_BOUND -> std::span<PageHandleSpec const>;

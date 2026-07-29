@@ -4,7 +4,7 @@
 
 namespace uf::task
 {
-    // A task's logical clock, exposed to scripts as umbra:now(). It is fully
+    // A task's logical clock, exposed to scripts as ctx:now(). It is fully
     // virtualized: it holds NO wall clock and reads NO steady_clock. Each read
     // returns a whole-millisecond logical count that starts at zero and advances by
     // one fixed logical tick, so the sequence a task observes is a pure function of
@@ -29,7 +29,7 @@ namespace uf::task
     class DeterministicClock final
     {
         // Whole logical milliseconds already handed out. int64 to match
-        // umbra:now()'s return; a task would have to read the clock 2^63 times to
+        // ctx:now()'s return; a task would have to read the clock 2^63 times to
         // approach the ceiling, far past any instruction budget, and readMillis
         // saturates rather than wraps if it ever did.
         int64 m_logicalMillis{0};
@@ -39,7 +39,7 @@ namespace uf::task
 
         // The current logical time in whole milliseconds, after which the clock
         // advances by one fixed logical tick. Successive reads therefore strictly
-        // increase (umbra:now() is non-decreasing) and are identical across runs
+        // increase (ctx:now() is non-decreasing) and are identical across runs
         // regardless of how fast the machine executed. Reading advances the clock,
         // so this is not a const observer -- the mutation is deliberately visible in
         // the signature rather than hidden behind a mutable member.
@@ -47,7 +47,7 @@ namespace uf::task
         auto readMillis() noexcept -> int64;
     };
 
-    // A task's sole source of randomness (umbra:random), replacing the math.random
+    // A task's sole source of randomness (ctx:random), replacing the math.random
     // the sandbox removed. It is a self-contained PCG32 generator -- a fixed,
     // version-stable algorithm implemented here rather than a std::mt19937 paired
     // with a std::uniform_int_distribution, whose library implementations are not
@@ -76,7 +76,7 @@ namespace uf::task
         auto nextUnitDouble() noexcept -> double;
 
         // A uniformly distributed value in [0, span) with no modulo bias, using
-        // rejection sampling. `span` must be non-zero; the caller (umbra:random's
+        // rejection sampling. `span` must be non-zero; the caller (ctx:random's
         // binding) guarantees a non-empty interval before calling.
         [[nodiscard]]
         auto boundedUint64(uint64 span) noexcept -> uint64;

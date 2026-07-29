@@ -28,7 +28,7 @@
 // The script substrate covers the parts it can prove today: run-to-run bit
 // determinism (#4), compile-failure isolation at the load boundary (#5), and the
 // built-in C-boundary cancellation exception that stands in for #6 until the
-// first umbra.* binding lands.
+// first uf.* binding lands.
 
 namespace uf::script
 {
@@ -98,7 +98,7 @@ namespace uf::script
             // BEFORE calling lua_break, so Engine::runNumber reports Cancelled
             // whether the break surfaced cleanly or as a trapped C-boundary error.
             // These cases lock that in. The veto #6 proper -- a registered host C
-            // binding that hangs -- lands with the first umbra.* binding in
+            // binding that hangs -- lands with the first uf.* binding in
             // modules/task (phase 2).
             SUBCASE("table.sort comparator infinite loop")
             {
@@ -126,7 +126,7 @@ namespace uf::script
                 // form of that stronger property is proven by the host-visible
                 // mark-counter discriminator in test-script.cpp ("A cancelled script
                 // never executes past the break"), and its host-C-binding form lands
-                // with the first umbra.* binding in phase 2.
+                // with the first uf.* binding in phase 2.
                 expectExternalStopCancels(
                     "pcall(function()\n"
                     "  table.sort({5, 4, 3, 2, 1}, function(a, b) while true do end end)\n"

@@ -209,8 +209,8 @@ namespace uf::script
         // so calling it on any framework value would hand back the entire
         // framework environment. `_G` is luaopen_base's self-reference to the
         // global table -- a live alias door that reaches every global around the
-        // AST resource closure, e.g. `_G.umbra:capture()` or
-        // `rawget(_G, 'umbra')`; luaL_sandbox only freezes it, so it stays a
+        // AST resource closure, e.g. `_G.uf:capture()` or
+        // `rawget(_G, 'uf')`; luaL_sandbox only freezes it, so it stays a
         // readable handle unless removed here. Nilling the `_G` name leaves the
         // underlying global table (LUA_GLOBALSINDEX) and every real global
         // intact; only the reflexive handle is gone. The host uses coroutines and

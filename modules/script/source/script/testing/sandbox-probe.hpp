@@ -10,7 +10,7 @@ namespace uf::script::testing
     // synthetic, deep-frozen host table as the global `host` (shape
     // { flat = 7, nested = { value = 1 } }), run `source` on a sandboxed task
     // thread, and return its numeric result. It exercises deepFreeze on nested
-    // host tables before the real umbra.* tables exist (phase 2). Luau-free so
+    // host tables before the real uf.* tables exist (phase 2). Luau-free so
     // tests may include it; not part of the public Engine surface.
     [[nodiscard]]
     auto runWithFrozenHostTable(

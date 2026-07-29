@@ -390,8 +390,8 @@ namespace uf::task
                 local cycle = ctx:cycle_open()
                 local page = ctx:cycle_page(cycle)
                 if page == nil then return 0 end
-                if not page:is(umbra.pages.page_a) then return 0 end
-                local hit = ctx:cycle_find(cycle, umbra.recognizers.action_target)
+                if not page:is(uf.pages.page_a) then return 0 end
+                local hit = ctx:cycle_find(cycle, uf.recognizers.action_target)
                 if hit == nil then return 0 end
                 ctx:cycle_click(cycle, hit)
                 return 1
@@ -429,13 +429,13 @@ namespace uf::task
                 if ok then return 0 end
                 if err.kind ~= 'internal_invariant' then return 0 end
                 if err.retryable ~= false then return 0 end
-                if getmetatable(err) ~= 'umbra.error' then return 0 end
+                if getmetatable(err) ~= 'uf.error' then return 0 end
 
                 -- The refused open left the first cycle whole: it still resolves,
                 -- finds and clicks.
                 local page = ctx:cycle_page(first)
                 if page == nil then return 0 end
-                local hit = ctx:cycle_find(first, umbra.recognizers.action_target)
+                local hit = ctx:cycle_find(first, uf.recognizers.action_target)
                 if hit == nil then return 0 end
                 ctx:cycle_click(first, hit)
                 return 1
@@ -460,13 +460,13 @@ namespace uf::task
 
             constexpr std::string_view source = R"lua(
                 local cycle = ctx:cycle_open()
-                local hit = ctx:cycle_find(cycle, umbra.recognizers.action_target)
+                local hit = ctx:cycle_find(cycle, uf.recognizers.action_target)
                 if hit == nil then return 0 end
 
                 local ok, err = pcall(function() return ctx:cycle_click(cycle, hit) end)
                 if ok then return 0 end
                 if err.kind ~= 'action_rejected' then return 0 end
-                if getmetatable(err) ~= 'umbra.error' then return 0 end
+                if getmetatable(err) ~= 'uf.error' then return 0 end
 
                 -- Resolving the page gives the cycle its evidence, and the very
                 -- same ticket and hit now deliver.
@@ -493,21 +493,21 @@ namespace uf::task
             constexpr std::string_view source = R"lua(
                 local cycle = ctx:cycle_open()
                 local page = ctx:cycle_page(cycle)
-                local hit = ctx:cycle_find(cycle, umbra.recognizers.action_target)
+                local hit = ctx:cycle_find(cycle, uf.recognizers.action_target)
                 ctx:cycle_click(cycle, hit)
 
                 local okPage, errPage = pcall(function() return ctx:cycle_page(cycle) end)
                 if okPage or errPage.kind ~= 'stale_observation' then return 0 end
-                -- The kind a raised error carries is a key of umbra.errors whose
+                -- The kind a raised error carries is a key of uf.errors whose
                 -- value is that same string: both come from the one domain
                 -- mapping, so a script's comparison can never silently miss.
-                if umbra.errors[errPage.kind] ~= errPage.kind then return 0 end
+                if uf.errors[errPage.kind] ~= errPage.kind then return 0 end
                 if errPage.retryable ~= true then return 0 end
-                if getmetatable(errPage) ~= 'umbra.error' then return 0 end
+                if getmetatable(errPage) ~= 'uf.error' then return 0 end
                 if pcall(function() errPage.kind = 'tampered' end) then return 0 end
 
                 local okFind, errFind = pcall(function()
-                    return ctx:cycle_find(cycle, umbra.recognizers.action_target)
+                    return ctx:cycle_find(cycle, uf.recognizers.action_target)
                 end)
                 if okFind or errFind.kind ~= 'stale_observation' then return 0 end
 
@@ -519,7 +519,7 @@ namespace uf::task
                 -- A closed cycle is equally dead, and its hit is refused even
                 -- against a cycle that IS open.
                 local closed = ctx:cycle_open()
-                local staleHit = ctx:cycle_find(closed, umbra.recognizers.action_target)
+                local staleHit = ctx:cycle_find(closed, uf.recognizers.action_target)
                 ctx:cycle_close(closed)
                 local okClosed, errClosed = pcall(function()
                     return ctx:cycle_page(closed)
@@ -557,7 +557,7 @@ namespace uf::task
 
                 local second = ctx:cycle_open()
                 local page = ctx:cycle_page(second)
-                local hit = ctx:cycle_find(second, umbra.recognizers.action_target)
+                local hit = ctx:cycle_find(second, uf.recognizers.action_target)
                 ctx:cycle_click(second, hit)
                 ctx:cycle_close(second)
 
@@ -651,7 +651,7 @@ namespace uf::task
 
             constexpr std::string_view source = R"lua(
                 local cycle = ctx:cycle_open()
-                local hit = ctx:cycle_find(cycle, umbra.recognizers.action_target)
+                local hit = ctx:cycle_find(cycle, uf.recognizers.action_target)
                 ctx:cycle_close(cycle)
                 return (hit == nil) and 1 or 0
             )lua";
@@ -679,12 +679,12 @@ namespace uf::task
             TaskContext context{*std::move(built.session), *built.recorder};
 
             constexpr std::string_view source = R"lua(
-                local target = umbra.pages.page_a
+                local target = uf.pages.page_a
                 while true do
                     local cycle = ctx:cycle_open()
                     local page = ctx:cycle_page(cycle)
                     if page ~= nil and page:is(target) then
-                        local hit = ctx:cycle_find(cycle, umbra.recognizers.action_target)
+                        local hit = ctx:cycle_find(cycle, uf.recognizers.action_target)
                         if hit ~= nil then
                             ctx:cycle_click(cycle, hit)
                         else
@@ -715,10 +715,10 @@ namespace uf::task
             // recorded as the cycle's authorization evidence -- which is why the
             // click below needs no cycle_page of its own.
             constexpr std::string_view source = R"lua(
-                local wait = ctx:wait_for_page(umbra.pages.page_a, {})
+                local wait = ctx:wait_for_page(uf.pages.page_a, {})
                 if wait == nil or wait.page == nil or wait.cycle == nil then return 0 end
-                if not wait.page:is(umbra.pages.page_a) then return 0 end
-                local hit = ctx:cycle_find(wait.cycle, umbra.recognizers.action_target)
+                if not wait.page:is(uf.pages.page_a) then return 0 end
+                local hit = ctx:cycle_find(wait.cycle, uf.recognizers.action_target)
                 if hit == nil then return 0 end
                 ctx:cycle_click(wait.cycle, hit)
                 return 1
@@ -740,19 +740,19 @@ namespace uf::task
             // A short explicit budget keeps the poll loop brief; the unknown frame
             // never resolves page_a, so the wait times out as a Tier B error whose
             // kind is the domain Timeout spelling, whose retryable is false, and
-            // which carries the protected umbra.error metatable. A timed-out wait
+            // which carries the protected uf.error metatable. A timed-out wait
             // opened no cycle, so the next open still succeeds.
             constexpr std::string_view source = R"lua(
                 local ok, err = pcall(function()
                     return ctx:wait_for_page(
-                        umbra.pages.page_a,
+                        uf.pages.page_a,
                         { timeout_ms = 30, poll_interval_ms = 5 }
                     )
                 end)
                 if ok then return 0 end
                 if err.kind ~= 'timeout' then return 0 end
                 if err.retryable ~= false then return 0 end
-                if getmetatable(err) ~= 'umbra.error' then return 0 end
+                if getmetatable(err) ~= 'uf.error' then return 0 end
 
                 local cycle = ctx:cycle_open()
                 ctx:cycle_close(cycle)
@@ -776,11 +776,11 @@ namespace uf::task
             // capture, so the frame source is never touched.
             constexpr std::string_view source = R"lua(
                 local ok, err = pcall(function()
-                    return ctx:wait_for_page(umbra.pages.page_a, { timeout_ms = 1e15 })
+                    return ctx:wait_for_page(uf.pages.page_a, { timeout_ms = 1e15 })
                 end)
                 if ok then return 0 end
                 if err.kind ~= 'invalid_resource' then return 0 end
-                if getmetatable(err) ~= 'umbra.error' then return 0 end
+                if getmetatable(err) ~= 'uf.error' then return 0 end
                 return 1
             )lua";
 
@@ -800,14 +800,14 @@ namespace uf::task
             constexpr std::string_view source = R"lua(
                 local cycle = ctx:cycle_open()
                 local page = ctx:cycle_page(cycle)
-                local hit = ctx:cycle_find(cycle, umbra.recognizers.action_target)
+                local hit = ctx:cycle_find(cycle, uf.recognizers.action_target)
                 ctx:cycle_click(cycle, hit)
 
                 local ok, err = ctx:try(function() ctx:cycle_click(cycle, hit) end)
                 if ok ~= false then return 0 end
                 if err == nil or err.kind ~= 'stale_observation' then return 0 end
                 if err.retryable ~= true then return 0 end
-                if getmetatable(err) ~= 'umbra.error' then return 0 end
+                if getmetatable(err) ~= 'uf.error' then return 0 end
 
                 local okDone, errDone = ctx:try(function() return 7 end)
                 if okDone ~= true or errDone ~= nil then return 0 end
@@ -842,7 +842,7 @@ namespace uf::task
             constexpr std::string_view source = R"lua(
                 local cycle = ctx:cycle_open()
                 local page = ctx:cycle_page(cycle)
-                local hit = ctx:cycle_find(cycle, umbra.recognizers.action_target)
+                local hit = ctx:cycle_find(cycle, uf.recognizers.action_target)
                 ctx:cycle_click(cycle, hit)
 
                 local ok, err = ctx:try(function() ctx:cycle_click(cycle, hit) end)
@@ -856,7 +856,7 @@ namespace uf::task
                 if cloned then return 0 end
                 if string.find(cloneError, 'protected metatable') == nil then return 0 end
 
-                if getmetatable(err) ~= 'umbra.error' then return 0 end
+                if getmetatable(err) ~= 'uf.error' then return 0 end
                 local forged = {
                     kind = err.kind,
                     message = err.message,
@@ -1051,6 +1051,31 @@ namespace uf::task
             }
         }
 
+        TEST_CASE("The retired root spelling names nothing on a real task VM")
+        {
+            auto built = buildBinding(resolvingFrames(FrameId{37}));
+            REQUIRE(built.session.has_value());
+            TaskContext context{*std::move(built.session), *built.recorder};
+
+            // `umbra` was this root's global name before 2026-07-29. The project
+            // environment is a whitelist with no metatable, so a name the
+            // installer no longer registers is structurally absent: it reads nil
+            // and indexing it raises. The controls are `uf` itself, which must
+            // still carry the same handles, and the handle labels, which are
+            // rooted at the same spelling.
+            constexpr std::string_view source = R"lua(
+                if umbra ~= nil then return 0 end
+                if pcall(function() return umbra.pages.page_a end) then return 0 end
+
+                if uf.pages.page_a == nil then return 0 end
+                if uf.recognizers.action_target == nil then return 0 end
+                if getmetatable(uf.pages.page_a) ~= 'uf.page' then return 0 end
+                return 1
+            )lua";
+
+            CHECK(runBound(context, built, source) == doctest::Approx(1.0));
+        }
+
         TEST_CASE("No project route reaches the private capability surface")
         {
             auto frameSource = std::make_unique<FakeFrameSource>(
@@ -1066,8 +1091,8 @@ namespace uf::task
             TaskContext context{*std::move(built.session), *built.recorder};
 
             // The primitives are upvalues of the framework's closures. A project
-            // script must not reach one as a global, as a field of umbra, through
-            // rawget, through a table.clone of umbra, or by walking values, keys
+            // script must not reach one as a global, as a field of uf, through
+            // rawget, through a table.clone of uf, or by walking values, keys
             // and metatables from anything it can name.
             //
             // ctx is excluded from the walk by identity, and only by identity:
@@ -1076,7 +1101,7 @@ namespace uf::task
             //
             // Three controls keep the claim from being vacuous: the scanner is
             // shown finding a planted primitive by the same route; the two
-            // by-name routes are shown finding a key that really is on umbra; and
+            // by-name routes are shown finding a key that really is on uf; and
             // the run ends by driving a real capture through ctx, so the
             // framework demonstrably holds what no project route can name.
             constexpr std::string_view source = R"lua(
@@ -1108,26 +1133,26 @@ namespace uf::task
                 if cycle_click ~= nil or wait_for_page ~= nil then return 0 end
                 if now ~= nil or random ~= nil or try ~= nil then return 0 end
 
-                -- Nor a field of umbra, by index or by rawget.
+                -- Nor a field of uf, by index or by rawget.
                 local names = {
                     'cycle_open', 'cycle_close', 'cycle_page', 'cycle_find',
                     'cycle_click', 'wait_for_page', 'now', 'random', 'try',
                 }
                 for _, name in ipairs(names) do
-                    if umbra[name] ~= nil then return 0 end
-                    if rawget(umbra, name) ~= nil then return 0 end
+                    if uf[name] ~= nil then return 0 end
+                    if rawget(uf, name) ~= nil then return 0 end
                 end
-                -- Control: both routes DO see a key that is on umbra.
-                if umbra.pages == nil or rawget(umbra, 'pages') == nil then
+                -- Control: both routes DO see a key that is on uf.
+                if uf.pages == nil or rawget(uf, 'pages') == nil then
                     return 0
                 end
                 -- And the old method spelling now calls a nil.
-                if pcall(function() return umbra:cycle_open() end) then return 0 end
+                if pcall(function() return uf:cycle_open() end) then return 0 end
 
-                -- No walk from anything nameable reaches one, umbra's clone and
+                -- No walk from anything nameable reaches one, uf's clone and
                 -- the framework's own ctx included.
                 if scan({
-                    umbra, ctx, table.clone(umbra), getmetatable(umbra),
+                    uf, ctx, table.clone(uf), getmetatable(uf),
                     _G, getfenv, setfenv, newproxy, gcinfo, coroutine, debug,
                     _VERSION, assert, error, getmetatable, ipairs, next, pairs,
                     pcall, print, rawequal, rawget, rawlen, rawset, select,
@@ -1172,7 +1197,7 @@ namespace uf::task
             constexpr std::string_view source = R"lua(
                 local cycle = ctx:cycle_open()
                 local page = ctx:cycle_page(cycle)
-                local hit = ctx:cycle_find(cycle, umbra.recognizers.action_target)
+                local hit = ctx:cycle_find(cycle, uf.recognizers.action_target)
                 if page == nil or hit == nil then return 0 end
                 ctx:cycle_click(cycle, hit)
 
@@ -1261,7 +1286,7 @@ namespace uf::task
             constexpr std::string_view source = R"lua(
                 local cycle = ctx:cycle_open()
                 local page = ctx:cycle_page(cycle)
-                local hit = ctx:cycle_find(cycle, umbra.recognizers.action_target)
+                local hit = ctx:cycle_find(cycle, uf.recognizers.action_target)
                 ctx:cycle_click(cycle, hit)
                 ctx:cycle_close(cycle)
                 return 1
@@ -1359,7 +1384,7 @@ namespace uf::task
             constexpr std::string_view source = R"lua(
                 local cycle = ctx:cycle_open()
                 local page = ctx:cycle_page(cycle)
-                local hit = ctx:cycle_find(cycle, umbra.recognizers.action_target)
+                local hit = ctx:cycle_find(cycle, uf.recognizers.action_target)
                 ctx:cycle_close(cycle)
                 return (page == nil and hit == nil) and 1 or 0
             )lua";
@@ -1403,13 +1428,13 @@ namespace uf::task
 
             // cycle_open succeeds in the engine, but recording its native call
             // fails; losing the trace evidence aborts the primitive as a Tier B
-            // io_failure carrying the protected umbra.error metatable, rather than
+            // io_failure carrying the protected uf.error metatable, rather than
             // dropping the record silently (the trace's throw-instant discipline).
             constexpr std::string_view source = R"lua(
                 local ok, err = pcall(function() return ctx:cycle_open() end)
                 if ok then return 0 end
                 if err.kind ~= 'io_failure' then return 0 end
-                if getmetatable(err) ~= 'umbra.error' then return 0 end
+                if getmetatable(err) ~= 'uf.error' then return 0 end
                 return 1
             )lua";
 

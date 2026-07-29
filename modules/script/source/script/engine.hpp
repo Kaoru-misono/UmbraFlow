@@ -22,7 +22,7 @@ namespace uf::script
     // Registers host-facing global tables on the VM's main state just before the
     // sandbox freezes it, and is responsible for deep-freezing whatever it
     // registers. The script module ships no installer of its own; modules/task
-    // supplies the umbra.* capability tables through this seam. Luau types never
+    // supplies the uf.* capability tables through this seam. Luau types never
     // cross this boundary: the installer receives only the opaque lua_State the
     // ffi layer knows how to drive. An empty installer registers nothing.
     //
@@ -75,7 +75,7 @@ namespace uf::script
     // deepFreeze would freeze it.
     //
     // It exists because a metatable is usually built and frozen before it is
-    // attached to anything -- the umbra handle kinds register theirs in the VM
+    // attached to anything -- the uf handle kinds register theirs in the VM
     // registry and hang it on each handle later -- and deepFreeze can only check
     // a metatable it reaches through an object already wearing it. Checking at
     // construction is what makes the rules hold for every object that metatable
@@ -138,7 +138,7 @@ namespace uf::script
         // framework bundle has loaded and before the sandbox freezes the globals
         // (this is installSandbox's order). Empty by default, which yields a
         // bare sandboxed VM with no host capabilities. modules/task supplies the
-        // umbra.* data tables here -- recognizers, pages and error kinds, all of
+        // uf.* data tables here -- recognizers, pages and error kinds, all of
         // which are data a project script may name.
         HostTableInstaller installHostTables{};
 

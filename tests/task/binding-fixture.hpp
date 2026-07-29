@@ -346,7 +346,7 @@ namespace uf::task
     // The EngineConfig a real task VM boots with, assembled in one place so no
     // test can accidentally assert against a surface shape the host does not
     // ship: the real framework bundle under the framework environment, the
-    // private capability surface handed to it as a chunk argument, the umbra
+    // private capability surface handed to it as a chunk argument, the uf
     // data tables as a project global, and the framework's own ctx published
     // beside them.
     //

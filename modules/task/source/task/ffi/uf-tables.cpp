@@ -58,22 +58,22 @@ namespace uf::task
         // Every handle kind's shared metatable is registered in the VM registry
         // under one of these keys, and the same string is the kind's __metatable
         // and __tostring label -- the only string a script can obtain from a
-        // handle, naming the kind and nothing else (no id, no address). The
-        // recognizer and page-reference spellings are unchanged from the resource
-        // wave so existing scripts and tests keep observing them.
-        constexpr auto k_recognizerType   = "umbra.recognizer";
-        constexpr auto k_pageRefType      = "umbra.page";
-        constexpr auto k_cycleType        = "umbra.cycle";
-        constexpr auto k_resolvedPageType = "umbra.resolved_page";
-        constexpr auto k_hitType          = "umbra.hit";
-        constexpr auto k_errorType        = "umbra.error";
+        // handle, naming the kind and nothing else (no id, no address). Every
+        // label is rooted at `uf`, the same script-visible root the DATA table is
+        // registered under, so a handle names the surface it came from.
+        constexpr auto k_recognizerType   = "uf.recognizer";
+        constexpr auto k_pageRefType      = "uf.page";
+        constexpr auto k_cycleType        = "uf.cycle";
+        constexpr auto k_resolvedPageType = "uf.resolved_page";
+        constexpr auto k_hitType          = "uf.hit";
+        constexpr auto k_errorType        = "uf.error";
 
         // The single global name the DATA installer registers, and therefore the
         // one host name the project environment whitelists. Spelled once here so
         // the registration and the whitelist entry cannot drift apart. The
         // private surface has no counterpart here on purpose: it is registered
         // under no name at all.
-        constexpr auto k_umbraRoot = "umbra";
+        constexpr auto k_ufRoot = "uf";
 
         // Pushes an error kind's wire spelling as a Lua string. The domain returns
         // a view rather than a C string, so push it with its length instead of
@@ -194,7 +194,7 @@ namespace uf::task
         }
 
         // Builds a frozen Tier B error table { kind, message, retryable } under the
-        // shared protected umbra.error metatable and raises it. The framework's
+        // shared protected uf.error metatable and raises it. The framework's
         // pure-Luau ctx:try identifies these by that metatable -- getmetatable
         // yields the label string k_errorType, which is the whole test -- and
         // scripts can neither forge nor mutate them. Never returns.
@@ -252,7 +252,7 @@ namespace uf::task
         }
 
         // Tier C: latch the fatal flag so the host discards this VM generation,
-        // then raise a plain non-table sentinel. It carries no umbra.error
+        // then raise a plain non-table sentinel. It carries no uf.error
         // metatable, so ctx:try refuses to swallow it and re-raises it unchanged.
         //
         // A project pcall CAN catch this value, and that is accepted: control is
@@ -264,7 +264,7 @@ namespace uf::task
         auto raiseCancelled(lua_State* state, TaskContext* context) -> void
         {
             context->markFatal();
-            lua_pushstring(state, "umbra: task cancelled");
+            lua_pushstring(state, "uf: task cancelled");
             lua_error(state);
         }
 
@@ -416,9 +416,9 @@ namespace uf::task
 
         // Every primitive below is a plain function of the private capability
         // table, called as native.<verb>(...) from the framework, so its
-        // arguments start at stack index 1. They were method calls on the umbra
+        // arguments start at stack index 1. They were method calls on the uf
         // root before the surface went private, which is why the design writes
-        // them as bare signatures: cycle_close(ticket), not umbra:cycle_close.
+        // them as bare signatures: cycle_close(ticket), not uf:cycle_close.
         //
         // cycle_open() -> ticket. Observes one frame and opens the
         // generation's single observation cycle over it. A capture failure maps
@@ -855,11 +855,11 @@ namespace uf::task
             lua_newtable(state);
             lua_setfield(state, metatable, "__index");
 
-            lua_pushcfunction(state, &denyWrite, "umbra_handle_newindex");
+            lua_pushcfunction(state, &denyWrite, "uf_handle_newindex");
             lua_setfield(state, metatable, "__newindex");
 
             lua_pushstring(state, label);
-            lua_pushcclosure(state, &handleToString, "umbra_handle_tostring", 1);
+            lua_pushcclosure(state, &handleToString, "uf_handle_tostring", 1);
             lua_setfield(state, metatable, "__tostring");
 
             lua_pushstring(state, label);
@@ -929,8 +929,8 @@ namespace uf::task
         }
 
         // Registers the metatables of the handle kinds the DATA surface mints:
-        // the recognizer and page references named under umbra.recognizers and
-        // umbra.pages. Both exist whether or not a session is bound, because a
+        // the recognizer and page references named under uf.recognizers and
+        // uf.pages. Both exist whether or not a session is bound, because a
         // reference is an identity rather than a capability.
         [[nodiscard]]
         auto installResourceMetatables(lua_State* state) -> Status
@@ -970,12 +970,12 @@ namespace uf::task
             return finishMetatable(state, k_resolvedPageType);
         }
 
-        // Populates `umbra[fieldName]` with a name table of opaque handles, one per
+        // Populates `uf[fieldName]` with a name table of opaque handles, one per
         // spec, each carrying the metatable registered under `metatableType`.
         template <typename Spec, typename Id>
         auto installResourceTable(
             lua_State* state,
-            int umbra,
+            int root,
             char const* fieldName,
             char const* metatableType,
             std::vector<Spec> const& specs
@@ -988,12 +988,12 @@ namespace uf::task
                 pushBoxed<Id>(state, spec.id, &destroyBox<Id>, metatableType);
                 lua_setfield(state, table, spec.name.c_str());
             }
-            lua_setfield(state, umbra, fieldName);
+            lua_setfield(state, root, fieldName);
         }
 
-        // Populates `umbra.errors` with one constant per AutomationErrorKind. Both
+        // Populates `uf.errors` with one constant per AutomationErrorKind. Both
         // the key and the value are that kind's domain wire spelling, so a script
-        // writes `err.kind == umbra.errors.timeout` and compares the exact string
+        // writes `err.kind == uf.errors.timeout` and compares the exact string
         // the Tier B error and the trace line both carry.
         //
         // The table is built here, from the same domain function, rather than
@@ -1003,7 +1003,7 @@ namespace uf::task
         // parse, no codegen and nothing to go stale. Iteration is over the
         // reflected entries, which is the repository's existing enumeration of the
         // kinds, so a new kind appears here with no edit to this function.
-        auto installErrorKindTable(lua_State* state, int umbra) -> void
+        auto installErrorKindTable(lua_State* state, int root) -> void
         {
             lua_newtable(state);
             int const table = lua_gettop(state);
@@ -1013,7 +1013,7 @@ namespace uf::task
                 pushWireName(state, entry.value);
                 lua_rawset(state, table);
             }
-            lua_setfield(state, umbra, "errors");
+            lua_setfield(state, root, "errors");
         }
 
         // Binds one primitive (`fieldName`) into the private surface table at
@@ -1033,11 +1033,11 @@ namespace uf::task
             lua_setfield(state, surface, fieldName);
         }
 
-        // Assembles the frozen global umbra table: recognizers, pages and error
+        // Assembles the frozen global uf table: recognizers, pages and error
         // kinds. Every entry is data. Nothing here can observe or act, which is
         // why it is safe as a project global.
         [[nodiscard]]
-        auto buildUmbraData(
+        auto buildUfData(
             lua_State* state,
             std::vector<RecognizerHandleSpec> const& recognizers,
             std::vector<PageHandleSpec> const& pages
@@ -1046,26 +1046,26 @@ namespace uf::task
             UF_TRY(installResourceMetatables(state));
 
             lua_newtable(state);
-            int const umbra = lua_gettop(state);
+            int const root = lua_gettop(state);
 
             installResourceTable<RecognizerHandleSpec, annotation::RecognizerId>(
                 state,
-                umbra,
+                root,
                 "recognizers",
                 k_recognizerType,
                 recognizers
             );
             installResourceTable<PageHandleSpec, annotation::PageId>(
                 state,
-                umbra,
+                root,
                 "pages",
                 k_pageRefType,
                 pages
             );
-            installErrorKindTable(state, umbra);
+            installErrorKindTable(state, root);
 
-            UF_TRY(script::deepFreeze(state, umbra));
-            lua_setglobal(state, k_umbraRoot);
+            UF_TRY(script::deepFreeze(state, root));
+            lua_setglobal(state, k_ufRoot);
             return ok();
         }
 
@@ -1074,7 +1074,7 @@ namespace uf::task
         // boot hands this one table to the framework bundle as a chunk argument
         // and then drops it, so no name in either environment ever refers to it.
         //
-        // It is frozen for the same reason the umbra table is: a framework bug
+        // It is frozen for the same reason the uf table is: a framework bug
         // that rebound a primitive would silently redefine what "click" means,
         // and freezing turns that into an immediate error instead.
         [[nodiscard]]
@@ -1149,7 +1149,7 @@ namespace uf::task
 
     auto CapabilitySurface::projectGlobals() -> std::vector<std::string>
     {
-        return std::vector<std::string>{std::string{k_umbraRoot}};
+        return std::vector<std::string>{std::string{k_ufRoot}};
     }
 
     auto CapabilitySurface::installer() const -> script::HostTableInstaller
@@ -1162,7 +1162,7 @@ namespace uf::task
                    lua_State* state
                ) -> Status
         {
-            return buildUmbraData(state, recognizers, pages);
+            return buildUfData(state, recognizers, pages);
         };
     }
 

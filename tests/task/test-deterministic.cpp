@@ -103,7 +103,7 @@ namespace uf::task
 
         TEST_CASE("The logical clock ignores wall time and reproduces across runs")
         {
-            // Regression for the veto #4 hole where umbra:now() returned wall time
+            // Regression for the veto #4 hole where ctx:now() returned wall time
             // elapsed since construction. That reading varied run to run with
             // execution speed, so a now()-branching script diverged even at the same
             // seed. The virtualized clock advances by a fixed logical tick per read
@@ -136,7 +136,7 @@ namespace uf::task
             int64 const b0 = b.readMillis();
             int64 const b1 = b.readMillis();
 
-            // The contract umbra:now() still promises: non-negative and monotone.
+            // The contract ctx:now() still promises: non-negative and monotone.
             CHECK(a0 >= 0);
             CHECK(a1 >= a0);
 

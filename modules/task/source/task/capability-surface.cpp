@@ -47,7 +47,7 @@ namespace uf::task
             {
                 return fail(
                     AutomationErrorKind::InvalidResource,
-                    "duplicate action-target name in umbra.recognizers: " + name
+                    "duplicate action-target name in uf.recognizers: " + name
                 );
             }
 
@@ -66,7 +66,7 @@ namespace uf::task
             {
                 return fail(
                     AutomationErrorKind::InvalidResource,
-                    "duplicate page name in umbra.pages: " + name
+                    "duplicate page name in uf.pages: " + name
                 );
             }
 

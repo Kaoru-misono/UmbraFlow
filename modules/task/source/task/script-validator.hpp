@@ -23,27 +23,27 @@ namespace uf::task
     };
 
     // Proves, before any Luau VM is created, that `source` (compiled under chunk
-    // name `chunkName`) reaches the umbra namespace only through the canonical
-    // literal spellings -- umbra.recognizers.<name>, umbra.pages.<name> and
-    // umbra.errors.<kind> direct member access -- and that every named resource
+    // name `chunkName`) reaches the uf namespace only through the canonical
+    // literal spellings -- uf.recognizers.<name>, uf.pages.<name> and
+    // uf.errors.<kind> direct member access -- and that every named resource
     // resolves against `surface`. This is the S0 resource closure
-    // (annotation-design 4):
-    // every reference is enumerated and closed here, so a missing resource is
-    // caught before the VM exists; runtime nil remains only defense in depth.
+    // (annotation-design 4): every reference is enumerated and closed here, so a
+    // missing resource is caught before the VM exists; runtime nil remains only
+    // defense in depth.
     //
     // An error-kind leaf is resolved against AutomationErrorKind's wire spellings
     // for the same reason, so a typo fails here rather than becoming a nil that
     // silently loses every comparison. It contributes nothing to the report: the
     // kinds are host vocabulary fixed for the binary, not project resources.
     //
-    // Every other contact with the umbra global is rejected: a namespace or
-    // handle alias (local r = umbra, local r = umbra.recognizers), a computed
-    // index (umbra.recognizers[name]), dynamic traversal (pairs(umbra)),
-    // passing/returning it, and a method call (umbra:anything(...)) -- the root
-    // carries data alone now that the capability surface is private to the
-    // framework, so there is no verb form to approve. A syntax error is likewise
-    // rejected. Every failure is AutomationErrorKind::InvalidResource and names
-    // the offending source location.
+    // Every other contact with the uf global is rejected: a namespace or handle
+    // alias (local r = uf, local r = uf.recognizers), a computed index
+    // (uf.recognizers[name]), dynamic traversal (pairs(uf)), passing/returning
+    // it, and a method call (uf:anything(...)) -- the root carries data alone
+    // now that the capability surface is private to the framework, so there is
+    // no verb form to approve. A syntax error is likewise rejected. Every
+    // failure is AutomationErrorKind::InvalidResource and names the offending
+    // source location.
     //
     // The framework's own `ctx` is out of scope here. It exposes no resource
     // name, so there is nothing for a pre-VM closure pass to resolve.

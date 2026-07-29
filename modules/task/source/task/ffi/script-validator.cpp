@@ -58,10 +58,10 @@ namespace uf::task
         // literal accesses; any other contact is rejected (annotation-design 4).
         //
         // There is deliberately no verb form. The capability surface moved into
-        // the trusted framework's closure, so `umbra:anything(...)` names nothing
+        // the trusted framework's closure, so `uf:anything(...)` names nothing
         // that exists and is rejected here rather than left to fail as a runtime
         // nil call.
-        constexpr auto k_namespace = "umbra";
+        constexpr auto k_namespace = "uf";
 
         // The two resource sub-namespaces that carry named handles, plus the
         // error-kind constant table. errors is validated the same way but is host
@@ -73,10 +73,10 @@ namespace uf::task
 
         // Luau's base library binds `_G` to the global table itself. It is not a
         // resource path but a reflexive handle to the whole global environment, so
-        // any chain rooted at it (_G.umbra, _G['umbra'], rawget(_G, 'umbra')) would
-        // reach the umbra namespace WITHOUT rooting at the literal umbra global the
-        // rest of this validator keys on. It is therefore rejected outright, the
-        // pre-VM twin of installSandbox niling `_G` on the task thread.
+        // any chain rooted at it (_G.uf, _G['uf'], rawget(_G, 'uf')) would reach
+        // the uf namespace WITHOUT rooting at the literal uf global the rest of
+        // this validator keys on. It is therefore rejected outright, the pre-VM
+        // twin of installSandbox niling `_G` on the task thread.
         constexpr auto k_globalEnv = "_G";
 
         [[nodiscard]]
@@ -110,11 +110,11 @@ namespace uf::task
         }
 
         // Follows a pure dot/colon member-access chain from `expr` down to its
-        // base and reports whether that base is the global umbra. Any non
+        // base and reports whether that base is the global uf. Any non
         // AstExprIndexName link -- a parenthesised group, a call, a computed
         // index -- breaks the "direct literal" chain, so only an unbroken member
-        // chain over the global umbra roots at the namespace. This is what makes
-        // (umbra).recognizers.x and umbra.recognizers[x].y fall through to their
+        // chain over the global uf roots at the namespace. This is what makes
+        // (uf).recognizers.x and uf.recognizers[x].y fall through to their
         // bare-global or computed-index rejection rather than being mistaken for
         // an approved access.
         [[nodiscard]]
@@ -129,15 +129,14 @@ namespace uf::task
             return global != nullptr && isNamespace(global->name);
         }
 
-        // Walks one script's AST and enumerates every umbra resource reference,
-        // rejecting the first contact with the umbra namespace that is not an
-        // approved two-level literal access. An
-        // umbra.errors.<kind> literal is checked the same way but contributes no
-        // resource, since the kinds are host vocabulary. Latches the
-        // first violation and turns every later visit into a no-op, so the
-        // reported location is the earliest offending one and traversal order is
-        // the message's tie-break. NOT reused across scripts: one visitor per
-        // parse.
+        // Walks one script's AST and enumerates every uf resource reference,
+        // rejecting the first contact with the uf namespace that is not an
+        // approved two-level literal access. A uf.errors.<kind> literal is
+        // checked the same way but contributes no resource, since the kinds are
+        // host vocabulary. Latches the first violation and turns every later
+        // visit into a no-op, so the reported location is the earliest offending
+        // one and traversal order is the message's tie-break. NOT reused across
+        // scripts: one visitor per parse.
         class ResourceVisitor final : public Luau::AstVisitor
         {
             std::unordered_set<std::string_view> m_recognizerNames{};
@@ -195,15 +194,15 @@ namespace uf::task
                 }
                 if (isNamespace(node->name))
                 {
-                    // A bare umbra global reached by recursion is never approved:
-                    // every approved form consumes its umbra root before descent
+                    // A bare uf global reached by recursion is never approved:
+                    // every approved form consumes its uf root before descent
                     // could reach it. So this is an alias, an argument, a return,
                     // or a traversal target -- all rejected.
                     recordFailure(
                         node->location,
-                        "the umbra namespace may be used only as "
-                        "umbra.recognizers.<name>, umbra.pages.<name> or "
-                        "umbra.errors.<kind>; it cannot be aliased, indexed "
+                        "the uf namespace may be used only as "
+                        "uf.recognizers.<name>, uf.pages.<name> or "
+                        "uf.errors.<kind>; it cannot be aliased, indexed "
                         "dynamically, iterated, passed, or returned"
                     );
                     return false;
@@ -211,18 +210,18 @@ namespace uf::task
                 if (isGlobalEnv(node->name))
                 {
                     // `_G` is the reflexive global-table handle. Every chain built
-                    // on it (_G.umbra:capture(), _G['umbra'], rawget(_G, 'umbra'))
-                    // roots here, never at the umbra global the other checks key on,
-                    // so it would otherwise sail through as unrelated code. Reject
-                    // the handle itself: a task script has no legitimate use for the
+                    // on it (_G.uf:capture(), _G['uf'], rawget(_G, 'uf')) roots
+                    // here, never at the uf global the other checks key on, so it
+                    // would otherwise sail through as unrelated code. Reject the
+                    // handle itself: a task script has no legitimate use for the
                     // raw global environment.
                     recordFailure(
                         node->location,
                         "the raw global environment '_G' is not accessible from a "
-                        "task script; it is an alias door to the umbra namespace "
-                        "and every other global, so reach the named resources "
-                        "only through umbra.recognizers.<name>, "
-                        "umbra.pages.<name> and umbra.errors.<kind>"
+                        "task script; it is an alias door to the uf namespace and "
+                        "every other global, so reach the named resources only "
+                        "through uf.recognizers.<name>, uf.pages.<name> and "
+                        "uf.errors.<kind>"
                     );
                     return false;
                 }
@@ -237,13 +236,13 @@ namespace uf::task
                 }
                 if (!rootsAtNamespace(node))
                 {
-                    // Not umbra-rooted (e.g. frame:find, page.field on a local):
-                    // keep walking so nested umbra references are still checked.
+                    // Not uf-rooted (e.g. frame:find, page.field on a local):
+                    // keep walking so nested uf references are still checked.
                     return true;
                 }
-                // This is the outermost umbra-rooted member chain. Classify it as
+                // This is the outermost uf-rooted member chain. Classify it as
                 // the one approved two-level literal or reject it, then stop
-                // descending (return false) so its umbra root is never revisited
+                // descending (return false) so its uf root is never revisited
                 // by the bare-global net above.
                 classifyResourceAccess(node);
                 return false;
@@ -259,12 +258,12 @@ namespace uf::task
                 m_failure = formatLocation(location) + ": " + std::move(message);
             }
 
-            // Classifies an umbra-rooted member-access chain whose outermost node
-            // is `node`. The only approved shape is exactly two dot levels:
-            // umbra . (recognizers|pages|errors) . <name>. Everything else -- a
-            // one-level field (umbra.recognizers as a value, umbra.foo), a deeper
-            // chain (umbra.recognizers.x.y), a colon index (umbra:anything), or
-            // an unknown sub-namespace -- is rejected.
+            // Classifies a uf-rooted member-access chain whose outermost node is
+            // `node`. The only approved shape is exactly two dot levels:
+            // uf . (recognizers|pages|errors) . <name>. Everything else -- a
+            // one-level field (uf.recognizers as a value, uf.foo), a deeper chain
+            // (uf.recognizers.x.y), a colon index (uf:anything), or an unknown
+            // sub-namespace -- is rejected.
             void classifyResourceAccess(Luau::AstExprIndexName* node)
             {
                 if (node->op == '.')
@@ -294,10 +293,10 @@ namespace uf::task
                             }
                             recordFailure(
                                 mid->location,
-                                "'umbra." + std::string{table}
+                                "'uf." + std::string{table}
                                     + "' is not a capability namespace; only "
-                                      "umbra.recognizers, umbra.pages and "
-                                      "umbra.errors exist"
+                                      "uf.recognizers, uf.pages and uf.errors "
+                                      "exist"
                             );
                             return;
                         }
@@ -307,8 +306,8 @@ namespace uf::task
                     node->location,
                     "'" + std::string{k_namespace}
                         + "' is only accessible as the two-level literals "
-                          "umbra.recognizers.<name>, umbra.pages.<name> and "
-                          "umbra.errors.<kind>; this access has the wrong shape"
+                          "uf.recognizers.<name>, uf.pages.<name> and "
+                          "uf.errors.<kind>; this access has the wrong shape"
                 );
             }
 
@@ -326,7 +325,7 @@ namespace uf::task
                 recordFailure(
                     location,
                     "no recognizer named '" + std::string{name}
-                        + "' is exposed under umbra.recognizers"
+                        + "' is exposed under uf.recognizers"
                 );
             }
 
@@ -340,12 +339,12 @@ namespace uf::task
                 recordFailure(
                     location,
                     "no page named '" + std::string{name}
-                        + "' is exposed under umbra.pages"
+                        + "' is exposed under uf.pages"
                 );
             }
 
             // Resolves an error-kind leaf against AutomationErrorKind's single
-            // wire spelling, which is exactly what umbra.errors is keyed by. A
+            // wire spelling, which is exactly what uf.errors is keyed by. A
             // misspelling would otherwise be a nil that makes every comparison
             // against it silently false, so it is closed here for the same reason
             // a missing recognizer is. Nothing is recorded on success: the kinds
@@ -363,7 +362,7 @@ namespace uf::task
                 recordFailure(
                     location,
                     "no error kind named '" + std::string{name}
-                        + "' is exposed under umbra.errors"
+                        + "' is exposed under uf.errors"
                 );
             }
         };
@@ -420,7 +419,7 @@ namespace uf::task
                 return fail(
                     AutomationErrorKind::InvalidResource,
                     "task script '" + chunk
-                        + "' has a disallowed umbra reference: " + *failure
+                        + "' has a disallowed uf reference: " + *failure
                 );
             }
             return visitor.takeReport();

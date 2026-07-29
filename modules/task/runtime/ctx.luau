@@ -5,14 +5,14 @@
 -- are never a key of any table a project script can name. The table returned
 -- below is frozen by the loader and published into the project environment as
 -- the global `ctx`; it is the whole of what a project task can reach besides
--- the `umbra` data tables.
+-- the `uf` data tables.
 --
 -- Deliberately thin. Every method here forwards one call and decides nothing:
 -- the policy layer -- ctx:step, ctx:cycle, ctx:retry, a real wait loop over
 -- cycle_open/cycle_page, and the interrupt registry -- is stage 3 of
 -- docs/plans/2026-07-29-three-layer-task-system.md and must not be started
 -- here. What exists today is exactly the set of bare verbs that used to hang
--- off the `umbra` root, so removing them from the project environment costs a
+-- off the `uf` root, so removing them from the project environment costs a
 -- project script nothing but a rename.
 --
 -- `native` is nil on a VM booted with no bound task session (the data-only
@@ -83,7 +83,7 @@ function ctx:try(fn)
     if ok then
         return true, nil
     end
-    if getmetatable(err) == "umbra.error" then
+    if getmetatable(err) == "uf.error" then
         return false, err
     end
     error(err, 0)

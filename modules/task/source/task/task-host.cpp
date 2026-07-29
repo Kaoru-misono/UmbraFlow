@@ -351,7 +351,7 @@ namespace uf::task
             );
         }
 
-        // Source the task from its owning project and validate every umbra
+        // Source the task from its owning project and validate every uf
         // reference before anything observable exists: a missing or unsafe task
         // name, or a reference the capability surface cannot resolve, must fail
         // before a VM is created (annotation-design 4) and before a trace file
@@ -450,7 +450,7 @@ namespace uf::task
         // under the framework environment and is handed the private capability
         // surface as its chunk argument; the task script below runs under a
         // project environment that is an explicit whitelist and holds no route
-        // back to the framework's. So the script reaches the umbra data tables
+        // back to the framework's. So the script reaches the uf data tables
         // and the framework's own `ctx`, and no primitive by any route.
         //
         // A VM that cannot be built at all -- a generation already cancelled, so

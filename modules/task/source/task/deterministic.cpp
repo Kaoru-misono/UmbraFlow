@@ -18,7 +18,7 @@ namespace uf::task
 
         // One read of the logical clock advances it by this many whole logical
         // milliseconds. It is a logical tick, not a real duration: its only job is
-        // to keep umbra:now() a strictly increasing, fully reproducible ordinal. A
+        // to keep ctx:now() a strictly increasing, fully reproducible ordinal. A
         // tick of one keeps consecutive reads one millisecond apart, honoring the
         // whole-millisecond contract, and by construction cannot introduce any
         // run-to-run variation.
