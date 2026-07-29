@@ -136,14 +136,6 @@ namespace uf::engine
         Point<ClientSpace> clickPoint;
     };
 
-    // The paired product of waitForPage: the observation that resolved the page
-    // and the resolved page itself, so the caller never re-evaluates the frame.
-    struct PageWait final
-    {
-        Observation              observation;
-        annotation::ResolvedPage page;
-    };
-
     // The recognition and action pipeline over one bound capture target.
     //
     // Trace lifetime contract: the session does NOT own its trace sink. It stores
@@ -187,11 +179,6 @@ namespace uf::engine
         [[nodiscard]]
         auto emit(trace::TraceEvent const& event) -> Status;
 
-        // D6: the minimal known-popup sweep lands in P0-C; P1 replaces this no-op
-        // with the bot:on registry. It runs once per waitForPage cycle so the loop
-        // shape is already in place when the real sweep arrives.
-        auto sweepKnownPopups() noexcept -> void;
-
     public:
         EngineSession(EngineSession const&) = delete;
         EngineSession(EngineSession&&) noexcept = default;
@@ -229,12 +216,5 @@ namespace uf::engine
             annotation::ResolvedPage const& page,
             ActionFound const& action
         ) -> Result<ActReceipt>;
-
-        [[nodiscard]]
-        auto waitForPage(
-            annotation::PageId pageId,
-            MonotonicInstant::Duration timeout,
-            MonotonicInstant::Duration pollInterval
-        ) -> Result<PageWait>;
     };
 }

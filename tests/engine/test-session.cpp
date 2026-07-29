@@ -37,7 +37,6 @@
 #include <optional>
 #include <span>
 #include <stop_token>
-#include <thread>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -93,7 +92,6 @@ namespace uf::engine
             LoadedRuntime            loaded;
             anno::ProjectFingerprint fingerprint;
             anno::RecognizerId       actionTarget;
-            anno::PageId             page;
         };
 
         // A runtime with one page (page_a, required anchor_a) and one action
@@ -162,7 +160,6 @@ namespace uf::engine
                 .loaded       = LoadedRuntime{.runtime = *std::move(runtime)},
                 .fingerprint  = fingerprint,
                 .actionTarget = actionT,
-                .page         = pageA,
             };
         }
 
@@ -254,7 +251,6 @@ namespace uf::engine
                 .loaded       = LoadedRuntime{.runtime = *std::move(runtime)},
                 .fingerprint  = fingerprint,
                 .actionTarget = actionT,
-                .page         = homePage,
             };
         }
 
@@ -1269,105 +1265,5 @@ namespace uf::engine
         CHECK(*p_source->deadline() >= *floor);
         CHECK(*p_source->deadline() <= *ceiling);
         CHECK(p_source->cancellable());
-    }
-
-    TEST_CASE("engine session waitForPage returns promptly when cancelled mid-sleep")
-    {
-        auto parts             = singlePageRuntime();
-        auto const fingerprint = parts.fingerprint;
-        auto const pageA       = parts.page;
-        auto frames            = std::vector<Frame>{};
-        // Grey-0 pixels never resolve pageA, so the wait loop keeps polling until
-        // the timeout, the deadline, or a cancellation ends it.
-        frames.emplace_back(
-            grayFrame(fingerprint, unknownPixels(), FrameId{17}, MonotonicInstant::now())
-        );
-
-        auto cancellation   = std::stop_source{};
-        auto config         = baseConfig(fingerprint);
-        config.cancellation = cancellation.get_token();
-        auto under          = makeSession(std::move(parts), std::move(frames), std::move(config));
-        REQUIRE(under.session.has_value());
-        auto& session = *under.session;
-
-        // Request stop ~50ms into a 10s poll sleep from another thread. The
-        // sliced sleep observes it within one 100ms slice, so waitForPage returns
-        // Cancelled far sooner than the poll interval. Copying the stop_source
-        // shares its stop-state, so the worker needs no reference capture.
-        auto const start = MonotonicInstant::now();
-        auto stopper     = std::jthread{
-            [source = cancellation]() mutable noexcept
-            {
-                std::this_thread::sleep_for(std::chrono::milliseconds{50});
-                static_cast<void>(source.request_stop());
-            }
-        };
-
-        auto const result = session.waitForPage(
-            pageA,
-            std::chrono::duration_cast<MonotonicInstant::Duration>(std::chrono::seconds{60}),
-            std::chrono::duration_cast<MonotonicInstant::Duration>(std::chrono::seconds{10})
-        );
-        auto const elapsed = MonotonicInstant::now().saturatingDurationSince(start);
-
-        REQUIRE_FALSE(result.has_value());
-        anno::test::requireErrorKind(result.error(), AutomationErrorKind::Cancelled);
-        CHECK(
-            elapsed < std::chrono::duration_cast<MonotonicInstant::Duration>(
-                std::chrono::seconds{2}
-            )
-        );
-        CHECK(under.clicks->clickCount() == 0);
-    }
-
-    TEST_CASE("engine session waitForPage times out when the page never resolves")
-    {
-        auto parts             = singlePageRuntime();
-        auto const fingerprint = parts.fingerprint;
-        auto const pageA       = parts.page;
-        auto frames            = std::vector<Frame>{};
-        frames.emplace_back(
-            grayFrame(fingerprint, unknownPixels(), FrameId{17}, MonotonicInstant::now())
-        );
-
-        auto under = makeSession(std::move(parts), std::move(frames), baseConfig(fingerprint));
-        REQUIRE(under.session.has_value());
-        auto& session = *under.session;
-
-        auto const result = session.waitForPage(
-            pageA,
-            MonotonicInstant::Duration::zero(),
-            MonotonicInstant::Duration::zero()
-        );
-        REQUIRE_FALSE(result.has_value());
-        anno::test::requireErrorKind(result.error(), AutomationErrorKind::Timeout);
-        CHECK(under.clicks->clickCount() == 0);
-    }
-
-    TEST_CASE("engine session waitForPage resolves on a later frame")
-    {
-        auto parts             = singlePageRuntime();
-        auto const fingerprint = parts.fingerprint;
-        auto const pageA       = parts.page;
-        auto frames            = std::vector<Frame>{};
-        frames.emplace_back(
-            grayFrame(fingerprint, unknownPixels(), FrameId{17}, MonotonicInstant::now())
-        );
-        frames.emplace_back(
-            grayFrame(fingerprint, resolvingPixels(), FrameId{18}, MonotonicInstant::now())
-        );
-
-        auto under = makeSession(std::move(parts), std::move(frames), baseConfig(fingerprint));
-        REQUIRE(under.session.has_value());
-        auto& session = *under.session;
-
-        auto result = session.waitForPage(
-            pageA,
-            std::chrono::duration_cast<MonotonicInstant::Duration>(std::chrono::seconds{5}),
-            MonotonicInstant::Duration::zero()
-        );
-        REQUIRE(result.has_value());
-        CHECK(result->page.pageId() == pageA);
-        CHECK(under.clicks->clickCount() == 0);
     }
 }

@@ -3,7 +3,6 @@
 #include <core/error/contracts.hpp>
 #include <core/error/result.hpp>
 #include <core/time/monotonic-time.hpp>
-#include <core/time/poll-sleep.hpp>
 #include <core/types/integer.hpp>
 
 #include <annotation/authorization.hpp>
@@ -640,61 +639,5 @@ namespace uf::engine
             .frameId    = identity.frameId(),
             .clickPoint = clientPoint,
         };
-    }
-
-    auto EngineSession::waitForPage(
-        annotation::PageId pageId,
-        MonotonicInstant::Duration timeout,
-        MonotonicInstant::Duration pollInterval
-    ) -> Result<PageWait>
-    {
-        auto const deadline = MonotonicInstant::now().checkedAdd(timeout);
-        if (!deadline)
-        {
-            return fail(
-                AutomationErrorKind::InvalidResource,
-                "waitForPage timeout overflows the monotonic clock"
-            );
-        }
-
-        for (;;)
-        {
-            sweepKnownPopups();
-
-            UF_TRY_VALUE(observation, observe());
-            UF_TRY_VALUE(outcome, resolvePage(observation));
-
-            auto const* p_resolved = std::get_if<annotation::ResolvedPage>(&outcome);
-            if (p_resolved != nullptr && p_resolved->pageId() == pageId)
-            {
-                return PageWait{
-                    std::move(observation),
-                    std::get<annotation::ResolvedPage>(std::move(outcome)),
-                };
-            }
-
-            if (MonotonicInstant::now() >= *deadline)
-            {
-                return fail(
-                    AutomationErrorKind::Timeout,
-                    "waitForPage timed out before the target page resolved"
-                );
-            }
-
-            if (m_config.cancellation.stop_requested())
-            {
-                return fail(
-                    AutomationErrorKind::Cancelled,
-                    "waitForPage cancelled before the target page resolved"
-                );
-            }
-
-            pollSleep(pollInterval, *deadline, m_config.cancellation);
-        }
-    }
-
-    auto EngineSession::sweepKnownPopups() noexcept -> void
-    {
-        // D6: intentional no-op until P0-C. See the declaration for the roadmap.
     }
 }
