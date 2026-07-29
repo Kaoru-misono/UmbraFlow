@@ -917,7 +917,7 @@ namespace uf::task
 
                 return runWithMark(
                     context,
-                    built,
+                    built.surface,
                     requestStop ? stop.get_token() : std::stop_token{},
                     source
                 );
@@ -1018,7 +1018,7 @@ namespace uf::task
                     return 1
                 )lua";
 
-                return runWithMark(context, built, stop.get_token(), source);
+                return runWithMark(context, built.surface, stop.get_token(), source);
             };
 
             SUBCASE("control: with no stop armed the carrier does name the run's kind")

@@ -618,10 +618,14 @@ namespace uf::task
         // InternalInvariant rather than becoming a Tier B failure a script could
         // catch and retry.
         //
-        // It takes no deadline yet. The plan's cycle_open(deadline) needs
-        // IFrameSource::capture() to accept one, which is stage 3 work; a
-        // parameter parsed and discarded here would tell a script its capture is
-        // bounded when nothing bounds it.
+        // It takes no deadline, and never will. The capture IS bounded --
+        // EngineSession::observe mints a CaptureBudget from the session's own
+        // captureTimeout and hands IFrameSource::capture both that deadline and
+        // the run's stop token -- but the bound is the HOST's, not the script's.
+        // How long one screenshot may block is a resource boundary the host
+        // owns, so a script is given no knob it could widen. The one deadline a
+        // script can hold comes from the `deadline` primitive, and it bounds a
+        // wait loop rather than any single capture.
         auto cycleOpenFn(lua_State* state) -> int
         {
             auto* context = boundContext(state);

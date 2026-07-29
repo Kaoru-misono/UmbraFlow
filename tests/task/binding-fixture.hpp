@@ -50,13 +50,15 @@
 #include <utility>
 #include <vector>
 
-// Shared test fixture for the modules/task binding, adversarial and determinism
-// suites: the single-page recognition runtime, the grey frame builders, the fake
-// frame sources, the recording sinks, and the bound-VM runners every suite drives
-// a real task VM through. test-task-binding.cpp, test-adversarial-surface.cpp and
-// test-determinism-harness.cpp all build sessions from these, so they live here
-// once rather than being copied into each translation unit. Everything is inline
-// or a header-defined type, so including it in more than one TU is safe.
+// Shared test fixture for every modules/task suite that boots a real task VM:
+// the one-page and two-page recognition runtimes, the grey frame builders, the
+// fake frame sources, the recording sinks, and the bound-VM runners.
+// test-task-binding.cpp, test-adversarial-surface.cpp,
+// test-determinism-harness.cpp, test-framework-context.cpp,
+// test-framework-surface.cpp and test-veto-blocking.cpp all build sessions from
+// these, so they live here once rather than being copied into each translation
+// unit. Everything is inline or a header-defined type, so including it in more
+// than one TU is safe.
 namespace uf::task
 {
     namespace anno = annotation;
@@ -64,6 +66,19 @@ namespace uf::task
     inline constexpr auto k_anchorId = "00000000-0000-0000-0000-000000000011";
     inline constexpr auto k_actionId = "00000000-0000-0000-0000-000000000013";
     inline constexpr auto k_pageId   = "00000000-0000-0000-0000-000000000111";
+
+    // The second page and its two recognizers, so a popup is a page in its own
+    // right and a target page exists for a wait to be waiting FOR.
+    inline constexpr auto k_popupAnchorId = "00000000-0000-0000-0000-000000000012";
+    inline constexpr auto k_closeDialogId = "00000000-0000-0000-0000-000000000014";
+    inline constexpr auto k_popupPageId   = "00000000-0000-0000-0000-000000000112";
+
+    // Distinct grey levels with an exact-match threshold keep the two pages
+    // mutually exclusive: a frame resolves one of them or neither, never both.
+    inline constexpr auto k_targetAnchorGray = uint8{2};
+    inline constexpr auto k_targetActionGray = uint8{5};
+    inline constexpr auto k_popupAnchorGray  = uint8{20};
+    inline constexpr auto k_popupCloseGray   = uint8{40};
 
     [[nodiscard]]
     constexpr auto asByte(uint8 value) noexcept -> std::byte
@@ -110,8 +125,8 @@ namespace uf::task
         auto const anchorA     = anno::test::recognizerId(k_anchorId);
         auto const actionT     = anno::test::recognizerId(k_actionId);
         auto const pageA       = anno::test::pageId(k_pageId);
-        auto anchorTemplate = encodedTemplate(2);
-        auto actionTemplate = encodedTemplate(5);
+        auto anchorTemplate = encodedTemplate(k_targetAnchorGray);
+        auto actionTemplate = encodedTemplate(k_targetActionGray);
         auto const sourceBytes = std::array{asByte(42)};
         auto const sourceHash  = anno::sha256(sourceBytes);
         REQUIRE(sourceHash.has_value());
@@ -168,6 +183,115 @@ namespace uf::task
         };
     }
 
+    // Two pages -- the target page_a and a popup -- with one action target each,
+    // which is the smallest catalog an interrupt can be addressed in: an
+    // interrupt names the page it recognizes, so proving one fires needs a
+    // second page for it to name.
+    [[nodiscard]]
+    inline auto interruptRuntime() -> RuntimeParts
+    {
+        auto const fingerprint  = anno::test::fingerprint(3, 1, 96, 96);
+        auto const targetAnchor = anno::test::recognizerId(k_anchorId);
+        auto const targetAction = anno::test::recognizerId(k_actionId);
+        auto const popupAnchor  = anno::test::recognizerId(k_popupAnchorId);
+        auto const popupClose   = anno::test::recognizerId(k_closeDialogId);
+        auto const targetPage   = anno::test::pageId(k_pageId);
+        auto const popupPage    = anno::test::pageId(k_popupPageId);
+
+        auto targetAnchorTemplate = encodedTemplate(k_targetAnchorGray);
+        auto targetActionTemplate = encodedTemplate(k_targetActionGray);
+        auto popupAnchorTemplate  = encodedTemplate(k_popupAnchorGray);
+        auto popupCloseTemplate   = encodedTemplate(k_popupCloseGray);
+
+        auto const sourceBytes = std::array{asByte(42)};
+        auto const sourceHash  = anno::sha256(sourceBytes);
+        REQUIRE(sourceHash.has_value());
+
+        auto const anchorSpec = [&](anno::RecognizerId id,
+                                    std::string_view name,
+                                    anno::ContentHash templateHash)
+        {
+            return anno::RuntimeRecognizerSpec{
+                .definition = anno::test::recognizer(
+                    fingerprint,
+                    id,
+                    std::string{name},
+                    anno::AnnotationType::PageAnchor,
+                    anno::test::pixelRect(0, 0, 1, 1),
+                    anno::test::pixelRect(0, 0, 3, 1),
+                    {},
+                    std::nullopt,
+                    anno::test::threshold(10'000)
+                ),
+                .templateHash = templateHash,
+                .sourceHash   = *sourceHash,
+            };
+        };
+        auto const actionSpec = [&](anno::RecognizerId id,
+                                    std::string_view name,
+                                    anno::PageId page,
+                                    anno::ContentHash templateHash)
+        {
+            return anno::RuntimeRecognizerSpec{
+                .definition = anno::test::recognizer(
+                    fingerprint,
+                    id,
+                    std::string{name},
+                    anno::AnnotationType::ActionTarget,
+                    anno::test::pixelRect(0, 0, 1, 1),
+                    anno::test::pixelRect(0, 0, 3, 1),
+                    {page},
+                    std::nullopt,
+                    anno::test::threshold(10'000)
+                ),
+                .templateHash = templateHash,
+                .sourceHash   = *sourceHash,
+            };
+        };
+
+        auto manifest = anno::RuntimeManifest::create(
+            anno::test::projectId("personal.framework_context"),
+            fingerprint,
+            {
+                anchorSpec(targetAnchor, "anchor_a", targetAnchorTemplate.hash),
+                actionSpec(
+                    targetAction,
+                    "action_target",
+                    targetPage,
+                    targetActionTemplate.hash
+                ),
+                anchorSpec(popupAnchor, "anchor_popup", popupAnchorTemplate.hash),
+                actionSpec(
+                    popupClose,
+                    "close_dialog",
+                    popupPage,
+                    popupCloseTemplate.hash
+                ),
+            },
+            {
+                anno::test::page(targetPage, "page_a", {targetAnchor}),
+                anno::test::page(popupPage, "popup", {popupAnchor}),
+            }
+        );
+        REQUIRE(manifest.has_value());
+
+        auto templates = std::vector<anno::EncodedRuntimeTemplate>{};
+        templates.emplace_back(std::move(targetAnchorTemplate));
+        templates.emplace_back(std::move(targetActionTemplate));
+        templates.emplace_back(std::move(popupAnchorTemplate));
+        templates.emplace_back(std::move(popupCloseTemplate));
+
+        auto runtime = anno::RecognitionRuntime::create(
+            *std::move(manifest),
+            std::move(templates)
+        );
+        REQUIRE(runtime.has_value());
+        return RuntimeParts{
+            .loaded      = engine::LoadedRuntime{.runtime = *std::move(runtime)},
+            .fingerprint = fingerprint,
+        };
+    }
+
     [[nodiscard]]
     inline auto grayFrame(
         anno::ProjectFingerprint fingerprint,
@@ -212,7 +336,22 @@ namespace uf::task
     [[nodiscard]]
     inline auto resolvingPixels() -> std::vector<std::byte>
     {
-        return std::vector<std::byte>{asByte(2), asByte(5), asByte(0)};
+        return std::vector<std::byte>{
+            asByte(k_targetAnchorGray),
+            asByte(k_targetActionGray),
+            asByte(0),
+        };
+    }
+
+    // A frame that resolves the popup page and hits its close button.
+    [[nodiscard]]
+    inline auto popupPixels() -> std::vector<std::byte>
+    {
+        return std::vector<std::byte>{
+            asByte(k_popupAnchorGray),
+            asByte(k_popupCloseGray),
+            asByte(0),
+        };
     }
 
     [[nodiscard]]
@@ -612,21 +751,22 @@ namespace uf::task
         uint64         markCount{0};
     };
 
-    // Runs `source` on a task VM bound to `built` with `cancellation` armed on
-    // the VM interrupt (the session already shares the same token), plus a host
-    // mark() the script can call. Returns the run result and how many times
-    // mark() reached. markCount is declared before the Engine, so it outlives
-    // the VM and the closure's pointer into it stays valid for every call.
+    // Runs `source` on a task VM bound to `surface` and `context` with
+    // `cancellation` armed on the VM interrupt (the session already shares the
+    // same token), plus a host mark() the script can call. Returns the run
+    // result and how many times mark() reached. markCount is declared before the
+    // Engine, so it outlives the VM and the closure's pointer into it stays
+    // valid for every call.
     [[nodiscard]]
     inline auto runWithMark(
         TaskContext& context,
-        Built& built,
+        CapabilitySurface const& surface,
         std::stop_token cancellation,
         std::string_view source
     ) -> DiscriminatorRun
     {
         uint64 markCount        = 0;
-        auto   config           = taskVmConfig(built.surface, context);
+        auto   config           = taskVmConfig(surface, context);
         auto   surfaceInstaller = std::move(config.installHostTables);
         config.cancellation     = std::move(cancellation);
         config.installHostTables =

@@ -20,15 +20,18 @@
 // remaining explicitly named cases and the documented non-yieldable-C-boundary
 // exception from the hardening ledger and integration-plan §5.
 //
-// Coverage that structurally belongs to later phases is called out per case and
-// is deliberately NOT faked here:
+// Coverage that structurally belongs above the substrate is called out per case
+// and is deliberately NOT faked here:
 //   - veto #4 full observation/action trace + seed 1000x -> B2 harness (phase 3)
-//   - veto #5 atomic generation SWAP / P2 live hot-reload -> modules/task (phase 2)
-//   - veto #6 real host-C-binding hang                    -> modules/task (phase 2)
-// The script substrate covers the parts it can prove today: run-to-run bit
+//   - veto #5 atomic generation SWAP / P2 live hot-reload -> modules/task
+//   - veto #6 a blocked host C binding -> tests/task/test-veto-blocking.cpp,
+//     which blocks each of the task layer's own primitives in turn and asserts
+//     the whole run still exits inside its budget once it is cancelled.
+// The script substrate covers the parts it can prove on its own: run-to-run bit
 // determinism (#4), compile-failure isolation at the load boundary (#5), and the
-// built-in C-boundary cancellation exception that stands in for #6 until the
-// first uf.* binding lands.
+// built-in C-boundary cancellation exception below, which is the substrate's
+// slice of #6 -- a runaway loop inside a non-yieldable C frame, with no uf.*
+// binding in sight.
 
 namespace uf::script
 {
@@ -98,8 +101,8 @@ namespace uf::script
             // BEFORE calling lua_break, so Engine::runNumber reports Cancelled
             // whether the break surfaced cleanly or as a trapped C-boundary error.
             // These cases lock that in. The veto #6 proper -- a registered host C
-            // binding that hangs -- lands with the first uf.* binding in
-            // modules/task (phase 2).
+            // binding that hangs -- lives in tests/task/test-veto-blocking.cpp,
+            // where each task primitive is blocked in turn.
             SUBCASE("table.sort comparator infinite loop")
             {
                 expectExternalStopCancels(
@@ -125,8 +128,8 @@ namespace uf::script
                 // script's post-cancel continuation was prevented -- the pure-Lua
                 // form of that stronger property is proven by the host-visible
                 // mark-counter discriminator in test-script.cpp ("A cancelled script
-                // never executes past the break"), and its host-C-binding form lands
-                // with the first uf.* binding in phase 2.
+                // never executes past the break"), and its host-C-binding form by
+                // the same discriminator in tests/task/test-veto-blocking.cpp.
                 expectExternalStopCancels(
                     "pcall(function()\n"
                     "  table.sort({5, 4, 3, 2, 1}, function(a, b) while true do end end)\n"

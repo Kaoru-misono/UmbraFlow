@@ -142,7 +142,9 @@ if(TARGET ${PROJECT_NAME}_task)
             task/test-determinism-harness.cpp
             task/test-framework-bundle.cpp
             task/test-framework-context.cpp
+            task/test-framework-surface.cpp
             task/test-semantic-events.cpp
+            task/test-veto-blocking.cpp
             task/test-task-loader.cpp
             task/test-script-validator.cpp
             task/test-deterministic.cpp

@@ -3,179 +3,47 @@
 #include <task/capability-surface.hpp>
 #include <task/task-context.hpp>
 
-#include <annotation/content-hash.hpp>
-#include <annotation/recognition.hpp>
-#include <annotation/recognition-runtime.hpp>
-#include <annotation/resource.hpp>
-#include <annotation/runtime-manifest.hpp>
-
 #include <core/error/result.hpp>
-#include <core/types/integer.hpp>
 
 #include <domain/error.hpp>
 #include <domain/frame.hpp>
 #include <domain/ids.hpp>
 
 #include <engine/ports.hpp>
-#include <engine/runtime-loader.hpp>
 #include <engine/session.hpp>
 
 #include <trace/event.hpp>
 
 #include <doctest/doctest.h>
 
-#include <array>
 #include <cstddef>
 #include <memory>
-#include <optional>
 #include <stop_token>
 #include <string_view>
 #include <utility>
 #include <vector>
 
 // The trusted Luau framework's policy layer, driven through a real task VM:
-// ctx:step, ctx:cycle, ctx:wait_for_page, ctx:retry and the interrupt registry.
+// ctx:step, ctx:cycle, ctx:wait_for_page and the interrupt registry, over real
+// recognition and the real cycle ledger.
 //
-// Every case is driven from fake ports and asserts only on counts the host can
-// see -- how many frames were served, how many clicks were delivered, whether a
-// cycle is still open -- so a green run finishes in milliseconds and nothing
-// here depends on how loaded the machine is. The two cancellation cases arm
-// their stop from inside the frame source rather than from a timer thread, so
-// even "the stop landed mid-wait" is a fixed point in the sequence rather than
-// a race.
+// Every case is driven from fake ENGINE ports and asserts only on facts the host
+// can see -- how many frames were served, how many clicks were delivered,
+// whether the ledger still holds a cycle -- so a green run finishes in
+// milliseconds and nothing here depends on how loaded the machine is. The two
+// cancellation cases arm their stop from inside the frame source rather than
+// from a timer thread, so even "the stop landed mid-wait" is a fixed point in
+// the sequence rather than a race.
+//
+// The companion file is test-framework-surface.cpp, which drives the SAME
+// framework against a scripted stand-in for the private capability surface and
+// asserts the primitive call sequence instead. What stays here is what a fake
+// surface cannot reach: real page recognition, real hit authorization, and the
+// ledger's own answer about the frame it is holding.
 namespace uf::task
 {
     namespace
     {
-        // Two more recognizers and one more page than singlePageRuntime, so a
-        // popup is a page in its own right and a target page exists for the wait
-        // to be waiting FOR. Distinct grey levels with an exact-match threshold
-        // keep the two pages mutually exclusive: a frame resolves one of them or
-        // neither, never both.
-        constexpr auto k_popupAnchorId      = "00000000-0000-0000-0000-000000000012";
-        constexpr auto k_closeDialogId      = "00000000-0000-0000-0000-000000000014";
-        constexpr auto k_popupPageId        = "00000000-0000-0000-0000-000000000112";
-
-        constexpr auto k_targetAnchorGray = uint8{2};
-        constexpr auto k_targetActionGray = uint8{5};
-        constexpr auto k_popupAnchorGray  = uint8{20};
-        constexpr auto k_popupCloseGray   = uint8{40};
-
-        [[nodiscard]]
-        auto interruptRuntime() -> RuntimeParts
-        {
-            auto const fingerprint  = anno::test::fingerprint(3, 1, 96, 96);
-            auto const targetAnchor = anno::test::recognizerId(k_anchorId);
-            auto const targetAction = anno::test::recognizerId(k_actionId);
-            auto const popupAnchor  = anno::test::recognizerId(k_popupAnchorId);
-            auto const popupClose   = anno::test::recognizerId(k_closeDialogId);
-            auto const targetPage   = anno::test::pageId(k_pageId);
-            auto const popupPage    = anno::test::pageId(k_popupPageId);
-
-            auto targetAnchorTemplate = encodedTemplate(k_targetAnchorGray);
-            auto targetActionTemplate = encodedTemplate(k_targetActionGray);
-            auto popupAnchorTemplate  = encodedTemplate(k_popupAnchorGray);
-            auto popupCloseTemplate   = encodedTemplate(k_popupCloseGray);
-
-            auto const sourceBytes = std::array{asByte(42)};
-            auto const sourceHash  = anno::sha256(sourceBytes);
-            REQUIRE(sourceHash.has_value());
-
-            auto const anchorSpec = [&](anno::RecognizerId id,
-                                        std::string_view name,
-                                        anno::ContentHash templateHash)
-            {
-                return anno::RuntimeRecognizerSpec{
-                    .definition = anno::test::recognizer(
-                        fingerprint,
-                        id,
-                        std::string{name},
-                        anno::AnnotationType::PageAnchor,
-                        anno::test::pixelRect(0, 0, 1, 1),
-                        anno::test::pixelRect(0, 0, 3, 1),
-                        {},
-                        std::nullopt,
-                        anno::test::threshold(10'000)
-                    ),
-                    .templateHash = templateHash,
-                    .sourceHash   = *sourceHash,
-                };
-            };
-            auto const actionSpec = [&](anno::RecognizerId id,
-                                        std::string_view name,
-                                        anno::PageId page,
-                                        anno::ContentHash templateHash)
-            {
-                return anno::RuntimeRecognizerSpec{
-                    .definition = anno::test::recognizer(
-                        fingerprint,
-                        id,
-                        std::string{name},
-                        anno::AnnotationType::ActionTarget,
-                        anno::test::pixelRect(0, 0, 1, 1),
-                        anno::test::pixelRect(0, 0, 3, 1),
-                        {page},
-                        std::nullopt,
-                        anno::test::threshold(10'000)
-                    ),
-                    .templateHash = templateHash,
-                    .sourceHash   = *sourceHash,
-                };
-            };
-
-            auto manifest = anno::RuntimeManifest::create(
-                anno::test::projectId("personal.framework_context"),
-                fingerprint,
-                {
-                    anchorSpec(targetAnchor, "anchor_a", targetAnchorTemplate.hash),
-                    actionSpec(
-                        targetAction,
-                        "action_target",
-                        targetPage,
-                        targetActionTemplate.hash
-                    ),
-                    anchorSpec(popupAnchor, "anchor_popup", popupAnchorTemplate.hash),
-                    actionSpec(
-                        popupClose,
-                        "close_dialog",
-                        popupPage,
-                        popupCloseTemplate.hash
-                    ),
-                },
-                {
-                    anno::test::page(targetPage, "page_a", {targetAnchor}),
-                    anno::test::page(popupPage, "popup", {popupAnchor}),
-                }
-            );
-            REQUIRE(manifest.has_value());
-
-            auto templates = std::vector<anno::EncodedRuntimeTemplate>{};
-            templates.emplace_back(std::move(targetAnchorTemplate));
-            templates.emplace_back(std::move(targetActionTemplate));
-            templates.emplace_back(std::move(popupAnchorTemplate));
-            templates.emplace_back(std::move(popupCloseTemplate));
-
-            auto runtime = anno::RecognitionRuntime::create(
-                *std::move(manifest),
-                std::move(templates)
-            );
-            REQUIRE(runtime.has_value());
-            return RuntimeParts{
-                .loaded      = engine::LoadedRuntime{.runtime = *std::move(runtime)},
-                .fingerprint = fingerprint,
-            };
-        }
-
-        [[nodiscard]]
-        auto popupPixels() -> std::vector<std::byte>
-        {
-            return std::vector<std::byte>{
-                asByte(k_popupAnchorGray),
-                asByte(k_popupCloseGray),
-                asByte(0),
-            };
-        }
-
         // A build over one of the two runtimes, with observing pointers to the
         // frame source and the click sink. The frame count is what several cases
         // below assert against: a refusal that still spent a capture would be a
@@ -612,75 +480,6 @@ namespace uf::task
             CHECK(kinds.back() == trace::TraceEventKind::FrameworkInterruptExhausted);
         }
 
-        TEST_CASE("ctx:retry follows the on list over retryable, and retryable without one")
-        {
-            auto framework = buildOver(singlePageRuntime(), unknownFrames(1, FrameId{69}));
-            REQUIRE(framework.built.session.has_value());
-            TaskContext context{
-                *std::move(framework.built.session),
-                *framework.built.recorder,
-            };
-
-            // Four directions over two kinds whose retryable flags differ:
-            // `timeout` is Abort and therefore retryable = false, while
-            // `stale_observation` is Retry and therefore true.
-            //
-            //   1. `on` names timeout            -> retried, though not retryable
-            //   2. no `on`, timeout              -> not retried, retryable rules
-            //   3. no `on`, stale_observation    -> retried, retryable rules
-            //   4. `on` names timeout only, and
-            //      the failure is retryable      -> NOT retried
-            //
-            // The fourth is what pins the semantics: with `on` present,
-            // `retryable` is not consulted at all.
-            constexpr std::string_view source = R"lua(
-                local function timeoutOnce()
-                    ctx:wait_for_page(
-                        uf.pages.page_a,
-                        { timeout_ms = 0 },
-                        function() end
-                    )
-                end
-
-                local function staleOnce()
-                    local ticket = ctx:cycle_open()
-                    ctx:cycle_close(ticket)
-                    ctx:cycle_page(ticket)
-                end
-
-                local function count(policy, body)
-                    local tries = 0
-                    local ok, err = ctx:try(function()
-                        ctx:retry(policy, function()
-                            tries += 1
-                            body()
-                        end)
-                    end)
-                    if ok ~= false then return -1 end
-                    return tries
-                end
-
-                local overridden =
-                    count({ attempts = 3, on = { uf.errors.timeout } }, timeoutOnce)
-                if overridden ~= 3 then return 0 end
-
-                local defaulted = count({ attempts = 3 }, timeoutOnce)
-                if defaulted ~= 1 then return 0 end
-
-                local retryable = count({ attempts = 2 }, staleOnce)
-                if retryable ~= 2 then return 0 end
-
-                local excluded =
-                    count({ attempts = 3, on = { uf.errors.timeout } }, staleOnce)
-                if excluded ~= 1 then return 0 end
-                return 1
-            )lua";
-
-            CHECK(runBound(context, framework.built, source) == doctest::Approx(1.0));
-            CHECK(framework.built.clicks->clickCount() == 0);
-            CHECK_FALSE(context.hasOpenCycle());
-        }
-
         TEST_CASE("ctx:step nests strictly and leaves no step open behind a raise")
         {
             auto framework = buildOver(singlePageRuntime(), unknownFrames(1, FrameId{70}));
@@ -783,7 +582,7 @@ namespace uf::task
                 return 1
             )lua";
 
-            auto const run = runWithMark(context, built, stop.get_token(), source);
+            auto const run = runWithMark(context, built.surface, stop.get_token(), source);
             REQUIRE_FALSE(run.result.has_value());
             CHECK(
                 automationErrorKind(run.result.error())

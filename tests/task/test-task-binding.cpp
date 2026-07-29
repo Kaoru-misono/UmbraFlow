@@ -789,7 +789,7 @@ namespace uf::task
                     TaskContextConfig{.cancellation = stop.get_token()},
                 };
 
-                auto const run = runWithMark(context, built, stop.get_token(), guarded);
+                auto const run = runWithMark(context, built.surface, stop.get_token(), guarded);
                 REQUIRE_FALSE(run.result.has_value());
                 CHECK(
                     automationErrorKind(run.result.error())
