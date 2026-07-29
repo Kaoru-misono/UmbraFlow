@@ -46,7 +46,7 @@ The engine deliberately does not own the following capabilities:
   fingerprint, and frame identity is validated by annotation.
 - It does not define any storage policy beyond the trace file format. The engine's serializer does
   no I/O and appends no newline; opening the JSONL, writing each line, and flushing live in
-  `entry/cli/file-trace-sink.cpp`.
+  `modules/trace/source/trace/file-sink.cpp`.
 
 The reason for this boundary is not abstraction for its own sake: strict-background input can only be
 honored by the platform layer, while recognition and authorization must be reproducible in CI that
@@ -190,10 +190,11 @@ engine and task write into the same stream. The events engine emits are:
 `ActionAbsent` collapse into the outcome of the two kinds above. The stage-independent
 `RecognitionStopped` and `Failure` become outcomes of the stage they occurred in, so a reader can
 now tell *which* step stopped or failed — information the old vocabulary did not carry.
-On the script path `SessionStarted` has no successor: the composition root's `run.started` records
-the same instant and adds the project, task, source hash, framework version and bundle hash, Luau
-compiler version, seed, and run identity. `entry/cli`'s smoke path writes no run-level event at all
-and its trace opens on the first `engine.observed`; that path is deleted with stage 1d's TaskHost.
+`SessionStarted` has no successor: `task::TaskHost`'s `run.started` records the same instant and
+adds the project, task, source hash, framework version and bundle hash, Luau compiler version,
+seed, and run identity. The `entry/cli` smoke path, which wrote no run-level event at all and whose
+trace opened on the first `engine.observed`, was deleted on 2026-07-29 together with the move of
+the run lifecycle into `TaskHost`.
 
 `trace::TraceRecorder` stamps `seq`, `runId` and `generationId` onto every event, plus `wallClock`
 inside `meta`. `meta` is the documented non-golden field set, stripped by
@@ -357,13 +358,13 @@ surface of a future Luau binding.
 - Tampered template bytes cause a hash mismatch and return `InvalidResource`.
 - A manifest exceeding 16 MiB is rejected by the stat fast path before reading.
 
-`tests/engine/test-trace.cpp` pins the wire contract:
+`tests/trace/test-trace.cpp` pins the wire contract:
 
 - The schema-first fixed order and exact golden JSON of a full-field event.
 - A minimal event outputs only `schema` and `kind`.
 - JSON escaping of quotes, backslashes, and control bytes.
 
-`tests/cli/test-file-trace-sink.cpp` pins the JSONL transport:
+The same file pins the JSONL transport of `trace::FileTraceSink`:
 
 - Each emit produces one line as defined by `serializeTraceEvent`.
 - An unopenable path returns an error `Status` rather than silently dropping the trace.

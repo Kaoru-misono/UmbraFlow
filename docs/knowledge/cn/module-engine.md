@@ -24,7 +24,7 @@ engine 不负责以下工作：
 - 不编辑或发布 annotation 项目，也不读取 authoring document。它只读 `generated/annotations.runtime.toml` 与该 manifest 闭包内的 runtime 模板。
 - 不实现 Luau 宿主、任务队列、pause/resume、事件订阅或常驻进程生命周期。`modules/script/source/script/engine.hpp` 中现有 `uf::script::Engine` 仍是独立的最小 Luau 执行器，当前没有依赖或绑定 `uf::engine::EngineSession`。
 - 不把识别算法和授权规则复制进自身。页面/动作识别由 annotation runtime 执行，页面允许关系、fingerprint 与 frame identity 的授权由 annotation 校验。
-- 不定义 trace 文件格式之外的存储策略。engine 的 serializer 不做 I/O，也不追加换行；JSONL 的打开、逐条写入和 flush 位于 `entry/cli/file-trace-sink.cpp`。
+- 不定义 trace 文件格式之外的存储策略。engine 的 serializer 不做 I/O，也不追加换行；JSONL 的打开、逐条写入和 flush 位于 `modules/trace/source/trace/file-sink.cpp`。
 
 严格后台输入只能由平台层实现，识别和授权则必须能在没有桌面、没有 HWND 的 CI
 中复现。为此，engine 只依赖几个窄端口；测试可以提供替身实现，平台代码也能保持
@@ -126,10 +126,11 @@ schema 由 `modules/trace/source/trace/event.hpp` 拥有，id 是
 `engine-trace/v1` 的 `PageResolved` / `PageUnknown` / `PageAmbiguous` 与
 `ActionFound` / `ActionAbsent` 折叠成上面两个 kind 的 outcome；原先与阶段无关的
 `RecognitionStopped` 与 `Failure` 也成为对应阶段的 outcome，因此现在还能读出停止或
-失败发生在哪一步。在脚本路径上 `SessionStarted` 没有后继：组合根的 `run.started`
+失败发生在哪一步。`SessionStarted` 没有后继：`task::TaskHost` 的 `run.started`
 记录同一时刻，并带上 project、task、source hash、framework 版本与 bundle hash、
-Luau 编译器版本、seed 与 run 身份。`entry/cli` 的 smoke 路径不写任何 run 级事件，
-它的 trace 从第一条 `engine.observed` 开始；该路径随 stage 1d 的 TaskHost 一起删除。
+Luau 编译器版本、seed 与 run 身份。`entry/cli` 的 smoke 路径不写任何 run 级事件、
+trace 从第一条 `engine.observed` 开始，它已于 2026-07-29 随运行生命周期迁入
+`TaskHost` 一并删除。
 
 `trace::TraceRecorder` 在每条事件上盖 `seq`、`runId`、`generationId`，以及 `meta`
 里的 `wallClock`。`meta` 是文档化的非 golden 字段集，golden 比较前用
@@ -270,13 +271,13 @@ include controller。否则 fake 端口无法在平台无关测试中替代桌�
 - 篡改模板 bytes 导致 hash mismatch 并返回 `InvalidResource`。
 - 超过 16 MiB 的 manifest 在读取前由 stat fast path 拒绝。
 
-`tests/engine/test-trace.cpp` 固定 wire contract：
+`tests/trace/test-trace.cpp` 固定 wire contract：
 
 - 全字段事件的 schema-first 固定顺序和精确 golden JSON。
 - 最小事件只输出 `schema` 与 `kind`。
 - quote、backslash 与 control bytes 的 JSON escaping。
 
-`tests/cli/test-file-trace-sink.cpp` 验证 JSONL 写入：
+同一文件验证 `trace::FileTraceSink` 的 JSONL 写入：
 
 - 每次 emit 产生一条由 `serializeTraceEvent` 定义的行。
 - 不可打开的路径返回 error `Status`，而不是静默丢 trace。

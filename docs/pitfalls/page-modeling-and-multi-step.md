@@ -63,6 +63,16 @@ instead of a guess — they did not.
 
 ## Multi-step navigation is a chain of `umbra-flow run` invocations
 
+> **Superseded 2026-07-29**: `--page` / `--action` and the single-step smoke flow
+> they drove were deleted (`docs/plans/2026-07-29-three-layer-task-system.md`
+> section 16, commit `e387453`). The shell chain below no longer parses -- both
+> flags are now refused as unknown arguments. A multi-step flow is one
+> `--task NAME` Luau script run through `task::TaskHost`. The modeling insight
+> this entry records -- each step re-observes and re-resolves the page it expects
+> to be standing on, so a step that did not navigate fail-closes instead of
+> clicking blind -- carries over to the script's page waits unchanged, and is why
+> the entry is kept rather than deleted.
+
 ### Symptom
 
 Not a failure. The engine deliberately has no loop: `EngineSession::act`

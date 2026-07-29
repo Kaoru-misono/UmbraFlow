@@ -1,32 +1,37 @@
 # entry/cli Architecture Knowledge
 
-`entry/cli` is the command-line entry point for `umbra-flow` and the composition point on Windows.
-It connects the platform-independent `engine` ports to the real capture and background-input
-capabilities of `controller`, and owns arguments, resource names, and process exit codes.
+`entry/cli` is the command-line entry point for `umbra-flow` and the Windows composition root for
+one run's desktop binding. It connects the platform-independent `engine` ports to the real capture
+and background-input capabilities of `controller`, and owns arguments and process exit codes.
+
+The run lifecycle itself is no longer here. Since 2026-07-29 it lives in `task::TaskHost`
+(`modules/task/source/task/task-host.hpp`), per `docs/plans/2026-07-29-three-layer-task-system.md`
+section 13. What remains in this directory is: parse the arguments, build the adapters and the ports
+they implement, call the host, and print the report it returns.
 
 ## Entry-Point Responsibilities
 
-This directory owns four kinds of product boundary.
+This directory owns three kinds of product boundary.
 
 The first is the process boundary. `entry/cli/main.cpp` copies `argv` into an owning
-`std::vector<std::string>`, recognizes the `run` subcommand, emits usage, a success report, or an
-error, and collapses every outcome into an integer exit code. With no subcommand it prints only
+`std::vector<std::string>`, recognizes the `run` subcommand, emits usage, the one-line report of a
+run that started, or an error, and collapses every outcome into an integer exit code. A started run
+always names its task, source hash, seed, and trace path, whether it completed, was cancelled, or
+failed; a failure adds the rendered error line. With no subcommand it prints only
 the project name and usage; there is currently no default behavior that implicitly runs a task.
 
 The second is the command boundary. `RunArgs` in `entry/cli/args.hpp` is the complete value object
-for one `run`, and `parseRunArguments` in `entry/cli/args.cpp` is responsible for turning ten
+for one `run`, and `parseRunArguments` in `entry/cli/args.cpp` is responsible for turning nine
 paired value flags into paths, names, budgets, and monotonic-clock durations. After a successful
-parse there are no "unset" optional fields: the four required items must be non-empty, and the
-remaining fields already carry safe defaults.
+parse there are no "unset" optional fields: the three required items must be non-empty, and the
+remaining fields already carry safe defaults. There is exactly one run mode -- a project-owned task
+addressed as (project, task) -- so there is nothing to choose between and no mutual-exclusion rule
+to enforce.
 
-The third is the resource-name boundary. A published runtime manifest uses stable IDs, whereas a
-human enters names when typing `--page` and `--action`. `entry/cli/name-resolution.hpp` provides
-`resolvePageName` and `resolveActionName`, which perform the name-to-ID translation over an
-already-validated `annotation::RecognitionCatalog`.
-
-The fourth is the composition boundary. The Windows implementation, `runProduct` in
-`entry/cli/run-windows.cpp`, selects a real window, creates the three adapters for capture, input,
-and trace, and then wires them to `engine::EngineSession`. Non-Windows builds use
+The third is the composition boundary. The Windows implementation, `runProduct` in
+`entry/cli/run-windows.cpp`, selects a real window and creates the two adapters for capture and
+input, which it hands to `task::TaskHost` inside a `task::TaskRunConfig`. The CLI never names
+`engine::EngineSession`; the host builds and owns it. Non-Windows builds use
 `entry/cli/run-unsupported.cpp`, which keeps the same product binary and testable command layer
 but has `runProduct` explicitly return `UnsupportedCapability`.
 
@@ -37,10 +42,19 @@ This directory deliberately does not own the following responsibilities:
 - It does not own Win32 window enumeration, WGC, target generation, lease validation, or message
   delivery; these belong to `modules/controller/`, and the CLI only does thin adaptation and
   assembly.
-- It does not define a task language or a general workflow. The current `runProduct` is a fixed
-  smoke flow: wait for one page, look for one action target, and click once when it exists.
-- It does not read authoring documents, nor does it generate manifests or templates. It only
-  consumes published projects that `engine::loadRuntimeProject` can load.
+- It does not define a task language or a general workflow, and it no longer runs a fixed one. The
+  `runSmokeFlow` single-step path -- wait for one page, look for one action target, click once --
+  was deleted on 2026-07-29 (`docs/plans/2026-07-29-three-layer-task-system.md` section 16).
+  `runProduct` binds a target and calls `TaskHost::startTask`; what happens inside the run is the
+  project's task script.
+- It does not translate resource names. A script names its resources directly as
+  `umbra.pages.NAME` and `umbra.recognizers.NAME`, and `task::validateScriptResources` in
+  `modules/task/source/task/script-validator.hpp` closes every such reference against the
+  capability surface before a VM exists. `entry/cli/name-resolution.{hpp,cpp}` existed only to
+  translate the two deleted flags and was deleted with them.
+- It does not read authoring documents, nor does it generate manifests or templates, and it does
+  not load them either: it names a published project directory, and `TaskHost::loadProject` reads
+  it through `engine::loadRuntimeProject`.
 - It does not provide a foreground or global-input fallback. A background-delivery failure is a
   product failure.
 - It does not take on a daemon, tray, scheduler, or multi-task lifecycle; the current design is
@@ -68,9 +82,12 @@ the process boundary.
 
 The `RunArgs` in `entry/cli/args.hpp` corresponds to the following real CLI surface:
 
-- `--project DIR`, `--selector TITLE-SUBSTRING`, `--page NAME`, and `--action NAME` are required.
-- `--timeout SEC` defaults to 30 seconds and is the overall deadline for `waitForPage`.
-- `--poll MS` defaults to 250 ms and accepts only 1 to 60000 ms.
+- `--project DIR`, `--selector TITLE-SUBSTRING`, and `--task NAME` are required. `--task` names
+  `tasks/NAME.luau` inside the published project.
+- `--timeout SEC` defaults to 30 seconds and `--poll MS` defaults to 250 ms, accepting only 1 to
+  60000 ms. Neither is a deadline the CLI enforces: they are the script page-wait defaults, forwarded
+  through `task::TaskRunConfig` into `TaskContextConfig::defaultWaitTimeout` and
+  `TaskContextConfig::defaultWaitPollInterval`, where a script that names neither falls back to them.
 - `--budget N` defaults to `1 << 28` and bounds the number of pixel comparisons in a single
   recognition.
 - `--recognition-timeout MS` defaults to 2000 ms and is the deadline for each recognition.
@@ -84,76 +101,73 @@ pairs; unknown flags, missing values, non-integers, and out-of-range values all 
 `InvalidResource`. As a result, the later composition only deals with typed values and never
 re-parses strings.
 
-### Offline Loading and Name Resolution
+### Project Loading
 
-`runProduct` first calls `engine::loadRuntimeProject` in
-`modules/engine/source/engine/runtime-loader.hpp`. That loader reads
+`runProduct` calls `task::TaskHost::loadProject` with the project directory and a
+`task::TaskHostConfig` carrying the console stop token. The host calls `engine::loadRuntimeProject`
+in `modules/engine/source/engine/runtime-loader.hpp`, which reads
 `generated/annotations.runtime.toml`, applies a 16 MiB size limit before reading, then reads
 `assets/templates/<hash>.png` according to the manifest references, with
 `annotation::RecognitionRuntime::create` validating the hash closure and decoding the templates.
 
-Only after loading succeeds does the CLI query `loaded.m_runtime.manifest().catalog()` through
-`resolvePageName` and `resolveActionName`. A page name is matched only within `catalog.pages()`;
-an action name is matched only within `catalog.recognizers()` against
-`annotation::AnnotationType::ActionTarget`, and a page anchor with the same name cannot be treated
-as an action. Matching is an exact, case-sensitive string comparison.
+The host then builds the script-visible capability surface from
+`loaded.runtime.manifest().catalog()` with `task::CapabilitySurface::create`, registers the loaded
+runtime and that surface together as one generation, and returns the generation's `GenerationId`.
+A generation outlives every run made against it: the runtime and the surface are per project, while
+the trace recorder, the engine session, the task context, and the VM are per run.
 
-`modules/annotation/source/annotation/catalog.cpp`, in `RecognitionCatalog::create`, already
-rejects duplicate page names, duplicate recognizer names, and IDs and names that conflict across
-resources, so the linear scan never faces the ambiguity of "take the first with the same name".
-The failure message lists every available page or action target in catalog order, giving the
-operator a diagnostic they can act on directly.
-
-This offline work deliberately happens before touching the desktop: a bad manifest, a missing
-template, or an unknown name will not first declare DPI, register a console handler, enumerate
-windows, or create capture resources.
+This work deliberately happens before touching the desktop: a bad project path, a corrupt manifest,
+or a missing template fails without declaring DPI, enumerating windows, or creating capture
+resources. That ordering is load-bearing and was re-verified live on 2026-07-29 -- binding the
+target first made a bad `--project` report a window error instead of the manifest error.
 
 ### Windows Composition Sequence
 
-After the offline prerequisites succeed, `entry/cli/run-windows.cpp` assembles in strictly the
-following order:
+`entry/cli/run-windows.cpp` assembles in strictly the following order:
 
-1. `ensurePerMonitorAwareV2` in `modules/controller/source/controller/dpi.hpp` declares
+1. `platform::ConsoleCancellation::install` in
+   `entry/cli/platform/windows-console-cancellation.hpp` registers the Ctrl-C/Ctrl-Break handler
+   and obtains a `std::stop_token`. It is installed first, before anything can block, and its
+   registration is held ahead of every later local so it is removed last. The token becomes
+   `TaskHostConfig::externalCancellation`, which the generation composes with the stop source
+   `TaskHost::cancel` drives, so an external stop and an explicit cancel feed one source.
+2. `TaskHost::loadProject` loads the project, as described above, before any desktop contact.
+3. `ensurePerMonitorAwareV2` in `modules/controller/source/controller/dpi.hpp` declares
    per-monitor-aware V2. Only then are the subsequent client size, client origin, and DPI
    fingerprint under a consistent coordinate interpretation.
-2. `platform::ConsoleCancellation::install` in
-   `entry/cli/platform/windows-console-cancellation.hpp` registers the Ctrl-C/Ctrl-Break handler
-   and obtains a `std::stop_token` for the engine to use.
-3. `enumerateCandidates` enumerates windows; the internal `selectCandidate` requires exactly one
-   candidate whose title contains `RunArgs::m_selector`. Zero or more than one both return
+4. `enumerateCandidates` enumerates windows; `selectCandidate` in
+   `entry/cli/candidate-selection.hpp` requires exactly one capturable candidate -- visible and not
+   minimized -- whose title contains `RunArgs::selector`. Zero or more than one both return
    `TargetUnavailable`, without guessing based on enumeration order.
-4. The selected handle constructs a `TargetSelector`, from which `resolveTarget` yields a
+5. The selected handle constructs a `TargetSelector`, from which `resolveTarget` yields a
    `ResolvedTarget`, reading `ClientSize`, `WindowHandle`, and the current `TargetGeneration`. The
    current one-shot process uses a fixed `CaptureSessionId{1}`.
-5. A live `annotation::ProjectFingerprint` is created from the resolved client width/height and the
+6. A live `annotation::ProjectFingerprint` is created from the resolved client width/height and the
    candidate window's DPI. It does not replace the manifest fingerprint; the two must be equal in
    recognition and action authorization.
-6. `platform::clientOriginDesktop` uses `ClientToScreen` to find the desktop-space origin of client
+7. `platform::clientOriginDesktop` uses `ClientToScreen` to find the desktop-space origin of client
    `(0, 0)`; together with the client extent it creates a `ClientGeometry`, and then a
-   `WgcCaptureSession`.
-7. The same handle, session, generation, and client extent create a `DeliveryTarget`, ensuring that
-   the capture identity and the delivery identity come from the same target resolution.
-8. Create `FileTraceSink`, `platform::WgcFrameSource`, and `platform::ControllerActionSink`, fill
-   the CLI arguments into `engine::EngineSessionConfig`, and finally call
-   `engine::EngineSession::create`.
+   `WgcCaptureSession`. The same handle, session, generation, and client extent create a
+   `DeliveryTarget`, ensuring that the capture identity and the delivery identity come from the
+   same target resolution.
+8. `platform::WgcFrameSource` and `platform::ControllerActionSink` wrap those two resources, and
+   together with the live fingerprint and the CLI's tuning values they fill a `task::TaskRunConfig`
+   that is moved into `TaskHost::startTask`.
 
-`EngineSessionConfig` carries the live fingerprint, the pixel budget, the per-recognition deadline,
-the maximum frame age, and the cancellation token. The three adapters are handed to the session as
-`std::unique_ptr<engine::IFrameSource>`, `std::unique_ptr<engine::IActionSink>`, and
-`std::unique_ptr<engine::ITraceSink>`; from this point on the session owns the port lifetimes.
+`TaskRunConfig` is a move-in ownership boundary rather than an ordinary config: it carries
+`std::unique_ptr<engine::IFrameSource>` and `std::unique_ptr<engine::IActionSink>`, so the caller's
+copy is left empty and the run owns the port lifetimes. Alongside them it carries the live
+fingerprint, the pixel budget, the per-recognition deadline, the maximum frame age, the two
+page-wait defaults, and the trace path.
 
-The execution stage calls `EngineSession::waitForPage(pageId, timeout, pollInterval)` in
-`modules/engine/source/engine/session.hpp`. The returned `PageWait` pairs the matched
-`ResolvedPage` with the same `Observation` that produced it, and the CLI then calls
-`EngineSession::findAction(observation, actionId)`, without grabbing another frame for the action.
+`startTask` is where the run happens. It loads and validates the task, opens the trace, and builds
+the `trace::TraceRecorder`, the `engine::EngineSession`, the `task::TaskContext`, and the VM for
+exactly the run's duration, in that order; the recorder is declared before every borrower and held
+through a `unique_ptr`, so its address is fixed and all three die before it on every path,
+including early returns. The CLI observes none of this: it receives a `task::TaskRunReport` and
+prints one line.
 
-An absent action is a normal Tier-A outcome: `EngineSession::findAction` returns a successful empty
-`std::optional<ActionFound>`, and the CLI produces `RunReport{m_actionDelivered = false}`. When the
-action exists, `EngineSession::act` consumes the observation, performs authorization, the
-frame-to-client transform, and delivery, and returns an `ActReceipt`; the CLI writes the actual
-client click point into the success report.
-
-### The Three Port Adapters
+### The Two Port Adapters
 
 `platform::WgcFrameSource` in `entry/cli/platform/wgc-frame-source.hpp` owns a move-only
 `WgcCaptureSession` by value. `capture()` forwards to the session as-is, and
@@ -173,12 +187,14 @@ If any step in the pointer down/up chain fails, the adapter preserves the origin
 appends context and never masks the original click failure. Both `AuditLog` and the held state are
 owning members of the adapter and never borrow a temporary on the `runProduct` stack.
 
-`FileTraceSink` in `entry/cli/file-trace-sink.hpp` owns a `std::ofstream`. `create` opens the path
-in binary + trunc mode and returns a `std::unique_ptr<engine::ITraceSink>`; a failure to open is an
-`IoFailure`. Each `emit` uses `engine::serializeTraceEvent` to write one JSONL record, appends a
-newline, and immediately `flush`es; a write or flush failure likewise returns `IoFailure` to the
-engine. This avoids leaving events across emits in the C++ stream buffer, but the code does not
-claim a filesystem-level durable-sync guarantee.
+The third port is no longer a CLI adapter. `trace::FileTraceSink` lives in
+`modules/trace/source/trace/file-sink.hpp`, and `TaskHost::startTask` opens it -- after the task has
+loaded and validated, so a misspelled task name leaves no evidence file behind. `create` opens the
+path in binary + trunc mode and returns a `std::unique_ptr<trace::ITraceSink>`; a failure to open is
+an `IoFailure`. Each `emit` writes one serialized JSONL record, appends a newline, and immediately
+`flush`es; a write or flush failure likewise returns `IoFailure` to its caller. This avoids leaving
+events across emits in the C++ stream buffer, but the code does not claim a filesystem-level
+durable-sync guarantee.
 
 ### Exit-Code Contract
 
@@ -188,12 +204,16 @@ and `run.cpp` maps structured errors to that enum. Only `main.cpp` converts it t
 
 | Exit Code | Meaning |
 |---:|---|
-| `0` | The help path of the empty command, or an action successfully delivered |
+| `0` | The help path of the empty command, or a task that ran to completion |
 | `1` | Unknown subcommand, argument/resource error, unsupported host, the vast majority of run failures, or an uncaught exception |
 | `2` | `TargetCompatibilityUnverified` |
-| `3` | The page was resolved, but the specified action target is absent from that observation |
 | `4` | `Timeout` |
 | `5` | `Cancelled`, or a console stop was already requested when the run failure returned |
+
+`3` is deliberately absent from that table and stays absent. It was `ActionAbsent`, and its only
+producer was the smoke path removed on 2026-07-29; a task script now decides for itself what an
+absent target means. The value is left unused rather than reassigned, because an operator or script
+reading an old `3` in a log must never be told it meant something else.
 
 Every CLI path returns `ExitCode`, avoiding a mix of `EXIT_FAILURE` and bare integers for the same
 contract. `exitCodeForError(error, stopRequested)` checks `stopRequested` first and
@@ -203,14 +223,22 @@ operator's cancellation intent is still reported preferentially as `5`. Argument
 handler installation, so a parse error is mapped explicitly with `stopRequested=false`; the
 non-Windows implementation also always reports that no cancellation was received.
 
+A run that started is mapped by `exitCodeForReport(report, stopRequested)`, the single definition of
+that mapping: a report carrying no failure is `Success`, and every other report defers to
+`exitCodeForError` over the failure that ended it. A cancelled run therefore reports `5` because its
+failure kind is `Cancelled`, not because this function knows about cancellation separately, and a
+run that never started reports the same kind the same way.
+
 The error text is composed by `formatRunError` from the automation kind, the message, all context,
 and, when present, the native error category/value. This is the CLI's single-line diagnostic
 format and does not change the classification of the underlying `Error`.
 
 ## Constraints That Must Remain True
 
-**Fail-closed.** Resource loading and name resolution complete before any desktop side effect; the
-window substring must be unique; a failure at any step of DPI declaration, geometry creation, WGC,
+**Fail-closed.** Project loading completes before any desktop side effect, and the task's script
+resource validation completes before a VM exists and before the trace file is opened, so a
+misspelled task or an unresolvable resource name leaves neither a VM nor an evidence file behind;
+the window substring must be unique; a failure at any step of DPI declaration, geometry creation, WGC,
 delivery, or trace terminates immediately through `UF_TRY`. When the live fingerprint does not
 match the manifest, `RecognitionRuntime` refuses recognition and `authorizeCoordinateAction` again
 refuses the action. After action authorization, `EngineSession::act` further revalidates the bound
@@ -224,15 +252,20 @@ and age at post time. A failure at either layer sends no click. After a successf
 observation is marked invalid before the potentially failing post-click trace, so that a trace
 failure cannot induce a duplicate delivery.
 
-**Determinism.** Argument conversion does not depend on locale; name resolution uses the catalog's
-stable order and unique names; window selection rejects multiple matches rather than taking "the
-first"; the same `Observation` carries both page and action evidence; the default click point and
-coordinate transform are computed by annotation/engine. Trace uses a fixed-schema serializer. Real
-window content and arrival timing are not themselves deterministic inputs, but the entry layer
+**Determinism.** Argument conversion does not depend on locale; script resource validation resolves
+every name against the capability surface's stable, catalog-ordered handle lists; window selection
+rejects multiple matches rather than taking "the first"; the same `Observation` carries both page
+and action evidence; the default click point and coordinate transform are computed by
+annotation/engine. Trace uses a fixed-schema serializer. `TaskHost` draws a fresh seed per run from
+`std::random_device` and stamps it into `run.started`, so a run's random sequence replays from its
+own record; a silently constant seed would look correct in a trace while destroying that property.
+Real window content and arrival timing are not themselves deterministic inputs, but the entry layer
 introduces no additional implicit selection.
 
-**Ownership and lifetime are visible.** `RunArgs`, `LoadedRuntime`, the three adapters, and their
-system resources all move by value or by `unique_ptr`. `ConsoleCancellation` manages the handler
+**Ownership and lifetime are visible.** `RunArgs` and the two adapters handed to `TaskHost` in a
+`TaskRunConfig` move by value or by `unique_ptr`; `LoadedRuntime` is owned by the generation and
+copied once per run, never per frame, so a generation still has a runtime for its next run.
+`ConsoleCancellation` manages the handler
 registration with RAII; the actual `stop_source` is a module-static process-lifetime object, so the
 exit-code boundary can still read the stop state after the handler is unregistered. That source,
 once stopped, is never reset, which is consistent with the "exactly one run per process" contract.
@@ -250,11 +283,14 @@ messages only to the single resolved HWND, and rejects null and `HWND_BROADCAST`
 becomes inactive, message delivery fails, or compatibility cannot be confirmed, it fails; there is
 no fallback that switches to foreground input "in order to succeed".
 
-**Trace is part of the correctness path.** `engine::ITraceSink::emit` returns a `Status`, and the
-`SessionStarted` of session creation, recognition failures, and authorization- and
-delivery-related events can all fail the operation. `FileTraceSink` likewise does not swallow write
-errors. This makes "unable to leave the required evidence" an explicit product failure rather than
-an invisible best-effort log loss.
+**Trace is part of the correctness path.** `trace::ITraceSink::emit` returns a `Status`, and the run
+bracket (`run.started`, `run.resources_validated`, `run.finished`), recognition failures, and
+authorization- and delivery-related events can all fail the operation. `trace::FileTraceSink`
+likewise does not swallow write errors. This makes "unable to leave the required evidence" an
+explicit product failure rather than an invisible best-effort log loss. It holds at the closing end
+too: when the run itself succeeded but `run.finished` could not be written, `startTask` puts that
+`IoFailure` into the report, so the run is reported Failed. An incomplete trace is not a completed
+run. The run's own failure always takes precedence, so this only surfaces when there was no other.
 
 ## Dependencies
 
@@ -262,17 +298,22 @@ The inbound edge is shell/operator → CLI. What crosses the boundary is string 
 project path, the target-title substring, names, and exit codes; at this layer the CLI is
 responsible for readable diagnostics and defaults.
 
-The outbound edge toward `engine` is established through `${PROJECT_NAME}_cli_support` in
-`entry/CMakeLists.txt`. What crosses the boundary is:
+The outbound edge now runs toward `task`, and is established through `${PROJECT_NAME}_cli_support`
+in `entry/CMakeLists.txt`, which links `${PROJECT_NAME}_task` PUBLIC on every host -- the exit-code
+boundary maps a `task::TaskRunReport`, so the task module is part of this library's interface even
+where the Windows composition does not build. `${PROJECT_NAME}_engine` stays PUBLIC as well,
+because the two adapters implement engine ports. What crosses the boundary is:
 
-- `LoadedRuntime` and `EngineSessionConfig`;
-- the three owning port implementations;
-- `PageId`, `RecognizerId`, `RunReport`, and structured `Error`.
+- the two owning port implementations plus the live `annotation::ProjectFingerprint`, moved in as a
+  `task::TaskRunConfig`, together with the pixel budget, the recognition deadline, the maximum frame
+  age, and the two page-wait defaults;
+- the project path, the task name, and the trace path;
+- `GenerationId`, `task::TaskRunReport`, and structured `Error`.
 
-`engine` never sees the HWND, the console handler, file-selection syntax, or the title substring.
-In the reverse direction, the CLI never interprets recognizer evidence, page outcomes, or
-authorization rules; it only drives the public surface of `waitForPage`, `EngineSession::findAction`,
-and `act`.
+`task` and `engine` never see the HWND, the console handler, file-selection syntax, or the title
+substring. In the reverse direction, the CLI never interprets recognizer evidence, page outcomes, or
+authorization rules, and no longer drives `waitForPage`, `EngineSession::findAction`, or `act`: it
+calls `loadProject` and `startTask` and reads the report.
 
 The outbound edge toward `controller` exists only in the Windows build. What crosses the boundary
 is the resolved `WindowHandle`, `ClientSize`, `Dpi`, `TargetGeneration`, `ClientGeometry`,
@@ -280,15 +321,14 @@ is the resolved `WindowHandle`, `ClientSize`, `Dpi`, `TargetGeneration`, `Client
 session/generation/frame identity and a coordinate transform, and the final click carries the same
 identity lineage back to the controller.
 
-Collaboration with `annotation` happens mainly indirectly through `engine`. The CLI touches
-`RecognitionCatalog` directly only for name resolution and creates `ProjectFingerprint` directly
-only to express the real target's size/DPI. It does not modify the catalog, nor does it create
-authoring resources.
+Collaboration with `annotation` is now fully indirect. The CLI creates a `ProjectFingerprint` to
+express the real target's size/DPI and touches nothing else in `annotation`: it does not read the
+`RecognitionCatalog`, does not modify it, and does not create authoring resources.
 
 The split of `${PROJECT_NAME}_cli_support` is part of the test architecture, not merely a build
-convenience. `entry/cli/main.cpp` keeps only a thin process shell; argument parsing, name
-resolution, file trace, error formatting, and exit-code mapping go into a static library that both
-the executable and `test-cli` link. On Windows the library additionally adds the real adapters and
+convenience. `entry/cli/main.cpp` keeps only a thin process shell; argument parsing, error
+formatting, and exit-code mapping go into a static library that both the executable and `test-cli`
+link. On Windows the library additionally adds the real adapters and
 links the controller; on other platforms it adds `run-unsupported.cpp`. As a result, the
 platform-independent contract can be tested in CI without a Windows desktop, while the product
 executable does not need to export internal functions.
@@ -301,19 +341,24 @@ global compile-definition macro.
 
 ## Tests
 
-`tests/cli/test-args.cpp` pins down the complete flag happy path, all optional defaults, the four
-required items, unknown/missing/non-integer inputs, the 1/60000 ms boundary of poll, and the
-exit-code mapping. Its cancellation-priority case combines `CaptureStalled`, `Timeout`, and
+`tests/cli/test-args.cpp` pins down the complete flag happy path, all optional defaults, the three
+required items, unknown/missing/non-integer inputs, the 1/60000 ms boundary of poll, and both
+exit-code mappings -- `exitCodeForError` per failure kind and `exitCodeForReport` per run outcome,
+including a completed run that reports success even though a stop arrived while it was finishing. It
+also pins that `--page` and `--action` are refused rather than ignored, so a stale invocation fails
+loudly instead of quietly running a different task, and that the usage text names `--task` and
+neither removed flag. Its cancellation-priority case combines `CaptureStalled`, `Timeout`, and
 `IoFailure` with `stopRequested=true` to directly prevent underlying errors from overriding the
 Ctrl-C intent.
 
-`tests/cli/test-name-resolution.cpp` uses a real `RecognitionCatalog` to pin down page and action
-name-to-ID and confirms that a page anchor cannot resolve to an action; the available list for an
-unknown name is also part of the test contract.
-
-`tests/cli/test-file-trace-sink.cpp` pins down "one serialized JSONL per emit" and the ordering,
-and confirms that a path that cannot be opened returns `IoFailure`. The fixed JSON schema itself is
-covered by `tests/engine/test-trace.cpp`.
+`tests/task/test-task-host.cpp` covers the run lifecycle that used to live here. It publishes a real
+annotation project into a temporary directory and drives `TaskHost` end to end against fake ports,
+then reads the trace file back: the acceptance case asserts the whole ordered
+`umbraflow-trace/v1` bracket from `run.started` through the engine and `task.native_call` events to
+`run.finished`, under one sequence and one run and generation identity. It also pins that two runs
+of the same task draw different seeds and that the reported seed is the one `run.started` recorded,
+that a failed run is reported rather than failing the call, that a missing task fails before any
+trace file is opened, and that the P2 verbs report `UnsupportedCapability`.
 
 The safety semantics of the CLI adapters are fixed in layers by downstream tests:
 
@@ -333,21 +378,25 @@ The safety semantics of the CLI adapters are fixed in layers by downstream tests
   `tests/controller/test-dpi.cpp` fix target resolution, generation, Win32 discovery errors, and
   DPI fail-closed classification.
 
-The `test-cli` in `tests/CMakeLists.txt` compiles in only the three platform-independent CLI test
-files directly and links `${PROJECT_NAME}_cli_support`. There is currently no direct unit test
-covering `main`/`dispatch`, `selectCandidate`, console registration, the client-origin adapter, or
-the entire real Windows composition; these belong to the on-hardware smoke/E2E verification surface
-and cannot be substituted by the green of the existing offline tests.
+The `test-cli` in `tests/CMakeLists.txt` compiles in `cli/test-args.cpp` on every host, adds
+`cli/test-candidate-selection.cpp` only on Windows where `selectCandidate` is compiled at all, and
+links `${PROJECT_NAME}_cli_support`. There is currently no direct unit test covering
+`main`/`dispatch`, console registration, the client-origin adapter, or the entire real Windows
+composition; these belong to the on-hardware smoke/E2E verification surface and cannot be
+substituted by the green of the existing offline tests. The run lifecycle is no longer on that list:
+it moved into `TaskHost` precisely so that it became reachable from a test.
 
 ## Future Extensions
 
-`docs/plans/2026-07-23-engine-architecture.md` is the direct authority for the current engine/CLI
-composition. It explicitly positions the CLI as the Windows composition root of Phase 3, positions
-the fixed C++ flow as a smoke flow, and leaves the task language to Luau. Therefore new task
-orchestration should attach to the observe/act/wait surface of `EngineSession` or to a script
-binding, and should not continue to pile a declarative language into `runProduct`.
+`docs/plans/2026-07-29-three-layer-task-system.md` is the direct authority for the current
+CLI/task composition. Its section 13 fixes the `TaskHost` verb set from P0 through P2, so the API
+surface does not change when a resident host replaces the CLI, and its section 16 records the
+removal of the smoke flow together with `--page`, `--action`, and `ExitCode::ActionAbsent`.
+New orchestration therefore belongs in the trusted Luau framework or in `TaskHost`, and must not
+come back into `runProduct`.
 
-The same plan lists the following seams:
+`docs/plans/2026-07-23-engine-architecture.md` remains the authority for the engine/port
+composition itself, and lists the following seams:
 
 - The P3 second platform is integrated by implementing the same `IFrameSource`, `IActionSink`, and
   `ITraceSink`; the CLI host implementation can replace `run-unsupported.cpp`, and the engine need
@@ -362,9 +411,9 @@ The same plan lists the following seams:
 
 `docs/plans/2026-07-21-product-form-and-roadmap.md` defines the current form as "P0 CLI
 single-task, strict-background, reliable cancellation" and defines P2 as a tray-resident App. At
-that point the composition boundary of `EngineSession` and the three ports can be reused, but the
-process lifecycle, task list, scheduled tasks, and UI state belong to a new app shell and should
-not become CLI or engine policy in reverse.
+that point the reusable boundary is `TaskHost` plus the ports a host binds for it, but the process
+lifecycle, task list, scheduled tasks, and UI state belong to a new app shell and should not become
+CLI, task, or engine policy in reverse.
 
 B3 of that roadmap further requires hard cancellation and long-run stability;
 `docs/plans/2026-07-20-post-port-win32-robustness.md` records still-open controller issues such as

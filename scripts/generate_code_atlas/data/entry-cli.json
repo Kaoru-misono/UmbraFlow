@@ -37,10 +37,6 @@
    "why": "真正的 Windows 组合序列，展示共享目标绑定如何支撑 smoke 与 script 两条运行路径"
   },
   {
-   "path": "entry/cli/name-resolution.hpp",
-   "why": "人输入的名称到 manifest 稳定 ID 的翻译边界"
-  },
-  {
    "path": "entry/cli/platform/controller-action-sink.hpp",
    "why": "看一个端口适配器如何持有 controller 状态并转发 lease"
   }
@@ -147,8 +143,8 @@
      "note": "目标兼容性无法确认"
     },
     {
-     "sig": "ActionAbsent = 3",
-     "note": "页面已解析但 action target 在该 observation 中缺席"
+     "sig": "（3 刻意空缺）",
+     "note": "原 ActionAbsent，唯一产出者 smoke 路径已于 2026-07-29 删除；该值留空不改派，使旧日志里的 3 不会被赋予新含义"
     },
     {
      "sig": "Timeout = 4",
@@ -240,28 +236,6 @@
     "uf::cli::RunReport",
     "uf::cli::ExitCode",
     "uf::Error"
-   ]
-  },
-  {
-   "name": "uf::cli::name-resolution",
-   "kind": "functions",
-   "file": "entry/cli/name-resolution.hpp",
-   "line": 15,
-   "responsibility": "资源名称边界：把人输入的 --page / --action 名称翻译成 manifest 的稳定 ID。匹配精确且区分大小写，page 只在 pages 中查、action 只在 ActionTarget recognizer 中查，未知名称 fail 时列出全部可用名称供操作者改正。",
-   "members": [
-    {
-     "sig": "auto resolvePageName(RecognitionCatalog const& catalog, std::string_view name) -> Result<PageId>",
-     "note": "页面名到 PageId"
-    },
-    {
-     "sig": "auto resolveActionName(RecognitionCatalog const& catalog, std::string_view name) -> Result<RecognizerId>",
-     "note": "动作名到 RecognizerId，page anchor 不能被当成动作"
-    }
-   ],
-   "related": [
-    "uf::annotation::RecognitionCatalog",
-    "uf::annotation::PageId",
-    "uf::annotation::RecognizerId"
    ]
   },
   {
@@ -433,7 +407,7 @@
      "line": 35
     },
     {
-     "text": "scriptMode 为真时打印 task/hash/trace；否则 actionDelivered 为假映射 ActionAbsent(3)，为真打印 page/action/click/trace",
+     "text": "已启动的 run 打印 task/hash/seed/trace 一行；失败先输出渲染错误行，再由 exitCodeForReport 映射退出码",
      "file": "entry/cli/main.cpp",
      "line": 42
     }
