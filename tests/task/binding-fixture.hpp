@@ -3,6 +3,7 @@
 #include "../annotation/test-helpers.hpp"
 
 #include <task/capability-surface.hpp>
+#include <task/framework-bundle.hpp>
 #include <task/task-context.hpp>
 
 #include <annotation/resource.hpp>
@@ -27,6 +28,8 @@
 #include <engine/session.hpp>
 
 #include <image/png.hpp>
+
+#include <script/engine.hpp>
 
 #include <trace/event.hpp>
 #include <trace/recorder.hpp>
@@ -339,6 +342,29 @@ namespace uf::task
     // lands under one identity.
     inline constexpr auto k_fixtureRunId        = TaskRunId{5};
     inline constexpr auto k_fixtureGenerationId = GenerationId{1};
+
+    // The EngineConfig a real task VM boots with, assembled in one place so no
+    // test can accidentally assert against a surface shape the host does not
+    // ship: the real framework bundle under the framework environment, the
+    // private capability surface handed to it as a chunk argument, the umbra
+    // data tables as a project global, and the framework's own ctx published
+    // beside them.
+    //
+    // `context` must outlive the Engine built from the returned config, because
+    // the private surface holds its address (see CapabilitySurface).
+    [[nodiscard]]
+    inline auto taskVmConfig(CapabilitySurface const& surface, TaskContext& context)
+        -> script::EngineConfig
+    {
+        return script::EngineConfig{
+            .frameworkModules  = frameworkScriptModules(),
+            .installHostTables = surface.installer(),
+            .installPrivateCapabilities =
+                CapabilitySurface::privateCapabilities(context),
+            .projectGlobals          = CapabilitySurface::projectGlobals(),
+            .frameworkProjectGlobals = frameworkProjectGlobals(),
+        };
+    }
 
     [[nodiscard]]
     inline auto baseConfig(anno::ProjectFingerprint fingerprint)

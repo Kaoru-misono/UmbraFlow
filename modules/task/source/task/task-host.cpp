@@ -447,10 +447,11 @@ namespace uf::task
         };
 
         // The VM boots two environments. The trusted framework bundle loads
-        // under the framework environment; the task script below runs under a
+        // under the framework environment and is handed the private capability
+        // surface as its chunk argument; the task script below runs under a
         // project environment that is an explicit whitelist and holds no route
-        // back to the framework's, so the capability surface named here is the
-        // whole of what the script can reach.
+        // back to the framework's. So the script reaches the umbra data tables
+        // and the framework's own `ctx`, and no primitive by any route.
         //
         // A VM that cannot be built at all -- a generation already cancelled, so
         // the interrupt breaks the framework boot, or a framework module that
@@ -459,10 +460,13 @@ namespace uf::task
         // bare Result failure here would leave a run bracket that never closed.
         auto vm = script::Engine::create(
             script::EngineConfig{
-                .cancellation      = p_generation->cancellation(),
-                .frameworkModules  = frameworkScriptModules(),
-                .installHostTables = p_generation->surface().installer(context),
-                .projectGlobals    = CapabilitySurface::projectGlobals(),
+                .cancellation               = p_generation->cancellation(),
+                .frameworkModules           = frameworkScriptModules(),
+                .installHostTables          = p_generation->surface().installer(),
+                .installPrivateCapabilities =
+                    CapabilitySurface::privateCapabilities(context),
+                .projectGlobals          = CapabilitySurface::projectGlobals(),
+                .frameworkProjectGlobals = frameworkProjectGlobals(),
             }
         );
         if (!vm)

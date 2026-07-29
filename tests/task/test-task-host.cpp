@@ -75,13 +75,13 @@ namespace uf::task
         // recognizer, so the run.resources_validated line carries a non-empty
         // closure of each.
         constexpr auto k_taskSource = std::string_view{
-            "local cycle = umbra:cycle_open()\n"
-            "local page = umbra:cycle_page(cycle)\n"
-            "if page == nil then umbra:cycle_close(cycle) return 0 end\n"
-            "if not page:is(umbra.pages.home) then umbra:cycle_close(cycle) return 0 end\n"
-            "local hit = umbra:cycle_find(cycle, umbra.recognizers.daily_button)\n"
-            "if hit == nil then umbra:cycle_close(cycle) return 0 end\n"
-            "umbra:cycle_click(cycle, hit)\n"
+            "local cycle = ctx:cycle_open()\n"
+            "local page = ctx:cycle_page(cycle)\n"
+            "if page == nil then ctx:cycle_close(cycle) return 0 end\n"
+            "if not page:is(umbra.pages.home) then ctx:cycle_close(cycle) return 0 end\n"
+            "local hit = ctx:cycle_find(cycle, umbra.recognizers.daily_button)\n"
+            "if hit == nil then ctx:cycle_close(cycle) return 0 end\n"
+            "ctx:cycle_click(cycle, hit)\n"
             "return 1\n"
         };
 

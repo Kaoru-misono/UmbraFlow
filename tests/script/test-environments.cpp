@@ -205,6 +205,71 @@ namespace uf::script
             }
         }
 
+        TEST_CASE("A framework module cannot capture a dangerous global at load time")
+        {
+            using testing::ProbeEnvironment;
+            using testing::runInEnvironment;
+
+            // The framework environment chains __index to the main globals, so a
+            // module that binds a name at LOAD time keeps that value for the
+            // whole generation regardless of what the boot removes afterwards.
+            // The boot therefore strips the denial list before any Lua runs --
+            // the framework included -- rather than after loading it, which is
+            // what the design's §7 ordering said.
+            //
+            // The module below tries every capture the denial list covers, plus
+            // one name it is meant to keep. Both halves are asserted, so this
+            // fails if the strip stopped happening AND if the strip started
+            // taking the whole standard library with it.
+            constexpr auto framework = std::string_view{
+                "capturedGlobalEnv  = _G\n"
+                "capturedGetfenv    = getfenv\n"
+                "capturedSetfenv    = setfenv\n"
+                "capturedNewproxy   = newproxy\n"
+                "capturedGcinfo     = gcinfo\n"
+                "capturedCoroutine  = coroutine\n"
+                "capturedDebug      = debug\n"
+                "capturedOsTime     = os.time\n"
+                "capturedOsClock    = os.clock\n"
+                "capturedOsDate     = os.date\n"
+                "capturedRandom     = math.random\n"
+                "capturedRandomseed = math.randomseed\n"
+                "capturedPcall      = pcall\n"
+                "return {}\n"
+            };
+
+            SUBCASE("every dangerous name was already gone when the module ran")
+            {
+                auto const captured = runInEnvironment(
+                    framework,
+                    "return ("
+                    "capturedGlobalEnv == nil and capturedGetfenv == nil"
+                    " and capturedSetfenv == nil and capturedNewproxy == nil"
+                    " and capturedGcinfo == nil and capturedCoroutine == nil"
+                    " and capturedDebug == nil and capturedOsTime == nil"
+                    " and capturedOsClock == nil and capturedOsDate == nil"
+                    " and capturedRandom == nil and capturedRandomseed == nil"
+                    ") and 1 or 0",
+                    ProbeEnvironment::Framework
+                );
+                REQUIRE(captured.has_value());
+                CHECK(*captured == doctest::Approx(1.0));
+            }
+
+            SUBCASE("control: an admitted name was capturable at the same moment")
+            {
+                // Without this the case above would pass on a boot that never ran
+                // the module at all, or one whose load-time environment was empty.
+                auto const admitted = runInEnvironment(
+                    framework,
+                    "return (capturedPcall ~= nil and capturedPcall == pcall) and 1 or 0",
+                    ProbeEnvironment::Framework
+                );
+                REQUIRE(admitted.has_value());
+                CHECK(*admitted == doctest::Approx(1.0));
+            }
+        }
+
         TEST_CASE("A failing host-table installer fails create with its own error")
         {
             using testing::probeInstallerFailure;

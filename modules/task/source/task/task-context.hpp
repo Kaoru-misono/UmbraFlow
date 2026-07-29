@@ -195,19 +195,13 @@ namespace uf::task
         [[nodiscard]]
         auto hasOpenCycle() const noexcept -> bool;
 
-        // True once the shared cancellation source has requested a stop. The
-        // binding layer's umbra:try consults this after a protected call so a
-        // cancellation is never handed back to the script as a recoverable error:
-        // the same stop token that makes the engine return Cancelled also drives
-        // the VM interrupt, so a requested stop means the generation is spent.
-        [[nodiscard]]
-        auto cancelled() const noexcept -> bool;
-
         // Latches that an unrecoverable cancellation was observed. The binding
         // layer sets this before raising its non-catchable sentinel, and gates
-        // every later engine verb on it, so a spent VM cannot resume automation
-        // even if a script swallowed the sentinel. The owning host reads it after
-        // the run to tell a cancelled generation from a merely errored one.
+        // every primitive on it at the C guard entry, so a spent VM cannot resume
+        // automation even if a script swallowed the sentinel. Since ctx:try is
+        // pure Luau and consults nothing, this latch is the whole of the terminal
+        // guarantee on the Luau side. The owning host reads it after the run to
+        // tell a cancelled generation from a merely errored one.
         void markFatal() noexcept;
 
         [[nodiscard]]

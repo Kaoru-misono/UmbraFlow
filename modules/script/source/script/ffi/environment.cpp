@@ -5,6 +5,7 @@
 
 #include <cstddef>
 #include <cstdlib>
+#include <optional>
 #include <string>
 
 // Luau's C headers are third-party and do not build clean under the project's
@@ -103,26 +104,27 @@ namespace uf::script
                 : std::string{"(non-string error value)"};
         }
 
-        // Copies one global by name into the table at `destination`. A name that
-        // resolves to nil fails: an environment quietly missing a whitelisted
-        // entry would look like a script bug at the point of use rather than
-        // like the boot problem it is.
+        // Copies one field by name from the table at `source` into the table at
+        // `destination`. A name that resolves to nil fails: an environment
+        // quietly missing a whitelisted entry would look like a script bug at
+        // the point of use rather than like the boot problem it is.
         [[nodiscard]]
-        auto copyGlobalInto(
+        auto copyFieldInto(
             lua_State* state,
+            int source,
             int destination,
             std::string_view name,
             std::string_view origin
         ) -> Status
         {
             auto const key = std::string{name};
-            lua_rawgetfield(state, LUA_GLOBALSINDEX, key.c_str());
+            lua_rawgetfield(state, source, key.c_str());
             if (lua_isnil(state, -1))
             {
                 lua_pop(state, 1);
                 return fail(
                     AutomationErrorKind::InternalInvariant,
-                    "project environment whitelist names a global that is absent"
+                    "project environment whitelist names a value that is absent"
                     " from this VM (" + std::string{origin} + "): " + key
                 );
             }
@@ -143,12 +145,22 @@ namespace uf::script
         auto resumeChunkOnThread(
             lua_State* mainState,
             int environmentIndex,
+            std::optional<int> argumentIndex,
             std::string_view source,
             std::string_view chunkName,
             InterruptState const* control
         ) -> Result<lua_State*>
         {
             int const environment = lua_absindex(mainState, environmentIndex);
+
+            // Absolutized before lua_newthread pushes onto `mainState`, because
+            // a relative index would name a different slot afterwards.
+            auto const argument = argumentIndex.transform(
+                [mainState](int index)
+                {
+                    return lua_absindex(mainState, index);
+                }
+            );
 
             auto options              = lua_CompileOptions{};
             options.optimizationLevel = 1;
@@ -223,7 +235,18 @@ namespace uf::script
             // leave the thread's stack holding exactly the function to resume.
             lua_remove(thread, 1);
 
-            int const runStatus = lua_resume(thread, nullptr, 0);
+            // The chunk's one vararg, when the caller supplied one. A framework
+            // module reads it as `local native = ...`, which is how the private
+            // capability surface becomes an upvalue of trusted code without ever
+            // being bound to a name either environment could reach.
+            int argumentCount = 0;
+            if (argument.has_value())
+            {
+                lua_xpush(mainState, thread, *argument);
+                argumentCount = 1;
+            }
+
+            int const runStatus = lua_resume(thread, nullptr, argumentCount);
             if (runStatus == LUA_BREAK || (control != nullptr && control->broken))
             {
                 // The interrupt hard-cancelled this thread (stop token, instruction
@@ -273,8 +296,9 @@ namespace uf::script
         lua_setfield(state, metatable, "__metatable");
         // Frozen with a shallow lua_setreadonly rather than deepFreezeMetatable,
         // which would follow __index into the main globals and freeze them here
-        // -- before the boot has finished removing the dangerous ones. The shape
-        // rules the walk would check are satisfied by construction two lines up.
+        // -- before the host installer has registered its tables and before
+        // luaL_sandbox, which owns that freeze. The shape rules the walk would
+        // check are satisfied by construction two lines up.
         lua_setreadonly(state, metatable, 1);
         lua_setmetatable(state, environment);
 
@@ -289,6 +313,7 @@ namespace uf::script
     auto loadFrameworkModules(
         lua_State* state,
         std::span<FrameworkModule const> modules,
+        std::optional<int> privateCapabilities,
         InterruptState const* control
     ) -> Status
     {
@@ -317,6 +342,7 @@ namespace uf::script
                 resumeChunkOnThread(
                     state,
                     environment,
+                    privateCapabilities,
                     module.source,
                     module.name,
                     control
@@ -347,7 +373,8 @@ namespace uf::script
 
     auto installProjectEnvironmentPrototype(
         lua_State* state,
-        std::span<std::string const> hostGlobals
+        std::span<std::string const> hostGlobals,
+        std::span<std::string const> frameworkGlobals
     ) -> Status
     {
         int const stackBase = lua_gettop(state);
@@ -363,11 +390,53 @@ namespace uf::script
 
         for (std::string_view const name : k_projectStandardGlobals)
         {
-            UF_TRY(copyGlobalInto(state, prototype, name, "standard library"));
+            UF_TRY(
+                copyFieldInto(
+                    state,
+                    LUA_GLOBALSINDEX,
+                    prototype,
+                    name,
+                    "standard library"
+                )
+            );
         }
         for (auto const& name : hostGlobals)
         {
-            UF_TRY(copyGlobalInto(state, prototype, name, "host installer"));
+            UF_TRY(
+                copyFieldInto(
+                    state,
+                    LUA_GLOBALSINDEX,
+                    prototype,
+                    name,
+                    "host installer"
+                )
+            );
+        }
+
+        if (!frameworkGlobals.empty())
+        {
+            pushFrameworkEnvironment(state);
+            int const framework = lua_gettop(state);
+            if (!lua_istable(state, framework))
+            {
+                return fail(
+                    AutomationErrorKind::InternalInvariant,
+                    "the framework environment is missing from the VM registry"
+                );
+            }
+            for (auto const& name : frameworkGlobals)
+            {
+                UF_TRY(
+                    copyFieldInto(
+                        state,
+                        framework,
+                        prototype,
+                        name,
+                        "framework bundle"
+                    )
+                );
+            }
+            lua_remove(state, framework);
         }
 
         // No metatable is attached, here or in pushProjectEnvironment. That
@@ -440,6 +509,7 @@ namespace uf::script
             resumeChunkOnThread(
                 mainState,
                 environmentIndex,
+                std::nullopt,
                 source,
                 chunkName,
                 control

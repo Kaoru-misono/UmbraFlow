@@ -102,25 +102,24 @@ namespace uf::task
         {
             auto const surface = buildSurface();
 
-            // Every approved shape at once: verb method calls (umbra:cycle_open,
-            // umbra:cycle_page, umbra:cycle_find, umbra:cycle_click,
-            // umbra:cycle_close, umbra:wait_for_page, umbra:try) plus the handle
-            // method page:is, and two-level resource literals, including ones used
-            // inside a verb argument and one repeated.
+            // A task the way one is written now that the capability surface is
+            // private: the framework's ctx drives everything, and the umbra root
+            // appears only as the two-level resource literals -- inside a ctx
+            // argument, inside a handle method's argument, and once repeated.
             constexpr std::string_view source = R"lua(
-                local cycle = umbra:cycle_open()
-                local page = umbra:cycle_page(cycle)
+                local cycle = ctx:cycle_open()
+                local page = ctx:cycle_page(cycle)
                 if page ~= nil and page:is(umbra.pages.home) then
-                    local hit = umbra:cycle_find(cycle, umbra.recognizers.battle)
+                    local hit = ctx:cycle_find(cycle, umbra.recognizers.battle)
                     if hit ~= nil then
-                        umbra:cycle_click(cycle, hit)
+                        ctx:cycle_click(cycle, hit)
                     end
                 end
-                local another = umbra:cycle_find(cycle, umbra.recognizers.daily_button)
-                umbra:cycle_close(cycle)
-                local wait = umbra:wait_for_page(umbra.pages.home, { timeout_ms = 1000 })
-                umbra:try(function()
-                    umbra:cycle_click(wait.cycle, another)
+                local another = ctx:cycle_find(cycle, umbra.recognizers.daily_button)
+                ctx:cycle_close(cycle)
+                local wait = ctx:wait_for_page(umbra.pages.home, { timeout_ms = 1000 })
+                ctx:try(function()
+                    ctx:cycle_click(wait.cycle, another)
                 end)
                 return 0
             )lua";
@@ -145,34 +144,52 @@ namespace uf::task
             CHECK(report->pages.empty());
         }
 
-        TEST_CASE("An unknown verb method call is not a resource and passes")
+        TEST_CASE("A method call on the umbra root is rejected: there are no verbs")
         {
             auto const surface = buildSurface();
 
-            // The validator closes resource references, not the verb set: an
-            // unknown verb is a runtime nil-call, out of this pass's scope.
-            auto const report =
-                validateScriptResources("umbra:frobnicate()\nreturn 0", "verb", surface);
-            REQUIRE(report.has_value());
-            CHECK(report->recognizers.empty());
-            CHECK(report->pages.empty());
+            // The root carries data alone now, so a colon call on it names
+            // nothing that could exist. It is rejected here rather than left to
+            // fail as a runtime nil call -- the same reason a misspelled error
+            // kind is rejected.
+            SUBCASE("a verb that used to exist")
+            {
+                expectRejected(
+                    surface,
+                    "return umbra:cycle_open()",
+                    {"umbra", "two-level"}
+                );
+            }
+            SUBCASE("a verb that never existed")
+            {
+                expectRejected(
+                    surface,
+                    "umbra:frobnicate()\nreturn 0",
+                    {"umbra", "two-level"}
+                );
+            }
         }
 
-        TEST_CASE("The host clock and RNG verbs validate as ordinary verb calls")
+        TEST_CASE("The framework context is not the umbra namespace and is not policed")
         {
             auto const surface = buildSurface();
 
-            // umbra:now() and umbra:random() are umbra method calls, the approved
-            // verb form; they reference no resource, so validation passes with an
-            // empty report and the pre-VM pass never rejects them.
+            // ctx is a project global the framework published; it exposes no
+            // resource name, so there is nothing here for a closure pass to
+            // resolve and it must not be mistaken for a umbra reference. The
+            // resource literals inside its arguments are still enumerated, which
+            // is what the report below proves.
             auto const report = validateScriptResources(
-                "local t = umbra:now()\nlocal r = umbra:random(1, 6)\nreturn t + r",
-                "clock-and-rng",
+                "local t = ctx:now()\n"
+                "local r = ctx:random(1, 6)\n"
+                "local w = ctx:wait_for_page(umbra.pages.home, {})\n"
+                "return t + r",
+                "context-calls",
                 surface
             );
             REQUIRE(report.has_value());
             CHECK(report->recognizers.empty());
-            CHECK(report->pages.empty());
+            CHECK(report->pages == std::vector<std::string>{"home"});
         }
 
         TEST_CASE("An error-kind literal validates and enumerates no resource")
@@ -183,7 +200,7 @@ namespace uf::task
             // names host vocabulary rather than a project resource, so it must
             // pass the namespace gate without appearing in the resource closure.
             auto const report = validateScriptResources(
-                "local ok, err = umbra:try(function() end)\n"
+                "local ok, err = ctx:try(function() end)\n"
                 "if not ok and err.kind == umbra.errors.stale_observation then\n"
                 "    return 1\n"
                 "end\n"
@@ -214,7 +231,7 @@ namespace uf::task
             auto const surface = buildSurface();
             expectRejected(
                 surface,
-                "return umbra:cycle_find(cycle, umbra.recognizers.does_not_exist)",
+                "return ctx:cycle_find(cycle, umbra.recognizers.does_not_exist)",
                 {"does_not_exist", "recognizer"}
             );
         }
@@ -236,7 +253,7 @@ namespace uf::task
             // is never a findable handle; the validator rejects it as missing.
             expectRejected(
                 surface,
-                "return umbra:capture():find(umbra.recognizers.home_marker)",
+                "return ctx:cycle_find(cycle, umbra.recognizers.home_marker)",
                 {"home_marker", "recognizer"}
             );
         }
@@ -286,9 +303,9 @@ namespace uf::task
             // installSandbox niling `_G` on the task thread. Each is pinned to the
             // '_G' offender so a chain that happened to fail for another reason
             // would not pass this test.
-            SUBCASE("calling a verb through the _G alias")
+            SUBCASE("indexing the namespace through the _G alias")
             {
-                expectRejected(surface, "return _G.umbra:capture()", {"_G"});
+                expectRejected(surface, "return _G.umbra.pages.home", {"_G"});
             }
             SUBCASE("aliasing the namespace off _G")
             {
@@ -368,14 +385,14 @@ namespace uf::task
             );
         }
 
-        TEST_CASE("The dot-call spelling of a verb is rejected")
+        TEST_CASE("Calling a one-level field of the namespace is rejected")
         {
             auto const surface = buildSurface();
-            // Only the colon method call umbra:capture() is canonical; the dot
-            // form touches umbra through a one-level field access.
+            // umbra.recognizers as a value is a one-level field access, and it is
+            // rejected whether it is called, aliased, or returned.
             expectRejected(
                 surface,
-                "return umbra.capture(umbra)",
+                "return umbra.recognizers(umbra)",
                 {"umbra"}
             );
         }

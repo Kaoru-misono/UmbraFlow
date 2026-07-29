@@ -35,26 +35,30 @@ namespace uf::task
         annotation::PageId id;
     };
 
-    // Builds and owns the script-visible capability surface for one project's
-    // recognition catalog: the recursively read-only umbra.recognizers and
+    // Builds and owns the two surfaces one project's recognition catalog gives a
+    // task VM, and keeps them apart.
+    //
+    // The PUBLIC one is data: the recursively read-only umbra.recognizers and
     // umbra.pages name tables of opaque handles, plus the umbra.errors table of
-    // error-kind constants. Construction validates every exposed name
-    // (fail-closed) and captures the {name, id} pairs; installer() then vends a
-    // script::HostTableInstaller that materializes the frozen umbra table on a
-    // task VM.
+    // error-kind constants. It is a global a project script may name, because
+    // naming a recognizer confers nothing -- a handle is an identity, not a
+    // capability.
+    //
+    // The PRIVATE one is capability: the observation-cycle primitives. It is
+    // never registered as a global and never becomes a key of any table either
+    // environment can reach; the boot hands it to the trusted framework as a
+    // chunk argument, so it survives only as a closure upvalue there.
+    //
+    // Construction validates every exposed name (fail-closed) and captures the
+    // {name, id} pairs.
     //
     // umbra.errors takes no catalog input: it is one string constant per
     // AutomationErrorKind, keyed and valued by that kind's domain wire spelling,
     // built at install time from the same function the trace and a Tier B error
-    // use. It is therefore installed by both overloads and is frozen with the
-    // rest of the surface.
+    // use.
     //
     // No Luau type appears in this header: the Luau work lives behind the ffi
-    // boundary and is reached only through the returned installer. The resource
-    // handles built here carry the recognizer / page identity the observation and
-    // action verbs consume; installer(TaskContext&) wires those verbs onto the
-    // same umbra table, while installer() vends a resource-only table with no
-    // bound session (used where only the name closure matters).
+    // boundary and is reached only through the returned installers.
     class CapabilitySurface final
     {
         std::vector<RecognizerHandleSpec> m_recognizers;
@@ -98,26 +102,39 @@ namespace uf::task
 
         // A host-table installer suitable for script::EngineConfig::installHostTables.
         // Invoked once per task VM before the sandbox freezes the globals, it
-        // builds the frozen global umbra table. The returned installer owns its
-        // own copy of the handle specs, so it stays valid independently of this
-        // surface's lifetime. This overload registers the data tables only:
-        // umbra.recognizers, umbra.pages and umbra.errors, with no observation or
-        // action verbs.
+        // builds the frozen global umbra table: umbra.recognizers, umbra.pages
+        // and umbra.errors. The returned installer owns its own copy of the
+        // handle specs, so it stays valid independently of this surface's
+        // lifetime.
+        //
+        // It takes no TaskContext because none of what it builds can act. That
+        // is the point of the split: the data surface is the same table whether
+        // or not a session is bound.
         [[nodiscard]]
         auto installer() const -> script::HostTableInstaller;
 
-        // The full installer for a live task: the data tables plus the
-        // observation-cycle primitives (umbra:cycle_open / cycle_close /
-        // cycle_page / cycle_find / cycle_click, plus umbra:wait_for_page) and
-        // page:is, each bound to `context`'s EngineSession and its cycle ledger.
+        // The private capability surface for a live task, suitable for
+        // script::EngineConfig::installPrivateCapabilities: the observation-cycle
+        // primitives (cycle_open / cycle_close / cycle_page / cycle_find /
+        // cycle_click, plus wait_for_page, now and random), each bound to
+        // `context`'s EngineSession and its cycle ledger. It also registers the
+        // handle metatables only a bound session can mint -- the cycle ticket,
+        // the hit, the resolved page and its page:is method, and the Tier B
+        // error guard.
         //
         // The returned installer captures a raw pointer to `context`. The caller
         // MUST keep `context` alive for at least as long as the script::Engine the
         // installer configures, because the VM's host functions dereference that
-        // pointer on every verb call; the TaskContext is non-movable so the
-        // address stays stable. The installer still owns its own copy of the specs.
+        // pointer on every primitive call; the TaskContext is non-movable so the
+        // address stays stable.
+        //
+        // Static for the same reason projectGlobals() is: the primitives take
+        // host-minted handles and scalars only, so nothing about them varies with
+        // one catalog. The catalog decides which handles exist, never what a
+        // primitive can do with one.
         [[nodiscard]]
-        auto installer(TaskContext& context) const -> script::HostTableInstaller;
+        static auto privateCapabilities(TaskContext& context)
+            -> script::PrivateCapabilityInstaller;
 
         [[nodiscard]]
         auto recognizerCount() const noexcept -> std::size_t;

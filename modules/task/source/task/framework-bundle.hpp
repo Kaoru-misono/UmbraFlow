@@ -5,6 +5,7 @@
 #include <script/engine.hpp>
 
 #include <span>
+#include <string>
 #include <string_view>
 #include <vector>
 
@@ -70,6 +71,18 @@ namespace uf::task
     // this runs once per VM, not once per script call.
     [[nodiscard]]
     auto frameworkScriptModules() -> std::vector<script::FrameworkModule>;
+
+    // The framework module names a project script may name, in the shape
+    // script::EngineConfig::frameworkProjectGlobals takes. Today that is `ctx`
+    // alone: the module of that name returns the context object, and publishing
+    // it is what lets the bare verbs leave the project environment.
+    //
+    // The name is spelled here rather than derived, because the generator takes
+    // it from a file stem and a C++ constant cannot read one. A rename that
+    // missed this list fails VM creation with InternalInvariant naming the
+    // missing entry, so the two cannot drift apart silently.
+    [[nodiscard]]
+    auto frameworkProjectGlobals() -> std::vector<std::string>;
 
     // Parses one framework module with the same vendored Luau parser the host
     // uses at load time, and reports the first syntax error together with its

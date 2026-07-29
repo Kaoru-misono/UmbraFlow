@@ -6,6 +6,7 @@
 
 #include <core/error/result.hpp>
 
+#include <optional>
 #include <span>
 #include <string>
 #include <string_view>
@@ -40,6 +41,13 @@ namespace uf::script
     // environment under the module's name, so a later module can reach an
     // earlier one and nothing outside the framework can reach either.
     //
+    // `privateCapabilities`, when present, is a `state` stack index holding the
+    // private capability surface; every module receives it as its single chunk
+    // argument (`local native = ...`). That is what makes the primitives closure
+    // upvalues of trusted code rather than keys of a reachable table: nothing
+    // binds the surface into either environment, so the only way to hold it is
+    // to have been handed it here.
+    //
     // A module that fails to compile, load, run, or freeze fails the whole
     // generation: the framework is first-party and compiled into the binary, so
     // a broken module is a broken host rather than bad user input.
@@ -47,6 +55,7 @@ namespace uf::script
     auto loadFrameworkModules(
         lua_State* state,
         std::span<FrameworkModule const> modules,
+        std::optional<int> privateCapabilities,
         InterruptState const* control
     ) -> Status;
 
@@ -56,15 +65,19 @@ namespace uf::script
     //
     // The prototype is an explicit whitelist: the deterministic base functions
     // and libraries this file names one by one, plus `hostGlobals`, the names
-    // the host installer registered. It carries NO metatable, so there is no
-    // __index chain to the framework environment or to the main globals -- the
-    // one structural property that makes the whole denial list hold. A
-    // whitelisted name that is absent from the main globals fails
-    // InternalInvariant rather than silently producing a thinner environment.
+    // the host installer registered, plus `frameworkGlobals`, the framework
+    // module names whose frozen exports the project may name. It carries NO
+    // metatable, so there is no __index chain to the framework environment or to
+    // the main globals -- the one structural property that makes the whole
+    // denial list hold, and the reason publishing a framework export copies the
+    // value rather than opening a route to its neighbours. A whitelisted name
+    // that is absent from its source table fails InternalInvariant rather than
+    // silently producing a thinner environment.
     [[nodiscard]]
     auto installProjectEnvironmentPrototype(
         lua_State* state,
-        std::span<std::string const> hostGlobals
+        std::span<std::string const> hostGlobals,
+        std::span<std::string const> frameworkGlobals
     ) -> Status;
 
     // Pushes a fresh, writable project environment -- a shallow copy of the

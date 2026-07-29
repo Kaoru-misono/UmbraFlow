@@ -46,7 +46,7 @@ namespace uf::task
         // The representative script. It walks a PageUnknown -> PageResolved
         // transition (cycle 1 then cycle 2), records a find that misses on the
         // unknown frame and a successful recognition + click on the resolved one,
-        // and reads umbra:now / umbra:random -- the two host facilities that make
+        // and reads ctx:now / ctx:random -- the two host facilities that make
         // determinism a real risk rather than a triviality.
         //
         // now() is the logical clock: it is fully virtualized (a fixed tick per
@@ -58,38 +58,38 @@ namespace uf::task
         // call sequence encodes the random stream and depends on the seed and
         // nothing else.
         constexpr std::string_view k_harnessScript = R"lua(
-            local t0 = umbra:now()
+            local t0 = ctx:now()
 
             -- Cycle 1: an unknown page and a find that completes with no match.
-            local c1 = umbra:cycle_open()
-            local page1 = umbra:cycle_page(c1)
-            local miss = umbra:cycle_find(c1, umbra.recognizers.action_target)
+            local c1 = ctx:cycle_open()
+            local page1 = ctx:cycle_page(c1)
+            local miss = ctx:cycle_find(c1, umbra.recognizers.action_target)
             if page1 ~= nil then error("frame 1 must be an unknown page") end
             if miss ~= nil then error("frame 1 find must miss") end
-            umbra:cycle_close(c1)
+            ctx:cycle_close(c1)
 
             -- Cycle 2: resolves page_a, the target hits, one click is delivered.
-            local c2 = umbra:cycle_open()
-            local page2 = umbra:cycle_page(c2)
+            local c2 = ctx:cycle_open()
+            local page2 = ctx:cycle_page(c2)
             if page2 == nil or not page2:is(umbra.pages.page_a) then
                 error("frame 2 must resolve page_a")
             end
-            local hit = umbra:cycle_find(c2, umbra.recognizers.action_target)
+            local hit = ctx:cycle_find(c2, umbra.recognizers.action_target)
             if hit == nil then error("frame 2 target must hit") end
-            umbra:cycle_click(c2, hit)
+            ctx:cycle_click(c2, hit)
 
             -- Seed-dependent tail: a fixed number of draws, each deciding whether
             -- to run one extra observation cycle. The resulting native call
             -- pattern encodes the random stream, so a changed seed changes the
             -- emitted action trace while a repeated seed reproduces it exactly.
             for _ = 1, 24 do
-                if umbra:random(1, 2) == 1 then
-                    local extra = umbra:cycle_open()
-                    umbra:cycle_close(extra)
+                if ctx:random(1, 2) == 1 then
+                    local extra = ctx:cycle_open()
+                    ctx:cycle_close(extra)
                 end
             end
 
-            local t1 = umbra:now()
+            local t1 = ctx:now()
             if t1 < t0 then error("now went backwards") end
             return 1
         )lua";
@@ -212,12 +212,7 @@ namespace uf::task
                 TaskContextConfig{.randomSeed = seed},
             };
 
-            auto vm = script::Engine::create(
-                script::EngineConfig{
-                    .installHostTables = built.surface.installer(context),
-                    .projectGlobals    = CapabilitySurface::projectGlobals(),
-                }
-            );
+            auto vm = script::Engine::create(taskVmConfig(built.surface, context));
             REQUIRE(vm.has_value());
             auto const result = vm->runNumber(k_harnessScript, "determinism-harness");
             REQUIRE(result.has_value());

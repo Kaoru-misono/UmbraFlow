@@ -24,19 +24,27 @@ namespace uf::task
         }
     }
 
-    TEST_CASE("the embedded bundle carries the stage-1 framework placeholder")
+    TEST_CASE("the embedded bundle carries the ctx module the project environment names")
     {
         auto const entries = frameworkBundleEntries();
         REQUIRE(!entries.empty());
 
-        auto const placeholder = std::ranges::find(
+        // The module name and the published project global are the same string,
+        // and nothing derives one from the other: the generator takes the name
+        // from a file stem while frameworkProjectGlobals() is a C++ constant. A
+        // rename that touched only one side fails here rather than at VM boot.
+        CHECK(
+            frameworkProjectGlobals() == std::vector<std::string>{std::string{"ctx"}}
+        );
+
+        auto const context = std::ranges::find(
             entries,
-            std::string_view{"placeholder"},
+            std::string_view{"ctx"},
             &FrameworkBundleEntry::name
         );
-        REQUIRE(placeholder != entries.end());
-        CHECK(placeholder->source.contains("stage = \"placeholder\""));
-        CHECK(placeholder->sourceHash.size() == 64U);
+        REQUIRE(context != entries.end());
+        CHECK(context->source.contains("function ctx:cycle_open()"));
+        CHECK(context->sourceHash.size() == 64U);
 
         CHECK(!frameworkVersion().empty());
         CHECK(frameworkBundleHash().size() == 64U);

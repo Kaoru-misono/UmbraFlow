@@ -5,6 +5,7 @@
 #include <core/utility/scope-exit.hpp>
 #include <domain/error.hpp>
 
+#include <optional>
 #include <string>
 #include <unordered_set>
 
@@ -177,20 +178,28 @@ namespace uf::script
         InterruptState const* control
     ) -> Status
     {
-        // The framework loads first, and under its own environment, because the
-        // whole point of the split is that trusted code never shares a global
-        // table with a project script. It runs before the dangerous globals are
-        // nilled, which is the design's order; nothing in the bundle needs them,
-        // and the framework's runtime lookups go through the same main globals
-        // the steps below strip, so the window closes with everything else.
-        installFrameworkEnvironment(state);
-        UF_TRY(loadFrameworkModules(state, config.frameworkModules, control));
+        int const stackBase = lua_gettop(state);
+        auto stackGuard = scopeExit(
+            [state, stackBase]() noexcept
+            {
+                lua_settop(state, stackBase);
+            }
+        );
 
-        if (config.installHostTables)
-        {
-            UF_TRY(config.installHostTables(state));
-        }
-
+        // Strip the dangerous names FIRST, before any Lua code -- the framework
+        // bundle included -- has run.
+        //
+        // The design's stated boot order loaded the framework before this step.
+        // That left a capture window: the framework environment chains __index
+        // to the main globals, so a module could bind `local getfenv = getfenv`
+        // at load time and keep that reference for the whole generation, past
+        // the nilling. It was harmless only while the framework exported nothing
+        // to project code, which stopped being true the moment it started
+        // exporting ctx. Nothing in the bundle legitimately wants any of these:
+        // time and randomness reach the framework through the private capability
+        // surface, and the environment escapes are exactly what the two-
+        // environment split exists to close.
+        //
         // Nil the globals luaL_sandbox does NOT remove (verified on 0.730). A
         // script that spawns its own coroutine escapes the interrupt-driven
         // cancel; debug can uninstall hooks and read outside the sandbox;
@@ -224,14 +233,61 @@ namespace uf::script
         nilLibraryField(state, "os", "date");
         nilLibraryField(state, "math", "random");
         // randomseed is inert once random is gone, but it is still an RNG entry
-        // point: leaving it would hand the phase-3 seeded umbra:random a second,
-        // unaudited way to be reseeded from script.
+        // point: leaving it would hand the seeded ctx:random a second, unaudited
+        // way to be reseeded from script.
         nilLibraryField(state, "math", "randomseed");
+
+        // The framework runs under its own environment, because the whole point
+        // of the split is that trusted code never shares a global table with a
+        // project script. Its private capability surface is built first and
+        // handed to each module as a chunk argument, so the primitives are
+        // upvalues of trusted closures and are bound to no name in either
+        // environment.
+        installFrameworkEnvironment(state);
+
+        auto privateCapabilities = std::optional<int>{};
+        if (config.installPrivateCapabilities)
+        {
+            int const before = lua_gettop(state);
+            UF_TRY(config.installPrivateCapabilities(state));
+            if (lua_gettop(state) != before + 1 || !lua_istable(state, -1))
+            {
+                return fail(
+                    AutomationErrorKind::InternalInvariant,
+                    "the private capability installer must leave exactly one "
+                    "table on the stack"
+                );
+            }
+            privateCapabilities = lua_gettop(state);
+        }
+
+        UF_TRY(
+            loadFrameworkModules(
+                state,
+                config.frameworkModules,
+                privateCapabilities,
+                control
+            )
+        );
+
+        // The surface has reached every module that will ever hold it, so drop
+        // the host's own reference: from here on the only way to name it is to
+        // be one of those closures.
+        lua_settop(state, stackBase);
+
+        if (config.installHostTables)
+        {
+            UF_TRY(config.installHostTables(state));
+        }
 
         luaL_sandbox(state);
 
         // Built last, from what the steps above left standing, so a name this
         // function removed can never reappear in the project environment.
-        return installProjectEnvironmentPrototype(state, config.projectGlobals);
+        return installProjectEnvironmentPrototype(
+            state,
+            config.projectGlobals,
+            config.frameworkProjectGlobals
+        );
     }
 }

@@ -424,17 +424,19 @@ namespace uf::task
             );
         }
 
-        // The distinctive value modules/task/runtime/placeholder.luau exports so
-        // the isolation claim below has something concrete to be about. It is
-        // spelled here as well as in the .luau, and the bundle-side check makes
-        // that duplication self-policing: renaming it on one side alone turns
-        // the claim vacuous, and the check reddens first.
+        // The distinctive value modules/task/runtime/ctx.luau assigns as a
+        // FRAMEWORK global -- deliberately not as an export, because the exports
+        // are published into the project environment and could not carry an
+        // isolation claim. It is spelled here as well as in the .luau, and the
+        // bundle-side check makes that duplication self-policing: renaming it on
+        // one side alone turns the claim vacuous, and the check reddens first.
         constexpr auto k_frameworkSentinel =
             std::string_view{"uf-framework-sentinel-6b21f0"};
 
         // A bounded, cycle-safe reachability search for the sentinel over
         // everything a project script can name on a real task VM -- the umbra
-        // root included -- following table values, table keys, and metatables.
+        // root and the published ctx included -- following table values, table
+        // keys, and metatables.
         [[nodiscard]]
         auto sentinelScan() -> std::string
         {
@@ -460,11 +462,12 @@ namespace uf::task
                 end
 
                 scan({
-                    -- The module name the loader binds the bundle's exports
-                    -- under: `placeholder` on a real task VM, `probe` when the
-                    -- same source is loaded through the script-layer probe. Both
-                    -- are listed so one scan serves both sides.
-                    umbra, placeholder, probe,
+                    -- The framework's own global, and the module name the loader
+                    -- binds the bundle's exports under: `ctx` on a real task VM,
+                    -- `probe` when the same source is loaded through the
+                    -- script-layer probe. All three are listed so one scan serves
+                    -- both sides.
+                    frameworkSentinel, umbra, ctx, probe,
                     _G, getfenv, setfenv, newproxy, gcinfo, coroutine, debug,
                     _VERSION, assert, error, getmetatable, ipairs, next, pairs,
                     pcall, print, rawequal, rawget, rawlen, rawset, select,
@@ -476,7 +479,7 @@ namespace uf::task
             )lua";
         }
 
-        TEST_CASE("A task VM's project environment cannot reach the real framework bundle")
+        TEST_CASE("A task VM's project environment reaches ctx and nothing else framework-side")
         {
             auto const catalog = buildCatalog();
             auto surface       = CapabilitySurface::create(catalog);
@@ -484,13 +487,13 @@ namespace uf::task
 
             auto const entries = frameworkBundleEntries();
             REQUIRE_FALSE(entries.empty());
-            auto const placeholder = entries.front();
+            auto const context = entries.front();
 
             SUBCASE("control: the bundle really carries the sentinel")
             {
-                CHECK(placeholder.name == "placeholder");
+                CHECK(context.name == "ctx");
                 CHECK(
-                    placeholder.source.find(k_frameworkSentinel)
+                    context.source.find(k_frameworkSentinel)
                     != std::string_view::npos
                 );
             }
@@ -501,7 +504,7 @@ namespace uf::task
                 // the same loader a task VM uses. Without this the case below
                 // would also pass on a VM where the framework never ran.
                 auto const found = script::testing::runInEnvironment(
-                    placeholder.source,
+                    context.source,
                     sentinelScan(),
                     script::testing::ProbeEnvironment::Framework
                 );
@@ -513,9 +516,10 @@ namespace uf::task
             {
                 auto engine = script::Engine::create(
                     script::EngineConfig{
-                        .frameworkModules  = frameworkScriptModules(),
-                        .installHostTables = surface->installer(),
-                        .projectGlobals    = CapabilitySurface::projectGlobals(),
+                        .frameworkModules        = frameworkScriptModules(),
+                        .installHostTables       = surface->installer(),
+                        .projectGlobals          = CapabilitySurface::projectGlobals(),
+                        .frameworkProjectGlobals = frameworkProjectGlobals(),
                     }
                 );
                 REQUIRE(engine.has_value());
@@ -524,9 +528,13 @@ namespace uf::task
                 REQUIRE(found.has_value());
                 CHECK(*found == doctest::Approx(0.0));
 
-                // The module name the loader binds in the framework environment
-                // is not a project global either, named rather than searched for.
-                CHECK(truthy(*engine, "placeholder == nil") == doctest::Approx(1.0));
+                // What the project DOES see of the framework is exactly the one
+                // published export, named rather than searched for: ctx is there,
+                // and the framework global beside it is not.
+                CHECK(truthy(*engine, "type(ctx) == 'table'") == doctest::Approx(1.0));
+                CHECK(
+                    truthy(*engine, "frameworkSentinel == nil") == doctest::Approx(1.0)
+                );
             }
         }
     }

@@ -52,9 +52,15 @@ namespace uf::task
 {
     namespace
     {
-        // The canonical script-visible root object. Every reference to it must be
-        // one of the three approved literal accesses or a verb method call; any
-        // other contact is rejected (annotation-design 4).
+        // The canonical script-visible root object. It carries data alone --
+        // named recognizer and page handles and the error-kind constants -- so
+        // every reference to it must be one of the three approved two-level
+        // literal accesses; any other contact is rejected (annotation-design 4).
+        //
+        // There is deliberately no verb form. The capability surface moved into
+        // the trusted framework's closure, so `umbra:anything(...)` names nothing
+        // that exists and is rejected here rather than left to fail as a runtime
+        // nil call.
         constexpr auto k_namespace = "umbra";
 
         // The two resource sub-namespaces that carry named handles, plus the
@@ -123,30 +129,9 @@ namespace uf::task
             return global != nullptr && isNamespace(global->name);
         }
 
-        // True when `node` is a umbra:<verb>(...) method call: a self-call whose
-        // callee is a colon index directly on the global umbra. This is the verb
-        // form, kept distinct from the two-level resource literal; the verb name
-        // itself is not resolved here (an unknown verb fails at runtime, and the
-        // bound verb set is not this validator's concern).
-        [[nodiscard]]
-        auto isNamespaceVerbCall(Luau::AstExprCall* node) -> bool
-        {
-            if (!node->self)
-            {
-                return false;
-            }
-            auto* const callee = node->func->as<Luau::AstExprIndexName>();
-            if (callee == nullptr || callee->op != ':')
-            {
-                return false;
-            }
-            auto* const global = callee->expr->as<Luau::AstExprGlobal>();
-            return global != nullptr && isNamespace(global->name);
-        }
-
         // Walks one script's AST and enumerates every umbra resource reference,
         // rejecting the first contact with the umbra namespace that is not an
-        // approved two-level literal access or a verb method call. An
+        // approved two-level literal access. An
         // umbra.errors.<kind> literal is checked the same way but contributes no
         // resource, since the kinds are host vocabulary. Latches the
         // first violation and turns every later visit into a no-op, so the
@@ -217,10 +202,9 @@ namespace uf::task
                     recordFailure(
                         node->location,
                         "the umbra namespace may be used only as "
-                        "umbra.recognizers.<name>, umbra.pages.<name>, "
-                        "umbra.errors.<kind>, or umbra:<verb>(...); it cannot be "
-                        "aliased, indexed dynamically, iterated, passed, or "
-                        "returned"
+                        "umbra.recognizers.<name>, umbra.pages.<name> or "
+                        "umbra.errors.<kind>; it cannot be aliased, indexed "
+                        "dynamically, iterated, passed, or returned"
                     );
                     return false;
                 }
@@ -236,10 +220,9 @@ namespace uf::task
                         node->location,
                         "the raw global environment '_G' is not accessible from a "
                         "task script; it is an alias door to the umbra namespace "
-                        "and every other global, so reach the capability surface "
+                        "and every other global, so reach the named resources "
                         "only through umbra.recognizers.<name>, "
-                        "umbra.pages.<name>, umbra.errors.<kind>, or "
-                        "umbra:<verb>(...)"
+                        "umbra.pages.<name> and umbra.errors.<kind>"
                     );
                     return false;
                 }
@@ -266,27 +249,6 @@ namespace uf::task
                 return false;
             }
 
-            auto visit(Luau::AstExprCall* node) -> bool override
-            {
-                if (m_failure.has_value())
-                {
-                    return false;
-                }
-                if (isNamespaceVerbCall(node))
-                {
-                    // umbra:<verb>(...) is approved. Skip the callee (its umbra
-                    // root is consumed here) but still walk the arguments, where
-                    // umbra.recognizers.<name> literals and disallowed umbra
-                    // touches both live.
-                    for (Luau::AstExpr* const arg : node->args)
-                    {
-                        arg->visit(this);
-                    }
-                    return false;
-                }
-                return true;
-            }
-
         private:
             void recordFailure(Luau::Location const& location, std::string message)
             {
@@ -301,8 +263,8 @@ namespace uf::task
             // is `node`. The only approved shape is exactly two dot levels:
             // umbra . (recognizers|pages|errors) . <name>. Everything else -- a
             // one-level field (umbra.recognizers as a value, umbra.foo), a deeper
-            // chain (umbra.recognizers.x.y), or an unknown sub-namespace -- is
-            // rejected.
+            // chain (umbra.recognizers.x.y), a colon index (umbra:anything), or
+            // an unknown sub-namespace -- is rejected.
             void classifyResourceAccess(Luau::AstExprIndexName* node)
             {
                 if (node->op == '.')

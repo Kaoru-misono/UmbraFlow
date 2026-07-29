@@ -2,10 +2,18 @@
 
 #include <script/engine.hpp>
 
+#include <string>
 #include <vector>
 
 namespace uf::task
 {
+    namespace
+    {
+        // The framework module whose frozen exports become the project global of
+        // the same name. Spelled once so the bundle and the whitelist agree.
+        constexpr auto k_contextModule = "ctx";
+    }
+
     auto frameworkScriptModules() -> std::vector<script::FrameworkModule>
     {
         auto const entries = frameworkBundleEntries();
@@ -22,5 +30,10 @@ namespace uf::task
             );
         }
         return modules;
+    }
+
+    auto frameworkProjectGlobals() -> std::vector<std::string>
+    {
+        return std::vector<std::string>{std::string{k_contextModule}};
     }
 }

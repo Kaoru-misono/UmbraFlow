@@ -155,11 +155,6 @@ namespace uf::task
         return m_cycles.isOpen();
     }
 
-    auto TaskContext::cancelled() const noexcept -> bool
-    {
-        return m_config.cancellation.stop_requested();
-    }
-
     void TaskContext::markFatal() noexcept
     {
         m_fatal = true;

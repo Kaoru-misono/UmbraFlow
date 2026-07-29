@@ -34,6 +34,18 @@ namespace uf::script
     // had already allocated.
     using HostTableInstaller = std::function<Status(lua_State* state)>;
 
+    // Builds the PRIVATE capability surface and leaves it, and nothing else, on
+    // the stack top. The boot hands that one table to every framework module as
+    // its chunk argument and then drops it, so the primitives live in a trusted
+    // closure's upvalue and are never a key of any table a project script can
+    // name -- which is the whole difference between this seam and the one above.
+    //
+    // Contract, enforced rather than assumed: a successful call grows the stack
+    // by exactly one and leaves a table on top. Anything else fails the
+    // generation with InternalInvariant instead of silently booting a framework
+    // whose capability argument is a stray value.
+    using PrivateCapabilityInstaller = std::function<Status(lua_State* state)>;
+
     // Recursively marks the table at stack `index`, every table reachable from
     // its values, and every metatable on the way, read-only, and enforces the
     // two structural rules a project-visible host object must satisfy. Freezing
@@ -126,8 +138,16 @@ namespace uf::script
         // framework bundle has loaded and before the sandbox freezes the globals
         // (this is installSandbox's order). Empty by default, which yields a
         // bare sandboxed VM with no host capabilities. modules/task supplies the
-        // umbra.* installer here.
+        // umbra.* data tables here -- recognizers, pages and error kinds, all of
+        // which are data a project script may name.
         HostTableInstaller installHostTables{};
+
+        // Optional private capability installer invoked once during create(),
+        // BEFORE the framework bundle loads, because the table it leaves on the
+        // stack is what each framework module is handed as its chunk argument.
+        // Empty by default, which boots a framework whose argument is absent.
+        // modules/task supplies the observation-cycle primitives here.
+        PrivateCapabilityInstaller installPrivateCapabilities{};
 
         // The global names `installHostTables` registers that a project script
         // must see. They are copied by name into the project environment, which
@@ -139,6 +159,18 @@ namespace uf::script
         // discipline: a name listed here that the installer did not register
         // fails the generation, so the two cannot drift apart silently.
         std::vector<std::string> projectGlobals{};
+
+        // The framework module names whose frozen exports the project
+        // environment publishes, under the same name, as project globals. This
+        // is the ONLY route by which anything the framework built becomes
+        // nameable from a project script, and it publishes a value rather than
+        // opening a chain: the project environment still has no metatable, so
+        // naming `ctx` here exposes that one frozen table and nothing else the
+        // framework environment holds.
+        //
+        // A name listed here that no framework module bound fails the
+        // generation, exactly as an unregistered projectGlobals name does.
+        std::vector<std::string> frameworkProjectGlobals{};
     };
 
     // Owns one embedded Luau VM (lua_State) for a single task generation: create
@@ -159,17 +191,18 @@ namespace uf::script
         auto operator=(Engine&&) noexcept -> Engine&;
         ~Engine();
 
-        // Create a task VM and boot its two environments in the order the
-        // three-layer design fixes: open the admitted base libraries, build the
-        // framework environment and load the framework bundle under it, install
-        // the host tables, remove the dangerous survivors luaL_sandbox leaves
+        // Create a task VM and boot its two environments: open the admitted base
+        // libraries, remove the dangerous survivors luaL_sandbox leaves
         // (getfenv/setfenv/newproxy/gcinfo/coroutine/debug/_G) together with the
-        // residual clock and RNG entry points, freeze the base libraries, and
-        // finally build the project environment as an explicit whitelist with no
-        // __index chain back to the framework environment or the main globals.
+        // residual clock and RNG entry points, build the framework environment,
+        // install the private capability surface and load the framework bundle
+        // under that environment with the surface as its chunk argument, install
+        // the host tables, freeze the base libraries, and finally build the
+        // project environment as an explicit whitelist with no __index chain
+        // back to the framework environment or the main globals.
         //
         // Fails if the VM cannot be allocated, if a framework module does not
-        // load or run, if the installer reports a failure (its error propagates
+        // load or run, if an installer reports a failure (its error propagates
         // unchanged), or if a whitelisted global is missing. Every failure path
         // closes the VM it had already allocated.
         [[nodiscard]]
