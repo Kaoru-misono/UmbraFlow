@@ -5,6 +5,7 @@
 #include <core/numeric/checked-cast.hpp>
 
 #include <string>
+#include <string_view>
 #include <utility>
 
 namespace uf
@@ -105,6 +106,30 @@ namespace uf
         }
 
         return failureResponse(*kind);
+    }
+
+    auto automationErrorWireName(AutomationErrorKind kind) noexcept -> std::string_view
+    {
+        switch (kind)
+        {
+        case AutomationErrorKind::Cancelled:                     return "cancelled";
+        case AutomationErrorKind::Timeout:                       return "timeout";
+        case AutomationErrorKind::InvalidResource:               return "invalid_resource";
+        case AutomationErrorKind::UnsupportedCapability:         return "unsupported_capability";
+        case AutomationErrorKind::TargetCompatibilityUnverified: return "target_compatibility_unverified";
+        case AutomationErrorKind::TargetUnavailable:             return "target_unavailable";
+        case AutomationErrorKind::CaptureUnavailable:            return "capture_unavailable";
+        case AutomationErrorKind::CaptureStalled:                return "capture_stalled";
+        case AutomationErrorKind::RecognitionFailed:             return "recognition_failed";
+        case AutomationErrorKind::StaleObservation:              return "stale_observation";
+        case AutomationErrorKind::ActionRejected:                return "action_rejected";
+        case AutomationErrorKind::ControllerDisconnected:        return "controller_disconnected";
+        case AutomationErrorKind::InternalInvariant:             return "internal_invariant";
+        case AutomationErrorKind::IoFailure:                     return "io_failure";
+        case AutomationErrorKind::ExternalFailure:               return "external_failure";
+        }
+
+        UF_UNREACHABLE_MSG("Unknown AutomationErrorKind value");
     }
 
     auto automationErrorKind(Error const& error) noexcept -> std::optional<AutomationErrorKind>

@@ -6,6 +6,7 @@
 #include <core/numeric/checked-arithmetic.hpp>
 #include <core/numeric/checked-cast.hpp>
 #include <core/time/monotonic-time.hpp>
+#include <core/types/enum-reflection.hpp>
 #include <core/types/integer.hpp>
 
 #include <annotation/resource.hpp>
@@ -69,32 +70,13 @@ namespace uf::task
         constexpr auto k_hitType          = "umbra.hit";
         constexpr auto k_errorType        = "umbra.error";
 
-        // The snake_case spelling a Tier B error table reports as its `kind`. It
-        // is the AutomationErrorKind name, not the C++ PascalCase, so scripts read
-        // a stable, language-neutral tag. The trailing return keeps the switch
-        // total under /WX without a default that would hide a new kind.
-        [[nodiscard]]
-        auto snakeName(AutomationErrorKind kind) noexcept -> char const*
+        // Pushes an error kind's wire spelling as a Lua string. The domain returns
+        // a view rather than a C string, so push it with its length instead of
+        // relying on the literal's terminator.
+        auto pushWireName(lua_State* state, AutomationErrorKind kind) -> void
         {
-            switch (kind)
-            {
-            case AutomationErrorKind::Cancelled:                     return "cancelled";
-            case AutomationErrorKind::Timeout:                       return "timeout";
-            case AutomationErrorKind::InvalidResource:               return "invalid_resource";
-            case AutomationErrorKind::UnsupportedCapability:         return "unsupported_capability";
-            case AutomationErrorKind::TargetCompatibilityUnverified: return "target_compatibility_unverified";
-            case AutomationErrorKind::TargetUnavailable:             return "target_unavailable";
-            case AutomationErrorKind::CaptureUnavailable:            return "capture_unavailable";
-            case AutomationErrorKind::CaptureStalled:                return "capture_stalled";
-            case AutomationErrorKind::RecognitionFailed:             return "recognition_failed";
-            case AutomationErrorKind::StaleObservation:              return "stale_observation";
-            case AutomationErrorKind::ActionRejected:                return "action_rejected";
-            case AutomationErrorKind::ControllerDisconnected:        return "controller_disconnected";
-            case AutomationErrorKind::InternalInvariant:             return "internal_invariant";
-            case AutomationErrorKind::IoFailure:                     return "io_failure";
-            case AutomationErrorKind::ExternalFailure:               return "external_failure";
-            }
-            return "internal_invariant";
+            auto const name = automationErrorWireName(kind);
+            lua_pushlstring(state, name.data(), name.size());
         }
 
         // The `retryable` field of a Tier B error table reuses the domain's own
@@ -320,7 +302,7 @@ namespace uf::task
             lua_createtable(state, 0, 3);
             int const table = lua_gettop(state);
 
-            lua_pushstring(state, snakeName(kind));
+            pushWireName(state, kind);
             lua_setfield(state, table, "kind");
             lua_pushstring(state, message.c_str());
             lua_setfield(state, table, "message");
@@ -1133,6 +1115,31 @@ namespace uf::task
             lua_setfield(state, umbra, fieldName);
         }
 
+        // Populates `umbra.errors` with one constant per AutomationErrorKind. Both
+        // the key and the value are that kind's domain wire spelling, so a script
+        // writes `err.kind == umbra.errors.timeout` and compares the exact string
+        // the Tier B error and the trace line both carry.
+        //
+        // The table is built here, from the same domain function, rather than
+        // generated into a .luau file by a build step. A generator would parse the
+        // enum and emit a third artifact that has to be kept in sync; reading the
+        // enum at install time leaves one source of truth by construction, with no
+        // parse, no codegen and nothing to go stale. Iteration is over the
+        // reflected entries, which is the repository's existing enumeration of the
+        // kinds, so a new kind appears here with no edit to this function.
+        auto installErrorKindTable(lua_State* state, int umbra) -> void
+        {
+            lua_newtable(state);
+            int const table = lua_gettop(state);
+            for (auto const& entry : enumEntries<AutomationErrorKind>())
+            {
+                pushWireName(state, entry.value);
+                pushWireName(state, entry.value);
+                lua_rawset(state, table);
+            }
+            lua_setfield(state, umbra, "errors");
+        }
+
         // Binds one umbra-rooted verb (`fieldName`) to a C closure carrying the
         // TaskContext as lightuserdata upvalue 1.
         auto installUmbraVerb(
@@ -1178,6 +1185,11 @@ namespace uf::task
                 k_pageRefType,
                 pages
             );
+
+            // Independent of the session: the kind constants are the same strings
+            // whether or not verbs are bound, so both installer overloads expose
+            // them and a script sees one surface shape.
+            installErrorKindTable(state, umbra);
 
             if (context != nullptr)
             {

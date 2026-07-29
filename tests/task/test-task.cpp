@@ -6,10 +6,21 @@
 
 #include <annotation/catalog.hpp>
 
+#include <core/error/result.hpp>
+#include <core/safety/annotations.hpp>
+#include <core/types/enum-reflection.hpp>
+
 #include <domain/error.hpp>
+#include <domain/ids.hpp>
+
+#include <trace/event.hpp>
+#include <trace/recorder.hpp>
+#include <trace/sink.hpp>
 
 #include <doctest/doctest.h>
 
+#include <cstddef>
+#include <memory>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -101,6 +112,88 @@ namespace uf::task
             );
         }
 
+        // Keeps the wire line of every event it is handed. A StampedTraceEvent
+        // cannot be minted outside modules/trace -- its constructor is private to
+        // TraceRecorder -- so recording through a real recorder is the only way to
+        // read back what a trace actually says.
+        class LineRecordingSink final : public trace::ITraceSink
+        {
+            std::vector<std::string> m_lines{};
+
+        public:
+            [[nodiscard]]
+            auto emit(trace::StampedTraceEvent const& event) -> Status override
+            {
+                m_lines.emplace_back(trace::serializeTraceEvent(event));
+                return ok();
+            }
+
+            [[nodiscard]]
+            auto lines() const noexcept UF_LIFETIME_BOUND
+                -> std::vector<std::string> const&
+            {
+                return m_lines;
+            }
+        };
+
+        // The value of a line's "errorKind" member. A wire spelling is lower-case
+        // ASCII with underscores, so nothing in it is escaped and the value ends
+        // at the next quote.
+        auto errorKindField(std::string const& line) -> std::string
+        {
+            constexpr auto member = std::string_view{R"("errorKind":")"};
+            auto const start      = line.find(member);
+            REQUIRE(start != std::string::npos);
+            auto const from = start + member.size();
+            auto const end  = line.find('"', from);
+            REQUIRE(end != std::string::npos);
+            return line.substr(from, end - from);
+        }
+
+        // One serialized run.finished line per error kind, in reflected enum
+        // order, reduced to the errorKind each one wrote.
+        auto tracedErrorKindSpellings() -> std::vector<std::string>
+        {
+            auto sink          = std::make_unique<LineRecordingSink>();
+            auto* const p_sink = sink.get();
+            auto recorder      = trace::TraceRecorder{
+                std::move(sink),
+                TaskRunId{1},
+                GenerationId{1},
+            };
+
+            for (auto const& entry : enumEntries<AutomationErrorKind>())
+            {
+                auto const status = recorder.emit(trace::TraceEvent{
+                    .kind       = trace::TraceEventKind::RunFinished,
+                    .runOutcome = trace::RunOutcome::Failed,
+                    .errorKind  = entry.value,
+                });
+                REQUIRE(status.has_value());
+            }
+
+            auto spellings = std::vector<std::string>{};
+            spellings.reserve(p_sink->lines().size());
+            for (auto const& line : p_sink->lines())
+            {
+                spellings.emplace_back(errorKindField(line));
+            }
+            return spellings;
+        }
+
+        // Every kind's wire spelling in reflected enum order, from the one domain
+        // function both the trace and the script table are now built on.
+        auto expectedErrorKindSpellings() -> std::vector<std::string>
+        {
+            auto spellings = std::vector<std::string>{};
+            spellings.reserve(enumEntries<AutomationErrorKind>().size());
+            for (auto const& entry : enumEntries<AutomationErrorKind>())
+            {
+                spellings.emplace_back(automationErrorWireName(entry.value));
+            }
+            return spellings;
+        }
+
         TEST_CASE("CapabilitySurface exposes only action targets and every page")
         {
             auto const catalog = buildCatalog();
@@ -178,6 +271,78 @@ namespace uf::task
                     *engine,
                     "umbra.recognizers.daily_button.x = 1\nreturn 0"
                 );
+            }
+            SUBCASE("a new key on umbra.errors is rejected")
+            {
+                expectRejected(*engine, "umbra.errors.injected = 1\nreturn 0");
+            }
+            SUBCASE("overwriting an error kind constant is rejected")
+            {
+                expectRejected(*engine, "umbra.errors.timeout = 'other'\nreturn 0");
+            }
+        }
+
+        TEST_CASE("umbra.errors holds exactly one constant per automation error kind")
+        {
+            auto const catalog = buildCatalog();
+            auto surface       = CapabilitySurface::create(catalog);
+            REQUIRE(surface.has_value());
+
+            auto engine = engineWithUmbra(*surface);
+            REQUIRE(engine.has_value());
+
+            // None missing, and every constant is its own key, so a script writes
+            // err.kind == umbra.errors.timeout and compares the exact string the
+            // host raised. The table is built by iterating the reflected kinds at
+            // install time, which is why a kind added to the enum appears here
+            // with no edit to the surface -- and cannot compile at all until the
+            // domain has given it a wire spelling.
+            for (auto const& wire : expectedErrorKindSpellings())
+            {
+                auto const expression = "umbra.errors." + wire + " == '" + wire + "'";
+                INFO("kind: ", wire);
+                CHECK(truthy(*engine, expression) == doctest::Approx(1.0));
+            }
+
+            // No extras: the script counts the installed table itself, so a stray
+            // key, or a duplicate spelling that collapsed two kinds onto one key,
+            // fails here rather than passing every lookup above.
+            auto const count = engine->runNumber(
+                "local n = 0\nfor _ in pairs(umbra.errors) do n = n + 1 end\nreturn n",
+                "umbra-errors-count"
+            );
+            REQUIRE(count.has_value());
+            CHECK(
+                *count
+                == doctest::Approx(
+                    static_cast<double>(enumEntries<AutomationErrorKind>().size())
+                )
+            );
+        }
+
+        TEST_CASE("A trace line and umbra.errors spell every error kind identically")
+        {
+            auto const catalog = buildCatalog();
+            auto surface       = CapabilitySurface::create(catalog);
+            REQUIRE(surface.has_value());
+
+            auto engine = engineWithUmbra(*surface);
+            REQUIRE(engine.has_value());
+
+            // The invariant the two deleted copies of this mapping asserted in
+            // comments and nothing checked: a trace line names a failure with
+            // exactly the string the script layer sees. Both sides are read from
+            // the real artifacts -- serialized umbraflow-trace/v1 lines and the
+            // table installed on a live VM -- so a divergence shows up as wrong
+            // output rather than as two calls to the same function.
+            auto const traced = tracedErrorKindSpellings();
+            CHECK(traced == expectedErrorKindSpellings());
+
+            for (auto const& wire : traced)
+            {
+                auto const expression = "umbra.errors." + wire + " == '" + wire + "'";
+                INFO("traced kind: ", wire);
+                CHECK(truthy(*engine, expression) == doctest::Approx(1.0));
             }
         }
 

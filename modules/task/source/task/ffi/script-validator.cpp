@@ -4,6 +4,7 @@
 
 #include <core/error/error.hpp>
 #include <core/error/result.hpp>
+#include <core/types/enum-reflection.hpp>
 
 #include <domain/error.hpp>
 
@@ -52,13 +53,17 @@ namespace uf::task
     namespace
     {
         // The canonical script-visible root object. Every reference to it must be
-        // one of the two approved literal resource accesses or a verb method call;
-        // any other contact is rejected (annotation-design 4).
+        // one of the three approved literal accesses or a verb method call; any
+        // other contact is rejected (annotation-design 4).
         constexpr auto k_namespace = "umbra";
 
-        // The two resource sub-namespaces that carry named handles.
+        // The two resource sub-namespaces that carry named handles, plus the
+        // error-kind constant table. errors is validated the same way but is host
+        // vocabulary rather than a project resource, so a reference to it is
+        // approved without entering the resource report.
         constexpr auto k_recognizersTable = "recognizers";
         constexpr auto k_pagesTable       = "pages";
+        constexpr auto k_errorsTable      = "errors";
 
         // Luau's base library binds `_G` to the global table itself. It is not a
         // resource path but a reflexive handle to the whole global environment, so
@@ -141,7 +146,9 @@ namespace uf::task
 
         // Walks one script's AST and enumerates every umbra resource reference,
         // rejecting the first contact with the umbra namespace that is not an
-        // approved two-level literal access or a verb method call. Latches the
+        // approved two-level literal access or a verb method call. An
+        // umbra.errors.<kind> literal is checked the same way but contributes no
+        // resource, since the kinds are host vocabulary. Latches the
         // first violation and turns every later visit into a no-op, so the
         // reported location is the earliest offending one and traversal order is
         // the message's tie-break. NOT reused across scripts: one visitor per
@@ -210,9 +217,10 @@ namespace uf::task
                     recordFailure(
                         node->location,
                         "the umbra namespace may be used only as "
-                        "umbra.recognizers.<name>, umbra.pages.<name>, or "
-                        "umbra:<verb>(...); it cannot be aliased, indexed "
-                        "dynamically, iterated, passed, or returned"
+                        "umbra.recognizers.<name>, umbra.pages.<name>, "
+                        "umbra.errors.<kind>, or umbra:<verb>(...); it cannot be "
+                        "aliased, indexed dynamically, iterated, passed, or "
+                        "returned"
                     );
                     return false;
                 }
@@ -228,8 +236,9 @@ namespace uf::task
                         node->location,
                         "the raw global environment '_G' is not accessible from a "
                         "task script; it is an alias door to the umbra namespace "
-                        "and every other global, so reach resources only through "
-                        "umbra.recognizers.<name>, umbra.pages.<name>, or "
+                        "and every other global, so reach the capability surface "
+                        "only through umbra.recognizers.<name>, "
+                        "umbra.pages.<name>, umbra.errors.<kind>, or "
                         "umbra:<verb>(...)"
                     );
                     return false;
@@ -290,9 +299,10 @@ namespace uf::task
 
             // Classifies an umbra-rooted member-access chain whose outermost node
             // is `node`. The only approved shape is exactly two dot levels:
-            // umbra . (recognizers|pages) . <name>. Everything else -- a one-level
-            // field (umbra.recognizers as a value, umbra.foo), a deeper chain
-            // (umbra.recognizers.x.y), or an unknown sub-namespace -- is rejected.
+            // umbra . (recognizers|pages|errors) . <name>. Everything else -- a
+            // one-level field (umbra.recognizers as a value, umbra.foo), a deeper
+            // chain (umbra.recognizers.x.y), or an unknown sub-namespace -- is
+            // rejected.
             void classifyResourceAccess(Luau::AstExprIndexName* node)
             {
                 if (node->op == '.')
@@ -315,11 +325,17 @@ namespace uf::task
                                 resolvePage(leaf, node->location);
                                 return;
                             }
+                            if (table == k_errorsTable)
+                            {
+                                resolveErrorKind(leaf, node->location);
+                                return;
+                            }
                             recordFailure(
                                 mid->location,
                                 "'umbra." + std::string{table}
-                                    + "' is not a resource namespace; only "
-                                      "umbra.recognizers and umbra.pages exist"
+                                    + "' is not a capability namespace; only "
+                                      "umbra.recognizers, umbra.pages and "
+                                      "umbra.errors exist"
                             );
                             return;
                         }
@@ -329,8 +345,8 @@ namespace uf::task
                     node->location,
                     "'" + std::string{k_namespace}
                         + "' is only accessible as the two-level literals "
-                          "umbra.recognizers.<name> and umbra.pages.<name>; this "
-                          "access has the wrong shape"
+                          "umbra.recognizers.<name>, umbra.pages.<name> and "
+                          "umbra.errors.<kind>; this access has the wrong shape"
                 );
             }
 
@@ -363,6 +379,29 @@ namespace uf::task
                     location,
                     "no page named '" + std::string{name}
                         + "' is exposed under umbra.pages"
+                );
+            }
+
+            // Resolves an error-kind leaf against AutomationErrorKind's single
+            // wire spelling, which is exactly what umbra.errors is keyed by. A
+            // misspelling would otherwise be a nil that makes every comparison
+            // against it silently false, so it is closed here for the same reason
+            // a missing recognizer is. Nothing is recorded on success: the kinds
+            // are host vocabulary, fixed for the binary, and the report enumerates
+            // the project resources a run depends on.
+            void resolveErrorKind(std::string_view name, Luau::Location const& location)
+            {
+                for (auto const& entry : enumEntries<AutomationErrorKind>())
+                {
+                    if (automationErrorWireName(entry.value) == name)
+                    {
+                        return;
+                    }
+                }
+                recordFailure(
+                    location,
+                    "no error kind named '" + std::string{name}
+                        + "' is exposed under umbra.errors"
                 );
             }
         };

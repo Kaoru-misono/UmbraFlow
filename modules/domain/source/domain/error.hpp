@@ -7,6 +7,7 @@
 #include <optional>
 #include <source_location>
 #include <string>
+#include <string_view>
 #include <system_error>
 
 namespace uf
@@ -66,6 +67,22 @@ namespace uf
 
     [[nodiscard]]
     auto automationErrorKind(Error const& error) noexcept -> std::optional<AutomationErrorKind>;
+
+    // The one snake_case spelling of an error kind outside C++. Every non-C++
+    // surface names a kind with this string and no other: the `errorKind` field
+    // of a trace line, the `kind` field of a Tier B error a script catches, and
+    // the `uf.errors.<kind>` constant that script compares it against. It lives
+    // in domain because domain owns AutomationErrorKind and is the only module
+    // both trace and task already depend on; it was two identical private copies
+    // whose comments required them to stay equal, with nothing checking that.
+    //
+    // Deliberately independent of enum reflection, so renaming the C++ enumerator
+    // cannot silently change a wire format and a script's comparisons. The switch
+    // is total with no default: a new kind does not compile until it has been
+    // given a spelling. The returned view names a string literal, so it outlives
+    // every caller and is not bound to the argument.
+    [[nodiscard]]
+    auto automationErrorWireName(AutomationErrorKind kind) noexcept -> std::string_view;
 
     [[nodiscard]]
     auto fail(

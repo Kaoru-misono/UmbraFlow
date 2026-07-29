@@ -387,6 +387,10 @@ namespace uf::task
 
                 local okResolve, errResolve = pcall(function() return frame:resolve_page() end)
                 if okResolve or errResolve.kind ~= 'stale_observation' then return 0 end
+                -- The kind a raised error carries is a key of umbra.errors whose
+                -- value is that same string: both come from the one domain
+                -- mapping, so a script's comparison can never silently miss.
+                if umbra.errors[errResolve.kind] ~= errResolve.kind then return 0 end
                 if errResolve.retryable ~= true then return 0 end
                 if getmetatable(errResolve) ~= 'umbra.error' then return 0 end
                 if pcall(function() errResolve.kind = 'tampered' end) then return 0 end

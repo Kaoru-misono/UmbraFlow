@@ -37,10 +37,17 @@ namespace uf::task
 
     // Builds and owns the script-visible capability surface for one project's
     // recognition catalog: the recursively read-only umbra.recognizers and
-    // umbra.pages name tables of opaque handles. Construction validates every
-    // exposed name (fail-closed) and captures the {name, id} pairs; installer()
-    // then vends a script::HostTableInstaller that materializes the frozen umbra
-    // table on a task VM.
+    // umbra.pages name tables of opaque handles, plus the umbra.errors table of
+    // error-kind constants. Construction validates every exposed name
+    // (fail-closed) and captures the {name, id} pairs; installer() then vends a
+    // script::HostTableInstaller that materializes the frozen umbra table on a
+    // task VM.
+    //
+    // umbra.errors takes no catalog input: it is one string constant per
+    // AutomationErrorKind, keyed and valued by that kind's domain wire spelling,
+    // built at install time from the same function the trace and a Tier B error
+    // use. It is therefore installed by both overloads and is frozen with the
+    // rest of the surface.
     //
     // No Luau type appears in this header: the Luau work lives behind the ffi
     // boundary and is reached only through the returned installer. The resource
@@ -79,12 +86,13 @@ namespace uf::task
         // Invoked once per task VM before the sandbox freezes the globals, it
         // builds the frozen global umbra table. The returned installer owns its
         // own copy of the handle specs, so it stays valid independently of this
-        // surface's lifetime. This overload registers the resource tables only:
-        // umbra.recognizers and umbra.pages, with no observation or action verbs.
+        // surface's lifetime. This overload registers the data tables only:
+        // umbra.recognizers, umbra.pages and umbra.errors, with no observation or
+        // action verbs.
         [[nodiscard]]
         auto installer() const -> script::HostTableInstaller;
 
-        // The full installer for a live task: the resource tables plus the
+        // The full installer for a live task: the data tables plus the
         // umbra:capture / frame:resolve_page / outcome:resolved / frame:find /
         // umbra:click / page:is verbs, each bound to `context`'s EngineSession.
         //

@@ -158,37 +158,6 @@ namespace uf::trace
             UF_UNREACHABLE_MSG("Unknown SadSearchStopReason value");
         }
 
-        // The snake_case wire spelling of an automation error kind, owned by this
-        // schema and kept independent of enum reflection so the wire format
-        // cannot silently follow a rename. It deliberately matches the `kind` a
-        // script's Tier B error reports, so a trace line names a failure with
-        // exactly the spelling the script saw -- the reason the merged stream
-        // keeps this spelling rather than engine-trace/v1's reflected PascalCase.
-        [[nodiscard]]
-        auto errorKindWireName(AutomationErrorKind kind) noexcept -> std::string_view
-        {
-            switch (kind)
-            {
-            case AutomationErrorKind::Cancelled:                     return "cancelled";
-            case AutomationErrorKind::Timeout:                       return "timeout";
-            case AutomationErrorKind::InvalidResource:               return "invalid_resource";
-            case AutomationErrorKind::UnsupportedCapability:         return "unsupported_capability";
-            case AutomationErrorKind::TargetCompatibilityUnverified: return "target_compatibility_unverified";
-            case AutomationErrorKind::TargetUnavailable:             return "target_unavailable";
-            case AutomationErrorKind::CaptureUnavailable:            return "capture_unavailable";
-            case AutomationErrorKind::CaptureStalled:                return "capture_stalled";
-            case AutomationErrorKind::RecognitionFailed:             return "recognition_failed";
-            case AutomationErrorKind::StaleObservation:              return "stale_observation";
-            case AutomationErrorKind::ActionRejected:                return "action_rejected";
-            case AutomationErrorKind::ControllerDisconnected:        return "controller_disconnected";
-            case AutomationErrorKind::InternalInvariant:             return "internal_invariant";
-            case AutomationErrorKind::IoFailure:                     return "io_failure";
-            case AutomationErrorKind::ExternalFailure:               return "external_failure";
-            }
-
-            UF_UNREACHABLE_MSG("Unknown AutomationErrorKind value");
-        }
-
         [[nodiscard]]
         auto serializePixelRect(PixelRect const& rect) -> std::string
         {
@@ -637,7 +606,12 @@ namespace uf::trace
 
         if (event.errorKind.has_value())
         {
-            builder.addString("errorKind", errorKindWireName(*event.errorKind));
+            // The domain's single wire spelling, which is also the `kind` a
+            // script's Tier B error carries and the uf.errors constant it
+            // compares against. That shared spelling -- not engine-trace/v1's
+            // reflected PascalCase -- is why a trace line names a failure with
+            // exactly the string the script saw.
+            builder.addString("errorKind", automationErrorWireName(*event.errorKind));
         }
 
         if (event.message.has_value())

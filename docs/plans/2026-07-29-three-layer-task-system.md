@@ -109,8 +109,6 @@ cycle_click(ticket, hit)          -> receipt       消费周期
 Lua 侧句柄只是一张**票**。C++ 持有票据账本,每次使用拿票对账。周期一关,票即死。
 **GC 完全不参与。**
 
-连锁简化三处:
-
 **硬规则:每个 generation 同时只允许存在一个打开的周期。** 账本至多一条。
 只要账本能装两条,「page 与 hit 同源」就仍然只是一次**检查**,而 C++ 不能依赖
 framework 的自觉;收窄到一条,第二帧根本不存在,跨帧混用才真的不可能发生。这也正是
@@ -625,7 +623,7 @@ SLA;一条 trace 足以解释每一步。
 - `task-trace/v1` 作为独立 schema。
 - `uf:try` 的 C 绑定(语义由纯 Luau 承接,`markFatal`/`guardFatal` 保留)。
 - `TaskContext` 作为单个类:拆成票据账本 + 私有能力面。
-- 两份 kind→wire 映射中的一份。
+- 两份 kind→wire 映射(整体上移到 `modules/domain`)。
 - project 环境里的全部裸动词。
 
 **entry/cli**
@@ -653,7 +651,8 @@ SLA;一条 trace 足以解释每一步。
 
 - 合并为单条 `umbraflow-trace/v1`(先做,因为之后每个阶段都往里发事件)。
 - `.luau` 构建管线:`embed_luau.py` + manifest key + `check_luau.py`。
-- 合并 kind→wire 映射为一份;生成 `uf.errors`;加覆盖性测试。
+- kind→wire 映射合并为 `modules/domain` 的一份;宿主在能力面安装时构建 `uf.errors`;
+  加覆盖性测试与 trace/脚本拼写一致性测试。
 - `TaskHost` 立起 D10 动词形;CLI 收缩;注入每 run 种子。
 
 出口:全门绿,现有任务仍按老表面跑通。

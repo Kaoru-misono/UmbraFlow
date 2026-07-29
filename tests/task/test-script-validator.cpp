@@ -174,6 +174,40 @@ namespace uf::task
             CHECK(report->pages.empty());
         }
 
+        TEST_CASE("An error-kind literal validates and enumerates no resource")
+        {
+            auto const surface = buildSurface();
+
+            // umbra.errors.<kind> is the third approved two-level literal. It
+            // names host vocabulary rather than a project resource, so it must
+            // pass the namespace gate without appearing in the resource closure.
+            auto const report = validateScriptResources(
+                "local ok, err = umbra:try(function() end)\n"
+                "if not ok and err.kind == umbra.errors.stale_observation then\n"
+                "    return 1\n"
+                "end\n"
+                "return 0",
+                "errors",
+                surface
+            );
+            REQUIRE(report.has_value());
+            CHECK(report->recognizers.empty());
+            CHECK(report->pages.empty());
+        }
+
+        TEST_CASE("A misspelled error kind is rejected before the VM exists")
+        {
+            auto const surface = buildSurface();
+            // Left as a runtime nil this would make every comparison against it
+            // silently false, which is exactly the failure the pre-VM pass closes
+            // for a missing recognizer.
+            expectRejected(
+                surface,
+                "return umbra.errors.time_out",
+                {"time_out", "error kind"}
+            );
+        }
+
         TEST_CASE("A reference to a missing recognizer is rejected by name")
         {
             auto const surface = buildSurface();
