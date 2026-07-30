@@ -66,16 +66,40 @@ reading "開始 1" to showing a card thumbnail.
 
 ### Root cause
 
-The acceptance threshold is derived from the template's **total** pixel count and
-knows nothing about the mask. `SimilarityThreshold::maximumSad` at
-`modules/annotation/source/annotation/catalog.cpp:300` computes from
-`templateWidth * templateHeight`, and `catalog.cpp:410` calls it with
-`spec.templateRect.width()` and `.height()`. The colour key never enters the
-calculation.
+> **Corrected 2026-07-31.** The original entry blamed the threshold formula for
+> ignoring the mask. It does not, because the *score* is rescaled to match it.
+> The measurements below are unchanged and still reproduce; only the mechanism
+> was wrong, and aiming a fix at the threshold would miss.
 
-So a 27-pixel mask is scored against a threshold sized for 920 pixels:
-`920 * 255 * 0.01 = 2346` at 9900 bp. Twenty-seven pixels of white glyph cannot
-accumulate enough difference to exceed that no matter what the frame holds.
+The threshold is derived from the template's total pixel count —
+`SimilarityThreshold::maximumSad` (`catalog.cpp:300`) computes from
+`templateWidth * templateHeight` — but the score handed to it is normalized onto
+that same scale. `normalizedScore` (`modules/vision/source/vision/sad.cpp:47-62`)
+returns `weightedSum * templatePixels / totalWeight`, and `sad.cpp:392` is where
+the reported score goes through it.
+
+Work the constants through and the template size cancels on both sides. The live
+decision is:
+
+> **accept iff the weighted mean grey error over the *selected* pixels is at most
+> `255 * (1 - t)`** — at 9900 bp, a mean error of 2.55 grey levels.
+
+So the threshold *is* mask-relative, and 27 white pixels over changed content
+would exceed it easily. That is not what happened.
+
+**What actually happened is the search, not the threshold.** The match is the
+argmin over the whole search ROI (`sad.cpp:351-403`), with an exact-match early
+exit the moment any candidate position scores zero (`sad.cpp:394-400`). Twenty-
+seven saturated-white pixels do not have to survive where the glyph *was* — they
+only have to find *some* offset inside the ROI where all 27 land on white. On a
+card thumbnail there are many such offsets, the search finds one, scores 0, and
+returns immediately.
+
+The driver is therefore **mask size against ROI size**, not the threshold. A tiny
+mask of a saturated colour is a template that asks "is there a patch of white
+anywhere in this region", and the answer on a busy screen is always yes.
+`docs/pitfalls/page-modeling-and-multi-step.md:246-254` states the same mechanism
+for a keyed menu glyph.
 
 The same shape appears in milder forms. On a `116x112` end-turn button, the 100
 selected pixels were the button's outer ring, identical whether the button showed
