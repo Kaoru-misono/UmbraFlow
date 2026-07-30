@@ -255,7 +255,7 @@ namespace uf::trace
             },
             .stopReason  = SadSearchStopReason::TimedOut,
             .runOutcome  = RunOutcome::Completed,
-            .errorKind   = AutomationErrorKind::RecognitionFailed,
+            .errorKind   = AutomationErrorKind::RecognitionIncomplete,
             .message     = std::string{"hello"},
             .clickClient = Point<ClientSpace>{128.0F, 64.0F},
         };
@@ -282,7 +282,7 @@ namespace uf::trace
             ",\"outcome\":\"Succeeded\""
             ",\"recognizerId\":\"aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee\""
             ",\"stopReason\":\"TimedOut\",\"runOutcome\":\"Completed\""
-            ",\"errorKind\":\"recognition_failed\",\"message\":\"hello\""
+            ",\"errorKind\":\"recognition_incomplete\",\"message\":\"hello\""
             ",\"clickClientX\":128,\"clickClientY\":64}"
         };
 

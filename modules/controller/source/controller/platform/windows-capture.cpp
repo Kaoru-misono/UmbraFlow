@@ -751,10 +751,30 @@ namespace uf
                 );
                 if (SetPropW(window, name.c_str(), token.get()) == FALSE)
                 {
+                    // ERROR_ACCESS_DENIED here has one cause worth naming. The
+                    // property is stamped on a window this process does not own,
+                    // and UIPI refuses that write when the target runs at a
+                    // higher integrity level than we do. Nothing about the
+                    // capture code can fix it, so the message says what the
+                    // operator has to do instead of leaving them to discover
+                    // that error 5 is about elevation. Input delivery is NOT a
+                    // useful signal here: PostMessage to the same window
+                    // succeeds unelevated, so "clicking works" does not imply
+                    // capture will bind.
+                    auto const lastError = GetLastError();
+                    if (lastError == static_cast<DWORD>(ERROR_ACCESS_DENIED))
+                    {
+                        return captureUnavailable(
+                            "failed to bind capture session to the target window "
+                            "instance (Win32 error 5, access denied): the target "
+                            "runs at a higher integrity level than this process. "
+                            "Restart this program elevated, at the target's level."
+                        );
+                    }
                     return captureUnavailable(
                         std::format(
                             "failed to bind capture session to the target window instance (Win32 error {})",
-                            GetLastError()
+                            lastError
                         )
                     );
                 }

@@ -158,6 +158,47 @@ namespace uf::cli
         CHECK(result->trace == k_defaultTracePath);
     }
 
+    TEST_CASE("the default comparison budget covers a page evaluation but not a full frame")
+    {
+        // The cost model the default is derived from, spelled once: a candidate
+        // position costs the template's pixels, and a search walks one position
+        // per placement that still fits inside the region.
+        auto constexpr searchCost = [](
+            uint64 templateWidth,
+            uint64 templateHeight,
+            uint64 roiWidth,
+            uint64 roiHeight
+        ) -> uint64
+        {
+            return (roiWidth - templateWidth + 1U)
+                * (roiHeight - templateHeight + 1U)
+                * templateWidth
+                * templateHeight;
+        };
+
+        // The two real authored recognizers this default was found wanting by.
+        auto constexpr narrowAnchor = searchCost(90, 33, 180, 70);
+        auto constexpr widestAnchor = searchCost(200, 50, 480, 90);
+        static_assert(narrowAnchor == 10'270'260U);
+        static_assert(widestAnchor == 115'210'000U);
+
+        // evaluatePage shares one budget across every page anchor in the catalog,
+        // so covering the widest single anchor is not enough: the figure to cover
+        // is the sum over a whole page evaluation. Eight pages identified by two
+        // anchors each, all as costly as the widest, is the envelope.
+        auto constexpr anchorsPerPageEvaluation = uint64{16};
+        auto constexpr pageEvaluation = widestAnchor * anchorsPerPageEvaluation;
+        CHECK(k_defaultPixelComparisonBudget >= pageEvaluation);
+        CHECK(k_defaultPixelComparisonBudget >= narrowAnchor);
+
+        // And the ceiling stays real: a small template over a whole 1600x900
+        // frame is genuinely unbounded work and has to be asked for with
+        // --budget rather than granted by default, or nothing fails closed.
+        auto constexpr fullFrameSmallTemplate = searchCost(66, 46, 1600, 900);
+        static_assert(fullFrameSmallTemplate == 3'984'522'300U);
+        CHECK(k_defaultPixelComparisonBudget < fullFrameSmallTemplate);
+    }
+
     TEST_CASE("parseRunArguments reports each missing required flag")
     {
         struct Case final

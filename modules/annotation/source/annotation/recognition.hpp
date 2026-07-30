@@ -22,6 +22,14 @@ namespace uf::annotation
     // The single classification of a stopped anchor search. Recognition
     // failures and regression control flow both read it instead of deciding
     // per stop reason at each site.
+    //
+    // No reason maps to a kind whose failureResponse is StepFailed, and each
+    // reason has a kind of its own. That is the load-bearing property, not an
+    // accident of the three current reasons: a stop means the search never
+    // decided, so a caller must not read it as the step having been ruled out.
+    // A completed search that matched nothing is not routed through here at all
+    // -- it is an AnchorEvidence whose hit() is false, and page resolution turns
+    // that into UnknownPage with no error.
     [[nodiscard]]
     auto searchStopKind(SadSearchStopReason reason) noexcept -> AutomationErrorKind;
 

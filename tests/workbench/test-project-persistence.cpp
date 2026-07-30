@@ -386,6 +386,12 @@ namespace uf::workbench
             ).has_value()
         );
 
+        // The runtime resolves a task at <projectRoot>/tasks/<name>.luau, so a
+        // save that does not leave that directory behind hands the author a
+        // project the runtime cannot run. Empty is correct -- the workbench
+        // authors annotations, not tasks -- but present is required.
+        CHECK(std::filesystem::is_directory(project.path() / "tasks"));
+
         auto const authoringToml = readText(project.path() / "annotations.toml");
         CHECK(
             authoringToml

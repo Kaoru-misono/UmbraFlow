@@ -122,23 +122,35 @@ def mask_deleted_special_members(line: str) -> str:
     return re.sub(r"=\s*delete\b", "", line)
 
 
-def mask_non_code(content: str) -> str:
-    patterns = (
-        re.compile(r"/\*.*?\*/", re.DOTALL),
-        re.compile(r'R"([^\s()\\]{0,16})\(.*?\)\1"', re.DOTALL),
-        re.compile(r'"(?:\\.|[^"\\])*"'),
-        re.compile(r"'(?:\\.|[^'\\])*'"),
-    )
+# One alternation, not four passes, because these constructs contain each
+# other's delimiters and only a single left-to-right scan resolves that the way
+# a lexer does: whichever starts first consumes its own span.
+#
+# Four separate passes had a hole that could HIDE a violation rather than
+# invent one. Line comments were not masked at all, so an apostrophe in a
+# comment -- "the caller's buffer" -- opened a character literal that ran to
+# the next apostrophe, blanking every line between. A raw `new` sitting in
+# that gap was invisible to the rules, and the gate passed the file.
+#
+# Line comments are masked here; `has_safety_comment` reads the ORIGINAL
+# lines, so `// SAFETY:` justifications are still found.
+NON_CODE_PATTERN = re.compile(
+    r'R"([^\s()\\]{0,16})\(.*?\)\1"'  # raw string, may contain anything
+    r"|/\*.*?\*/"  # block comment
+    r"|//[^\n]*"  # line comment
+    r'|"(?:\\.|[^"\\])*"'  # string literal
+    r"|'(?:\\.|[^'\\])*'",  # character literal
+    re.DOTALL,
+)
 
-    masked = content
-    for pattern in patterns:
-        masked = pattern.sub(
-            lambda match: "".join(
-                "\n" if character == "\n" else " " for character in match.group(0)
-            ),
-            masked,
-        )
-    return masked
+
+def mask_non_code(content: str) -> str:
+    return NON_CODE_PATTERN.sub(
+        lambda match: "".join(
+            "\n" if character == "\n" else " " for character in match.group(0)
+        ),
+        content,
+    )
 
 
 def is_unsafe_boundary(path: Path) -> bool:

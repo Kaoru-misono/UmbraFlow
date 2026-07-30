@@ -16,7 +16,10 @@
 #include <annotation/runtime-manifest.hpp>
 
 #include <core/error/result.hpp>
+#include <core/numeric/checked-cast.hpp>
 #include <core/types/integer.hpp>
+
+#include <image/png.hpp>
 
 #include <doctest/doctest.h>
 
@@ -341,6 +344,122 @@ namespace uf::authoring
             return KeyedFixture{.blueFrame = blue, .purpleFrame = purple};
         }
 
+        // The extent a project needs to hold both search regions the budget
+        // cases author: 480 wide for the wider one and 160 tall for the two
+        // stacked without overlapping.
+        constexpr auto k_budgetWidth  = uint32{480};
+        constexpr auto k_budgetHeight = uint32{160};
+
+        // A deterministic grey plane written into all three colour channels, so
+        // the matcher's BT.601 conversion reads back exactly these values. The
+        // mixing wraps on purpose: it only has to scatter, and two seeds have to
+        // produce planes with no 90x33 or 200x50 block in common so a template
+        // cropped from one is genuinely absent from the other.
+        [[nodiscard]]
+        auto writeNoiseFrame(
+            std::filesystem::path const& path,
+            uint32 seed
+        ) -> void
+        {
+            auto pixels = std::vector<std::byte>{};
+            pixels.reserve(std::size_t{k_budgetWidth} * k_budgetHeight * 4U);
+            for (auto y = uint32{0}; y < k_budgetHeight; ++y)
+            {
+                for (auto x = uint32{0}; x < k_budgetWidth; ++x)
+                {
+                    auto mixed = (x * 73'856'093U)
+                        ^ (y * 19'349'663U)
+                        ^ ((seed + 1U) * 83'492'791U);
+                    mixed ^= mixed >> 13U;
+                    mixed *= 2'654'435'761U;
+                    mixed ^= mixed >> 16U;
+
+                    auto const narrowed = checkedCast<uint8>(mixed & 0xFFU);
+                    REQUIRE(narrowed.has_value());
+                    auto const grey = std::byte{*narrowed};
+                    pixels.emplace_back(grey);
+                    pixels.emplace_back(grey);
+                    pixels.emplace_back(grey);
+                    pixels.emplace_back(std::byte{255});
+                }
+            }
+
+            auto const written = image::writeRgbaPng(
+                path,
+                k_budgetWidth,
+                k_budgetHeight,
+                pixels
+            );
+            REQUIRE(written.has_value());
+        }
+
+        // One project holding the two search geometries a real annotation session
+        // found the previous default budget too small for, as two page anchors on
+        // one page. Both are anchors on purpose: evaluatePage shares one budget
+        // across every page anchor in the catalog, so a match on either of them
+        // spends the sum of the two searches, which is the figure the default has
+        // to cover.
+        struct BudgetFixture final
+        {
+            std::filesystem::path authoredFrame{};
+            std::filesystem::path otherFrame{};
+        };
+
+        [[nodiscard]]
+        auto authorBudgetProject(TemporaryProject const& project) -> BudgetFixture
+        {
+            auto const authored = project.path() / "authored.png";
+            auto const other    = project.path() / "other.png";
+            writeNoiseFrame(authored, 1);
+            writeNoiseFrame(other, 2);
+
+            requireOk(
+                run(
+                    "project",
+                    "init",
+                    project.text(),
+                    "--project-id",
+                    "personal.budget_cli",
+                    "--resolution",
+                    std::format("{}x{}", k_budgetWidth, k_budgetHeight)
+                )
+            );
+            // Template 90x33 in a 180x70 region: 91 * 38 = 3,458 positions.
+            requireOk(
+                run(
+                    "page",
+                    "create",
+                    project.text(),
+                    "menu",
+                    "narrow_label",
+                    "--source",
+                    authored.string(),
+                    "--rect",
+                    "0,0,90,33",
+                    "--search-roi",
+                    "0,0,180,70"
+                )
+            );
+            // Template 200x50 in a 480x90 region: 281 * 41 = 11,521 positions.
+            requireOk(
+                run(
+                    "page",
+                    "add-anchor",
+                    project.text(),
+                    "menu",
+                    "wide_label",
+                    "--source",
+                    authored.string(),
+                    "--rect",
+                    "0,70,200,50",
+                    "--search-roi",
+                    "0,70,480,90"
+                )
+            );
+
+            return BudgetFixture{.authoredFrame = authored, .otherFrame = other};
+        }
+
         // The two crops on disk with no project around them. A frames
         // subcommand reads PNGs and never opens a project root, so the
         // temporary directory here is scratch space rather than a project.
@@ -554,6 +673,75 @@ namespace uf::authoring
         );
         requireOk(authored);
         CHECK(authored.json.contains("\"hit\":true"));
+    }
+
+    TEST_CASE("authoring CLI match tells a search that did not finish from one that missed")
+    {
+        auto const project = TemporaryProject{"budget"};
+        auto const frames  = authorBudgetProject(project);
+
+        // Both ordinary search regions complete under the default budget, on a
+        // frame that holds neither template, which is the case that walks every
+        // candidate position instead of exiting early on an exact hit. A match on
+        // one anchor evaluates both, so this one answer covers both geometries.
+        auto const missed = run(
+            "match",
+            project.text(),
+            "wide_label",
+            "--frame",
+            frames.otherFrame.string()
+        );
+        requireOk(missed);
+        CHECK(missed.json.contains("\"hit\":false"));
+
+        auto const spent = unsignedField(missed.json, "pixel_comparisons");
+        CHECK(spent > 0);
+        CHECK(spent <= cli::k_defaultPixelComparisonBudget);
+
+        // The control on the miss: the frame the project was authored against
+        // still hits, so the miss above is a measurement of two different images
+        // rather than a project that can match nothing.
+        auto const hit = run(
+            "match",
+            project.text(),
+            "wide_label",
+            "--frame",
+            frames.authoredFrame.string()
+        );
+        requireOk(hit);
+        CHECK(hit.json.contains("\"hit\":true"));
+
+        // The guard is still real. A budget far below what the same search just
+        // spent has to stop it: if it ran to completion anyway this would answer
+        // ok with a miss, exactly like the run above.
+        auto const tiny = uint64{1'000};
+        REQUIRE(tiny < spent);
+        auto const stopped = run(
+            "match",
+            project.text(),
+            "wide_label",
+            "--frame",
+            frames.otherFrame.string(),
+            "--budget",
+            std::format("{}", tiny)
+        );
+        CHECK_FALSE(stopped.ok);
+        CHECK(stopped.exitCode != cli::ExitCode::Success);
+        CHECK(std::to_underlying(stopped.exitCode) != 0);
+
+        // And the answer an agent reads is not the answer a miss produces. The
+        // kind names a recognition that never finished, and the response names
+        // the branch: observe again, rather than conclude the anchor is absent.
+        CHECK(stopped.json.contains("\"kind\":\"RecognitionIncomplete\""));
+        CHECK(stopped.json.contains("\"response\":\"retry\""));
+        CHECK(stopped.json.contains("budget exhausted"));
+        CHECK_FALSE(stopped.json.contains("\"hit\":"));
+
+        // The other half: the completed miss carries no failure classification at
+        // all, so the two outcomes cannot be read as the same thing.
+        CHECK_FALSE(missed.json.contains("RecognitionIncomplete"));
+        CHECK_FALSE(missed.json.contains("\"response\":"));
+        CHECK(missed.exitCode == cli::ExitCode::Success);
     }
 
     TEST_CASE("authoring CLI refuses invalid input and names what was wrong")

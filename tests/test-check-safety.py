@@ -32,6 +32,46 @@ class SafetyRuleTests(unittest.TestCase):
             check_cpp_format.VENDORED_DIRECTORY_NAMES,
         )
 
+    def test_apostrophes_in_comments_do_not_hide_a_raw_allocation(self) -> None:
+        # The failure this pins could HIDE a violation, not invent one. Line
+        # comments used to survive masking, so an apostrophe in one opened a
+        # character literal that ran to the next apostrophe and blanked every
+        # line between -- taking a raw `new` with it.
+        source = (
+            "namespace uf::probe\n"
+            "{\n"
+            "    // The caller's buffer is not owned here.\n"
+            "    auto leak() -> int*\n"
+            "    {\n"
+            "        return new int{7};\n"
+            "    }\n"
+            "    // Restores the apostrophe's pairing.\n"
+            "}\n"
+        )
+        self.assertIn("new", check_safety.mask_non_code(source))
+
+    def test_masking_still_blinds_the_rules_to_non_code(self) -> None:
+        # The control for the case above: widening what the rules can see must
+        # not let a mention of `new` inside a literal or a comment count.
+        for hidden in (
+            'auto text = "call new here";',
+            "/* do not new */",
+            "// do not new",
+        ):
+            with self.subTest(hidden=hidden):
+                self.assertNotIn("new", check_safety.mask_non_code(hidden))
+
+        # And a construct that merely contains a delimiter must not swallow the
+        # code after it: the string owns the `//`, the escaped quote does not
+        # end its string, and the character literal holds a quote.
+        for visible in (
+            'auto text = "http://x"; return new int{1};',
+            'auto text = "a\\"b"; return new int{2};',
+            "char c = '\\''; return new int{3};",
+        ):
+            with self.subTest(visible=visible):
+                self.assertIn("new", check_safety.mask_non_code(visible))
+
     def test_nodiscard_declaration_covers_friend_redeclaration(self) -> None:
         content = """class Store final
 {

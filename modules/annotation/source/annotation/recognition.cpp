@@ -57,7 +57,7 @@ namespace uf::annotation
         case SadSearchStopReason::Cancelled: return AutomationErrorKind::Cancelled;
         case SadSearchStopReason::TimedOut: return AutomationErrorKind::Timeout;
         case SadSearchStopReason::ComparisonBudgetExhausted:
-            return AutomationErrorKind::RecognitionFailed;
+            return AutomationErrorKind::RecognitionIncomplete;
         }
 
         UF_UNREACHABLE_MSG("Unknown SadSearchStopReason value");

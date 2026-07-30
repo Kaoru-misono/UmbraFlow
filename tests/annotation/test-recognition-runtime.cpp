@@ -564,8 +564,12 @@ namespace uf::annotation
         REQUIRE_FALSE(outcome.has_value());
         test::requireErrorKind(
             outcome.error(),
-            AutomationErrorKind::RecognitionFailed
+            AutomationErrorKind::RecognitionIncomplete
         );
+        // The page evaluation stopped before it reached anchorB, so the run knows
+        // nothing about that anchor; the caller has to observe again rather than
+        // treat the page as ruled out.
+        CHECK(failureResponse(outcome.error()) == FailureResponse::Retry);
     }
 
     TEST_CASE("recognition runtime preserves an immediate cancellation as a stop")

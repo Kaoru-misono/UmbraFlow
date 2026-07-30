@@ -2,9 +2,11 @@
 
 #include <doctest/doctest.h>
 
+#include <algorithm>
 #include <array>
 #include <string_view>
 #include <system_error>
+#include <vector>
 
 TEST_CASE("all automation error kinds survive the generic result channel")
 {
@@ -57,9 +59,9 @@ TEST_CASE("all automation error kinds survive the generic result channel")
             uf::FailureResponse::Retry
         },
         ErrorCase{
-            uf::AutomationErrorKind::RecognitionFailed,
-            "RecognitionFailed",
-            uf::FailureResponse::StepFailed
+            uf::AutomationErrorKind::RecognitionIncomplete,
+            "RecognitionIncomplete",
+            uf::FailureResponse::Retry
         },
         ErrorCase{
             uf::AutomationErrorKind::StaleObservation,
@@ -108,6 +110,38 @@ TEST_CASE("all automation error kinds survive the generic result channel")
         CHECK(result.error().detailCode().message() == testCase.name);
         CHECK(uf::failureResponse(result.error()) == testCase.response);
     }
+}
+
+TEST_CASE("every unwind scope has one distinct spelling outside C++")
+{
+    auto const responses = std::array{
+        uf::FailureResponse::Retry,
+        uf::FailureResponse::StepFailed,
+        uf::FailureResponse::Abort,
+        uf::FailureResponse::Cancelled,
+    };
+
+    auto spellings = std::vector<std::string_view>{};
+    for (auto const response : responses)
+    {
+        auto const wire = uf::failureResponseWireName(response);
+        CHECK_FALSE(wire.empty());
+        CHECK_FALSE(std::ranges::contains(spellings, wire));
+        spellings.emplace_back(wire);
+    }
+    CHECK(spellings.size() == responses.size());
+
+    // The distinction the JSON surface is there to carry: a search that never
+    // finished and a step that was ruled out do not spell the same word, so a
+    // caller branching on the string cannot conflate them.
+    CHECK(
+        uf::failureResponseWireName(
+            uf::failureResponse(uf::AutomationErrorKind::RecognitionIncomplete)
+        )
+        != uf::failureResponseWireName(
+            uf::failureResponse(uf::AutomationErrorKind::ActionRejected)
+        )
+    );
 }
 
 TEST_CASE("system error codes keep operating-system values with the high bit set")

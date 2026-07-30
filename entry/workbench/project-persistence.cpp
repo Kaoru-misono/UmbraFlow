@@ -201,6 +201,15 @@ namespace uf::workbench
         UF_TRY(ensureDirectory(absoluteRoot / "assets" / "templates"));
         UF_TRY(ensureDirectory(absoluteRoot / "generated"));
 
+        // The workbench writes no task, but the runtime resolves one at
+        // <projectRoot>/tasks/<name>.luau (task-loader.hpp), so a project saved
+        // here and then run would fail on a directory the authoring tool never
+        // made. Creating it empty is the whole fix: an author who has just
+        // annotated their pages finds the place their task goes, and the
+        // runtime's own "no such task" error stays about the task rather than
+        // about the layout.
+        UF_TRY(ensureDirectory(absoluteRoot / "tasks"));
+
         auto assetOrder = std::vector<std::size_t>{};
         assetOrder.reserve(sourceAssets.size());
         for (auto index = std::size_t{0}; index < sourceAssets.size(); ++index)

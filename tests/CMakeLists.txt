@@ -260,12 +260,16 @@ if(TARGET ${PROJECT_NAME}_workbench_support)
     # is registered beside the workbench's and reaches across to the colour-key
     # crops that live there.
     if(TARGET ${PROJECT_NAME}_authoring_support)
+        # The image module is private to authoring_support, but the budget cases
+        # have to write source frames at a size no committed fixture has, so the
+        # test links the PNG writer itself.
         cpp_add_test(
             NAME test-authoring
             SOURCES
                 authoring/test-authoring-cli.cpp
             LIBS
                 ${PROJECT_NAME}_authoring_support
+                ${PROJECT_NAME}_image
         )
     endif()
 

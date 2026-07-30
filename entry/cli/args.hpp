@@ -23,10 +23,29 @@ namespace uf::cli
         )
     );
 
-    // A generous per-recognition ceiling on template pixel comparisons: high
-    // enough that a legitimate full-frame search never exhausts it, low enough
-    // that a pathological project cannot spin without bound before failing closed.
-    inline constexpr auto k_defaultPixelComparisonBudget = uint64{1} << 28;
+    // A per-recognition ceiling on template pixel comparisons, shared by
+    // `umbra-flow run` and `umbra-authoring` so one number governs both.
+    //
+    // What a search costs is arithmetic rather than a guess. One candidate
+    // position costs templateWidth * templateHeight comparisons, and the search
+    // walks (roiWidth - templateWidth + 1) * (roiHeight - templateHeight + 1)
+    // positions, so its worst case is the product; pruning only ever lowers it.
+    // The figure to cover is not one search, because evaluatePage shares one
+    // budget across every page anchor in the catalog -- it is the sum over them.
+    //
+    // The envelope: a page evaluation whose anchors are each as costly as the
+    // widest ordinary authored one, a 200x50 template in a 480x90 search region.
+    // That is 281 * 41 = 11,521 positions x 10,000 pixels = 115,210,000
+    // comparisons, and eight pages identified by two anchors each make sixteen
+    // of them: 1,843,360,000. 2^31 = 2,147,483,648 covers that with headroom.
+    //
+    // It deliberately does not cover a full-frame search for a small template.
+    // A 66x46 template over 1600x900 walks 1535 * 855 = 1,312,425 positions x
+    // 3,036 pixels = 3,984,522,300 comparisons, about 1.9x this ceiling, so such
+    // a project has to author a search region or raise --budget on purpose.
+    // Sizing the default for that case instead would leave nothing failing
+    // closed on a project whose geometry is genuinely unbounded.
+    inline constexpr auto k_defaultPixelComparisonBudget = uint64{1} << 31;
 
     inline constexpr auto k_defaultTracePath = std::string_view{
         "umbra-flow-trace.jsonl"

@@ -22,7 +22,14 @@ namespace uf
         TargetUnavailable,
         CaptureUnavailable,
         CaptureStalled,
-        RecognitionFailed,
+        // A recognition that never finished looking: a search stopped on its
+        // comparison budget rather than deciding. It is deliberately not named
+        // for a failed recognition, because a recognition that completes and
+        // matches nothing is not a failure at all -- it is UnknownPage, or a
+        // nil hit, and it carries no error. Conflating the two lets a task act
+        // on a screen it never inspected, so the kind a caller reads has to say
+        // which of the two it got.
+        RecognitionIncomplete,
         StaleObservation,
         ActionRejected,
         ControllerDisconnected,
@@ -84,6 +91,16 @@ namespace uf
     [[nodiscard]]
     auto automationErrorWireName(AutomationErrorKind kind) noexcept -> std::string_view;
 
+    // The snake_case spelling of an unwind scope outside C++. A caller reading a
+    // failure off a non-C++ surface has to make the same decision failureResponse
+    // exists for -- retry the observation, take another branch, or stop -- and
+    // naming the response directly saves it from carrying its own list of which
+    // kinds mean which. Independent of enum reflection for the same reason
+    // automationErrorWireName is, and total with no default. The returned view
+    // names a string literal, so it outlives every caller.
+    [[nodiscard]]
+    auto failureResponseWireName(FailureResponse response) noexcept -> std::string_view;
+
     [[nodiscard]]
     auto fail(
         AutomationErrorKind kind,
@@ -103,7 +120,7 @@ UF_REFLECT_ENUM(
     uf::AutomationErrorKind::TargetUnavailable,
     uf::AutomationErrorKind::CaptureUnavailable,
     uf::AutomationErrorKind::CaptureStalled,
-    uf::AutomationErrorKind::RecognitionFailed,
+    uf::AutomationErrorKind::RecognitionIncomplete,
     uf::AutomationErrorKind::StaleObservation,
     uf::AutomationErrorKind::ActionRejected,
     uf::AutomationErrorKind::ControllerDisconnected,

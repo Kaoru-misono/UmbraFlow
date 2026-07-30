@@ -1601,12 +1601,22 @@ namespace uf::authoring
             context.emplace_back(jsonString(frame));
         }
 
+        // `kind` names what went wrong and `response` names how far it has to
+        // unwind, which is the axis a caller actually branches on. An agent
+        // driving `match` needs both: a completed search that matched nothing
+        // answers ok with "hit":false, while a search that never finished
+        // answers this document with a Retry response, and acting on the second
+        // as though it were the first is acting on a screen never inspected.
         auto const detail = std::array{
             JsonMember{
                 .key   = "kind",
                 .value = jsonString(
                     kindName.value_or("UnknownAutomationErrorKind")
                 ),
+            },
+            JsonMember{
+                .key   = "response",
+                .value = jsonString(failureResponseWireName(failureResponse(error))),
             },
             JsonMember{.key = "message", .value = jsonString(error.message())},
             JsonMember{.key = "context", .value = jsonArray(context)},

@@ -178,26 +178,56 @@ namespace uf::annotation
         CHECK(candidates[1] == fixture.pageB);
     }
 
-    TEST_CASE("every matcher stop reason aborts complete page resolution")
+    TEST_CASE("a search that never finished is not classified as a decided miss")
     {
         auto const fixture = resolutionFixture();
         auto const* p_anchor = fixture.catalog.findRecognizer(fixture.anchorA);
         REQUIRE(p_anchor != nullptr);
+        auto const identity = FrameIdentity{
+            CaptureSessionId{7},
+            TargetGeneration::fromValue(3),
+            FrameId{11}
+        };
+
         struct StopCase final
         {
             SadSearchStopReason reason{};
-            AutomationErrorKind expected{};
+            AutomationErrorKind expectedKind{};
+            FailureResponse     expectedResponse{};
         };
+
+        // Each of the three reasons carries its own kind, and none of the three
+        // lands on StepFailed, which is the response a caller reads as "this step
+        // is ruled out, take the other branch". A stop rules nothing out.
         auto const cases = std::array{
-            StopCase{SadSearchStopReason::Cancelled, AutomationErrorKind::Cancelled},
-            StopCase{SadSearchStopReason::TimedOut, AutomationErrorKind::Timeout},
+            StopCase{
+                SadSearchStopReason::Cancelled,
+                AutomationErrorKind::Cancelled,
+                FailureResponse::Cancelled,
+            },
+            StopCase{
+                SadSearchStopReason::TimedOut,
+                AutomationErrorKind::Timeout,
+                FailureResponse::Abort,
+            },
             StopCase{
                 SadSearchStopReason::ComparisonBudgetExhausted,
-                AutomationErrorKind::RecognitionFailed,
+                AutomationErrorKind::RecognitionIncomplete,
+                FailureResponse::Retry,
             },
         };
         for (auto const testCase : cases)
         {
+            CHECK(searchStopKind(testCase.reason) == testCase.expectedKind);
+            CHECK(
+                failureResponse(searchStopKind(testCase.reason))
+                == testCase.expectedResponse
+            );
+            CHECK(
+                failureResponse(searchStopKind(testCase.reason))
+                != FailureResponse::StepFailed
+            );
+
             auto const sadOutcome = SadSearchOutcome{testCase.reason};
             auto const evaluation = AnchorEvaluation::fromSadOutcome(
                 *p_anchor,
@@ -207,11 +237,32 @@ namespace uf::annotation
             auto const evaluations = std::array{*evaluation};
             auto const result = PageResolver::resolve(
                 fixture.catalog,
-                FrameIdentity{CaptureSessionId{7}, TargetGeneration::fromValue(3), FrameId{11}},
+                identity,
                 evaluations
             );
             REQUIRE_FALSE(result.has_value());
-            test::requireErrorKind(result.error(), testCase.expected);
+            test::requireErrorKind(result.error(), testCase.expectedKind);
         }
+
+        // The other half, without which the checks above would pass on a matcher
+        // that never decided anything: a search that did complete and matched
+        // nothing is not an error at all. It resolves, and the resolution is
+        // UnknownPage -- so "did not finish" and "did not match" are told apart
+        // by whether there is an error, then by which kind it carries.
+        auto const completedMiss = resolve(fixture, 26, 26);
+        REQUIRE(completedMiss.has_value());
+        CHECK(std::holds_alternative<UnknownPage>(*completedMiss));
+
+        // A stop reason must never spell itself the way any other one does,
+        // because the rendered message is what an operator reads to know which
+        // stop happened.
+        CHECK(
+            searchStopDescription(SadSearchStopReason::ComparisonBudgetExhausted)
+            != searchStopDescription(SadSearchStopReason::TimedOut)
+        );
+        CHECK(
+            searchStopDescription(SadSearchStopReason::Cancelled)
+            != searchStopDescription(SadSearchStopReason::TimedOut)
+        );
     }
 }

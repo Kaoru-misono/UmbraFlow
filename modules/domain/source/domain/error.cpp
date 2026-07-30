@@ -80,7 +80,12 @@ namespace uf
         case AutomationErrorKind::Cancelled: return FailureResponse::Cancelled;
         case AutomationErrorKind::CaptureStalled: return FailureResponse::Retry;
         case AutomationErrorKind::StaleObservation: return FailureResponse::Retry;
-        case AutomationErrorKind::RecognitionFailed: return FailureResponse::StepFailed;
+        // Retry rather than StepFailed: the caller learned nothing about the
+        // screen, so it must observe again within its own retry budget instead
+        // of branching as though the page had been ruled out. The comparison
+        // count depends on the frame's own pixels, so a later frame can complete
+        // where this one ran out.
+        case AutomationErrorKind::RecognitionIncomplete: return FailureResponse::Retry;
         case AutomationErrorKind::ActionRejected: return FailureResponse::StepFailed;
         case AutomationErrorKind::Timeout: return FailureResponse::Abort;
         case AutomationErrorKind::InvalidResource: return FailureResponse::Abort;
@@ -120,7 +125,7 @@ namespace uf
         case AutomationErrorKind::TargetUnavailable:             return "target_unavailable";
         case AutomationErrorKind::CaptureUnavailable:            return "capture_unavailable";
         case AutomationErrorKind::CaptureStalled:                return "capture_stalled";
-        case AutomationErrorKind::RecognitionFailed:             return "recognition_failed";
+        case AutomationErrorKind::RecognitionIncomplete:         return "recognition_incomplete";
         case AutomationErrorKind::StaleObservation:              return "stale_observation";
         case AutomationErrorKind::ActionRejected:                return "action_rejected";
         case AutomationErrorKind::ControllerDisconnected:        return "controller_disconnected";
@@ -130,6 +135,19 @@ namespace uf
         }
 
         UF_UNREACHABLE_MSG("Unknown AutomationErrorKind value");
+    }
+
+    auto failureResponseWireName(FailureResponse response) noexcept -> std::string_view
+    {
+        switch (response)
+        {
+        case FailureResponse::Retry:      return "retry";
+        case FailureResponse::StepFailed: return "step_failed";
+        case FailureResponse::Abort:      return "abort";
+        case FailureResponse::Cancelled:  return "cancelled";
+        }
+
+        UF_UNREACHABLE_MSG("Unknown FailureResponse value");
     }
 
     auto automationErrorKind(Error const& error) noexcept -> std::optional<AutomationErrorKind>

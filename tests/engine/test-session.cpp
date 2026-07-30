@@ -1046,7 +1046,14 @@ namespace uf::engine
         REQUIRE(observation.has_value());
         auto const found = session.findAction(*observation, actionT);
         REQUIRE_FALSE(found.has_value());
-        anno::test::requireErrorKind(found.error(), AutomationErrorKind::RecognitionFailed);
+        anno::test::requireErrorKind(
+            found.error(),
+            AutomationErrorKind::RecognitionIncomplete
+        );
+        // The search never looked, so the session must not report the absence a
+        // completed miss reports: a miss returns an empty optional with no error,
+        // and this returns an error whose response is Retry.
+        CHECK(failureResponse(found.error()) == FailureResponse::Retry);
         CHECK(under.clicks->clickCount() == 0);
 
         // The old stage-blind RecognitionStopped kind is now the Stopped outcome

@@ -81,7 +81,7 @@ namespace uf::cli
         case AutomationErrorKind::TargetUnavailable:
         case AutomationErrorKind::CaptureUnavailable:
         case AutomationErrorKind::CaptureStalled:
-        case AutomationErrorKind::RecognitionFailed:
+        case AutomationErrorKind::RecognitionIncomplete:
         case AutomationErrorKind::StaleObservation:
         case AutomationErrorKind::ActionRejected:
         case AutomationErrorKind::ControllerDisconnected:
