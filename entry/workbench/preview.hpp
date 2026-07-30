@@ -73,14 +73,6 @@ namespace uf::workbench
 
         std::optional<PreviewAnchorRow> actionEvidence{};
         std::optional<PreviewStop>      actionStop{};
-
-        // Set when a selected action target could not be evaluated on this
-        // screen because the element is placed on several pages and this
-        // screen's page is not one of them (or the screen is unclaimed). The
-        // page and anchor evaluation above still ran; only the action search was
-        // skipped, and this states why in a line fit for the status bar. An
-        // action evidence is never reported alongside a skip note.
-        std::optional<std::string> actionSkipNote{};
     };
 
     // The pixel-comparison ceiling ONE search may spend. This is the workbench's
@@ -136,9 +128,11 @@ namespace uf::workbench
     // region is a fraction of a whole-model check, so it can run where the
     // author is looking rather than behind a button they have to remember.
     //
-    // The recognizer supplies both the template and the region to search, so
-    // evaluating the element being copied against the screen it is being copied
-    // onto gives exactly the score its copy will have -- no copy need exist yet.
+    // The element supplies the appearance and its reference the region, so
+    // evaluating the element against the screen it is being put onto gives
+    // exactly the score the new reference will have -- it need not exist yet.
+    // Fails for an element no page exercises interact on: with no reference
+    // there is no region to search.
     [[nodiscard]]
     auto scoreRegionOnScreen(
         annotation::AuthoringDocument const& document,
@@ -257,9 +251,9 @@ namespace uf::workbench
     };
 
     // How searching one element on one screen came out. Every (element, screen)
-    // pair in the grid carries one of these, so a screen a multi-placed element
-    // is not placed on is an explicit NotSearchedHere state rather than an empty
-    // hole the reader has to interpret.
+    // pair in the grid carries one of these, so a pair nothing measured is an
+    // explicit NotSearchedHere state rather than an empty hole the reader has to
+    // interpret.
     enum class ModelCellOutcome : uint8
     {
         // Searched and matched: the score came in at or below the threshold.
@@ -269,16 +263,18 @@ namespace uf::workbench
         // The search hit its comparison budget or the run's deadline before it
         // produced evidence, so no score was measured here.
         Stopped,
-        // This screen's page does not place the element, so there is no search
-        // region for it here -- a multi-placed element off its pages, never an
-        // anchor or a single-placement element (those are searched everywhere).
+        // Nothing searched for the element here. One element compiles to one
+        // recognizer, so an element some page exercises is searched on every
+        // screen, on and off its own pages -- which is what makes the grid's
+        // off-diagonal cells measurable. What is left is an element no page
+        // exercises at all: it has no region to be searched in anywhere.
         NotSearchedHere,
     };
 
     // One (element, screen) observation in the marks-x-screens grid, filed under
-    // the ELEMENT id -- never a derived per-page recognizer id -- so the UI's
-    // element-keyed lookups reach it the same way the margins do. Derived from
-    // the same per-screen evaluation the margins fold in, with no second search.
+    // the element id, the one name a signature, an authorisation, a trace line,
+    // and the UI's own lookups all resolve. Derived from the same per-screen
+    // evaluation the margins fold in, with no second search.
     struct ModelCheckCell final
     {
         annotation::ElementId elementId;
@@ -291,11 +287,12 @@ namespace uf::workbench
         std::optional<uint64> sadScore{};
         uint64                maximumSad{};
 
-        // Whether the element is authored to match on this screen: the screen's
-        // recorded page places it (an interactive region) or names it (an
-        // anchor). This is the ground truth the colour is read against -- a hit
-        // where this is false is a misfire, a miss where it is true is a hole.
-        // Left false for a cell that was not searched or was stopped.
+        // Whether the element is authored to match on this screen: the page
+        // recorded for the screen references it, whatever capability that
+        // reference exercises. This is the ground truth the colour is read
+        // against -- a hit where this is false is a misfire, a miss where it is
+        // true is a hole. Left false for a cell that was not searched or was
+        // stopped.
         bool expectedHit{};
 
         // Why a Stopped cell stopped -- the budget or the deadline -- for the

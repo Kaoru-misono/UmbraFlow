@@ -140,14 +140,12 @@ namespace uf::workbench
                 deleted.withdrawnRoles == 1U ? "signature" : "signatures"
             );
         }
-        if (deleted.clearedAuthorizations > 0U)
+        if (deleted.withdrawnReferences > 0U)
         {
             summary += std::format(
-                "; cleared it from {} recognizer {}",
-                deleted.clearedAuthorizations,
-                deleted.clearedAuthorizations == 1U
-                    ? "authorization"
-                    : "authorizations"
+                "; withdrew {} page {}",
+                deleted.withdrawnReferences,
+                deleted.withdrawnReferences == 1U ? "reference" : "references"
             );
         }
         if (deleted.removedRegressions > 0U)
@@ -157,49 +155,6 @@ namespace uf::workbench
                 deleted.removedRegressions,
                 deleted.removedRegressions == 1U ? "case" : "cases"
             );
-        }
-        return summary;
-    }
-
-    // Names the type change and everything the conversion had to repair with
-    // it, so an authorization the author did not ask for and a field the
-    // conversion could not keep are both stated rather than discovered later.
-    [[nodiscard]]
-    auto retypeSummary(
-        AppState const& state,
-        RetypedRecognizer const& retyped,
-        char const* typeName
-    ) -> std::string
-    {
-        auto summary = std::format("type set to {}", typeName);
-        if (auto const page = retyped.authorizedPage)
-        {
-            summary += std::format(
-                "; authorized page \"{}\"",
-                pageName(state, *page)
-            );
-        }
-        if (retyped.withdrawnRoles > 0U)
-        {
-            summary += std::format(
-                "; withdrew from {} page {}",
-                retyped.withdrawnRoles,
-                retyped.withdrawnRoles == 1U ? "signature" : "signatures"
-            );
-        }
-        if (retyped.clearedAuthorizations > 0U)
-        {
-            summary += std::format(
-                "; cleared {} page {}",
-                retyped.clearedAuthorizations,
-                retyped.clearedAuthorizations == 1U
-                    ? "authorization"
-                    : "authorizations"
-            );
-        }
-        if (retyped.clearedClick)
-        {
-            summary += "; cleared the default click";
         }
         return summary;
     }
@@ -426,22 +381,22 @@ namespace uf::workbench
         requestEdit(ui, std::move(deleted->draft), std::move(description));
     }
 
-    // The source a recognizer was authored against, so a selection can follow
-    // the recognizer to the image its rectangles are meaningful on.
+    // The screen an element's pixels were cut from, so a selection can follow it
+    // to the image its rectangles are meaningful on. The source is a property of
+    // the appearance now, so an element located by its page -- which declares
+    // none -- has no screen of its own to follow to.
     [[nodiscard]]
     auto sourceOfRecognizer(
         AppState const& state,
         annotation::ElementId id
     ) -> std::optional<annotation::SourceId>
     {
-        for (auto const& relationship : state.document().recognizerSources())
+        auto const* p_element = state.document().findElement(id);
+        if (p_element == nullptr || p_element->variants().empty())
         {
-            if (relationship.recognizerId == id)
-            {
-                return relationship.sourceId;
-            }
+            return std::nullopt;
         }
-        return std::nullopt;
+        return p_element->variants().front().sourceId();
     }
 
     // The screen explicitly recorded as this page, if any. Distinct from
@@ -492,12 +447,12 @@ namespace uf::workbench
         return std::nullopt;
     }
 
-    auto placementContext(
+    auto referenceContext(
         AppState const& state,
         annotation::ElementId id,
         annotation::SourceId shownScreen,
         std::optional<annotation::PageId> selectionPage
-    ) -> std::optional<PlacementContext>
+    ) -> std::optional<ReferenceContext>
     {
         auto const pageContext = shownPageForScreen(
             state,
@@ -509,76 +464,32 @@ namespace uf::workbench
             return std::nullopt;
         }
 
-        // Only an interactive region carries a per-page placement the canvas can
-        // edit here: an anchor joins its page through the signature, and an info
-        // region's default range is left to the properties panel.
-        auto const* definition = state.document().catalog().findRecognizer(id);
+        auto const* p_element   = state.document().findElement(id);
+        auto const* p_reference = state.document().catalog().findReference(
+            *pageContext,
+            id
+        );
+        if (p_element == nullptr || p_reference == nullptr)
+        {
+            return std::nullopt;
+        }
+        // A reference exercising identify reads the element's own region and is
+        // refused one of its own, so there is nothing per-page for the canvas to
+        // edit through it. An element that is only read is excluded for a
+        // narrower reason: the canvas writes a per-page region through
+        // EditPage::region, which is an interactive-region handle, and nothing
+        // authors a readable cell's per-page region yet.
         if (
-            definition == nullptr
-            || definition->annotationType()
-                != annotation::AnnotationType::ActionTarget
+            p_reference->exercised.hasIdentify()
+            || !p_element->capabilities().hasInteract()
         )
         {
             return std::nullopt;
         }
-
-        for (auto const& placement : state.document().placements())
-        {
-            if (
-                placement.pageId == *pageContext
-                && placement.elementId == id
-            )
-            {
-                return PlacementContext{
-                    .page      = *pageContext,
-                    .searchRoi = placement.searchRoi,
-                };
-            }
-        }
-        return std::nullopt;
-    }
-
-    auto isRegionShared(
-        AppState const& state,
-        annotation::ElementId id
-    ) -> bool
-    {
-        auto const found = std::ranges::find(
-            state.document().recognizerSources(),
-            id,
-            &annotation::AuthoringRecognizerSource::recognizerId
-        );
-        return found != state.document().recognizerSources().end()
-            && found->shared;
-    }
-
-    auto requestRegionShared(
-        AppState& state,
-        PanelUiState& ui,
-        annotation::ElementId id,
-        bool shared
-    ) -> void
-    {
-        auto marked = setRegionShared(state.draft(), id, shared);
-        if (!marked)
-        {
-            ui.report(
-                LogSeverity::Error,
-                std::format(
-                    "{} failed: {}",
-                    shared ? "sharing" : "unsharing",
-                    toString(marked.error())
-                )
-            );
-            return;
-        }
-        requestEdit(
-            ui,
-            *std::move(marked),
-            shared
-                ? "marked reusable; drag it onto another page from Shared regions"
-                : std::string{"no longer reusable"}
-        );
+        return ReferenceContext{
+            .page      = *pageContext,
+            .searchRoi = p_reference->searchRoi.value_or(p_element->searchRoi()),
+        };
     }
 
     auto elementColourKey(
@@ -587,9 +498,11 @@ namespace uf::workbench
     ) -> std::optional<annotation::ColourKey>
     {
         auto const* p_element = state.document().findElement(id);
-        return p_element == nullptr
-            ? std::nullopt
-            : p_element->colourKey();
+        if (p_element == nullptr || p_element->variants().empty())
+        {
+            return std::nullopt;
+        }
+        return p_element->variants().front().colourKey();
     }
 
     auto requestElementColourKey(
@@ -665,15 +578,15 @@ namespace uf::workbench
         );
     }
 
-    auto requestSharedRegionOnPage(
+    auto requestReferenceOnPage(
         AppState& state,
         PanelUiState& ui,
-        annotation::ElementId shareFrom,
+        annotation::ElementId elementId,
         annotation::PageId pageId
     ) -> void
     {
         auto draft         = state.draft();
-        auto const* origin = findEditableRecognizer(draft, shareFrom);
+        auto const* origin = findEditableRecognizer(draft, elementId);
         if (origin == nullptr)
         {
             ui.report(
@@ -684,32 +597,32 @@ namespace uf::workbench
         }
 
         auto const targetScreen = claimedScreen(state, pageId);
-        auto shared             = shareRegionOnPage(
+        auto referenced         = referenceElementOnPage(
             state.draft(),
-            SharedRegionSpec{
-                .elementId = shareFrom,
+            ReferenceElementSpec{
+                .elementId = elementId,
                 .pageId    = pageId,
                 .searchRoi = origin->searchRoi,
             }
         );
-        if (!shared)
+        if (!referenced)
         {
             ui.report(
                 LogSeverity::Error,
                 std::format(
-                    "share failed: {}",
-                    toString(shared.error())
+                    "placing it there failed: {}",
+                    toString(referenced.error())
                 )
             );
             return;
         }
 
-        // The new placement searches the region the element already uses, so
-        // scoring the element against the target screen is scoring the placement
+        // The new reference searches the region the element already uses, so
+        // scoring the element against the target screen is scoring the reference
         // the drop just created.
         auto verdict = std::string{};
 
-        // A placement that scores as not matching on its target screen is a
+        // A reference that scores as not matching on its target screen is a
         // done-but-degraded outcome, so its otherwise-successful message is
         // reported at Warning rather than Info.
         auto severity = LogSeverity::Info;
@@ -721,7 +634,7 @@ namespace uf::workbench
                 auto const scored = scoreRegionOnScreen(
                     state.document(),
                     *assets,
-                    shareFrom,
+                    elementId,
                     *targetScreen,
                     annotation::RecognitionPolicy{
                         .maximumPixelComparisons = k_recognitionComparisonBudget,
@@ -749,14 +662,14 @@ namespace uf::workbench
 
         requestEditSelecting(
             ui,
-            std::move(shared->draft),
+            std::move(referenced->draft),
             std::format(
                 "\"{}\" placed on page \"{}\"{}",
-                shared->name,
+                referenced->name,
                 pageName(state, pageId),
                 verdict
             ),
-            shareFrom,
+            elementId,
             targetScreen,
             severity
         );
@@ -819,9 +732,9 @@ namespace uf::workbench
 
         if (isTemplate)
         {
-            // An element is one thing placed on N pages, so correcting its
-            // template corrects it everywhere at once. Each placement keeps its
-            // own detection range, which the moved template must still fit.
+            // An element is one thing referenced by N pages, so correcting its
+            // appearance corrects it everywhere at once. Each reference keeps
+            // its own detection range, which the moved template must still fit.
             auto retemplated = setElementTemplateRect(
                 state.draft(),
                 recognizerId,
@@ -840,11 +753,11 @@ namespace uf::workbench
             else
             {
                 auto description = std::format("template rect set to {}", geometry);
-                if (retemplated->otherPlacements > 1U)
+                if (retemplated->referencingPages > 1U)
                 {
                     description += std::format(
                         "; searched on {} pages, all updated",
-                        retemplated->otherPlacements
+                        retemplated->referencingPages
                     );
                 }
                 requestEdit(
@@ -856,9 +769,9 @@ namespace uf::workbench
         }
         else if (pageContext.has_value())
         {
-            // With a page context the drag edits that page's placement, not the
+            // With a page context the drag edits that page's reference, not the
             // element's shared default, so the range set here moves on this page
-            // alone. Routed through EditPage so the placement write and the
+            // alone. Routed through EditPage so the reference write and the
             // one-commit-per-frame guard stay in one place.
             auto opened = EditPage::open(state, *pageContext);
             if (!opened)
@@ -912,8 +825,8 @@ namespace uf::workbench
         else
         {
             // No page context: this writes the element's own default search
-            // range, which seeds new placements and every page that has not
-            // refined its own.
+            // range, which serves every page whose reference has not refined
+            // one of its own.
             auto draft       = state.draft();
             auto* recognizer = findEditableRecognizer(draft, recognizerId);
             if (recognizer != nullptr)

@@ -1,4 +1,5 @@
 #include "../annotation/test-helpers.hpp"
+#include "authoring-fixture.hpp"
 
 #include <model-check-view.hpp>
 #include <panel-state.hpp>
@@ -59,7 +60,7 @@ namespace uf::workbench
                 fingerprint,
                 {*source},
                 {
-                    annotation::test::anchorElement(
+                    test::markElement(
                         fingerprint,
                         anchorId,
                         "home_marker",
@@ -68,8 +69,14 @@ namespace uf::workbench
                         annotation::test::pixelRect(0, 0, 4, 4)
                     ),
                 },
-                {annotation::test::page(pageId, "home", {anchorId})},
-                {},
+                {annotation::test::page(pageId, "home")},
+                {
+                    annotation::test::reference(
+                        pageId,
+                        anchorId,
+                        annotation::test::identifiesAs()
+                    ),
+                },
                 {}
             );
             REQUIRE(created.has_value());

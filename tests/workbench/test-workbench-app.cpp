@@ -1,4 +1,5 @@
 #include "../annotation/test-helpers.hpp"
+#include "authoring-fixture.hpp"
 
 #include <authoring-edit.hpp>
 #include <workbench-app.hpp>
@@ -55,7 +56,7 @@ namespace uf::workbench
                 fingerprint,
                 {*source},
                 {
-                    annotation::test::anchorElement(
+                    test::markElement(
                         fingerprint,
                         anchorId,
                         "home_marker",
@@ -64,8 +65,14 @@ namespace uf::workbench
                         annotation::test::pixelRect(0, 0, 4, 4)
                     ),
                 },
-                {annotation::test::page(pageId, "home", {anchorId})},
-                {},
+                {annotation::test::page(pageId, "home")},
+                {
+                    annotation::test::reference(
+                        pageId,
+                        anchorId,
+                        annotation::test::identifiesAs()
+                    ),
+                },
                 {}
             );
             REQUIRE(created.has_value());
@@ -109,7 +116,7 @@ namespace uf::workbench
                 fingerprint,
                 {*source},
                 {
-                    annotation::test::anchorElement(
+                    test::markElement(
                         fingerprint,
                         anchorId,
                         "home_marker",
@@ -117,7 +124,7 @@ namespace uf::workbench
                         annotation::test::pixelRect(0, 0, 2, 2),
                         annotation::test::pixelRect(0, 0, 4, 4)
                     ),
-                    annotation::test::interactiveElement(
+                    test::clickableElement(
                         fingerprint,
                         regionId,
                         "daily_button",
@@ -126,12 +133,17 @@ namespace uf::workbench
                         annotation::test::pixelRect(3, 3, 4, 4)
                     ),
                 },
-                {annotation::test::page(pageId, "home", {anchorId})},
+                {annotation::test::page(pageId, "home")},
                 {
-                    annotation::test::placement(
+                    annotation::test::reference(
+                        pageId,
+                        anchorId,
+                        annotation::test::identifiesAs()
+                    ),
+                    annotation::test::reference(
                         pageId,
                         regionId,
-                        annotation::test::pixelRect(3, 3, 4, 4)
+                        annotation::test::interacts()
                     ),
                 },
                 {}
@@ -431,8 +443,8 @@ namespace uf::workbench
             .shownScreen  = sourceId,
         });
 
-        // Remove the region and its placement in an otherwise valid edit; the
-        // home page still identifies itself through its anchor.
+        // Remove the region and every page's reference to it in an otherwise
+        // valid edit; the home page still identifies itself through its mark.
         auto draft = state.draft();
         std::erase_if(
             draft.recognizers,
@@ -442,10 +454,10 @@ namespace uf::workbench
             }
         );
         std::erase_if(
-            draft.placements,
-            [regionId](EditablePlacement const& placement)
+            draft.references,
+            [regionId](EditableReference const& reference)
             {
-                return placement.elementId == regionId;
+                return reference.elementId == regionId;
             }
         );
         auto const applied = state.applyEdit(draft);

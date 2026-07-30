@@ -7,6 +7,8 @@
 #include <annotation/resource.hpp>
 
 #include <core/error/result.hpp>
+#include <core/safety/annotations.hpp>
+#include <core/types/integer.hpp>
 
 #include <domain/space.hpp>
 
@@ -44,16 +46,6 @@ namespace uf::workbench
         annotation::ElementId id
     ) -> EditableRecognizer*;
 
-    // Says what retyping repaired as well as that it succeeded. An authorization
-    // or a withdrawn page membership the author did not ask for must not be
-    // silent, because the next thing they do depends on it.
-    [[nodiscard]]
-    auto retypeSummary(
-        AppState const& state,
-        RetypedRecognizer const& retyped,
-        char const* typeName
-    ) -> std::string;
-
     // The percentage a basis-point threshold is shown as, and the basis points a
     // shown percentage commits to. Persistence stays integer basis points (design
     // lock OQ-1 / §1.4): the UI shows a familiar percent to two decimals while the
@@ -68,8 +60,8 @@ namespace uf::workbench
 
     // Duplicates the selected element as a new one and selects the copy once the
     // edit lands: a fresh id, a unique name derived from the original, and the
-    // same rectangles, threshold, click, kind, and placements. Reports a refusal
-    // on the status line rather than committing a rejected edit.
+    // same region, capabilities, appearances, and page references. Reports a
+    // refusal on the status line rather than committing a rejected edit.
     auto requestDuplicateElement(
         AppState& state,
         PanelUiState& ui,
@@ -114,8 +106,8 @@ namespace uf::workbench
     // catalog counts, exactly as the former Actions buttons did.
     auto dispatchToolbarCommand(AppState& state, PanelUiState& ui) -> void;
 
-    // States what a deletion withdrew along the way, for the same reason
-    // retypeSummary does.
+    // States what a deletion withdrew along the way, because a membership the
+    // author did not ask to remove must not be silent.
     [[nodiscard]]
     auto deletionSummary(
         std::string_view what,
@@ -142,7 +134,9 @@ namespace uf::workbench
         PagelessExpectation expectation
     ) -> void;
 
-    // The screen a recognizer was authored against, if the document records one.
+    // The screen one element's pixels were cut from: the source of its sole
+    // appearance. An element located by its page has no appearance and so no
+    // screen of its own.
     [[nodiscard]]
     auto sourceOfRecognizer(
         AppState const& state,
@@ -168,40 +162,42 @@ namespace uf::workbench
         std::optional<annotation::PageId> selectionPage = std::nullopt
     ) -> std::optional<annotation::PageId>;
 
-    // The page whose placement of an interactive region the canvas edits when
-    // that region is shown over a given screen, together with that placement's
-    // per-page search ROI. Narrowed to the case the canvas can act on: the
-    // recognizer is an interactive region and that page places it. Empty for an
-    // anchor, or a region not placed on the resolved page, in which case the
-    // canvas falls back to the element's own default range.
+    // The page whose reference to an element the canvas edits when that element
+    // is shown over a given screen, together with the region searched for it
+    // there. Narrowed to the case the canvas can act on: the page references the
+    // element, does not identify by it (a reference exercising identify reads the
+    // element's own region and may not refine it), and the element is one that
+    // can be clicked, which is the only handle the canvas has to write a per-page
+    // region through. Empty otherwise, in which case the canvas falls back to the
+    // element's own default range.
     //
     // The page is resolved by precedence: selectionPage -- the page an element
     // was selected under, from a page's member list -- wins outright; only
     // without one does the context fall back to the page that claims the shown
-    // screen (the inverse of claimedScreen). This is what lets ROI editing on an
-    // element selected under a page use that page even when the shown screen's
-    // claim is missing or ambiguous.
-    struct PlacementContext final
+    // screen (the inverse of claimedScreen). This is what lets range editing on
+    // an element selected under a page use that page even when the shown
+    // screen's claim is missing or ambiguous.
+    struct ReferenceContext final
     {
         annotation::PageId page;
         PixelRect          searchRoi;
     };
 
     [[nodiscard]]
-    auto placementContext(
+    auto referenceContext(
         AppState const& state,
         annotation::ElementId id,
         annotation::SourceId shownScreen,
         std::optional<annotation::PageId> selectionPage = std::nullopt
-    ) -> std::optional<PlacementContext>;
+    ) -> std::optional<ReferenceContext>;
 
     // Selects a recognizer and follows to the screen it is meaningful on:
     // preferredScreen when the caller knows it (a member picked from a page's
-    // group), otherwise the screen the template was cut from. pageContext is the
-    // page the element was selected under, if any, which the canvas then prefers
-    // when resolving the placement it edits. Without a resolvable screen the
-    // element inherits the currently shown one so its rectangles are not drawn
-    // over whatever image the canvas happens to hold.
+    // group), otherwise the screen its appearance was cut from. pageContext is
+    // the page the element was selected under, if any, which the canvas then
+    // prefers when resolving the reference it edits. Without a resolvable screen
+    // the element inherits the currently shown one so its rectangles are not
+    // drawn over whatever image the canvas happens to hold.
     auto selectRecognizer(
         AppState& state,
         annotation::ElementId id,
@@ -209,17 +205,10 @@ namespace uf::workbench
         std::optional<annotation::PageId> pageContext = std::nullopt
     ) -> void;
 
-    // Whether the author marked this region reusable on other pages. The flag is
-    // authoring-only, so it lives beside the recognizer rather than on it.
-    [[nodiscard]]
-    auto isRegionShared(
-        AppState const& state,
-        annotation::ElementId id
-    ) -> bool;
-
-    // The colour key one element carries, if any. It is authoring-only -- the
-    // runtime reads the mask off the compiled template's alpha and never sees a
-    // key -- so it is read off the draft rather than off the catalog.
+    // The colour key one element carries, if any: the key on its sole
+    // appearance. It is authoring-only -- the runtime reads the mask off the
+    // compiled template's alpha and never sees a key -- so it is read off the
+    // draft rather than off the catalog.
     [[nodiscard]]
     auto elementColourKey(
         AppState const& state,
@@ -237,35 +226,25 @@ namespace uf::workbench
         std::optional<annotation::ColourKey> colourKey
     ) -> void;
 
-    // Marks an interactive region reusable on other pages, or takes the mark off,
-    // reporting a refusal rather than letting the checkbox snap back unexplained.
-    auto requestRegionShared(
-        AppState& state,
-        PanelUiState& ui,
-        annotation::ElementId id,
-        bool shared
-    ) -> void;
-
-    // Puts a shared element on another page and says at once whether it is
-    // actually there.
+    // Puts an element on another page as a borrowed reference and says at once
+    // whether it is actually there.
     //
-    // The copy starts with the region the element already searches, not the whole
-    // frame: the same element usually sits in the same place, so that is both the
-    // better first guess and a search small enough to score on the spot. The
-    // score is measured against the page being dropped onto, which is the only
-    // screen the copy will ever be searched on, and it is the answer to the
-    // question sharing cannot answer on its own -- whether these pixels look the
-    // same over there.
-    auto requestSharedRegionOnPage(
+    // The reference starts with the region the element already searches, not the
+    // whole frame: the same element usually sits in the same place, so that is
+    // both the better first guess and a search small enough to score on the spot.
+    // The score is measured against the page being dropped onto, and it is the
+    // answer to the question the reference cannot answer on its own -- whether
+    // these pixels look the same over there.
+    auto requestReferenceOnPage(
         AppState& state,
         PanelUiState& ui,
-        annotation::ElementId shareFrom,
+        annotation::ElementId elementId,
         annotation::PageId pageId
     ) -> void;
 
     // Commits a finished canvas drag as one undo entry, on release rather than
-    // per mouse-move. A page context (from placementContext) routes a search-ROI
-    // edit to that page's placement, so editing the range while viewing one page
+    // per mouse-move. A page context (from referenceContext) routes a search-range
+    // edit to that page's reference, so editing the range while viewing one page
     // leaves every other page's range untouched; without it the edit writes the
     // element's own default range.
     auto editSelectedRectOnRelease(

@@ -1,4 +1,5 @@
 #include "../annotation/test-helpers.hpp"
+#include "authoring-fixture.hpp"
 
 #include <authoring-actions.hpp>
 #include <authoring-edit.hpp>
@@ -70,7 +71,7 @@ namespace uf::workbench
                 fingerprint,
                 {*source},
                 {
-                    annotation::test::anchorElement(
+                    test::markElement(
                         fingerprint,
                         anchorId,
                         "home_marker",
@@ -78,7 +79,7 @@ namespace uf::workbench
                         annotation::test::pixelRect(0, 0, 2, 2),
                         annotation::test::pixelRect(0, 0, 4, 4)
                     ),
-                    annotation::test::anchorElement(
+                    test::markElement(
                         fingerprint,
                         awayId,
                         "away_marker",
@@ -86,7 +87,7 @@ namespace uf::workbench
                         annotation::test::pixelRect(0, 0, 2, 2),
                         annotation::test::pixelRect(0, 0, 4, 4)
                     ),
-                    annotation::test::interactiveElement(
+                    test::clickableElement(
                         fingerprint,
                         regionId,
                         "daily_button",
@@ -96,13 +97,25 @@ namespace uf::workbench
                     ),
                 },
                 {
-                    annotation::test::page(homePage, "home", {anchorId}),
-                    annotation::test::page(awayPage, "away", {awayId}),
+                    annotation::test::page(homePage, "home"),
+                    annotation::test::page(awayPage, "away"),
                 },
                 {
-                    annotation::test::placement(
+                    annotation::test::reference(
+                        homePage,
+                        anchorId,
+                        annotation::test::identifiesAs()
+                    ),
+                    annotation::test::reference(
+                        awayPage,
+                        awayId,
+                        annotation::test::identifiesAs()
+                    ),
+                    annotation::test::reference(
                         homePage,
                         regionId,
+                        annotation::test::interacts(),
+                        annotation::Holding::Owned,
                         annotation::test::pixelRect(3, 3, 4, 4)
                     ),
                 },
@@ -319,25 +332,21 @@ namespace uf::workbench
         auto const* recognizer =
             state.document().catalog().findRecognizer(newId);
         REQUIRE(recognizer != nullptr);
-        CHECK(recognizer->templateRect() == drawn);
-        CHECK(
-            recognizer->annotationType()
-                == annotation::AnnotationType::ActionTarget
-        );
+        REQUIRE(recognizer->variants().size() == 1U);
+        CHECK(recognizer->variants().front().templateRect == drawn);
+        CHECK(recognizer->capabilities().hasInteract());
 
-        // The placement's search region is the one seeded from the drawn
-        // template -- grown by its extent and clamped to the 8x8 frame -- not the
-        // whole frame by luck. It always encloses the template.
-        auto seeded = std::optional<PixelRect>{};
-        for (auto const& placement : state.document().placements())
-        {
-            if (placement.pageId == homePage && placement.elementId == newId)
-            {
-                seeded = placement.searchRoi;
-            }
-        }
-        REQUIRE(seeded.has_value());
-        CHECK(*seeded == annotation::test::pixelRect(0, 0, 8, 8));
+        // The element's search region is the one seeded from the drawn template
+        // -- grown by its extent and clamped to the 8x8 frame -- not the whole
+        // frame by luck. It always encloses the template, and the page's
+        // reference inherits it rather than pinning a copy.
+        CHECK(recognizer->searchRoi() == annotation::test::pixelRect(0, 0, 8, 8));
+        auto const* reference = state.document().catalog().findReference(
+            homePage,
+            newId
+        );
+        REQUIRE(reference != nullptr);
+        CHECK_FALSE(reference->searchRoi.has_value());
     }
 
     TEST_CASE("placeDrawn refuses a template that is too small")
@@ -386,10 +395,15 @@ namespace uf::workbench
         std::move(*page).commit(ui, "placed daily_button on away");
         applyPendingEdit(state, ui);
 
-        auto const* recognizer =
-            state.document().catalog().findRecognizer(regionId);
-        REQUIRE(recognizer != nullptr);
-        CHECK(std::ranges::contains(recognizer->allowedPageIds(), awayPage));
+        // The reference IS the authorisation, and it is Referenced rather than
+        // Owned: these pixels are borrowed from the page that owns them.
+        auto const* reference = state.document().catalog().findReference(
+            awayPage,
+            regionId
+        );
+        REQUIRE(reference != nullptr);
+        CHECK(reference->exercised.hasInteract());
+        CHECK(reference->holding == annotation::Holding::Referenced);
     }
 
     TEST_CASE("classifyScreen sets an existing case's classification")
@@ -488,28 +502,37 @@ namespace uf::workbench
         auto state = appState();
         auto ui    = PanelUiState{};
         auto const regionId = annotation::test::elementId(k_regionId);
+        auto const homePage = annotation::test::pageId(k_homePage);
         auto const awayPage = annotation::test::pageId(k_awayPage);
         auto const newRect  = annotation::test::pixelRect(3, 3, 3, 3);
 
-        auto page = EditPage::open(state, annotation::test::pageId(k_homePage));
+        auto page = EditPage::open(state, homePage);
         REQUIRE(page.has_value());
 
-        // Place the region on a second page, so a template correction has more
-        // than one placement to be seen by.
-        REQUIRE(page->region(regionId)->shareToPage(awayPage).has_value());
-        REQUIRE(page->region(regionId)->pagesPlacedOn().size() == 2U);
+        // Put the region on a second page, so a template correction has more
+        // than one reference to be seen by.
+        REQUIRE(page->region(regionId)->referenceOnPage(awayPage).has_value());
+        REQUIRE(page->region(regionId)->pagesReferencing().size() == 2U);
 
         REQUIRE(page->region(regionId)->setTemplateRect(newRect).has_value());
         std::move(*page).commit(ui, "moved the template");
         applyPendingEdit(state, ui);
 
-        // One element, one template, corrected once -- yet placed on both pages,
-        // so its runtime membership still names both.
+        // One element, one appearance, corrected once -- yet referenced by both
+        // pages, so both see the correction and neither holds a copy.
         auto const* recognizer =
             state.document().catalog().findRecognizer(regionId);
         REQUIRE(recognizer != nullptr);
-        CHECK(recognizer->templateRect() == newRect);
-        CHECK(recognizer->allowedPageIds().size() == 2U);
+        REQUIRE(recognizer->variants().size() == 1U);
+        CHECK(recognizer->variants().front().templateRect == newRect);
+        CHECK(
+            state.document().catalog().findReference(homePage, regionId)
+            != nullptr
+        );
+        CHECK(
+            state.document().catalog().findReference(awayPage, regionId)
+            != nullptr
+        );
     }
 
     TEST_CASE("a page view assembles the authored data and ids")
@@ -542,38 +565,53 @@ namespace uf::workbench
         CHECK(views.back().name == "away");
     }
 
-    TEST_CASE("a region retyped to info stays visible on its page")
+    TEST_CASE("every capability a page exercises puts the element in a group")
     {
-        // The bug this pins: the retype kept the data but no view rendered a
-        // placed info element, leaving the entity reachable only through undo.
-        // Reachability is a property of the VIEW, so the assertion is on the
-        // view, not on the draft.
+        // The bug this pins: a page member that no group rendered was reachable
+        // only through undo. Reachability is a property of the VIEW, so the
+        // assertion is on the view. Under a capability set one element sits in
+        // several groups at once, which is the case the model change exists for.
         auto const state    = appState();
         auto const regionId = annotation::test::elementId(k_regionId);
+        auto const homePage = annotation::test::pageId(k_homePage);
 
-        auto retyped = retypeRecognizer(
-            state.draft(),
+        auto draft           = state.draft();
+        auto const reference = std::ranges::find_if(
+            draft.references,
+            [&](EditableReference const& candidate)
+            {
+                return candidate.pageId == homePage
+                    && candidate.elementId == regionId;
+            }
+        );
+        REQUIRE(reference != draft.references.end());
+
+        auto const target = std::ranges::find(
+            draft.recognizers,
             regionId,
-            annotation::AnnotationType::InfoRegion
+            &EditableRecognizer::id
         );
-        REQUIRE(retyped.has_value());
+        REQUIRE(target != draft.recognizers.end());
+        target->capabilities.read = annotation::Read{};
+        reference->exercised.read = annotation::ExercisedRead{};
 
-        auto const view = PageView::of(
-            retyped->draft,
-            annotation::test::pageId(k_homePage)
-        );
+        auto const view = PageView::of(draft, homePage);
         REQUIRE(view.has_value());
 
-        auto const inInfos = std::ranges::any_of(
-            view->infos,
-            [&](PageView::RegionRow const& row) { return row.id == regionId; }
-        );
-        auto const inRegions = std::ranges::any_of(
-            view->regions,
-            [&](PageView::RegionRow const& row) { return row.id == regionId; }
-        );
-        CHECK(inInfos);
-        CHECK_FALSE(inRegions);
+        auto const has = [&](std::vector<PageView::MemberRow> const& rows)
+        {
+            return std::ranges::any_of(
+                rows,
+                [&](PageView::MemberRow const& row) { return row.id == regionId; }
+            );
+        };
+        CHECK(has(view->regions));
+        CHECK(has(view->infos));
+        CHECK_FALSE(has(view->identifiedBy));
+
+        // And it is a document the model accepts, so the two groups describe a
+        // state an author can actually reach.
+        CHECK(buildAuthoringDocument(draft).has_value());
     }
 
     TEST_CASE("createFrom builds a page around a screen and its first anchor")
@@ -624,11 +662,13 @@ namespace uf::workbench
         auto const* recognizer =
             state.document().catalog().findRecognizer(newId);
         REQUIRE(recognizer != nullptr);
-        CHECK(
-            recognizer->annotationType()
-                == annotation::AnnotationType::ActionTarget
+        CHECK(recognizer->capabilities().hasInteract());
+        auto const* reference = state.document().catalog().findReference(
+            awayPage,
+            newId
         );
-        CHECK(std::ranges::contains(recognizer->allowedPageIds(), awayPage));
+        REQUIRE(reference != nullptr);
+        CHECK(reference->exercised.hasInteract());
     }
 
     TEST_CASE("claimScreen records the screen as this page's example")
@@ -688,7 +728,7 @@ namespace uf::workbench
                 fingerprint,
                 {*source},
                 {
-                    annotation::test::anchorElement(
+                    test::markElement(
                         fingerprint,
                         anchorId,
                         "home_marker",
@@ -696,7 +736,7 @@ namespace uf::workbench
                         annotation::test::pixelRect(0, 0, 2, 2),
                         annotation::test::pixelRect(0, 0, 4, 4)
                     ),
-                    annotation::test::anchorElement(
+                    test::markElement(
                         fingerprint,
                         awayId,
                         "away_marker",
@@ -704,7 +744,7 @@ namespace uf::workbench
                         annotation::test::pixelRect(0, 0, 2, 2),
                         annotation::test::pixelRect(0, 0, 4, 4)
                     ),
-                    annotation::test::interactiveElement(
+                    test::clickableElement(
                         fingerprint,
                         regionId,
                         "daily_button",
@@ -714,18 +754,32 @@ namespace uf::workbench
                     ),
                 },
                 {
-                    annotation::test::page(homePage, "home", {anchorId}),
-                    annotation::test::page(awayPage, "away", {awayId}),
+                    annotation::test::page(homePage, "home"),
+                    annotation::test::page(awayPage, "away"),
                 },
                 {
-                    annotation::test::placement(
+                    annotation::test::reference(
+                        homePage,
+                        anchorId,
+                        annotation::test::identifiesAs()
+                    ),
+                    annotation::test::reference(
+                        awayPage,
+                        awayId,
+                        annotation::test::identifiesAs()
+                    ),
+                    annotation::test::reference(
                         homePage,
                         regionId,
+                        annotation::test::interacts(),
+                        annotation::Holding::Owned,
                         annotation::test::pixelRect(3, 3, 4, 4)
                     ),
-                    annotation::test::placement(
+                    annotation::test::reference(
                         awayPage,
                         regionId,
+                        annotation::test::interacts(),
+                        annotation::Holding::Referenced,
                         annotation::test::pixelRect(4, 4, 4, 4)
                     ),
                 },
@@ -751,28 +805,29 @@ namespace uf::workbench
             };
         }
 
+        // The region searched for one element on one page: the reference's
+        // refinement when it made one, the element's own otherwise.
         [[nodiscard]]
-        auto placementRoi(
+        auto referenceRoi(
             AppState const& state,
             annotation::PageId page,
             annotation::ElementId element
         ) -> std::optional<PixelRect>
         {
-            for (auto const& placement : state.document().placements())
+            auto const* p_reference = state.document().catalog().findReference(
+                page,
+                element
+            );
+            auto const* p_element = state.document().findElement(element);
+            if (p_reference == nullptr || p_element == nullptr)
             {
-                if (
-                    placement.pageId == page
-                    && placement.elementId == element
-                )
-                {
-                    return placement.searchRoi;
-                }
+                return std::nullopt;
             }
-            return std::nullopt;
+            return p_reference->searchRoi.value_or(p_element->searchRoi());
         }
     }
 
-    TEST_CASE("placementContext resolves the page that claims the shown screen")
+    TEST_CASE("referenceContext resolves the page that claims the shown screen")
     {
         auto const state    = twoPlacementState();
         auto const sourceId = annotation::test::sourceId(k_sourceId);
@@ -782,17 +837,17 @@ namespace uf::workbench
 
         // The source is recorded as the home page's example, and the region is
         // placed on home, so its home placement is the editing context.
-        auto const context = placementContext(state, regionId, sourceId);
+        auto const context = referenceContext(state, regionId, sourceId);
         REQUIRE(context.has_value());
         CHECK(context->page == homePage);
         CHECK(context->searchRoi == annotation::test::pixelRect(3, 3, 4, 4));
 
-        // An anchor joins its page through the signature, not a placement, so it
-        // never resolves to a placement context.
-        CHECK_FALSE(placementContext(state, anchorId, sourceId).has_value());
+        // A reference exercising identify reads the element's own region and
+        // may not refine it, so it never yields an editable context.
+        CHECK_FALSE(referenceContext(state, anchorId, sourceId).has_value());
     }
 
-    TEST_CASE("placementContext prefers the selection's page over the shown screen's claim")
+    TEST_CASE("referenceContext prefers the selection's page over the shown screen's claim")
     {
         auto const state    = twoPlacementState();
         auto const sourceId = annotation::test::sourceId(k_sourceId);
@@ -802,7 +857,7 @@ namespace uf::workbench
 
         // With no selection page, the shown screen's claim (home) resolves, as
         // the fallback that predates the typed selection.
-        auto const fallback = placementContext(state, regionId, sourceId);
+        auto const fallback = referenceContext(state, regionId, sourceId);
         REQUIRE(fallback.has_value());
         CHECK(fallback->page == homePage);
         CHECK(fallback->searchRoi == annotation::test::pixelRect(3, 3, 4, 4));
@@ -810,7 +865,7 @@ namespace uf::workbench
         // A selection page wins outright: an element selected under the away page
         // edits the away placement even though the shown screen is claimed by
         // home. This is the one behaviour U1a intentionally changes.
-        auto const chosen = placementContext(
+        auto const chosen = referenceContext(
             state,
             regionId,
             sourceId,
@@ -821,7 +876,7 @@ namespace uf::workbench
         CHECK(chosen->searchRoi == annotation::test::pixelRect(4, 4, 4, 4));
     }
 
-    TEST_CASE("a page-context ROI edit moves only that page's placement")
+    TEST_CASE("a page-context ROI edit moves only that page's reference")
     {
         auto state = twoPlacementState();
         auto ui    = PanelUiState{};
@@ -839,12 +894,12 @@ namespace uf::workbench
         );
         applyPendingEdit(state, ui);
 
-        // The home placement moved; the away placement and the element's own
+        // The home reference moved; the away reference and the element's own
         // default range are both untouched -- the defect this covers moved all of
         // them at once.
-        CHECK(placementRoi(state, homePage, regionId) == edited);
+        CHECK(referenceRoi(state, homePage, regionId) == edited);
         CHECK(
-            placementRoi(state, awayPage, regionId)
+            referenceRoi(state, awayPage, regionId)
             == annotation::test::pixelRect(4, 4, 4, 4)
         );
         auto const* element = state.document().findElement(regionId);
@@ -853,7 +908,7 @@ namespace uf::workbench
         CHECK(ui.statusLine.find("on page \"home\"") != std::string::npos);
     }
 
-    TEST_CASE("a context-free ROI edit moves the element default, not a placement")
+    TEST_CASE("a context-free ROI edit moves the element default, not a reference")
     {
         auto state = twoPlacementState();
         auto ui    = PanelUiState{};
@@ -875,11 +930,11 @@ namespace uf::workbench
         REQUIRE(element != nullptr);
         CHECK(element->searchRoi() == edited);
         CHECK(
-            placementRoi(state, homePage, regionId)
+            referenceRoi(state, homePage, regionId)
             == annotation::test::pixelRect(3, 3, 4, 4)
         );
         CHECK(
-            placementRoi(state, awayPage, regionId)
+            referenceRoi(state, awayPage, regionId)
             == annotation::test::pixelRect(4, 4, 4, 4)
         );
     }

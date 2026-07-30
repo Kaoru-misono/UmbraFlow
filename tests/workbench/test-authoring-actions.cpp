@@ -1,4 +1,5 @@
 #include "../annotation/test-helpers.hpp"
+#include "authoring-fixture.hpp"
 
 #include <authoring-actions.hpp>
 #include <authoring-edit.hpp>
@@ -59,7 +60,7 @@ namespace uf::workbench
                 fingerprint,
                 {*source},
                 {
-                    annotation::test::anchorElement(
+                    test::markElement(
                         fingerprint,
                         anchorId,
                         "home_marker",
@@ -68,8 +69,14 @@ namespace uf::workbench
                         annotation::test::pixelRect(0, 0, 4, 4)
                     ),
                 },
-                {annotation::test::page(pageId, "home", {anchorId})},
-                {},
+                {annotation::test::page(pageId, "home")},
+                {
+                    annotation::test::reference(
+                        pageId,
+                        anchorId,
+                        annotation::test::identifiesAs()
+                    ),
+                },
                 {}
             );
             REQUIRE(created.has_value());
@@ -381,7 +388,7 @@ namespace uf::workbench
         CHECK(noisy.find("3") != std::string::npos);
     }
 
-    TEST_CASE("a recognizer resolves to the screen it was authored against")
+    TEST_CASE("an element resolves to the screen its appearance was cut from")
     {
         auto const state = appState();
 

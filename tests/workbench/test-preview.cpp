@@ -1,4 +1,5 @@
 #include "../annotation/test-helpers.hpp"
+#include "authoring-fixture.hpp"
 
 #include <authoring-edit.hpp>
 #include <preview.hpp>
@@ -91,7 +92,7 @@ namespace uf::workbench
                 fingerprint,
                 {*source},
                 {
-                    annotation::test::anchorElement(
+                    test::markElement(
                         fingerprint,
                         anchorId,
                         "anchor",
@@ -99,7 +100,7 @@ namespace uf::workbench
                         annotation::test::pixelRect(0, 0, 1, 1),
                         annotation::test::pixelRect(0, 0, 3, 1)
                     ),
-                    annotation::test::interactiveElement(
+                    test::clickableElement(
                         fingerprint,
                         actionId,
                         "action",
@@ -108,12 +109,17 @@ namespace uf::workbench
                         annotation::test::pixelRect(0, 0, 3, 1)
                     ),
                 },
-                {annotation::test::page(pageId, "home", {anchorId})},
+                {annotation::test::page(pageId, "home")},
                 {
-                    annotation::test::placement(
+                    annotation::test::reference(
+                        pageId,
+                        anchorId,
+                        annotation::test::identifiesAs()
+                    ),
+                    annotation::test::reference(
                         pageId,
                         actionId,
-                        annotation::test::pixelRect(0, 0, 3, 1)
+                        annotation::test::interacts()
                     ),
                 },
                 {}
@@ -343,7 +349,7 @@ namespace uf::workbench
                     // Template is column 0 of screen A; searched in columns 1..7,
                     // where its value never recurs, so the search misses after a
                     // full seven-column scan.
-                    annotation::test::anchorElement(
+                    test::markElement(
                         fingerprint,
                         lowAnchor,
                         "low_anchor",
@@ -352,7 +358,7 @@ namespace uf::workbench
                         annotation::test::pixelRect(1, 0, 7, 1)
                     ),
                     // Template is column 7 of screen A; searched in columns 0..6.
-                    annotation::test::anchorElement(
+                    test::markElement(
                         fingerprint,
                         highAnchor,
                         "high_anchor",
@@ -361,14 +367,19 @@ namespace uf::workbench
                         annotation::test::pixelRect(0, 0, 7, 1)
                     ),
                 },
+                {annotation::test::page(pageId, "home")},
                 {
-                    annotation::test::page(
+                    annotation::test::reference(
                         pageId,
-                        "home",
-                        {lowAnchor, highAnchor}
+                        lowAnchor,
+                        annotation::test::identifiesAs()
+                    ),
+                    annotation::test::reference(
+                        pageId,
+                        highAnchor,
+                        annotation::test::identifiesAs()
                     ),
                 },
-                {},
                 {}
             );
             REQUIRE(document.has_value());
@@ -543,7 +554,7 @@ namespace uf::workbench
                     sourceFrom(otherId, fingerprint, lightPng),
                 },
                 {
-                    annotation::test::anchorElement(
+                    test::markElement(
                         fingerprint,
                         anchorId,
                         "dark_mark",
@@ -551,7 +562,7 @@ namespace uf::workbench
                         annotation::test::pixelRect(0, 0, 1, 1),
                         annotation::test::pixelRect(0, 0, 1, 1)
                     ),
-                    annotation::test::anchorElement(
+                    test::markElement(
                         fingerprint,
                         otherAnchor,
                         "light_mark",
@@ -561,10 +572,21 @@ namespace uf::workbench
                     ),
                 },
                 {
-                    annotation::test::page(pageId, "dark", {anchorId}),
-                    annotation::test::page(otherPageId, "light", {otherAnchor}),
+                    annotation::test::page(pageId, "dark"),
+                    annotation::test::page(otherPageId, "light"),
                 },
-                {},
+                {
+                    annotation::test::reference(
+                        pageId,
+                        anchorId,
+                        annotation::test::identifiesAs()
+                    ),
+                    annotation::test::reference(
+                        otherPageId,
+                        otherAnchor,
+                        annotation::test::identifiesAs()
+                    ),
+                },
                 std::move(regressions)
             );
             REQUIRE(document.has_value());
@@ -685,12 +707,12 @@ namespace uf::workbench
         CHECK(wrong == 1);
     }
 
-    TEST_CASE("a shared region is scored on the page it is used on")
+    TEST_CASE("a borrowed region is scored on the page it is used on")
     {
-        // The false green this exists to prevent: a region whose template was cut
-        // from one screen but which is authorized on another. Scoring it against
-        // the screen it came from reports a perfect match for something that
-        // never fires anywhere it is allowed to.
+        // The false green this exists to prevent: a region whose appearance was
+        // cut from one screen but which is referenced by another page. Scoring it
+        // against the screen it came from reports a perfect match for something
+        // that never fires anywhere it is authorised.
         auto const sharedId = annotation::test::elementId(
             "00000000-0000-0000-0000-000000000414"
         );
@@ -702,23 +724,32 @@ namespace uf::workbench
         auto draft         = makeAuthoringDraft(fixture.document);
         draft.recognizers.emplace_back(
             EditableRecognizer{
-                .id             = sharedId,
-                .name           = "shared_region",
-                .annotationType = annotation::AnnotationType::ActionTarget,
-                .sourceId       = darkSource,
-                .templateRect   = annotation::test::pixelRect(0, 0, 1, 1),
-                .searchRoi      = annotation::test::pixelRect(0, 0, 1, 1),
-                .similarityBasisPoints = 9'000U,
-                .defaultClick   = {},
+                .id   = sharedId,
+                .name = "shared_region",
+                .capabilities = EditableCapabilities{
+                    .interact = EditableInteract{},
+                },
+                .searchRoi = annotation::test::pixelRect(0, 0, 1, 1),
+                .variants  = {
+                    EditableVariant{
+                        .name         = "default",
+                        .sourceId     = darkSource,
+                        .templateRect = annotation::test::pixelRect(0, 0, 1, 1),
+                        .similarityBasisPoints = 9'000U,
+                    },
+                },
             }
         );
-        // The element's template was cut from the dark screen but it is placed on
-        // the light page, which is the false-green case under test.
-        draft.placements.emplace_back(
-            EditablePlacement{
+        // The appearance was cut from the dark screen but only the light page
+        // references it, which is the false-green case under test.
+        draft.references.emplace_back(
+            EditableReference{
                 .pageId    = lightPage,
                 .elementId = sharedId,
-                .searchRoi = annotation::test::pixelRect(0, 0, 1, 1),
+                .holding   = annotation::Holding::Owned,
+                .exercised = EditableExercised{
+                    .interact = annotation::ExercisedInteract{},
+                },
             }
         );
         auto const document = buildAuthoringDocument(draft);
@@ -838,13 +869,12 @@ namespace uf::workbench
             annotation::PageId       lightPageId{annotation::test::pageId(k_lightPageId)};
         };
 
-        // One interactive element "menu" placed on two pages, each with its own
-        // claimed screen, plus a third screen no page claims. The menu template is
-        // pixel B, which appears at a DIFFERENT column on each claimed screen, so a
-        // per-screen search lands its box in a different place -- proof the runtime
-        // recognizer for that screen's page was the one evaluated. The element is
-        // selected in the UI by its own id, and every consumer keys evidence by
-        // that id, never the derived per-page recognizer id.
+        // One interactive element "menu" referenced by two pages, each with its
+        // own claimed screen, plus a third screen no page claims. The menu
+        // appearance is pixel B, which sits at a DIFFERENT column on each claimed
+        // screen, so a per-screen search lands its box in a different place. The
+        // element is one recognizer under its own id, which is the id every
+        // consumer keys evidence by.
         [[nodiscard]]
         auto multiPlacedFixture() -> MultiPlacedFixture
         {
@@ -892,7 +922,7 @@ namespace uf::workbench
                 },
                 {
                     // dark_mark identifies the dark screen (A at col 0 only there).
-                    annotation::test::anchorElement(
+                    test::markElement(
                         fingerprint,
                         darkMarkId,
                         "dark_mark",
@@ -901,7 +931,7 @@ namespace uf::workbench
                         annotation::test::pixelRect(0, 0, 1, 1)
                     ),
                     // light_mark identifies the light screen (Y at col 2 only there).
-                    annotation::test::anchorElement(
+                    test::markElement(
                         fingerprint,
                         lightMarkId,
                         "light_mark",
@@ -909,8 +939,8 @@ namespace uf::workbench
                         annotation::test::pixelRect(2, 0, 1, 1),
                         annotation::test::pixelRect(2, 0, 1, 1)
                     ),
-                    // menu: template cut from the dark screen at col 1 (pixel B).
-                    annotation::test::interactiveElement(
+                    // menu: appearance cut from the dark screen at col 1 (pixel B).
+                    test::clickableElement(
                         fingerprint,
                         menuId,
                         "menu",
@@ -920,19 +950,30 @@ namespace uf::workbench
                     ),
                 },
                 {
-                    annotation::test::page(darkPageId, "dark", {darkMarkId}),
-                    annotation::test::page(lightPageId, "light", {lightMarkId}),
+                    annotation::test::page(darkPageId, "dark"),
+                    annotation::test::page(lightPageId, "light"),
                 },
                 {
-                    annotation::test::placement(
+                    annotation::test::reference(
+                        darkPageId,
+                        darkMarkId,
+                        annotation::test::identifiesAs()
+                    ),
+                    annotation::test::reference(
+                        lightPageId,
+                        lightMarkId,
+                        annotation::test::identifiesAs()
+                    ),
+                    annotation::test::reference(
                         darkPageId,
                         menuId,
-                        annotation::test::pixelRect(0, 0, 3, 1)
+                        annotation::test::interacts()
                     ),
-                    annotation::test::placement(
+                    annotation::test::reference(
                         lightPageId,
                         menuId,
-                        annotation::test::pixelRect(0, 0, 3, 1)
+                        annotation::test::interacts(),
+                        annotation::Holding::Referenced
                     ),
                 },
                 {
@@ -982,13 +1023,12 @@ namespace uf::workbench
         }
     }
 
-    TEST_CASE("runPreview evaluates a multi-placed action target on each claimed screen")
+    TEST_CASE("runPreview evaluates an element referenced by two pages on each")
     {
-        // The regression this fixes: selecting a multi-placed element and
-        // previewing used to fail the whole preview, because the element id it was
-        // selected by is absent from the runtime catalog -- the runtime carries one
-        // per-page recognizer under a derived id instead. The preview must resolve
-        // the page context of the shown screen and evaluate the recognizer for it.
+        // One element is one recognizer under its own id, so the id the UI
+        // selected it by is the id the runtime answers to. What the shown
+        // screen's page still decides is which reference supplies the region,
+        // and each page's reference lands the box where that screen has it.
         auto const fixture = multiPlacedFixture();
 
         auto const onDark = runPreview(
@@ -999,9 +1039,7 @@ namespace uf::workbench
             continuingPolicy(1000)
         );
         REQUIRE(onDark.has_value());
-        CHECK_FALSE(onDark->actionSkipNote.has_value());
         REQUIRE(onDark->actionEvidence.has_value());
-        // Reported under the element id, never the derived per-page id.
         CHECK(onDark->actionEvidence->recognizerId == fixture.menuId);
         CHECK(onDark->actionEvidence->hit);
         REQUIRE(onDark->actionEvidence->matchedRect.has_value());
@@ -1022,19 +1060,21 @@ namespace uf::workbench
         CHECK(onLight->actionEvidence->recognizerId == fixture.menuId);
         CHECK(onLight->actionEvidence->hit);
         REQUIRE(onLight->actionEvidence->matchedRect.has_value());
-        // The same element's box lands at a different column, because the light
-        // screen's own per-page recognizer searched it there.
+        // The same element's box lands at a different column, because that is
+        // where the light screen has these pixels.
         CHECK(
             onLight->actionEvidence->matchedRect.value()
             == annotation::test::pixelRect(0, 0, 1, 1)
         );
     }
 
-    TEST_CASE("runPreview skips a multi-placed action target on an unclaimed screen")
+    TEST_CASE("runPreview still searches an action target on an unclaimed screen")
     {
-        // On a screen no page claims there is no page that places the element, so
-        // the action search is skipped with a note rather than failing. The page
-        // and anchor evaluation must survive.
+        // A screen no page claims supplies no reference, so the element's own
+        // page supplies one and the search runs anyway. That is the whole
+        // question an author looking at a foreign screen is asking -- do these
+        // pixels turn up here -- and refusing to answer it would hide exactly
+        // the misfire the model check hunts for.
         auto const fixture = multiPlacedFixture();
 
         auto const onSpare = runPreview(
@@ -1045,18 +1085,20 @@ namespace uf::workbench
             continuingPolicy(1000)
         );
         REQUIRE(onSpare.has_value());
-        CHECK_FALSE(onSpare->actionEvidence.has_value());
-        REQUIRE(onSpare->actionSkipNote.has_value());
-        CHECK(onSpare->actionSkipNote->find("menu") != std::string::npos);
-        // The anchor rows are still there: only the action search was skipped.
+        REQUIRE(onSpare->actionEvidence.has_value());
+        CHECK(onSpare->actionEvidence->recognizerId == fixture.menuId);
+        // The spare screen is three copies of pixel A and the menu is pixel B,
+        // so the honest answer is a measured miss rather than a skipped search.
+        CHECK_FALSE(onSpare->actionEvidence->hit);
+        // The anchor rows are still there.
         CHECK_FALSE(onSpare->anchorRows.empty());
     }
 
-    TEST_CASE("runModelCheck files a multi-placed element's margin under the element id")
+    TEST_CASE("runModelCheck files an element's margin under the element id")
     {
-        // The model check evaluates each action target per screen through the
-        // recognizer for that screen's page, and records the score under the
-        // element id the UI keys margins by -- not the derived per-page id.
+        // The model check evaluates each action target per screen and records
+        // the score under the element id the UI keys margins by, which is also
+        // the only id the runtime catalog answers to.
         auto const fixture = multiPlacedFixture();
 
         auto const check = runModelCheck(
@@ -1205,11 +1247,14 @@ namespace uf::workbench
         CHECK(classifyModelCell(*p_elsewhere) == ModelCellColor::Expected);
     }
 
-    TEST_CASE("runModelCheck marks a multi-placed element not-searched off its pages")
+    TEST_CASE("runModelCheck searches an element on screens it does not belong to")
     {
-        // The menu is placed on the dark and light pages and on no other, so it
-        // is a hit on both claimed screens and an explicit not-searched cell on
-        // the spare screen -- never an empty hole.
+        // The grid's off-diagonal cells are the ones that carry information: a
+        // mark always matches the screen it was cut from, so the only evidence
+        // it identifies one screen rather than another is what it does on the
+        // rest. The menu is referenced by the dark and light pages and by no
+        // other, and the spare screen must still be MEASURED -- an unsearched
+        // cell there could never report a hit where the element does not belong.
         auto const fixture = multiPlacedFixture();
 
         auto const check = runModelCheck(
@@ -1232,8 +1277,10 @@ namespace uf::workbench
 
         auto const* p_spare = findCell(*check, fixture.menuId, fixture.spareSource);
         REQUIRE(p_spare != nullptr);
-        CHECK(p_spare->outcome == ModelCellOutcome::NotSearchedHere);
-        CHECK(classifyModelCell(*p_spare) == ModelCellColor::NotSearched);
+        CHECK(p_spare->outcome == ModelCellOutcome::Miss);
+        CHECK_FALSE(p_spare->expectedHit);
+        CHECK(p_spare->sadScore.has_value());
+        CHECK(classifyModelCell(*p_spare) == ModelCellColor::Expected);
     }
 
     TEST_CASE("runModelCheck records a stopped anchor as a stopped cell")

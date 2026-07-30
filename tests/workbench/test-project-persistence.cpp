@@ -1,4 +1,5 @@
 #include "../annotation/test-helpers.hpp"
+#include "authoring-fixture.hpp"
 
 #include <project-persistence.hpp>
 
@@ -163,7 +164,7 @@ namespace uf::workbench
                 fingerprint,
                 {*source},
                 {
-                    annotation::test::anchorElement(
+                    test::markElement(
                         fingerprint,
                         anchorId,
                         "home_marker",
@@ -172,8 +173,14 @@ namespace uf::workbench
                         annotation::test::pixelRect(0, 0, 2, 2)
                     ),
                 },
-                {annotation::test::page(pageId, "home", {anchorId})},
-                {},
+                {annotation::test::page(pageId, "home")},
+                {
+                    annotation::test::reference(
+                        pageId,
+                        anchorId,
+                        annotation::test::identifiesAs()
+                    ),
+                },
                 {}
             );
             REQUIRE(document.has_value());
@@ -227,7 +234,7 @@ namespace uf::workbench
                 fingerprint,
                 {*firstSource, *secondSource},
                 {
-                    annotation::test::anchorElement(
+                    test::markElement(
                         fingerprint,
                         firstAnchorId,
                         "first_marker",
@@ -235,7 +242,7 @@ namespace uf::workbench
                         annotation::test::pixelRect(0, 0, 1, 1),
                         annotation::test::pixelRect(0, 0, 2, 2)
                     ),
-                    annotation::test::anchorElement(
+                    test::markElement(
                         fingerprint,
                         secondAnchorId,
                         "second_marker",
@@ -244,14 +251,19 @@ namespace uf::workbench
                         annotation::test::pixelRect(0, 0, 2, 2)
                     ),
                 },
+                {annotation::test::page(pageId, "home")},
                 {
-                    annotation::test::page(
+                    annotation::test::reference(
                         pageId,
-                        "home",
-                        {firstAnchorId, secondAnchorId}
+                        firstAnchorId,
+                        annotation::test::identifiesAs()
+                    ),
+                    annotation::test::reference(
+                        pageId,
+                        secondAnchorId,
+                        annotation::test::identifiesAs()
                     ),
                 },
-                {},
                 {}
             );
             REQUIRE(document.has_value());

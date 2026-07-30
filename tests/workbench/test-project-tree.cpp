@@ -1,4 +1,5 @@
 #include "../annotation/test-helpers.hpp"
+#include "authoring-fixture.hpp"
 
 #include <project-tree.hpp>
 
@@ -105,7 +106,7 @@ namespace uf::workbench
                     makeSource(k_screenQId, fingerprint, std::byte{0x0E}),
                 },
                 {
-                    annotation::test::anchorElement(
+                    test::markElement(
                         fingerprint,
                         anchorPId,
                         "home_marker",
@@ -113,7 +114,7 @@ namespace uf::workbench
                         annotation::test::pixelRect(0, 0, 2, 2),
                         annotation::test::pixelRect(0, 0, 4, 4)
                     ),
-                    annotation::test::anchorElement(
+                    test::markElement(
                         fingerprint,
                         anchorQId,
                         "battle_marker",
@@ -123,15 +124,32 @@ namespace uf::workbench
                     ),
                 },
                 {
-                    annotation::test::page(pageP, "home", {anchorPId}),
+                    annotation::test::page(pageP, "home"),
                     annotation::test::page(
                         annotation::test::pageId(k_pageQ),
-                        "battle",
-                        {anchorQId},
-                        {anchorPId}
+                        "battle"
                     ),
                 },
-                {},
+                {
+                    annotation::test::reference(
+                        pageP,
+                        anchorPId,
+                        annotation::test::identifiesAs()
+                    ),
+                    annotation::test::reference(
+                        annotation::test::pageId(k_pageQ),
+                        anchorQId,
+                        annotation::test::identifiesAs()
+                    ),
+                    annotation::test::reference(
+                        annotation::test::pageId(k_pageQ),
+                        anchorPId,
+                        annotation::test::identifiesAs(
+                            annotation::SignatureRole::Forbidden
+                        ),
+                        annotation::Holding::Referenced
+                    ),
+                },
                 {
                     resolvedCase(k_regA, k_screenAId, k_pageP),
                     resolvedCase(k_regA2, k_screenA2Id, k_pageP),
