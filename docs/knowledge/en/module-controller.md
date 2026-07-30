@@ -119,6 +119,14 @@ The creation process lives in
    property value is a session-exclusive event-handle token. If an HWND with the same numeric value
    is recycled by the system, the new window does not inherit that property, so `matches()` can reject
    the wrong instance.
+
+   **Win32 error 5 at this `SetPropW` means elevation, and since 2026-07-30 (`2429578`) the message
+   says so** instead of reporting the bare number. Stamping a property on the target is refused by
+   UIPI when the target runs at a higher integrity level than the caller. The obvious probe points
+   the wrong way — `PostMessage` to the same window succeeds unelevated — so input delivery working
+   does **not** imply capture will bind, and that cost a real detour. Error 5 here has one cause, so
+   the message names it; other Win32 errors keep the numeric form. See
+   `docs/pitfalls/capture-and-target-selection.md`.
 2. Checks WGC availability and the OS build. Below build 19041, cursor capture cannot be turned off,
    so the session fails outright. `WgcCaptureOptions::requireBorderless()` currently always fails,
    because there is no caller-owned borderless access grant path yet.
@@ -196,6 +204,16 @@ The keyboard entry points `keyPress`, `keyDown`, `keyUp`, `inputText`, and `inpu
 accept an `ObservationLease`; they only compare the action generation. `KeyInput` records the virtual
 key and the extended-key bit; `inputText` first strictly decodes UTF-8, then sends `WM_CHAR` per
 UTF-16 code unit, while `inputUnichar` accepts only a Unicode scalar and sends `WM_UNICHAR`.
+
+**`keyPress` acquired its first production caller on 2026-07-30** (`ed38124`). Until then the whole
+keyboard path was exercised only by tests, and the "generation, not lease" shape above was a
+capability nobody used; it is now the contract `engine::IActionSink::pressKey` and the CLI's
+`ControllerActionSink` are built on, and it turned out to be exactly right — a keystroke names no
+coordinate, so there is no rect a lease could fence. What was missing was only the name-to-virtual-key
+mapping: `KeyInput::fromName` and `KeyInput::fromKeyName` resolve one, and **which names exist is
+`KeyName`'s single definition in `modules/domain`**, which `fromName` routes through rather than
+repeating, so the two cannot come to disagree. The other four entry points still have no production
+caller.
 
 `modules/controller/source/controller/detail/input-message.hpp` encodes action determinism into a
 `PostSpec`: the mouse uses only `WM_MOUSEMOVE`, `WM_LBUTTONDOWN`, and `WM_LBUTTONUP`, and the keyboard

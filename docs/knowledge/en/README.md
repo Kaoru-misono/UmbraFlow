@@ -45,19 +45,34 @@ that are not theirs.
 > guarantees the pages are missing at the exact moment they are most needed — reading an
 > on-hardware failure off a trace.
 
+> **Count corrected (2026-07-30, `ed38124`)**: the private surface now holds **thirteen** primitives,
+> not twelve — `key` was added beside `cycle_click`. The paragraph above stays as written, because
+> "the surface is stable" was the claim and it still holds; what changed is that a second front-end
+> arrived and needed a keystroke, not that the shape of the layer moved. The scope below grows with
+> it, and the two pages are still owed.
+
 The suggested scope:
 
 - **`module-task.md`** — `TaskHost`'s D10 verb shape and the run lifecycle; the capability surface's
   two seams (`installer()` for the data tables, `privateCapabilities()` for the primitive table) and
-  why the second is private; the observation-cycle protocol and `CycleLedger`; the carrier shapes of
-  Tier A/B/C; which policy the trusted Luau framework (`runtime/ctx.luau` plus `runtime/task.luau`)
-  owns, and exactly where the "C++ owns guarantees, Luau owns policy" line falls. It must **not**
-  restate the sandbox, budgets, and dual environments that `module-script.md` already covers.
+  why the second is private; the observation-cycle protocol and `CycleLedger`, including `spend`
+  beside `consume` — a separate method rather than a flag, so each call site states whether its input
+  has a coordinate to authorize; the carrier shapes of Tier A/B/C; which policy the trusted Luau
+  framework (`runtime/ctx.luau` plus `runtime/task.luau`) owns, and exactly where the "C++ owns
+  guarantees, Luau owns policy" line falls. **Since 2026-07-30 it must also cover the second
+  front-end**: `task::OperatorSession` as a sibling consumer of the same private primitives rather
+  than a route into Luau, the per-generation front-end claim that makes the two mutually exclusive,
+  and the `key` primitive — `ctx:key(ticket, name)` and `view:key(name)` on the Luau side, requiring
+  an open cycle and spending it, with no hit ordinal and no page requirement. It must **not** restate
+  the sandbox, budgets, and dual environments that `module-script.md` already covers, nor the
+  operator wire protocol that `entry-cli.md` covers.
 - **`module-trace.md`** — schema ownership of `umbraflow-trace/v1`; the event families (`run.*`,
-  `engine.*`, `task.native_call`, and the eight `framework.*` events from 3d on); field ordering and
-  the rules for golden comparison; the documented non-golden field set; `ITraceSink`'s synchronous
-  fallible contract and the failure-precedence rules; and the "audit log, not a replay log"
-  positioning. **Since 3d it must also cover the validation state machine**: why
+  `engine.*` including `engine.key_delivered`, `task.native_call`, and the eight `framework.*`
+  events from 3d on); field ordering and the rules for golden comparison; the documented non-golden
+  field set; `ITraceSink`'s synchronous fallible contract and the failure-precedence rules; the
+  `frontEnd` stamp (`"task"` or `"operator"`), which is part of the stamp rather than of the event
+  and is also a protocol rule — the validator refuses `framework.*` on an operator stream; and the
+  "audit log, not a replay log" positioning. **Since 3d it must also cover the validation state machine**: why
   `TraceStreamValidator` is owned by `TraceRecorder` (the recorder is the only path to a sink in the
   codebase, so it cannot be gone around), where the two failure kinds divide (Tier B
   `InvalidResource` for a request a project caused, `InternalInvariant` for a protocol breach, which

@@ -23,11 +23,14 @@ vision      image
 
 controller (Windows) -> core, domain
 script               -> core, domain
-entry/cli            -> engine + controller
+entry/cli            -> task（外加 engine、controller）
+entry/authoring      -> entry/workbench + entry/cli（外加 image）
 entry/workbench      -> annotation + engine + controller + image
 ```
 
 图中箭头表示左侧模块依赖右侧模块。`vision` 和 `image` 位于同一层，互不依赖。
+`modules/task` 与 `modules/trace` 没有画在这里，也还没有自己的页；这两页还欠着的范围见
+`README.md`。
 
 | 模块 | 负责什么 | 不负责什么 |
 | --- | --- | --- |
@@ -45,19 +48,40 @@ entry/workbench      -> annotation + engine + controller + image
 不会反向进入 domain、vision、image、annotation 或 engine。Linux/macOS 因此仍可
 构建平台无关模块，CI 也能用替身端口测试运行时流程。
 
-## 三个可执行入口
+## 四个二进制、五个入口
+
+`umbra-flow` 是一个二进制、两个子命令；另外三个各只有一个入口。
 
 | 入口 | 用途 | 当前状态 |
 | --- | --- | --- |
 | `umbra-workbench` | 编辑标注项目、采集源图、预览、编译和发布 | A1 标注工具 |
+| `umbra-authoring` | 在命令行上做同样的标注工作，外加测量帧 | 开发工具（2026-07-30） |
 | `umbra-flow run` | 加载已发布项目，运行 `--task NAME` 指名的 Luau 任务 | P0 单任务 runner |
+| `umbra-flow drive` | 加载同样的项目，执行 `--queue` 里操作者送来的 JSON 行命令 | P0 操作者前端（2026-07-30） |
 | `m0-demo` | 验证 WGC 捕获和严格后台输入 | 已冻结，不再承载产品功能 |
 
-三条路径不能混用：
+这些路径不能混用：
 
-- `Workbench` 可以生成识别资产，但没有输入能力。
-- `umbra-flow run` 只读取生成后的运行时清单和模板，不读取完整的编辑截图。
+- Workbench 与 `umbra-authoring` 可以生成识别资产，但两者都没有输入能力。
+- `umbra-flow` 只读取生成后的运行时清单和模板，不读取完整的编辑截图。
+- **`run` 与 `drive` 是同一张能力面上的两个前端，一个 generation 只接受其中一个。**
+  `TaskHost` 在先到的那个前端上上闩，此后终身拒绝另一个。两者都够不到对方够不到的东西：
+  操作者前端绑定的是受信任 Luau framework 绑定的那批私有原语，继承同样的拒绝。它是同级的
+  第二个消费者，不是通往 Luau 的口子——没有 chunk、没有源码、没有任何字符串会变成代码。
 - `m0-demo` 没有接入 annotation 授权栈，也不能作为 engine 或 CLI 的共享实现。
+
+`umbra-authoring` 是**开发工具，并且它自己不直接写任何东西**：每一次改动都经过
+`annotation::AuthoringDocument`，因为标注产物就是点击授权的证据，那道校验不能被绕过。
+它的子命令是 `project init|show|save`、`page create|add-anchor|add-target`、`match`
+（拿一张留出来的截图验证某个 recognizer），以及 `frames stability|probe|census`
+（vision 的那三个测量原语）。每次调用不论成败都往 stdout 写一份 JSON 文档。`match` 才是重点：
+标注、验证、迭代，整个回路里没有人。
+
+失败文档用 `kind` 与 `response` 作答，两者都采用其他每一个 JSON 表面所用的**wire 拼写**
+（`automationErrorWireName` 与 `failureResponseWireName`），所以是 `recognition_incomplete`
+而不是 C++ 枚举名。`response` 的存在是为了让调用方不必解析消息就能分清「没跑完」与「硬失败」。
+2026-07-30（`81ba61b`）之前 `kind` 用的是枚举名，而它旁边的 `response` 早就用 wire 名，
+于是同一个 JSON 对象用两套约定作答，读了两个表面的 agent 会带着同一个 kind 的两种拼法。
 
 ## 从编辑项目到运行时
 
@@ -153,8 +177,14 @@ back-pointer 的情况下维持该边界。平台 handle、D3D 对象和 Win32 �
 controller 或 `entry/` 的平台目录。
 
 严格后台不是一个可选开关，而是可达 API 的限制。当前允许的输入路径最终落到目标窗口
-的 `PostMessageW`；`SetForegroundWindow`、`SetFocus`、`SendInput`、`mouse_event`、
-`keybd_event` 和 `SetCursorPos` 都在禁止名单中。
+的 `PostMessageW`——鼠标消息如此，2026-07-30 起按键消息也如此；
+`SetForegroundWindow`、`SetFocus`、`SendInput`、`mouse_event`、
+`keybd_event` 和 `SetCursorPos` 都在禁止名单中。按键和别的东西一样走 `PostMessageW`，
+带同一份审计记录，down 与 up 之间不做任何保持。
+
+按键的授权与点击有意不同：`IActionSink::click` 收 `ObservationLease`，
+`IActionSink::pressKey` 收 `TargetGeneration`——lease 围栏的是坐标，而按键不指名坐标。
+它仍然要求一个打开的观察周期并花掉它，因为投出去的按键与点击一样会改变屏幕。
 
 ## 去哪里找
 
@@ -168,7 +198,8 @@ controller 或 `entry/` 的平台目录。
 | Luau 底座：沙箱、预算、取消和两个环境 | [`module-script.md`](module-script.md) |
 | WGC、目标连续性、DPI 和输入 | [`module-controller.md`](module-controller.md) |
 | 标注工具的编辑、预览和发布流程 | [`entry-workbench.md`](entry-workbench.md) |
-| 产品命令行和 Windows 组合流程 | [`entry-cli.md`](entry-cli.md) |
+| 色键、模板 mask 与带 mask 的匹配器 | [`module-annotation.md`](module-annotation.md)、[`module-vision-image.md`](module-vision-image.md) |
+| 产品命令行、操作者 `drive` 协议和 Windows 组合流程 | [`entry-cli.md`](entry-cli.md) |
 | 冻结的真机验收链路 | [`entry-m0-demo.md`](entry-m0-demo.md) |
 
 ## 验证范围

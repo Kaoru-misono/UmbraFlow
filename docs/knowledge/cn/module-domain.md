@@ -6,13 +6,14 @@
 
 `modules/domain/manifest.txt` 只公开依赖 `core`。因此 `domain` 可以被 `vision`、`image`、`annotation`、`engine`、`script` 和 Windows-only `controller` 共同使用，而不会把平台 API 或更高层产品策略反向带入底层。
 
-它拥有五组契约：
+它拥有六组契约：
 
 - `modules/domain/source/domain/space.hpp` 与 `space.cpp` 定义坐标空间、浮点几何、整数像素几何及二者之间可证明的桥。
 - `modules/domain/source/domain/ids.hpp` 与 `ids.cpp` 定义强类型标识、`Label` 和不可回绕的 `TargetGeneration`。
 - `modules/domain/source/domain/frame.hpp` 与 `frame.cpp` 定义带身份、捕获时间、像素所有权和坐标变换的 `Frame`。
 - `modules/domain/source/domain/detection.hpp` 与 `detection.cpp` 定义同帧 `Detection` 以及动作时效凭证 `ObservationLease`。
 - `modules/domain/source/domain/error.hpp`、`error.cpp`、`time.hpp` 和 `time.cpp` 定义自动化错误分类、恢复范围以及单调时间上的安全运算。
+- `modules/domain/source/domain/key.hpp` 与 `key.cpp` 定义 `KeyName`，即「有哪些键名存在」的唯一定义（2026-07-30，`ed38124`）。
 
 `domain` 不负责以下工作：
 
@@ -133,6 +134,16 @@ Windows capture 在 `modules/controller/source/controller/platform/windows-captu
 到期判断是严格的 `now > expiresAt`。恰好在 deadline 仍有效；零时长 lease 在 `capturedAt` 当刻有效，之后立即失效。
 
 `ObservationLease::validate` 按顺序比较 session、target generation、observed frame，最后检查年龄；任一失败都是 `StaleObservation`。它不重试，因为“重新观察”是上层控制流选择，不应隐藏在安全凭证里。
+
+**lease 不是每一种输入的凭证。** 2026-07-30（`ed38124`）起，`engine::IActionSink::pressKey` 改用一个裸的 `TargetGeneration` 给按键做围栏，因为 lease 存在的目的是约束*坐标*的保质期，而按键不指名任何坐标。把 lease 读成「动作需要的凭证」因此只在一个方向上是错的：它是*坐标*动作需要的凭证。见 `module-engine.md`。
+
+### `KeyName`
+
+`modules/domain/source/domain/key.hpp` 的 `KeyName` 是**「有哪些键名存在」的唯一定义**。被接受的集合是大写的 `"A".."Z"`、`"0".."9"` 与 `"F1".."F12"`——48 个名字对应 48 个互不相同的虚拟键，**没有别名**，因为一个拼错的名字绝不能解析成旁边那个键。`KeyName::create` 是造出它的唯一途径，集合之外的名字一律以 `ActionRejected` 失败：没人能解析的名字是被拒绝的动作，而不是缺失的资源。`controller::KeyInput::fromName` 走的是 `create` 而不是重写一遍判断，于是两边不会对「项目可以写哪些名字」产生分歧。
+
+它住在 `domain` 而不是 `controller`，是为了让按键能穿过 engine 的动作端口而不必让那个端口提到虚拟键——虚拟键是 Windows 的事实。名字是平台中立的：无论宿主是什么，目标印在界面上的都是 `E`，所以一路传下去的值就是名字，把它解析成虚拟键的是投递边缘的适配器。它按字节存而不是存一个码，因为落到 trace 行上、以及作者读回来的都是这个名字；类型可平凡复制、可比较，因此处处按值传。`k_maxKeyNameBytes` 是 3，即 `"F12"` 的长度。
+
+这个集合有意封闭且有意小。两个前端和端口读的都是这一份定义，这才使「目标自己的 UI 印出来的那个键」是一个事实，而不是三张必须互相吻合的表。
 
 ### 错误公共面
 

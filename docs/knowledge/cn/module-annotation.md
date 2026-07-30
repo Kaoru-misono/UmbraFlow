@@ -4,6 +4,9 @@
 > 取代按页拷贝、v1 读取路径退役、编译器按 placement 展开运行时 recognizer、
 > deriveModel 永久桥）。以实际代码与
 > `docs/plans/2026-07-26-page-centric-authoring.md` 为准，待重新同步。
+>
+> 2026-07-30（`c392161`）加入的色键**已经**写在下面的「色键与模板 mask」以及运行时一节里，
+> 因为它改变了一份编译后模板的字节意味着什么。
 
 本文说明 `modules/annotation` 已经实现的 S0 契约。完整设计见
 `docs/plans/2026-07-22-annotation-design.md`，这里主要说明代码入口、处理流程和必须
@@ -136,7 +139,33 @@ regression→source 和 resolved regression→page 引用，并保证 source、r
 不超过 256 Mi-pixels，唯一生成模板 PNG bytes 总和不超过 512 MiB；单个 PNG 还受 image codec
 的文件配额约束。配额或闭包失败返回 `InvalidResource`，函数只返回完整值，不发布任何部分结果。
 
-`ContentHash` 和内置 SHA-256 实现在
+#### 色键与模板 mask
+
+一个 `Element` 可以带一个可选的 `ColourKey`——取到的颜色加一个容差——编译器把它烘进模板的
+**alpha 通道**。没有新的资产种类、没有新的 manifest 字段、也没有单独的 mask 文件，因为
+**模板 PNG 的 alpha 通道就是匹配器用来加权的那张 mask**：模板本来就是 32 位、alpha 恒为 255
+且无人读取，所以写这个通道就是全部改动。`authoring-compiler.cpp` 的 `applyColourKeyAlpha`
+把每个裁出的 BGRA 像素的第四个字节改写成 `ColourKey::alphaFor(red, green, blue)`，
+再把结果当作一整张图交给同一个 `generateTemplateAsset`。
+
+距离是三个通道绝对差之和，因此取值 0..765，一个单位就是一个通道上的一级。`alphaFor` 在容差以内
+给全额权重，然后**线性斜坡到两倍容差处归零**。斜坡不是装饰：硬截断会让作者的容差旋钮一格一格
+地跳，而且它会从字形的抗锯齿裙边中间切过去，那里刚过截断线的像素仍然主要是字形——实测那条菜单
+项，白字周围容差取 12 拿到字形的 93.9%，留下一圈距离 13..24 的边缘像素，斜坡按它们应得的权重
+把这些像素重新收回来。容差为 0 谈不上斜坡，退化成精确颜色 mask；最大容差接纳所有颜色，
+合法但无用——那和完全不带键是同一张 mask。
+
+有三条性质承重：
+
+- **存下来的是键，永远不是它产生的 mask。** 作者重新打开项目必须能拖动容差、看着选中的像素跟着
+  变，而烘好的 mask 拖不回去。
+- **不带色键的元素输出逐字节相同的字节**，走的是原来那条调用，所以重新保存一个已有项目不会挪动
+  任何东西，色键出现之前标注的每一个模板也都保持全不透明的 alpha。
+- **派生 catalog 不带色键。** 键是编辑期的真相，运行时从模板的 alpha 上读 mask，所以编译器从
+  recognizer 派生自的那个 element 上取它。对同一屏同一矩形用两个不同色键的两个元素是两个模板
+  任务，因此裁剪/哈希去重也把色键计入键值。
+
+`ContentHash` 与内置 SHA-256 实现在
 `modules/annotation/source/annotation/content-hash.hpp` 与
 `modules/annotation/source/annotation/content-hash.cpp`。文本形式严格为
 `sha256:` 加 64 个小写十六进制字符。
@@ -162,6 +191,19 @@ maxSad = floor((10000 - basisPoints) * 255 * width * height / 10000)
 hit    = sadScore <= maxSad
 ```
 
+**阈值对 mask 一无所知，这是一个值得点名的陷阱。** `maximumSad` 由模板的*全部*像素数推出，
+而带 mask 的分数又被放大回同一个完整矩形——正是这一点让两者处在同一量纲上。但这也意味着，
+一个只选中寥寥几个像素的键，被拿去对着按整个矩形定的上限打分，而且什么都不会失败：一张 27 像素
+的 mask 对着按 920 像素定的阈值，每一帧都命中，什么也没测出来。一个在它本该区分的每种状态下
+都命中的元素，比没有这个元素更糟，因为它看起来是绿的。所以带色键的模板需要比不带的严得多的
+阈值——真机上 9000 基点让九个 recognizer 里三个假阳性，改标到 9900 后，七个标签在一张没见过的
+帧上 7/7、在一张无 UI 的帧上 0/7。这两种失败编辑期都没有检查；
+`umbra-authoring frames probe` 和它的 `fully_selected_pixels` 是唯一的守卫。见
+`docs/pitfalls/colour-key-annotation.md`。
+
+一个**什么都选不中**的键在编辑期被接受，到匹配时以 `InternalInvariant` 中止——它读起来像
+「程序坏了」，而真相是「这个键在那个矩形里什么都没匹配上」。
+
 等号命中是契约的一部分。`AnchorEvaluation::fromSadOutcome` 位于
 `modules/annotation/source/annotation/recognition.cpp`，它检查 matcher 返回矩形仍在 `searchRoi`
 中、score 不超过理论最大 SAD，然后构造 `AnchorEvidence`。`displayConfidence` 是浮点展示值，
@@ -172,7 +214,8 @@ hit    = sadScore <= maxSad
 
 - `create` 接受 `RuntimeManifest` 与 `EncodedRuntimeTemplate`。它要求收到的 hash 集合恰好等于 manifest
   引用的唯一模板集合，重新计算每份 PNG 的 SHA-256，解码为自有 Gray8 bytes，并核对模板尺寸与
-  recognizer geometry。
+  recognizer geometry。它还把每个模板的 **alpha 通道抽成一张 mask 平面**；所有像素都不透明时
+  mask 留空，于是选中的是无 mask 匹配器，也就是色键出现之前的项目原本的行为。
 - `evaluatePage` 返回 `PageRecognitionAttempt`，既可携带完整 `PageOutcome`，也可携带
   `PageRecognitionStop`，同时保留已经完成的 anchor evidence 和 pixel comparison 计数。
 - `recognizePage` 是操作型便利入口：completed outcome 原样返回，stop 映射为结构化 `Error`。

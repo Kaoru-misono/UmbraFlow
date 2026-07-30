@@ -317,6 +317,11 @@ blocked in turn and all eight exit inside a 2 s budget; `deadline`, `random`, `t
 longjmps, so it reaches no host call at all. The roster and the reasoning are in
 `docs/plans/2026-07-29-three-layer-task-system.md` §8.
 
+The `key` primitive added on 2026-07-30 (`ed38124`) is blockable and has **no case of its own**: the
+suite's fake sink blocks in `pressKey` exactly as it blocks in `click`, so what the blocked-click
+case proves holds for a blocked key — same port, same gate. The count above is therefore still eight
+cases, over a private surface that is now thirteen primitives rather than twelve.
+
 ## Relationship to the Product Runtime
 
 ### Current Callers

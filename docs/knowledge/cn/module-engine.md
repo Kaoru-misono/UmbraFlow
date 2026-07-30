@@ -39,6 +39,7 @@ engine 不负责以下工作：
 - `IFrameSource::capture(CaptureBudget const&) -> Result<Frame>` 从一个已经绑定的目标取得帧。`CaptureBudget` 是嵌套在该端口里的 `{ deadline, cancellation }`：capture 是 engine 唯一可能阻塞在外部生产者上的操作，没有这个界限，一个等合成器的适配器就自己决定了调用方要等多久，而一次被取消的 run 会卡在帧池里。两个成员都承重，适配器必须都兑现。deadline 是**绝对时刻**而不是时长，所以一个已经花掉一部分预算的调用方无法悄悄续期；它没有默认值，每个构造点都得说出自己施加的界限。
 - `IFrameSource::validateTargetInstance() -> Status` 复核绑定的仍是同一个目标实例。engine 在 capture 前调用一次，在 delivery 前再调用一次，后者用于关闭“观察后 HWND 被复用或目标被替换”的窗口。
 - `IActionSink::click(Point<ClientSpace>, ObservationLease const&) -> Status` 接收 client 坐标和原始 lease。lease pass-through 是接口的一部分，适配器不能只传坐标，否则 controller 层无法执行第二层 session/generation/age fencing。
+- `IActionSink::pressKey(KeyName, TargetGeneration) -> Status` 投递一次按下并释放。它收的是 `TargetGeneration` 而 `click` 收的是 lease，**这个差别就是两个动词之间授权上的全部差别**：lease 围栏的是*坐标*，它的 `frameId` 与年龄之所以存在，是因为布局一动，同一个点击点就悄悄变成了别的意思；而按键不指名任何点，没有任何矩形的位置会因此过时，也没有东西要靠帧年龄去保护。仍然必须成立的是这次按键落到 observation 来自的那个目标实例上，而 generation 携带的正是这件事。实现**必须**把这个 generation 转发下去，让 controller 的复验仍在 post 时发生；**必须**严格后台投递；**绝不**抢焦点或激活目标窗口。2026-07-30（`ed38124`）落地。
 - `ITraceSink::emit(TraceEvent const&) -> Status` 是同步、可失败的证据端口。失败不是 best-effort warning，而会中止当前 engine 操作。
 
 三个端口都不可复制、不可移动，由虚析构支持组合根提供实现。`EngineSession` 通过 `std::unique_ptr` 独占它们，因而端口实现和其中的平台资源与 session 同寿命。
@@ -78,7 +79,22 @@ Windows 产品入口使用两个薄适配器：
   对应 D4 Tier A，不是错误。
 - `ActionFound` 保存原始 `AnchorEvidence`、绑定 recognizer identity 的 `ActionDetection` 和确定性的 `PixelPoint`。点击点由 annotation 的 `resolveClickPixel` 决定；match rect 经 `pixelRectToFrameRect` 变成 authorization-ready `Detection`。
 - `EngineSession::act(Observation&&, ResolvedPage const&, ActionFound const&)` 消费 observation，成功返回记录被授权 `FrameId` 与 client-space 坐标的 `ActReceipt`。
-**engine 没有任何循环。** 上面五个动词全是单次的：观察一帧、在那一帧上解析、在那一帧上找、点一次。
+- `EngineSession::pressKey(Observation&&, KeyName)` 同样消费 observation，返回 `KeyReceipt`——
+  `{ frameId, key }`，没有点，因为按键本来就没有点；这也正是它是一个独立回执、而不是一个带着
+  杜撰坐标的 `ActReceipt` 的原因。
+
+  它与 `act` **共有**这些：请求过停止时，任何 sink 调用之前就拒绝；来自另一个 session 的
+  observation 是 `InternalInvariant`，已作废的是 `StaleObservation`；post 之前立刻复验绑定的
+  目标实例；observation 被花掉，因此一个 observation 至多投出一次输入——按键与点击一样会改变
+  屏幕，活过它的那一帧描述的是一个已经不存在的目标。
+
+  它**有意不共有**两件事，因为按键不指名任何屏幕位置。一是没有 page 授权、没有同帧 detection：
+  那两样回答的是「我要点的东西还在我看到的位置吗、这一页允许点它吗」，虚拟键根本不提这个问题，
+  在这里要兑现它只能杜撰一个 detection。二是不强制 observation 的 lease：lease 约束的是坐标的
+  保质期，而按键的含义不随布局衰减；强制它等于用一条根本不适用的理由拒绝按键，还会逼操作者为
+  整次 run 放宽 `--max-frame-age`——为了一个按键削弱其中的每一次点击。
+
+**engine 没有任何循环。** 上面六个动词全是单次的：观察一帧、在那一帧上解析、在那一帧上找、点一次或按一次键。
 2026-07-29(`8b16f2d`)删掉了 `EngineSession::waitForPage`、它的成对返回类型 `PageWait` 和那个永远
 no-op 的 `sweepKnownPopups`；「等到某页出现」现在是受信任 Luau framework 里的
 `ctx:wait_for_page`（`modules/task/runtime/ctx.luau`）。理由见
@@ -131,6 +147,8 @@ schema 由 `modules/trace/source/trace/event.hpp` 拥有，id 是
   出来时能读出差了多少，而不是只知道没解析出来。
 - `engine.action_found`，outcome 为 `Found` / `Absent` / `Stopped` / `Failed`。
 - `engine.action_authorized`、`engine.action_rejected`、`engine.action_delivered`。
+- `engine.key_delivered`，每投出一次按键一条，记录它花掉的 observation 来自哪一帧，以及按了哪个键。
+  它没有坐标，理由与 `KeyReceipt` 没有坐标是同一条。
 
 `engine-trace/v1` 的 `PageResolved` / `PageUnknown` / `PageAmbiguous` 与
 `ActionFound` / `ActionAbsent` 折叠成上面两个 kind 的 outcome；原先与阶段无关的
@@ -141,10 +159,24 @@ Luau 编译器版本、seed 与 run 身份。`entry/cli` 的 smoke 路径不写�
 trace 从第一条 `engine.observed` 开始，它已于 2026-07-29 随运行生命周期迁入
 `TaskHost` 一并删除。
 
-`trace::TraceRecorder` 在每条事件上盖 `seq`、`runId`、`generationId`，以及 `meta`
+`trace::TraceRecorder` 在每条事件上盖 `seq`、`runId`、`generationId`、`frontEnd`，以及 `meta`
 里的 `wallClock`。`meta` 是文档化的非 golden 字段集，golden 比较前用
 `trace::stripNonGoldenFields` 剥掉。engine 不拥有 sink：它借用 run 的 recorder，
 文件的打开、逐条写入与 flush 由 `modules/trace` 的 `FileTraceSink` 负责。
+
+**`frontEnd` 属于「盖章」而不属于事件本身**（2026-07-30，`ed38124`）。取值是 `"task"` 或
+`"operator"`，来自 `trace::FrontEnd`。它存在是因为能力面现在有两个同级消费者——task 所跑的
+受信任 Luau framework，和从进程外送命令的操作者——没有这条归属，读 trace 的人就回答不了
+「这件事是 task 做的还是操作者做的」，而这个问题对每一行都要问一次；于是一个 recorder 为整次
+run 持有一个值并盖到每一行上，没有任何发射方能忘掉它，也没有谁能冒领另一个前端的活。
+`TaskHost` 交给 recorder 的就是它闩住的那个值，所以一条流的归属与产生它的互斥是同一件事，
+而不是两件必须彼此吻合的事。
+
+它同时是一条协议规则而不只是标签：`TraceStreamValidator` 在 operator 流上**拒绝
+`framework.*` 事件**，报 `InternalInvariant`。那些事件描述的是受信任 Luau framework 自己的
+结构——哪个 step 开着、这是第几次重试、哪个 interrupt 命中了——而 operator 流上根本没有那个
+framework，所以这样一行只可能是宿主 bug 把 task 的结构安到了操作者头上。拒绝它，才使这个字段
+是权威而不是装饰。
 
 ## 必须保持的约束
 
@@ -318,6 +350,12 @@ include controller。否则 fake 端口无法在平台无关测试中替代桌�
   token：`DeadlineHonouringFrameSource` 真的阻塞到那个时刻才返回，是套件里唯一一个
   不是凭空满足 budget 的帧源。
 
+`pressKey` 在 `EngineSession` 这一层没有自己的用例。`CountingActionSink` 实现了这个动词并记录
+它被围栏在哪个 `TargetGeneration` 上——那个 generation 正是被测的授权差别——但行为钉在上一层的
+`tests/task/test-operator-front-end.cpp`：按键不需要已解析的 page（这正是它与点击的分界）、
+投出去的按键消费掉它的周期且只到达 sink 一次、无法解析的键名在周期被花掉之前就被拒绝，
+以及 task 与 operator 走到它的方式完全一致。改 `pressKey` 时读那几个用例，不要去 engine 里找。
+
 这些测试有意把 engine 的顺序与 Windows 分离：engine fake 固定 lease pass-through，CLI
 sink 测试固定 JSONL durability，controller 的 lease、窗口 identity、message encoding
 与 strict-background 约束由 `tests/controller/` 固定。`ControllerActionSink` 的补偿与
@@ -384,7 +422,14 @@ trace 演进应新增 schema version，并同步 `TraceEvent`、显式 wire-name
 serializer golden tests 与所有 sinks/consumers。不能借 C++ enum rename 偷改 v1；
 也不能把新增字段的 unordered iteration 引入稳定输出。
 
-新增 swipe、key 或更丰富 action 时，应扩展明确的 action port/receipt 与对应 lease
+新增 swipe 或更丰富 action 时，应扩展明确的 action port/receipt 与对应 lease
 规则，而不是绕过 `act` 直接暴露 controller。无论动作种类如何，delivery-edge
 revalidation、invalidate-before-fallible-post-delivery-work、零焦点窃取和可诊断 trace
 这些约束在扩展后仍须保留。
+
+**按键动作就是这条规则的样板**（2026-07-30，`ed38124`）：它新增了 `IActionSink::pressKey`、
+`EngineSession::pressKey`、自己的 `KeyReceipt` 和自己的 `engine.key_delivered`，而不是复用
+click 的回执或它的 lease。它说明的是：接缝上的围栏不是一条照抄的规则，而是每种动作都要各自
+回答一次的问题——点击围栏的是坐标，需要 lease；按键围栏的是实例，需要 generation——而正确的
+「不同」写法是换一个参数类型，不是在原来那个上加一个标志位。将来的拖拽两端各有一个坐标、
+中间还有一段保持，它得用第三种方式回答同一个问题。

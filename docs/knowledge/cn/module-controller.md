@@ -111,6 +111,13 @@ session/generation；目标变化后应销毁并以新 generation 重建，而�
 1. `WindowInstanceMarker` 在目标 HWND 上设置进程内唯一名称的 window property，
    property 值是 session 独占的 event-handle token。相同数值的 HWND 若被系统
    回收，新窗口不会继承该 property，`matches()` 因而能拒绝错误实例。
+
+   **这一步 `SetPropW` 上的 Win32 错误 5 意味着提权，2026-07-30（`2429578`）起消息直接这么说**，
+   而不是只报一个数字。目标的完整性级别高于调用方时，UIPI 会拒绝在它上面盖属性。而最顺手的
+   探针指向的方向恰恰是反的——不提权地对同一个窗口 `PostMessage` 是成功的——所以「输入投递能用」
+   **推不出**「capture 能绑定」，这一点真的绕过一次冤枉路。这里的错误 5 只有一个原因，所以消息
+   把它点名；其他 Win32 错误保持数字形式。见
+   `docs/pitfalls/capture-and-target-selection.md`。
 2. 检查 WGC 可用性和 OS build。build 低于 19041 时无法关闭 cursor capture，
    session 直接失败。`WgcCaptureOptions::requireBorderless()` 当前总是失败，因为
    还没有调用者拥有的 borderless access grant 路径。
@@ -183,6 +190,14 @@ up；client geometry 变化本身不影响该 identity 比较。
 `ObservationLease`，只比较 action generation。`KeyInput` 记录 virtual key 与
 extended-key 位；`inputText` 先严格解码 UTF-8，再按 UTF-16 code unit 发送
 `WM_CHAR`，`inputUnichar` 只接受 Unicode scalar 并发送 `WM_UNICHAR`。
+
+**`keyPress` 在 2026-07-30（`ed38124`）才有了第一个生产调用方。** 在那之前整条键盘路径只被
+测试跑过，上面那句「收 generation 而不是 lease」是一项没人用的能力；现在它是
+`engine::IActionSink::pressKey` 与 CLI 的 `ControllerActionSink` 所依据的契约，而且事后看
+恰好是对的——按键不指名坐标，没有任何矩形可供 lease 围栏。当时缺的只是「名字到虚拟键」的
+映射：`KeyInput::fromName` 与 `KeyInput::fromKeyName` 负责解析，而**有哪些名字存在是
+`modules/domain` 里 `KeyName` 的唯一定义**，`fromName` 走的是它而不是重写一遍判断，两边因此
+不会产生分歧。另外四个入口至今没有生产调用方。
 
 `modules/controller/source/controller/detail/input-message.hpp` 将动作确定性编码为
 `PostSpec`：鼠标只使用 `WM_MOUSEMOVE`、`WM_LBUTTONDOWN`、`WM_LBUTTONUP`，

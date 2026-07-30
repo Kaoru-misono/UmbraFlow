@@ -24,6 +24,12 @@
 >   读成「识别失败/没匹配上」**:识别跑完却没匹配上根本不是错误(那是 `UnknownPage`
 >   或空命中,不带 error kind);这个 kind 只表示比较预算在搜索结束前耗尽、调用方对
 >   屏幕一无所知,所以它的 retryable 默认值就是重试——重新观察,而不是把该步当已排除。
+> - **(2026-07-30 补注)** 上面「framework 私有的 12 个原语」现在是 **13 个**:`ed38124`
+>   加了 `key(ticket, name)`,形状与理由见新文 §5 的 2026-07-30 形状快照。同一笔还给宿主
+>   加了**第二个前端** `umbra-flow drive`(`TaskHost::startOperatorSession` 与
+>   `task::OperatorSession`),它是同一张私有能力面的同级消费者而不是通往 Luau 的口子,
+>   一个 generation 只接受两者之一。本文 §一与 §四只描述脚本这一条路,读时不要据此推断
+>   「只有脚本能驱动」;权威见新文 §5 与 §13。
 >
 > 状态:**已裁决,2026-07-27 grill 完成**。本文补全
 > [`2026-07-21-lua-task-model-grill-decisions.md`](2026-07-21-lua-task-model-grill-decisions.md)

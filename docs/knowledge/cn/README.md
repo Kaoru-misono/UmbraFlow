@@ -32,18 +32,30 @@ policy 整个搬进这两层之后，engine 页与 CLI 页已经在替它们解�
 > **用**这个表面写第一个真日常并标定常数，改的是数值不是形状。等阶段 4 只会让这两页在最
 > 需要它们的那一刻（照着一条 trace 读一次真机失败）刚好还不存在。
 
+> **数目更正（2026-07-30，`ed38124`）**：私有表上现在是**十三个**原语而不是十二个——
+> `key` 加在 `cycle_click` 旁边。上面那段照原样保留：它当时的主张是「表面已经稳定」，
+> 这一点仍然成立；变的是来了第二个前端，而它需要一次按键，不是这一层的形状动了。
+> 下面的范围随之扩大，两页仍然欠着。
+
 建议范围如下：
 
 - **`module-task.md`** — `TaskHost` 的 D10 动词形与 run 生命周期；私有能力面的两道
   接缝（`installer()` 的数据表 / `privateCapabilities()` 的原语表）与它为什么私有；
-  观察周期协议与 `CycleLedger`；Tier A/B/C 的载体形状；受信任 Luau framework
-  （`runtime/ctx.luau` + `runtime/task.luau`）承担哪些 policy，以及「C++ 拥有保证、
-  Luau 拥有 policy」这条边界线具体划在哪。**不重复** `module-script.md` 已经写清的沙箱、
-  预算与双环境机制。
+  观察周期协议与 `CycleLedger`，含 `consume` 旁边的 `spend`——它是一个独立方法而不是一个
+  标志位，好让每个调用点自己说出「我这个输入有没有坐标要授权」；Tier A/B/C 的载体形状；
+  受信任 Luau framework（`runtime/ctx.luau` + `runtime/task.luau`）承担哪些 policy，
+  以及「C++ 拥有保证、Luau 拥有 policy」这条边界线具体划在哪。
+  **2026-07-30 起还必须写清第二个前端**：`task::OperatorSession` 是同一批私有原语的同级
+  消费者而不是通往 Luau 的路、把两者变成互斥的那道 per-generation 前端闩，以及 `key` 原语
+  ——Luau 侧是 `ctx:key(ticket, name)` 与 `view:key(name)`，要求一个打开的周期并花掉它，
+  没有命中序数、也没有 page 要求。**不重复** `module-script.md` 已经写清的沙箱、
+  预算与双环境机制，也不重复 `entry-cli.md` 已经写清的操作者线协议。
 - **`module-trace.md`** — `umbraflow-trace/v1` 的 schema 所有权、事件族
-  （`run.*` / `engine.*` / `task.native_call`，以及 3d 起的八条 `framework.*`）、
-  字段顺序与 golden 比较的规则、非 golden 字段集、`ITraceSink` 的同步可失败契约与
-  失败优先级，以及「审计日志而非重放日志」这条定位。**3d 之后还必须写清校验状态机**：
+  （`run.*` / `engine.*`（含 `engine.key_delivered`）/ `task.native_call`，以及 3d 起的八条
+  `framework.*`）、字段顺序与 golden 比较的规则、非 golden 字段集、`ITraceSink` 的同步可失败
+  契约与失败优先级、`frontEnd` 这个盖章字段（`"task"` 或 `"operator"`，它属于盖章而不属于事件
+  本身，而且同时是一条协议规则——校验器在 operator 流上拒绝 `framework.*`），
+  以及「审计日志而非重放日志」这条定位。**3d 之后还必须写清校验状态机**：
   `TraceStreamValidator` 为什么由 `TraceRecorder` 持有（recorder 是全仓唯一通向 sink 的
   路径，所以绕不过去）、两个失败 kind 的分界（Tier B `InvalidResource` 是 project 造成的
   请求被拒、`InternalInvariant` 是协议破坏并花掉 generation）、以及 step 作用域是**盖章**

@@ -12,7 +12,7 @@ their own.
 common by `vision`, `image`, `annotation`, `engine`, `script`, and the Windows-only `controller`,
 without dragging platform APIs or higher-level product policy back down into the lower layer.
 
-It owns five groups of contracts:
+It owns six groups of contracts:
 
 - `modules/domain/source/domain/space.hpp` and `space.cpp` define coordinate spaces, floating-point
   geometry, integer pixel geometry, and the provable bridge between the two.
@@ -24,6 +24,8 @@ It owns five groups of contracts:
   and the action-timeliness credential `ObservationLease`.
 - `modules/domain/source/domain/error.hpp`, `error.cpp`, `time.hpp`, and `time.cpp` define
   automation error classification, recovery scope, and safe arithmetic over monotonic time.
+- `modules/domain/source/domain/key.hpp` and `key.cpp` define `KeyName`, the single definition of
+  which key names exist (2026-07-30, `ed38124`).
 
 `domain` deliberately does not own the following responsibilities:
 
@@ -227,6 +229,33 @@ zero-duration lease is valid at the instant of `capturedAt` and expires immediat
 `ObservationLease::validate` compares session, target generation, and observed frame in order, and
 finally checks age; any failure is `StaleObservation`. It does not retry, because "observe again" is
 an upper-layer control-flow choice and should not be hidden inside a safety credential.
+
+**A lease is not the credential for every input.** Since 2026-07-30 (`ed38124`)
+`engine::IActionSink::pressKey` fences a keystroke on a bare `TargetGeneration` instead, because a
+lease exists to bound a *coordinate*'s shelf life and a keystroke names no coordinate. Reading the
+lease as "the credential an action needs" is therefore wrong in exactly one direction: it is the
+credential a *coordinate* action needs. See `module-engine.md`.
+
+### `KeyName`
+
+`KeyName` in `modules/domain/source/domain/key.hpp` is **the single definition of which key names
+exist**. The accepted set is `"A".."Z"`, `"0".."9"` and `"F1".."F12"` in uppercase — 48 names over 48
+distinct virtual keys, with **no aliases**, because a typo must not resolve to a neighbouring key.
+`KeyName::create` is the only way to make one and fails `ActionRejected` for anything outside that
+set: a name nobody can resolve is a rejected action, not a missing resource.
+`controller::KeyInput::fromName` routes through `create` rather than repeating the test, so the two
+cannot come to disagree about which names a project may write.
+
+It lives in `domain` rather than in `controller` so a keystroke can cross the engine's action port
+without that port naming a virtual key, which is a Windows fact. A name is platform-neutral — the
+target prints `E` whatever the host is — so the value that travels is the name, and the adapter at
+the delivery edge is what resolves it. It stores bytes rather than a code, because the name is what
+reaches a trace line and what an author reads back, and it is trivially copyable and comparable, so
+it travels by value everywhere. `k_maxKeyNameBytes` is 3, the length of `"F12"`.
+
+The set is deliberately closed and deliberately small. Both front-ends and the port read this one
+definition, which is what makes "the key the target's own UI prints" a single fact rather than three
+tables that have to agree.
 
 ### The Error Public Surface
 

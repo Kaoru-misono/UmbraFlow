@@ -5,6 +5,10 @@
 > per-placement runtime recognizer expansion in the compiler, and the
 > deriveModel permanent bridge). Trust the code and
 > `docs/plans/2026-07-26-page-centric-authoring.md` until resynced.
+>
+> The colour key added on 2026-07-30 (`c392161`) **is** written up below, in
+> "Colour keys and the template mask" and in the runtime section, because it
+> changes what a compiled template's bytes mean.
 
 This document describes the S0 contract already implemented by `modules/annotation`. The complete
 design is in `docs/plans/2026-07-22-annotation-design.md`; this guide focuses on code entry points,
@@ -183,6 +187,38 @@ the total unique generated template PNG bytes to no more than 512 MiB; each indi
 constrained by the image codec's file quota. A quota or closure failure returns `InvalidResource`,
 and the function returns only a complete value, publishing no partial result.
 
+#### Colour keys and the template mask
+
+An `Element` may carry an optional `ColourKey` — a picked colour plus a tolerance — and the
+compiler bakes it into the template's **alpha channel**. There is no new asset kind, no new manifest
+field, and no separate mask file, because **the template PNG's alpha channel is the mask the matcher
+weights by**: templates were already 32-bit with alpha pinned at 255 and unread, so writing that
+channel was the whole change. `applyColourKeyAlpha` in `authoring-compiler.cpp` rewrites the fourth
+byte of each cropped BGRA pixel with `ColourKey::alphaFor(red, green, blue)` and hands the result to
+the same `generateTemplateAsset` as a whole image.
+
+Distance is the sum of the three absolute channel differences, so it runs 0..765 and one unit is one
+level on one channel. `alphaFor` gives full weight out to the tolerance and then **ramps linearly to
+nothing at twice it**. The ramp is not decoration: a hard cut makes an author's tolerance control
+jump in steps, and it cuts through the antialiased skirt of a glyph, where the pixels just past the
+cut are still mostly glyph — on the measured menu entry a tolerance of 12 around the white text
+takes 93.9% of the glyph and leaves a rim of edge pixels at distance 13..24, and those are what the
+ramp readmits at the weight they deserve. A tolerance of 0 has no ramp and stays an exact-colour
+mask; the maximum tolerance admits every colour, which is legal and useless — the same mask as no
+key at all.
+
+Three properties are load-bearing:
+
+- **What is stored is the key, never the mask it produces.** An author reopening a project has to be
+  able to move the tolerance and watch the selection change, and a baked mask cannot be moved back.
+- **An element with no colour key emits byte-identical bytes** through the original call, so
+  re-saving an existing project moves nothing, and every template authored before keys existed keeps
+  a fully opaque alpha.
+- **The derived catalog carries no colour key.** The key is authoring truth and the runtime reads
+  the mask off the template's alpha, so the compiler takes it from the element the recognizer was
+  derived from. Two elements that key the same rectangle of the same screen differently are two
+  template tasks, so the crop/hash deduplication keys on the colour key as well.
+
 `ContentHash` and the built-in SHA-256 are implemented in
 `modules/annotation/source/annotation/content-hash.hpp` and
 `modules/annotation/source/annotation/content-hash.cpp`. The text form is strictly `sha256:` followed
@@ -209,6 +245,22 @@ maxSad = floor((10000 - basisPoints) * 255 * width * height / 10000)
 hit    = sadScore <= maxSad
 ```
 
+**The threshold knows nothing about the mask, and that is a trap worth naming.** `maximumSad` is
+derived from the template's *total* pixel count, while a masked score is rescaled to that same full
+rectangle, which is exactly what keeps the two on one scale. But it means a key selecting a handful
+of pixels is scored against a ceiling sized for the whole rectangle, and nothing fails: a 27-pixel
+mask under a threshold sized for 920 pixels hits every frame and measures nothing. An element that
+hits every state it is meant to distinguish is worse than no element, because it looks green. A
+colour-keyed template therefore needs a far tighter threshold than an opaque one — 9000 basis points
+gave three false-positive recognizers out of nine on the live game, and re-authoring at 9900 gave
+7/7 on an unseen frame and 0/7 on a UI-free one. There is no authoring-time check for either
+failure; `umbra-authoring frames probe` and its `fully_selected_pixels` are the only guard. See
+`docs/pitfalls/colour-key-annotation.md`.
+
+A key that selects *no* pixels is accepted at authoring time and aborts at match time with
+`InternalInvariant`, which reads as "the program is broken" when the truth is "this key matches
+nothing inside that rectangle".
+
 The equality hit is part of the contract. `AnchorEvaluation::fromSadOutcome` lives in
 `modules/annotation/source/annotation/recognition.cpp`; it checks that the matcher's returned
 rectangle is still within `searchRoi` and that the score does not exceed the theoretical maximum SAD,
@@ -221,7 +273,9 @@ is determined solely by the integer `sadScore <= maximumSad`.
 - `create` accepts a `RuntimeManifest` and `EncodedRuntimeTemplate`s. It requires the received hash
   set to exactly equal the unique template set referenced by the manifest, recomputes each PNG's
   SHA-256, decodes into owned Gray8 bytes, and checks the template size against the recognizer
-  geometry.
+  geometry. It also extracts each template's **alpha channel as a mask plane**; the mask is left
+  empty when every pixel is opaque, which selects the unmasked matcher and therefore the exact
+  behaviour projects authored before masks had.
 - `evaluatePage` returns a `PageRecognitionAttempt`, which may carry either a complete `PageOutcome`
   or a `PageRecognitionStop`, while preserving the anchor evidence already completed and the pixel
   comparison count.

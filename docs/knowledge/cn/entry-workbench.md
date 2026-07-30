@@ -101,8 +101,11 @@ PNG 路径从 `WorkbenchServices::m_pickPngToImport` 到
 `entry/workbench/source-ingestion.hpp` 的 `importSourcePng`：
 
 1. `image::loadPng` 解码外部文件；
-2. `assembleSource` 用 decoded geometry 和默认 96 DPI 建
-   `ProjectFingerprint`；
+2. `assembleSource` 用 decoded geometry 和 `dpi` 参数（默认 96）建
+   `ProjectFingerprint`。2026-07-30（`eacb05f`）起它是**参数而不是常量**：`dpi` 必须是
+   *这张截图所来自的窗口*的密度，而不是文件的密度——文件没有密度。`AuthoringDocument` 要求
+   每个 source 的指纹与项目相等，所以按错密度导入不会让结果变差，而是让文档被拒绝；在它还被
+   钉死为 96 的时候，一个从 144 dpi 窗口标注的项目一张文件都吃不进去；
 3. pixels 经 pinned `image::encodeRgbaPng` 重新编码为 canonical PNG；
 4. canonical bytes 经 `annotation::sha256` 得到 `ContentHash`；
 5. 返回同 ID 的 `AuthoringSourceSpec` 与 `AuthoringSourceAsset`，
@@ -127,7 +130,11 @@ provenance 记录 frame 的 `TargetGeneration` 和 wall-clock RFC 3339 capture t
 
 1. 在创建目录或写 final metadata 前调用 `compileAuthoringDocument`，验证
    document 与全部 source bytes，并生成 `CompiledAuthoringProject`；
-2. 建立 project root、`assets/sources`、`assets/templates`、`generated`；
+2. 建立 project root、`assets/sources`、`assets/templates`、`generated`，以及 2026-07-30
+   （`2429578`）起多建的一个空 `tasks/`。workbench 不写任何 task，但运行时在
+   `<projectRoot>/tasks/<name>.luau` 解析 task，于是在这里标注并保存的项目，作者不先自己
+   想明白「少了一个目录、少的是哪个」就跑不起来。它保持为空；它在，运行时那句「没有这个
+   task」才是在说 task，而不是在说目录布局；
 3. 发布 document 引用的 content-addressed source PNG；
 4. 发布编译所得 content-addressed template PNG；
 5. 单文件原子替换 `annotations.toml`；
@@ -175,6 +182,26 @@ API 还支持 `std::stop_token`。`PreviewResult` 保留 completed
 `PreviewStop` 中的 recognizer ID 和 `SadSearchStopReason`。stop 不会被压成
 `hit=false`。Preview frame 的 synthetic frame/session/generation identity 只为
 满足真实 recognition API；结果不进入 document、history 或 action delivery。
+
+### 取色键
+
+2026-07-30（`c392161`）起，元素可以带一个 `ColourKey`，而取键这个动作发生在 workbench。
+`entry/workbench/preview.hpp` 里的两个函数就是这个动作的全部模型：
+
+- `sampleSourcePixel(asset, point)` 是吸管——取一个键就是取一个像素。
+- `previewColourKeyMask(asset, templateRect, colourKey)` 返回从所在屏幕上裁下来的模板矩形，
+  **该键蕴含的 mask 已经写进 alpha 通道——就是编译器会烘进去的那些字节**——外加
+  `fullyKeptPixels` 与 `partiallyKeptPixels`。不带键时 mask 全不透明，这正是一个不带键的元素
+  编译出来的样子。
+
+**看见选中的像素才是要点**，这也是面板把 mask 叠回裁剪图上、而不是只报一个数字的原因。
+一个键是关于「哪些是字形、哪些是背景」的一次猜测，而它的两种失败——几乎什么都没选中，
+或者把画面也选进来了——在数字里都看不出来，在叠加图上都一眼可见。两个计数分开报，是因为它们
+回答不同的问题：多少一定是文字，以及它周围的边有多软；部分保留的像素就是容差斜坡按较低权重
+重新收回的抗锯齿边缘。
+
+文档存的是键与容差，永远不是 mask，这样作者重开项目后还能拖动容差、看着选中的像素跟着变。
+编译器拿它做什么见 `module-annotation.md`，匹配器怎么用它加权见 `module-vision-image.md`。
 
 ## 必须保持的约束
 

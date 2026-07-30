@@ -7,13 +7,19 @@ one another. The related S0 design is in `docs/plans/2026-07-22-annotation-desig
 
 ## Module Responsibilities
 
-`vision` owns three things:
+`vision` owns five things:
 
 1. Deterministically converting a strided BGRA8 frame into tightly packed Gray8 bytes.
 2. Performing SAD (sum of absolute differences) template search within an integer `PixelRect`, and
-   yielding a stable best position and a `uint64` score.
+   yielding a stable best position and a `uint64` score — optionally **weighting each template pixel
+   by a parallel mask plane** (2026-07-30, `c392161`).
 3. Providing a precise comparison budget for long searches, a synchronous cancellation/deadline
    poll, and a stop reason that is never lost.
+4. Owning the colour-key weight rule: `colourKeyAlpha` in
+   `modules/vision/source/vision/frame-analysis.hpp` is its one implementation, and
+   `annotation::ColourKey::alphaFor` delegates here.
+5. Answering three measurement questions about a **set** of decoded frames — stability, colour probe,
+   colour census — in `modules/vision/source/vision/frame-analysis.hpp` (2026-07-30, `eacb05f`).
 
 `image` owns the other three things:
 
@@ -96,12 +102,93 @@ All three control types live in the same header:
 comparisons actually performed, including the one that triggers pruning or an exact-match return,
 but not the next comparison that a budget/poll has already blocked.
 
-`matchTemplateSad` has two overloads:
+`matchTemplateSad` has four overloads, two unmasked and two masked:
 
 - The three-argument overload returns `Result<std::optional<SadMatch>>`, and internally uses the
   maximum `uint64` budget and a poll that always returns `Continue`.
 - The bounded overload accepts `maximumPixelComparisons` and a `SadSearchPoll`, and returns
   `Result<SadSearchReport>`. Runtime, Preview, and the frozen m0-demo all use this overload.
+- Two further overloads take a `templateMask` between the template and the ROI, in the unbounded and
+  bounded shapes respectively. They are **additive**: every existing call is untouched.
+
+#### The masked matcher
+
+The mask is a Gray8 plane with the template's exact extent. A mask byte of 255 counts its pixel in
+full, 0 excludes it, and an intermediate value is a **partial weight**, which is what an antialiased
+glyph edge needs. The reported score normalizes by the weight actually summed and rescales to the
+template's full rectangle:
+
+```text
+score = templatePixels * sum(weight * |haystack - template|) / sum(weight)
+```
+
+That rescaling is the point. A mask covering a tenth of its rectangle stays on the same scale as one
+covering all of it, and therefore on the scale existing unmasked thresholds already use, so
+`SimilarityThreshold` did not have to learn about masks. Truncating division rounds the quotient
+down. **A mask whose weights sum to zero selects nothing and is rejected rather than divided by.**
+
+Two properties hold the old behaviour. The overloads are additive, so no existing call changed; and
+**a fully opaque mask is bit-identical to the unmasked matcher** — same score, same match, same
+prune decisions, same comparison count — because the constant 255 cancels out of the quotient and
+out of every pruning comparison. That was verified by forcing every template down the masked path
+and watching nothing change.
+
+Colour is not the matcher and must not be. On the measured menu, bright white covers 8.2% of the
+menu region but 10.9%–18.7% of the artwork behind it: keyed on colour alone, the character art
+outranks the menu. **The colour selects which pixels are compared; SAD still identifies the shape.**
+
+`bgra8ToAlpha8` extracts a BGRA8 buffer's alpha channel as a tightly packed Gray8-shaped plane,
+which is the mask the masked matcher consumes. A template PNG's alpha channel *is* that plane, which
+is why colour keying needed no new asset kind — see `module-annotation.md`.
+
+#### Frame analysis
+
+`modules/vision/source/vision/frame-analysis.hpp` answers three questions about a set of frames,
+each answered by hand once and each too slow to answer that way twice. Frames arrive already decoded
+as `BgraImage` BGRA8 planes (`modules/vision/source/vision/bgra-image.hpp`); this module never
+touches a file.
+
+**They take N frames, not two.** `analyseStability` and `probeColour` each take one `std::span` of
+frames rather than a pair, because the useful set is two backgrounds *plus a frame taken seconds
+later to catch animation*: a pixel that is stable in the first two and moves in the third is not
+stable, and that difference is invisible both to semantics and to the eye while producing
+intermittent match failures. A two-frame API would have needed replacing immediately. Both require
+at least two frames — one frame is stable everywhere and answers nothing.
+
+- `analyseStability(frames, StabilitySpec)` reports which pixels of a rect held still across every
+  frame. Its `stableMask` is 255 where every frame agreed and 0 elsewhere, shaped so it can be handed
+  straight to `matchTemplateSad` as a template mask. `grayTolerance` is the grey spread a pixel may
+  still be called stable at, and zero demands byte identity, which is what UI drawn over changing
+  artwork actually produces. `minimumGap` splits a region on a run of fully unstable rows or columns;
+  zero disables splitting and reports the naive single bounding box, which merges a menu label with
+  the sub-label under it. It also returns the row and column profiles the regions were cut from, so a
+  caller can choose `minimumGap` from the data rather than by guessing.
+- `probeColour(frames, ColourProbeSpec)` measures how well one colour key isolates whatever holds
+  still in a rect. It reports `fullySelectedPixels` and `rampSelectedPixels`, and the gap between
+  `maskedMeanGraySpread` and `rectMeanGraySpread` is the whole answer to whether the rect survives a
+  background change. `fullySelectedPixels` is also the only guard against a key that selects nothing:
+  there is no authoring-time check for that.
+- `censusColours(frame, ColourCensusSpec)` counts the colours of **one** frame's rect, so a key is
+  picked from data instead of by sampling a pixel and hoping. Alpha is ignored — a captured frame's
+  alpha carries no colour. It is single-frame and O(pixels), so unlike the two scans above it takes
+  no budget. Equal counts are ordered by packed blue/green/red ascending, so the report never depends
+  on traversal order.
+
+The two scans share the matcher's budget and cancellation vocabulary — `SadSearchPoll`,
+`SadSearchControl`, `SadSearchStopReason`, `k_sadSearchPollIntervalComparisons` — rather than
+declaring a parallel set, and count `completedPixelVisits` (one per pixel per frame) the way the
+matcher counts comparisons. The `Sad` prefix on those names is historical; one convention per module
+is worth more than a better prefix.
+
+`colourKeyAlpha(pixel, keyRed, keyGreen, keyBlue, tolerance)` is the colour-key weight rule's **one**
+implementation: full weight out to the tolerance, then a linear ramp to nothing at twice it, with a
+tolerance of zero staying an exact-colour match. Distance is the sum of the three channel distances,
+so `k_maximumColourKeyTolerance == 765` is the widest tolerance that means anything. It lives here
+rather than in `annotation` because `probeColour` needs it to answer how many pixels a key selects,
+which is the question that function exists for; `annotation::ColourKey::alphaFor` delegates here, and
+the dependency runs annotation → vision so the call can only go that way. Before 2026-07-30
+(`eacb05f`) there were two byte-identical copies of the rule, and that drift would have been silent:
+authoring would bake one mask while the probe reported another.
 
 The bounded search first calls `roi.ensureWithinExtent`. Legal candidates are traversed in
 row-major order with `candidateY` as the outer loop and `candidateX` as the inner loop, accumulating
@@ -331,7 +418,20 @@ There is no reverse edge either: the recognition kernel never calls capture or i
   interval;
 - the error kind for illegal `GrayImage` geometry and an out-of-bounds ROI;
 - BT.601 integer samples, alpha ignored, input padding ignored, tight Gray8 output, and
-  bad-geometry rejection.
+  bad-geometry rejection;
+- the masked matcher: that an opaque mask reproduces the unmasked result exactly, that a
+  zero-weight mask is rejected rather than divided by, and the frame-analysis primitives against
+  `tests/vision/label-fixture.hpp`, real menu-label pixels captured over two backgrounds. One of
+  those numbers is a hard cross-check rather than an agreement — the summed score over the fixture
+  rect is the same `opaqueScore` the masked-SAD test pins, so the two fixtures are provably the same
+  rectangle.
+
+`tests/annotation/test-colour-key-join.cpp` is the join test between the two halves, which were
+built in parallel and each tested against a hand-built artifact until it existed. It puts
+`compileAuthoringDocument`'s emitted PNG bytes straight into `RecognitionRuntime` with nothing
+hand-built between: keyed, the label matches at 0.046 mean difference; unkeyed, the same rectangle
+misses at 56.979 against a 25.5 threshold. It was falsified by repointing the key at the artwork,
+which inverts the mask and puts the mean at 69.47.
 
 `tests/image/test-pixels.cpp` pins RGBA/BGRA byte order, incomplete-pixel rejection, template/frame
 sharing the same gray kernel, and the tight output of a padded crop along with short-source

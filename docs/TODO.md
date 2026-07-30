@@ -24,6 +24,28 @@
 
 ## 1. P0-A — 可视化标注系统
 
+> **进展(2026-07-30)——两项能力落地,下面的 checkbox 尚未按它们重述:**
+>
+> - **色键遮罩,端到端**(`c392161`)。游戏把右侧菜单的白字直接画在会变的立绘上:同一处 UI
+>   在两种背景下逐像素灰度平均差 56.8 / 26.8,而字形像素本身逐字节相同。作者取色,颜色决定
+>   拿哪些像素来比,同一对目标降到 0.28 / 0.18。落地形状:vision 的 `matchTemplateSad` 增加
+>   两个带 mask 的 overload(增量,现有调用一处未改;全不透明 mask 与无 mask 逐位一致),
+>   annotation 把 `ColourKey` 烘进模板 PNG 的 **alpha 通道**(无新资产、无 manifest 变更;
+>   不带键的模板字节不动),workbench 加取色器与选中像素叠加预览。**注意阈值陷阱**:阈值按
+>   模板全部像素数推出,对 mask 一无所知,所以带色键的模板要严得多的阈值(真机 9000 bp →
+>   9900 bp),细节见 [`pitfalls/colour-key-annotation.md`](pitfalls/colour-key-annotation.md)。
+> - **`umbra-authoring`**(`eacb05f`)——第二个二进制,开发工具,让 agent 不开 GUI 也能标注
+>   一个项目。它自己不写任何东西,每一次改动都经过 `AuthoringDocument`,因为标注产物就是点击
+>   授权的证据。同批加入 vision 的三个帧分析原语(稳定性 / 色键探针 / 颜色普查),它们**收 N 帧
+>   而不是两帧**:两种背景找出「不随背景变的 UI」,几秒后再拍的第三帧才找出「正在动的东西」。
+>   `match` 子命令是重点:标注、对着留出来的截图验证、迭代,回路里没有人。
+>
+> 顺带修掉两处会直接卡死高 DPI 标注的(同在 `eacb05f`):`importSourcePng` 曾把每张导入的 PNG
+> 盖成 96 dpi,而 `AuthoringDocument` 拒绝指纹与项目不符的 source,于是 1600x900@144 的项目
+> 一张截图也吃不进;CLI 又从这个约束反向推错,把自己的项目钉死在 96 且不给 `--dpi`。
+> 文件没有显示密度,唯一可能正确的是窗口的密度,也就是项目的密度——这不是便利,而是因为
+> 运行时在 live 指纹与 catalog 不符时拒绝投递点击,所以按错密度标注的项目是不可用而不是近似。
+
 - [x] 锁定 authoring/runtime schema、`template_rect`/`search_roi`、page resolution、动作证据、
       项目级尺寸/DPI 兼容契约与 Dear ImGui + D3D11 技术栈(2026-07-23)。
 - [ ] 独立 GUI:WGC 抓帧/导入图片、样本列表、画布缩放/平移、框选编辑、undo/redo。
@@ -135,6 +157,32 @@
 >
 > 余下的是**阶段 4(第一个真日常 + 真机验收全项)**——由开发者裁决何时开始——
 > 以及条件性的阶段 5(跨文件复用,仅当阶段 4 证明需要)。
+>
+> **进展(2026-07-30,`ed38124`)——阶段 4 开工前先长出了第二个前端与一个新原语:**
+>
+> - **`umbra-flow drive`**:命令以 JSON 行追加进 `--queue`,每条命令一行结果 flush 进
+>   `--results`。它是同一张私有能力面的**同级消费者**,不是通往 Luau 的口子——保证层
+>   (周期账本、四要件点击授权、指纹检查、trace)本来就在 Luau 之下的 C++ 里,`ctx.luau`
+>   只是它的一个消费者。**一个 generation 只接受一个前端**,`startTask` 与
+>   `startOperatorSession` 中先到的那个上闩,另一个报 `UnsupportedCapability`。
+>   便利命令(`wait_page` / `find_click`)**不带任何自己的默认值**,每个 timeout 与轮询间隔
+>   都是必填字段,于是 `ctx.luau` 仍是 task 侧 policy 的唯一住处。
+> - **`key` 原语**(私有表 12 → 13 个)。目标游戏是键盘驱动的:`E` 结束回合、`A`/`S` 开牌堆、
+>   `F1`-`F3` 换角色、数字键选手牌;而点卡牌不会选中它(真机验证),出牌需要拖拽,当时没有
+>   任何前端能做。`IActionSink::pressKey` 收 `TargetGeneration` 而 `click` 收
+>   `ObservationLease`——按键不指名坐标,没有会过时的矩形。它要求周期打开并花掉周期,
+>   为此 `CycleLedger` 多了 `spend` 与 `consume` 并列。键名集合是 `domain::KeyName` 这一份
+>   (A-Z / 0-9 / F1-F12,48 个,无别名)。
+> - trace 每条事件多一个 `frontEnd`(`"task"` / `"operator"`),校验状态机在 operator 流上
+>   拒绝 `framework.*`。
+>
+> 真机验证过(实现方够不到真机):`cycle_open` 绑定窗口、`cycle_find` 把一次判定为未命中的
+> 搜索报成 ok 而不是错误、按键投递并记为 `engine.key_delivered`、同一个已花掉周期上的第二次
+> 按键被 `StaleObservation` 拒绝、每条事件都带 `frontEnd=operator`。m0-demo 路径上两次按键
+> 把手牌从 06/10 变成 05/10、弃牌堆变成 6+1、第一个敌人从 352 掉到 239。
+>
+> 这几条不改变阶段 4 的定义,但改变谁能驱动它:第一个真日常既可以是 task,也可以先由操作者
+> 逐步驱动出来。下面的 checkbox 尚未按此重述。
 
 - [ ] 固定 Luau 精确版本,接入 compiler/VM 与 `IScriptRuntime` 可序列化边界
       (边界口径见

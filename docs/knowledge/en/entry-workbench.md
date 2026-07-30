@@ -141,8 +141,13 @@ The PNG path runs from `WorkbenchServices::m_pickPngToImport` to the `importSour
 `entry/workbench/source-ingestion.hpp`:
 
 1. `image::loadPng` decodes the external file;
-2. `assembleSource` builds the `ProjectFingerprint` from the decoded geometry and the default 96
-   DPI;
+2. `assembleSource` builds the `ProjectFingerprint` from the decoded geometry and the `dpi`
+   parameter, which defaults to 96. Since 2026-07-30 (`eacb05f`) that is a **parameter rather than a
+   constant**: `dpi` must be the density of the *window the screenshot came from*, not of the file,
+   which does not have one. `AuthoringDocument` requires every source's fingerprint to equal the
+   project's, so importing at the wrong density does not degrade the result — it refuses the
+   document, and a project authored from a 144-DPI window could not ingest a single file while this
+   was pinned at 96;
 3. the pixels are re-encoded into a canonical PNG through the pinned `image::encodeRgbaPng`;
 4. the canonical bytes are run through `annotation::sha256` to obtain the `ContentHash`;
 5. an `AuthoringSourceSpec` and an `AuthoringSourceAsset` with the same ID are returned, with
@@ -176,7 +181,12 @@ The write entry point is the `saveAndGenerateAuthoringProject` in
 
 1. before creating any directory or writing final metadata, call `compileAuthoringDocument` to
    validate the document together with all source bytes and to produce the `CompiledAuthoringProject`;
-2. create the project root, `assets/sources`, `assets/templates`, and `generated`;
+2. create the project root, `assets/sources`, `assets/templates`, `generated`, and — since
+   2026-07-30 (`2429578`) — an empty `tasks/`. The workbench writes no task, but the runtime
+   resolves one at `<projectRoot>/tasks/<name>.luau`, so a project authored and saved here could not
+   be run without the author first working out that a directory was missing and which one. It stays
+   empty; present means the runtime's "no such task" is a message about the task rather than about
+   the layout;
 3. publish the content-addressed source PNGs referenced by the document;
 4. publish the content-addressed template PNGs produced by compilation;
 5. atomically replace `annotations.toml` as a single file;
@@ -224,6 +234,28 @@ Resolved/Unknown/Ambiguous, the resolved page ID, and the recognizer ID and `Sad
 inside `PreviewStop`. A stop is never collapsed into `hit=false`. The synthetic
 frame/session/generation identity of the Preview frame exists only to satisfy the real recognition
 API; the result does not enter the document, the history, or action delivery.
+
+### Picking a colour key
+
+Since 2026-07-30 (`c392161`) an element may carry a `ColourKey`, and the workbench is where one is
+picked. Two functions in `entry/workbench/preview.hpp` are the whole model of that gesture:
+
+- `sampleSourcePixel(asset, point)` is the eyedropper — picking a key is picking a pixel.
+- `previewColourKeyMask(asset, templateRect, colourKey)` returns the template rectangle cropped out
+  of its screen with the mask the key implies **already written into the alpha channel — the same
+  bytes the compiler bakes** — plus `fullyKeptPixels` and `partiallyKeptPixels`. Without a key the
+  mask is fully opaque, which is exactly what an unkeyed element compiles to.
+
+Seeing the selection is the part that matters, and it is why the panel draws the mask back over the
+crop rather than only reporting a number. A key is a guess about what is glyph and what is
+background, and both failure modes — selecting almost nothing, or selecting the artwork too — are
+invisible in the number and obvious in the overlay. The two counts are reported apart because they
+answer different questions: how much is certainly text, and how soft the edge around it is, the
+partial pixels being the antialiased rim the tolerance ramp readmits at reduced weight.
+
+The document stores the key and the tolerance, never the mask, so an author can reopen a project and
+move the tolerance while watching the selection change. See `module-annotation.md` for what the
+compiler then does with it, and `module-vision-image.md` for how the matcher weights by it.
 
 ## Constraints That Must Remain True
 

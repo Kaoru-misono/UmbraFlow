@@ -7,12 +7,17 @@
 
 ## 模块分工
 
-`vision` 拥有三件事：
+`vision` 拥有五件事：
 
 1. 将带 stride 的 BGRA8 frame 确定性转换成紧密排列的 Gray8 bytes。
 2. 在整数 `PixelRect` 内执行 SAD（sum of absolute differences）模板搜索，并给出稳定的最佳位置与
-   `uint64` score。
+   `uint64` score；还可以**按一张与模板同形的 mask 平面给每个模板像素加权**
+   （2026-07-30，`c392161`）。
 3. 为长搜索提供精确 comparison budget、同步 cancellation/deadline poll 和不丢失的停止原因。
+4. 拥有色键权重规则：`modules/vision/source/vision/frame-analysis.hpp` 的 `colourKeyAlpha` 是它的
+   唯一实现，`annotation::ColourKey::alphaFor` 转调到这里。
+5. 在 `modules/vision/source/vision/frame-analysis.hpp` 里回答关于**一组**已解码帧的三个测量问题
+   ——稳定性、色键探针、颜色普查（2026-07-30，`eacb05f`）。
 
 `image` 拥有另外三件事：
 
@@ -79,12 +84,79 @@ threshold：只要 template 能在 ROI 中合法放置，completed search 就返
 `m_completedPixelComparisons`；计数覆盖所有实际比较，包括触发 pruning 或 exact-match return 的那一次，
 但不包含 budget/poll 已阻止的下一次比较。
 
-`matchTemplateSad` 有两个 overload：
+`matchTemplateSad` 有四个 overload，两个不带 mask、两个带 mask：
 
 - 三参数 overload 返回 `Result<std::optional<SadMatch>>`，内部使用最大 `uint64` budget 和永远
   `Continue` 的 poll。
 - 有界 overload 接受 `maximumPixelComparisons` 与 `SadSearchPoll`，返回
   `Result<SadSearchReport>`。Runtime、Preview 与冻结的 m0-demo 都使用这个 overload。
+- 另两个 overload 在模板与 ROI 之间多收一个 `templateMask`，分别对应上面两种形状。它们是
+  **增量的**：现有每一处调用都没被动过。
+
+#### 带 mask 的匹配器
+
+mask 是一张与模板范围完全相同的 Gray8 平面。mask 字节 255 表示该像素全额计入，0 表示排除，
+中间值是**部分权重**——这正是抗锯齿字形边缘需要的东西。报出的 score 按实际累加到的权重归一，
+再放大回模板的完整矩形：
+
+```text
+score = templatePixels * sum(weight * |haystack - template|) / sum(weight)
+```
+
+这次放大回去才是要点。只盖住十分之一矩形的 mask 与盖满全部的 mask 处在同一量纲上，
+因此也就处在既有无 mask 阈值本来使用的量纲上，`SimilarityThreshold` 不必学会 mask 这回事。
+除法截断向下取整。**权重和为零的 mask 什么都没选中，被拒绝而不是拿去做除数。**
+
+有两条性质守住旧行为。overload 是增量的，现有调用一处未改；而且**全不透明的 mask 与无 mask
+匹配器逐位一致**——同样的分数、同样的命中、同样的剪枝决定、同样的比较次数——因为常数 255
+在商里和每一次剪枝比较里都被约掉了。验证方式是把每一个模板都强行走一遍带 mask 的路径，
+看着什么都没变。
+
+颜色不是匹配器，也绝不能是。实测那份菜单：亮白色占菜单区域的 8.2%，却占背后画面的
+10.9%–18.7%——只按颜色判定，角色立绘会压过菜单。**颜色选的是拿哪些像素来比，认形状的仍是 SAD。**
+
+`bgra8ToAlpha8` 把 BGRA8 缓冲的 alpha 通道抽成一张紧密排列的 Gray8 形状平面，那就是带 mask
+匹配器消费的 mask。模板 PNG 的 alpha 通道*就是*这张平面，这也是色键不需要新资产类型的原因
+——见 `module-annotation.md`。
+
+#### 帧分析
+
+`modules/vision/source/vision/frame-analysis.hpp` 回答关于一组帧的三个问题，每一个都被手工
+答过一次，也都慢到不值得再手工答第二次。帧以已解码的 `BgraImage`（BGRA8 平面，
+`modules/vision/source/vision/bgra-image.hpp`）进来；这个模块从不碰文件。
+
+**它们收 N 帧，不是两帧。** `analyseStability` 与 `probeColour` 各收一个帧的 `std::span` 而不是
+一对，因为有用的那一组是两张不同背景，*外加一张几秒后再拍的*用来抓动画：一个像素在前两张里
+稳定、在第三张里动了，它就不稳定；而这个差别对语义和肉眼都不可见，却会制造时有时无的匹配失败。
+两帧的 API 一落地就得换掉。两者都要求至少两帧——一帧到处都稳定，什么也答不了。
+
+- `analyseStability(frames, StabilitySpec)` 报出一个 rect 里哪些像素在每一帧上都没动。它的
+  `stableMask` 在所有帧一致处是 255、其余是 0，形状就是可以直接交给 `matchTemplateSad` 当模板
+  mask 的形状。`grayTolerance` 是一个像素仍可被称为稳定的灰度跨度，零表示要求逐字节相同——
+  这正是画在变化画面上的 UI 实际产生的结果。`minimumGap` 按一段完全不稳定的连续行或列把区域
+  切开；零关闭切分，报出那个朴素的单一包围盒，而它会把菜单标签和它下面的子标签并成一块。
+  它还返回切区域所用的行、列剖面，让调用方照数据挑 `minimumGap`，而不是靠猜。
+- `probeColour(frames, ColourProbeSpec)` 测量一个色键把 rect 里「不动的东西」隔离得有多好。
+  它报出 `fullySelectedPixels` 与 `rampSelectedPixels`，而 `maskedMeanGraySpread` 与
+  `rectMeanGraySpread` 之间的落差，就是「这个 rect 扛不扛得住换背景」的全部答案。
+  `fullySelectedPixels` 同时是防住「一个什么都选不中的键」的唯一守卫：编辑期没有这项检查。
+- `censusColours(frame, ColourCensusSpec)` 数**一**帧的一个 rect 用了哪些颜色，让色键从数据里
+  挑出来，而不是采一个像素然后祈祷。alpha 被忽略——捕获帧的 alpha 不携带颜色。它是单帧且
+  O(像素) 的，所以不像上面两个扫描那样收 budget。计数相同的项按打包后的 blue/green/red 升序
+  排列，因此报告永远不依赖遍历顺序。
+
+两个扫描共用匹配器的 budget 与取消词汇——`SadSearchPoll`、`SadSearchControl`、
+`SadSearchStopReason`、`k_sadSearchPollIntervalComparisons`——而不是另立一套，并且按匹配器数
+比较次数的方式数 `completedPixelVisits`（每帧每像素一次）。那些名字上的 `Sad` 前缀是历史遗留；
+一个模块一套约定，比一个更好的前缀值钱。
+
+`colourKeyAlpha(pixel, keyRed, keyGreen, keyBlue, tolerance)` 是色键权重规则的**唯一**实现：
+在容差以内全额，然后线性斜坡到两倍容差处归零，容差为零则退化成精确颜色匹配。距离是三个通道
+距离之和，所以 `k_maximumColourKeyTolerance == 765` 是仍然有意义的最大容差。它住在这里而不是
+`annotation`，是因为 `probeColour` 需要它来回答「这个键选中了多少像素」——那正是那个函数存在的
+理由；`annotation::ColourKey::alphaFor` 转调过来，依赖方向是 annotation → vision，所以调用只能
+朝这个方向走。2026-07-30（`eacb05f`）之前这条规则有两份逐字节相同的实现，而那种走偏是无声的：
+编辑期烘出一张 mask，探针却报出另一张。
 
 有界搜索先调用 `roi.ensureWithinExtent`。合法候选按 `candidateY` 外层、`candidateX` 内层的 row-major
 顺序遍历并逐行累加绝对差。差值非负，所以一行后 partial sum 已 `>= best` 时可以安全 pruning。只有
@@ -272,7 +344,17 @@ composition 层把 frame 交给 recognition。反向也没有 edge：识别核�
 - zero/one/exact comparison budget、exact-match early return 的计数；
 - `Cancelled`、`TimedOut`、`ComparisonBudgetExhausted` 三种 stop 与 4096 comparison poll interval；
 - 非法 `GrayImage` geometry、越界 ROI 的 error kind；
-- BT.601 integer samples、alpha ignored、input padding ignored、tight Gray8 output 与坏 geometry 拒绝。
+- BT.601 integer samples、alpha ignored、input padding ignored、tight Gray8 output 与坏 geometry 拒绝；
+- 带 mask 的匹配器：全不透明 mask 精确复现无 mask 的结果、权重和为零的 mask 被拒绝而不是拿去做
+  除数，以及帧分析原语对 `tests/vision/label-fixture.hpp` 的验证——那是真实菜单标签在两种背景下
+  的像素。其中一个数字是硬交叉校验而不是「结果吻合」：该 fixture rect 上的总和与带 mask SAD
+  测试钉住的 `opaqueScore` 是同一个数，因此两份 fixture 可证明是同一个矩形。
+
+`tests/annotation/test-colour-key-join.cpp` 是两半之间的接合测试。这两半是并行做出来的，在它
+存在之前各自只对着手工构造的产物测过自己那一端。它把 `compileAuthoringDocument` 吐出的 PNG
+字节直接送进 `RecognitionRuntime`，中间没有任何手工构造：带色键时该标签以 0.046 的平均差命中，
+不带色键时同一个矩形以 56.979 对 25.5 的阈值落空。证伪方式是把色键指向画面，mask 随之反转，
+平均差变成 69.47。
 
 `tests/image/test-pixels.cpp` 固定 RGBA/BGRA byte order、incomplete pixel 拒绝、template/frame 共用同一个
 gray kernel，以及带 padding crop 的紧密输出与短 source 拒绝。

@@ -237,6 +237,46 @@ random(...)                       -> number
 >
 > 至此 §5 的十二个原语全部存在,本节不再有「尚未落地」的项。
 
+> **形状快照 2026-07-30(`ed38124`)——多了一个原语**:私有表上是**十三个**原语
+> 加 `error_tag` 那一个数据字段,共十四个键(`uf-tables.cpp` 的 `buildPrivateSurface`):
+>
+> ```text
+> cycle_open  cycle_close  cycle_page  cycle_find  cycle_click
+> key         deadline     wait        settle      raise
+> emit        terminal     random
+> error_tag                                            -- 非能力,Tier B 标签串
+> ```
+>
+> 新增的是 **`key(ticket, name)`**。本节标题的「12 个原语」与上面那句「§5 的十二个原语全部
+> 存在」都按此读作十三,而目标表上没有它,是因为写那张表时目标游戏还被当成鼠标驱动的。
+>
+> **它为什么是一个原语,而不是 `cycle_click` 的一个参数。** 目标游戏是键盘驱动的,它的战斗
+> UI 把每个动作的按键印在界面上(`E` 结束回合、`A`/`S` 开牌堆、`F1`-`F3` 换角色、数字键选
+> 手牌);而鼠标路径根本表达不了「打出一张牌」——真机验证过,点卡牌不会选中它,点敌人打开的
+> 是那个敌人的查看面板——所以出牌需要拖拽,而当时没有任何前端能做拖拽。
+>
+> **它的形状与 `cycle_click` 的差别,每一处都是有理由的:**
+>
+> - **收 ticket,不收 hit。** 没有命中序数,因为根本没有命中:按键不指名位置,没有「先找到
+>   什么」这一步。
+> - **不要求已解析的 page。** 标注项目声明的是「这一页授权哪些 recognizer」,对按键则什么
+>   都没声明;这里的一个 resolved page 会是一份没有东西能核对它的证据。
+> - **仍然要求周期打开,并且花掉它。** 要求打开的周期不是仪式:它把这次按键放进「同时只有
+>   一个周期」的定序里,与它前后的每次观察和点击排在一起,并给它的 trace 行一个周期序数,
+>   于是读的人能看出按下这个键时屏幕上是哪一帧。花掉周期则与点击同理——投出去的按键改变了
+>   屏幕。
+> - **为此 `CycleLedger` 多了 `spend`,与 `consume` 并列**,是一个独立方法而不是 `consume`
+>   上的一个标志位:page 要求对点击不是可选的、将来也不会变成可选的,伸手去拿 `spend` 的
+>   调用方是在声明「我这个输入没有坐标要授权」,两个不同的拼写让这句声明留在调用点上可见。
+> - 端口那一侧的差别见 §12 与 `docs/knowledge/*/module-engine.md`:`IActionSink::pressKey`
+>   收 `TargetGeneration`,而 `click` 收 `ObservationLease`。
+>
+> 四条不变量对它全部成立:纯粹、入参只有句柄和标量、返回只有标量、有界且感知 stop token。
+> §8 那份一票否决第 6 条的名单也随之多一个能阻塞的原语,但**没有多一个用例**:
+> `tests/task/test-veto-blocking.cpp` 的替身 sink 在 `pressKey` 上阻塞的方式与在 `click` 上
+> 完全一样,同一个端口、同一道闸,所以被阻塞的 click 那一例证明的东西对被阻塞的按键同样成立。
+> 该节「不是 12 个,是 8 个」这句照读,8 指的是用例数,不是表上的原语数。
+
 四条不变量(它们同时是 §11 可逆性的条件):
 
 1. 纯粹:只有效果,不回调进 Lua。
@@ -397,6 +437,19 @@ ctx:call(subtask, ...)                   -- P1
 >   后果。宿主于是在 `run.finished` 看到一个仍然打开的 step,而这正是正确的读法:
 >   这次 run 确实结束在这个 step 里面。(`ctx:cycle` 不在此列:它根本没有语义事件,
 >   周期的开关只落在 `task.native_call` 上。)
+
+> **补记 2026-07-30(`ed38124`)——`ctx` 上多了按键,两处**:
+>
+> - **`view:key(name)`** —— `ctx:cycle` / `ctx:wait_for_page` 交给块的那个周期视图上,
+>   与 `view:click(hit)` 并列。它**不收 hit**:与 `view:click` 的全部差别就是按键不指名
+>   位置,因此没有「先找到什么」这一步;作者写的是自己目标印在界面上的那个名字,`"E"`、
+>   `"3"`、`"F1"`。它与 `view:click` 一样**把视图置死**,因为宿主那边的周期已经被花掉了
+>   ——这是宿主的规则而不是 `ctx.luau` 的规则,这里的记账只是跟上它。
+> - **`ctx:key(ticket, name)`** —— 与五个 `ctx:cycle_*` 转发同属那一段直接转发,和它们一样
+>   不是给日常脚本用的。它叫 `key` 而不是 `cycle_key`,因为那是这个原语在私有表上的名字,
+>   而那一段的规矩是每个原语按自己的名字转发。
+>
+> 上表(`ctx:step` / `ctx:cycle` / ...)按此多读一条 `view:key`;`ctx:call` 仍是 P1,未落地。
 
 ### `wait_for_page` 的 framework 实现
 
@@ -811,6 +864,24 @@ task.native_call         序号 / 原语 / 入参身份 / outcome / error kind /
                          durationMillis(仅 settle)
 ```
 
+> **补记 2026-07-30(`ed38124`)——事件表多一条,而且每一行多一个字段**:
+>
+> - **多的那条事件是 `engine.key_delivered`**,每投出一次按键一条,记录它花掉的 observation
+>   来自哪一帧、按了哪个键。它**没有坐标**,与 `engine.action_delivered` 的差别就在这里:
+>   按键本来就没有坐标,一个杜撰的坐标会让读 trace 的人以为那里发生过一次定位。
+> - **多的那个字段是 `frontEnd`**,取值 `"task"` 或 `"operator"`,由 `TraceRecorder` 盖在
+>   **每一条**事件上,与 `seq` / `runId` / `generationId` 同列。它属于**盖章**而不属于事件:
+>   能力面现在有两个同级消费者(task 跑的受信任 Luau framework,和从进程外送命令的操作者),
+>   「这件事是谁做的」对每一行都要问一次,所以答案由 recorder 为整次 run 持有一份并写到每一
+>   行上——没有任何发射方能忘掉它,也没有谁能冒领另一个前端的活。
+> - **`TaskHost` 交给 recorder 的就是它闩住的那个前端值**,所以「一条流归属谁」与「产生它的
+>   互斥」是同一件事,而不是两件必须彼此吻合的事。互斥本身见本节下面的校验状态机与 §13。
+> - **`frontEnd` 同时是一条协议规则,不只是标签**:§12 的校验状态机在 operator 流上**拒绝
+>   `framework.*`**,报 `InternalInvariant`。那八条事件描述的是受信任 Luau framework 自己的
+>   结构,而 operator 流上没有那个 framework,这样一行只可能是宿主 bug 把 task 的结构安到了
+>   操作者头上。拒绝它,这个字段才是权威而不是装饰。因此本节「两个失败 kind 的分界」那份
+>   `InternalInvariant` 清单要多读一条:operator 流上的 `framework.*`。
+
 > **补记 2026-07-29(阶段 2c `c37ee5b`)——`run.finished` 的 error kind 是真 kind 了**:
 > 在此之前,一个**没人捕获**的 Tier B 错误穿出脚本时,`script` 只知道「栈顶是个非字符串
 > 的值」,于是整类失败一律报 `InvalidResource`——一个超时没被 catch 的任务会在报告和
@@ -969,6 +1040,37 @@ public:
 每 run 种子,干掉固定默认值占位。
 
 `TaskRunReport` 的字段与到 `ExitCode` 的映射在本文定义,不留给实现方。
+
+> **落地补记 2026-07-30(`ed38124`)——动词集多了一个,而且它不是 D10 之外的新能力**:
+> `TaskHost` 上多了
+>
+> ```cpp
+> auto startOperatorSession(GenerationId generation, TaskRunConfig config)
+>     -> Result<std::unique_ptr<OperatorSession>>;
+> ```
+>
+> 它与 `startTask` 是**同一张能力面的两个前端**,不是第二套能力:`OperatorSession` 消费的
+> 就是 `ctx.luau` 消费的那批私有原语,经同一个 `TaskContext`,因此拿到的拒绝也一模一样。
+> 它明确**不是**通往 Luau 的路——没有 chunk、没有源码、没有任何字符串会变成代码,§7 关掉的
+> eval 路径一条都没重开。它也没有 `raise` / `emit` / `random`:前两个是 framework 用来按
+> 自己的方式失败、记录自己结构的,操作者没有自己的结构要记;`random` 存在是因为沙箱拿掉了
+> `math.random` 而脚本没有别的来源,操作者自己有。
+>
+> **互斥写在这里,是因为 §4 的账本只有一格。** 两个 policy 源驱动同一个 generation 会争抢
+> 那一格:task 的等待循环和操作者的命令都会认为自己拥有那唯一打开的周期。所以
+> `startTask` 与 `startOperatorSession` 中先到 generation 的那个**闩住**该 generation 的
+> 前端,另一个终身被拒——无论到达顺序,无论被调用多少次;同一个前端再来一次是允许的
+> (一个 generation 本来就会顺序跑多个 task、也会顺序开多个操作者会话),不允许的是混用。
+> 它报 `UnsupportedCapability` 而不是不变量失败:问是合法的,只是拿不到,这时二进制里没有
+> 任何东西坏掉。闩住的那个值同时就是交给 trace recorder 的值(见 §12)。
+>
+> 与 `startTask` 唯一的生命周期差别是**它不阻塞**:会话被活着交回去,调用方逐动词驱动它,
+> 最后调 `OperatorSession::finish` 关掉 run 括号。因此上面那句「未实现的动词返回一个已经
+> 存在的真实错误 kind」不受影响,D10 的 P0→P2 不换 API 面这条也不受影响。
+>
+> 而 `entry/cli` 那句「只剩:解析参数、构造 adapter、调 `TaskHost`、打印报告」多一件:
+> 操作者线协议(`entry/cli/drive-protocol.*`)。它仍不是 policy——便利命令的每个 timeout
+> 与轮询间隔都是必填字段,`ctx.luau` 仍是 task 侧 policy 的唯一住处。
 
 ## 十四、构建管线
 

@@ -25,12 +25,14 @@ vision      image
 
 controller (Windows) -> core, domain
 script               -> core, domain
-entry/cli            -> engine + controller
+entry/cli            -> task (+ engine, controller)
+entry/authoring      -> entry/workbench + entry/cli (+ image)
 entry/workbench      -> annotation + engine + controller + image
 ```
 
 An arrow points from a dependent toward its dependency. `vision` and `image` are peers and do not
-depend on one another.
+depend on one another. `modules/task` and `modules/trace` are not drawn here and have no page of
+their own yet; see `README.md` for the scope those two pages are still owed.
 
 | Module | Owns | Does not own |
 | --- | --- | --- |
@@ -49,21 +51,48 @@ depend on one another.
 can therefore still build the platform-independent modules, and CI can test the runtime flow with
 fake ports.
 
-## The three executables
+## The four binaries, five entry points
+
+`umbra-flow` is one binary with two subcommands; the other three each have one.
 
 | Entry point | Purpose | Current status |
 | --- | --- | --- |
 | `umbra-workbench` | Edit annotation projects, capture source images, preview, compile, and publish | A1 annotation tool |
+| `umbra-authoring` | Do the same authoring work from a command line, plus measure frames | Development tool (2026-07-30) |
 | `umbra-flow run` | Load a published project and run the Luau task named by `--task NAME` | P0 single-task runner |
+| `umbra-flow drive` | Load the same project and execute operator JSON-line commands from `--queue` | P0 operator front-end (2026-07-30) |
 | `m0-demo` | Verify WGC capture and strict-background input | Frozen; no longer carries product features |
 
-These three paths must not be mixed:
+These paths must not be mixed:
 
-- Workbench can generate recognition assets, but it has no input capability.
-- `umbra-flow run` reads only the generated runtime manifest and templates, not the full authoring
+- Workbench and `umbra-authoring` can generate recognition assets, but neither has any input
+  capability.
+- `umbra-flow` reads only the generated runtime manifest and templates, not the full authoring
   screenshots.
+- **`run` and `drive` are two front-ends over one capability surface, and one generation admits
+  exactly one of them.** `TaskHost` latches the first front-end to reach a generation and refuses
+  the other for its life. Neither can reach anything the other cannot: the operator front-end binds
+  to the same private primitives the trusted Luau framework binds to, and inherits the same
+  refusals. It is a sibling consumer, not a hole into Luau — no chunk, no source, no string that
+  becomes code.
 - `m0-demo` does not use the annotation authorization stack and cannot serve as shared
   implementation for engine or CLI.
+
+`umbra-authoring` is a **development tool and writes nothing directly**: every change goes through
+`annotation::AuthoringDocument`, because annotation output is click-authorization evidence and that
+validation must not be bypassed. Its subcommands are `project init|show|save`, `page
+create|add-anchor|add-target`, `match` (verify a recognizer against a held-out screenshot), and
+`frames stability|probe|census` (the vision measurement primitives). One JSON document goes to
+stdout per invocation, success or failure. The `match` subcommand is the point: annotate, verify,
+iterate, with no human in the loop.
+
+A failure document answers with `kind` and `response`, both in the **wire spelling** every other
+JSON surface uses — `automationErrorWireName` and `failureResponseWireName`, so
+`recognition_incomplete` rather than the C++ enumerator name. `response` exists so a caller can tell
+a did-not-finish from a hard failure without parsing the message. Until 2026-07-30 (`81ba61b`)
+`kind` used the enumerator name while `response` beside it already used the wire name, so one JSON
+object answered in two conventions and an agent reading two surfaces carried two spellings of one
+kind.
 
 ## From an authoring project to runtime
 
@@ -174,9 +203,15 @@ back-pointer. Platform handles, D3D objects, and Win32 input implementation rema
 or the platform directories in `entry/`.
 
 Strict-background is a restriction on reachable APIs, not an optional switch. The allowed input
-path currently ends at `PostMessageW` for the target window.
-`SetForegroundWindow`, `SetFocus`, `SendInput`, `mouse_event`, `keybd_event`, and `SetCursorPos`
-are all forbidden.
+path currently ends at `PostMessageW` for the target window, for mouse messages and — since
+2026-07-30 — for key messages. `SetForegroundWindow`, `SetFocus`, `SendInput`, `mouse_event`,
+`keybd_event`, and `SetCursorPos` are all forbidden; a keystroke takes the `PostMessageW` route like
+everything else, with the same audit record and no hold between down and up.
+
+A keystroke is authorized differently from a click, on purpose: `IActionSink::click` takes an
+`ObservationLease` and `IActionSink::pressKey` takes a `TargetGeneration`, because a lease fences a
+coordinate and a keystroke names none. It still requires an open observation cycle and spends it,
+because a delivered keystroke changes the screen exactly as a click does.
 
 ## Where to look
 
@@ -190,7 +225,8 @@ are all forbidden.
 | The Luau substrate: sandbox, budgets, cancellation, and the two environments | [`module-script.md`](module-script.md) |
 | WGC, target continuity, DPI, and input | [`module-controller.md`](module-controller.md) |
 | Editing, preview, and publication in the annotation tool | [`entry-workbench.md`](entry-workbench.md) |
-| Product CLI and Windows composition | [`entry-cli.md`](entry-cli.md) |
+| Colour keys, the template mask, and the masked matcher | [`module-annotation.md`](module-annotation.md), [`module-vision-image.md`](module-vision-image.md) |
+| Product CLI, the operator `drive` protocol, and Windows composition | [`entry-cli.md`](entry-cli.md) |
 | Frozen on-hardware acceptance path | [`entry-m0-demo.md`](entry-m0-demo.md) |
 
 ## Verification scope

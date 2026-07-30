@@ -1,39 +1,61 @@
 # entry/cli Architecture Knowledge
 
 `entry/cli` is the command-line entry point for `umbra-flow` and the Windows composition root for
-one run's desktop binding. It connects the platform-independent `engine` ports to the real capture
-and background-input capabilities of `controller`, and owns arguments and process exit codes.
+one session's desktop binding. It connects the platform-independent `engine` ports to the real
+capture and background-input capabilities of `controller`, and owns arguments and process exit
+codes.
+
+**`umbra-flow` has two subcommands, `run` and `drive`, and they are two front-ends over one
+capability surface.** `run` loads a project-owned Luau task and lets the trusted framework drive it;
+`drive` takes JSON-line commands from an operator outside the process and drives the same
+primitives. Neither can reach anything the other cannot, and a single generation admits exactly one
+of them: `TaskHost::Generation::claimFrontEnd` latches the first front-end to reach a generation --
+whichever of `startTask` and `startOperatorSession` arrives first -- and refuses the other for that
+generation's life, reported as `UnsupportedCapability` rather than as an invariant failure, because
+asking is legitimate and nothing in the binary is broken when it happens (2026-07-30, `ed38124`).
 
 The run lifecycle itself is no longer here. Since 2026-07-29 it lives in `task::TaskHost`
 (`modules/task/source/task/task-host.hpp`), per `docs/plans/2026-07-29-three-layer-task-system.md`
 section 13. What remains in this directory is: parse the arguments, build the adapters and the ports
-they implement, call the host, and print the report it returns.
+they implement, call the host, and print the report it returns — plus, since 2026-07-30, the
+operator protocol itself, which is a text encoding of that same host surface and holds no policy.
 
 ## Entry-Point Responsibilities
 
 This directory owns three kinds of product boundary.
 
 The first is the process boundary. `entry/cli/main.cpp` copies `argv` into an owning
-`std::vector<std::string>`, recognizes the `run` subcommand, emits usage, the one-line report of a
-run that started, or an error, and collapses every outcome into an integer exit code. A started run
-always names its task, source hash, seed, and trace path, whether it completed, was cancelled, or
-failed; a failure adds the rendered error line. With no subcommand it prints only
-the project name and usage; there is currently no default behavior that implicitly runs a task.
+`std::vector<std::string>`, recognizes the `run` and `drive` subcommands, emits usage, the one-line
+report of a session that started, or an error, and collapses every outcome into an integer exit
+code. A started run always names its task, source hash, seed, and trace path, whether it completed,
+was cancelled, or failed; a started drive session names its queue, results, and trace paths instead,
+because it ran no task and therefore has no task name or source hash to report. A failure adds the
+rendered error line. With no subcommand it prints the project name and **both** usages — the two
+modes are equal citizens, so neither is the one a reader is shown by default.
 
-The second is the command boundary. `RunArgs` in `entry/cli/args.hpp` is the complete value object
-for one `run`, and `parseRunArguments` in `entry/cli/args.cpp` is responsible for turning nine
-paired value flags into paths, names, budgets, and monotonic-clock durations. After a successful
-parse there are no "unset" optional fields: the three required items must be non-empty, and the
-remaining fields already carry safe defaults. There is exactly one run mode -- a project-owned task
-addressed as (project, task) -- so there is nothing to choose between and no mutual-exclusion rule
-to enforce.
+The second is the command boundary. `RunArgs` and `DriveArgs` in `entry/cli/args.hpp` are the
+complete value objects for one `run` and one `drive`, parsed by `parseRunArguments` and
+`parseDriveArguments` in `entry/cli/args.cpp`, which turn paired value flags into paths, names,
+budgets, and monotonic-clock durations. After a successful parse there are no "unset" optional
+fields: the required items must be non-empty, and the remaining fields already carry safe defaults.
 
-The third is the composition boundary. The Windows implementation, `runProduct` in
-`entry/cli/run-windows.cpp`, selects a real window and creates the two adapters for capture and
-input, which it hands to `task::TaskHost` inside a `task::TaskRunConfig`. The CLI never names
-`engine::EngineSession`; the host builds and owns it. Non-Windows builds use
-`entry/cli/run-unsupported.cpp`, which keeps the same product binary and testable command layer
-but has `runProduct` explicitly return `UnsupportedCapability`.
+**The two argument shapes state the mutual exclusion before anything else does.** There is no
+`--task` on `DriveArgs` and no `--queue` on `RunArgs`, so a session that has both a task and a
+command queue cannot be spelled. `main.cpp` chooses the mode from one subcommand token and neither
+handler can reach the other. Neither of those is the structural refusal, though — that is
+`TaskHost`'s per-generation front-end claim, which refuses the second front-end however it was
+reached.
+
+The third is the composition boundary. The Windows implementations, `runProduct` in
+`entry/cli/run-windows.cpp` and `driveProduct` in `entry/cli/drive-windows.cpp`, select a real
+window and create the two adapters for capture and input, which they hand to `task::TaskHost`
+inside a `task::TaskRunConfig`. The CLI never names `engine::EngineSession`; the host builds and
+owns it. The desktop binding both commands need -- DPI awareness, window enumeration, candidate
+selection, capture and controller setup -- lives once in `entry/cli/platform/target-binding.{hpp,cpp}`
+and returns a `BoundTarget`, so the two commands cannot end up with separate answers to "which
+window did you mean". Non-Windows builds use `entry/cli/run-unsupported.cpp` and
+`entry/cli/drive-unsupported.cpp`, which keep the same product binary and testable command layer
+but have both product entry points explicitly return `UnsupportedCapability`.
 
 This directory deliberately does not own the following responsibilities:
 
@@ -59,7 +81,10 @@ This directory deliberately does not own the following responsibilities:
 - It does not provide a foreground or global-input fallback. A background-delivery failure is a
   product failure.
 - It does not take on a daemon, tray, scheduler, or multi-task lifecycle; the current design is
-  one `run` per process.
+  one session per process — one `run` or one `drive`, never both.
+- It does not add capability in `drive`. The operator protocol is a text encoding of the private
+  capability surface plus two loops built out of it; every refusal an operator meets is the refusal
+  a task meets, because both call the same `TaskContext`.
 
 This boundary explains why target discovery stays in the entry layer rather than moving into
 `engine`: `engine::IFrameSource` receives "one already-bound target" and thereby stays
@@ -70,27 +95,51 @@ product's policy for how it obtains that port on Windows.
 
 ### Command-Line Entry Point
 
-The `dispatch` in `entry/cli/main.cpp` has only two public product paths:
+The `dispatch` in `entry/cli/main.cpp` has three public product paths:
 
-- Empty arguments: print generated `application::k_name` and `runUsageText()`, and
-  return `0`.
+- Empty arguments: print generated `application::k_name` and `usageText()` — both subcommands'
+  usage — and return `0`.
 - First argument is `run`: hand the remaining arguments to `dispatchRun`.
+- First argument is `drive`: hand the remaining arguments to `dispatchDrive`.
 
-Any other first argument is treated as an unknown subcommand, prints an error and usage, and
+Any other first argument is treated as an unknown subcommand, prints an error and both usages, and
 returns `1`. `main` also checks that `argumentCount` can be safely converted and is non-zero, and
 it catches `std::exception` and unknown exceptions at the outermost level; exceptions never cross
 the process boundary.
 
 The `RunArgs` in `entry/cli/args.hpp` corresponds to the following real CLI surface:
 
-- `--project DIR`, `--selector TITLE-SUBSTRING`, and `--task NAME` are required. `--task` names
-  `tasks/NAME.luau` inside the published project.
-- `--budget N` defaults to `1 << 28` and bounds the number of pixel comparisons in a single
-  recognition.
+- `--project DIR`, `--selector TITLE-SUBSTRING`, and `--task NAME` are required **for `run`**.
+  `--task` names `tasks/NAME.luau` inside the published project.
+- `--budget N` defaults to `k_defaultPixelComparisonBudget == 1 << 31` and bounds the number of
+  pixel comparisons in a single recognition. It was `1 << 28` until 2026-07-30 (`2429578`), which
+  could not finish an ordinary page: `evaluateGrayPage` shares one budget across **every anchor of a
+  page**, so the figure to cover is the sum rather than one search. The envelope stated at the
+  constant is a 200x50 template in a 480x90 search region — 11,521 positions at 10,000 pixels — and
+  sixteen such anchors, 1,843,360,000. A whole-frame search for a small template is deliberately
+  still outside the default, at about 1.9x the ceiling, so such a project must author a search
+  region or raise `--budget` on purpose. The same constant is shared with `umbra-authoring`, so one
+  number governs verification and the run.
 - `--recognition-timeout MS` defaults to 2000 ms and is the deadline for each recognition.
 - `--max-frame-age MS` defaults to 750 ms and determines how long an observation lease remains
   usable for an action.
 - `--trace PATH` defaults to `umbra-flow-trace.jsonl`.
+
+`DriveArgs` binds a target and a project exactly as `RunArgs` does, and `--budget`,
+`--recognition-timeout`, `--max-frame-age` and `--trace` are the same fields with the same
+defaults, because the two front-ends must not be able to run under different guarantees. What
+replaces `--task` is the pair of IPC files:
+
+- `--project DIR`, `--selector TITLE-SUBSTRING`, `--queue PATH`, and `--results PATH` are required
+  **for `drive`**.
+- `--idle-timeout S` defaults to 120 s and ends a session whose command queue has gone quiet, so an
+  operator who walks away, or a driving process that died, does not leave a session holding a
+  capture device and a bound target indefinitely. The figure matches the m0-demo input agent's own
+  idle timeout, which is the protocol this one follows.
+
+There are deliberately **no timeout, poll-interval or retry defaults on `DriveArgs`**. Those are
+policy; every convenience command requires them as fields (see below), and a CLI flag for them
+would be a second place task-side policy could live.
 
 Integers are consumed in full by `std::from_chars`, and durations are checked against the target
 representation range before conversion. Flags are read as "flag immediately followed by value"
@@ -107,6 +156,65 @@ re-observe now live in `modules/task/runtime/ctx.luau` as `k_defaultTimeoutMilli
 `k_defaultPollMillis` (500 ms), which a script overrides through `{ timeout_ms, poll_ms }`. The
 surviving `--recognition-timeout` is the deadline for one recognition and has nothing to do with a
 page wait.
+
+### The Operator Protocol (`drive`)
+
+`entry/cli/drive-protocol.{hpp,cpp}` defines the wire protocol and `entry/cli/drive.{hpp,cpp}` runs
+the loop. Commands arrive as **JSON lines appended to `--queue`**, and **one JSON result line per
+command is appended to `--results` and flushed immediately**, so an operator that reads the file
+sees a command's answer before the next command is executed. `k_maxDriveCommandBytes` caps one line
+at 64 KiB, matching the m0-demo input agent's ceiling; a command is a handful of scalars, so
+anything near it is a malformed line rather than a large one.
+
+**Three refusals on the IPC paths, checked by `validateDriveIpcPaths` before the desktop is touched
+at all.** The queue must already exist, because a session that created it would race the operator
+appending to it. The two paths must be distinct, because a session reading its own results would
+re-execute them. And **the results path must not already exist**, so a stale results file from an
+earlier session can never be mistaken for this one's and nothing is silently appended to or
+clobbered. That last guard is the m0-demo input agent's, carried over deliberately — it caught two
+real operator mistakes.
+
+**The queue is read by byte offset.** `QueueReader` keeps the session's own offset into the file, so
+a line is executed exactly once however many times the queue is polled, and **a partial trailing
+line is held back until its terminator arrives** — an operator appending a command in two writes
+never has half of it executed. A queue that shrank was replaced or truncated under the session,
+which makes the offset name a different file's bytes, and is refused as `InvalidResource`.
+
+**Two command layers, one copy of the policy.** Layer one is the private capability surface
+verbatim, one command per primitive with the same name, arguments and failure modes the Luau
+surface has, with the opaque handles replaced by integer ids because an operator has only text:
+`cycle_open`, `cycle_close`, `cycle_page`, `cycle_find`, `cycle_click`, `key`, `settle`, `deadline`,
+`wait`, plus `quit`. Each maps to exactly one `task::OperatorSession` verb, which maps to exactly
+one `TaskContext` call — the same call `ctx.luau` makes. Layer two is convenience: `wait_page` and
+`find_click`, each replacing a hand-written loop.
+
+The constraint that makes layer two safe is that **a convenience command carries no policy defaults
+of its own**. Every timeout and poll interval is a **required** field (`timeout_ms`, `poll_ms`),
+rejected rather than filled in, so `modules/task/runtime/ctx.luau` keeps its defaults and stays the
+only place task-side policy lives; there is no second copy in C++ to drift out of step with it. A
+field a command does not accept is likewise refused rather than ignored. Layer two composes
+layer-one verbs and nothing else: it decides when to stop looping, and the caller decides every
+number that decision uses.
+
+A `DriveResult` has one line shape rather than twelve — `ok` plus the optional values a verb can
+produce — so an operator reads results with one parser. `ok` is the distinction every caller
+depends on, so a refused command never reports it true. A failure line carries the domain's own
+wire spelling of the kind in `errorKind`, the same string the trace line and a task's Tier B error
+carry. A refused command is normally an ordinary outcome — the operator reads the line and tries
+something else — with one exception: a `Cancelled` refusal ends the session, because once the
+generation is spent every later primitive refuses on the terminal latch and continuing would only
+spin the queue until the idle timeout.
+
+`task::OperatorSession` (`modules/task/source/task/operator-session.hpp`) is the consumer on the
+other side, and it is a **sibling** of the trusted Luau framework rather than a route into it. The
+guarantee layer sits below Luau — the cycle ledger, the four-requisite click authorization, the
+fingerprint check and the trace are all C++ behind `TaskContext` — so an operator gets exactly the
+primitives and exactly the refusals a task gets. There is no chunk, no source and no string that
+becomes code, and the sandbox's closed eval routes stay closed. An operator may name only what a
+task may name: the session holds a copy of the same `CapabilitySurface` the `uf.recognizers` and
+`uf.pages` tables are built from. `raise`, `emit` and `random` are deliberately absent — an operator
+has no framework structure of its own to record, and admitting `emit` would put a second author on
+the `framework.*` events the trace stream validator now refuses outright on an operator stream.
 
 ### Project Loading
 
@@ -130,7 +238,13 @@ target first made a bad `--project` report a window error instead of the manifes
 
 ### Windows Composition Sequence
 
-`entry/cli/run-windows.cpp` assembles in strictly the following order:
+`entry/cli/run-windows.cpp` assembles in strictly the following order. Steps 3 through 8 are no
+longer written there: since 2026-07-30 (`ed38124`) they live in `platform::bindTarget` in
+`entry/cli/platform/target-binding.cpp` and are shared verbatim with `drive-windows.cpp`, which
+performs steps 1, 2 and 3-8 in the same order and differs only in calling
+`TaskHost::startOperatorSession` where `run` calls `startTask`. `drive` additionally validates its
+IPC paths before step 1, so a results file that already exists fails before a console handler is
+even installed.
 
 1. `platform::ConsoleCancellation::install` in
    `entry/cli/platform/windows-console-cancellation.hpp` registers the Ctrl-C/Ctrl-Break handler
@@ -191,9 +305,17 @@ to be decided by the implementation in `modules/controller/source/controller/cap
 generation, expiry, coordinate finiteness, client bounds, and the Win32 signed-16-bit encoding
 range at the moment of actual delivery.
 
-If any step in the pointer down/up chain fails, the adapter preserves the original error and calls
-`releaseHeld` to drain any held input that may remain. A failure of the compensating release only
-appends context and never masks the original click failure. Both `AuditLog` and the held state are
+Its second verb, `pressKey(key, actionGeneration)`, forwards to `uf::keyPress` with
+`KeyInput::fromKeyName(key)`, and passes a `TargetGeneration` where `click` passes a lease. That is
+not an oversight: a keystroke names no coordinate, so there is no rect whose position could have
+gone stale and nothing for a frame age to protect; what must still hold is that the keystroke
+reaches the target instance the observation came from, which is exactly what the generation carries.
+See `module-engine.md` for the full contrast between the two authorizations.
+
+If any step in the pointer or key down/up chain fails, the adapter preserves the original error and
+calls `releaseHeld` to drain any held input that may remain — a press that landed while its release
+did not would otherwise strand the key down in the target. A failure of the compensating release
+only appends context and never masks the original failure. Both `AuditLog` and the held state are
 owning members of the adapter and never borrow a temporary on the `runProduct` stack.
 
 The third port is no longer a CLI adapter. `trace::FileTraceSink` lives in
@@ -213,7 +335,7 @@ and `run.cpp` maps structured errors to that enum. Only `main.cpp` converts it t
 
 | Exit Code | Meaning |
 |---:|---|
-| `0` | The help path of the empty command, or a task that ran to completion |
+| `0` | The help path of the empty command, or a task or drive session that ran to completion |
 | `1` | Unknown subcommand, argument/resource error, unsupported host, the vast majority of run failures, or an uncaught exception |
 | `2` | `TargetCompatibilityUnverified` |
 | `4` | `Timeout` |
@@ -232,8 +354,9 @@ operator's cancellation intent is still reported preferentially as `5`. Argument
 handler installation, so a parse error is mapped explicitly with `stopRequested=false`; the
 non-Windows implementation also always reports that no cancellation was received.
 
-A run that started is mapped by `exitCodeForReport(report, stopRequested)`, the single definition of
-that mapping: a report carrying no failure is `Success`, and every other report defers to
+A session that started is mapped by `exitCodeForReport(report, stopRequested)`, the single
+definition of that mapping, used by `run` and `drive` alike because both end in a
+`task::TaskRunReport`: a report carrying no failure is `Success`, and every other report defers to
 `exitCodeForError` over the failure that ended it. A cancelled run therefore reports `5` because its
 failure kind is `Cancelled`, not because this function knows about cancellation separately, and a
 run that never started reports the same kind the same way.
@@ -288,7 +411,9 @@ together restrict reuse.
 **Strict-background.** The CLI never calls focus, activation, or global-input APIs.
 `ControllerActionSink` ultimately enters the `PostMessageW` path in
 `modules/controller/source/controller/platform/windows-input.cpp`, delivering integer mouse
-messages only to the single resolved HWND, and rejects null and `HWND_BROADCAST`. When the target
+messages -- and, since 2026-07-30, key messages -- only to the single resolved HWND, and rejects
+null and `HWND_BROADCAST`. `pressKey` takes the same route with the same audit record and the same
+`HWND_BROADCAST` refusal, and holds nothing between down and up. When the target
 becomes inactive, message delivery fails, or compatibility cannot be confirmed, it fails; there is
 no fallback that switches to foreground input "in order to succeed".
 
@@ -317,12 +442,17 @@ because the two adapters implement engine ports. What crosses the boundary is:
   `task::TaskRunConfig`, together with the pixel budget, the recognition deadline, and the maximum
   frame age;
 - the project path, the task name, and the trace path;
-- `GenerationId`, `task::TaskRunReport`, and structured `Error`.
+- `GenerationId`, `task::TaskRunReport`, and structured `Error`;
+- for `drive`, a `std::unique_ptr<task::OperatorSession>` handed back by `startOperatorSession`,
+  which the CLI drives verb by verb and then closes with `OperatorSession::finish`. `startTask`
+  blocks for the whole run; `startOperatorSession` does not, which is the only lifecycle difference
+  between the two front-ends.
 
-`task` and `engine` never see the HWND, the console handler, file-selection syntax, or the title
-substring. In the reverse direction, the CLI never interprets recognizer evidence, page outcomes, or
-authorization rules, and no longer drives any `EngineSession` verb: it calls `loadProject` and
-`startTask` and reads the report.
+`task` and `engine` never see the HWND, the console handler, file-selection syntax, the title
+substring, or the queue and results files. In the reverse direction, the CLI never interprets
+recognizer evidence, page outcomes, or authorization rules, and no longer drives any `EngineSession`
+verb: it calls `loadProject` and then either `startTask` or `startOperatorSession`, and reads the
+report.
 
 The outbound edge toward `controller` exists only in the Windows build. What crosses the boundary
 is the resolved `WindowHandle`, `ClientSize`, `Dpi`, `TargetGeneration`, `ClientGeometry`,
@@ -360,6 +490,20 @@ neither removed flag. Its cancellation-priority case combines `CaptureStalled`, 
 `IoFailure` with `stopRequested=true` to directly prevent underlying errors from overriding the
 Ctrl-C intent.
 
+`tests/cli/test-drive-protocol.cpp` pins the operator protocol on every host, because it names no
+Win32 type: every layer-one command's parse, the required-field refusals that keep the convenience
+commands free of policy defaults, a field a command does not accept being refused rather than
+ignored, the result-line shape, and the three IPC path refusals.
+
+`tests/task/test-operator-front-end.cpp` pins the session below it by running the same scenario down
+both paths: a click with no same-frame page and a click on an expired frame are refused identically
+on the task and operator paths, an operator names exactly what a task names and nothing else, every
+operator trace line is attributed to the operator front-end, and an operator stream refuses a
+`framework.*` event outright. It also pins that a delivered key consumes its cycle, that the refusal
+the next verb then gets **names no click** — a keystroke spent that cycle (2026-07-30, `2075404`).
+`tests/task/test-task-host.cpp` holds the exclusion itself: a generation drives one front-end,
+whichever arrives first.
+
 `tests/task/test-task-host.cpp` covers the run lifecycle that used to live here. It publishes a real
 annotation project into a temporary directory and drives `TaskHost` end to end against fake ports,
 then reads the trace file back: the acceptance case asserts the whole ordered
@@ -388,12 +532,13 @@ The safety semantics of the CLI adapters are fixed in layers by downstream tests
   `tests/controller/test-dpi.cpp` fix target resolution, generation, Win32 discovery errors, and
   DPI fail-closed classification.
 
-The `test-cli` in `tests/CMakeLists.txt` compiles in `cli/test-args.cpp` on every host, adds
-`cli/test-candidate-selection.cpp` only on Windows where `selectCandidate` is compiled at all, and
-links `${PROJECT_NAME}_cli_support`. There is currently no direct unit test covering
-`main`/`dispatch`, console registration, the client-origin adapter, or the entire real Windows
-composition; these belong to the on-hardware smoke/E2E verification surface and cannot be
-substituted by the green of the existing offline tests. The run lifecycle is no longer on that list:
+The `test-cli` in `tests/CMakeLists.txt` compiles in `cli/test-args.cpp` and
+`cli/test-drive-protocol.cpp` on every host, adds `cli/test-candidate-selection.cpp` only on Windows
+where `selectCandidate` is compiled at all, and links `${PROJECT_NAME}_cli_support`. There is
+currently no direct unit test covering `main`/`dispatch`, console registration, the client-origin
+adapter, `platform::bindTarget`, or the entire real Windows composition; these belong to the
+on-hardware smoke/E2E verification surface and cannot be substituted by the green of the existing
+offline tests. The run lifecycle is no longer on that list:
 it moved into `TaskHost` precisely so that it became reachable from a test.
 
 ## Future Extensions
@@ -421,6 +566,11 @@ composition itself, and lists the following seams:
 - P0-C: if on-hardware UIPI verification requires a separate elevated process, the plan requires
   copying the protocol semantics of the m0-demo input-agent into the runner adapter layer, rather
   than linking the already-frozen m0-demo.
+
+The `drive` front-end does not change that authority; it is a second consumer of the same
+`TaskHost` surface, which is why it needed no new host verb beyond `startOperatorSession`. Anything
+an operator would want that a task cannot do belongs on the capability surface, where both would
+get it, and not in `drive-protocol.cpp`.
 
 `docs/plans/2026-07-21-product-form-and-roadmap.md` defines the current form as "P0 CLI
 single-task, strict-background, reliable cancellation" and defines P2 as a tray-resident App. At

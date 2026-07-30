@@ -74,6 +74,16 @@ The public ports are concentrated in `modules/engine/source/engine/ports.hpp`.
   coordinate and the original lease. The lease pass-through is part of the interface; an adapter
   cannot pass only the coordinate, otherwise the controller layer cannot perform the second layer of
   session/generation/age fencing.
+- `IActionSink::pressKey(KeyName, TargetGeneration) -> Status` delivers one press-and-release. It
+  takes a `TargetGeneration` where `click` takes a lease, and **that difference is the whole
+  authorization difference between the two verbs**. A lease fences a *coordinate*: its `frameId` and
+  age exist because a click point silently means something else once the layout moved. A keystroke
+  names no point, so there is no rect whose position could have gone stale and nothing for a frame
+  age to protect. What must still hold is that the keystroke reaches the target instance the
+  observation came from, which is exactly what the generation carries. The implementation MUST
+  forward that generation so the controller's revalidation still runs at post time, MUST deliver
+  strictly in the background, and MUST never steal focus or activate the target window. Landed
+  2026-07-30 (`ed38124`).
 - `ITraceSink::emit(TraceEvent const&) -> Status` is a synchronous, fallible evidence port. A failure
   is not a best-effort warning but aborts the current engine operation.
 
@@ -150,8 +160,28 @@ The public runtime surface lives in `modules/engine/source/engine/session.hpp`:
 - `EngineSession::act(Observation&&, ResolvedPage const&, ActionFound const&)` consumes the
   observation and on success returns an `ActReceipt` recording the authorized `FrameId` and the
   client-space coordinate.
-**The engine has no loop.** All five verbs above are single-shot: observe one frame, resolve on that
-frame, find on that frame, click once. 2026-07-29 (`8b16f2d`) deleted `EngineSession::waitForPage`,
+- `EngineSession::pressKey(Observation&&, KeyName)` likewise consumes the observation and returns a
+  `KeyReceipt` — `{ frameId, key }`, with no point, because a keystroke has none, which is why it is
+  a separate receipt rather than an `ActReceipt` with an invented coordinate.
+
+  It **shares** with `act`: a requested stop refuses before any sink call; an observation from
+  another session is `InternalInvariant` and an invalidated one `StaleObservation`; the bound target
+  instance is revalidated immediately before the post; and the observation is spent, so one
+  observation delivers at most one input — a keystroke changes the screen exactly as a click does,
+  so a frame that survived it would describe a target that no longer exists.
+
+  It **deliberately does not share** two things, because a keystroke names no screen position. There
+  is no page authorization and no same-frame detection: those answer "is the thing I am about to
+  click still where I saw it, and is it allowed on this page", questions a virtual key does not
+  raise and which could only be honoured here by inventing a detection. And the observation's lease
+  is not enforced: a lease bounds a coordinate's shelf life, and a key's meaning does not decay with
+  layout, so enforcing it would refuse keystrokes for a reason that cannot apply to them and would
+  push an operator to widen `--max-frame-age` for a whole run — weakening every click in it to serve
+  a key.
+
+**The engine has no loop.** All six verbs above are single-shot: observe one frame, resolve on that
+frame, find on that frame, click once or press one key. 2026-07-29 (`8b16f2d`) deleted
+`EngineSession::waitForPage`,
 its paired return type `PageWait`, and the permanently no-op `sweepKnownPopups`; "wait until page X
 appears" is now `ctx:wait_for_page` in the trusted Luau framework
 (`modules/task/runtime/ctx.luau`). The reasoning is in
@@ -206,6 +236,8 @@ engine and task write into the same stream. The events engine emits are:
   far off it was rather than only that it happened.
 - `engine.action_found`, with outcome `Found` / `Absent` / `Stopped` / `Failed`.
 - `engine.action_authorized`, `engine.action_rejected`, `engine.action_delivered`.
+- `engine.key_delivered`, one line per delivered keystroke, naming the frame the observation it
+  spent came from and the key. It has no coordinate for the same reason `KeyReceipt` has none.
 
 `engine-trace/v1`'s `PageResolved` / `PageUnknown` / `PageAmbiguous` and `ActionFound` /
 `ActionAbsent` collapse into the outcome of the two kinds above. The stage-independent
@@ -217,11 +249,28 @@ seed, and run identity. The `entry/cli` smoke path, which wrote no run-level eve
 trace opened on the first `engine.observed`, was deleted on 2026-07-29 together with the move of
 the run lifecycle into `TaskHost`.
 
-`trace::TraceRecorder` stamps `seq`, `runId` and `generationId` onto every event, plus `wallClock`
-inside `meta`. `meta` is the documented non-golden field set, stripped by
+`trace::TraceRecorder` stamps `seq`, `runId`, `generationId` and `frontEnd` onto every event, plus
+`wallClock` inside `meta`. `meta` is the documented non-golden field set, stripped by
 `trace::stripNonGoldenFields` before a golden comparison. Engine does not own a sink: it borrows the
 run's recorder, and opening the file, writing each line and flushing belong to `FileTraceSink` in
 `modules/trace`.
+
+**`frontEnd` is part of the stamp rather than of the event** (2026-07-30, `ed38124`). It is
+`"task"` or `"operator"`, from `trace::FrontEnd`, and it exists because the capability surface now
+has two consumers at the same level — the trusted Luau framework a task runs on, and an operator
+sending commands from outside. Without the attribution, no reader of a trace can answer "did the
+task do this, or did the operator", and that question is asked of every line; so one recorder
+carries one value for the whole run and writes it onto every line, and no emitter can forget it or
+claim the other front-end's work. The same latched value is what `TaskHost` hands the recorder, so a
+stream's attribution and the mutual exclusion that produced it are one fact rather than two that
+have to agree.
+
+It is also a protocol rule, not merely a label: `TraceStreamValidator` **refuses a `framework.*`
+event on an operator stream** as `InternalInvariant`. Those events describe the trusted Luau
+framework's own structure — which step is open, which retry attempt this is, which interrupt matched
+— and on an operator stream that framework does not exist, so such a line could only be a host bug
+attributing task structure to the operator. Refusing it is what keeps the field authoritative
+instead of decorative.
 
 ## Constraints That Must Remain True
 
@@ -419,6 +468,15 @@ The same file pins the JSONL transport of `trace::FileTraceSink`:
   stop token: `DeadlineHonouringFrameSource` actually blocks until that instant, making it the one
   frame source in the suite that does not satisfy its budget vacuously.
 
+`pressKey` has no `EngineSession`-level case of its own. `CountingActionSink` implements the verb
+and records the `TargetGeneration` it was fenced on — that generation *is* the authorization
+difference under test — but the behaviour is pinned one layer up, in
+`tests/task/test-operator-front-end.cpp`: that a key needs no resolved page, which is exactly where
+it differs from a click; that a delivered key consumes its cycle and reaches the sink once; that an
+unresolvable key name is refused before the cycle is spent; and that a task and an operator both
+reach it identically. When changing `pressKey`, read those cases rather than looking for engine
+ones.
+
 These tests deliberately separate the engine's ordering from Windows: the engine fakes pin the lease
 pass-through, the CLI sink tests pin the JSONL durability, and the controller's lease, window
 identity, message encoding, and strict-background constraints are pinned by `tests/controller/`. The
@@ -491,7 +549,16 @@ Trace evolution should add a new schema version and keep `TraceEvent`, the expli
 switch, the serializer golden tests, and all sinks/consumers in sync. It must not sneakily change v1
 via a C++ enum rename; nor introduce unordered iteration of new fields into the stable output.
 
-When adding swipe, key, or richer actions, one should extend an explicit action port/receipt and the
+When adding swipe or richer actions, one should extend an explicit action port/receipt and the
 corresponding lease rules, rather than bypassing `act` to expose controller directly. Regardless of
 the action kind, delivery-edge revalidation, invalidate-before-fallible-post-delivery-work, zero
 focus stealing, and diagnosable trace remain the shapes the seam must preserve.
+
+**The key action is the worked example of that rule** (2026-07-30, `ed38124`): it added
+`IActionSink::pressKey`, `EngineSession::pressKey`, its own `KeyReceipt`, and its own
+`engine.key_delivered` line, rather than reusing `click`'s receipt or its lease. What it shows is
+that the seam's fencing is not one rule to copy but a question to answer per action kind — a click
+fences a coordinate and needs a lease, a keystroke fences an instance and needs a generation — and
+that the right way to differ is a separate parameter type, not a flag on the existing one. A drag,
+whenever it arrives, has a coordinate at each end and a hold in between, so it will have to answer
+the question a third way.
