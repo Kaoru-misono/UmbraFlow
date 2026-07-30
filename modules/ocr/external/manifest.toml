@@ -1,0 +1,96 @@
+# Where the ocr module's third-party payloads came from.
+#
+# The payloads themselves are COMMITTED, beside this file: 47 MB of prebuilt
+# runtime and trained weights. A clone therefore builds and recognises text with
+# no network round trip, and the bytes that decide what the project can read are
+# pinned by the same commit as the code that reads them.
+#
+# So this file is not a download list any more -- it is the provenance and
+# integrity record for bytes a reviewer cannot read a diff of. It answers where
+# each payload came from, under what licence, and why this particular model was
+# chosen; `python scripts/fetch_external.py --check` re-verifies the tree against
+# the digests, and a plain run restores anything deleted.
+#
+# The one thing deliberately NOT committed is debug symbols: the onnxruntime
+# release carries a 408 MB .pdb, 93% of its own payload, useful only to someone
+# debugging onnxruntime itself. `prune` below removes it after extraction, so a
+# fetched tree and the committed tree are the same tree.
+#
+# Cost to keep in mind before bumping a version: git history is append-only, so
+# every future version bump adds its own 47 MB permanently. Bump on a measured
+# reason, not on a release notification.
+
+schema = "umbraflow-external/v1"
+module = "ocr"
+
+# The inference runtime. Windows x64 only for now, which matches every other
+# platform-bound part of this project (capture, input, the workbench shell); a
+# second platform adds a payload here rather than changing anything above it.
+[[payload]]
+name = "onnxruntime"
+version = "1.28.0"
+url = "https://github.com/microsoft/onnxruntime/releases/download/v1.28.0/onnxruntime-win-x64-1.28.0.zip"
+sha256 = "abef733dacbe2f571547a7150b479b5cb9cc0df22f96c24983a42cadb1b4f8bc"
+bytes = 78796801
+archive = "zip"
+# The zip holds one top-level directory of that name; the fetch flattens it.
+destination = "onnxruntime"
+# Dropped after extraction. See the header: these are 93% of the payload and are
+# only useful when debugging onnxruntime itself. Pruning here rather than by hand
+# is what keeps a fetched tree byte-identical to the committed one.
+prune = ["**/*.pdb"]
+platforms = ["windows"]
+license = "MIT"
+
+# Text recognition: an image of one line in, a string out.
+#
+# PP-OCRv6 rather than the v4 generation RapidOCR publishes, for one measured
+# reason: v4's general Chinese dictionary is Simplified-first and does not
+# contain 擇, 戰, 鬥, 認 or 敵. A model whose output layer lacks a character can
+# never emit it, so on a Traditional Chinese target that is a correctness
+# ceiling rather than an accuracy score. v6 carries one 18,708-character
+# dictionary covering both scripts.
+#
+# The `small` size rather than `medium`: on the first real frames both read
+# 6 of 6 regions correctly, and small was ~3x faster and ~3.6x smaller. Revisit
+# only against a case medium actually wins.
+[[payload]]
+name = "ppocr-v6-small-rec"
+version = "PP-OCRv6"
+url = "https://huggingface.co/PaddlePaddle/PP-OCRv6_small_rec_onnx/resolve/main/inference.onnx"
+sha256 = "5435fd747c9e0efe15a96d0b378d5bd157e9492ed8fd80edf08f30d02fa24634"
+bytes = 21160000
+destination = "models/ppocr-v6-small-rec/inference.onnx"
+license = "Apache-2.0"
+
+# The recognizer's character dictionary and preprocessing shape travel with the
+# weights and are useless apart from them, so they are a payload of their own
+# rather than a file to keep in sync by hand.
+[[payload]]
+name = "ppocr-v6-small-rec-config"
+version = "PP-OCRv6"
+url = "https://huggingface.co/PaddlePaddle/PP-OCRv6_small_rec_onnx/resolve/main/inference.yml"
+sha256 = "ab078671bb49f06228eadccd34f1bb501e157f7a047095ffb943ba81512c77d1"
+bytes = 150580
+destination = "models/ppocr-v6-small-rec/inference.yml"
+license = "Apache-2.0"
+
+# Text detection: a region in, the boxes that hold text out. Only the Block
+# layout needs it; a SingleLine read skips this model entirely.
+[[payload]]
+name = "ppocr-v6-small-det"
+version = "PP-OCRv6"
+url = "https://huggingface.co/PaddlePaddle/PP-OCRv6_small_det_onnx/resolve/main/inference.onnx"
+sha256 = "d73e0058b7a8086bbd57f3d10b8bcd4ff95363f67e06e2762b5e814fe9c9410e"
+bytes = 9900000
+destination = "models/ppocr-v6-small-det/inference.onnx"
+license = "Apache-2.0"
+
+[[payload]]
+name = "ppocr-v6-small-det-config"
+version = "PP-OCRv6"
+url = "https://huggingface.co/PaddlePaddle/PP-OCRv6_small_det_onnx/resolve/main/inference.yml"
+sha256 = "193f435274bf9f0b5f71a929bbfbcf148282df7e633b34e7c373e8f44741b516"
+bytes = 900
+destination = "models/ppocr-v6-small-det/inference.yml"
+license = "Apache-2.0"

@@ -37,3 +37,17 @@ __pycache__/
 
 # Local-only regression fixtures: real game screenshots stay local; CI verifies only synthetic fixtures.
 tests/assets/real-regression/
+
+# Third-party payloads under modules/*/external are TRACKED, against the file
+# patterns above: a clone builds without a network round trip, and the bytes the
+# project recognises text with are pinned by the same commit as the code that
+# reads them. Their provenance stays in each module's external/manifest.toml,
+# which scripts/fetch_external.py can re-verify or restore from.
+#
+# Debug symbols are the exception and are never tracked. The onnxruntime release
+# ships a 408 MB .pdb -- 93% of the payload -- that is only useful when debugging
+# onnxruntime itself. The fetch prunes it, so this rule and the manifest's prune
+# list agree by construction.
+!modules/*/external/**/*.dll
+!modules/*/external/**/*.lib
+modules/*/external/**/*.pdb

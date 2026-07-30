@@ -57,3 +57,23 @@
 *.so    binary
 *.dylib binary
 *.a     binary
+
+# --- Fetched third-party payloads ---------------------------------------------------
+# Vendor bytes are kept exactly as the release published them. The repository's
+# LF policy above is a first-party rule, and applying it here would rewrite files
+# this project did not write: a fetched tree would then differ from the committed
+# one, and modules/ocr/external/manifest.toml pins a digest that assumes they are
+# the same bytes.
+#
+# `binary` rather than `-text`, and the difference matters. `-text` alone keeps
+# the bytes but leaves the files in the diff, where every CRLF line reads as
+# trailing whitespace and `git diff --check` reports the whole payload. `binary`
+# says what is actually true -- these are vendored artifacts nobody edits or
+# reviews line by line -- and turns off diff, merge and the whitespace check
+# together.
+modules/*/external/onnxruntime/** binary
+modules/*/external/models/**      binary
+
+# Neural network weights. Auto-detection would probably call these binary anyway;
+# saying so removes the "probably".
+*.onnx  binary
