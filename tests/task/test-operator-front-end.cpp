@@ -434,6 +434,13 @@ namespace uf::task
         REQUIRE_FALSE(again.has_value());
         CHECK(automationErrorKind(again.error()) == AutomationErrorKind::StaleObservation);
         CHECK(side.actions->keys().size() == 1U);
+
+        // The refusal must not name a click. It is the only account the operator
+        // gets of why the cycle is gone, and a keystroke spent this one: the
+        // message used to say "already consumed by a click" on exactly this path,
+        // which sent a reader looking for a click that never happened.
+        CHECK_FALSE(again.error().message().contains("click"));
+        CHECK(again.error().message().contains("delivered input"));
     }
 
     TEST_CASE("a key needs no resolved page, which is where it differs from a click")

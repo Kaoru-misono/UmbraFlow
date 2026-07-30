@@ -79,7 +79,7 @@ namespace uf::task
         return fail(
             AutomationErrorKind::StaleObservation,
             "this observation cycle is no longer open; its frame was released "
-            "or already consumed by a click"
+            "or already consumed by a delivered input"
         );
     }
 
