@@ -276,4 +276,52 @@ if(WIN32 AND TARGET ${PROJECT_NAME}_annotation)
         )
         target_compile_features(${WORKBENCH_EXECUTABLE} PRIVATE cxx_std_23)
     endif()
+
+    # A development tool, not product surface: it lets an agent author a project
+    # from measured numbers instead of dragging rectangles in the GUI. It shares
+    # the workbench's persistence and edit layer rather than reimplementing
+    # either, so every write it makes goes through AuthoringDocument's
+    # validation exactly as the GUI's does. It is a separate binary precisely so
+    # nothing in the product can come to depend on it.
+    set(AUTHORING_LIBRARY ${PROJECT_NAME}_authoring_support)
+    set(AUTHORING_EXECUTABLE ${PROJECT_NAME}_authoring)
+
+    add_library(${AUTHORING_LIBRARY} STATIC
+        authoring/command.cpp
+        authoring/command.hpp
+        authoring/command-runner.cpp
+        authoring/command-runner.hpp
+        authoring/json-writer.cpp
+        authoring/json-writer.hpp
+    )
+    cpp_apply_safety_profile(${AUTHORING_LIBRARY})
+    target_include_directories(${AUTHORING_LIBRARY}
+        PUBLIC
+            ${CMAKE_CURRENT_SOURCE_DIR}/authoring
+    )
+    # workbench_support carries the authoring document, its edit layer, and the
+    # atomic publication of a project. cli_support carries the exit-code
+    # boundary this tool reuses, and the engine's runtime loader behind it is
+    # what `match` runs a recognizer with. The image module decodes the PNG a
+    # match is measured against.
+    target_link_libraries(${AUTHORING_LIBRARY}
+        PUBLIC
+            ${WORKBENCH_LIBRARY}
+            ${CLI_LIBRARY}
+        PRIVATE
+            ${PROJECT_NAME}_image
+    )
+    target_compile_features(${AUTHORING_LIBRARY} PUBLIC cxx_std_23)
+
+    add_executable(${AUTHORING_EXECUTABLE}
+        authoring/main.cpp
+        ${CPP_UTF8_RC}
+    )
+    cpp_apply_safety_profile(${AUTHORING_EXECUTABLE})
+    cpp_apply_utf8_manifest(${AUTHORING_EXECUTABLE})
+    set_target_properties(${AUTHORING_EXECUTABLE} PROPERTIES
+        OUTPUT_NAME "umbra-authoring"
+    )
+    target_link_libraries(${AUTHORING_EXECUTABLE} PRIVATE ${AUTHORING_LIBRARY})
+    target_compile_features(${AUTHORING_EXECUTABLE} PRIVATE cxx_std_23)
 endif()

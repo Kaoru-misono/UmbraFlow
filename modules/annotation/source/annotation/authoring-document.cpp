@@ -10,6 +10,8 @@
 
 #include <domain/error.hpp>
 
+#include <vision/frame-analysis.hpp>
+
 #include <algorithm>
 #include <array>
 #include <cstddef>
@@ -681,37 +683,25 @@ namespace uf::annotation
         };
     }
 
+    // Delegated rather than duplicated. The ramp had two byte-identical copies
+    // for a while -- one here, one behind probeColour, which needs it to answer
+    // how many pixels a key selects. Two copies of one rule is exactly what
+    // drifts, and the drift would be silent: authoring would bake one mask and
+    // the probe would report another. annotation depends on vision, so the call
+    // goes this way and the rule lives once.
     auto ColourKey::alphaFor(
         uint8 red,
         uint8 green,
         uint8 blue
     ) const noexcept -> uint8
     {
-        auto const spread = [](uint8 left, uint8 right) noexcept -> uint32
-        {
-            return left >= right
-                ? static_cast<uint32>(left) - static_cast<uint32>(right)
-                : static_cast<uint32>(right) - static_cast<uint32>(left);
-        };
-        auto const distance = (
-            spread(red, m_red)
-            + spread(green, m_green)
-            + spread(blue, m_blue)
+        return colourKeyAlpha(
+            Bgra8Pixel{.blue = blue, .green = green, .red = red, .alpha = 255},
+            m_red,
+            m_green,
+            m_blue,
+            m_tolerance
         );
-        if (distance <= m_tolerance)
-        {
-            return uint8{255};
-        }
-
-        auto const rampEnd = m_tolerance * 2U;
-        if (m_tolerance == 0U || distance >= rampEnd)
-        {
-            return uint8{0};
-        }
-        // Rounded rather than truncated, so the ramp is symmetric about its
-        // midpoint. The numerator peaks at 255 * 764 and stays inside uint32.
-        auto const weighted = 255U * (rampEnd - distance) + m_tolerance / 2U;
-        return static_cast<uint8>(weighted / m_tolerance);
     }
 
     auto annotationTypeOfKind(ElementKind const& kind) noexcept -> AnnotationType

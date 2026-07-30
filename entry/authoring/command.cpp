@@ -1,0 +1,827 @@
+#include "command.hpp"
+
+#include <core/numeric/checked-cast.hpp>
+#include <core/safety/checked-access.hpp>
+#include <core/types/integer.hpp>
+
+#include <domain/error.hpp>
+
+#include <array>
+#include <charconv>
+#include <cstddef>
+#include <format>
+#include <memory>
+#include <optional>
+#include <string>
+#include <string_view>
+#include <system_error>
+#include <utility>
+#include <vector>
+
+namespace uf::authoring
+{
+    namespace
+    {
+        [[nodiscard]]
+        auto invalid(std::string message) -> std::unexpected<Error>
+        {
+            return fail(AutomationErrorKind::InvalidResource, std::move(message));
+        }
+
+        [[nodiscard]]
+        auto parseUnsigned(
+            std::string_view value,
+            std::string_view flag
+        ) -> Result<uint64>
+        {
+            auto parsed             = uint64{};
+            auto const* const begin = std::to_address(value.begin());
+            auto const* const end   = std::to_address(value.end());
+            auto const result       = std::from_chars(begin, end, parsed);
+            if (result.ec != std::errc{} || result.ptr != end)
+            {
+                return invalid(
+                    std::format("{} expects an integer, got \"{}\"", flag, value)
+                );
+            }
+            return parsed;
+        }
+
+        [[nodiscard]]
+        auto parseUnsigned32(
+            std::string_view value,
+            std::string_view flag
+        ) -> Result<uint32>
+        {
+            UF_TRY_VALUE(parsed, parseUnsigned(value, flag));
+            auto const narrowed = checkedCast<uint32>(parsed);
+            if (!narrowed)
+            {
+                return invalid(
+                    std::format("{} value {} does not fit 32 bits", flag, parsed)
+                );
+            }
+            return *narrowed;
+        }
+
+        // Splits a flag value on a single separator into exactly Count integer
+        // fields. Both shapes this CLI accepts are that: "x,y,w,h" and "r,g,b"
+        // for a rectangle and a colour, "WxH" for a resolution. Reporting the
+        // expected field count is what turns a typo into a message an agent can
+        // act on rather than a silently truncated rectangle.
+        template <std::size_t Count>
+        [[nodiscard]]
+        auto parseFields(
+            std::string_view value,
+            std::string_view flag,
+            char separator,
+            std::string_view shape
+        ) -> Result<std::array<uint32, Count>>
+        {
+            auto fields    = std::array<uint32, Count>{};
+            auto remaining = value;
+            for (auto index = std::size_t{0}; index < Count; ++index)
+            {
+                auto const isLast = (index + 1U == Count);
+                auto const cut    = remaining.find(separator);
+                if (isLast == (cut != std::string_view::npos))
+                {
+                    return invalid(
+                        std::format(
+                            "{} expects {}, got \"{}\"",
+                            flag,
+                            shape,
+                            value
+                        )
+                    );
+                }
+
+                auto const field = isLast ? remaining : remaining.substr(0, cut);
+                UF_TRY_VALUE(parsed, parseUnsigned32(field, flag));
+                checkedAt(fields, index) = parsed;
+                if (!isLast)
+                {
+                    remaining = remaining.substr(cut + 1U);
+                }
+            }
+            return fields;
+        }
+
+        [[nodiscard]]
+        auto parseRect(
+            std::string_view value,
+            std::string_view flag
+        ) -> Result<PixelRect>
+        {
+            UF_TRY_VALUE(
+                fields,
+                parseFields<4>(value, flag, ',', "x,y,w,h")
+            );
+            auto const [x, y, width, height] = fields;
+            return PixelRect::create(x, y, width, height);
+        }
+
+        [[nodiscard]]
+        auto positional(
+            std::span<std::string const> raw,
+            std::size_t index,
+            std::string_view what
+        ) -> Result<std::string>
+        {
+            if (index >= raw.size() || raw[index].empty())
+            {
+                return invalid(std::format("missing required argument <{}>", what));
+            }
+            if (raw[index].starts_with("--"))
+            {
+                return invalid(
+                    std::format(
+                        "expected <{}>, got flag \"{}\"",
+                        what,
+                        raw[index]
+                    )
+                );
+            }
+            return raw[index];
+        }
+
+        [[nodiscard]]
+        auto require(
+            std::optional<std::string> value,
+            std::string_view flag
+        ) -> Result<std::string>
+        {
+            if (!value || value->empty())
+            {
+                return invalid(std::format("missing required argument {}", flag));
+            }
+            return *std::move(value);
+        }
+
+        // Every flag a subcommand that draws a rectangle accepts, collected as
+        // written. --key and --tolerance build one ColourKey between them, so
+        // neither can become a domain value until the whole line has been read.
+        struct DrawOptions final
+        {
+            std::optional<std::string> source{};
+            std::optional<std::string> rect{};
+            std::optional<std::string> searchRoi{};
+            std::optional<std::string> key{};
+
+            uint32 tolerance{k_defaultColourTolerance};
+            uint32 similarityBasisPoints{k_defaultSimilarityBasisPoints};
+        };
+
+        [[nodiscard]]
+        auto parseDrawOptions(
+            std::span<std::string const> raw
+        ) -> Result<DrawOptions>
+        {
+            auto options = DrawOptions{};
+            auto index   = std::size_t{0};
+            while (index < raw.size())
+            {
+                auto const& flag = raw[index];
+                if (index + 1U >= raw.size())
+                {
+                    return invalid(std::format("missing value for {}", flag));
+                }
+                auto const& value = raw[index + 1U];
+
+                if (flag == "--source")
+                {
+                    options.source = value;
+                }
+                else if (flag == "--rect")
+                {
+                    options.rect = value;
+                }
+                else if (flag == "--search-roi")
+                {
+                    options.searchRoi = value;
+                }
+                else if (flag == "--key")
+                {
+                    options.key = value;
+                }
+                else if (flag == "--tolerance")
+                {
+                    UF_TRY_VALUE(parsed, parseUnsigned32(value, flag));
+                    options.tolerance = parsed;
+                }
+                else if (flag == "--min-similarity-bp")
+                {
+                    UF_TRY_VALUE(parsed, parseUnsigned32(value, flag));
+                    options.similarityBasisPoints = parsed;
+                }
+                else
+                {
+                    return invalid(std::format("unknown argument \"{}\"", flag));
+                }
+                index += 2U;
+            }
+            return options;
+        }
+
+        [[nodiscard]]
+        auto buildElementDraw(
+            std::string name,
+            DrawOptions const& options
+        ) -> Result<ElementDraw>
+        {
+            UF_TRY_VALUE(source, require(options.source, "--source"));
+            UF_TRY_VALUE(rectText, require(options.rect, "--rect"));
+            UF_TRY_VALUE(templateRect, parseRect(rectText, "--rect"));
+
+            auto searchRoi = std::optional<PixelRect>{};
+            if (options.searchRoi)
+            {
+                UF_TRY_VALUE(parsed, parseRect(*options.searchRoi, "--search-roi"));
+                searchRoi = parsed;
+            }
+
+            auto colourKey = std::optional<annotation::ColourKey>{};
+            if (options.key)
+            {
+                UF_TRY_VALUE(
+                    channels,
+                    parseFields<3>(*options.key, "--key", ',', "r,g,b")
+                );
+                auto const [red, green, blue] = channels;
+                UF_TRY_VALUE(
+                    created,
+                    annotation::ColourKey::create(
+                        red,
+                        green,
+                        blue,
+                        options.tolerance
+                    )
+                );
+                colourKey = created;
+            }
+
+            UF_TRY_VALUE(
+                threshold,
+                annotation::SimilarityThreshold::create(
+                    options.similarityBasisPoints
+                )
+            );
+
+            return ElementDraw{
+                .name         = std::move(name),
+                .source       = std::move(source),
+                .templateRect = templateRect,
+                .searchRoi    = searchRoi,
+                .colourKey    = colourKey,
+                .threshold    = threshold,
+            };
+        }
+
+        [[nodiscard]]
+        auto parseInitProject(
+            std::span<std::string const> raw
+        ) -> Result<AuthoringCommand>
+        {
+            UF_TRY_VALUE(root, positional(raw, 0, "root"));
+
+            auto projectId  = std::optional<std::string>{};
+            auto resolution = std::optional<std::string>{};
+            auto density    = std::optional<std::string>{};
+
+            auto index = std::size_t{1};
+            while (index < raw.size())
+            {
+                auto const& flag = raw[index];
+                if (index + 1U >= raw.size())
+                {
+                    return invalid(std::format("missing value for {}", flag));
+                }
+                auto const& value = raw[index + 1U];
+
+                if (flag == "--project-id")
+                {
+                    projectId = value;
+                }
+                else if (flag == "--resolution")
+                {
+                    resolution = value;
+                }
+                else if (flag == "--dpi")
+                {
+                    density = value;
+                }
+                else
+                {
+                    return invalid(std::format("unknown argument \"{}\"", flag));
+                }
+                index += 2U;
+            }
+
+            UF_TRY_VALUE(requiredId, require(std::move(projectId), "--project-id"));
+            UF_TRY_VALUE(
+                requiredResolution,
+                require(std::move(resolution), "--resolution")
+            );
+            UF_TRY_VALUE(
+                extent,
+                parseFields<2>(requiredResolution, "--resolution", 'x', "WxH")
+            );
+            auto const [width, height] = extent;
+            auto dpi = k_defaultSourceDpi;
+            if (density.has_value())
+            {
+                UF_TRY_VALUE(parsed, parseFields<1>(*density, "--dpi", 'x', "N"));
+                dpi = parsed.front();
+            }
+            UF_TRY_VALUE(
+                fingerprint,
+                annotation::ProjectFingerprint::create(width, height, dpi, dpi)
+            );
+
+            return InitProject{
+                .root        = std::filesystem::path{root},
+                .projectId   = std::move(requiredId),
+                .fingerprint = fingerprint,
+            };
+        }
+
+        [[nodiscard]]
+        auto parseRootOnly(
+            std::span<std::string const> raw,
+            std::string_view verb
+        ) -> Result<std::filesystem::path>
+        {
+            UF_TRY_VALUE(root, positional(raw, 0, "root"));
+            if (raw.size() > 1U)
+            {
+                return invalid(
+                    std::format(
+                        "project {} takes only <root>, got \"{}\"",
+                        verb,
+                        raw[1]
+                    )
+                );
+            }
+            return std::filesystem::path{root};
+        }
+
+        [[nodiscard]]
+        auto parseProjectCommand(
+            std::span<std::string const> raw
+        ) -> Result<AuthoringCommand>
+        {
+            UF_TRY_VALUE(verb, positional(raw, 0, "init|show|save"));
+            auto const rest = raw.subspan(1U);
+
+            if (verb == "init")
+            {
+                return parseInitProject(rest);
+            }
+            if (verb == "show")
+            {
+                UF_TRY_VALUE(root, parseRootOnly(rest, "show"));
+                return ShowProject{.root = std::move(root)};
+            }
+            if (verb == "save")
+            {
+                UF_TRY_VALUE(root, parseRootOnly(rest, "save"));
+                return SaveProject{.root = std::move(root)};
+            }
+            return invalid(std::format("unknown project verb \"{}\"", verb));
+        }
+
+        [[nodiscard]]
+        auto parsePageCommand(
+            std::span<std::string const> raw
+        ) -> Result<AuthoringCommand>
+        {
+            UF_TRY_VALUE(verb, positional(raw, 0, "create|add-anchor|add-target"));
+            UF_TRY_VALUE(root, positional(raw, 1, "root"));
+            UF_TRY_VALUE(page, positional(raw, 2, "page"));
+
+            auto const isCreate = (verb == "create");
+            auto const isAnchor = (verb == "add-anchor");
+            if (!isCreate && !isAnchor && verb != "add-target")
+            {
+                return invalid(std::format("unknown page verb \"{}\"", verb));
+            }
+
+            UF_TRY_VALUE(
+                name,
+                positional(raw, 3, isCreate ? "anchor" : "name")
+            );
+            UF_TRY_VALUE(options, parseDrawOptions(raw.subspan(4U)));
+            UF_TRY_VALUE(draw, buildElementDraw(std::move(name), options));
+
+            if (isCreate)
+            {
+                return CreatePage{
+                    .root   = std::filesystem::path{root},
+                    .page   = std::move(page),
+                    .anchor = std::move(draw),
+                };
+            }
+            return AddElement{
+                .root = std::filesystem::path{root},
+                .page = std::move(page),
+                .role = isAnchor ? ElementRole::Anchor : ElementRole::Target,
+                .draw = std::move(draw),
+            };
+        }
+
+        [[nodiscard]]
+        auto parseMatchCommand(
+            std::span<std::string const> raw
+        ) -> Result<AuthoringCommand>
+        {
+            UF_TRY_VALUE(root, positional(raw, 0, "root"));
+            UF_TRY_VALUE(recognizer, positional(raw, 1, "recognizer"));
+
+            auto frame  = std::optional<std::string>{};
+            auto budget = cli::k_defaultPixelComparisonBudget;
+
+            auto index = std::size_t{2};
+            while (index < raw.size())
+            {
+                auto const& flag = raw[index];
+                if (index + 1U >= raw.size())
+                {
+                    return invalid(std::format("missing value for {}", flag));
+                }
+                auto const& value = raw[index + 1U];
+
+                if (flag == "--frame")
+                {
+                    frame = value;
+                }
+                else if (flag == "--budget")
+                {
+                    UF_TRY_VALUE(parsed, parseUnsigned(value, flag));
+                    budget = parsed;
+                }
+                else
+                {
+                    return invalid(std::format("unknown argument \"{}\"", flag));
+                }
+                index += 2U;
+            }
+
+            UF_TRY_VALUE(requiredFrame, require(std::move(frame), "--frame"));
+            return MatchRecognizer{
+                .root       = std::filesystem::path{root},
+                .recognizer = std::move(recognizer),
+                .frame      = std::filesystem::path{requiredFrame},
+                .budget     = budget,
+            };
+        }
+
+        // The PNG paths a frames subcommand opens with. They are positional and
+        // variable in number, so they end at the first flag rather than at a
+        // fixed index. How many are needed is each subcommand's own question --
+        // a stability or probe scan compares frames and needs two, a census
+        // counts the colours of one -- so this reports what it found and leaves
+        // that judgment to the caller.
+        struct FrameArguments final
+        {
+            std::vector<std::filesystem::path> frames{};
+
+            // How many arguments the paths consumed, so the flags after them
+            // are read by the same loop every other subcommand uses.
+            std::size_t consumed{};
+        };
+
+        [[nodiscard]]
+        auto parseFrameArguments(
+            std::span<std::string const> raw
+        ) -> Result<FrameArguments>
+        {
+            auto arguments = FrameArguments{};
+            while (arguments.consumed < raw.size())
+            {
+                if (raw[arguments.consumed].starts_with("--"))
+                {
+                    break;
+                }
+                UF_TRY_VALUE(path, positional(raw, arguments.consumed, "png"));
+                arguments.frames.emplace_back(std::move(path));
+                ++arguments.consumed;
+            }
+            if (arguments.frames.empty())
+            {
+                return invalid("missing required argument <png>");
+            }
+            return arguments;
+        }
+
+        // A scan compares frames, and one frame is stable everywhere and agrees
+        // with itself about every colour. Refusing that here rather than letting
+        // the vision module refuse it keeps the answer an argument error the
+        // caller can fix, instead of an internal invariant.
+        [[nodiscard]]
+        auto requireComparableFrames(
+            FrameArguments const& arguments,
+            std::string_view verb
+        ) -> Status
+        {
+            if (arguments.frames.size() < 2U)
+            {
+                return fail(
+                    AutomationErrorKind::InvalidResource,
+                    std::format(
+                        "frames {} compares frames and needs at least two <png>, got {}",
+                        verb,
+                        arguments.frames.size()
+                    )
+                );
+            }
+            return ok();
+        }
+
+        [[nodiscard]]
+        auto parseStabilityCommand(
+            std::span<std::string const> raw
+        ) -> Result<AuthoringCommand>
+        {
+            UF_TRY_VALUE(arguments, parseFrameArguments(raw));
+            UF_TRY(requireComparableFrames(arguments, "stability"));
+
+            auto rect          = std::optional<std::string>{};
+            auto grayTolerance = uint32{0};
+            auto minimumGap    = uint32{0};
+
+            auto index = arguments.consumed;
+            while (index < raw.size())
+            {
+                auto const& flag = raw[index];
+                if (index + 1U >= raw.size())
+                {
+                    return invalid(std::format("missing value for {}", flag));
+                }
+                auto const& value = raw[index + 1U];
+
+                if (flag == "--rect")
+                {
+                    rect = value;
+                }
+                else if (flag == "--gray-tolerance")
+                {
+                    UF_TRY_VALUE(parsed, parseUnsigned32(value, flag));
+                    grayTolerance = parsed;
+                }
+                else if (flag == "--gap")
+                {
+                    UF_TRY_VALUE(parsed, parseUnsigned32(value, flag));
+                    minimumGap = parsed;
+                }
+                else
+                {
+                    return invalid(std::format("unknown argument \"{}\"", flag));
+                }
+                index += 2U;
+            }
+
+            auto analysed = std::optional<PixelRect>{};
+            if (rect)
+            {
+                UF_TRY_VALUE(parsed, parseRect(*rect, "--rect"));
+                analysed = parsed;
+            }
+
+            return AnalyseFrameStability{
+                .frames        = std::move(arguments.frames),
+                .rect          = analysed,
+                .grayTolerance = grayTolerance,
+                .minimumGap    = minimumGap,
+            };
+        }
+
+        [[nodiscard]]
+        auto parseProbeCommand(
+            std::span<std::string const> raw
+        ) -> Result<AuthoringCommand>
+        {
+            UF_TRY_VALUE(arguments, parseFrameArguments(raw));
+            UF_TRY(requireComparableFrames(arguments, "probe"));
+
+            auto rect      = std::optional<std::string>{};
+            auto key       = std::optional<std::string>{};
+            auto tolerance = k_defaultColourTolerance;
+
+            auto index = arguments.consumed;
+            while (index < raw.size())
+            {
+                auto const& flag = raw[index];
+                if (index + 1U >= raw.size())
+                {
+                    return invalid(std::format("missing value for {}", flag));
+                }
+                auto const& value = raw[index + 1U];
+
+                if (flag == "--rect")
+                {
+                    rect = value;
+                }
+                else if (flag == "--key")
+                {
+                    key = value;
+                }
+                else if (flag == "--tolerance")
+                {
+                    UF_TRY_VALUE(parsed, parseUnsigned32(value, flag));
+                    tolerance = parsed;
+                }
+                else
+                {
+                    return invalid(std::format("unknown argument \"{}\"", flag));
+                }
+                index += 2U;
+            }
+
+            UF_TRY_VALUE(rectText, require(std::move(rect), "--rect"));
+            UF_TRY_VALUE(analysed, parseRect(rectText, "--rect"));
+            UF_TRY_VALUE(keyText, require(std::move(key), "--key"));
+            UF_TRY_VALUE(
+                channels,
+                parseFields<3>(keyText, "--key", ',', "r,g,b")
+            );
+            auto const [red, green, blue] = channels;
+            UF_TRY_VALUE(
+                colourKey,
+                annotation::ColourKey::create(red, green, blue, tolerance)
+            );
+
+            return ProbeFrameColour{
+                .frames = std::move(arguments.frames),
+                .rect   = analysed,
+                .key    = colourKey,
+            };
+        }
+
+        [[nodiscard]]
+        auto parseCensusCommand(
+            std::span<std::string const> raw
+        ) -> Result<AuthoringCommand>
+        {
+            UF_TRY_VALUE(arguments, parseFrameArguments(raw));
+            if (arguments.frames.size() != 1U)
+            {
+                return invalid(
+                    std::format(
+                        "frames census counts one frame's colours and takes one "
+                        "<png>, got {}",
+                        arguments.frames.size()
+                    )
+                );
+            }
+
+            auto rect    = std::optional<std::string>{};
+            auto entries = k_defaultCensusEntries;
+
+            auto index = arguments.consumed;
+            while (index < raw.size())
+            {
+                auto const& flag = raw[index];
+                if (index + 1U >= raw.size())
+                {
+                    return invalid(std::format("missing value for {}", flag));
+                }
+                auto const& value = raw[index + 1U];
+
+                if (flag == "--rect")
+                {
+                    rect = value;
+                }
+                else if (flag == "--top")
+                {
+                    UF_TRY_VALUE(parsed, parseUnsigned32(value, flag));
+                    entries = parsed;
+                }
+                else
+                {
+                    return invalid(std::format("unknown argument \"{}\"", flag));
+                }
+                index += 2U;
+            }
+
+            UF_TRY_VALUE(rectText, require(std::move(rect), "--rect"));
+            UF_TRY_VALUE(analysed, parseRect(rectText, "--rect"));
+
+            return CensusFrameColours{
+                .frame          = std::move(arguments.frames.front()),
+                .rect           = analysed,
+                .maximumEntries = entries,
+            };
+        }
+
+        [[nodiscard]]
+        auto parseFramesCommand(
+            std::span<std::string const> raw
+        ) -> Result<AuthoringCommand>
+        {
+            UF_TRY_VALUE(verb, positional(raw, 0, "stability|probe|census"));
+            auto const rest = raw.subspan(1U);
+
+            if (verb == "stability")
+            {
+                return parseStabilityCommand(rest);
+            }
+            if (verb == "probe")
+            {
+                return parseProbeCommand(rest);
+            }
+            if (verb == "census")
+            {
+                return parseCensusCommand(rest);
+            }
+            return invalid(std::format("unknown frames verb \"{}\"", verb));
+        }
+    }
+
+    auto parseAuthoringCommand(
+        std::span<std::string const> raw
+    ) -> Result<AuthoringCommand>
+    {
+        UF_TRY_VALUE(group, positional(raw, 0, "project|page|match|frames"));
+        auto const rest = raw.subspan(1U);
+
+        if (group == "project")
+        {
+            return parseProjectCommand(rest);
+        }
+        if (group == "page")
+        {
+            return parsePageCommand(rest);
+        }
+        if (group == "match")
+        {
+            return parseMatchCommand(rest);
+        }
+        if (group == "frames")
+        {
+            return parseFramesCommand(rest);
+        }
+        return invalid(std::format("unknown subcommand \"{}\"", group));
+    }
+
+    auto authoringUsageText() noexcept -> std::string_view
+    {
+        return
+            "Usage:\n"
+            "  umbra-authoring project init  ROOT --project-id ID "
+            "--resolution WxH\n"
+            "  umbra-authoring project show  ROOT\n"
+            "  umbra-authoring project save  ROOT\n"
+            "  umbra-authoring page create     ROOT PAGE ANCHOR <draw>\n"
+            "  umbra-authoring page add-anchor ROOT PAGE NAME   <draw>\n"
+            "  umbra-authoring page add-target ROOT PAGE NAME   <draw>\n"
+            "  umbra-authoring match ROOT RECOGNIZER --frame PNG [--budget N]\n"
+            "  umbra-authoring frames stability PNG PNG... [--rect x,y,w,h]\n"
+            "                                   [--gray-tolerance N] [--gap N]\n"
+            "  umbra-authoring frames probe     PNG PNG... --rect x,y,w,h\n"
+            "                                   --key r,g,b [--tolerance N]\n"
+            "  umbra-authoring frames census    PNG --rect x,y,w,h [--top N]\n"
+            "\n"
+            "<draw> options:\n"
+            "  --source HASH-OR-PATH   Screen the rectangle was measured on:\n"
+            "                          a 64-hex source content hash the project\n"
+            "                          already holds, or a PNG path to ingest\n"
+            "  --rect x,y,w,h          Template rectangle, in source pixels\n"
+            "  --search-roi x,y,w,h    Where to look for it; default: whole screen\n"
+            "  --key r,g,b             Colour key selecting the template pixels\n"
+            "                          that count; default: every pixel counts\n"
+            "  --tolerance N           Colour distance still fully counted, 0..765;\n"
+            "                          default: 12\n"
+            "  --min-similarity-bp N   Similarity threshold in basis points, "
+            "0..10000;\n"
+            "                          default: 9000\n"
+            "\n"
+            "<frames> options:\n"
+            "  --rect x,y,w,h          The rectangle analysed inside every "
+            "frame;\n"
+            "                          stability defaults to the whole first "
+            "frame\n"
+            "  --gray-tolerance N      Grey spread across frames a pixel may "
+            "still\n"
+            "                          be called stable at; default: 0, exact\n"
+            "  --gap N                 Consecutive unstable rows or columns "
+            "that\n"
+            "                          split one region in two; default: 0, "
+            "which\n"
+            "                          reports one box over every stable pixel\n"
+            "  --key r,g,b             The colour a probe measures the "
+            "selection of\n"
+            "  --tolerance N           Colour distance still fully selected, "
+            "0..765;\n"
+            "                          default: 12\n"
+            "  --top N                 Dominant colours a census reports; "
+            "default: 8\n"
+            "\n"
+            "--dpi N                 Display density of the window the screenshots\\n                          came from; default 96. Must match the target.\\n"
+            "stamps on an imported PNG. A page is created with the first anchor\n"
+            "that identifies it, because a page with an empty signature is not a\n"
+            "thing the annotation model can represent.\n"
+            "\n"
+            "One JSON document is written to stdout per invocation, success or\n"
+            "failure; a failure adds one rendered line to stderr.\n";
+    }
+}

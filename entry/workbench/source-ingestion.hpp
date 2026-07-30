@@ -29,14 +29,26 @@ namespace uf::workbench
         annotation::AuthoringSourceAsset asset;
     };
 
+    // The density a PNG adopts when its caller states none. A file carries no
+    // display density, and 96 is the conventional answer.
+    inline constexpr auto k_defaultSourceDpi = uint32{96};
+
     // Decodes an external PNG and re-encodes it into the project's canonical PNG
     // form, so byte-identical images ingested through different encoders share a
     // content hash. Provenance is recorded as imported. Rejects any input the
     // image module cannot decode as a PNG.
+    //
+    // `dpi` must be the density of the window the screenshot came from, not the
+    // density of the file, which does not have one. AuthoringDocument requires
+    // every source's fingerprint to equal the project's, so importing at the
+    // wrong density does not degrade the result -- it refuses the document. A
+    // project authored from a 144-dpi window cannot ingest a file left at the 96
+    // default at all, which is why this is a parameter rather than a constant.
     [[nodiscard]]
     auto importSourcePng(
         annotation::SourceId id,
-        std::filesystem::path const& path
+        std::filesystem::path const& path,
+        uint32 dpi = k_defaultSourceDpi
     ) -> Result<IngestedSource>;
 
     // Encodes an already-captured BGRA frame into a canonical source asset and

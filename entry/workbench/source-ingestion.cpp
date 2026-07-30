@@ -22,12 +22,6 @@ namespace uf::workbench
 {
     namespace
     {
-        // A bare PNG import carries no display density, so it adopts the
-        // conventional 96 DPI. A WGC capture supplies the real target density
-        // instead (see ingestSourceFromFrame) so a project authored from a
-        // high-DPI window matches that window's runtime fingerprint.
-        constexpr auto k_defaultSourceDpi = uint32{96};
-
         constexpr auto k_sourceResourceName = std::string_view{
             "workbench-source.png"
         };
@@ -78,7 +72,8 @@ namespace uf::workbench
 
     auto importSourcePng(
         annotation::SourceId id,
-        std::filesystem::path const& path
+        std::filesystem::path const& path,
+        uint32 dpi
     ) -> Result<IngestedSource>
     {
         UF_TRY_VALUE(decoded, image::loadPng(path));
@@ -86,7 +81,7 @@ namespace uf::workbench
             id,
             decoded.width,
             decoded.height,
-            k_defaultSourceDpi,
+            dpi,
             decoded.pixels,
             annotation::ImportedSourceProvenance{}
         );

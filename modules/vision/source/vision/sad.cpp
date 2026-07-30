@@ -1,5 +1,7 @@
 #include "sad.hpp"
 
+#include "bgra-image.hpp"
+
 #include <core/error/contracts.hpp>
 #include <core/numeric/checked-arithmetic.hpp>
 #include <core/numeric/checked-cast.hpp>
@@ -21,16 +23,6 @@ namespace uf
     {
         // The largest weighted absolute difference one pixel can contribute.
         constexpr auto k_maximumPixelContribution = uint64{255} * 255U;
-
-        constexpr auto k_bgraBytesPerPixel = std::size_t{4};
-
-        struct Bgra8Plane final
-        {
-            std::size_t width{};
-            std::size_t height{};
-            std::size_t rowBytes{};
-            std::size_t planeLength{};
-        };
 
         [[nodiscard]]
         auto checkedSubspan(
@@ -69,75 +61,6 @@ namespace uf
             return *scaled / totalWeight;
         }
 
-        [[nodiscard]]
-        auto validateBgra8Plane(
-            std::span<std::byte const> bgra,
-            uint32 width,
-            uint32 height,
-            std::size_t stride
-        ) -> Result<Bgra8Plane>
-        {
-            auto const widthSize = checkedCast<std::size_t>(width);
-            auto const heightSize = checkedCast<std::size_t>(height);
-            if (!widthSize || !heightSize)
-            {
-                return fail(
-                    AutomationErrorKind::InternalInvariant,
-                    std::format("bgra image dimensions {}x{} do not fit buffer geometry", width, height)
-                );
-            }
-
-            auto const minimumRow = checkedMultiply(*widthSize, k_bgraBytesPerPixel);
-            if (!minimumRow)
-            {
-                return fail(
-                    AutomationErrorKind::InternalInvariant,
-                    std::format("bgra row size overflow: width {} * 4", width)
-                );
-            }
-
-            UF_TRY(
-                validateBufferGeometry(
-                    width,
-                    height,
-                    stride,
-                    *minimumRow,
-                    bgra.size()
-                )
-            );
-
-            auto const planeLength = checkedMultiply(*widthSize, *heightSize);
-            if (!planeLength)
-            {
-                return fail(
-                    AutomationErrorKind::InternalInvariant,
-                    std::format("gray image size overflow: width {} * height {}", width, height)
-                );
-            }
-
-            return Bgra8Plane{
-                .width       = *widthSize,
-                .height      = *heightSize,
-                .rowBytes    = *minimumRow,
-                .planeLength = *planeLength,
-            };
-        }
-
-        [[nodiscard]]
-        auto bgraRow(
-            std::span<std::byte const> bgra UF_LIFETIME_BOUND,
-            std::size_t y,
-            std::size_t stride,
-            std::size_t rowBytes
-        ) noexcept -> std::span<std::byte const>
-        {
-            auto const rowStart = checkedMultiply(y, stride);
-            UF_CHECK(rowStart.has_value());
-
-            auto const row = checkedSubspan(bgra, *rowStart, rowBytes);
-            UF_CHECK(row.has_value());
-            return *row;
-        }
     }
 
     auto GrayImage::create(
@@ -585,41 +508,16 @@ namespace uf
     {
         UF_TRY_VALUE(
             plane,
-            validateBgra8Plane(bgra, width, height, stride)
+            BgraImage::create(bgra, width, height, stride)
         );
 
         auto output = std::vector<std::byte>{};
-        output.reserve(plane.planeLength);
-        for (auto y = std::size_t{0}; y < plane.height; ++y)
+        output.reserve(plane.pixelCount());
+        for (auto y = uint32{0}; y < height; ++y)
         {
-            auto const row = bgraRow(bgra, y, stride, plane.rowBytes);
-
-            for (auto x = std::size_t{0}; x < plane.width; ++x)
+            for (auto x = uint32{0}; x < width; ++x)
             {
-                auto const pixelOffset = checkedMultiply(x, k_bgraBytesPerPixel);
-                UF_CHECK(pixelOffset.has_value());
-                auto const greenOffset = checkedAdd(*pixelOffset, std::size_t{1});
-                auto const redOffset = checkedAdd(*pixelOffset, std::size_t{2});
-                UF_CHECK(greenOffset.has_value());
-                UF_CHECK(redOffset.has_value());
-                auto const blue = std::to_integer<uint32>(
-                    checkedAt(row, *pixelOffset)
-                );
-                auto const green = std::to_integer<uint32>(
-                    checkedAt(row, *greenOffset)
-                );
-                auto const red = std::to_integer<uint32>(
-                    checkedAt(row, *redOffset)
-                );
-                auto const weightedGray = (
-                    uint32{77} * red
-                    + uint32{150} * green
-                    + uint32{29} * blue
-                );
-                auto const gray = weightedGray >> 8;
-                auto const grayByte = checkedCast<uint8>(gray);
-                UF_CHECK(grayByte.has_value());
-                output.emplace_back(std::byte{*grayByte});
+                output.emplace_back(std::byte{plane.grayAt(x, y)});
             }
         }
 
@@ -635,22 +533,16 @@ namespace uf
     {
         UF_TRY_VALUE(
             plane,
-            validateBgra8Plane(bgra, width, height, stride)
+            BgraImage::create(bgra, width, height, stride)
         );
 
         auto output = std::vector<std::byte>{};
-        output.reserve(plane.planeLength);
-        for (auto y = std::size_t{0}; y < plane.height; ++y)
+        output.reserve(plane.pixelCount());
+        for (auto y = uint32{0}; y < height; ++y)
         {
-            auto const row = bgraRow(bgra, y, stride, plane.rowBytes);
-
-            for (auto x = std::size_t{0}; x < plane.width; ++x)
+            for (auto x = uint32{0}; x < width; ++x)
             {
-                auto const pixelOffset = checkedMultiply(x, k_bgraBytesPerPixel);
-                UF_CHECK(pixelOffset.has_value());
-                auto const alphaOffset = checkedAdd(*pixelOffset, std::size_t{3});
-                UF_CHECK(alphaOffset.has_value());
-                output.emplace_back(checkedAt(row, *alphaOffset));
+                output.emplace_back(std::byte{plane.pixelAt(x, y).alpha});
             }
         }
 

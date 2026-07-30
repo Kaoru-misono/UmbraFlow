@@ -256,6 +256,19 @@ if(TARGET ${PROJECT_NAME}_workbench_support)
         )
     endif()
 
+    # The authoring CLI drives the same persistence and edit layer, so its test
+    # is registered beside the workbench's and reaches across to the colour-key
+    # crops that live there.
+    if(TARGET ${PROJECT_NAME}_authoring_support)
+        cpp_add_test(
+            NAME test-authoring
+            SOURCES
+                authoring/test-authoring-cli.cpp
+            LIBS
+                ${PROJECT_NAME}_authoring_support
+        )
+    endif()
+
     # Local-only real-screenshot regression. The fixture directory holds real
     # game screenshots that are never committed, so the target is registered
     # only when a developer has created it. Rerun cmake configure after adding
