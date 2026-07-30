@@ -1,5 +1,6 @@
 #include "command.hpp"
 
+#include <annotation/capabilities.hpp>
 #include <annotation/resource.hpp>
 
 #include <core/numeric/checked-cast.hpp>
@@ -8,6 +9,7 @@
 
 #include <domain/error.hpp>
 
+#include <algorithm>
 #include <array>
 #include <charconv>
 #include <cstddef>
@@ -160,6 +162,173 @@ namespace uf::authoring
             return *std::move(value);
         }
 
+        // The capability vocabulary, spelled the way the authoring document
+        // spells it, so an author reads one set of names on the command line and
+        // in the file rather than learning a CLI dialect.
+        enum class CapabilityName : uint8
+        {
+            Identify,
+            Interact,
+            Read,
+        };
+
+        [[nodiscard]]
+        auto capabilityNamed(
+            std::string_view text
+        ) noexcept -> std::optional<CapabilityName>
+        {
+            constexpr auto k_names = std::array{
+                std::pair{std::string_view{"identify"}, CapabilityName::Identify},
+                std::pair{std::string_view{"interact"}, CapabilityName::Interact},
+                std::pair{std::string_view{"read"}, CapabilityName::Read},
+            };
+            auto const found = std::ranges::find(
+                k_names,
+                text,
+                &std::pair<std::string_view, CapabilityName>::first
+            );
+            if (found == k_names.end())
+            {
+                return std::nullopt;
+            }
+            return found->second;
+        }
+
+        [[nodiscard]]
+        auto signatureRoleNamed(
+            std::string_view text
+        ) noexcept -> std::optional<annotation::SignatureRole>
+        {
+            using Role = annotation::SignatureRole;
+
+            constexpr auto k_roles = std::array{
+                std::pair{std::string_view{"required"}, Role::Required},
+                std::pair{std::string_view{"forbidden"}, Role::Forbidden},
+            };
+            auto const found = std::ranges::find(
+                k_roles,
+                text,
+                &std::pair<std::string_view, Role>::first
+            );
+            if (found == k_roles.end())
+            {
+                return std::nullopt;
+            }
+            return found->second;
+        }
+
+        [[nodiscard]]
+        auto repeatedCapability(std::string_view name) -> std::unexpected<Error>
+        {
+            return invalid(
+                std::format("--capability {} was given twice", name)
+            );
+        }
+
+        [[nodiscard]]
+        auto refuseSignatureRole(bool present, std::string_view name) -> Status
+        {
+            if (!present)
+            {
+                return ok();
+            }
+            return fail(
+                AutomationErrorKind::InvalidResource,
+                std::format(
+                    "--capability {} takes no \":role\"; only identify is "
+                    "evidence for or against a page",
+                    name
+                )
+            );
+        }
+
+        // One --capability token folded into the set read so far. The role is a
+        // suffix on identify rather than a flag of its own, so a role stated
+        // without identify -- which the model's ExercisedIdentify has nowhere to
+        // put -- cannot be typed at all.
+        [[nodiscard]]
+        auto withCapability(
+            DrawnCapabilities const& collected,
+            std::string_view token
+        ) -> Result<DrawnCapabilities>
+        {
+            auto const cut     = token.find(':');
+            auto const named   = token.substr(0U, cut);
+            auto const hasRole = (cut != std::string_view::npos);
+
+            auto const capability = capabilityNamed(named);
+            if (!capability)
+            {
+                return invalid(
+                    std::format(
+                        "--capability expects identify, interact or read, "
+                        "got \"{}\"",
+                        named
+                    )
+                );
+            }
+
+            auto updated = collected;
+            switch (*capability)
+            {
+            case CapabilityName::Identify:
+            {
+                if (updated.identify)
+                {
+                    return repeatedCapability("identify");
+                }
+                auto role = annotation::SignatureRole::Required;
+                if (hasRole)
+                {
+                    auto const roleText = token.substr(cut + 1U);
+                    auto const parsed   = signatureRoleNamed(roleText);
+                    if (!parsed)
+                    {
+                        return invalid(
+                            std::format(
+                                "--capability identify takes :required or "
+                                ":forbidden, got \"{}\"",
+                                roleText
+                            )
+                        );
+                    }
+                    role = *parsed;
+                }
+                updated.identify = role;
+                break;
+            }
+            case CapabilityName::Interact:
+                UF_TRY(refuseSignatureRole(hasRole, "interact"));
+                if (updated.interact)
+                {
+                    return repeatedCapability("interact");
+                }
+                updated.interact = true;
+                break;
+            case CapabilityName::Read:
+                UF_TRY(refuseSignatureRole(hasRole, "read"));
+                if (updated.read)
+                {
+                    return repeatedCapability("read");
+                }
+                updated.read = true;
+                break;
+            }
+            return updated;
+        }
+
+        [[nodiscard]]
+        auto declaresAnyCapability(
+            DrawnCapabilities const& capabilities
+        ) noexcept -> bool
+        {
+            return (
+                capabilities.identify.has_value()
+                || capabilities.interact
+                || capabilities.read
+            );
+        }
+
         // Every flag a subcommand that draws a rectangle accepts, collected as
         // written. --key and --tolerance build one ColourKey between them, so
         // neither can become a domain value until the whole line has been read.
@@ -173,7 +342,7 @@ namespace uf::authoring
             uint32 tolerance{k_defaultColourTolerance};
             uint32 similarityBasisPoints{k_defaultSimilarityBasisPoints};
 
-            bool shared{};
+            DrawnCapabilities capabilities{};
         };
 
         [[nodiscard]]
@@ -186,17 +355,6 @@ namespace uf::authoring
             while (index < raw.size())
             {
                 auto const& flag = raw[index];
-
-                // The one valueless draw flag, so it is taken before the
-                // missing-value guard below: a trailing --shared is a complete
-                // argument rather than a flag whose value is absent.
-                if (flag == "--shared")
-                {
-                    options.shared = true;
-                    index += 1U;
-                    continue;
-                }
-
                 if (index + 1U >= raw.size())
                 {
                     return invalid(std::format("missing value for {}", flag));
@@ -218,6 +376,14 @@ namespace uf::authoring
                 else if (flag == "--key")
                 {
                     options.key = value;
+                }
+                else if (flag == "--capability")
+                {
+                    UF_TRY_VALUE(
+                        applied,
+                        withCapability(options.capabilities, value)
+                    );
+                    options.capabilities = applied;
                 }
                 else if (flag == "--tolerance")
                 {
@@ -289,7 +455,6 @@ namespace uf::authoring
                 .searchRoi    = searchRoi,
                 .colourKey    = colourKey,
                 .threshold    = threshold,
-                .shared       = options.shared,
             };
         }
 
@@ -406,39 +571,70 @@ namespace uf::authoring
             return invalid(std::format("unknown project verb \"{}\"", verb));
         }
 
+        // `page reference` names an element instead of drawing one, so it reads
+        // its own short argument list rather than the <draw> options.
+        [[nodiscard]]
+        auto parseReferenceElement(
+            std::string const& root,
+            std::string const& page,
+            std::span<std::string const> raw
+        ) -> Result<AuthoringCommand>
+        {
+            UF_TRY_VALUE(element, positional(raw, 0, "element"));
+
+            auto searchRoi = std::optional<std::string>{};
+            auto index     = std::size_t{1};
+            while (index < raw.size())
+            {
+                auto const& flag = raw[index];
+                if (index + 1U >= raw.size())
+                {
+                    return invalid(std::format("missing value for {}", flag));
+                }
+                auto const& value = raw[index + 1U];
+
+                if (flag == "--search-roi")
+                {
+                    searchRoi = value;
+                }
+                else
+                {
+                    return invalid(std::format("unknown argument \"{}\"", flag));
+                }
+                index += 2U;
+            }
+
+            auto refined = std::optional<PixelRect>{};
+            if (searchRoi)
+            {
+                UF_TRY_VALUE(parsed, parseRect(*searchRoi, "--search-roi"));
+                refined = parsed;
+            }
+
+            return ReferenceElement{
+                .root      = std::filesystem::path{root},
+                .page      = page,
+                .element   = std::move(element),
+                .searchRoi = refined,
+            };
+        }
+
         [[nodiscard]]
         auto parsePageCommand(
             std::span<std::string const> raw
         ) -> Result<AuthoringCommand>
         {
-            UF_TRY_VALUE(
-                verb,
-                positional(raw, 0, "create|add-anchor|add-target|add-info")
-            );
+            UF_TRY_VALUE(verb, positional(raw, 0, "create|add|reference"));
             UF_TRY_VALUE(root, positional(raw, 1, "root"));
             UF_TRY_VALUE(page, positional(raw, 2, "page"));
 
-            // A table rather than a chain: the verb set is closed, and a chain
-            // over a closed set accepts a new member with no branch while the
-            // compiler stays silent. Adding a verb here is adding a row.
-            struct RoleVerb final
+            if (verb == "reference")
             {
-                std::string_view verb;
-                ElementRole      role;
-            };
-            constexpr auto k_roleVerbs = std::array{
-                RoleVerb{.verb = "add-anchor", .role = ElementRole::Anchor},
-                RoleVerb{.verb = "add-target", .role = ElementRole::Target},
-                RoleVerb{.verb = "add-info",   .role = ElementRole::Info},
-            };
+                return parseReferenceElement(root, page, raw.subspan(3U));
+            }
 
             auto const isCreate = (verb == "create");
-            auto const named    = std::ranges::find(
-                k_roleVerbs,
-                verb,
-                &RoleVerb::verb
-            );
-            if (!isCreate && named == k_roleVerbs.end())
+            if (!isCreate && verb != "add")
             {
                 return invalid(std::format("unknown page verb \"{}\"", verb));
             }
@@ -448,8 +644,28 @@ namespace uf::authoring
                 positional(raw, 3, isCreate ? "anchor" : "name")
             );
             UF_TRY_VALUE(options, parseDrawOptions(raw.subspan(4U)));
-            UF_TRY_VALUE(draw, buildElementDraw(std::move(name), options));
 
+            // A page's first element identifies it -- PageSignature has no
+            // representation for a page nothing names -- so `create` has no
+            // capability to choose and refuses the flag rather than accepting it
+            // and quietly meaning something else than it does on `add`.
+            if (isCreate && declaresAnyCapability(options.capabilities))
+            {
+                return invalid(
+                    "page create authors the mark that identifies the new page, "
+                    "so it takes no --capability; use page add for the rest"
+                );
+            }
+            if (!isCreate && !declaresAnyCapability(options.capabilities))
+            {
+                return invalid(
+                    "page add needs at least one --capability "
+                    "(identify[:required|:forbidden], interact, read); an "
+                    "element nothing can reach is not a thing the model holds"
+                );
+            }
+
+            UF_TRY_VALUE(draw, buildElementDraw(std::move(name), options));
             if (isCreate)
             {
                 return CreatePage{
@@ -459,10 +675,10 @@ namespace uf::authoring
                 };
             }
             return AddElement{
-                .root = std::filesystem::path{root},
-                .page = std::move(page),
-                .role = named->role,
-                .draw = std::move(draw),
+                .root         = std::filesystem::path{root},
+                .page         = std::move(page),
+                .capabilities = options.capabilities,
+                .draw         = std::move(draw),
             };
         }
 
@@ -475,6 +691,7 @@ namespace uf::authoring
             UF_TRY_VALUE(recognizer, positional(raw, 1, "recognizer"));
 
             auto frame  = std::optional<std::string>{};
+            auto page   = std::optional<std::string>{};
             auto budget = cli::k_defaultPixelComparisonBudget;
 
             auto index = std::size_t{2};
@@ -490,6 +707,10 @@ namespace uf::authoring
                 if (flag == "--frame")
                 {
                     frame = value;
+                }
+                else if (flag == "--page")
+                {
+                    page = value;
                 }
                 else if (flag == "--budget")
                 {
@@ -508,6 +729,7 @@ namespace uf::authoring
                 .root       = std::filesystem::path{root},
                 .recognizer = std::move(recognizer),
                 .frame      = std::filesystem::path{requiredFrame},
+                .page       = std::move(page),
                 .budget     = budget,
             };
         }
@@ -808,11 +1030,13 @@ namespace uf::authoring
             "--resolution WxH\n"
             "  umbra-authoring project show  ROOT\n"
             "  umbra-authoring project save  ROOT\n"
-            "  umbra-authoring page create     ROOT PAGE ANCHOR <draw>\n"
-            "  umbra-authoring page add-anchor ROOT PAGE NAME   <draw>\n"
-            "  umbra-authoring page add-target ROOT PAGE NAME   <draw>\n"
-            "  umbra-authoring page add-info   ROOT PAGE NAME   <draw>\n"
-            "  umbra-authoring match ROOT RECOGNIZER --frame PNG [--budget N]\n"
+            "  umbra-authoring page create    ROOT PAGE ANCHOR <draw>\n"
+            "  umbra-authoring page add       ROOT PAGE NAME "
+            "--capability C... <draw>\n"
+            "  umbra-authoring page reference ROOT PAGE ELEMENT "
+            "[--search-roi x,y,w,h]\n"
+            "  umbra-authoring match ROOT RECOGNIZER --frame PNG [--page PAGE]\n"
+            "                                        [--budget N]\n"
             "  umbra-authoring frames stability PNG PNG... [--rect x,y,w,h]\n"
             "                                   [--gray-tolerance N] [--gap N]\n"
             "  umbra-authoring frames probe     PNG PNG... --rect x,y,w,h\n"
@@ -820,6 +1044,34 @@ namespace uf::authoring
             "  umbra-authoring frames census    PNG --rect x,y,w,h [--top N]\n"
             "\n"
             "<draw> options:\n"
+            "  --capability C          What these pixels may be used for. Give\n"
+            "                          the flag once per capability; a set is\n"
+            "                          the point, so an element that names its\n"
+            "                          page AND can be clicked is\n"
+            "                          --capability identify --capability "
+            "interact,\n"
+            "                          matched once a cycle rather than twice.\n"
+            "                          C is one of:\n"
+            "                            identify[:required|:forbidden]\n"
+            "                                     joins this page's signature "
+            "as\n"
+            "                                     evidence for it, or against "
+            "it;\n"
+            "                                     default :required. The role "
+            "is\n"
+            "                                     the PAGE's, not the "
+            "element's --\n"
+            "                                     one mark is required by one "
+            "page\n"
+            "                                     and forbidden by another\n"
+            "                            interact this page may click it\n"
+            "                            read     this page may read text out "
+            "of\n"
+            "                                     it\n"
+            "                          page add requires at least one; page "
+            "create\n"
+            "                          takes none, because a page's first mark\n"
+            "                          identifies it by definition\n"
             "  --source HASH-OR-PATH   Screen the rectangle was measured on:\n"
             "                          a 64-hex source content hash the project\n"
             "                          already holds, or a PNG path to ingest\n"
@@ -832,11 +1084,6 @@ namespace uf::authoring
             "  --min-similarity-bp N   Similarity threshold in basis points, "
             "0..10000;\n"
             "                          default: 9000\n"
-            "  --shared                Mark these pixels reusable on other "
-            "pages.\n"
-            "                          Takes no value. add-target only: an "
-            "anchor\n"
-            "                          identifies one page by definition\n"
             "\n"
             "<frames> options:\n"
             "  --rect x,y,w,h          The rectangle analysed inside every "
@@ -868,6 +1115,22 @@ namespace uf::authoring
             "A page is created with the first anchor that identifies it, because a\n"
             "page with an empty signature is not a thing the annotation model can\n"
             "represent.\n"
+            "\n"
+            "page reference puts an element the project ALREADY holds onto a second\n"
+            "page: one element, two pages, one search and one template to correct.\n"
+            "It is the only verb that produces a borrowed element -- everything\n"
+            "drawn is owned by the page it was drawn on -- so redrawing a menu\n"
+            "button per page is the thing it exists to replace. The element has to\n"
+            "declare interact or read: one that only identifies joins a page\n"
+            "through that page's signature instead. --search-roi narrows the\n"
+            "search on THIS page only; without it the page uses the element's own\n"
+            "region.\n"
+            "\n"
+            "match --page names the page a click target is located on, because a\n"
+            "refined search region and a pinned appearance both belong to a page's\n"
+            "reference. It is only needed when more than one page clicks the\n"
+            "element, and it is refused for an element that identifies: the anchor\n"
+            "pass runs before any page is known.\n"
             "\n"
             "One JSON document is written to stdout per invocation, success or\n"
             "failure; a failure adds one rendered line to stderr.\n";

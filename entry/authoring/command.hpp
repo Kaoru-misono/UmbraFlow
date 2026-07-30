@@ -7,6 +7,7 @@
 #include <args.hpp>
 
 #include <annotation/authoring-document.hpp>
+#include <annotation/capabilities.hpp>
 #include <annotation/resource.hpp>
 
 #include <core/error/result.hpp>
@@ -65,14 +66,25 @@ namespace uf::authoring
         std::optional<annotation::ColourKey> colourKey{};
 
         annotation::SimilarityThreshold threshold;
+    };
 
-        // Whether these pixels are meant to be reused on other pages. It is a
-        // statement of intent rather than a placement -- a global control like a
-        // menu button is drawn once and then placed wherever it appears -- and
-        // intent has to be stored because no other field implies it before that
-        // second page exists. Only an interactive region can carry it; an anchor
-        // is evidence for one page's identity by definition.
-        bool shared{};
+    // What one drawn rectangle may be used for, as --capability collected it.
+    // Three fields rather than a list of tokens, so "identify twice" and "a
+    // signature role without identify" are both unrepresentable here instead of
+    // being rejected later.
+    //
+    // The role rides on identify because that is where the model keeps it: an
+    // element declares that it CAN identify, and the page's reference declares
+    // whether it is evidence FOR that page or AGAINST it. No element-side field
+    // could hold the answer, since one mark is required by one page and
+    // forbidden by another. Interact and read have no such page-side datum,
+    // which is exactly why they are plain flags.
+    struct DrawnCapabilities final
+    {
+        std::optional<annotation::SignatureRole> identify{};
+
+        bool interact{};
+        bool read{};
     };
 
     struct InitProject final
@@ -105,30 +117,34 @@ namespace uf::authoring
         ElementDraw anchor;
     };
 
-    // Which link a new element takes to its page. An anchor is identity evidence
-    // and joins the page's signature; a target is something a task may click
-    // there and is authorized on the page through a placement. The annotation
-    // model ties the link to the type, so this is not a flag the CLI could
-    // apply afterwards.
-    enum class ElementRole : uint8
-    {
-        Anchor,
-        Target,
-
-        // A region the runtime READS rather than clicks: a level, a count, a
-        // timer. Its rectangle says where to look; what is inside it is text
-        // that changes, which is exactly what a template cannot carry and why
-        // this is a third role rather than a target nobody clicks.
-        Info,
-    };
-
+    // One element drawn onto a page, with everything that page does with it
+    // committed in the same edit. One capability set serves as both halves:
+    // pixels are drawn where they are used, so at the moment of drawing what
+    // the element declares and what the page exercises are the same set. The
+    // two only ever differ once a SECOND page borrows the element, which is
+    // ReferenceElement below.
     struct AddElement final
     {
         std::filesystem::path root{};
         std::string           page{};
 
-        ElementRole role{ElementRole::Anchor};
-        ElementDraw draw;
+        DrawnCapabilities capabilities{};
+        ElementDraw       draw;
+    };
+
+    // Puts an element the project already holds onto a second page. This is the
+    // only way Holding::Referenced is produced: everything drawn is Owned by the
+    // page it was drawn on, so borrowing is what a second page does instead of
+    // redrawing the same pixels under a second id and a second search per cycle.
+    struct ReferenceElement final
+    {
+        std::filesystem::path root{};
+        std::string           page{};
+        std::string           element{};
+
+        // Absent means this page searches the element's own region, which is
+        // what an absent per-page refinement means in the document too.
+        std::optional<PixelRect> searchRoi{};
     };
 
     struct MatchRecognizer final
@@ -136,6 +152,12 @@ namespace uf::authoring
         std::filesystem::path root{};
         std::string           recognizer{};
         std::filesystem::path frame{};
+
+        // Which page to locate a click target on. Locating one is page-scoped
+        // now -- the refined search region and the pinned appearance both live
+        // on the page's reference -- so it is answered from the references when
+        // exactly one page exercises interact, and asked for when several do.
+        std::optional<std::string> page{};
 
         uint64 budget{cli::k_defaultPixelComparisonBudget};
     };
@@ -196,6 +218,7 @@ namespace uf::authoring
         SaveProject,
         CreatePage,
         AddElement,
+        ReferenceElement,
         MatchRecognizer,
         AnalyseFrameStability,
         ProbeFrameColour,

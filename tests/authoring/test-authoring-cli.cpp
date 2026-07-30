@@ -13,6 +13,7 @@
 
 #include <annotation/authoring-compiler.hpp>
 #include <annotation/authoring-document.hpp>
+#include <annotation/catalog.hpp>
 #include <annotation/runtime-manifest.hpp>
 
 #include <core/error/result.hpp>
@@ -23,6 +24,7 @@
 
 #include <doctest/doctest.h>
 
+#include <algorithm>
 #include <atomic>
 #include <charconv>
 #include <chrono>
@@ -330,14 +332,130 @@ namespace uf::authoring
             requireOk(
                 run(
                     "page",
-                    "add-anchor",
+                    "add",
                     project.text(),
                     "menu",
                     "unkeyed_menu",
+                    "--capability",
+                    "identify",
                     "--source",
                     blue.string(),
                     "--rect",
                     wholeCrop
+                )
+            );
+
+            return KeyedFixture{.blueFrame = blue, .purpleFrame = purple};
+        }
+
+        // The one appearance every element this CLI draws carries. An element
+        // authored here has exactly one, so a test that finds another number is
+        // looking at a document the CLI did not write.
+        [[nodiscard]]
+        auto soleVariant(
+            annotation::Element const& element
+        ) -> annotation::Variant
+        {
+            REQUIRE(element.variants().size() == 1U);
+            return element.variants().front();
+        }
+
+        [[nodiscard]]
+        auto elementNamed(
+            annotation::AuthoringDocument const& document,
+            std::string_view name
+        ) -> annotation::Element const*
+        {
+            for (auto const& element : document.elements())
+            {
+                if (element.name().value() == name)
+                {
+                    return &element;
+                }
+            }
+            return nullptr;
+        }
+
+        [[nodiscard]]
+        auto pageNamed(
+            annotation::AuthoringDocument const& document,
+            std::string_view name
+        ) -> annotation::PageSignature const*
+        {
+            for (auto const& page : document.catalog().pages())
+            {
+                if (page.name().value() == name)
+                {
+                    return &page;
+                }
+            }
+            return nullptr;
+        }
+
+        // Two pages, and one clickable element drawn on the first. This is the
+        // shape `page reference` exists for: the second page shows the same
+        // control, and the model wants one element referenced twice rather than
+        // two elements searched twice.
+        [[nodiscard]]
+        auto authorTwoPageProject(TemporaryProject const& project) -> KeyedFixture
+        {
+            auto const blue   = project.path() / "menu-over-blue.png";
+            auto const purple = project.path() / "menu-over-purple.png";
+            writePng(blue, fixture::k_menuOverBlueArtwork);
+            writePng(purple, fixture::k_menuOverPurpleArtwork);
+
+            requireOk(
+                run(
+                    "project",
+                    "init",
+                    project.text(),
+                    "--project-id",
+                    "personal.two_page_cli",
+                    "--resolution",
+                    std::format("{}x{}", fixture::k_width, fixture::k_height)
+                )
+            );
+            requireOk(
+                run(
+                    "page",
+                    "create",
+                    project.text(),
+                    "menu",
+                    "menu_mark",
+                    "--source",
+                    blue.string(),
+                    "--rect",
+                    wholeCropRect()
+                )
+            );
+            requireOk(
+                run(
+                    "page",
+                    "create",
+                    project.text(),
+                    "sortie",
+                    "sortie_mark",
+                    "--source",
+                    purple.string(),
+                    "--rect",
+                    wholeCropRect()
+                )
+            );
+            requireOk(
+                run(
+                    "page",
+                    "add",
+                    project.text(),
+                    "menu",
+                    "menu_button",
+                    "--capability",
+                    "interact",
+                    "--source",
+                    blue.string(),
+                    "--rect",
+                    "10,4,20,12",
+                    "--search-roi",
+                    "0,0,60,30"
                 )
             );
 
@@ -444,10 +562,12 @@ namespace uf::authoring
             requireOk(
                 run(
                     "page",
-                    "add-anchor",
+                    "add",
                     project.text(),
                     "menu",
                     "wide_label",
+                    "--capability",
+                    "identify",
                     "--source",
                     authored.string(),
                     "--rect",
@@ -482,10 +602,12 @@ namespace uf::authoring
         requireOk(
             run(
                 "page",
-                "add-target",
+                "add",
                 project.text(),
                 "menu",
                 "menu_button",
+                "--capability",
+                "interact",
                 "--source",
                 frames.blueFrame.string(),
                 "--rect",
@@ -519,59 +641,477 @@ namespace uf::authoring
         CHECK(document.sources().size() == 1U);
 
         REQUIRE(document.elements().size() == 3U);
-        auto const elementNamed = [&document](
-            std::string_view name
-        ) -> annotation::Element const*
-        {
-            for (auto const& element : document.elements())
-            {
-                if (element.name().value() == name)
-                {
-                    return &element;
-                }
-            }
-            return nullptr;
-        };
 
-        auto const* p_keyed = elementNamed("keyed_menu");
+        auto const* p_keyed = elementNamed(document, "keyed_menu");
         REQUIRE(p_keyed != nullptr);
-        CHECK(p_keyed->annotationType() == annotation::AnnotationType::PageAnchor);
+        CHECK(p_keyed->capabilities().hasIdentify());
+        CHECK_FALSE(p_keyed->capabilities().hasInteract());
+
+        auto const keyedVariant = soleVariant(*p_keyed);
         CHECK(
-            p_keyed->templateRect()
+            keyedVariant.templateRect()
             == *PixelRect::create(0, 0, fixture::k_width, fixture::k_height)
         );
-        REQUIRE(p_keyed->colourKey().has_value());
-        CHECK(p_keyed->colourKey()->red() == fixture::k_textRed);
-        CHECK(p_keyed->colourKey()->green() == fixture::k_textGreen);
-        CHECK(p_keyed->colourKey()->blue() == fixture::k_textBlue);
-        CHECK(p_keyed->colourKey()->tolerance() == k_tolerance);
+        REQUIRE(keyedVariant.colourKey().has_value());
+        CHECK(keyedVariant.colourKey()->red() == fixture::k_textRed);
+        CHECK(keyedVariant.colourKey()->green() == fixture::k_textGreen);
+        CHECK(keyedVariant.colourKey()->blue() == fixture::k_textBlue);
+        CHECK(keyedVariant.colourKey()->tolerance() == k_tolerance);
 
-        auto const* p_unkeyed = elementNamed("unkeyed_menu");
+        auto const* p_unkeyed = elementNamed(document, "unkeyed_menu");
         REQUIRE(p_unkeyed != nullptr);
         // The control on the key checks above: an element authored without
         // --key must come back carrying none, so a CLI that invented a key
         // would fail here rather than pass everything.
-        CHECK_FALSE(p_unkeyed->colourKey().has_value());
+        CHECK_FALSE(soleVariant(*p_unkeyed).colourKey().has_value());
 
-        auto const* p_target = elementNamed("menu_button");
+        auto const* p_target = elementNamed(document, "menu_button");
         REQUIRE(p_target != nullptr);
-        CHECK(p_target->annotationType() == annotation::AnnotationType::ActionTarget);
-        CHECK(p_target->templateRect() == *PixelRect::create(10, 4, 20, 12));
+        CHECK(p_target->capabilities().hasInteract());
+        CHECK_FALSE(p_target->capabilities().hasIdentify());
+        CHECK_FALSE(p_target->capabilities().hasRead());
         CHECK(p_target->searchRoi() == *PixelRect::create(0, 0, 60, 30));
-        CHECK(p_target->threshold().basisPoints() == 8500);
-        REQUIRE(p_target->colourKey().has_value());
-        CHECK(p_target->colourKey()->red() == 249);
-        CHECK(p_target->colourKey()->tolerance() == 8);
 
-        // An action target reaches its page through a placement, not through the
-        // signature, so a CLI that added the element and dropped the link would
-        // still load an element and fail only here.
-        REQUIRE(document.placements().size() == 1U);
-        CHECK(document.placements().front().elementId == p_target->id());
-        CHECK(
-            document.placements().front().pageId
-            == document.catalog().pages().front().id()
+        auto const targetVariant = soleVariant(*p_target);
+        CHECK(targetVariant.templateRect() == *PixelRect::create(10, 4, 20, 12));
+        CHECK(targetVariant.threshold().basisPoints() == 8500);
+        REQUIRE(targetVariant.colourKey().has_value());
+        CHECK(targetVariant.colourKey()->red() == 249);
+        CHECK(targetVariant.colourKey()->tolerance() == 8);
+
+        // Every page-side use is a reference now, and the two anchors reach the
+        // page through one as well: their references are what the signature is
+        // derived from. A CLI that drew an element and dropped its reference
+        // would still load an element and fail only here.
+        REQUIRE(document.references().size() == 3U);
+        auto const pageId = document.catalog().pages().front().id();
+        for (auto const& reference : document.references())
+        {
+            CHECK(reference.pageId == pageId);
+            CHECK(reference.holding == annotation::Holding::Owned);
+        }
+
+        auto const* p_targetReference = document.catalog().findReference(
+            pageId,
+            p_target->id()
         );
+        REQUIRE(p_targetReference != nullptr);
+        CHECK(p_targetReference->exercised.hasInteract());
+        CHECK_FALSE(p_targetReference->exercised.hasIdentify());
+    }
+
+    TEST_CASE("authoring CLI draws one element that both identifies a page and is clicked")
+    {
+        auto const project = TemporaryProject{"capability-set"};
+        auto const frames  = authorTwoPageProject(project);
+
+        // The case the capability set exists for: one row of text that names
+        // the page AND can be clicked. Two flags, one rectangle, one element.
+        requireOk(
+            run(
+                "page",
+                "add",
+                project.text(),
+                "menu",
+                "story_label",
+                "--capability",
+                "identify",
+                "--capability",
+                "interact",
+                "--source",
+                frames.blueFrame.string(),
+                "--rect",
+                "40,4,30,12"
+            )
+        );
+
+        auto const loaded = workbench::loadAuthoringProject(project.path());
+        REQUIRE(loaded.has_value());
+        auto const& document = loaded->document;
+
+        auto const* p_dual = elementNamed(document, "story_label");
+        REQUIRE(p_dual != nullptr);
+        CHECK(p_dual->capabilities().hasIdentify());
+        CHECK(p_dual->capabilities().hasInteract());
+        CHECK_FALSE(p_dual->capabilities().hasRead());
+
+        // One element and one appearance, not two of either. A CLI that took
+        // only the last --capability would still pass the has-interact check
+        // above; a CLI that drew the rectangle once per capability would leave
+        // two elements matched twice a cycle, which is the cost this replaces.
+        CHECK(document.elements().size() == 4U);
+        CHECK(soleVariant(*p_dual).templateRect() == *PixelRect::create(40, 4, 30, 12));
+
+        auto const* p_menu = pageNamed(document, "menu");
+        REQUIRE(p_menu != nullptr);
+        auto const* p_reference = document.catalog().findReference(
+            p_menu->id(),
+            p_dual->id()
+        );
+        REQUIRE(p_reference != nullptr);
+        CHECK(p_reference->exercised.hasIdentify());
+        CHECK(p_reference->exercised.hasInteract());
+        CHECK(p_reference->holding == annotation::Holding::Owned);
+
+        // And the signature the page derives from that reference names it, so
+        // the identify half is load-bearing rather than a recorded flag.
+        CHECK(std::ranges::contains(p_menu->required(), p_dual->id()));
+    }
+
+    TEST_CASE("authoring CLI reads the signature role off the identify capability")
+    {
+        auto const project = TemporaryProject{"signature-role"};
+        auto const frames  = authorTwoPageProject(project);
+
+        requireOk(
+            run(
+                "page",
+                "add",
+                project.text(),
+                "sortie",
+                "must_be_absent",
+                "--capability",
+                "identify:forbidden",
+                "--source",
+                frames.purpleFrame.string(),
+                "--rect",
+                "40,4,30,12"
+            )
+        );
+        // The control, drawn the same way on the same page: without the suffix
+        // the role is required, so the two land in different vectors of one
+        // signature and a CLI that ignored the suffix would put both in the same.
+        requireOk(
+            run(
+                "page",
+                "add",
+                project.text(),
+                "sortie",
+                "must_be_present",
+                "--capability",
+                "identify",
+                "--source",
+                frames.purpleFrame.string(),
+                "--rect",
+                "70,4,25,12"
+            )
+        );
+
+        auto const loaded = workbench::loadAuthoringProject(project.path());
+        REQUIRE(loaded.has_value());
+        auto const& document = loaded->document;
+
+        auto const* p_forbidden = elementNamed(document, "must_be_absent");
+        auto const* p_required  = elementNamed(document, "must_be_present");
+        REQUIRE(p_forbidden != nullptr);
+        REQUIRE(p_required != nullptr);
+
+        auto const* p_sortie = pageNamed(document, "sortie");
+        REQUIRE(p_sortie != nullptr);
+        CHECK(std::ranges::contains(p_sortie->forbidden(), p_forbidden->id()));
+        CHECK_FALSE(std::ranges::contains(p_sortie->required(), p_forbidden->id()));
+        CHECK(std::ranges::contains(p_sortie->required(), p_required->id()));
+    }
+
+    TEST_CASE("authoring CLI puts an already-authored element on a second page")
+    {
+        auto const project = TemporaryProject{"reference"};
+        auto const frames  = authorTwoPageProject(project);
+
+        auto const before = workbench::loadAuthoringProject(project.path());
+        REQUIRE(before.has_value());
+        auto const elementsBefore = before->document.elements().size();
+
+        auto const referenced = run(
+            "page",
+            "reference",
+            project.text(),
+            "sortie",
+            "menu_button",
+            "--search-roi",
+            "0,0,80,40"
+        );
+        requireOk(referenced);
+        CHECK(referenced.json.contains("\"holding\":\"referenced\""));
+        CHECK(unsignedField(referenced.json, "pages_referencing") == 2U);
+
+        auto const loaded = workbench::loadAuthoringProject(project.path());
+        REQUIRE(loaded.has_value());
+        auto const& document = loaded->document;
+
+        // No copy was minted. This is the whole claim: one element, one
+        // template, two pages -- so correcting the pixels later corrects both.
+        // A CLI that duplicated the element would pass every holding check
+        // below and fail only here.
+        CHECK(document.elements().size() == elementsBefore);
+
+        auto const* p_button = elementNamed(document, "menu_button");
+        auto const* p_menu   = pageNamed(document, "menu");
+        auto const* p_sortie = pageNamed(document, "sortie");
+        REQUIRE(p_button != nullptr);
+        REQUIRE(p_menu != nullptr);
+        REQUIRE(p_sortie != nullptr);
+
+        auto const* p_home = document.catalog().findReference(
+            p_menu->id(),
+            p_button->id()
+        );
+        auto const* p_borrowed = document.catalog().findReference(
+            p_sortie->id(),
+            p_button->id()
+        );
+        REQUIRE(p_home != nullptr);
+        REQUIRE(p_borrowed != nullptr);
+
+        // Holding says which page the pixels belong to, which is the question
+        // the flag it replaced could not answer. The home page keeps Owned and
+        // the borrower is Referenced; two owners is what the catalog refuses.
+        CHECK(p_home->holding == annotation::Holding::Owned);
+        CHECK(p_borrowed->holding == annotation::Holding::Referenced);
+        CHECK(p_borrowed->exercised.hasInteract());
+
+        // The borrowed reference carries the region --search-roi named, not the
+        // element's own, so a per-page refinement reaches the document.
+        REQUIRE(p_borrowed->searchRoi.has_value());
+        CHECK(*p_borrowed->searchRoi == *PixelRect::create(0, 0, 80, 40));
+        CHECK(p_button->searchRoi() == *PixelRect::create(0, 0, 60, 30));
+
+        // Locating it is page-scoped now, and two pages click it, so match has
+        // to be told which. Nothing but --page can choose between them.
+        auto const ambiguous = run(
+            "match",
+            project.text(),
+            "menu_button",
+            "--frame",
+            frames.blueFrame.string()
+        );
+        CHECK_FALSE(ambiguous.ok);
+        CHECK(ambiguous.message.contains("--page has to name which"));
+
+        auto const located = run(
+            "match",
+            project.text(),
+            "menu_button",
+            "--frame",
+            frames.blueFrame.string(),
+            "--page",
+            "menu"
+        );
+        requireOk(located);
+        CHECK(located.json.contains("\"hit\":true"));
+        CHECK(located.json.contains("\"page\":\"menu\""));
+    }
+
+    TEST_CASE("authoring CLI refuses references and capability sets the model cannot hold")
+    {
+        auto const project = TemporaryProject{"refusals"};
+        auto const frames  = authorTwoPageProject(project);
+
+        SUBCASE("an element that only identifies is not placed, it is signed")
+        {
+            auto const refused = run(
+                "page",
+                "reference",
+                project.text(),
+                "sortie",
+                "menu_mark"
+            );
+            CHECK_FALSE(refused.ok);
+            CHECK(std::to_underlying(refused.exitCode) != 0);
+            CHECK(refused.message.contains("only identifies a page"));
+
+            // The control: the clickable element on the same page is taken, so
+            // the refusal is about what the element declares.
+            requireOk(
+                run(
+                    "page",
+                    "reference",
+                    project.text(),
+                    "sortie",
+                    "menu_button"
+                )
+            );
+
+            // And a second reference from the same page is refused rather than
+            // recorded twice.
+            auto const again = run(
+                "page",
+                "reference",
+                project.text(),
+                "sortie",
+                "menu_button"
+            );
+            CHECK_FALSE(again.ok);
+            CHECK(again.message.contains("already on that page"));
+        }
+
+        SUBCASE("a capability the vocabulary does not have")
+        {
+            auto const unknown = run(
+                "page",
+                "add",
+                project.text(),
+                "menu",
+                "mystery",
+                "--capability",
+                "click",
+                "--source",
+                frames.blueFrame.string(),
+                "--rect",
+                "0,0,10,10"
+            );
+            CHECK_FALSE(unknown.ok);
+            CHECK(std::to_underlying(unknown.exitCode) != 0);
+            CHECK(
+                unknown.message.contains(
+                    "--capability expects identify, interact or read"
+                )
+            );
+        }
+
+        SUBCASE("a signature role on a capability that has none")
+        {
+            auto const roled = run(
+                "page",
+                "add",
+                project.text(),
+                "menu",
+                "roled",
+                "--capability",
+                "interact:required",
+                "--source",
+                frames.blueFrame.string(),
+                "--rect",
+                "0,0,10,10"
+            );
+            CHECK_FALSE(roled.ok);
+            CHECK(roled.message.contains("takes no \":role\""));
+        }
+
+        SUBCASE("no capability at all, and one stated twice")
+        {
+            auto const none = run(
+                "page",
+                "add",
+                project.text(),
+                "menu",
+                "purposeless",
+                "--source",
+                frames.blueFrame.string(),
+                "--rect",
+                "0,0,10,10"
+            );
+            CHECK_FALSE(none.ok);
+            CHECK(none.message.contains("needs at least one --capability"));
+
+            auto const twice = run(
+                "page",
+                "add",
+                project.text(),
+                "menu",
+                "doubled",
+                "--capability",
+                "interact",
+                "--capability",
+                "interact",
+                "--source",
+                frames.blueFrame.string(),
+                "--rect",
+                "0,0,10,10"
+            );
+            CHECK_FALSE(twice.ok);
+            CHECK(twice.message.contains("was given twice"));
+        }
+
+        SUBCASE("a page's first mark identifies it, so create takes no capability")
+        {
+            auto const flagged = run(
+                "page",
+                "create",
+                project.text(),
+                "battle",
+                "battle_mark",
+                "--capability",
+                "interact",
+                "--source",
+                frames.purpleFrame.string(),
+                "--rect",
+                "0,0,10,10"
+            );
+            CHECK_FALSE(flagged.ok);
+            CHECK(flagged.message.contains("takes no --capability"));
+
+            // The control: the same page without the flag is created, so the
+            // refusal is about the flag rather than about the page.
+            requireOk(
+                run(
+                    "page",
+                    "create",
+                    project.text(),
+                    "battle",
+                    "battle_mark",
+                    "--source",
+                    frames.purpleFrame.string(),
+                    "--rect",
+                    "0,0,10,10"
+                )
+            );
+        }
+    }
+
+    TEST_CASE("authoring CLI authors a region the runtime reads rather than clicks")
+    {
+        auto const project = TemporaryProject{"read"};
+        auto const frames  = authorTwoPageProject(project);
+
+        requireOk(
+            run(
+                "page",
+                "add",
+                project.text(),
+                "menu",
+                "level_readout",
+                "--capability",
+                "read",
+                "--source",
+                frames.blueFrame.string(),
+                "--rect",
+                "70,20,25,12"
+            )
+        );
+
+        auto const loaded = workbench::loadAuthoringProject(project.path());
+        REQUIRE(loaded.has_value());
+        auto const& document = loaded->document;
+
+        auto const* p_readout = elementNamed(document, "level_readout");
+        REQUIRE(p_readout != nullptr);
+        CHECK(p_readout->capabilities().hasRead());
+        CHECK_FALSE(p_readout->capabilities().hasIdentify());
+        CHECK_FALSE(p_readout->capabilities().hasInteract());
+
+        auto const* p_menu = pageNamed(document, "menu");
+        REQUIRE(p_menu != nullptr);
+        auto const* p_reference = document.catalog().findReference(
+            p_menu->id(),
+            p_readout->id()
+        );
+        REQUIRE(p_reference != nullptr);
+        CHECK(p_reference->exercised.hasRead());
+        CHECK_FALSE(p_reference->exercised.hasInteract());
+
+        // Neither runtime entry point reaches it: the anchor pass does not look
+        // at it and there is no click to locate, so match says so instead of
+        // answering with a measurement it never made.
+        auto const matched = run(
+            "match",
+            project.text(),
+            "level_readout",
+            "--frame",
+            frames.blueFrame.string()
+        );
+        CHECK_FALSE(matched.ok);
+        CHECK(matched.message.contains("is only read"));
     }
 
     TEST_CASE("authoring CLI publishes a runtime manifest that parses and matches the compile")
@@ -755,10 +1295,12 @@ namespace uf::authoring
         {
             auto const outside = run(
                 "page",
-                "add-anchor",
+                "add",
                 project.text(),
                 "menu",
                 "off_screen",
+                "--capability",
+                "identify",
                 "--source",
                 frames.blueFrame.string(),
                 "--rect",
@@ -775,10 +1317,12 @@ namespace uf::authoring
             requireOk(
                 run(
                     "page",
-                    "add-anchor",
+                    "add",
                     project.text(),
                     "menu",
                     "on_screen",
+                    "--capability",
+                    "identify",
                     "--source",
                     frames.blueFrame.string(),
                     "--rect",
@@ -791,10 +1335,12 @@ namespace uf::authoring
         {
             auto const truncated = run(
                 "page",
-                "add-anchor",
+                "add",
                 project.text(),
                 "menu",
                 "bad_colour",
+                "--capability",
+                "identify",
                 "--source",
                 frames.blueFrame.string(),
                 "--rect",
@@ -808,10 +1354,12 @@ namespace uf::authoring
 
             auto const outOfRange = run(
                 "page",
-                "add-anchor",
+                "add",
                 project.text(),
                 "menu",
                 "bad_channel",
+                "--capability",
+                "identify",
                 "--source",
                 frames.blueFrame.string(),
                 "--rect",
@@ -827,10 +1375,12 @@ namespace uf::authoring
             requireOk(
                 run(
                     "page",
-                    "add-anchor",
+                    "add",
                     project.text(),
                     "menu",
                     "good_colour",
+                    "--capability",
+                    "identify",
                     "--source",
                     frames.blueFrame.string(),
                     "--rect",
@@ -845,10 +1395,12 @@ namespace uf::authoring
         {
             auto const missing = run(
                 "page",
-                "add-anchor",
+                "add",
                 project.text(),
                 "no_such_page",
                 "stray_anchor",
+                "--capability",
+                "identify",
                 "--source",
                 frames.blueFrame.string(),
                 "--rect",
@@ -862,10 +1414,12 @@ namespace uf::authoring
             requireOk(
                 run(
                     "page",
-                    "add-anchor",
+                    "add",
                     project.text(),
                     "menu",
                     "stray_anchor",
+                    "--capability",
+                    "identify",
                     "--source",
                     frames.blueFrame.string(),
                     "--rect",
@@ -881,10 +1435,12 @@ namespace uf::authoring
             );
             auto const refused = run(
                 "page",
-                "add-anchor",
+                "add",
                 project.text(),
                 "menu",
                 "off_screen",
+                "--capability",
+                "identify",
                 "--source",
                 frames.blueFrame.string(),
                 "--rect",
