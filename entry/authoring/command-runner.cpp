@@ -17,7 +17,6 @@
 #include <core/numeric/checked-cast.hpp>
 #include <core/safety/annotations.hpp>
 #include <core/safety/checked-access.hpp>
-#include <core/types/enum-reflection.hpp>
 #include <core/types/integer.hpp>
 
 #include <domain/error.hpp>
@@ -1589,10 +1588,14 @@ namespace uf::authoring
 
     auto authoringErrorJson(Error const& error) -> std::string
     {
+        // The wire name, not the enumerator spelling. Every other JSON surface in
+        // the tree already answers with it -- the trace's errorKind, the Luau
+        // uf.errors table, the drive protocol's results -- so an agent reading two
+        // of them had to carry two spellings of one kind.
         auto kindName = std::optional<std::string_view>{};
         if (auto const kind = automationErrorKind(error); kind)
         {
-            kindName = enumName(*kind);
+            kindName = automationErrorWireName(*kind);
         }
 
         auto context = std::vector<std::string>{};

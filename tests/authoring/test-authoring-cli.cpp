@@ -732,14 +732,16 @@ namespace uf::authoring
         // And the answer an agent reads is not the answer a miss produces. The
         // kind names a recognition that never finished, and the response names
         // the branch: observe again, rather than conclude the anchor is absent.
-        CHECK(stopped.json.contains("\"kind\":\"RecognitionIncomplete\""));
+        // Both fields carry the wire spelling, which is the one every other JSON
+        // surface answers with; the enumerator spelling appeared here alone.
+        CHECK(stopped.json.contains("\"kind\":\"recognition_incomplete\""));
         CHECK(stopped.json.contains("\"response\":\"retry\""));
         CHECK(stopped.json.contains("budget exhausted"));
         CHECK_FALSE(stopped.json.contains("\"hit\":"));
 
         // The other half: the completed miss carries no failure classification at
         // all, so the two outcomes cannot be read as the same thing.
-        CHECK_FALSE(missed.json.contains("RecognitionIncomplete"));
+        CHECK_FALSE(missed.json.contains("recognition_incomplete"));
         CHECK_FALSE(missed.json.contains("\"response\":"));
         CHECK(missed.exitCode == cli::ExitCode::Success);
     }
