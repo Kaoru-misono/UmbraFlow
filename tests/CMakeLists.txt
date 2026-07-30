@@ -200,7 +200,6 @@ if(TARGET ${PROJECT_NAME}_workbench_support)
     cpp_add_test(
         NAME test-workbench
         SOURCES
-            workbench/asan-smoke-fixture.cpp
             workbench/test-authoring-actions.cpp
             workbench/test-authoring-edit.cpp
             workbench/test-canvas-math.cpp
@@ -218,45 +217,10 @@ if(TARGET ${PROJECT_NAME}_workbench_support)
             ${PROJECT_NAME}_image
     )
 
-    # AddressSanitizer smoke: run the real umbra-workbench GUI with --smoke N over
-    # a generated project so the whole panel draw path is exercised under ASan.
-    # The prescription lives in docs/pitfalls/workbench-authoring-ui.md. The smoke
-    # target only exists where the GUI executable does (it needs the controller
-    # for WGC capture ingestion). The fixture is generated fresh into the build
-    # tree by a skipped doctest case in test-workbench, so a clean checkout needs
-    # no committed binary assets. Its own label keeps it off the CI set; a CI job
-    # that configures/builds the x64-asan preset and runs `ctest -L AsanSmoke` is
-    # still pending (Actions billing is currently blocked).
-    set(ASAN_SMOKE_FIXTURE_ROOT "${CMAKE_CURRENT_BINARY_DIR}/asan-smoke-project")
-    target_compile_definitions(test-workbench PRIVATE
-        UF_ASAN_SMOKE_FIXTURE_ROOT="${ASAN_SMOKE_FIXTURE_ROOT}"
-    )
-
-    if(WIN32 AND TARGET ${PROJECT_NAME}_workbench)
-        add_test(
-            NAME asan-smoke-fixture
-            COMMAND test-workbench
-                --test-case=workbench\ emits\ the\ AddressSanitizer\ smoke\ fixture
-                --no-skip
-        )
-        set_tests_properties(asan-smoke-fixture PROPERTIES
-            FIXTURES_SETUP ASAN_SMOKE_PROJECT
-            LABELS "AsanSmoke"
-            TIMEOUT 60
-        )
-
-        add_test(
-            NAME workbench-asan-smoke
-            COMMAND $<TARGET_FILE:${PROJECT_NAME}_workbench>
-                "${ASAN_SMOKE_FIXTURE_ROOT}"
-                --smoke 180
-        )
-        set_tests_properties(workbench-asan-smoke PROPERTIES
-            FIXTURES_REQUIRED ASAN_SMOKE_PROJECT
-            LABELS "AsanSmoke"
-            TIMEOUT 120
-        )
-    endif()
+    # The AddressSanitizer smoke test drove the archived umbra-workbench GUI over
+    # a generated project to exercise the panel draw path. Both the GUI and the
+    # fixture generator went with it; git history holds them, and
+    # docs/pitfalls/workbench-authoring-ui.md keeps the prescription.
 
     # The authoring CLI drives the same persistence and edit layer, so its test
     # is registered beside the workbench's and reaches across to the colour-key

@@ -198,99 +198,17 @@ if(WIN32 AND TARGET ${PROJECT_NAME}_annotation)
     )
     target_compile_features(${WORKBENCH_LIBRARY} PUBLIC cxx_std_23)
 
-    # One-shot Windows Graphics Capture ingestion reuses the controller capture
-    # session, so it is only compiled where the controller module is present.
-    if(TARGET ${PROJECT_NAME}_controller)
-        target_sources(${WORKBENCH_LIBRARY}
-            PRIVATE
-                workbench/platform/windows-capture-source.cpp
-                workbench/platform/windows-capture-source.hpp
-        )
-        target_link_libraries(${WORKBENCH_LIBRARY}
-            PRIVATE
-                ${PROJECT_NAME}_controller
-        )
-    endif()
+    # The Dear ImGui workbench GUI that once sat on top of this library was
+    # archived; git history holds it. What remains here is the platform-free
+    # authoring backend the CLI below drives, so the library carries no ImGui,
+    # no Direct3D 11 shell, and no Windows Graphics Capture ingestion.
 
-    # The GUI executable needs the controller for WGC capture ingestion. It does
-    # not need the engine: the recognition core it shares with the runtime is
-    # annotation::RecognitionRuntime, and the runtime consumes only the manifest
-    # and template assets the workbench publishes last. Dear ImGui and the
-    # Direct3D 11 shell live only behind this gate, so the platform-free
-    # workbench_support stays free of them.
-    if(TARGET ${PROJECT_NAME}_controller)
-        set(IMGUI_LIBRARY imgui)
-
-        # Dear ImGui ships no build system, so the core translation units and the
-        # Win32 + Direct3D 11 backends are compiled here as a private static
-        # library. Its headers are exported SYSTEM so the project's strict
-        # warnings-as-errors profile never fires on third-party code, mirroring how
-        # modules/script/external isolates Luau.
-        add_library(${IMGUI_LIBRARY} STATIC
-            workbench/external/imgui/imgui.cpp
-            workbench/external/imgui/imgui_draw.cpp
-            workbench/external/imgui/imgui_tables.cpp
-            workbench/external/imgui/imgui_widgets.cpp
-            workbench/external/imgui/backends/imgui_impl_win32.cpp
-            workbench/external/imgui/backends/imgui_impl_dx11.cpp
-        )
-        target_include_directories(${IMGUI_LIBRARY} SYSTEM PUBLIC
-            workbench/external/imgui
-            workbench/external/imgui/backends
-        )
-        if(MSVC)
-            target_compile_options(${IMGUI_LIBRARY} PRIVATE /W0)
-        endif()
-        target_link_libraries(${IMGUI_LIBRARY}
-            PUBLIC
-                d3d11
-                dxgi
-                dwmapi
-                imm32
-                user32
-                gdi32
-        )
-        target_compile_features(${IMGUI_LIBRARY} PRIVATE cxx_std_17)
-
-        set(WORKBENCH_EXECUTABLE ${PROJECT_NAME}_workbench)
-
-        add_executable(${WORKBENCH_EXECUTABLE}
-            workbench/app/main.cpp
-            workbench/app/panels.cpp
-            workbench/app/panels.hpp
-            workbench/platform/windows-file-dialog.cpp
-            workbench/platform/windows-file-dialog.hpp
-            workbench/platform/windows-gui-shell.cpp
-            workbench/platform/windows-gui-shell.hpp
-            workbench/platform/windows-texture-cache.cpp
-            workbench/platform/windows-texture-cache.hpp
-            ${CPP_UTF8_RC}
-        )
-        cpp_apply_safety_profile(${WORKBENCH_EXECUTABLE})
-        cpp_apply_utf8_manifest(${WORKBENCH_EXECUTABLE})
-        set_target_properties(${WORKBENCH_EXECUTABLE} PROPERTIES
-            OUTPUT_NAME "umbra-workbench"
-        )
-        target_link_libraries(${WORKBENCH_EXECUTABLE}
-            PRIVATE
-                ${WORKBENCH_LIBRARY}
-                ${PROJECT_NAME}_controller
-                ${PROJECT_NAME}_image
-                ${IMGUI_LIBRARY}
-                comdlg32
-                d3d11
-                dxgi
-                user32
-        )
-        target_compile_features(${WORKBENCH_EXECUTABLE} PRIVATE cxx_std_23)
-    endif()
-
-    # A development tool, not product surface: it lets an agent author a project
-    # from measured numbers instead of dragging rectangles in the GUI. It shares
-    # the workbench's persistence and edit layer rather than reimplementing
-    # either, so every write it makes goes through AuthoringDocument's
-    # validation exactly as the GUI's does. It is a separate binary precisely so
-    # nothing in the product can come to depend on it.
+    # A development tool, and since the GUI was archived the only way to author a
+    # project: it works from measured numbers rather than dragged rectangles. It
+    # shares the persistence and edit layer rather than reimplementing either, so
+    # every write it makes goes through AuthoringDocument's validation. It is a
+    # separate binary precisely so nothing in the product can come to depend on
+    # it.
     set(AUTHORING_LIBRARY ${PROJECT_NAME}_authoring_support)
     set(AUTHORING_EXECUTABLE ${PROJECT_NAME}_authoring)
 
