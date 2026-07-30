@@ -13,6 +13,7 @@
 
 #include <array>
 #include <optional>
+#include <string>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -26,6 +27,28 @@ namespace uf::annotation
         constexpr auto k_pageAId = "00000000-0000-0000-0000-000000000101";
         constexpr auto k_pageBId = "00000000-0000-0000-0000-000000000102";
 
+        [[nodiscard]]
+        auto singleVariantAnchor(
+            ElementId id,
+            std::string name,
+            PixelRect templateRect
+        ) -> RecognizerDefinition
+        {
+            return test::recognizer(
+                test::fingerprint(),
+                id,
+                std::move(name),
+                test::capabilities(Identify{}),
+                test::pixelRect(0, 0, 4, 4),
+                std::vector<RecognizerVariant>{
+                    test::recognizerVariant("only", templateRect),
+                }
+            );
+        }
+
+        // Every threshold and every rectangle in the evidence belongs to the
+        // variant that produced it, so the variant has to be named alongside the
+        // element it belongs to.
         auto anchorEvaluation(
             RecognizerDefinition const& recognizer,
             uint64 score
@@ -34,7 +57,13 @@ namespace uf::annotation
             auto const outcome = SadSearchOutcome{
                 std::optional<SadMatch>{SadMatch{0, 0, score}}
             };
-            auto result = AnchorEvaluation::fromSadOutcome(recognizer, outcome);
+            REQUIRE(recognizer.variants().size() == 1U);
+            auto result = AnchorEvaluation::fromSadOutcome(
+                recognizer,
+                recognizer.variants().front(),
+                recognizer.searchRoi(),
+                outcome
+            );
             REQUIRE(result.has_value());
             return *std::move(result);
         }
@@ -57,33 +86,46 @@ namespace uf::annotation
             auto const pageB = test::pageId(k_pageBId);
             auto recognizers = std::vector<RecognizerDefinition>{};
             recognizers.emplace_back(
-                test::recognizer(
-                    projectFingerprint,
-                    anchorA,
-                    "anchor_a",
-                    AnnotationType::PageAnchor,
-                    test::pixelRect(0, 0, 1, 1),
-                    test::pixelRect(0, 0, 4, 4)
-                )
+                singleVariantAnchor(anchorA, "anchor_a", test::pixelRect(0, 0, 1, 1))
             );
             recognizers.emplace_back(
-                test::recognizer(
-                    projectFingerprint,
-                    anchorB,
-                    "anchor_b",
-                    AnnotationType::PageAnchor,
-                    test::pixelRect(0, 0, 1, 1),
-                    test::pixelRect(0, 0, 4, 4)
+                singleVariantAnchor(anchorB, "anchor_b", test::pixelRect(0, 0, 1, 1))
+            );
+
+            // page_a requires A and forbids B; page_b requires A alone. The two
+            // signatures are derived from exactly these rows.
+            auto references = std::vector<PageReference>{};
+            references.emplace_back(
+                test::reference(
+                    pageA,
+                    anchorA,
+                    test::identifiesAs(SignatureRole::Required)
                 )
             );
-            auto pages = std::vector<PageSignature>{};
-            pages.emplace_back(test::page(pageA, "page_a", {anchorA}, {anchorB}));
-            pages.emplace_back(test::page(pageB, "page_b", {anchorA}));
+            references.emplace_back(
+                test::reference(
+                    pageA,
+                    anchorB,
+                    test::identifiesAs(SignatureRole::Forbidden)
+                )
+            );
+            references.emplace_back(
+                test::reference(
+                    pageB,
+                    anchorA,
+                    test::identifiesAs(SignatureRole::Required),
+                    Holding::Referenced
+                )
+            );
             return ResolutionFixture{
                 .catalog = test::catalog(
                     projectFingerprint,
                     std::move(recognizers),
-                    std::move(pages)
+                    {
+                        test::page(pageA, "page_a"),
+                        test::page(pageB, "page_b"),
+                    },
+                    std::move(references)
                 ),
                 .anchorA = anchorA,
                 .anchorB = anchorB,
@@ -116,14 +158,10 @@ namespace uf::annotation
 
     TEST_CASE("anchor evidence accepts the inclusive integer SAD boundary")
     {
-        auto const projectFingerprint = test::fingerprint();
-        auto const anchor = test::recognizer(
-            projectFingerprint,
+        auto const anchor = singleVariantAnchor(
             test::elementId(k_anchorAId),
             "anchor",
-            AnnotationType::PageAnchor,
-            test::pixelRect(0, 0, 2, 2),
-            test::pixelRect(0, 0, 4, 4)
+            test::pixelRect(0, 0, 2, 2)
         );
         struct BoundaryCase final
         {
@@ -146,6 +184,10 @@ namespace uf::annotation
             CHECK(p_evidence->hit() == testCase.hit);
             CHECK(p_evidence->sadScore() == testCase.score);
             REQUIRE(p_evidence->matchedRect().has_value());
+            // Which appearance answered is part of the evidence, or "why did
+            // this match" cannot be read back out of the stream.
+            REQUIRE(p_evidence->variantName().has_value());
+            CHECK(p_evidence->variantName()->value() == "only");
         }
     }
 
@@ -183,6 +225,7 @@ namespace uf::annotation
         auto const fixture = resolutionFixture();
         auto const* p_anchor = fixture.catalog.findRecognizer(fixture.anchorA);
         REQUIRE(p_anchor != nullptr);
+        REQUIRE(p_anchor->variants().size() == 1U);
         auto const identity = FrameIdentity{
             CaptureSessionId{7},
             TargetGeneration::fromValue(3),
@@ -231,6 +274,8 @@ namespace uf::annotation
             auto const sadOutcome = SadSearchOutcome{testCase.reason};
             auto const evaluation = AnchorEvaluation::fromSadOutcome(
                 *p_anchor,
+                p_anchor->variants().front(),
+                p_anchor->searchRoi(),
                 sadOutcome
             );
             REQUIRE(evaluation.has_value());

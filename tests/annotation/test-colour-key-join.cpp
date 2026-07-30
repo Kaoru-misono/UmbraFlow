@@ -82,22 +82,22 @@ namespace uf::annotation
             std::optional<ColourKey> colourKey
         ) -> Element
         {
-            auto result = Element::create(
+            return test::element(
                 fingerprint,
-                Element::Spec{
-                    .id           = id,
-                    .name         = test::resourceName(std::move(name)),
-                    .sourceId     = sourceId,
-                    .templateRect = wholeCrop(),
-                    .searchRoi    = wholeCrop(),
-                    .threshold    = test::threshold(),
-                    .colourKey    = colourKey,
-                    .kind         = AnchorElement{},
-                    .shared       = false,
+                id,
+                std::move(name),
+                test::capabilities(Identify{}),
+                wholeCrop(),
+                std::vector<Variant>{
+                    test::variant(
+                        "only",
+                        sourceId,
+                        wholeCrop(),
+                        test::threshold(),
+                        colourKey
+                    ),
                 }
             );
-            REQUIRE(result.has_value());
-            return *std::move(result);
         }
 
         struct AuthoredProject final
@@ -155,16 +155,31 @@ namespace uf::annotation
                 )
             );
 
+            auto references = std::vector<PageReference>{};
+            references.emplace_back(
+                test::reference(
+                    test::pageId(k_keyedPageId),
+                    keyedId,
+                    test::identifiesAs()
+                )
+            );
+            references.emplace_back(
+                test::reference(
+                    test::pageId(k_unkeyedPageId),
+                    unkeyedId,
+                    test::identifiesAs()
+                )
+            );
             auto document = AuthoringDocument::create(
                 test::projectId("personal.colour_key_join"),
                 fingerprint,
                 {*source},
                 std::move(elements),
                 {
-                    test::page(test::pageId(k_keyedPageId), "keyed", {keyedId}),
-                    test::page(test::pageId(k_unkeyedPageId), "unkeyed", {unkeyedId}),
+                    test::page(test::pageId(k_keyedPageId), "keyed"),
+                    test::page(test::pageId(k_unkeyedPageId), "unkeyed"),
                 },
-                {},
+                std::move(references),
                 {}
             );
             REQUIRE(document.has_value());
@@ -280,10 +295,12 @@ namespace uf::annotation
             REQUIRE(compiled.has_value());
 
             auto const* p_keyed = compiled->runtimeManifest.findAsset(
-                test::elementId(k_keyedId)
+                test::elementId(k_keyedId),
+                test::resourceName("only")
             );
             auto const* p_unkeyed = compiled->runtimeManifest.findAsset(
-                test::elementId(k_unkeyedId)
+                test::elementId(k_unkeyedId),
+                test::resourceName("only")
             );
             REQUIRE(p_keyed != nullptr);
             REQUIRE(p_unkeyed != nullptr);

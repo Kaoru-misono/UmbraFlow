@@ -1,7 +1,6 @@
 #include "test-helpers.hpp"
 
 #include <annotation/capabilities.hpp>
-#include <annotation/catalog.hpp>
 
 #include <domain/error.hpp>
 
@@ -15,9 +14,6 @@ namespace uf::annotation
 {
     namespace
     {
-        constexpr auto k_elementId = "00000000-0000-0000-0000-000000000201";
-        constexpr auto k_pageId    = "00000000-0000-0000-0000-000000000202";
-
         // Which of the three capabilities one case turns on. The subset rule has
         // to hold over every combination on both sides, and spelling out
         // fourteen optionals per case would bury the property being checked.
@@ -85,37 +81,6 @@ namespace uf::annotation
         }
     }
 
-    TEST_CASE("each annotation type reads as exactly one capability")
-    {
-        auto const anchor = ElementCapabilities::fromAnnotationType(
-            AnnotationType::PageAnchor,
-            std::nullopt
-        );
-        CHECK(anchor.hasIdentify());
-        CHECK_FALSE(anchor.hasInteract());
-        CHECK_FALSE(anchor.hasRead());
-
-        auto const clickOffset = TemplateOffset::create(1, 2, 4, 4);
-        REQUIRE(clickOffset.has_value());
-        auto const target = ElementCapabilities::fromAnnotationType(
-            AnnotationType::ActionTarget,
-            *clickOffset
-        );
-        CHECK_FALSE(target.hasIdentify());
-        REQUIRE(target.hasInteract());
-        CHECK_FALSE(target.hasRead());
-        REQUIRE(target.interact()->clickOffset.has_value());
-        CHECK(*target.interact()->clickOffset == *clickOffset);
-
-        auto const info = ElementCapabilities::fromAnnotationType(
-            AnnotationType::InfoRegion,
-            std::nullopt
-        );
-        CHECK_FALSE(info.hasIdentify());
-        CHECK_FALSE(info.hasInteract());
-        CHECK(info.hasRead());
-    }
-
     TEST_CASE("an element no capability can reach is refused at construction")
     {
         auto const empty = ElementCapabilities::create(
@@ -164,6 +129,36 @@ namespace uf::annotation
             CHECK(capabilities->hasInteract() == combination.interact.has_value());
             CHECK(capabilities->hasRead() == combination.read.has_value());
         }
+    }
+
+    TEST_CASE("the click offset an element carries belongs to its interact capability")
+    {
+        // The rule this replaces was a cross-field one -- "only an action_target
+        // may define a default click" -- and it needed a test because a spec
+        // could state a click beside any of the three types. It is now a fact of
+        // the type: the offset lives inside Interact and there is nowhere else
+        // to put it, so the only thing left worth checking is that the payload
+        // survives construction.
+        auto const clickOffset = TemplateOffset::create(1, 2, 4, 4);
+        REQUIRE(clickOffset.has_value());
+        auto const withClick = ElementCapabilities::create(
+            std::nullopt,
+            Interact{.clickOffset = *clickOffset},
+            std::nullopt
+        );
+        REQUIRE(withClick.has_value());
+        REQUIRE(withClick->hasInteract());
+        REQUIRE(withClick->interact()->clickOffset.has_value());
+        CHECK(*withClick->interact()->clickOffset == *clickOffset);
+
+        auto const withoutClick = ElementCapabilities::create(
+            std::nullopt,
+            Interact{},
+            std::nullopt
+        );
+        REQUIRE(withoutClick.has_value());
+        REQUIRE(withoutClick->hasInteract());
+        CHECK_FALSE(withoutClick->interact()->clickOffset.has_value());
     }
 
     TEST_CASE("read parameters default to a single line with no charset restriction")
@@ -283,67 +278,5 @@ namespace uf::annotation
                 CHECK(exercised.isSubsetOf(declared) == expected);
             }
         }
-    }
-
-    TEST_CASE("a recognizer definition derives its capability from its annotation type")
-    {
-        auto const projectFingerprint = test::fingerprint();
-        auto const elementId          = test::elementId(k_elementId);
-        auto const pageId             = test::pageId(k_pageId);
-        auto const templateRect       = test::pixelRect(0, 0, 2, 2);
-        auto const searchRoi          = test::pixelRect(0, 0, 4, 4);
-
-        auto const anchor = test::recognizer(
-            projectFingerprint,
-            elementId,
-            "home_marker",
-            AnnotationType::PageAnchor,
-            templateRect,
-            searchRoi
-        );
-        CHECK(anchor.capabilities().hasIdentify());
-        CHECK_FALSE(anchor.capabilities().hasInteract());
-        CHECK_FALSE(anchor.capabilities().hasRead());
-
-        auto const clickOffset = TemplateOffset::create(1, 1, 2, 2);
-        REQUIRE(clickOffset.has_value());
-        auto const target = test::recognizer(
-            projectFingerprint,
-            elementId,
-            "daily_button",
-            AnnotationType::ActionTarget,
-            templateRect,
-            searchRoi,
-            {pageId},
-            *clickOffset
-        );
-        auto const targetCapabilities = target.capabilities();
-        CHECK_FALSE(targetCapabilities.hasIdentify());
-        REQUIRE(targetCapabilities.hasInteract());
-        CHECK_FALSE(targetCapabilities.hasRead());
-        REQUIRE(targetCapabilities.interact()->clickOffset.has_value());
-        CHECK(*targetCapabilities.interact()->clickOffset == *clickOffset);
-
-        auto const info = test::recognizer(
-            projectFingerprint,
-            elementId,
-            "level_value",
-            AnnotationType::InfoRegion,
-            templateRect,
-            searchRoi
-        );
-        CHECK_FALSE(info.capabilities().hasIdentify());
-        CHECK_FALSE(info.capabilities().hasInteract());
-        CHECK(info.capabilities().hasRead());
-
-        // The derivation stays a reading of the stored type, not a second fact
-        // alongside it.
-        CHECK(
-            info.capabilities()
-            == ElementCapabilities::fromAnnotationType(
-                info.annotationType(),
-                info.defaultClick()
-            )
-        );
     }
 }

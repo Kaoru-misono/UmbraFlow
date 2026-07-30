@@ -43,6 +43,66 @@ namespace uf::annotation
             CHECK(error.message().find(expected) != std::string_view::npos);
         }
 
+        [[nodiscard]]
+        auto anchorElement(
+            ElementId id,
+            std::string name,
+            PixelRect templateRect
+        ) -> RecognizerDefinition
+        {
+            return test::recognizer(
+                test::fingerprint(),
+                id,
+                std::move(name),
+                test::capabilities(Identify{}),
+                test::pixelRect(0, 0, 4, 4),
+                std::vector<RecognizerVariant>{
+                    test::recognizerVariant("only", templateRect),
+                }
+            );
+        }
+
+        [[nodiscard]]
+        auto interactiveElement(ElementId id, std::string name) -> RecognizerDefinition
+        {
+            return test::recognizer(
+                test::fingerprint(),
+                id,
+                std::move(name),
+                test::capabilities(std::nullopt, Interact{}),
+                test::pixelRect(0, 0, 4, 4),
+                std::vector<RecognizerVariant>{
+                    test::recognizerVariant("only", test::pixelRect(1, 1, 1, 1)),
+                }
+            );
+        }
+
+        [[nodiscard]]
+        auto hitEvaluation(RecognizerDefinition const& recognizer) -> AnchorEvaluation
+        {
+            auto result = AnchorEvaluation::fromSadOutcome(
+                recognizer,
+                recognizer.variants().front(),
+                recognizer.searchRoi(),
+                SadSearchOutcome{std::optional<SadMatch>{SadMatch{0, 0, 0}}}
+            );
+            REQUIRE(result.has_value());
+            return *std::move(result);
+        }
+
+        [[nodiscard]]
+        auto missEvaluation(RecognizerDefinition const& recognizer) -> AnchorEvaluation
+        {
+            auto result = AnchorEvaluation::fromSadOutcome(
+                recognizer,
+                recognizer.variants().front(),
+                recognizer.searchRoi(),
+                SadSearchOutcome{std::optional<SadMatch>{}}
+            );
+            REQUIRE(result.has_value());
+            return *std::move(result);
+        }
+
         struct AuthorizationFixture final
         {
             ProjectFingerprint fingerprint{test::fingerprint()};
@@ -61,41 +121,24 @@ namespace uf::annotation
             auto const pageId = test::pageId(k_pageId);
             auto recognizers = std::vector<RecognizerDefinition>{};
             recognizers.emplace_back(
-                test::recognizer(
-                    projectFingerprint,
-                    anchorId,
-                    "home_marker",
-                    AnnotationType::PageAnchor,
-                    test::pixelRect(0, 0, 1, 1),
-                    test::pixelRect(0, 0, 4, 4)
-                )
+                anchorElement(anchorId, "home_marker", test::pixelRect(0, 0, 1, 1))
             );
-            recognizers.emplace_back(
-                test::recognizer(
-                    projectFingerprint,
-                    actionId,
-                    "daily_button",
-                    AnnotationType::ActionTarget,
-                    test::pixelRect(1, 1, 1, 1),
-                    test::pixelRect(0, 0, 4, 4),
-                    {pageId}
-                )
+            recognizers.emplace_back(interactiveElement(actionId, "daily_button"));
+            auto references = std::vector<PageReference>{};
+            references.emplace_back(
+                test::reference(pageId, anchorId, test::identifiesAs())
+            );
+            references.emplace_back(
+                test::reference(pageId, actionId, test::interacts())
             );
             auto catalog = test::catalog(
                 projectFingerprint,
                 std::move(recognizers),
-                {test::page(pageId, "home", {anchorId})}
+                {test::page(pageId, "home")},
+                std::move(references)
             );
             auto const* p_anchor = catalog.findRecognizer(anchorId);
             REQUIRE(p_anchor != nullptr);
-            auto const sadOutcome = SadSearchOutcome{
-                std::optional<SadMatch>{SadMatch{0, 0, 0}}
-            };
-            auto const evaluation = AnchorEvaluation::fromSadOutcome(
-                *p_anchor,
-                sadOutcome
-            );
-            REQUIRE(evaluation.has_value());
 
             auto frame = test::frame(
                 projectFingerprint,
@@ -104,7 +147,7 @@ namespace uf::annotation
                 FrameId{11},
                 test::instantAt(MonotonicInstant::Duration{100})
             );
-            auto const evaluations = std::array{*evaluation};
+            auto const evaluations = std::array{hitEvaluation(*p_anchor)};
             auto outcome = PageResolver::resolve(
                 catalog,
                 FrameIdentity::fromFrame(frame),
@@ -213,7 +256,7 @@ namespace uf::annotation
         );
     }
 
-    TEST_CASE("action detection retains recognizer identity instead of trusting its label")
+    TEST_CASE("action detection retains element identity instead of trusting its label")
     {
         auto const fixture = authorizationFixture();
         auto const mismatched = ActionDetection::create(
@@ -227,6 +270,8 @@ namespace uf::annotation
             "detection label does not match its bound recognizer identity"
         );
 
+        // The anchor is a real catalog element under a real name; what it does
+        // not declare is interact, and there is nothing else to deliver to.
         auto const anchorBound = ActionDetection::create(
             fixture.catalog,
             test::elementId(k_anchorId),
@@ -235,11 +280,11 @@ namespace uf::annotation
         REQUIRE_FALSE(anchorBound.has_value());
         requireActionRejected(
             anchorBound.error(),
-            "detection is not bound to a catalog action_target"
+            "detection is not bound to an interactive catalog element"
         );
     }
 
-    TEST_CASE("coordinate action refuses a page the recognizer does not authorize")
+    TEST_CASE("coordinate action refuses a page that does not exercise interact on the element")
     {
         auto const projectFingerprint = test::fingerprint();
         auto const homeAnchorId       = test::elementId(k_anchorId);
@@ -250,60 +295,39 @@ namespace uf::annotation
 
         auto recognizers = std::vector<RecognizerDefinition>{};
         recognizers.emplace_back(
-            test::recognizer(
-                projectFingerprint,
-                homeAnchorId,
-                "home_marker",
-                AnnotationType::PageAnchor,
-                test::pixelRect(0, 0, 1, 1),
-                test::pixelRect(0, 0, 4, 4)
-            )
+            anchorElement(homeAnchorId, "home_marker", test::pixelRect(0, 0, 1, 1))
         );
         recognizers.emplace_back(
-            test::recognizer(
-                projectFingerprint,
-                awayAnchorId,
-                "away_marker",
-                AnnotationType::PageAnchor,
-                test::pixelRect(2, 2, 1, 1),
-                test::pixelRect(0, 0, 4, 4)
-            )
+            anchorElement(awayAnchorId, "away_marker", test::pixelRect(2, 2, 1, 1))
         );
-        // Authorizes the away page only, while the frame resolves to home.
-        recognizers.emplace_back(
-            test::recognizer(
-                projectFingerprint,
-                actionId,
-                "daily_button",
-                AnnotationType::ActionTarget,
-                test::pixelRect(1, 1, 1, 1),
-                test::pixelRect(0, 0, 4, 4),
-                {awayPageId}
-            )
+        recognizers.emplace_back(interactiveElement(actionId, "daily_button"));
+
+        // Only the away page references the button for interaction, while the
+        // frame resolves to home. The authorisation IS that missing reference.
+        auto references = std::vector<PageReference>{};
+        references.emplace_back(
+            test::reference(homePageId, homeAnchorId, test::identifiesAs())
+        );
+        references.emplace_back(
+            test::reference(awayPageId, awayAnchorId, test::identifiesAs())
+        );
+        references.emplace_back(
+            test::reference(awayPageId, actionId, test::interacts())
         );
         auto catalog = test::catalog(
             projectFingerprint,
             std::move(recognizers),
             {
-                test::page(homePageId, "home", {homeAnchorId}),
-                test::page(awayPageId, "away", {awayAnchorId}),
-            }
+                test::page(homePageId, "home"),
+                test::page(awayPageId, "away"),
+            },
+            std::move(references)
         );
 
         auto const* p_home = catalog.findRecognizer(homeAnchorId);
         auto const* p_away = catalog.findRecognizer(awayAnchorId);
         REQUIRE(p_home != nullptr);
         REQUIRE(p_away != nullptr);
-        auto const present = AnchorEvaluation::fromSadOutcome(
-            *p_home,
-            SadSearchOutcome{std::optional<SadMatch>{SadMatch{0, 0, 0}}}
-        );
-        auto const absent = AnchorEvaluation::fromSadOutcome(
-            *p_away,
-            SadSearchOutcome{std::optional<SadMatch>{}}
-        );
-        REQUIRE(present.has_value());
-        REQUIRE(absent.has_value());
 
         auto frame = test::frame(
             projectFingerprint,
@@ -312,7 +336,10 @@ namespace uf::annotation
             FrameId{11},
             test::instantAt(MonotonicInstant::Duration{100})
         );
-        auto const evaluations = std::array{*present, *absent};
+        auto const evaluations = std::array{
+            hitEvaluation(*p_home),
+            missEvaluation(*p_away),
+        };
         auto outcome = PageResolver::resolve(
             catalog,
             FrameIdentity::fromFrame(frame),
@@ -361,7 +388,7 @@ namespace uf::annotation
         REQUIRE_FALSE(unauthorized.has_value());
         requireActionRejected(
             unauthorized.error(),
-            "action recognizer does not authorize the resolved page"
+            "the resolved page does not exercise interact on this element"
         );
     }
 
@@ -377,23 +404,25 @@ namespace uf::annotation
 
         auto const anchorId = test::elementId(k_anchorId);
         auto const pageId   = test::pageId(k_pageId);
-        auto anchorOnly     = std::vector<RecognizerDefinition>{};
+        auto const anchorOnlyReferences = [&]
+        {
+            auto references = std::vector<PageReference>{};
+            references.emplace_back(
+                test::reference(pageId, anchorId, test::identifiesAs())
+            );
+            return references;
+        };
+        auto anchorOnly = std::vector<RecognizerDefinition>{};
         anchorOnly.emplace_back(
-            test::recognizer(
-                fixture.fingerprint,
-                anchorId,
-                "home_marker",
-                AnnotationType::PageAnchor,
-                test::pixelRect(0, 0, 1, 1),
-                test::pixelRect(0, 0, 4, 4)
-            )
+            anchorElement(anchorId, "home_marker", test::pixelRect(0, 0, 1, 1))
         );
 
-        // Same project identity, but the action recognizer is gone.
+        // Same project identity, but the interactive element is gone.
         auto const withoutAction = test::catalog(
             fixture.fingerprint,
             anchorOnly,
-            {test::page(pageId, "home", {anchorId})}
+            {test::page(pageId, "home")},
+            anchorOnlyReferences()
         );
         auto const absent = authorizeCoordinateAction(
             withoutAction,
@@ -405,7 +434,7 @@ namespace uf::annotation
         REQUIRE_FALSE(absent.has_value());
         requireActionRejected(
             absent.error(),
-            "page or action recognizer is absent from the active catalog"
+            "page or interactive element is absent from the active catalog"
         );
 
         // Structurally identical catalog under a different project identity.
@@ -413,7 +442,8 @@ namespace uf::annotation
             test::projectId("personal.other"),
             fixture.fingerprint,
             std::move(anchorOnly),
-            {test::page(pageId, "home", {anchorId})}
+            {test::page(pageId, "home")},
+            anchorOnlyReferences()
         );
         REQUIRE(foreign.has_value());
         auto const mismatchedProject = authorizeCoordinateAction(

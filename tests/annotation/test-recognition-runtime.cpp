@@ -24,6 +24,7 @@
 #include <optional>
 #include <span>
 #include <stop_token>
+#include <string>
 #include <string_view>
 #include <utility>
 #include <variant>
@@ -82,6 +83,45 @@ namespace uf::annotation
             };
         }
 
+        // One element with exactly one appearance, which is what every fixture
+        // below wants: the fold across several is the annotation-model test's
+        // subject, not this file's.
+        [[nodiscard]]
+        auto oneVariantSpec(
+            ProjectFingerprint fingerprint,
+            ElementId id,
+            std::string name,
+            ElementCapabilities capabilities,
+            PixelRect templateRect,
+            ContentHash templateHash,
+            ContentHash sourceHash
+        ) -> RuntimeRecognizerSpec
+        {
+            return RuntimeRecognizerSpec{
+                .definition = test::recognizer(
+                    fingerprint,
+                    id,
+                    std::move(name),
+                    std::move(capabilities),
+                    test::pixelRect(0, 0, fingerprint.width(), fingerprint.height()),
+                    std::vector<RecognizerVariant>{
+                        test::recognizerVariant(
+                            "only",
+                            templateRect,
+                            test::threshold(10'000)
+                        ),
+                    }
+                ),
+                .variants = std::vector<RuntimeVariantAsset>{
+                    RuntimeVariantAsset{
+                        .variantName  = test::resourceName("only"),
+                        .templateHash = templateHash,
+                        .sourceHash   = sourceHash,
+                    },
+                },
+            };
+        }
+
         enum class RuntimeTemplateLayout : uint8
         {
             Distinct,
@@ -124,45 +164,65 @@ namespace uf::annotation
             auto const sourceHash  = sha256(sourceBytes);
             REQUIRE(sourceHash.has_value());
 
+            auto recognizers = std::vector<RuntimeRecognizerSpec>{};
+            recognizers.emplace_back(
+                oneVariantSpec(
+                    fingerprint,
+                    anchorA,
+                    "anchor_a",
+                    test::capabilities(Identify{}),
+                    test::pixelRect(0, 0, 1, 1),
+                    templateA.hash,
+                    *sourceHash
+                )
+            );
+            recognizers.emplace_back(
+                oneVariantSpec(
+                    fingerprint,
+                    anchorB,
+                    "anchor_b",
+                    test::capabilities(Identify{}),
+                    test::pixelRect(0, 0, 1, 1),
+                    templateB.hash,
+                    *sourceHash
+                )
+            );
+
+            // page_a requires anchor_a and forbids anchor_b; page_b requires
+            // anchor_a alone, borrowing the anchor page_a owns.
+            auto references = std::vector<PageReference>{};
+            references.emplace_back(
+                test::reference(
+                    pageA,
+                    anchorA,
+                    test::identifiesAs(SignatureRole::Required)
+                )
+            );
+            references.emplace_back(
+                test::reference(
+                    pageA,
+                    anchorB,
+                    test::identifiesAs(SignatureRole::Forbidden)
+                )
+            );
+            references.emplace_back(
+                test::reference(
+                    pageB,
+                    anchorA,
+                    test::identifiesAs(SignatureRole::Required),
+                    Holding::Referenced
+                )
+            );
+
             auto manifest = RuntimeManifest::create(
                 test::projectId("personal.recognition_runtime"),
                 fingerprint,
+                std::move(recognizers),
                 {
-                    RuntimeRecognizerSpec{
-                        .definition = test::recognizer(
-                            fingerprint,
-                            anchorA,
-                            "anchor_a",
-                            AnnotationType::PageAnchor,
-                            test::pixelRect(0, 0, 1, 1),
-                            test::pixelRect(0, 0, 3, 1),
-                            {},
-                            std::nullopt,
-                            test::threshold(10'000)
-                        ),
-                        .templateHash = templateA.hash,
-                        .sourceHash   = *sourceHash,
-                    },
-                    RuntimeRecognizerSpec{
-                        .definition = test::recognizer(
-                            fingerprint,
-                            anchorB,
-                            "anchor_b",
-                            AnnotationType::PageAnchor,
-                            test::pixelRect(0, 0, 1, 1),
-                            test::pixelRect(0, 0, 3, 1),
-                            {},
-                            std::nullopt,
-                            test::threshold(10'000)
-                        ),
-                        .templateHash = templateB.hash,
-                        .sourceHash   = *sourceHash,
-                    },
+                    test::page(pageA, "page_a"),
+                    test::page(pageB, "page_b"),
                 },
-                {
-                    test::page(pageA, "page_a", {anchorA}, {anchorB}),
-                    test::page(pageB, "page_b", {anchorA}),
-                }
+                std::move(references)
             );
             REQUIRE(manifest.has_value());
             auto templates = std::vector<EncodedRuntimeTemplate>{};
@@ -190,8 +250,8 @@ namespace uf::annotation
         {
             RecognitionRuntime runtime;
             ProjectFingerprint fingerprint{test::fingerprint()};
-            ElementId       anchorA{test::elementId(k_anchorAId)};
-            ElementId       anchorB{test::elementId(k_anchorBId)};
+            ElementId          anchorA{test::elementId(k_anchorAId)};
+            ElementId          anchorB{test::elementId(k_anchorBId)};
             PageId             pageA{test::pageId(k_pageAId)};
             PageId             pageB{test::pageId(k_pageBId)};
         };
@@ -326,44 +386,46 @@ namespace uf::annotation
             auto const sourceHash  = sha256(sourceBytes);
             REQUIRE(sourceHash.has_value());
 
+            auto recognizers = std::vector<RuntimeRecognizerSpec>{};
+            recognizers.emplace_back(
+                oneVariantSpec(
+                    fingerprint,
+                    anchorA,
+                    "anchor_a",
+                    test::capabilities(Identify{}),
+                    test::pixelRect(0, 0, 1, 1),
+                    anchorTemplate.hash,
+                    *sourceHash
+                )
+            );
+            recognizers.emplace_back(
+                oneVariantSpec(
+                    fingerprint,
+                    actionT,
+                    "action_target",
+                    test::capabilities(std::nullopt, Interact{}),
+                    test::pixelRect(0, 0, 1, 1),
+                    actionTemplate.hash,
+                    *sourceHash
+                )
+            );
+
+            // page_a is recognised by the anchor and authorises the button,
+            // which is the whole of what "authorised" now means.
+            auto references = std::vector<PageReference>{};
+            references.emplace_back(
+                test::reference(pageA, anchorA, test::identifiesAs())
+            );
+            references.emplace_back(
+                test::reference(pageA, actionT, test::interacts())
+            );
+
             auto manifest = RuntimeManifest::create(
                 test::projectId("personal.action_target_runtime"),
                 fingerprint,
-                {
-                    RuntimeRecognizerSpec{
-                        .definition = test::recognizer(
-                            fingerprint,
-                            anchorA,
-                            "anchor_a",
-                            AnnotationType::PageAnchor,
-                            test::pixelRect(0, 0, 1, 1),
-                            test::pixelRect(0, 0, 3, 1),
-                            {},
-                            std::nullopt,
-                            test::threshold(10'000)
-                        ),
-                        .templateHash = anchorTemplate.hash,
-                        .sourceHash   = *sourceHash,
-                    },
-                    RuntimeRecognizerSpec{
-                        .definition = test::recognizer(
-                            fingerprint,
-                            actionT,
-                            "action_target",
-                            AnnotationType::ActionTarget,
-                            test::pixelRect(0, 0, 1, 1),
-                            test::pixelRect(0, 0, 3, 1),
-                            {pageA},
-                            std::nullopt,
-                            test::threshold(10'000)
-                        ),
-                        .templateHash = actionTemplate.hash,
-                        .sourceHash   = *sourceHash,
-                    },
-                },
-                {
-                    test::page(pageA, "page_a", {anchorA}),
-                }
+                std::move(recognizers),
+                {test::page(pageA, "page_a")},
+                std::move(references)
             );
             REQUIRE(manifest.has_value());
             auto templates = std::vector<EncodedRuntimeTemplate>{};
@@ -383,8 +445,8 @@ namespace uf::annotation
         {
             RecognitionRuntime runtime;
             ProjectFingerprint fingerprint{test::fingerprint(3, 1, 96, 96)};
-            ElementId       anchorA{test::elementId(k_anchorAId)};
-            ElementId       actionTarget{test::elementId(k_actionId)};
+            ElementId          anchorA{test::elementId(k_anchorAId)};
+            ElementId          actionTarget{test::elementId(k_actionId)};
             PageId             pageA{test::pageId(k_pageAId)};
         };
 
@@ -749,6 +811,7 @@ namespace uf::annotation
         auto const attempt = fixture.runtime.evaluateActionTarget(
             frame,
             fixture.fingerprint,
+            fixture.pageA,
             fixture.actionTarget,
             continuingPolicy(100)
         );
@@ -777,6 +840,7 @@ namespace uf::annotation
         auto const attempt = fixture.runtime.evaluateActionTarget(
             frame,
             fixture.fingerprint,
+            fixture.pageA,
             fixture.actionTarget,
             continuingPolicy(100)
         );
@@ -792,7 +856,7 @@ namespace uf::annotation
         CHECK(p_evidence->sadScore().value() > p_evidence->maximumSad());
     }
 
-    TEST_CASE("recognition runtime rejects recognizers that are not catalog action targets")
+    TEST_CASE("recognition runtime locates only what the given page authorises")
     {
         auto const fixture = actionFixture();
         auto const frame   = runtimeFrame(
@@ -804,6 +868,7 @@ namespace uf::annotation
         auto const unknown = fixture.runtime.evaluateActionTarget(
             frame,
             fixture.fingerprint,
+            fixture.pageA,
             test::elementId(k_anchorBId),
             continuingPolicy(100)
         );
@@ -814,16 +879,23 @@ namespace uf::annotation
             != std::string_view::npos
         );
 
-        auto const wrongType = fixture.runtime.evaluateActionTarget(
+        // A real element on a real page, which that page references only to
+        // identify itself. There is no action here to locate, and there is no
+        // second list to consult: the reference IS the authorisation.
+        auto const notExercised = fixture.runtime.evaluateActionTarget(
             frame,
             fixture.fingerprint,
+            fixture.pageA,
             fixture.anchorA,
             continuingPolicy(100)
         );
-        REQUIRE_FALSE(wrongType.has_value());
-        test::requireErrorKind(wrongType.error(), AutomationErrorKind::InvalidResource);
+        REQUIRE_FALSE(notExercised.has_value());
+        test::requireErrorKind(
+            notExercised.error(),
+            AutomationErrorKind::InvalidResource
+        );
         CHECK(
-            wrongType.error().message().find("action_target")
+            notExercised.error().message().find("does not exercise interact")
             != std::string_view::npos
         );
     }
@@ -840,6 +912,7 @@ namespace uf::annotation
         auto const incompatible = fixture.runtime.evaluateActionTarget(
             frame,
             test::fingerprint(3, 1, 120, 120),
+            fixture.pageA,
             fixture.actionTarget,
             continuingPolicy(100)
         );
@@ -865,6 +938,7 @@ namespace uf::annotation
         auto const cancelled = fixture.runtime.evaluateActionTarget(
             frame,
             fixture.fingerprint,
+            fixture.pageA,
             fixture.actionTarget,
             RecognitionPolicy{
                 .maximumPixelComparisons = 100,
@@ -883,6 +957,7 @@ namespace uf::annotation
         auto const exhausted = fixture.runtime.evaluateActionTarget(
             frame,
             fixture.fingerprint,
+            fixture.pageA,
             fixture.actionTarget,
             continuingPolicy(0)
         );
@@ -923,44 +998,43 @@ namespace uf::annotation
         auto const sourceHash  = sha256(sourceBytes);
         REQUIRE(sourceHash.has_value());
 
+        auto recognizers = std::vector<RuntimeRecognizerSpec>{};
+        recognizers.emplace_back(
+            oneVariantSpec(
+                fingerprint,
+                maskedId,
+                "masked_anchor",
+                test::capabilities(Identify{}),
+                test::pixelRect(0, 0, 2, 1),
+                maskedTemplate.hash,
+                *sourceHash
+            )
+        );
+        recognizers.emplace_back(
+            oneVariantSpec(
+                fingerprint,
+                opaqueId,
+                "opaque_anchor",
+                test::capabilities(Identify{}),
+                test::pixelRect(0, 0, 2, 1),
+                opaqueTemplate.hash,
+                *sourceHash
+            )
+        );
+        auto references = std::vector<PageReference>{};
+        references.emplace_back(
+            test::reference(pageA, maskedId, test::identifiesAs())
+        );
+        references.emplace_back(
+            test::reference(pageA, opaqueId, test::identifiesAs())
+        );
+
         auto manifest = RuntimeManifest::create(
             test::projectId("personal.masked_runtime"),
             fingerprint,
-            {
-                RuntimeRecognizerSpec{
-                    .definition = test::recognizer(
-                        fingerprint,
-                        maskedId,
-                        "masked_anchor",
-                        AnnotationType::PageAnchor,
-                        test::pixelRect(0, 0, 2, 1),
-                        test::pixelRect(0, 0, 3, 1),
-                        {},
-                        std::nullopt,
-                        test::threshold(10'000)
-                    ),
-                    .templateHash = maskedTemplate.hash,
-                    .sourceHash   = *sourceHash,
-                },
-                RuntimeRecognizerSpec{
-                    .definition = test::recognizer(
-                        fingerprint,
-                        opaqueId,
-                        "opaque_anchor",
-                        AnnotationType::PageAnchor,
-                        test::pixelRect(0, 0, 2, 1),
-                        test::pixelRect(0, 0, 3, 1),
-                        {},
-                        std::nullopt,
-                        test::threshold(10'000)
-                    ),
-                    .templateHash = opaqueTemplate.hash,
-                    .sourceHash   = *sourceHash,
-                },
-            },
-            {
-                test::page(pageA, "page_a", {maskedId, opaqueId}),
-            }
+            std::move(recognizers),
+            {test::page(pageA, "page_a")},
+            std::move(references)
         );
         REQUIRE(manifest.has_value());
         auto templates = std::vector<EncodedRuntimeTemplate>{};
@@ -1020,7 +1094,6 @@ namespace uf::annotation
     {
         auto const fingerprint = test::fingerprint(8, 8, 96, 96);
         auto const actionT     = test::elementId(k_actionId);
-        auto const pageA       = test::pageId(k_pageAId);
 
         auto const offset = TemplateOffset::create(2, 1, 4, 3);
         REQUIRE(offset.has_value());
@@ -1028,12 +1101,18 @@ namespace uf::annotation
             fingerprint,
             actionT,
             "action_target",
-            AnnotationType::ActionTarget,
+            test::capabilities(
+                std::nullopt,
+                Interact{.clickOffset = *offset}
+            ),
             test::pixelRect(0, 0, 4, 3),
-            test::pixelRect(0, 0, 4, 3),
-            {pageA},
-            *offset,
-            test::threshold(10'000)
+            std::vector<RecognizerVariant>{
+                test::recognizerVariant(
+                    "only",
+                    test::pixelRect(0, 0, 4, 3),
+                    test::threshold(10'000)
+                ),
+            }
         );
         auto const offsetClick = resolveClickPixel(
             withOffset,
@@ -1047,12 +1126,15 @@ namespace uf::annotation
             fingerprint,
             actionT,
             "action_target",
-            AnnotationType::ActionTarget,
+            test::capabilities(std::nullopt, Interact{}),
             test::pixelRect(0, 0, 3, 5),
-            test::pixelRect(0, 0, 3, 5),
-            {pageA},
-            std::nullopt,
-            test::threshold(10'000)
+            std::vector<RecognizerVariant>{
+                test::recognizerVariant(
+                    "only",
+                    test::pixelRect(0, 0, 3, 5),
+                    test::threshold(10'000)
+                ),
+            }
         );
         auto const centerClick = resolveClickPixel(
             centered,
@@ -1065,12 +1147,15 @@ namespace uf::annotation
             fingerprint,
             test::elementId(k_anchorAId),
             "anchor_a",
-            AnnotationType::PageAnchor,
+            test::capabilities(Identify{}),
             test::pixelRect(0, 0, 3, 5),
-            test::pixelRect(0, 0, 3, 5),
-            {},
-            std::nullopt,
-            test::threshold(10'000)
+            std::vector<RecognizerVariant>{
+                test::recognizerVariant(
+                    "only",
+                    test::pixelRect(0, 0, 3, 5),
+                    test::threshold(10'000)
+                ),
+            }
         );
         auto const rejected = resolveClickPixel(
             anchor,
@@ -1079,7 +1164,7 @@ namespace uf::annotation
         REQUIRE_FALSE(rejected.has_value());
         test::requireErrorKind(rejected.error(), AutomationErrorKind::InvalidResource);
         CHECK(
-            rejected.error().message().find("action_target")
+            rejected.error().message().find("interacts")
             != std::string_view::npos
         );
     }

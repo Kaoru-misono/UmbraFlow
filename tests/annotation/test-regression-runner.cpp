@@ -15,6 +15,7 @@
 #include <cstddef>
 #include <optional>
 #include <stop_token>
+#include <string>
 #include <string_view>
 #include <utility>
 #include <variant>
@@ -182,6 +183,56 @@ namespace uf::annotation
                 );
             }
 
+            auto const exactAnchor = [&](
+                ElementId id,
+                std::string name,
+                PixelRect templateRect
+            )
+            {
+                return test::element(
+                    fingerprint,
+                    id,
+                    std::move(name),
+                    test::capabilities(Identify{}),
+                    test::pixelRect(0, 0, 3, 1),
+                    std::vector<Variant>{
+                        test::variant(
+                            "only",
+                            templateSource.source.id(),
+                            templateRect,
+                            test::threshold(10'000)
+                        ),
+                    }
+                );
+            };
+
+            // page_a requires anchor_a and forbids anchor_b; page_b requires
+            // anchor_a alone. Both signatures are derived from these rows, and
+            // page_b borrows the anchor page_a owns.
+            auto references = std::vector<PageReference>{};
+            references.emplace_back(
+                test::reference(
+                    pageA,
+                    anchorA,
+                    test::identifiesAs(SignatureRole::Required)
+                )
+            );
+            references.emplace_back(
+                test::reference(
+                    pageA,
+                    anchorB,
+                    test::identifiesAs(SignatureRole::Forbidden)
+                )
+            );
+            references.emplace_back(
+                test::reference(
+                    pageB,
+                    anchorA,
+                    test::identifiesAs(SignatureRole::Required),
+                    Holding::Referenced
+                )
+            );
+
             auto document = AuthoringDocument::create(
                 test::projectId("personal.regression_runner"),
                 fingerprint,
@@ -192,30 +243,14 @@ namespace uf::annotation
                     ambiguousSource.source,
                 },
                 {
-                    test::anchorElement(
-                        fingerprint,
-                        anchorA,
-                        "anchor_a",
-                        templateSource.source.id(),
-                        test::pixelRect(0, 0, 1, 1),
-                        test::pixelRect(0, 0, 3, 1),
-                        test::threshold(10'000)
-                    ),
-                    test::anchorElement(
-                        fingerprint,
-                        anchorB,
-                        "anchor_b",
-                        templateSource.source.id(),
-                        test::pixelRect(1, 0, 1, 1),
-                        test::pixelRect(0, 0, 3, 1),
-                        test::threshold(10'000)
-                    ),
+                    exactAnchor(anchorA, "anchor_a", test::pixelRect(0, 0, 1, 1)),
+                    exactAnchor(anchorB, "anchor_b", test::pixelRect(1, 0, 1, 1)),
                 },
                 {
-                    test::page(pageA, "page_a", {anchorA}, {anchorB}),
-                    test::page(pageB, "page_b", {anchorA}),
+                    test::page(pageA, "page_a"),
+                    test::page(pageB, "page_b"),
                 },
-                {},
+                std::move(references),
                 std::move(regressions)
             );
             REQUIRE(document.has_value());
