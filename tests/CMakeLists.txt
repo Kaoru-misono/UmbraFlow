@@ -297,6 +297,35 @@ if(TARGET ${PROJECT_NAME}_workbench_support)
             LABELS "REAL"
             TIMEOUT 600
         )
+
+        # What the OCR adapter reads off a real frame. Local-only for the same
+        # reason as the target above, and separate from it because it is the ocr
+        # module under test rather than the workbench's regression runner.
+        cpp_add_test(
+            NAME test-ocr-real
+            SOURCES
+                ocr/test-ocr-real.cpp
+            LIBS
+                ${PROJECT_NAME}_ocr
+                ${PROJECT_NAME}_image
+                ${PROJECT_NAME}_vision
+        )
+        target_compile_definitions(test-ocr-real PRIVATE
+            UF_REAL_REGRESSION_ROOT="${CMAKE_SOURCE_DIR}/tests/assets/real-regression"
+            UF_OCR_MODEL_ROOT="${CMAKE_SOURCE_DIR}/modules/ocr/external/models"
+        )
+        # onnxruntime resolves beside the executable, so the runtime DLLs are
+        # copied rather than assumed to be on PATH.
+        add_custom_command(TARGET test-ocr-real POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                ${UF_OCR_ONNXRUNTIME_SHARED_LIBRARIES}
+                $<TARGET_FILE_DIR:test-ocr-real>
+            VERBATIM
+        )
+        set_tests_properties(test-ocr-real PROPERTIES
+            LABELS "REAL"
+            TIMEOUT 300
+        )
     endif()
 endif()
 

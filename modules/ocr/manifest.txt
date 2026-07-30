@@ -1,0 +1,17 @@
+[module]
+name = ocr
+type = static
+version = 0.1.0
+
+[build]
+unity_build = false
+
+[dependencies]
+public = core domain vision
+
+# The inference runtime is private and Windows-only, exactly as capture and input
+# already are. The port in source/ocr/engine.hpp names no runtime type, so a
+# platform without an adapter still compiles the vocabulary and the port; it just
+# has nothing that creates an engine.
+[dependencies.windows]
+private = ocr_onnxruntime
