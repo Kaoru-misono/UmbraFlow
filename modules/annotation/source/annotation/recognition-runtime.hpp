@@ -77,6 +77,18 @@ namespace uf::annotation
             std::vector<std::byte> mask{};
         };
 
+        // Searching one element across its appearances: either the folded
+        // evidence, or the stop that ended the search. A stop in any variant
+        // stops the whole element -- taking the best of the variants already
+        // searched would make the answer a function of the comparison budget,
+        // which is a configuration value.
+        struct ElementMatchAttempt final
+        {
+            std::variant<AnchorEvidence, SadSearchStopReason> result;
+
+            uint64 completedPixelComparisons{};
+        };
+
         RuntimeManifest           m_manifest;
         std::vector<GrayTemplate> m_templates;
 
@@ -89,6 +101,21 @@ namespace uf::annotation
         auto findTemplate(
             ContentHash const& hash
         ) const noexcept UF_LIFETIME_BOUND -> GrayTemplate const*;
+
+        // Every declared appearance is searched and the results are folded into
+        // one piece of evidence before anything downstream sees them. The fold
+        // has to happen here: PageResolver ANDs over a page's required anchors,
+        // so V variants compiled into V required anchors would turn "any
+        // appearance matches" into "all of them must".
+        [[nodiscard]]
+        auto matchElement(
+            GrayImage const& grayFrame,
+            RecognizerDefinition const& recognizer,
+            PixelRect searchRoi,
+            std::optional<ResourceName> const& pinnedVariant,
+            uint64 maximumPixelComparisons,
+            SadSearchPoll const& poll
+        ) const -> Result<ElementMatchAttempt>;
 
         [[nodiscard]]
         static auto matchGrayTemplate(
@@ -113,15 +140,6 @@ namespace uf::annotation
             ProjectFingerprint liveFingerprint
         ) const -> Status;
 
-        [[nodiscard]]
-        auto evaluateGrayActionTarget(
-            GrayImage const& grayFrame,
-            RecognizerDefinition const& recognizer,
-            GrayTemplate const& grayTemplate,
-            RecognitionPolicy const& policy,
-            SadSearchPoll const& poll
-        ) const -> Result<ActionTargetAttempt>;
-
     public:
         [[nodiscard]]
         static auto create(
@@ -139,11 +157,17 @@ namespace uf::annotation
             RecognitionPolicy const& policy
         ) const -> Result<PageRecognitionAttempt>;
 
+        // Locating one element on one already-resolved page. The page is a
+        // parameter because the per-page facts now live on the reference: a
+        // refined search region and a pinned appearance are both read from it,
+        // and an element the page does not exercise for interaction has no
+        // action to be located for.
         [[nodiscard]]
         auto evaluateActionTarget(
             Frame const& frame,
             ProjectFingerprint liveFingerprint,
-            ElementId recognizerId,
+            PageId pageId,
+            ElementId elementId,
             RecognitionPolicy const& policy
         ) const -> Result<ActionTargetAttempt>;
 
@@ -155,10 +179,12 @@ namespace uf::annotation
         ) const -> Result<PageOutcome>;
     };
 
-    // Derives the single deterministic click pixel for an action target from the
-    // rectangle its template matched. A template-local click offset is added to
+    // Derives the single deterministic click pixel for an interactive element
+    // from the rectangle it matched. A template-local click offset is added to
     // the matched origin with checked arithmetic; without one, the click is the
-    // truncating integer center of the matched rectangle.
+    // truncating integer center of the matched rectangle. An element located by
+    // its page rather than by its own pixels has no offset to carry, so it
+    // takes the center of the region the page put it in.
     [[nodiscard]]
     auto resolveClickPixel(
         RecognizerDefinition const& recognizer,

@@ -10,7 +10,6 @@
 #include <domain/error.hpp>
 
 #include <algorithm>
-#include <array>
 #include <cstddef>
 #include <format>
 #include <optional>
@@ -27,6 +26,8 @@ namespace uf::annotation
     {
         constexpr auto k_maximumRuntimeManifestBytes = std::size_t{16} * 1024U * 1024U;
         constexpr auto k_maximumRuntimeResources     = std::size_t{4096};
+        constexpr auto k_maximumRuntimeVariants      = std::size_t{4096} * 8U;
+        constexpr auto k_maximumRuntimeReferences    = std::size_t{4096} * 16U;
 
         [[nodiscard]]
         auto invalidManifest(std::string message) -> std::unexpected<Error>
@@ -46,25 +47,58 @@ namespace uf::annotation
             return path;
         }
 
+        // A recognizer as its own table row leaves it. Its variants arrive in
+        // later rows, and the click offset cannot become a TemplateOffset until
+        // one of those templates is known.
+        struct ParsedRecognizer final
+        {
+            ElementId                id;
+            ResourceName             name;
+            PixelRect                searchRoi;
+            detail::CapabilityFields capabilities;
+
+            std::vector<RecognizerVariant>   variants{};
+            std::vector<RuntimeVariantAsset> assets{};
+        };
+
+        struct ParsedVariant final
+        {
+            ElementId           elementId;
+            RecognizerVariant   variant;
+            RuntimeVariantAsset asset;
+        };
+
         [[nodiscard]]
         auto parseRecognizer(
-            detail::CanonicalTomlReader& reader,
-            ProjectFingerprint fingerprint
-        ) -> Result<RuntimeRecognizerSpec>
+            detail::CanonicalTomlReader& reader
+        ) -> Result<ParsedRecognizer>
         {
             UF_TRY_VALUE(idText, reader.takeStringField("id"));
-            UF_TRY_VALUE(resourceId, ResourceId::parse(idText));
-            auto const id = ElementId{resourceId};
+            UF_TRY_VALUE(id, detail::parseId<ElementId>(idText));
             UF_TRY_VALUE(nameText, reader.takeStringField("name"));
             UF_TRY_VALUE(name, ResourceName::create(std::move(nameText)));
-            UF_TRY_VALUE(typeText, reader.takeStringField("annotation_type"));
-            auto const annotationType = detail::annotationTypeFromText(typeText);
-            if (!annotationType)
-            {
-                return invalidManifest(
-                    std::format("runtime manifest has unknown annotation_type '{}'", typeText)
-                );
-            }
+            UF_TRY_VALUE(
+                searchRoi,
+                detail::parsePixelRectField(reader, "search_roi")
+            );
+            UF_TRY_VALUE(capabilities, detail::parseCapabilityFields(reader));
+            return ParsedRecognizer{
+                .id           = id,
+                .name         = std::move(name),
+                .searchRoi    = searchRoi,
+                .capabilities = capabilities,
+            };
+        }
+
+        [[nodiscard]]
+        auto parseVariant(
+            detail::CanonicalTomlReader& reader
+        ) -> Result<ParsedVariant>
+        {
+            UF_TRY_VALUE(elementIdText, reader.takeStringField("element_id"));
+            UF_TRY_VALUE(elementId, detail::parseId<ElementId>(elementIdText));
+            UF_TRY_VALUE(nameText, reader.takeStringField("name"));
+            UF_TRY_VALUE(name, ResourceName::create(std::move(nameText)));
             UF_TRY_VALUE(kind, reader.takeStringField("kind"));
             if (kind != "gray_template")
             {
@@ -89,117 +123,94 @@ namespace uf::annotation
                 reader.takeStringField("source_hash")
             );
             UF_TRY_VALUE(sourceHash, ContentHash::parse(sourceHashText));
-            UF_TRY_VALUE(templateRect, detail::parsePixelRectField(reader, "template_rect"));
-            UF_TRY_VALUE(searchRoi, detail::parsePixelRectField(reader, "search_roi"));
+            UF_TRY_VALUE(
+                templateRect,
+                detail::parsePixelRectField(reader, "template_rect")
+            );
             UF_TRY_VALUE(
                 thresholdValue,
                 reader.takeUnsigned32Field("min_similarity_bp")
             );
             UF_TRY_VALUE(threshold, SimilarityThreshold::create(thresholdValue));
 
-            auto defaultClick = std::optional<TemplateOffset>{};
-            UF_TRY_VALUE(
-                hasDefaultClick,
-                reader.nextIsField("default_click")
-            );
-            if (hasDefaultClick)
-            {
-                UF_TRY_VALUE(
-                    values,
-                    reader.takeUnsigned32ArrayField("default_click")
-                );
-                if (values.size() != 2U)
-                {
-                    return invalidManifest(
-                        "runtime manifest default_click must have two integers"
-                    );
-                }
-                UF_TRY_VALUE(
-                    offset,
-                    TemplateOffset::create(
-                        checkedAt(values, 0),
-                        checkedAt(values, 1),
-                        templateRect.width(),
-                        templateRect.height()
-                    )
-                );
-                defaultClick = offset;
-            }
-
-            auto allowedPageIds = std::vector<PageId>{};
-            UF_TRY_VALUE(
-                hasAllowedPages,
-                reader.nextIsField("allowed_page_ids")
-            );
-            if (hasAllowedPages)
-            {
-                UF_TRY_VALUE(
-                    encoded,
-                    reader.takeStringArrayField("allowed_page_ids")
-                );
-                UF_TRY_VALUE(parsed, detail::parseIds<PageId>(encoded));
-                allowedPageIds = std::move(parsed);
-            }
-
-            UF_TRY_VALUE(
-                definition,
-                RecognizerDefinition::create(
-                    fingerprint,
-                    RecognizerSpec{
-                        .id             = id,
-                        .name           = std::move(name),
-                        .annotationType = *annotationType,
-                        .templateRect   = templateRect,
-                        .searchRoi      = searchRoi,
-                        .threshold      = threshold,
-                        .defaultClick   = defaultClick,
-                        .allowedPageIds = std::move(allowedPageIds),
-                    }
-                )
-            );
-            return RuntimeRecognizerSpec{
-                .definition   = std::move(definition),
-                .templateHash = templateHash,
-                .sourceHash   = sourceHash,
+            return ParsedVariant{
+                .elementId = elementId,
+                .variant   = RecognizerVariant{
+                    .name         = name,
+                    .templateRect = templateRect,
+                    .threshold    = threshold,
+                },
+                .asset = RuntimeVariantAsset{
+                    .variantName  = std::move(name),
+                    .templateHash = templateHash,
+                    .sourceHash   = sourceHash,
+                },
             };
         }
 
         [[nodiscard]]
         auto parsePage(
             detail::CanonicalTomlReader& reader
-        ) -> Result<PageSignature>
+        ) -> Result<PageSpec>
         {
             UF_TRY_VALUE(idText, reader.takeStringField("id"));
-            UF_TRY_VALUE(resourceId, ResourceId::parse(idText));
-            auto const id = PageId{resourceId};
+            UF_TRY_VALUE(id, detail::parseId<PageId>(idText));
             UF_TRY_VALUE(nameText, reader.takeStringField("name"));
             UF_TRY_VALUE(name, ResourceName::create(std::move(nameText)));
-            UF_TRY_VALUE(
-                requiredText,
-                reader.takeStringArrayField("required")
-            );
-            UF_TRY_VALUE(
-                required,
-                detail::parseIds<ElementId>(requiredText)
-            );
-            UF_TRY_VALUE(
-                forbiddenText,
-                reader.takeStringArrayField("forbidden")
-            );
-            UF_TRY_VALUE(
-                forbidden,
-                detail::parseIds<ElementId>(forbiddenText)
-            );
-            return PageSignature::create(
-                PageSpec{
-                    .id        = id,
-                    .name      = std::move(name),
-                    .required  = std::move(required),
-                    .forbidden = std::move(forbidden),
-                }
-            );
+            return PageSpec{
+                .id   = id,
+                .name = std::move(name),
+            };
         }
 
+        [[nodiscard]]
+        auto parseReference(
+            detail::CanonicalTomlReader& reader
+        ) -> Result<PageReference>
+        {
+            UF_TRY_VALUE(pageIdText, reader.takeStringField("page_id"));
+            UF_TRY_VALUE(pageId, detail::parseId<PageId>(pageIdText));
+            UF_TRY_VALUE(elementIdText, reader.takeStringField("element_id"));
+            UF_TRY_VALUE(elementId, detail::parseId<ElementId>(elementIdText));
+            UF_TRY_VALUE(holdingName, reader.takeStringField("holding"));
+            auto const holding = detail::holdingFromText(holdingName);
+            if (!holding)
+            {
+                return invalidManifest(
+                    std::format("unknown page reference holding '{}'", holdingName)
+                );
+            }
+            UF_TRY_VALUE(exercised, detail::parseExercisedFields(reader));
+
+            auto searchRoi = std::optional<PixelRect>{};
+            UF_TRY_VALUE(hasSearchRoi, reader.nextIsField("search_roi"));
+            if (hasSearchRoi)
+            {
+                UF_TRY_VALUE(
+                    refined,
+                    detail::parsePixelRectField(reader, "search_roi")
+                );
+                searchRoi = refined;
+            }
+
+            auto variant = std::optional<ResourceName>{};
+            UF_TRY_VALUE(hasVariant, reader.nextIsField("variant"));
+            if (hasVariant)
+            {
+                UF_TRY_VALUE(variantText, reader.takeStringField("variant"));
+                UF_TRY_VALUE(name, ResourceName::create(std::move(variantText)));
+                variant = std::move(name);
+            }
+
+            return PageReference{
+                .pageId    = pageId,
+                .elementId = elementId,
+                .holding   = *holding,
+                .exercised = exercised,
+                .searchRoi = searchRoi,
+                .variant   = std::move(variant),
+            };
+        }
     }
 
     RuntimeManifest::RuntimeManifest(
@@ -215,16 +226,18 @@ namespace uf::annotation
         ProjectId projectId,
         ProjectFingerprint fingerprint,
         std::vector<RuntimeRecognizerSpec> recognizers,
-        std::vector<PageSignature> pages
+        std::vector<PageSpec> pages,
+        std::vector<PageReference> references
     ) -> Result<RuntimeManifest>
     {
         if (
             recognizers.size() > k_maximumRuntimeResources
             || pages.size() > k_maximumRuntimeResources
+            || references.size() > k_maximumRuntimeReferences
         )
         {
             return invalidManifest(
-                "runtime manifest exceeds the recognizer or page quota"
+                "runtime manifest exceeds the recognizer, page, or reference quota"
             );
         }
 
@@ -240,19 +253,40 @@ namespace uf::annotation
         auto definitions = std::vector<RecognizerDefinition>{};
         auto assets      = std::vector<RuntimeRecognizerAsset>{};
         definitions.reserve(recognizers.size());
-        assets.reserve(recognizers.size());
         for (auto& recognizer : recognizers)
         {
-            auto const id = recognizer.definition.id();
-            assets.emplace_back(
-                RuntimeRecognizerAsset{
-                    .id           = id,
-                    .templateHash = recognizer.templateHash,
-                    .sourceHash   = recognizer.sourceHash,
-                    .templatePath = templatePath(recognizer.templateHash),
+            auto const id       = recognizer.definition.id();
+            auto const variants = recognizer.definition.variants();
+            if (recognizer.variants.size() != variants.size())
+            {
+                return invalidManifest(
+                    "runtime manifest needs exactly one template asset per declared variant"
+                );
+            }
+            for (auto index = std::size_t{0}; index < variants.size(); ++index)
+            {
+                auto const& asset = checkedAt(recognizer.variants, index);
+                if (asset.variantName != checkedAt(variants, index).name)
+                {
+                    return invalidManifest(
+                        "runtime manifest template assets are not in variant order"
+                    );
                 }
-            );
+                assets.emplace_back(
+                    RuntimeRecognizerAsset{
+                        .elementId    = id,
+                        .variantName  = asset.variantName,
+                        .templateHash = asset.templateHash,
+                        .sourceHash   = asset.sourceHash,
+                        .templatePath = templatePath(asset.templateHash),
+                    }
+                );
+            }
             definitions.emplace_back(std::move(recognizer.definition));
+        }
+        if (assets.size() > k_maximumRuntimeVariants)
+        {
+            return invalidManifest("runtime manifest exceeds the variant quota");
         }
 
         UF_TRY_VALUE(
@@ -261,7 +295,8 @@ namespace uf::annotation
                 std::move(projectId),
                 fingerprint,
                 std::move(definitions),
-                std::move(pages)
+                std::move(pages),
+                std::move(references)
             )
         );
         auto manifest = RuntimeManifest{
@@ -288,13 +323,19 @@ namespace uf::annotation
     }
 
     auto RuntimeManifest::findAsset(
-        ElementId id
+        ElementId elementId,
+        ResourceName const& variantName
     ) const noexcept -> RuntimeRecognizerAsset const*
     {
-        auto const found = std::ranges::find(
+        auto const found = std::ranges::find_if(
             m_assets,
-            id,
-            &RuntimeRecognizerAsset::id
+            [elementId, &variantName](RuntimeRecognizerAsset const& asset) noexcept -> bool
+            {
+                return (
+                    asset.elementId == elementId
+                    && asset.variantName == variantName
+                );
+            }
         );
         return found == m_assets.end() ? nullptr : &*found;
     }
@@ -318,8 +359,6 @@ namespace uf::annotation
 
         for (auto const& recognizer : manifest.catalog().recognizers())
         {
-            auto const* p_asset = manifest.findAsset(recognizer.id());
-            UF_CHECK_MSG(p_asset != nullptr, "runtime recognizer asset is missing");
             output += "\n[[recognizer]]\n";
             detail::appendStringField(
                 output,
@@ -327,39 +366,45 @@ namespace uf::annotation
                 recognizer.id().value().toString()
             );
             detail::appendStringField(output, "name", recognizer.name().value());
-            detail::appendStringField(
-                output,
-                "annotation_type",
-                detail::annotationTypeText(recognizer.annotationType())
-            );
-            detail::appendStringField(output, "kind", "gray_template");
-            detail::appendStringField(output, "template", p_asset->templatePath);
-            detail::appendStringField(
-                output,
-                "template_hash",
-                p_asset->templateHash.toString()
-            );
-            detail::appendStringField(
-                output,
-                "source_hash",
-                p_asset->sourceHash.toString()
-            );
-            detail::appendRectField(output, "template_rect", recognizer.templateRect());
             detail::appendRectField(output, "search_roi", recognizer.searchRoi());
-            output += "min_similarity_bp = ";
-            output += std::to_string(recognizer.threshold().basisPoints());
-            output.push_back('\n');
-            if (auto const click = recognizer.defaultClick())
+            detail::appendCapabilityFields(output, recognizer.capabilities());
+        }
+
+        for (auto const& recognizer : manifest.catalog().recognizers())
+        {
+            for (auto const& variant : recognizer.variants())
             {
-                output += "default_click = ";
-                auto const values = std::array{click->x(), click->y()};
-                detail::appendUnsigned32Array(output, values);
-                output.push_back('\n');
-            }
-            if (!recognizer.allowedPageIds().empty())
-            {
-                output += "allowed_page_ids = ";
-                detail::appendIdArray(output, recognizer.allowedPageIds());
+                auto const* p_asset = manifest.findAsset(
+                    recognizer.id(),
+                    variant.name
+                );
+                UF_CHECK_MSG(p_asset != nullptr, "runtime variant asset is missing");
+                output += "\n[[variant]]\n";
+                detail::appendStringField(
+                    output,
+                    "element_id",
+                    recognizer.id().value().toString()
+                );
+                detail::appendStringField(output, "name", variant.name.value());
+                detail::appendStringField(output, "kind", "gray_template");
+                detail::appendStringField(output, "template", p_asset->templatePath);
+                detail::appendStringField(
+                    output,
+                    "template_hash",
+                    p_asset->templateHash.toString()
+                );
+                detail::appendStringField(
+                    output,
+                    "source_hash",
+                    p_asset->sourceHash.toString()
+                );
+                detail::appendRectField(
+                    output,
+                    "template_rect",
+                    variant.templateRect
+                );
+                output += "min_similarity_bp = ";
+                output += std::to_string(variant.threshold.basisPoints());
                 output.push_back('\n');
             }
         }
@@ -369,12 +414,35 @@ namespace uf::annotation
             output += "\n[[page]]\n";
             detail::appendStringField(output, "id", page.id().value().toString());
             detail::appendStringField(output, "name", page.name().value());
-            output += "required = ";
-            detail::appendIdArray(output, page.required());
-            output.push_back('\n');
-            output += "forbidden = ";
-            detail::appendIdArray(output, page.forbidden());
-            output.push_back('\n');
+        }
+
+        for (auto const& reference : manifest.catalog().references())
+        {
+            output += "\n[[reference]]\n";
+            detail::appendStringField(
+                output,
+                "page_id",
+                reference.pageId.value().toString()
+            );
+            detail::appendStringField(
+                output,
+                "element_id",
+                reference.elementId.value().toString()
+            );
+            detail::appendStringField(
+                output,
+                "holding",
+                detail::holdingText(reference.holding)
+            );
+            detail::appendExercisedFields(output, reference.exercised);
+            if (auto const refined = reference.searchRoi)
+            {
+                detail::appendRectField(output, "search_roi", *refined);
+            }
+            if (auto const& pinned = reference.variant)
+            {
+                detail::appendStringField(output, "variant", pinned->value());
+            }
         }
         return output;
     }
@@ -415,35 +483,57 @@ namespace uf::annotation
             )
         );
 
-        auto recognizers  = std::vector<RuntimeRecognizerSpec>{};
-        auto pages        = std::vector<PageSignature>{};
-        auto parsingPages = false;
+        auto parsedRecognizers = std::vector<ParsedRecognizer>{};
+        auto pages             = std::vector<PageSpec>{};
+        auto references        = std::vector<PageReference>{};
+        auto variantCount      = std::size_t{0};
+        auto section           = uint8{0};
         while (!reader.eof())
         {
             UF_TRY(reader.expect(""));
             auto const headerLine = reader.line();
             UF_TRY_VALUE(header, reader.take());
+            auto rank = uint8{0};
             if (header == "[[recognizer]]")
             {
-                if (parsingPages)
-                {
-                    return invalidManifest(
-                        "runtime manifest recognizers must precede pages"
-                    );
-                }
-                if (recognizers.size() >= k_maximumRuntimeResources)
+                rank = 1;
+                if (parsedRecognizers.size() >= k_maximumRuntimeResources)
                 {
                     return invalidManifest(
                         "runtime manifest exceeds the recognizer quota"
                     );
                 }
-                UF_TRY_VALUE(recognizer, parseRecognizer(reader, fingerprint));
-                recognizers.emplace_back(std::move(recognizer));
-                continue;
+                UF_TRY_VALUE(recognizer, parseRecognizer(reader));
+                parsedRecognizers.emplace_back(std::move(recognizer));
             }
-            if (header == "[[page]]")
+            else if (header == "[[variant]]")
             {
-                parsingPages = true;
+                rank = 2;
+                if (variantCount >= k_maximumRuntimeVariants)
+                {
+                    return invalidManifest(
+                        "runtime manifest exceeds the variant quota"
+                    );
+                }
+                UF_TRY_VALUE(parsed, parseVariant(reader));
+                auto const owner = std::ranges::find(
+                    parsedRecognizers,
+                    parsed.elementId,
+                    &ParsedRecognizer::id
+                );
+                if (owner == parsedRecognizers.end())
+                {
+                    return invalidManifest(
+                        "runtime manifest variant references an unknown element"
+                    );
+                }
+                owner->variants.emplace_back(std::move(parsed.variant));
+                owner->assets.emplace_back(std::move(parsed.asset));
+                ++variantCount;
+            }
+            else if (header == "[[page]]")
+            {
+                rank = 3;
                 if (pages.size() >= k_maximumRuntimeResources)
                 {
                     return invalidManifest(
@@ -452,14 +542,69 @@ namespace uf::annotation
                 }
                 UF_TRY_VALUE(page, parsePage(reader));
                 pages.emplace_back(std::move(page));
-                continue;
             }
-            return invalidManifest(
-                std::format(
-                    "runtime manifest line {} has unknown table header '{}'",
-                    headerLine,
-                    header
+            else if (header == "[[reference]]")
+            {
+                rank = 4;
+                if (references.size() >= k_maximumRuntimeReferences)
+                {
+                    return invalidManifest(
+                        "runtime manifest exceeds the reference quota"
+                    );
+                }
+                UF_TRY_VALUE(reference, parseReference(reader));
+                references.emplace_back(std::move(reference));
+            }
+            else
+            {
+                return invalidManifest(
+                    std::format(
+                        "runtime manifest line {} has unknown table header '{}'",
+                        headerLine,
+                        header
+                    )
+                );
+            }
+            if (rank < section)
+            {
+                return invalidManifest(
+                    "runtime manifest recognizer, variant, page, and reference tables are out of order"
+                );
+            }
+            section = rank;
+        }
+
+        auto recognizers = std::vector<RuntimeRecognizerSpec>{};
+        recognizers.reserve(parsedRecognizers.size());
+        for (auto& parsed : parsedRecognizers)
+        {
+            auto boundingTemplate = std::optional<PixelRect>{};
+            if (!parsed.variants.empty())
+            {
+                boundingTemplate = parsed.variants.front().templateRect;
+            }
+            UF_TRY_VALUE(
+                capabilities,
+                detail::toElementCapabilities(parsed.capabilities, boundingTemplate)
+            );
+            UF_TRY_VALUE(
+                definition,
+                RecognizerDefinition::create(
+                    fingerprint,
+                    RecognizerSpec{
+                        .id           = parsed.id,
+                        .name         = std::move(parsed.name),
+                        .capabilities = capabilities,
+                        .searchRoi    = parsed.searchRoi,
+                        .variants     = std::move(parsed.variants),
+                    }
                 )
+            );
+            recognizers.emplace_back(
+                RuntimeRecognizerSpec{
+                    .definition = std::move(definition),
+                    .variants   = std::move(parsed.assets),
+                }
             );
         }
 
@@ -469,7 +614,8 @@ namespace uf::annotation
                 std::move(projectId),
                 fingerprint,
                 std::move(recognizers),
-                std::move(pages)
+                std::move(pages),
+                std::move(references)
             )
         );
         if (serializeRuntimeManifest(manifest) != canonicalToml)

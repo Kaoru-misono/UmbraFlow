@@ -68,6 +68,7 @@ cpp_add_test(
 cpp_add_test(
     NAME test-annotation
     SOURCES
+        annotation/test-annotation-model.cpp
         annotation/test-authoring-compiler.cpp
         annotation/test-authoring-document.cpp
         annotation/test-authorization.cpp

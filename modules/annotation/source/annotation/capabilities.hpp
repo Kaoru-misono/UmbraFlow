@@ -97,17 +97,6 @@ namespace uf::annotation
             std::optional<Read> read
         ) -> Result<ElementCapabilities>;
 
-        // The reading of today's three-way annotation type as a capability set,
-        // total over the enum and therefore unable to fail. A page anchor
-        // identifies, an action target interacts and carries the click through,
-        // an info region reads. A fourth enumerator would be a compile error
-        // here rather than a silent miscategorisation.
-        [[nodiscard]]
-        static auto fromAnnotationType(
-            AnnotationType type,
-            std::optional<TemplateOffset> clickOffset
-        ) noexcept -> ElementCapabilities;
-
         [[nodiscard]]
         auto identify() const noexcept UF_LIFETIME_BOUND -> std::optional<Identify> const&;
 

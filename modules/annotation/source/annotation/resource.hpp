@@ -46,14 +46,13 @@ namespace uf::annotation
 
     // Identifies one authored element. It was called RecognizerId while an
     // element and a recognizer were the same thing; they are not. A recognizer
-    // is what the compiler emits, one per (element, page) pair, so an element
-    // placed on N pages has N of them and an element the task only reads state
-    // out of need not recognize anything at all. What the author mints and
-    // every authoring edit addresses is the element, which is what this names.
+    // is what the compiler emits, and an element the task only reads state out
+    // of need not recognize anything at all. What the author mints and every
+    // authoring edit addresses is the element, which is what this names.
     //
-    // The compiler's derived per-placement ids are minted into this same space
-    // (derivedRuntimeRecognizerId), because a runtime recognizer is addressed
-    // by the element it stands for whenever there is only one of it.
+    // One element compiles to exactly one runtime recognizer under this id,
+    // whatever pages reference it, so this is also the only id a page
+    // signature, an authorisation, or a trace line ever has to resolve.
     using ElementId = StrongValue<detail::ElementIdTag, ResourceId>;
     using PageId = StrongValue<detail::PageIdTag, ResourceId>;
     using SourceId = StrongValue<detail::SourceIdTag, ResourceId>;
@@ -86,13 +85,6 @@ namespace uf::annotation
 
         [[nodiscard]]
         auto value() const noexcept UF_LIFETIME_BOUND -> std::string const&;
-    };
-
-    enum class AnnotationType : uint8
-    {
-        PageAnchor,
-        ActionTarget,
-        InfoRegion,
     };
 
     class ProjectFingerprint final

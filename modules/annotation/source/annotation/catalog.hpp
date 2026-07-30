@@ -5,6 +5,7 @@
 
 #include <core/error/result.hpp>
 #include <core/safety/annotations.hpp>
+#include <core/types/integer.hpp>
 
 #include <domain/space.hpp>
 
@@ -15,32 +16,57 @@
 
 namespace uf::annotation
 {
-    struct RecognizerSpec final
+    // One appearance of one element as the runtime sees it: which rectangle to
+    // cut and how close a match has to be. The authoring-side Variant carries
+    // two more facts -- the source screen it was cut from and the colour key
+    // that produced its mask -- and neither reaches the runtime, because the
+    // mask is baked into the compiled template's alpha channel and the source
+    // is authoring truth.
+    struct RecognizerVariant final
     {
-        ElementId    id;
-        ResourceName name;
-
-        AnnotationType      annotationType{};
+        ResourceName        name;
         PixelRect           templateRect;
-        PixelRect           searchRoi;
         SimilarityThreshold threshold;
 
-        std::optional<TemplateOffset> defaultClick{};
-        std::vector<PageId>           allowedPageIds{};
+        auto operator==(RecognizerVariant const&) const -> bool = default;
     };
+
+    struct RecognizerSpec final
+    {
+        ElementId           id;
+        ResourceName        name;
+        ElementCapabilities capabilities;
+        PixelRect           searchRoi;
+
+        // Ordered, and empty is a legal state: it says this rectangle is
+        // located by the page being recognised rather than by pixels of its
+        // own. Declaration order decides nothing but ties.
+        std::vector<RecognizerVariant> variants{};
+    };
+
+    // The shape rules an element obeys whichever side states it: the search
+    // region fits the project, every variant template fits the project and that
+    // region, every threshold has a computable SAD ceiling, variant names are
+    // distinct, a rectangle with no pixels of its own cannot be identity
+    // evidence, and a click offset lands inside every appearance it could be
+    // measured from. The authoring Element and the runtime RecognizerDefinition
+    // both call it, so the two cannot drift apart.
+    [[nodiscard]]
+    auto validateElementShape(
+        ProjectFingerprint fingerprint,
+        PixelRect searchRoi,
+        std::span<RecognizerVariant const> variants,
+        ElementCapabilities const& capabilities
+    ) -> Status;
 
     class RecognizerDefinition final
     {
-        ElementId    m_id;
-        ResourceName m_name;
-
-        AnnotationType      m_annotationType;
-        PixelRect           m_templateRect;
+        ElementId           m_id;
+        ResourceName        m_name;
+        ElementCapabilities m_capabilities;
         PixelRect           m_searchRoi;
-        SimilarityThreshold m_threshold;
 
-        std::optional<TemplateOffset> m_defaultClick;
-        std::vector<PageId>           m_allowedPageIds;
+        std::vector<RecognizerVariant> m_variants;
 
         explicit RecognizerDefinition(RecognizerSpec spec) noexcept;
 
@@ -53,44 +79,94 @@ namespace uf::annotation
 
         [[nodiscard]] auto id() const -> ElementId;
         [[nodiscard]] auto name() const -> ResourceName;
-        [[nodiscard]] auto annotationType() const noexcept -> AnnotationType;
-
-        // Derived from the annotation type on every call rather than stored. A
-        // stored set would be a second source of truth for the same fact, and it
-        // would grow this type, which both RecognitionCatalog and
-        // AuthoringDocument move around inside a vector.
-        [[nodiscard]] auto capabilities() const noexcept -> ElementCapabilities;
-
-        [[nodiscard]] auto templateRect() const noexcept -> PixelRect;
-        [[nodiscard]] auto searchRoi() const noexcept -> PixelRect;
-        [[nodiscard]] auto threshold() const noexcept -> SimilarityThreshold;
-        [[nodiscard]] auto defaultClick() const noexcept -> std::optional<TemplateOffset>;
 
         [[nodiscard]]
-        auto allowedPageIds() const noexcept UF_LIFETIME_BOUND -> std::span<PageId const>;
+        auto capabilities() const noexcept UF_LIFETIME_BOUND -> ElementCapabilities const&;
+
+        [[nodiscard]] auto searchRoi() const noexcept -> PixelRect;
+
+        [[nodiscard]]
+        auto variants() const noexcept UF_LIFETIME_BOUND -> std::span<RecognizerVariant const>;
+
+        // Returned observations remain valid only while this definition lives.
+        [[nodiscard]]
+        auto findVariant(
+            ResourceName const& name
+        ) const noexcept UF_LIFETIME_BOUND -> RecognizerVariant const*;
+    };
+
+    // Which page an element's rectangle belongs to. Owned is the author saying
+    // these pixels are this page's alone, and the editing tools refuse to
+    // reference them elsewhere; Referenced is a page borrowing an element whose
+    // home is another page. It replaces the old `bool shared`, which could only
+    // record an intent and could contradict the placements without anything
+    // noticing.
+    enum class Holding : uint8
+    {
+        Owned,
+        Referenced,
+    };
+
+    // One page's use of one element: what that page does with it, plus the two
+    // refinements a page may make. This is the edge the model is built on --
+    // authorisation IS the reference, and a page's signature is derived from
+    // the references that exercise identify.
+    //
+    // `holding` is an authoring-side editing guard rail that the runtime never
+    // reads. It rides on this one type rather than forcing a near-identical
+    // second one, which would duplicate five fields to hide one.
+    struct PageReference final
+    {
+        PageId                pageId;
+        ElementId             elementId;
+        Holding               holding{Holding::Owned};
+        ExercisedCapabilities exercised;
+
+        // Absent means "use the element's own search region". A reference that
+        // exercises identify may not set it: the anchor pass reads the
+        // element-level region, and refining it would search the same pixels
+        // twice per cycle, which is the cost the capability merge exists to
+        // remove.
+        std::optional<PixelRect> searchRoi{};
+
+        // Which appearance applies here, when the page decides it. Absent means
+        // every variant is searched and the best normalized margin wins.
+        //
+        // It binds the page-scoped paths only. The anchor pass runs before any
+        // page is known -- that is what makes one search serve every page -- so
+        // identify always folds across every variant, whatever a reference
+        // pins.
+        std::optional<ResourceName> variant{};
+
+        auto operator==(PageReference const&) const -> bool = default;
     };
 
     struct PageSpec final
     {
-        PageId                 id;
-        ResourceName           name;
-        std::vector<ElementId> required{};
-        std::vector<ElementId> forbidden{};
+        PageId       id;
+        ResourceName name;
     };
 
     class PageSignature final
     {
+        // A signature is derived, never authored. RecognitionCatalog builds it
+        // from the page references whose exercised identify carries Required or
+        // Forbidden; a public factory taking the two vectors would be a second
+        // way to state one fact, and the two ways could disagree.
+        friend class RecognitionCatalog;
+
         PageId                 m_id;
         ResourceName           m_name;
         std::vector<ElementId> m_required;
         std::vector<ElementId> m_forbidden;
 
-        explicit PageSignature(PageSpec spec) noexcept;
+        PageSignature(
+            PageSpec spec,
+            std::vector<ElementId> required,
+            std::vector<ElementId> forbidden
+        ) noexcept;
 
     public:
-        [[nodiscard]]
-        static auto create(PageSpec const& spec) -> Result<PageSignature>;
-
         [[nodiscard]] auto id() const -> PageId;
         [[nodiscard]] auto name() const -> ResourceName;
 
@@ -107,6 +183,7 @@ namespace uf::annotation
         ProjectFingerprint                m_fingerprint;
         std::vector<RecognizerDefinition> m_recognizers;
         std::vector<PageSignature>        m_pages;
+        std::vector<PageReference>        m_references;
         std::vector<ElementId>            m_pageAnchorOrder;
 
         RecognitionCatalog(
@@ -114,16 +191,22 @@ namespace uf::annotation
             ProjectFingerprint fingerprint,
             std::vector<RecognizerDefinition> recognizers,
             std::vector<PageSignature> pages,
+            std::vector<PageReference> references,
             std::vector<ElementId> pageAnchorOrder
         ) noexcept;
 
     public:
+        // Both sides of the project converge here: the authoring document
+        // derives its read model through this factory and the runtime manifest
+        // is parsed into one, so every model invariant below holds on disk and
+        // in memory without either side repeating the check.
         [[nodiscard]]
         static auto create(
             ProjectId projectId,
             ProjectFingerprint fingerprint,
             std::vector<RecognizerDefinition> recognizers,
-            std::vector<PageSignature> pages
+            std::vector<PageSpec> pages,
+            std::vector<PageReference> references
         ) -> Result<RecognitionCatalog>;
 
         [[nodiscard]]
@@ -137,6 +220,9 @@ namespace uf::annotation
         [[nodiscard]]
         auto pages() const noexcept UF_LIFETIME_BOUND -> std::span<PageSignature const>;
 
+        [[nodiscard]]
+        auto references() const noexcept UF_LIFETIME_BOUND -> std::span<PageReference const>;
+
         // Returned observations remain valid only while this catalog is alive.
         [[nodiscard]]
         auto findRecognizer(
@@ -145,6 +231,12 @@ namespace uf::annotation
 
         [[nodiscard]]
         auto findPage(PageId id) const noexcept UF_LIFETIME_BOUND -> PageSignature const*;
+
+        [[nodiscard]]
+        auto findReference(
+            PageId pageId,
+            ElementId elementId
+        ) const noexcept UF_LIFETIME_BOUND -> PageReference const*;
 
         [[nodiscard]]
         auto pageAnchorOrder() const noexcept UF_LIFETIME_BOUND -> std::span<ElementId const>;

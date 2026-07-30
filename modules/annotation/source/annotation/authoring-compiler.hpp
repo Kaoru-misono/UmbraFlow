@@ -28,29 +28,27 @@ namespace uf::annotation
         std::vector<TemplateAsset> templateAssets{};
     };
 
+    // One authored element compiles to exactly one runtime recognizer, under
+    // the element's own id, however many pages reference it and however many
+    // appearances it declares.
+    //
+    // The rule it replaces minted a derived id per (element, page) as soon as
+    // an element reached two pages, which meant an element on two pages had no
+    // recognizer under its own id at all -- so a page signature naming that
+    // element pointed at nothing in the runtime catalog. One recognizer per
+    // element is also what the capability merge buys: a patch of pixels that
+    // both names its page and can be clicked is searched once per cycle, and
+    // minting a recognizer per page would put the second search straight back.
+    // The element id is the one name scripts, authorisation, and the trace all
+    // use, so it is the one the runtime catalog must answer to.
+    //
+    // Everything a page needs to say about an element -- which capabilities it
+    // exercises, a refined search region, a pinned appearance -- is carried by
+    // the page reference rows, which are the model's edge and reach the runtime
+    // manifest unchanged.
     [[nodiscard]]
     auto compileAuthoringDocument(
         AuthoringDocument const& document,
         std::span<AuthoringSourceAsset const> sourceAssets
     ) -> Result<CompiledAuthoringProject>;
-
-    // THE mapping from an authored element and one page it is placed on to the
-    // id of the per-placement runtime recognizer that page receives. An element
-    // placed on N >= 2 pages compiles into N runtime recognizers, one per page,
-    // each needing an id distinct from the element's own and stable across
-    // compiles; this is that id. It is the single source of truth: the compiler
-    // emits these recognizers with it, and every consumer of the generated
-    // manifest -- the workbench preview and model check -- maps a UI-facing
-    // element id back to the runtime recognizer for a given page through the
-    // same function. sha256 over the element id bytes concatenated with the page
-    // id bytes, truncated to 16 through ResourceId::fromBytes: deterministic for
-    // fixed inputs and collision-resistant enough that a clash with a real id is
-    // astronomically unlikely -- and any clash fails loudly in
-    // RecognitionCatalog::create's uniqueness guard rather than silently
-    // dropping a recognizer.
-    [[nodiscard]]
-    auto derivedRuntimeRecognizerId(
-        ElementId elementId,
-        PageId pageId
-    ) -> ElementId;
 }

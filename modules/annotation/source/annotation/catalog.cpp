@@ -19,7 +19,9 @@
 #include <ranges>
 #include <span>
 #include <string>
+#include <string_view>
 #include <utility>
+#include <vector>
 
 namespace uf::annotation
 {
@@ -112,19 +114,52 @@ namespace uf::annotation
             return std::adjacent_find(ids.begin(), ids.end()) != ids.end();
         }
 
-        template <typename Id>
-        [[nodiscard]]
-        auto containsId(std::span<Id const> ids, Id id) noexcept -> bool
-        {
-            return std::ranges::find(ids, id) != ids.end();
-        }
-
         [[nodiscard]]
         auto sameSignature(PageSignature const& left, PageSignature const& right) noexcept -> bool
         {
             return (
                 std::ranges::equal(left.required(), right.required())
                 && std::ranges::equal(left.forbidden(), right.forbidden())
+            );
+        }
+
+        [[nodiscard]]
+        auto invalidCatalog(std::string message) -> std::unexpected<Error>
+        {
+            return fail(
+                AutomationErrorKind::InvalidResource,
+                std::move(message)
+            );
+        }
+
+        [[nodiscard]]
+        auto referenceLess(
+            PageReference const& left,
+            PageReference const& right
+        ) noexcept -> bool
+        {
+            if (left.pageId != right.pageId)
+            {
+                return left.pageId.value() < right.pageId.value();
+            }
+            return left.elementId.value() < right.elementId.value();
+        }
+
+        [[nodiscard]]
+        auto rectWithin(PixelRect rect, ProjectFingerprint fingerprint) noexcept -> bool
+        {
+            return (
+                rect.right() <= fingerprint.width()
+                && rect.bottom() <= fingerprint.height()
+            );
+        }
+
+        [[nodiscard]]
+        auto templateFits(PixelRect templateRect, PixelRect searchRoi) noexcept -> bool
+        {
+            return (
+                templateRect.width() <= searchRoi.width()
+                && templateRect.height() <= searchRoi.height()
             );
         }
     }
@@ -420,15 +455,105 @@ namespace uf::annotation
         );
     }
 
+    auto validateElementShape(
+        ProjectFingerprint fingerprint,
+        PixelRect searchRoi,
+        std::span<RecognizerVariant const> variants,
+        ElementCapabilities const& capabilities
+    ) -> Status
+    {
+        if (!rectWithin(searchRoi, fingerprint))
+        {
+            return invalidCatalog(
+                "element search_roi must fit the project resolution"
+            );
+        }
+
+        for (auto const& variant : variants)
+        {
+            if (!rectWithin(variant.templateRect, fingerprint))
+            {
+                return invalidCatalog(
+                    std::format(
+                        "variant \"{}\" template_rect must fit the project resolution",
+                        variant.name.value()
+                    )
+                );
+            }
+            if (!templateFits(variant.templateRect, searchRoi))
+            {
+                return invalidCatalog(
+                    std::format(
+                        "variant \"{}\" template must fit inside the element search_roi",
+                        variant.name.value()
+                    )
+                );
+            }
+            UF_TRY(
+                variant.threshold.maximumSad(
+                    variant.templateRect.width(),
+                    variant.templateRect.height()
+                )
+            );
+        }
+
+        for (auto left = std::size_t{0}; left < variants.size(); ++left)
+        {
+            for (auto right = left + 1U; right < variants.size(); ++right)
+            {
+                if (checkedAt(variants, left).name == checkedAt(variants, right).name)
+                {
+                    return invalidCatalog("element variant names must be unique");
+                }
+            }
+        }
+
+        // A rectangle with no pixels of its own is located by the page that was
+        // recognised, so it cannot be part of what recognises that page.
+        if (variants.empty() && capabilities.hasIdentify())
+        {
+            return invalidCatalog(
+                "an element with no variants cannot exercise identify: it has no pixels to be evidence"
+            );
+        }
+
+        auto const& interact = capabilities.interact();
+        if (interact.has_value() && interact->clickOffset.has_value())
+        {
+            // The offset is template-local, so with no template there is
+            // nothing for it to be local to.
+            if (variants.empty())
+            {
+                return invalidCatalog(
+                    "an element with no variants cannot define a click offset: there is no template to measure it from"
+                );
+            }
+            for (auto const& variant : variants)
+            {
+                if (
+                    interact->clickOffset->x() >= variant.templateRect.width()
+                    || interact->clickOffset->y() >= variant.templateRect.height()
+                )
+                {
+                    return invalidCatalog(
+                        std::format(
+                            "click offset must be inside every variant template, and falls outside \"{}\"",
+                            variant.name.value()
+                        )
+                    );
+                }
+            }
+        }
+
+        return ok();
+    }
+
     RecognizerDefinition::RecognizerDefinition(RecognizerSpec spec) noexcept
         : m_id{spec.id}
         , m_name{std::move(spec.name)}
-        , m_annotationType{spec.annotationType}
-        , m_templateRect{spec.templateRect}
+        , m_capabilities{spec.capabilities}
         , m_searchRoi{spec.searchRoi}
-        , m_threshold{spec.threshold}
-        , m_defaultClick{spec.defaultClick}
-        , m_allowedPageIds{std::move(spec.allowedPageIds)}
+        , m_variants{std::move(spec.variants)}
     {
     }
 
@@ -437,172 +562,51 @@ namespace uf::annotation
         RecognizerSpec const& spec
     ) -> Result<RecognizerDefinition>
     {
-        auto const templateWithinProject = (
-            spec.templateRect.right() <= fingerprint.width()
-            && spec.templateRect.bottom() <= fingerprint.height()
-        );
-        auto const searchWithinProject = (
-            spec.searchRoi.right() <= fingerprint.width()
-            && spec.searchRoi.bottom() <= fingerprint.height()
-        );
-        if (!templateWithinProject || !searchWithinProject)
-        {
-            return fail(
-                AutomationErrorKind::InvalidResource,
-                "recognizer template_rect and search_roi must fit the project resolution"
-            );
-        }
-
-        if (
-            spec.templateRect.width() > spec.searchRoi.width()
-            || spec.templateRect.height() > spec.searchRoi.height()
-        )
-        {
-            return fail(
-                AutomationErrorKind::InvalidResource,
-                "recognizer template dimensions must fit inside search_roi"
-            );
-        }
-
         UF_TRY(
-            spec.threshold.maximumSad(
-                spec.templateRect.width(),
-                spec.templateRect.height()
+            validateElementShape(
+                fingerprint,
+                spec.searchRoi,
+                spec.variants,
+                spec.capabilities
             )
         );
 
-        if (
-            spec.annotationType != AnnotationType::ActionTarget
-            && spec.defaultClick.has_value()
-        )
-        {
-            return fail(
-                AutomationErrorKind::InvalidResource,
-                "only action_target recognizers may define a default click"
-            );
-        }
-
-        if (
-            spec.defaultClick.has_value()
-            && (
-                spec.defaultClick->x() >= spec.templateRect.width()
-                || spec.defaultClick->y() >= spec.templateRect.height()
-            )
-        )
-        {
-            return fail(
-                AutomationErrorKind::InvalidResource,
-                "default click must be inside the recognizer template"
-            );
-        }
-
-        if (
-            spec.annotationType == AnnotationType::PageAnchor
-            && !spec.allowedPageIds.empty()
-        )
-        {
-            return fail(
-                AutomationErrorKind::InvalidResource,
-                "page_anchor membership must be expressed by page signatures"
-            );
-        }
-
-        if (
-            spec.annotationType == AnnotationType::ActionTarget
-            && spec.allowedPageIds.empty()
-        )
-        {
-            return fail(
-                AutomationErrorKind::InvalidResource,
-                "action_target recognizer must authorize at least one page"
-            );
-        }
-
-        auto normalizedSpec = spec;
-        std::ranges::sort(normalizedSpec.allowedPageIds, lessId<PageId>);
-        if (hasDuplicateIds<PageId>(normalizedSpec.allowedPageIds))
-        {
-            return fail(
-                AutomationErrorKind::InvalidResource,
-                "recognizer contains duplicate allowed page IDs"
-            );
-        }
-
-        return RecognizerDefinition{std::move(normalizedSpec)};
+        return RecognizerDefinition{spec};
     }
 
     auto RecognizerDefinition::id() const -> ElementId { return m_id; }
     auto RecognizerDefinition::name() const -> ResourceName { return m_name; }
-    auto RecognizerDefinition::annotationType() const noexcept -> AnnotationType
+    auto RecognizerDefinition::capabilities() const noexcept -> ElementCapabilities const&
     {
-        return m_annotationType;
+        return m_capabilities;
     }
-    auto RecognizerDefinition::capabilities() const noexcept -> ElementCapabilities
-    {
-        return ElementCapabilities::fromAnnotationType(m_annotationType, m_defaultClick);
-    }
-    auto RecognizerDefinition::templateRect() const noexcept -> PixelRect { return m_templateRect; }
     auto RecognizerDefinition::searchRoi() const noexcept -> PixelRect { return m_searchRoi; }
-    auto RecognizerDefinition::threshold() const noexcept -> SimilarityThreshold
+    auto RecognizerDefinition::variants() const noexcept -> std::span<RecognizerVariant const>
     {
-        return m_threshold;
+        return m_variants;
     }
-    auto RecognizerDefinition::defaultClick() const noexcept -> std::optional<TemplateOffset>
+    auto RecognizerDefinition::findVariant(
+        ResourceName const& name
+    ) const noexcept -> RecognizerVariant const*
     {
-        return m_defaultClick;
-    }
-    auto RecognizerDefinition::allowedPageIds() const noexcept -> std::span<PageId const>
-    {
-        return m_allowedPageIds;
+        auto const found = std::ranges::find(
+            m_variants,
+            name,
+            &RecognizerVariant::name
+        );
+        return found == m_variants.end() ? nullptr : &*found;
     }
 
-    PageSignature::PageSignature(PageSpec spec) noexcept
+    PageSignature::PageSignature(
+        PageSpec spec,
+        std::vector<ElementId> required,
+        std::vector<ElementId> forbidden
+    ) noexcept
         : m_id{spec.id}
         , m_name{std::move(spec.name)}
-        , m_required{std::move(spec.required)}
-        , m_forbidden{std::move(spec.forbidden)}
+        , m_required{std::move(required)}
+        , m_forbidden{std::move(forbidden)}
     {
-    }
-
-    auto PageSignature::create(PageSpec const& spec) -> Result<PageSignature>
-    {
-        auto normalizedSpec = spec;
-        if (
-            normalizedSpec.required.empty()
-            && normalizedSpec.forbidden.empty()
-        )
-        {
-            return fail(
-                AutomationErrorKind::InvalidResource,
-                "page signature must contain at least one required or forbidden recognizer"
-            );
-        }
-
-        std::ranges::sort(normalizedSpec.required, lessId<ElementId>);
-        std::ranges::sort(normalizedSpec.forbidden, lessId<ElementId>);
-        if (
-            hasDuplicateIds<ElementId>(normalizedSpec.required)
-            || hasDuplicateIds<ElementId>(normalizedSpec.forbidden)
-        )
-        {
-            return fail(
-                AutomationErrorKind::InvalidResource,
-                "page signature contains duplicate recognizer IDs"
-            );
-        }
-
-        for (auto const id : normalizedSpec.required)
-        {
-            if (containsId<ElementId>(normalizedSpec.forbidden, id))
-            {
-                return fail(
-                    AutomationErrorKind::InvalidResource,
-                    "page required and forbidden recognizer sets overlap"
-                );
-            }
-        }
-
-        return PageSignature{std::move(normalizedSpec)};
     }
 
     auto PageSignature::id() const -> PageId { return m_id; }
@@ -621,12 +625,14 @@ namespace uf::annotation
         ProjectFingerprint fingerprint,
         std::vector<RecognizerDefinition> recognizers,
         std::vector<PageSignature> pages,
+        std::vector<PageReference> references,
         std::vector<ElementId> pageAnchorOrder
     ) noexcept
         : m_projectId{std::move(projectId)}
         , m_fingerprint{fingerprint}
         , m_recognizers{std::move(recognizers)}
         , m_pages{std::move(pages)}
+        , m_references{std::move(references)}
         , m_pageAnchorOrder{std::move(pageAnchorOrder)}
     {
     }
@@ -635,7 +641,8 @@ namespace uf::annotation
         ProjectId projectId,
         ProjectFingerprint fingerprint,
         std::vector<RecognizerDefinition> recognizers,
-        std::vector<PageSignature> pages
+        std::vector<PageSpec> pages,
+        std::vector<PageReference> references
     ) -> Result<RecognitionCatalog>
     {
         std::ranges::sort(
@@ -649,70 +656,57 @@ namespace uf::annotation
         std::ranges::sort(
             pages,
             {},
-            [](PageSignature const& page) -> ResourceId
+            [](PageSpec const& page) -> ResourceId
             {
-                return page.id().value();
+                return page.id.value();
             }
         );
+        std::ranges::sort(references, referenceLess);
 
         for (auto index = std::size_t{1}; index < recognizers.size(); ++index)
         {
-            auto const& previous = recognizers[index - 1];
-            auto const& current = recognizers[index];
-            if (previous.id() == current.id())
+            if (
+                checkedAt(recognizers, index - 1U).id()
+                == checkedAt(recognizers, index).id()
+            )
             {
-                return fail(
-                    AutomationErrorKind::InvalidResource,
-                    "recognizer IDs must be unique"
-                );
+                return invalidCatalog("element IDs must be unique");
             }
         }
 
         for (auto leftIndex = std::size_t{0}; leftIndex < recognizers.size(); ++leftIndex)
         {
             for (
-                auto rightIndex = leftIndex + 1;
+                auto rightIndex = leftIndex + 1U;
                 rightIndex < recognizers.size();
                 ++rightIndex
             )
             {
-                if (recognizers[leftIndex].name() == recognizers[rightIndex].name())
+                if (
+                    checkedAt(recognizers, leftIndex).name()
+                    == checkedAt(recognizers, rightIndex).name()
+                )
                 {
-                    return fail(
-                        AutomationErrorKind::InvalidResource,
-                        "recognizer names must be unique"
-                    );
+                    return invalidCatalog("element names must be unique");
                 }
             }
         }
 
         for (auto index = std::size_t{1}; index < pages.size(); ++index)
         {
-            auto const& previous = pages[index - 1];
-            auto const& current = pages[index];
-            if (previous.id() == current.id())
+            if (checkedAt(pages, index - 1U).id == checkedAt(pages, index).id)
             {
-                return fail(
-                    AutomationErrorKind::InvalidResource,
-                    "page IDs must be unique"
-                );
+                return invalidCatalog("page IDs must be unique");
             }
         }
 
         for (auto leftIndex = std::size_t{0}; leftIndex < pages.size(); ++leftIndex)
         {
-            for (
-                auto rightIndex = leftIndex + 1;
-                rightIndex < pages.size();
-                ++rightIndex
-            )
+            for (auto rightIndex = leftIndex + 1U; rightIndex < pages.size(); ++rightIndex)
             {
-                if (pages[leftIndex].name() == pages[rightIndex].name())
+                if (checkedAt(pages, leftIndex).name == checkedAt(pages, rightIndex).name)
                 {
-                    return fail(
-                        AutomationErrorKind::InvalidResource,
-                        "page names must be unique"
-                    );
+                    return invalidCatalog("page names must be unique");
                 }
             }
         }
@@ -722,12 +716,11 @@ namespace uf::annotation
             for (auto const& recognizer : recognizers)
             {
                 if (
-                    page.id().value() == recognizer.id().value()
-                    || page.name() == recognizer.name()
+                    page.id.value() == recognizer.id().value()
+                    || page.name == recognizer.name()
                 )
                 {
-                    return fail(
-                        AutomationErrorKind::InvalidResource,
+                    return invalidCatalog(
                         "resource IDs and names must be globally unique"
                     );
                 }
@@ -745,73 +738,214 @@ namespace uf::annotation
             );
             return found == recognizers.end() ? nullptr : &*found;
         };
-        auto findPage = [&pages](PageId id) noexcept -> PageSignature const*
+        auto findPage = [&pages](PageId id) noexcept -> PageSpec const*
         {
-            auto const found = std::ranges::find(pages, id, &PageSignature::id);
+            auto const found = std::ranges::find(pages, id, &PageSpec::id);
             return found == pages.end() ? nullptr : &*found;
         };
 
-        auto pageAnchorOrder = std::vector<ElementId>{};
-        for (auto const& page : pages)
+        for (auto index = std::size_t{0}; index < references.size(); ++index)
         {
-            for (auto const id : page.required())
+            auto const& reference = checkedAt(references, index);
+            if (
+                index != 0U
+                && checkedAt(references, index - 1U).pageId == reference.pageId
+                && checkedAt(references, index - 1U).elementId == reference.elementId
+            )
             {
-                auto const* p_recognizer = findRecognizer(id);
-                if (
-                    p_recognizer == nullptr
-                    || p_recognizer->annotationType() != AnnotationType::PageAnchor
-                )
-                {
-                    return fail(
-                        AutomationErrorKind::InvalidResource,
-                        "page signatures may reference only existing page_anchor recognizers"
-                    );
-                }
-                pageAnchorOrder.emplace_back(id);
+                return invalidCatalog("a page references the same element twice");
             }
-            for (auto const id : page.forbidden())
+
+            auto const* p_page = findPage(reference.pageId);
+            if (p_page == nullptr)
             {
-                auto const* p_recognizer = findRecognizer(id);
-                if (
-                    p_recognizer == nullptr
-                    || p_recognizer->annotationType() != AnnotationType::PageAnchor
-                )
+                return invalidCatalog("page reference names an unknown page");
+            }
+            auto const* p_element = findRecognizer(reference.elementId);
+            if (p_element == nullptr)
+            {
+                return invalidCatalog("page reference names an unknown element");
+            }
+
+            // Two levels, one direction: the element declares what it can do,
+            // and the reference declares what this page does with it.
+            if (!reference.exercised.isSubsetOf(p_element->capabilities()))
+            {
+                return invalidCatalog(
+                    std::format(
+                        "page \"{}\" exercises a capability \"{}\" does not declare",
+                        p_page->name.value(),
+                        p_element->name().value()
+                    )
+                );
+            }
+
+            // The anchor pass reads the element-level region. Letting a
+            // signature member narrow it per page would search the same pixels
+            // a second time in the same cycle, which is exactly the cost the
+            // capability merge exists to remove.
+            if (reference.exercised.hasIdentify() && reference.searchRoi.has_value())
+            {
+                return invalidCatalog(
+                    std::format(
+                        "page \"{}\" exercises identify on \"{}\" and may not refine its search_roi",
+                        p_page->name.value(),
+                        p_element->name().value()
+                    )
+                );
+            }
+
+            if (auto const refined = reference.searchRoi)
+            {
+                UF_TRY(
+                    validateElementShape(
+                        fingerprint,
+                        *refined,
+                        p_element->variants(),
+                        p_element->capabilities()
+                    )
+                );
+            }
+
+            if (auto const& pinned = reference.variant)
+            {
+                if (p_element->findVariant(*pinned) == nullptr)
                 {
-                    return fail(
-                        AutomationErrorKind::InvalidResource,
-                        "page signatures may reference only existing page_anchor recognizers"
+                    return invalidCatalog(
+                        std::format(
+                            "page \"{}\" pins variant \"{}\", which \"{}\" does not declare",
+                            p_page->name.value(),
+                            pinned->value(),
+                            p_element->name().value()
+                        )
                     );
                 }
-                pageAnchorOrder.emplace_back(id);
             }
         }
 
         for (auto const& recognizer : recognizers)
         {
-            for (auto const pageId : recognizer.allowedPageIds())
+            // Owned is the author saying an element belongs to one page. Two
+            // pages claiming to own the same one is the contradiction the flag
+            // this replaced could hold without anything noticing.
+            auto owners = std::size_t{0};
+            for (auto const& reference : references)
             {
-                if (findPage(pageId) == nullptr)
+                if (
+                    reference.elementId == recognizer.id()
+                    && reference.holding == Holding::Owned
+                )
                 {
-                    return fail(
-                        AutomationErrorKind::InvalidResource,
-                        "recognizer allowed_page_ids contains an unknown page"
+                    ++owners;
+                }
+            }
+            if (owners > 1U)
+            {
+                return invalidCatalog(
+                    std::format(
+                        "\"{}\" is owned by more than one page",
+                        recognizer.name().value()
+                    )
+                );
+            }
+
+            // The closure that replaces "an action target must authorize a
+            // page": an element the runtime could be asked to click has to be
+            // reachable somewhere it can be clicked. An element that is only
+            // read, or only identifies, needs no such edge.
+            if (!recognizer.capabilities().hasInteract())
+            {
+                continue;
+            }
+            auto const exercised = std::ranges::any_of(
+                references,
+                [&recognizer](PageReference const& reference)
+                {
+                    return (
+                        reference.elementId == recognizer.id()
+                        && reference.exercised.hasInteract()
                     );
                 }
+            );
+            if (!exercised)
+            {
+                return invalidCatalog(
+                    std::format(
+                        "\"{}\" declares interact but no page exercises it",
+                        recognizer.name().value()
+                    )
+                );
             }
         }
 
-        for (auto leftIndex = std::size_t{0}; leftIndex < pages.size(); ++leftIndex)
+        // The signature is derived here and stored nowhere else. References are
+        // sorted by page then element, so each page's members come out already
+        // ordered by ID, and one reference per (page, element) makes required
+        // and forbidden structurally incapable of overlapping or repeating.
+        auto signatures      = std::vector<PageSignature>{};
+        auto pageAnchorOrder = std::vector<ElementId>{};
+        signatures.reserve(pages.size());
+        for (auto& page : pages)
+        {
+            auto required  = std::vector<ElementId>{};
+            auto forbidden = std::vector<ElementId>{};
+            for (auto const& reference : references)
+            {
+                if (reference.pageId != page.id)
+                {
+                    continue;
+                }
+                auto const& identify = reference.exercised.identify();
+                if (!identify.has_value())
+                {
+                    continue;
+                }
+                switch (identify->role)
+                {
+                case SignatureRole::Required:
+                    required.emplace_back(reference.elementId);
+                    break;
+                case SignatureRole::Forbidden:
+                    forbidden.emplace_back(reference.elementId);
+                    break;
+                }
+                pageAnchorOrder.emplace_back(reference.elementId);
+            }
+
+            if (required.empty() && forbidden.empty())
+            {
+                return invalidCatalog(
+                    std::format(
+                        "page \"{}\" has no reference exercising identify, so nothing can recognise it",
+                        page.name.value()
+                    )
+                );
+            }
+            signatures.emplace_back(
+                PageSignature{
+                    std::move(page),
+                    std::move(required),
+                    std::move(forbidden)
+                }
+            );
+        }
+
+        for (auto leftIndex = std::size_t{0}; leftIndex < signatures.size(); ++leftIndex)
         {
             for (
-                auto rightIndex = leftIndex + 1;
-                rightIndex < pages.size();
+                auto rightIndex = leftIndex + 1U;
+                rightIndex < signatures.size();
                 ++rightIndex
             )
             {
-                if (sameSignature(pages[leftIndex], pages[rightIndex]))
+                if (
+                    sameSignature(
+                        checkedAt(signatures, leftIndex),
+                        checkedAt(signatures, rightIndex)
+                    )
+                )
                 {
-                    return fail(
-                        AutomationErrorKind::InvalidResource,
+                    return invalidCatalog(
                         "two pages have the same required and forbidden signature"
                     );
                 }
@@ -828,7 +962,8 @@ namespace uf::annotation
             std::move(projectId),
             fingerprint,
             std::move(recognizers),
-            std::move(pages),
+            std::move(signatures),
+            std::move(references),
             std::move(pageAnchorOrder)
         };
     }
@@ -853,6 +988,11 @@ namespace uf::annotation
         return m_pages;
     }
 
+    auto RecognitionCatalog::references() const noexcept -> std::span<PageReference const>
+    {
+        return m_references;
+    }
+
     auto RecognitionCatalog::findRecognizer(
         ElementId id
     ) const noexcept -> RecognizerDefinition const*
@@ -869,6 +1009,24 @@ namespace uf::annotation
     {
         auto const found = std::ranges::find(m_pages, id, &PageSignature::id);
         return found == m_pages.end() ? nullptr : &*found;
+    }
+
+    auto RecognitionCatalog::findReference(
+        PageId pageId,
+        ElementId elementId
+    ) const noexcept -> PageReference const*
+    {
+        auto const found = std::ranges::find_if(
+            m_references,
+            [pageId, elementId](PageReference const& reference) noexcept -> bool
+            {
+                return (
+                    reference.pageId == pageId
+                    && reference.elementId == elementId
+                );
+            }
+        );
+        return found == m_references.end() ? nullptr : &*found;
     }
 
     auto RecognitionCatalog::pageAnchorOrder() const noexcept -> std::span<ElementId const>

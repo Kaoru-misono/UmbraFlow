@@ -2,7 +2,6 @@
 
 #include <domain/error.hpp>
 
-#include <ranges>
 #include <utility>
 
 namespace uf::annotation
@@ -40,12 +39,12 @@ namespace uf::annotation
         auto const* p_recognizer = catalog.findRecognizer(recognizerId);
         if (
             p_recognizer == nullptr
-            || p_recognizer->annotationType() != AnnotationType::ActionTarget
+            || !p_recognizer->capabilities().hasInteract()
         )
         {
             return fail(
                 AutomationErrorKind::ActionRejected,
-                "detection is not bound to a catalog action_target"
+                "detection is not bound to an interactive catalog element"
             );
         }
 
@@ -104,21 +103,27 @@ namespace uf::annotation
         if (
             p_page == nullptr
             || p_recognizer == nullptr
-            || p_recognizer->annotationType() != AnnotationType::ActionTarget
+            || !p_recognizer->capabilities().hasInteract()
         )
         {
             return fail(
                 AutomationErrorKind::ActionRejected,
-                "page or action recognizer is absent from the active catalog"
+                "page or interactive element is absent from the active catalog"
             );
         }
 
-        auto const allowedPageIds = p_recognizer->allowedPageIds();
-        if (std::ranges::find(allowedPageIds, resolvedPage.pageId()) == allowedPageIds.end())
+        // Authorisation IS the reference. The separate allowed-page list said
+        // exactly this and had to be kept equal to it by hand, with nothing
+        // checking that it was.
+        auto const* p_reference = catalog.findReference(
+            resolvedPage.pageId(),
+            actionDetection.recognizerId()
+        );
+        if (p_reference == nullptr || !p_reference->exercised.hasInteract())
         {
             return fail(
                 AutomationErrorKind::ActionRejected,
-                "action recognizer does not authorize the resolved page"
+                "the resolved page does not exercise interact on this element"
             );
         }
 

@@ -1,10 +1,13 @@
 #pragma once
 
 #include "canonical-toml.hpp"
+#include "capabilities.hpp"
+#include "catalog.hpp"
 #include "resource.hpp"
 
 #include <core/error/result.hpp>
 #include <core/safety/checked-access.hpp>
+#include <core/types/integer.hpp>
 
 #include <domain/space.hpp>
 
@@ -17,13 +20,57 @@
 
 namespace uf::annotation::detail
 {
-    [[nodiscard]]
-    auto annotationTypeText(AnnotationType type) noexcept -> std::string_view;
+    // One element's capability row exactly as it is spelled on disk. The click
+    // offset stays raw here because a TemplateOffset has to be bounded by a
+    // template, and the variant rows carrying the templates follow the element
+    // row that owns them, in both schemas.
+    struct CapabilityFields final
+    {
+        struct RawClickOffset final
+        {
+            uint32 x{};
+            uint32 y{};
+        };
+
+        bool identify{};
+        bool interact{};
+        bool read{};
+
+        std::optional<RawClickOffset>     clickOffset{};
+        ReadLayout                        layout{ReadLayout::SingleLine};
+        std::optional<CharsetRestriction> charset{};
+    };
 
     [[nodiscard]]
-    auto annotationTypeFromText(
-        std::string_view value
-    ) noexcept -> std::optional<AnnotationType>;
+    auto parseCapabilityFields(CanonicalTomlReader& reader) -> Result<CapabilityFields>;
+
+    // Completes the parsed row once a template exists to bound the click offset
+    // against. An absent boundingTemplate means the element declares no
+    // variants, and then no click offset can be measured at all.
+    [[nodiscard]]
+    auto toElementCapabilities(
+        CapabilityFields const& fields,
+        std::optional<PixelRect> boundingTemplate
+    ) -> Result<ElementCapabilities>;
+
+    auto appendCapabilityFields(
+        std::string& output,
+        ElementCapabilities const& capabilities
+    ) -> void;
+
+    [[nodiscard]]
+    auto parseExercisedFields(CanonicalTomlReader& reader) -> Result<ExercisedCapabilities>;
+
+    auto appendExercisedFields(
+        std::string& output,
+        ExercisedCapabilities const& exercised
+    ) -> void;
+
+    [[nodiscard]]
+    auto holdingText(Holding holding) noexcept -> std::string_view;
+
+    [[nodiscard]]
+    auto holdingFromText(std::string_view value) noexcept -> std::optional<Holding>;
 
     [[nodiscard]]
     auto parsePixelRectField(

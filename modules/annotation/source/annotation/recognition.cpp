@@ -94,6 +94,7 @@ namespace uf::annotation
     AnchorEvidence::AnchorEvidence(
         ElementId recognizerId,
         bool hit,
+        std::optional<ResourceName> variantName,
         std::optional<uint64> sadScore,
         uint64 maximumSad,
         std::optional<PixelRect> matchedRect,
@@ -101,6 +102,7 @@ namespace uf::annotation
     ) noexcept
         : m_recognizerId{recognizerId}
         , m_hit{hit}
+        , m_variantName{std::move(variantName)}
         , m_sadScore{sadScore}
         , m_maximumSad{maximumSad}
         , m_matchedRect{matchedRect}
@@ -108,8 +110,28 @@ namespace uf::annotation
     {
     }
 
+    auto AnchorEvidence::locatedByPage(
+        ElementId recognizerId,
+        PixelRect rect
+    ) -> AnchorEvidence
+    {
+        return AnchorEvidence{
+            recognizerId,
+            true,
+            std::nullopt,
+            std::nullopt,
+            uint64{0},
+            rect,
+            std::nullopt
+        };
+    }
+
     auto AnchorEvidence::recognizerId() const -> ElementId { return m_recognizerId; }
     auto AnchorEvidence::hit() const noexcept -> bool { return m_hit; }
+    auto AnchorEvidence::variantName() const noexcept -> std::optional<ResourceName> const&
+    {
+        return m_variantName;
+    }
     auto AnchorEvidence::sadScore() const noexcept -> std::optional<uint64> { return m_sadScore; }
     auto AnchorEvidence::maximumSad() const noexcept -> uint64 { return m_maximumSad; }
     auto AnchorEvidence::matchedRect() const noexcept -> std::optional<PixelRect>
@@ -132,17 +154,17 @@ namespace uf::annotation
 
     auto AnchorEvaluation::fromSadOutcome(
         RecognizerDefinition const& recognizer,
+        RecognizerVariant const& variant,
+        PixelRect searchRoi,
         SadSearchOutcome const& outcome
     ) -> Result<AnchorEvaluation>
     {
-        if (
-            recognizer.annotationType() != AnnotationType::PageAnchor
-            && recognizer.annotationType() != AnnotationType::ActionTarget
-        )
+        auto const* p_declared = recognizer.findVariant(variant.name);
+        if (p_declared == nullptr || *p_declared != variant)
         {
             return fail(
                 AutomationErrorKind::InvalidResource,
-                "SAD evidence may evaluate only page_anchor or action_target recognizers"
+                "SAD evidence must name a variant the element declares"
             );
         }
 
@@ -155,10 +177,10 @@ namespace uf::annotation
         }
 
         auto const& match = std::get<std::optional<SadMatch>>(outcome);
-        auto const templateRect = recognizer.templateRect();
+        auto const templateRect = variant.templateRect;
         UF_TRY_VALUE(
             maximumSad,
-            recognizer.threshold().maximumSad(
+            variant.threshold.maximumSad(
                 templateRect.width(),
                 templateRect.height()
             )
@@ -171,6 +193,7 @@ namespace uf::annotation
                 AnchorEvidence{
                     recognizer.id(),
                     false,
+                    variant.name,
                     std::nullopt,
                     maximumSad,
                     std::nullopt,
@@ -179,7 +202,6 @@ namespace uf::annotation
             };
         }
 
-        auto const searchRoi = recognizer.searchRoi();
         auto const matchedRight = checkedAdd(match->x(), templateRect.width());
         auto const matchedBottom = checkedAdd(match->y(), templateRect.height());
         if (
@@ -193,7 +215,7 @@ namespace uf::annotation
         {
             return fail(
                 AutomationErrorKind::InternalInvariant,
-                "SAD matcher returned a rectangle outside the recognizer search_roi"
+                "SAD matcher returned a rectangle outside the searched region"
             );
         }
 
@@ -236,12 +258,19 @@ namespace uf::annotation
             AnchorEvidence{
                 recognizer.id(),
                 match->score() <= maximumSad,
+                variant.name,
                 match->score(),
                 maximumSad,
                 matchedRect,
                 displayConfidence
             }
         };
+    }
+
+    auto AnchorEvaluation::fromEvidence(AnchorEvidence evidence) -> AnchorEvaluation
+    {
+        auto const id = evidence.recognizerId();
+        return AnchorEvaluation{id, Evaluation{std::move(evidence)}};
     }
 
     auto AnchorEvaluation::recognizerId() const -> ElementId { return m_recognizerId; }

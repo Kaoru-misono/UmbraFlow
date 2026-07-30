@@ -1,8 +1,10 @@
 #pragma once
 
+#include "capabilities.hpp"
 #include "catalog.hpp"
 #include "content-hash.hpp"
 #include "resource.hpp"
+#include "variant.hpp"
 
 #include <core/error/result.hpp>
 #include <core/safety/annotations.hpp>
@@ -20,13 +22,14 @@
 
 namespace uf::annotation
 {
-    // The schema the GUI reads and writes. Bumped from v1 when page membership
-    // moved off the recognizer (allowed_page_ids) and onto page-side placements.
-    // The v1 read path has been retired: the sole real project migrated to v2 on
-    // disk, so an old schema string now fails with the ordinary unsupported-schema
-    // error rather than upgrading.
+    // The schema the authoring tools read and write. Bumped from v2 when the
+    // three-way annotation type became a capability set, the shared flag became
+    // page-side holding, and a page's signature stopped being authored and
+    // started being derived from its references. The v2 read path has been
+    // retired the way the v1 one was: an old schema string fails with the
+    // ordinary unsupported-schema error rather than upgrading.
     inline constexpr auto k_authoringDocumentSchema = std::string_view{
-        "umbraflow-authoring/v2"
+        "umbraflow-authoring/v3"
     };
 
     namespace detail
@@ -89,75 +92,40 @@ namespace uf::annotation
         auto provenance() const noexcept UF_LIFETIME_BOUND -> SourceProvenance const&;
     };
 
-    // The three kinds an element can be. They are the payloads of the element
-    // sum type below, matched with core/utility/variant-match.hpp. Only the
-    // interactive kind carries a click, which is what turns "only an action
-    // target may define a default click" from a cross-field rule into a fact of
-    // the type: an anchor or an info region has no field to misuse.
-    struct AnchorElement final
-    {
-        auto operator==(AnchorElement const&) const -> bool = default;
-    };
-
-    struct InteractiveElement final
-    {
-        std::optional<TemplateOffset> clickOffset{};
-
-        auto operator==(InteractiveElement const&) const -> bool = default;
-    };
-
-    struct InfoElement final
-    {
-        auto operator==(InfoElement const&) const -> bool = default;
-    };
-
-    using ElementKind = std::variant<
-        AnchorElement,
-        InteractiveElement,
-        InfoElement
-    >;
-
-    // The annotation type that a kind compiles down to, so the runtime manifest
-    // and the derived catalog keep their existing three-way vocabulary.
-    [[nodiscard]]
-    auto annotationTypeOfKind(ElementKind const& kind) noexcept -> AnnotationType;
-
-    // An authored element: the template pixels drawn once, plus the two facts
-    // only authoring keeps. The screen it was drawn on is what makes its
-    // rectangles meaningful; the shared flag records that the author intends
-    // these pixels to be reused on other pages, a statement of intent no other
-    // field can carry. Where an element is placed no longer lives here -- that
-    // is a page-side fact (see AuthoringPlacement). An anchor keeps its search
-    // region on the element, since its page membership is a signature and no
-    // requirement yet needs a per-signature region; an interactive or info
-    // element carries its own search region here too, and each placement may
-    // refine it per page in a later phase.
+    // An authored element: one rectangle of the screen, what it may be used
+    // for, and the appearances it can take. Where it is used is a page-side
+    // fact and lives on PageReference; nothing here says which page.
+    //
+    // An empty variant list is a legal and meaningful state: it says this
+    // rectangle is located by the page being recognised rather than by pixels
+    // of its own, which is what a readable cell and a click target inside an
+    // already-identified page both need. Its cost is the one section 2.1
+    // accepted for reading -- if the layout moves, the rectangle points at the
+    // wrong place -- and its consequence is that such an element can never be
+    // identity evidence.
     class Element final
     {
     public:
         struct Spec final
         {
-            ElementId                id;
-            ResourceName             name;
-            SourceId                 sourceId;
-            PixelRect                templateRect;
-            PixelRect                searchRoi;
-            SimilarityThreshold      threshold;
-            std::optional<ColourKey> colourKey{};
-            ElementKind              kind;
-            bool                     shared{};
+            ElementId           id;
+            ResourceName        name;
+            ElementCapabilities capabilities;
+            PixelRect           searchRoi;
+
+            // Ordered. Declaration order decides ties and nothing else: which
+            // variant matched is decided by normalized margin, because a wide
+            // early variant winning by arriving first would move the click.
+            std::vector<Variant> variants{};
         };
 
     private:
-        ElementId                m_id;
-        ResourceName             m_name;
-        SourceId                 m_sourceId;
-        PixelRect                m_templateRect;
-        PixelRect                m_searchRoi;
-        SimilarityThreshold      m_threshold;
-        std::optional<ColourKey> m_colourKey;
-        ElementKind              m_kind;
-        bool                     m_shared;
+        ElementId           m_id;
+        ResourceName        m_name;
+        ElementCapabilities m_capabilities;
+        PixelRect           m_searchRoi;
+
+        std::vector<Variant> m_variants;
 
         explicit Element(Spec spec) noexcept;
 
@@ -170,43 +138,27 @@ namespace uf::annotation
 
         [[nodiscard]] auto id() const -> ElementId;
         [[nodiscard]] auto name() const -> ResourceName;
-        [[nodiscard]] auto sourceId() const -> SourceId;
-        [[nodiscard]] auto templateRect() const noexcept -> PixelRect;
+
+        [[nodiscard]]
+        auto capabilities() const noexcept UF_LIFETIME_BOUND -> ElementCapabilities const&;
+
         [[nodiscard]] auto searchRoi() const noexcept -> PixelRect;
-        [[nodiscard]] auto threshold() const noexcept -> SimilarityThreshold;
-        [[nodiscard]] auto annotationType() const noexcept -> AnnotationType;
-        [[nodiscard]] auto shared() const noexcept -> bool;
-
-        // Which of the template's pixels count. Absent means all of them, which
-        // is what every element authored before the key existed says and keeps
-        // saying: its compiled template is fully opaque, byte for byte as
-        // before.
-        [[nodiscard]]
-        auto colourKey() const noexcept -> std::optional<ColourKey>;
 
         [[nodiscard]]
-        auto kind() const noexcept UF_LIFETIME_BOUND -> ElementKind const&;
+        auto variants() const noexcept UF_LIFETIME_BOUND -> std::span<Variant const>;
+
+        // Returned observations remain valid only while this element lives.
+        [[nodiscard]]
+        auto findVariant(
+            ResourceName const& name
+        ) const noexcept UF_LIFETIME_BOUND -> Variant const*;
     };
 
-    // One interactive or info element placed on one page, with where the runtime
-    // should look for it there. This is the page-membership edge the recognizer
-    // used to carry inverted; storing page_id here lets the whole set serialize
-    // as a flat table, which the canonical TOML reader can parse.
-    struct AuthoringPlacement final
-    {
-        PageId    pageId;
-        ElementId elementId;
-        PixelRect searchRoi;
-
-        auto operator==(AuthoringPlacement const&) const -> bool = default;
-    };
-
-    struct AuthoringRecognizerSource final
-    {
-        ElementId recognizerId;
-        SourceId  sourceId;
-        bool      shared{};
-    };
+    // The runtime's view of one authored variant. The source it was cut from
+    // and the colour key that masked it are authoring truth and stop here: the
+    // runtime reads the mask off the compiled template's alpha channel.
+    [[nodiscard]]
+    auto runtimeVariantOf(Variant const& variant) -> RecognizerVariant;
 
     enum class RegressionClassification : uint8
     {
@@ -268,18 +220,16 @@ namespace uf::annotation
 
     class AuthoringDocument final
     {
-        // m_elements and m_placements are the v2 source of truth. m_catalog is a
-        // read model derived from them at construction (its recognizers carry
-        // the allowed_page_ids inverted from the placements) so that the
-        // compiler and every UI panel that already reads catalog() keep working
-        // unchanged; m_recognizerSources is derived likewise. Phase 3 removes
-        // the derived read models once those callers speak placements natively.
-        RecognitionCatalog                     m_catalog;
-        std::vector<AuthoringSource>           m_sources;
-        std::vector<Element>                   m_elements;
-        std::vector<AuthoringPlacement>        m_placements;
-        std::vector<AuthoringRecognizerSource> m_recognizerSources;
-        std::vector<RegressionCase>            m_regressions;
+        // m_elements is the authoring truth; m_catalog is the read model
+        // derived from it at construction, and it is also where the page
+        // references live, because the reference is the same value on both
+        // sides. Every model invariant that spans elements and pages is
+        // enforced by RecognitionCatalog::create, so the authoring document and
+        // the runtime manifest cannot disagree about what is well formed.
+        RecognitionCatalog           m_catalog;
+        std::vector<AuthoringSource> m_sources;
+        std::vector<Element>         m_elements;
+        std::vector<RegressionCase>  m_regressions;
 
         // LLVM 23's performance-unnecessary-value-param check can recurse
         // through StrongValue construction when these owned sinks are passed
@@ -288,22 +238,18 @@ namespace uf::annotation
             RecognitionCatalog&& catalog,
             std::vector<AuthoringSource>&& sources,
             std::vector<Element>&& elements,
-            std::vector<AuthoringPlacement>&& placements,
-            std::vector<AuthoringRecognizerSource>&& recognizerSources,
             std::vector<RegressionCase>&& regressions
         ) noexcept;
 
     public:
-        // The v2 model: elements plus the page-side placements that authorize
-        // interactive and info elements onto pages.
         [[nodiscard]]
         static auto create(
             ProjectId projectId,
             ProjectFingerprint fingerprint,
             std::vector<AuthoringSource> sources,
             std::vector<Element> elements,
-            std::vector<PageSignature> pages,
-            std::vector<AuthoringPlacement> placements,
+            std::vector<PageSpec> pages,
+            std::vector<PageReference> references,
             std::vector<RegressionCase> regressions
         ) -> Result<AuthoringDocument>;
 
@@ -317,12 +263,7 @@ namespace uf::annotation
         auto elements() const noexcept UF_LIFETIME_BOUND -> std::span<Element const>;
 
         [[nodiscard]]
-        auto placements() const noexcept UF_LIFETIME_BOUND
-            -> std::span<AuthoringPlacement const>;
-
-        [[nodiscard]]
-        auto recognizerSources() const noexcept UF_LIFETIME_BOUND
-            -> std::span<AuthoringRecognizerSource const>;
+        auto references() const noexcept UF_LIFETIME_BOUND -> std::span<PageReference const>;
 
         [[nodiscard]]
         auto regressions() const noexcept UF_LIFETIME_BOUND -> std::span<RegressionCase const>;

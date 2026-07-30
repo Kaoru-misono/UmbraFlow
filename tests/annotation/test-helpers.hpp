@@ -1,7 +1,10 @@
 #pragma once
 
 #include <annotation/authoring-document.hpp>
+#include <annotation/capabilities.hpp>
+#include <annotation/catalog.hpp>
 #include <annotation/resource.hpp>
+#include <annotation/variant.hpp>
 
 #include <core/numeric/checked-arithmetic.hpp>
 #include <core/numeric/checked-cast.hpp>
@@ -95,162 +98,180 @@ namespace uf::annotation::test
         return *result;
     }
 
+    inline auto templateOffset(
+        uint32 x,
+        uint32 y,
+        uint32 templateWidth,
+        uint32 templateHeight
+    ) -> TemplateOffset
+    {
+        auto const result = TemplateOffset::create(
+            x,
+            y,
+            templateWidth,
+            templateHeight
+        );
+        REQUIRE(result.has_value());
+        return *result;
+    }
+
+    // What an element declares it can be used for.
+    inline auto capabilities(
+        std::optional<Identify> identify = std::nullopt,
+        std::optional<Interact> interact = std::nullopt,
+        std::optional<Read> read         = std::nullopt
+    ) -> ElementCapabilities
+    {
+        auto const result = ElementCapabilities::create(identify, interact, read);
+        REQUIRE(result.has_value());
+        return *result;
+    }
+
+    // What one page's reference does with it. The subset of the above that this
+    // page actually uses.
+    inline auto exercised(
+        std::optional<ExercisedIdentify> identify = std::nullopt,
+        std::optional<ExercisedInteract> interact = std::nullopt,
+        std::optional<ExercisedRead> read         = std::nullopt
+    ) -> ExercisedCapabilities
+    {
+        auto const result = ExercisedCapabilities::create(identify, interact, read);
+        REQUIRE(result.has_value());
+        return *result;
+    }
+
+    inline auto identifiesAs(
+        SignatureRole role = SignatureRole::Required
+    ) -> ExercisedCapabilities
+    {
+        return exercised(ExercisedIdentify{.role = role});
+    }
+
+    inline auto interacts() -> ExercisedCapabilities
+    {
+        return exercised(std::nullopt, ExercisedInteract{});
+    }
+
+    inline auto variant(
+        std::string name,
+        SourceId variantSourceId,
+        PixelRect templateRect,
+        SimilarityThreshold similarityThreshold = threshold(),
+        std::optional<ColourKey> colourKey      = std::nullopt
+    ) -> Variant
+    {
+        auto result = Variant::create(
+            Variant::Spec{
+                .name         = resourceName(std::move(name)),
+                .sourceId     = variantSourceId,
+                .templateRect = templateRect,
+                .threshold    = similarityThreshold,
+                .colourKey    = colourKey,
+            }
+        );
+        REQUIRE(result.has_value());
+        return *std::move(result);
+    }
+
+    inline auto recognizerVariant(
+        std::string name,
+        PixelRect templateRect,
+        SimilarityThreshold similarityThreshold = threshold()
+    ) -> RecognizerVariant
+    {
+        return RecognizerVariant{
+            .name         = resourceName(std::move(name)),
+            .templateRect = templateRect,
+            .threshold    = similarityThreshold,
+        };
+    }
+
+    inline auto element(
+        ProjectFingerprint projectFingerprint,
+        ElementId id,
+        std::string name,
+        ElementCapabilities elementCapabilities,
+        PixelRect searchRoi,
+        std::vector<Variant> variants = {}
+    ) -> Element
+    {
+        auto result = Element::create(
+            projectFingerprint,
+            Element::Spec{
+                .id           = id,
+                .name         = resourceName(std::move(name)),
+                .capabilities = std::move(elementCapabilities),
+                .searchRoi    = searchRoi,
+                .variants     = std::move(variants),
+            }
+        );
+        REQUIRE(result.has_value());
+        return *std::move(result);
+    }
+
     inline auto recognizer(
         ProjectFingerprint projectFingerprint,
         ElementId id,
         std::string name,
-        AnnotationType annotationType,
-        PixelRect templateRect,
+        ElementCapabilities elementCapabilities,
         PixelRect searchRoi,
-        std::vector<PageId> allowedPageIds         = {},
-        std::optional<TemplateOffset> defaultClick = std::nullopt,
-        SimilarityThreshold similarityThreshold    = threshold()
+        std::vector<RecognizerVariant> variants = {}
     ) -> RecognizerDefinition
     {
         auto result = RecognizerDefinition::create(
             projectFingerprint,
             RecognizerSpec{
-                .id             = id,
-                .name           = resourceName(std::move(name)),
-                .annotationType = annotationType,
-                .templateRect   = templateRect,
-                .searchRoi      = searchRoi,
-                .threshold      = similarityThreshold,
-                .defaultClick   = defaultClick,
-                .allowedPageIds = std::move(allowedPageIds),
-            }
-        );
-        REQUIRE(result.has_value());
-        return *std::move(result);
-    }
-
-    inline auto page(
-        PageId id,
-        std::string name,
-        std::vector<ElementId> required,
-        std::vector<ElementId> forbidden = {}
-    ) -> PageSignature
-    {
-        auto result = PageSignature::create(
-            PageSpec{
-                .id        = id,
-                .name      = resourceName(std::move(name)),
-                .required  = std::move(required),
-                .forbidden = std::move(forbidden),
-            }
-        );
-        REQUIRE(result.has_value());
-        return *std::move(result);
-    }
-
-    inline auto anchorElement(
-        ProjectFingerprint projectFingerprint,
-        ElementId id,
-        std::string name,
-        SourceId sourceId,
-        PixelRect templateRect,
-        PixelRect searchRoi,
-        SimilarityThreshold similarityThreshold = threshold(),
-        bool shared                             = false
-    ) -> Element
-    {
-        auto result = Element::create(
-            projectFingerprint,
-            Element::Spec{
                 .id           = id,
                 .name         = resourceName(std::move(name)),
-                .sourceId     = sourceId,
-                .templateRect = templateRect,
+                .capabilities = std::move(elementCapabilities),
                 .searchRoi    = searchRoi,
-                .threshold    = similarityThreshold,
-                .kind         = AnchorElement{},
-                .shared       = shared,
+                .variants     = std::move(variants),
             }
         );
         REQUIRE(result.has_value());
         return *std::move(result);
     }
 
-    inline auto interactiveElement(
-        ProjectFingerprint projectFingerprint,
-        ElementId id,
-        std::string name,
-        SourceId sourceId,
-        PixelRect templateRect,
-        PixelRect searchRoi,
-        std::optional<TemplateOffset> clickOffset = std::nullopt,
-        SimilarityThreshold similarityThreshold   = threshold(),
-        bool shared                               = false
-    ) -> Element
+    inline auto page(PageId id, std::string name) -> PageSpec
     {
-        auto result = Element::create(
-            projectFingerprint,
-            Element::Spec{
-                .id           = id,
-                .name         = resourceName(std::move(name)),
-                .sourceId     = sourceId,
-                .templateRect = templateRect,
-                .searchRoi    = searchRoi,
-                .threshold    = similarityThreshold,
-                .kind         = InteractiveElement{.clickOffset = clickOffset},
-                .shared       = shared,
-            }
-        );
-        REQUIRE(result.has_value());
-        return *std::move(result);
+        return PageSpec{
+            .id   = id,
+            .name = resourceName(std::move(name)),
+        };
     }
 
-    inline auto infoElement(
-        ProjectFingerprint projectFingerprint,
-        ElementId id,
-        std::string name,
-        SourceId sourceId,
-        PixelRect templateRect,
-        PixelRect searchRoi,
-        SimilarityThreshold similarityThreshold = threshold()
-    ) -> Element
+    inline auto reference(
+        PageId referencedPageId,
+        ElementId referencedElementId,
+        ExercisedCapabilities exercisedCapabilities,
+        Holding holding                          = Holding::Owned,
+        std::optional<PixelRect> searchRoi        = std::nullopt,
+        std::optional<ResourceName> pinnedVariant = std::nullopt
+    ) -> PageReference
     {
-        auto result = Element::create(
-            projectFingerprint,
-            Element::Spec{
-                .id           = id,
-                .name         = resourceName(std::move(name)),
-                .sourceId     = sourceId,
-                .templateRect = templateRect,
-                .searchRoi    = searchRoi,
-                .threshold    = similarityThreshold,
-                .kind         = InfoElement{},
-                .shared       = false,
-            }
-        );
-        REQUIRE(result.has_value());
-        return *std::move(result);
-    }
-
-    inline auto placement(
-        PageId pageId,
-        ElementId elementId,
-        PixelRect searchRoi
-    ) -> AuthoringPlacement
-    {
-        return AuthoringPlacement{
-            .pageId    = pageId,
-            .elementId = elementId,
+        return PageReference{
+            .pageId    = referencedPageId,
+            .elementId = referencedElementId,
+            .holding   = holding,
+            .exercised = std::move(exercisedCapabilities),
             .searchRoi = searchRoi,
+            .variant   = std::move(pinnedVariant),
         };
     }
 
     inline auto catalog(
         ProjectFingerprint projectFingerprint,
         std::vector<RecognizerDefinition> recognizers,
-        std::vector<PageSignature> pages
+        std::vector<PageSpec> pages,
+        std::vector<PageReference> references
     ) -> RecognitionCatalog
     {
         auto result = RecognitionCatalog::create(
             projectId(),
             projectFingerprint,
             std::move(recognizers),
-            std::move(pages)
+            std::move(pages),
+            std::move(references)
         );
         REQUIRE(result.has_value());
         return *std::move(result);

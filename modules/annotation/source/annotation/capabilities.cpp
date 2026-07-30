@@ -1,7 +1,5 @@
 #include "capabilities.hpp"
 
-#include <core/error/contracts.hpp>
-
 #include <domain/error.hpp>
 
 #include <optional>
@@ -38,27 +36,6 @@ namespace uf::annotation
         }
 
         return ElementCapabilities{identify, interact, read};
-    }
-
-    auto ElementCapabilities::fromAnnotationType(
-        AnnotationType type,
-        std::optional<TemplateOffset> clickOffset
-    ) noexcept -> ElementCapabilities
-    {
-        switch (type)
-        {
-        case AnnotationType::PageAnchor:
-            return ElementCapabilities{Identify{}, std::nullopt, std::nullopt};
-        case AnnotationType::ActionTarget:
-            return ElementCapabilities{
-                std::nullopt,
-                Interact{.clickOffset = clickOffset},
-                std::nullopt
-            };
-        case AnnotationType::InfoRegion:
-            return ElementCapabilities{std::nullopt, std::nullopt, Read{}};
-        }
-        UF_UNREACHABLE_MSG("unknown annotation type");
     }
 
     auto ElementCapabilities::identify() const noexcept -> std::optional<Identify> const&
