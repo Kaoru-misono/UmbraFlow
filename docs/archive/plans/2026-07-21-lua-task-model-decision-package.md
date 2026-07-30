@@ -16,6 +16,12 @@
 > 里程碑现为 **P0–P3**。读 §1/§2 的**约束与调研**不受影响(与语言无关);读 §3 的**裁决建议**以 D0–D10 为准
 > (sol2 专属 API 已作废,机制结论多数保留并已按 Luau 传导)。
 >
+> **(2026-07-30 补注)** 文中的 `RecognitionFailed` 已改名为 `RecognitionIncomplete`
+> (wire 名 `recognition_incomplete`,`FailureResponse` = `Retry`;见
+> `modules/domain/source/domain/error.hpp`)。正文不改写,但**不要读成「识别失败」**:
+> 识别跑完却没匹配上不带任何错误(那是 `UnknownPage` 或空命中),该 kind 只表示比较
+> 预算在搜索结束前耗尽、调用方对屏幕一无所知,应重新观察。
+>
 > **四条灵魂约束(不可退让)**:确定性、可追踪、严格后台、核心零游戏分支。
 > **grill 议程原件**:[`2026-07-20-lua-task-model-grill.md`](2026-07-20-lua-task-model-grill.md)。
 

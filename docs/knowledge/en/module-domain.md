@@ -234,9 +234,17 @@ an upper-layer control-flow choice and should not be hidden inside a safety cred
 outward. The exhaustive switch of `failureResponse(AutomationErrorKind)` currently maps as follows:
 
 - `Cancelled` → `Cancelled`;
-- `CaptureStalled`, `StaleObservation` → `Retry`;
-- `RecognitionFailed`, `ActionRejected` → `StepFailed`;
+- `CaptureStalled`, `StaleObservation`, `RecognitionIncomplete` → `Retry`;
+- `ActionRejected` → `StepFailed`;
 - all other kinds → `Abort`.
+
+`RecognitionIncomplete` is deliberately not named for a failed recognition. A recognition that
+completes and matches nothing is not an error at all — it is `UnknownPage`, or a nil hit, and it
+carries no error kind. This kind means only that the comparison budget ran out before the search
+finished, so the caller learned nothing about the screen. That is why its response is `Retry` and not
+`StepFailed`: the caller has to observe again within its own budget instead of branching as though
+the page had been ruled out, and because the comparison count depends on the frame's own pixels, a
+later frame can complete where this one ran out.
 
 When adding an `AutomationErrorKind`, the default-less switch forces the developer to choose a
 recovery scope. `fail(kind, message, nativeCode)` encodes the kind into the private `uf.automation`

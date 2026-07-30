@@ -161,7 +161,9 @@ trace 从第一条 `engine.observed` 开始，它已于 2026-07-29 随运行生�
   任一不符返回 `StaleObservation`。
 - recognition budget、deadline 或 cancellation 产生明确 stop reason，而不是把
   半完成搜索当 miss。page/action stop 会先 emit `RecognitionStopped`，再映射为
-  `RecognitionFailed`、`Timeout` 或 `Cancelled`。
+  `RecognitionIncomplete`、`Timeout` 或 `Cancelled`。`RecognitionIncomplete` 说的是
+  搜索没看完，不是看完了没匹配上；它的 `FailureResponse` 是 `Retry`，调用方要重新
+  观察，而不是把该页当已排除。
 - `UnknownPage`、`AmbiguousPages` 不可伪装成 `ResolvedPage`；`act` 的参数类型本身
   要求真实 `ResolvedPage`。action miss 则是空 optional，保持 Tier A 正常控制流。
 - delivery 前再次调用 `validateTargetInstance`。目标被替换时 emit

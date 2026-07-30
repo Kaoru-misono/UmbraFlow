@@ -49,7 +49,7 @@
    "name": "uf::workbench::AuthoringDraft",
    "kind": "struct",
    "file": "entry/workbench/authoring-edit.hpp",
-   "line": 83,
+   "line": 89,
    "responsibility": "供界面编辑的 v2 中间数据聚合。控件可暂写普通字符串/整数/vector，但 element 与 page-side placement 必须一起整体重建成完整有效的 AuthoringDocument 才能进入历史。",
    "members": [
     {
@@ -181,7 +181,7 @@
    "name": "uf::workbench::EditablePlacement",
    "kind": "struct",
    "file": "entry/workbench/authoring-edit.hpp",
-   "line": 60,
+   "line": 66,
    "responsibility": "annotation::AuthoringPlacement 的 draft-side 对应物，把一个 interactive/info element 放到一页，并保存 runtime 在该页使用的独立 search ROI。anchor 不使用 placement，而通过 page signature 归属页面。",
    "members": [
     {
@@ -206,7 +206,7 @@
    "name": "uf::workbench::EditablePage",
    "kind": "struct",
    "file": "entry/workbench/authoring-edit.hpp",
-   "line": 67,
+   "line": 73,
    "responsibility": "一页的签名在 draft 中的可编辑视图：required 锚点识别这是哪一页，forbidden 锚点则必须不匹配。空签名会被 AuthoringDocument 拒绝，故锚点只能随页面一起提交。",
    "members": [
     {
@@ -231,7 +231,7 @@
    "name": "uf::workbench::EditableRegression",
    "kind": "struct",
    "file": "entry/workbench/authoring-edit.hpp",
-   "line": 75,
+   "line": 81,
    "responsibility": "一条回归用例的可编辑视图，记录某张源图被期望解析成哪一页。它是文档中唯一「某张截图代表哪一页」的陈述，也是 whole-model check 唯一可对照的基准。",
    "members": [
     {
@@ -256,7 +256,7 @@
    "name": "uf::workbench::PageMemberKind",
    "kind": "enum",
    "file": "entry/workbench/authoring-edit.hpp",
-   "line": 153,
+   "line": 159,
    "responsibility": "新 element 加入一页时扮演的角色：anchor 进入 signature，action/info 则生成 placement。作者画一个矩形时只需选择这一项。",
    "members": [
     {
@@ -277,7 +277,7 @@
    "name": "uf::workbench::NewPageSpec",
    "kind": "struct",
    "file": "entry/workbench/authoring-edit.hpp",
-   "line": 116,
+   "line": 122,
    "responsibility": "createPageFromSource 从调用者拿到的一切建页输入。三个 id 由调用者铸造（铸造不纯、函数要保持可测），页名与锚点名则从 draft 派生。",
    "members": [
     {
@@ -314,7 +314,7 @@
    "name": "uf::workbench::CreatedPage",
    "kind": "struct",
    "file": "entry/workbench/authoring-edit.hpp",
-   "line": 127,
+   "line": 133,
    "responsibility": "createPageFromSource 的结果：建好页与首锚点后的完整 draft，连同派生出的页名与锚点名，供调用者展示与随后选中。",
    "members": [
     {
@@ -339,7 +339,7 @@
    "name": "uf::workbench::PageMemberSpec",
    "kind": "struct",
    "file": "entry/workbench/authoring-edit.hpp",
-   "line": 160,
+   "line": 166,
    "responsibility": "addPageMember 给一页加一个 typed+linked 识别器所需的输入。kind 决定它是锚点还是 action target——作者画一个矩形时唯一要做的决定。",
    "members": [
     {
@@ -377,7 +377,7 @@
    "name": "uf::workbench::AddedPageMember",
    "kind": "struct",
    "file": "entry/workbench/authoring-edit.hpp",
-   "line": 171,
+   "line": 177,
    "responsibility": "addPageMember 与 shareRegionOnPage 的共同结果：加入成员后的完整 draft 与派生的成员名，供调用者落地后选中该成员。",
    "members": [
     {
@@ -399,7 +399,7 @@
    "name": "uf::workbench::SharedRegionSpec",
    "kind": "struct",
    "file": "entry/workbench/authoring-edit.hpp",
-   "line": 254,
+   "line": 272,
    "responsibility": "shareRegionOnPage 把一个交互区域复用到另一页的输入：新副本识别器 id、被复用的源识别器、目标页、以及副本在该页的搜索区。",
    "members": [
     {
@@ -428,7 +428,7 @@
    "name": "uf::workbench::RetemplatedRegion",
    "kind": "struct",
    "file": "entry/workbench/authoring-edit.hpp",
-   "line": 282,
+   "line": 300,
    "responsibility": "retemplateSharedRegion 的结果：移动模板矩形并带动共享组每个成员后的 draft，movedMembers 报告一起被移动了多少个成员。",
    "members": [
     {
@@ -448,7 +448,7 @@
    "name": "uf::workbench::ScreenClaimSpec",
    "kind": "struct",
    "file": "entry/workbench/authoring-edit.hpp",
-   "line": 303,
+   "line": 321,
    "responsibility": "claimScreenForPage 声明某截图解析到某页的输入。regressionId 只在需要新增回归用例时才被读取，重指已有屏时不用。",
    "members": [
     {
@@ -472,7 +472,7 @@
    "name": "uf::workbench::RetypedRecognizer",
    "kind": "struct",
    "file": "entry/workbench/authoring-edit.hpp",
-   "line": 360,
+   "line": 378,
    "responsibility": "一次识别器类型变更连同它顺带做的所有修复。授权是作者没主动要的权限、被清空的字段让转换有损，所以两者都不能悄悄发生，必须逐项报给调用者。",
    "members": [
     {
@@ -501,7 +501,7 @@
    "name": "uf::workbench::DeletedEntity",
    "kind": "struct",
    "file": "entry/workbench/authoring-edit.hpp",
-   "line": 389,
+   "line": 407,
    "responsibility": "一次删除连同它带走的东西。文档中每个实体都被别人引用，删一个总会改动邻居；计数让调用者说清还有什么随之移动，不适用的计数保持为零。",
    "members": [
     {
@@ -526,7 +526,7 @@
    "name": "uf::workbench::AuthoringEditHistory",
    "kind": "class",
    "file": "entry/workbench/authoring-edit.hpp",
-   "line": 428,
+   "line": 446,
    "responsibility": "document 的唯一真相与 undo/redo 历史。apply 先把 draft 重建成完整 document，再比较规范序列化：相同则不写历史；不同则把旧版本移入 undo、清空 redo、限制 100 条。undo/redo 整体移动 document value，故跨识别器/页面的引用始终作为同一版本恢复。",
    "members": [
     {
@@ -684,7 +684,7 @@
    "name": "uf::workbench::DuplicateElementSpec",
    "kind": "struct",
    "file": "entry/workbench/authoring-edit.hpp",
-   "line": 188,
+   "line": 194,
    "responsibility": "duplicateElement 的输入：指定被复制 element 与调用方铸造的新 identity。",
    "members": [
     {
@@ -704,7 +704,7 @@
    "name": "uf::workbench::DuplicatedElement",
    "kind": "struct",
    "file": "entry/workbench/authoring-edit.hpp",
-   "line": 194,
+   "line": 200,
    "responsibility": "独立复制一个 element 的结果；副本继承原 placement 集但拥有新 ID 与唯一派生名。",
    "members": [
     {
@@ -725,7 +725,7 @@
    "name": "uf::workbench::SharedRegionPlacement",
    "kind": "struct",
    "file": "entry/workbench/authoring-edit.hpp",
-   "line": 261,
+   "line": 279,
    "responsibility": "把同一个 interactive element 放到另一页后的结果，返回完整 draft 与 element 名；不会铸造 recognizer 副本。",
    "members": [
     {
@@ -746,7 +746,7 @@
    "name": "uf::workbench::PagelessExpectation",
    "kind": "enum",
    "file": "entry/workbench/authoring-edit.hpp",
-   "line": 330,
+   "line": 348,
    "responsibility": "不命名页面的两类 screen regression 期望；resolved claim 仍由 page-scoped EditPage 处理。",
    "members": [
     {
@@ -766,7 +766,7 @@
    "name": "uf::workbench::ScreenExpectationSpec",
    "kind": "struct",
    "file": "entry/workbench/authoring-edit.hpp",
-   "line": 336,
+   "line": 354,
    "responsibility": "recordScreenExpectation 的输入，把一张 screen 绑定到 Unknown 或 Ambiguous 期望；已有 case 会被改写而非重复添加。",
    "members": [
     {
@@ -985,7 +985,7 @@
    "name": "uf::workbench::ScreenCheckOutcome",
    "kind": "enum",
    "file": "entry/workbench/preview.hpp",
-   "line": 152,
+   "line": 203,
    "responsibility": "一张截图对照它被声称代表的页面解析出的结果。Unclaimed 与 Stopped 不是失败判决——它们表示检查无话可说，报成失败会误导作者。",
    "members": [
     {
@@ -1010,7 +1010,7 @@
    "name": "uf::workbench::ScreenCheck",
    "kind": "struct",
    "file": "entry/workbench/preview.hpp",
-   "line": 164,
+   "line": 215,
    "responsibility": "whole-model check 中一张截图的行：它解析到什么、被记录为什么、以及这两者中哪个是最终 outcome。",
    "members": [
     {
@@ -1034,7 +1034,7 @@
    "name": "uf::workbench::RecognizerMargin",
    "kind": "struct",
    "file": "entry/workbench/preview.hpp",
-   "line": 182,
+   "line": 233,
    "responsibility": "一个识别器在自己所属屏幕与最接近的另一屏上的相似度分数。以对共享预算的原始分数（非比率）报告，因为 maximumSad 只依赖模板与阈值、不依赖屏幕，故两屏分数直接可比。间距是最值得盯的数字。",
    "members": [
     {
@@ -1059,7 +1059,7 @@
    "name": "uf::workbench::LiveScreenCheck",
    "kind": "struct",
    "file": "entry/workbench/preview.hpp",
-   "line": 291,
+   "line": 342,
    "responsibility": "运行目标当前屏幕的检查。实时帧不带记录期望（作者正看着它），故只报页面如何分类，不附对错判决。",
    "members": [
     {
@@ -1080,7 +1080,7 @@
    "name": "uf::workbench::ModelCheck",
    "kind": "struct",
    "file": "entry/workbench/preview.hpp",
-   "line": 298,
+   "line": 349,
    "responsibility": "一次全模型检查的完整结果：每屏解析情况、每识别器间距、以及可选的实时帧检查。作者无法用肉眼做这件事——一个标记总以零分匹配它裁自的图，唯一证据是它在别屏上的分数。",
    "members": [
     {
@@ -1478,7 +1478,7 @@
    "name": "uf::workbench::PageAnchor",
    "kind": "class",
    "file": "entry/workbench/edit-page.hpp",
-   "line": 281,
+   "line": 125,
    "responsibility": "签名成员的对称 handle：识别（或必须不识别）此页的锚点。与 InteractiveRegion 同样的借用契约——non-copyable/non-movable、每次按 id 解析、只由 EditPage 铸造。",
    "members": [
     {
@@ -1764,7 +1764,7 @@
    "name": "uf::workbench::ModelCellOutcome",
    "kind": "enum",
    "file": "entry/workbench/preview.hpp",
-   "line": 211,
+   "line": 262,
    "responsibility": "marks×screens 网格中一个 element/screen 组合的搜索结果。",
    "members": [
     {
@@ -1789,7 +1789,7 @@
    "name": "uf::workbench::ModelCheckCell",
    "kind": "struct",
    "file": "entry/workbench/preview.hpp",
-   "line": 230,
+   "line": 281,
    "responsibility": "一个 element 在一个 captured screen 上的完整检查单元，保留结果、分数、期望命中与停止原因。",
    "members": [
     {
@@ -1826,7 +1826,7 @@
    "name": "uf::workbench::ModelCellColor",
    "kind": "enum",
    "file": "entry/workbench/preview.hpp",
-   "line": 256,
+   "line": 307,
    "responsibility": "由纯 classifyModelCell 决定的网格色带，把正确、薄边界、误配与未搜索从 ImGui 中抽离。",
    "members": [
     {

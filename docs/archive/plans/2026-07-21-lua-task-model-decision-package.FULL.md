@@ -7,6 +7,12 @@
 > **四条灵魂约束（不可退让）**：确定性、可追踪、严格后台、核心零游戏分支。
 >
 > **背景**：产品 UmbraFlow 是通用视觉游戏自动化框架，正把任务模型从"显式状态机"换成命令式 Lua 5.4 + sol2。
+>
+> **(2026-07-30 补注)** 本档为旧口径留档，正文不改写。其中的 `RecognitionFailed` 已改名为
+> `RecognitionIncomplete`（wire 名 `recognition_incomplete`，`FailureResponse` = `Retry`；见
+> `modules/domain/source/domain/error.hpp`），且**不要读成"识别失败"**：识别跑完却没匹配上
+> 不带任何错误（那是 `UnknownPage` 或空命中），该 kind 只表示比较预算在搜索结束前耗尽、
+> 调用方对屏幕一无所知，应重新观察。
 
 ## 目录
 

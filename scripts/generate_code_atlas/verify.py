@@ -42,8 +42,13 @@ def load(path):
 
 
 def save(path, data):
-    with io.open(path, "w", encoding="utf-8") as f:
+    # LF plus a trailing newline, because scripts/fix_format.py normalizes every
+    # .json in the repository that way. Writing platform newlines or omitting the
+    # final newline made every auto-fixed data file fail the format gate right
+    # after the atlas pipeline had just been run as documented.
+    with io.open(path, "w", encoding="utf-8", newline="\n") as f:
         json.dump(data, f, ensure_ascii=False, indent=1)
+        f.write("\n")
 
 
 def verify_module(json_path):

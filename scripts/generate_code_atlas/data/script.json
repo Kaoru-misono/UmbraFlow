@@ -45,7 +45,7 @@
    "name": "uf::script::HostTableInstaller",
    "kind": "alias",
    "file": "modules/script/source/script/engine.hpp",
-   "line": 26,
+   "line": 38,
    "responsibility": "在主 state 被 sandbox 冻结前安装 host-facing globals 的组合 seam。script 本身不注册产品 capability；modules/task 用它安装已深冻结的 uf.* tables。",
    "members": [
     {
@@ -63,7 +63,7 @@
    "name": "uf::script::EngineConfig",
    "kind": "struct",
    "file": "modules/script/source/script/engine.hpp",
-   "line": 33,
+   "line": 132,
    "responsibility": "一个任务 VM generation 的全部 live policy：外部取消、内存硬上限、interrupt tick 预算、steady-clock deadline 与 host-table installer。create 一次性把这些值固化进 heap-pinned Impl。",
    "members": [
     {
@@ -98,7 +98,7 @@
    "name": "uf::script::Engine",
    "kind": "class",
    "file": "modules/script/source/script/engine.hpp",
-   "line": 70,
+   "line": 216,
    "responsibility": "单个任务 generation 的 move-only Luau VM owner。它把 VM 建成 quota-backed、sandboxed、interrupt-armed 状态；每次 runNumber 使用新 sandbox thread，hard cancel 后把整个 generation 标为 terminal。",
    "members": [
     {

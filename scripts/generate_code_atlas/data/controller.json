@@ -443,7 +443,7 @@
    "name": "uf::PointerButton",
    "kind": "enum",
    "file": "modules/controller/source/controller/input.hpp",
-   "line": 88,
+   "line": 96,
    "responsibility": "限定当前支持的指针按钮集合；有意只有左键，符合严格后台的最小注入面。",
    "members": [
     {
@@ -456,7 +456,7 @@
    "name": "uf::HeldPointerInput",
    "kind": "class",
    "file": "modules/controller/source/controller/input.hpp",
-   "line": 93,
+   "line": 101,
    "responsibility": "记录一个被按下但未释放的指针（按钮+像素），是 HeldInput variant 的指针分支。",
    "members": [
     {
@@ -477,7 +477,7 @@
    "name": "uf::DeliveryTarget",
    "kind": "class",
    "file": "modules/controller/source/controller/input.hpp",
-   "line": 114,
+   "line": 122,
    "responsibility": "把 {WindowHandle, CaptureSessionId, TargetGeneration, 非空 ClientSize} 固定为一个投递 capability。它不拥有窗口、不自动跟随 ResolvedTarget；generation/session 改变时应创建新值。",
    "members": [
     {
@@ -503,7 +503,7 @@
    "name": "uf::ReleaseOutcome",
    "kind": "struct",
    "file": "modules/controller/source/controller/input.hpp",
-   "line": 161,
+   "line": 169,
    "responsibility": "记录 releaseHeld 里某个被释放输入及其 best-effort Up 投递结果，让调用者看到每项成败而不吞掉失败。",
    "members": [
     {
@@ -520,7 +520,7 @@
    "name": "uf::AuditRecord",
    "kind": "struct",
    "file": "modules/controller/source/controller/input.hpp",
-   "line": 167,
+   "line": 175,
    "responsibility": "一次『尝试投递』的诊断证据：目标、消息、wParam/lParam 与 monotonic 时刻；表示尝试而非成功，PostMessageW 成功也只表示已入队。",
    "members": [
     {
@@ -541,7 +541,7 @@
    "name": "uf::AuditLog",
    "kind": "class",
    "file": "modules/controller/source/controller/input.hpp",
-   "line": 177,
+   "line": 185,
    "responsibility": "caller-owned 的输入尝试审计流，按尝试顺序与 monotonic 时间戳追加；null/broadcast 因未尝试而不留记录。它是诊断证据不是成功确认。",
    "members": [
     {
@@ -567,7 +567,7 @@
    "name": "uf::HeldInputs",
    "kind": "class",
    "file": "modules/controller/source/controller/input.hpp",
-   "line": 199,
+   "line": 207,
    "responsibility": "caller-owned 的按下状态，绑定 {HWND, CaptureSessionId, TargetGeneration}。守住『本进程不会把旧 held capability 带到新目标』：identity 不符时完全不投递，releaseAll 总是先清空内存再 best-effort 投 Up。",
    "members": [
     {

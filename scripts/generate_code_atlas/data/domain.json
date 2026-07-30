@@ -346,7 +346,7 @@
    "name": "uf::Label",
    "kind": "class",
    "file": "modules/domain/source/domain/ids.hpp",
-   "line": 36,
+   "line": 41,
    "responsibility": "保证合法 UTF-8 的字符串标签（允许空串）。create 是唯一入口；value() 返回受 owner 生命周期约束的 const reference，避免误把任意字符串当作已验证标签。",
    "members": [
     {
@@ -371,7 +371,7 @@
    "name": "uf::TargetGeneration",
    "kind": "class",
    "file": "modules/domain/source/domain/ids.hpp",
-   "line": 61,
+   "line": 66,
    "responsibility": "低频 safety 维度：包装 core::Generation，绝不回绕。next() 在 uint64 顶点返回 InternalInvariant，防止回绕后重新接受陈旧证据。默认值即 initial()。",
    "members": [
     {
@@ -405,7 +405,7 @@
    "name": "uf::TargetGenerationHash",
    "kind": "struct",
    "file": "modules/domain/source/domain/ids.hpp",
-   "line": 100,
+   "line": 105,
    "responsibility": "对 TargetGeneration 的底层值做哈希，供 unordered 容器按 generation 索引使用。",
    "members": [
     {
@@ -622,8 +622,8 @@
      "note": "捕获不可用与捕获停滞（后者可 Retry）。"
     },
     {
-     "sig": "RecognitionFailed, StaleObservation, ActionRejected",
-     "note": "识别失败、观察陈旧、动作被拒。"
+     "sig": "RecognitionIncomplete, StaleObservation, ActionRejected",
+     "note": "识别没看完（比较预算先耗尽，不是没匹配上，故 Retry）、观察陈旧、动作被拒。"
     },
     {
      "sig": "ControllerDisconnected, InternalInvariant",
@@ -643,7 +643,7 @@
    "name": "uf::FailureResponse",
    "kind": "enum",
    "file": "modules/domain/source/domain/error.hpp",
-   "line": 37,
+   "line": 45,
    "responsibility": "失败需要向外展开多远，是调用者真正分支的轴；AutomationErrorKind 只记录“发生了什么”。是否 retry 是控制流政策，不能从错误名字临时猜测。",
    "members": [
     {
@@ -681,7 +681,7 @@
     },
     {
      "sig": "auto failureResponse(AutomationErrorKind) noexcept -> FailureResponse",
-     "note": "穷尽 switch：Cancelled→Cancelled，CaptureStalled/StaleObservation→Retry，RecognitionFailed/ActionRejected→StepFailed，其余→Abort。"
+     "note": "穷尽 switch：Cancelled→Cancelled，CaptureStalled/StaleObservation/RecognitionIncomplete→Retry，ActionRejected→StepFailed，其余→Abort。"
     },
     {
      "sig": "auto failureResponse(Error const&) noexcept -> FailureResponse",

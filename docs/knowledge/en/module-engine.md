@@ -239,7 +239,9 @@ All conditions that would make "what to do where" uncertain fail toward rejectio
   returns `StaleObservation`.
 - A recognition budget, deadline, or cancellation produces an explicit stop reason rather than
   treating a half-completed search as a miss. A page/action stop first emits `RecognitionStopped`,
-  then maps to `RecognitionFailed`, `Timeout`, or `Cancelled`.
+  then maps to `RecognitionIncomplete`, `Timeout`, or `Cancelled`. `RecognitionIncomplete` says the
+  search never finished looking, not that it looked and matched nothing, and its `FailureResponse` is
+  `Retry` so the caller observes again rather than treating the page as ruled out.
 - `UnknownPage` and `AmbiguousPages` cannot masquerade as `ResolvedPage`; the parameter type of
   `act` itself requires a real `ResolvedPage`. An action miss, on the other hand, is an empty
   optional, keeping the Tier A normal control flow.

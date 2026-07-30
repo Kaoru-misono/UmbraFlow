@@ -232,3 +232,46 @@ widget edits; see the workbench authoring UI pitfalls.
 the recorded session re-pointed `meiling` from `page` to `page_1` in that order
 without a rejection (`authorized page "page_1"` then
 `withdrew authorization on page "page"` in `workbench.log`).
+
+## A colour-keyed template needs a much tighter threshold than an opaque one
+
+### Symptom
+
+A colour-keyed anchor matches its own page at a near-perfect score and also
+matches a frame that does not contain the UI at all. Measured on 卡厄思梦境,
+2026-07-30, at the default 9000 basis points: the real page scored 0–7 while a
+frame with no HUD in it scored 16601 against a 70686 ceiling — a comfortable
+false positive.
+
+### Root cause
+
+The mask decides *which* pixels SAD compares; it does not make SAD compare
+*shape*. A menu glyph keyed on white selects only pixels that are themselves
+~255, so the comparison reduces to "are these 416 positions bright" and any
+sufficiently uniform bright region of the artwork satisfies it. The shape
+information lives in which pixels the mask selects, and nothing penalises the
+unselected pixels for being wrong.
+
+This is inherent to masked matching on a monochrome glyph, not a defect in the
+mask.
+
+### Fix
+
+Set the threshold from the measured separation rather than taking the default.
+Real matches and false positives are orders of magnitude apart, so this is easy
+once the numbers exist: here, real 0–7 against false 16601 means 9900 basis
+points separates them with a thousandfold margin, and re-authoring the same
+seven labels at 9900 gave 7/7 on an unseen frame and 0/7 on a UI-free one.
+
+`k_defaultSimilarityBasisPoints` is 9000, which was calibrated for opaque
+templates where the whole rectangle carries evidence. It is too loose for a
+colour-keyed template and a masked element should pass `--min-similarity-bp`
+explicitly.
+
+### Regression check
+
+Every colour-keyed recognizer needs both halves: a positive frame it was not
+authored against, and a frame that genuinely lacks the UI. The negative half is
+what catches this, and it has to be *genuinely* UI-free — a frame captured while
+the HUD was fading in still contains most of the glyph and will match, which
+looks like a false positive but is not one.

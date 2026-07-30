@@ -483,7 +483,7 @@
    "name": "uf::annotation::ElementKind",
    "kind": "alias",
    "file": "modules/annotation/source/annotation/authoring-document.hpp",
-   "line": 114,
+   "line": 189,
    "responsibility": "一个 element 三选一的语义变体，是 Element::kind 的负载。只有 interactive 一种带 click，把“只有 action target 能定义默认点击”从跨字段规则变成类型事实：anchor 与 info 根本没有可误用的字段。annotationTypeOfKind 把它压回 manifest 的三态 AnnotationType。",
    "members": [
     {
@@ -516,7 +516,7 @@
    "name": "uf::annotation::Element",
    "kind": "class",
    "file": "modules/annotation/source/annotation/authoring-document.hpp",
-   "line": 135,
+   "line": 210,
    "responsibility": "v2 作者模型的核心：绘制一次的模板像素，加上只属于 authoring 的两个事实——它绘制所在的 SourceId 与 shared 复用意图。元素放在哪一页不再存这里（那是 AuthoringPlacement 的页面侧事实），锚点仍把 searchRoi 留在元素上。create 用 fingerprint 校验几何后构造。",
    "members": [
     {
@@ -550,7 +550,7 @@
    "name": "uf::annotation::AuthoringPlacement",
    "kind": "struct",
    "file": "modules/annotation/source/annotation/authoring-document.hpp",
-   "line": 186,
+   "line": 270,
    "responsibility": "把一个 interactive 或 info 元素放到一页上，并记录运行时在该页应到哪里找它。这是 recognizer 过去反向携带的页面成员关系边；把 pageId 存在这里让整组 placement 序列化成扁平表，可被 canonical TOML reader 解析。",
    "members": [
     {
@@ -571,7 +571,7 @@
    "name": "uf::annotation::AuthoringRecognizerSource",
    "kind": "struct",
    "file": "modules/annotation/source/annotation/authoring-document.hpp",
-   "line": 195,
+   "line": 279,
    "responsibility": "AuthoringDocument 从 v2 element 模型派生的 recognizer→source 只读关系，同时保留作者的 shared 意图，供仍按 runtime recognizer 读取的编译器与 UI 过渡使用。",
    "members": [
     {
@@ -588,7 +588,7 @@
    "name": "uf::annotation::RegressionClassification",
    "kind": "enum",
    "file": "modules/annotation/source/annotation/authoring-document.hpp",
-   "line": 202,
+   "line": 286,
    "responsibility": "回归用例的作者分类，独立于其期望结果，使 positive/negative/confusable 不暗改 resolved/unknown/ambiguous 期望。",
    "members": [
     {
@@ -609,7 +609,7 @@
    "name": "uf::annotation::RegressionExpectation",
    "kind": "alias",
    "file": "modules/annotation/source/annotation/authoring-document.hpp",
-   "line": 226,
+   "line": 310,
    "responsibility": "回归用例期望的 page 解析结果变体，与 classification 各自独立保存，只有 resolved 期望携带 PageId。",
    "members": [
     {
@@ -630,7 +630,7 @@
    "name": "uf::annotation::RegressionSpec",
    "kind": "struct",
    "file": "modules/annotation/source/annotation/authoring-document.hpp",
-   "line": 232,
+   "line": 316,
    "responsibility": "RegressionCase 的未验证输入 DTO：把 RegressionId、被测 SourceId、作者 classification 与期望 expectation 聚合成一次构造入参，classification 与 expectation 各自独立保存。",
    "members": [
     {
@@ -651,7 +651,7 @@
    "name": "uf::annotation::RegressionCase",
    "kind": "class",
    "file": "modules/annotation/source/annotation/authoring-document.hpp",
-   "line": 240,
+   "line": 324,
    "responsibility": "文档中的一个回归用例：绑定 RegressionId、被测 SourceId、classification 与 expectation，供 regression runner 逐个重放。",
    "members": [
     {
@@ -677,7 +677,7 @@
    "name": "uf::annotation::AuthoringDocument",
    "kind": "class",
    "file": "modules/annotation/source/annotation/authoring-document.hpp",
-   "line": 260,
+   "line": 344,
    "responsibility": "GUI v2 编辑文档的顶层 owner 与 document 级 validation gate。拥有 sources、elements、page-side placements、regressions，并从它们派生 catalog 与 recognizer-source read model；create 排序并闭合所有引用，施加每类 4096 条与 canonical 16 MiB 上限。",
    "members": [
     {
@@ -953,7 +953,7 @@
    "name": "uf::annotation::FrameIdentity",
    "kind": "class",
    "file": "modules/annotation/source/annotation/recognition.hpp",
-   "line": 33,
+   "line": 41,
    "responsibility": "把 CaptureSessionId、TargetGeneration、FrameId 三元组捆成一个可比较的帧身份，用于在证据与授权中断言页面、检测、租约都来自同一帧。",
    "members": [
     {
@@ -982,7 +982,7 @@
    "name": "uf::annotation::AnchorEvidence",
    "kind": "class",
    "file": "modules/annotation/source/annotation/recognition.hpp",
-   "line": 60,
+   "line": 68,
    "responsibility": "单个锚点求值的完整证据：recognizer ID、整数 hit、可选 SAD score、maximumSad、可选匹配矩形与浮点展示 confidence。hit 只由整数 sadScore<=maximumSad 决定，confidence 仅供展示。仅 AnchorEvaluation 可构造。",
    "members": [
     {
@@ -1011,7 +1011,7 @@
    "name": "uf::annotation::AnchorEvaluation",
    "kind": "class",
    "file": "modules/annotation/source/annotation/recognition.hpp",
-   "line": 91,
+   "line": 70,
    "responsibility": "把一次有界 SAD 搜索结果转成“证据或停止原因”的变体。fromSadOutcome 校验返回矩形仍在 searchRoi、score 不超理论最大 SAD，再构造 AnchorEvidence；matcher 停止则原样保留为 SadSearchStopReason。当前只接受 PageAnchor/ActionTarget。",
    "members": [
     {
@@ -1038,11 +1038,11 @@
    "kind": "functions",
    "file": "modules/annotation/source/annotation/recognition.hpp",
    "line": 26,
-   "responsibility": "把 vision 的 SadSearchStopReason 归一成单一分类，让识别失败与 regression 控制流读同一处，而不是在每个调用点各自判断停止原因。",
+   "responsibility": "把 vision 的 SadSearchStopReason 归一成单一分类，让识别停止与 regression 控制流读同一处，而不是在每个调用点各自判断停止原因。载重性质：没有任何 reason 映射到 failureResponse 为 StepFailed 的 kind，且每个 reason 各有自己的 kind——停止意味着搜索没作出判定，调用方不能读成该步已被排除；跑完却没匹配上的搜索根本不走这里，那是 hit() 为 false 的 AnchorEvidence，由页面解析转成不带错误的 UnknownPage。",
    "members": [
     {
      "sig": "searchStopKind(SadSearchStopReason) -> AutomationErrorKind",
-     "note": "停止原因到错误 kind。"
+     "note": "停止原因到错误 kind：预算耗尽 → RecognitionIncomplete（Retry）。"
     },
     {
      "sig": "searchStopDescription(SadSearchStopReason) -> string_view",
@@ -1054,7 +1054,7 @@
    "name": "uf::annotation::PageEvaluation",
    "kind": "class",
    "file": "modules/annotation/source/annotation/recognition.hpp",
-   "line": 118,
+   "line": 126,
    "responsibility": "单个页面的求值结果：其 required/forbidden 各锚点的 AnchorEvidence 与 candidate 标志（required 全命中且 forbidden 全缺席才为 candidate）。",
    "members": [
     {
@@ -1079,7 +1079,7 @@
    "name": "uf::annotation::PageResolutionEvidence",
    "kind": "class",
    "file": "modules/annotation/source/annotation/recognition.hpp",
-   "line": 144,
+   "line": 152,
    "responsibility": "一次页面解析的完整证据 owner：project ID、FrameIdentity、全部 PageEvaluation 与候选 PageId 列表。它被三种 PageOutcome 共同持有，也是未来 page confusion 诊断的依据。",
    "members": [
     {
@@ -1104,7 +1104,7 @@
    "name": "uf::annotation::ResolvedPage",
    "kind": "class",
    "file": "modules/annotation/source/annotation/recognition.hpp",
-   "line": 174,
+   "line": 182,
    "responsibility": "页面解析三态中唯一携带确定 PageId 的结果，因而只有它能进入 authorizeCoordinateAction——engine 直接以它作为可点击能力令牌。仅 PageResolver 能构造，杜绝调用者凭空伪造已解析页面。",
    "members": [
     {
@@ -1126,7 +1126,7 @@
    "name": "uf::annotation::UnknownPage",
    "kind": "class",
    "file": "modules/annotation/source/annotation/recognition.hpp",
-   "line": 190,
+   "line": 198,
    "responsibility": "零候选的 fail-closed 结果，只携带 PageResolutionEvidence 而无 PageId，类型上无法作为可点击能力传入授权门。仅 PageResolver 能构造。",
    "members": [
     {
@@ -1143,7 +1143,7 @@
    "name": "uf::annotation::AmbiguousPages",
    "kind": "class",
    "file": "modules/annotation/source/annotation/recognition.hpp",
-   "line": 203,
+   "line": 211,
    "responsibility": "多候选的 fail-closed 结果，只携带 PageResolutionEvidence 而无单一 PageId，冲突不被先到候选掩盖，类型上无法进入授权门。仅 PageResolver 能构造。",
    "members": [
     {
@@ -1160,7 +1160,7 @@
    "name": "uf::annotation::PageOutcome",
    "kind": "alias",
    "file": "modules/annotation/source/annotation/recognition.hpp",
-   "line": 216,
+   "line": 224,
    "responsibility": "页面解析的三态封闭结果，全部携带 PageResolutionEvidence；只有 ResolvedPage 额外携带唯一 PageId，因而只有它能进入 authorizeCoordinateAction，Unknown/Ambiguous 在类型上无法作为可点击能力传入。",
    "members": [
     {
@@ -1189,7 +1189,7 @@
    "name": "uf::annotation::PageResolver",
    "kind": "class",
    "file": "modules/annotation/source/annotation/recognition.hpp",
-   "line": 218,
+   "line": 184,
    "responsibility": "把锚点求值集合收敛为 PageOutcome 的无状态解析器。要求输入完全覆盖并对齐 pageAnchorOrder，评估所有页面：零候选→Unknown，一候选→Resolved，多候选→Ambiguous；绝不因先遇一个候选就提前成功而隐藏冲突。",
    "members": [
     {

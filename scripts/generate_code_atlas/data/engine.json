@@ -59,7 +59,7 @@
    "name": "uf::engine::IActionSink",
    "kind": "class",
    "file": "modules/engine/source/engine/ports.hpp",
-   "line": 48,
+   "line": 70,
    "responsibility": "把单次后台点击投递给已绑定目标的端口；engine 只做第 1 层坐标授权，端口必须原样转发 lease 让 controller 的第 2 层 fencing 留在回路，并保证严格后台、不夺焦。",
    "members": [
     {
@@ -132,7 +132,7 @@
    "name": "uf::engine::EngineSessionConfig",
    "kind": "struct",
    "file": "modules/engine/source/engine/session.hpp",
-   "line": 39,
+   "line": 52,
    "responsibility": "会话构造时一次性捕获的只读配置传输聚合；用 designated initializers 构造。live fingerprint 无默认，必须每处提供，其余字段有安全默认。",
    "members": [
     {
@@ -164,7 +164,7 @@
    "name": "uf::engine::ActionFound",
    "kind": "class",
    "file": "modules/engine/source/engine/session.hpp",
-   "line": 54,
+   "line": 68,
    "responsibility": "一次成功动作目标搜索的结果值：原始 anchor 证据、绑定 recognizer identity 的 authorization-ready detection、以及从 match 确定性导出的单个点击 pixel。成员均无默认，只由 findAction 构造。",
    "members": [
     {
@@ -190,7 +190,7 @@
    "name": "uf::engine::Observation",
    "kind": "class",
    "file": "modules/engine/source/engine/session.hpp",
-   "line": 90,
+   "line": 104,
    "responsibility": "覆盖单帧的一次性、move-only 句柄（Model B 的编码），只由 observe 产出。它拥有 Frame、lease 与 frame identity，并携带不指向 EngineSession 状态的共享不可变 identity token；查询由 EngineSession 接收它来执行，失效句柄返回 StaleObservation，异会话句柄返回 InternalInvariant。",
    "members": [
     {
@@ -212,7 +212,7 @@
    "name": "uf::engine::ActReceipt",
    "kind": "struct",
    "file": "modules/engine/source/engine/session.hpp",
-   "line": 119,
+   "line": 133,
    "responsibility": "一次已投递点击的记录：它被授权针对的帧，以及 post 给 sink 的 client-space 点。作为 act 的成功返回值证明动作已落地。",
    "members": [
     {
@@ -253,7 +253,7 @@
    "name": "uf::engine::EngineSession",
    "kind": "class",
    "file": "modules/engine/source/engine/session.hpp",
-   "line": 133,
+   "line": 106,
    "responsibility": "一次 run 的拥有者与运行时状态机：独占 runtime 与三个端口，把 observe→resolve→find→act 串成 fail-closed 路径，并在每个失败/生命周期节点 emit 结构化 trace。守住单帧决策、双层 lease 防线与 invalidate-before-fallible-post-delivery 等不变量。",
    "members": [
     {

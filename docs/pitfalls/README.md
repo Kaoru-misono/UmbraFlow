@@ -10,4 +10,5 @@ Each entry should contain the symptom, root cause, fix, and a regression check. 
 - [Cross-platform CI toolchain diagnostics](cross-platform-ci-toolchains.md)
 - [Capture and target selection](capture-and-target-selection.md)
 - [Page modeling and multi-step flows](page-modeling-and-multi-step.md)
+- [Colour-key annotation](colour-key-annotation.md)
 - [Workbench authoring UI](workbench-authoring-ui.md)

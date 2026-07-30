@@ -46,7 +46,7 @@
    "name": "uf::cli::RunArgs",
    "kind": "struct",
    "file": "entry/cli/args.hpp",
-   "line": 51,
+   "line": 66,
    "responsibility": "一次 run 调用的完整值对象。project 与 selector 始终必填；task 模式要求 task 非空且 page/action 为空，smoke 模式要求 page/action 非空且 task 为空。其余字段采用安全默认值，因此下游组合只处理类型化值而不再解析字符串。",
    "members": [
     {
@@ -127,7 +127,7 @@
    "name": "uf::cli::ExitCode",
    "kind": "enum",
    "file": "entry/cli/run.hpp",
-   "line": 14,
+   "line": 23,
    "responsibility": "产品 CLI 的稳定进程退出码契约，让所有路径返回强类型值而不是散落的裸数字；只有 main 在进程边界用 std::to_underlying 转成 int。",
    "members": [
     {

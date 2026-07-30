@@ -139,9 +139,11 @@ Windows capture 在 `modules/controller/source/controller/platform/windows-captu
 `AutomationErrorKind` 枚举记录原因；`FailureResponse` 记录失败应向外展开多远。`failureResponse(AutomationErrorKind)` 的穷尽 switch 当前映射为：
 
 - `Cancelled` → `Cancelled`；
-- `CaptureStalled`、`StaleObservation` → `Retry`；
-- `RecognitionFailed`、`ActionRejected` → `StepFailed`；
+- `CaptureStalled`、`StaleObservation`、`RecognitionIncomplete` → `Retry`；
+- `ActionRejected` → `StepFailed`；
 - 其余 kind → `Abort`。
+
+`RecognitionIncomplete` 有意不叫“识别失败”。识别跑完却没匹配上根本不是错误——那是 `UnknownPage` 或空命中，不带任何 error kind。这个 kind 只表示比较预算在搜索结束前就耗尽了，调用方对屏幕一无所知。所以它的响应是 `Retry` 而不是 `StepFailed`：调用方必须在自己的预算内重新观察，而不能当成“该页已被排除”去分支；又因为比较次数取决于帧自身的像素，这一帧耗尽的搜索在后一帧可能跑完。
 
 新增 `AutomationErrorKind` 时，没有 default 的 switch 会迫使开发者选择恢复范围。`fail(kind, message, nativeCode)` 把 kind 编码进私有的 `uf.automation` error category；编码使用 underlying value 加一，避免合法 kind 变成值为零的“无错误”code。`automationErrorKind` 只接受该 category，普通 `std::error_code` 不会冒充自动化错误；无法分类的 `Error` 保守地映射为 `Abort`。
 

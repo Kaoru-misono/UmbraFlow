@@ -208,7 +208,9 @@ release-active `UF_CHECK`，外部资源错误使用 `Result`。唯一明确例�
 必要候选，因而既不能证明“存在最佳 match”，也不能证明“没有可接受 match”。若把 stop 折叠成
 `hit=false`，required anchor 会错误地产生 Unknown，更危险的是 forbidden anchor 会因“未命中”而帮助
 页面成为 candidate。`SadSearchOutcome` 的独立 variant alternative 从 kernel 开始阻止这种信息丢失；
-`annotation` 再将三者分别映射到 `Cancelled`、`Timeout`、`RecognitionFailed`。
+`annotation` 再将三者分别映射到 `Cancelled`、`Timeout`、`RecognitionIncomplete`。最后这个 kind 取名
+取的是“没看完”，不是“没认出来”：它表示搜索根本没看完，所以 `FailureResponse` 是 `Retry`，
+调用方必须重新观察，而不能对屏幕下任何结论。
 
 **所有权与生命周期显式。** `GrayImage` 是短生命周期 borrow，声明与实现都不保存 backing owner；
 matcher 与 poll 都同步完成且不 retain callback。PNG decode/encode result、crop 和 layout conversion

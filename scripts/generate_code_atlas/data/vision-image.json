@@ -173,7 +173,7 @@
    "name": "uf::GrayImage",
    "kind": "class",
    "file": "modules/vision/source/vision/sad.hpp",
-   "line": 98,
+   "line": 134,
    "responsibility": "只读 Gray8 像素 view。存在的意义是让 matcher 收到已验证 geometry 的紧密/带 stride 灰度数据，而不必知道它来自 PNG、WGC 还是 fixture。",
    "members": [
     {
@@ -389,7 +389,7 @@
      "line": 87
     },
     {
-     "text": "返回 SadSearchReport：完成则给最优 SadMatch（或空 optional），未完成则给 SadSearchStopReason——stop 不是 miss，由 annotation 分别映射到 Cancelled/Timeout/RecognitionFailed。"
+     "text": "返回 SadSearchReport：完成则给最优 SadMatch（或空 optional），未完成则给 SadSearchStopReason——stop 不是 miss，由 annotation 分别映射到 Cancelled/Timeout/RecognitionIncomplete。"
     }
    ]
   }

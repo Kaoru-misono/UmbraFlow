@@ -251,7 +251,10 @@ match exists" nor that "there is no acceptable match". If a stop is collapsed in
 required anchor will incorrectly yield Unknown, and, more dangerously, a forbidden anchor will help a
 page become a candidate because of the "miss". The independent variant alternative in
 `SadSearchOutcome` prevents this information loss starting at the kernel; `annotation` then maps the
-three respectively to `Cancelled`, `Timeout`, and `RecognitionFailed`.
+three respectively to `Cancelled`, `Timeout`, and `RecognitionIncomplete`. That last kind is named
+for the incompleteness, not for a failure to recognise: it says the search never finished looking, so
+its `FailureResponse` is `Retry` and a caller must observe again instead of concluding anything about
+the screen.
 
 **Ownership and lifetime are explicit.** `GrayImage` is a short-lived borrow, and neither the
 declaration nor the implementation stores the backing owner; the matcher and poll both complete

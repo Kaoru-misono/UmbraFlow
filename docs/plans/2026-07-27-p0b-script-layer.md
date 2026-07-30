@@ -16,6 +16,14 @@
 >   整体删除。
 > - `task-trace/v1` 与 `engine-trace/v1` 合并为 `umbraflow-trace/v1`(新文 §12)。
 > - §六的五个待裁决项已在 2026-07-29 全部有结论,就地标注于该节。
+> - **(2026-07-30 补注)** `RecognitionFailed` 已改名为 **`RecognitionIncomplete`**,
+>   wire 名由 `recognition_failed` 改为 `recognition_incomplete`,`FailureResponse`
+>   由 `StepFailed` 改为 **`Retry`**(依据:`modules/domain/source/domain/error.hpp`
+>   与 `error.cpp` 的 `failureResponse`/`automationErrorWireName`)。本文 §三阶段 2 与
+>   §四 Tier 映射里的 `RecognitionFailed` 一律读作 `RecognitionIncomplete`,并且**不能
+>   读成「识别失败/没匹配上」**:识别跑完却没匹配上根本不是错误(那是 `UnknownPage`
+>   或空命中,不带 error kind);这个 kind 只表示比较预算在搜索结束前耗尽、调用方对
+>   屏幕一无所知,所以它的 retryable 默认值就是重试——重新观察,而不是把该步当已排除。
 >
 > 状态:**已裁决,2026-07-27 grill 完成**。本文补全
 > [`2026-07-21-lua-task-model-grill-decisions.md`](2026-07-21-lua-task-model-grill-decisions.md)
