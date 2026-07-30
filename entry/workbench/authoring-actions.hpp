@@ -217,6 +217,26 @@ namespace uf::workbench
         annotation::RecognizerId id
     ) -> bool;
 
+    // The colour key one element carries, if any. It is authoring-only -- the
+    // runtime reads the mask off the compiled template's alpha and never sees a
+    // key -- so it is read off the draft rather than off the catalog.
+    [[nodiscard]]
+    auto elementColourKey(
+        AppState const& state,
+        annotation::RecognizerId id
+    ) -> std::optional<annotation::ColourKey>;
+
+    // Sets or clears one element's colour key, reporting a refusal rather than
+    // letting the picker snap back unexplained. One call is one undo entry, so
+    // the picker commits on the end of a gesture rather than on every frame of
+    // a slider drag.
+    auto requestElementColourKey(
+        AppState& state,
+        PanelUiState& ui,
+        annotation::RecognizerId id,
+        std::optional<annotation::ColourKey> colourKey
+    ) -> void;
+
     // Marks an interactive region reusable on other pages, or takes the mark off,
     // reporting a refusal rather than letting the checkbox snap back unexplained.
     auto requestRegionShared(

@@ -93,6 +93,42 @@ namespace uf
         SadSearchPoll const& poll
     ) -> Result<SadSearchReport>;
 
+    // Matches templateImage while weighting each of its pixels by the parallel
+    // templateMask plane, which must have the template's exact extent. A mask
+    // byte of 255 counts its pixel in full, 0 excludes it, and an intermediate
+    // value is a partial weight, which is what an antialiased glyph edge needs.
+    // A template PNG's alpha channel is that plane.
+    //
+    // The reported score normalizes by the weight actually summed:
+    //
+    //     score = templatePixels * sum(weight * |haystack - template|)
+    //             / sum(weight)
+    //
+    // where templatePixels is the template's full rectangle. A mask covering a
+    // tenth of its rectangle therefore stays on the same scale as one covering
+    // all of it, and both stay on the scale existing unmasked thresholds use. A
+    // fully opaque mask reproduces the unmasked match, score and comparison
+    // count exactly, because the constant 255 cancels out of the quotient and
+    // out of every pruning comparison. Truncating division rounds the quotient
+    // down. A mask whose weights sum to zero selects nothing and is rejected.
+    [[nodiscard]]
+    auto matchTemplateSad(
+        GrayImage const& haystack,
+        GrayImage const& templateImage,
+        GrayImage const& templateMask,
+        PixelRect roi
+    ) -> Result<std::optional<SadMatch>>;
+
+    [[nodiscard]]
+    auto matchTemplateSad(
+        GrayImage const& haystack,
+        GrayImage const& templateImage,
+        GrayImage const& templateMask,
+        PixelRect roi,
+        uint64 maximumPixelComparisons,
+        SadSearchPoll const& poll
+    ) -> Result<SadSearchReport>;
+
     // A read-only Gray8 view. The backing storage must outlive this object and
     // every matcher call that uses it.
     class GrayImage final
@@ -111,6 +147,15 @@ namespace uf
         friend auto matchTemplateSad(
             GrayImage const& haystack,
             GrayImage const& templateImage,
+            PixelRect roi,
+            uint64 maximumPixelComparisons,
+            SadSearchPoll const& poll
+        ) -> Result<SadSearchReport>;
+
+        friend auto matchTemplateSad(
+            GrayImage const& haystack,
+            GrayImage const& templateImage,
+            GrayImage const& templateMask,
             PixelRect roi,
             uint64 maximumPixelComparisons,
             SadSearchPoll const& poll
@@ -141,9 +186,18 @@ namespace uf
             std::size_t width
         ) const noexcept UF_LIFETIME_BOUND -> std::optional<std::span<std::byte const>>;
 
+        // Sums every pixel of this plane. A mask plane's sum is the weight its
+        // score must be normalized by.
+        [[nodiscard]]
+        auto weightSum() const noexcept -> uint64;
+
+        // p_templateMask is an optional observation of a plane with the
+        // template's extent; without one every pixel carries weight one, which
+        // makes the accumulated sum the plain SAD.
         [[nodiscard]]
         auto candidateSad(
             GrayImage const& templateImage,
+            GrayImage const* p_templateMask,
             std::size_t candidateX,
             std::size_t candidateY,
             uint64 best,
@@ -151,6 +205,15 @@ namespace uf
             uint64 completedPixelComparisons,
             SadSearchPoll const& poll
         ) const -> CandidateReport;
+
+        [[nodiscard]]
+        auto search(
+            GrayImage const& templateImage,
+            GrayImage const* p_templateMask,
+            PixelRect roi,
+            uint64 maximumPixelComparisons,
+            SadSearchPoll const& poll
+        ) const -> Result<SadSearchReport>;
 
     public:
         [[nodiscard]]
@@ -168,6 +231,16 @@ namespace uf
 
     [[nodiscard]]
     auto bgra8ToGray8(
+        std::span<std::byte const> bgra,
+        uint32 width,
+        uint32 height,
+        std::size_t stride
+    ) -> Result<std::vector<std::byte>>;
+
+    // Extracts the alpha channel as a tightly packed Gray8 shaped plane, which
+    // is the mask the masked matcher consumes.
+    [[nodiscard]]
+    auto bgra8ToAlpha8(
         std::span<std::byte const> bgra,
         uint32 width,
         uint32 height,

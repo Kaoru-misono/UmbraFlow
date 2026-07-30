@@ -3,6 +3,7 @@
 #include "authoring-edit.hpp"
 #include "model-check-job.hpp"
 #include "canvas-math.hpp"
+#include "preview.hpp"
 #include "workbench-app.hpp"
 
 #include <annotation/resource.hpp>
@@ -182,6 +183,21 @@ namespace uf::workbench
             bool                   justOpened{true};
         };
 
+        // The colour-key preview held between frames, keyed by everything it was
+        // computed from. Building it decodes the whole screen PNG and masks a
+        // crop of it, which is far too much to redo every frame and needless:
+        // the picture changes only when the element, its rectangle, or its key
+        // changes, and those are exactly the fields below.
+        struct ColourKeyMemo final
+        {
+            annotation::RecognizerId elementId;
+            annotation::SourceId     sourceId;
+            PixelRect                templateRect;
+
+            std::optional<annotation::ColourKey> colourKey{};
+            ColourKeyMaskPreview                 preview{};
+        };
+
         // A delete-everywhere awaiting confirmation, named for the modal that
         // guards it. detail is the "what will be removed" line, built at request
         // time from the same counts the deletion produces. Cleared on confirm,
@@ -255,6 +271,23 @@ namespace uf::workbench
         // longer submits itself -- ImGui has already cleared the active id -- and
         // that is exactly the frame the drop is accepted on.
         std::optional<annotation::RecognizerId> draggedRegion{};
+
+        // The colour-key picker's between-frame state.
+        //
+        // colourKeyDraft is the key the preview is drawn from, which during a
+        // tolerance drag runs ahead of the document on purpose: the preview has
+        // to follow the drag, and the document must not, or one gesture would
+        // leave a hundred undo entries. It is committed when the slider is let
+        // go, and reseeded from the document whenever the selection moves or an
+        // undo changes the stored key while nothing is being dragged.
+        //
+        // colourKeyPicking arms the eyedropper: the next left click on the
+        // canvas is spent naming a colour instead of selecting an element.
+        std::optional<annotation::RecognizerId> colourKeyFor{};
+        std::optional<annotation::ColourKey>    colourKeyDraft{};
+        bool                                    colourKeyPicking{};
+        bool                                    colourKeySliderActive{};
+        std::optional<ColourKeyMemo>            colourKeyMemo{};
 
         // The whole-model check runs off the GUI thread, so it lives across
         // frames. Neither copyable nor movable, which is why PanelUiState is

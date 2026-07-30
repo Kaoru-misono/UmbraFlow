@@ -45,6 +45,12 @@ namespace uf::workbench
         uint32                                similarityBasisPoints{};
         std::optional<EditableTemplateOffset> defaultClick{};
 
+        // Which pixels of the template count, as the colour the author picked
+        // plus a tolerance around it. Absent means all of them. The key is what
+        // is stored, never the mask it bakes into: reopening a project has to
+        // let the author move the tolerance and watch the selection move.
+        std::optional<annotation::ColourKey> colourKey{};
+
         // The author marked these pixels as reusable on other pages. Intent
         // rather than fact: it is set before any second page exists, which is
         // the whole point -- it is what puts the element somewhere the author
@@ -249,6 +255,18 @@ namespace uf::workbench
         AuthoringDraft draft,
         annotation::RecognizerId id,
         bool shared
+    ) -> Result<AuthoringDraft>;
+
+    // Sets or clears the colour key on one element. Every kind may carry one: a
+    // menu entry drawn as white text over changing artwork is as often the
+    // anchor that identifies a page as it is something to click, and it is
+    // exactly the case the key exists for. Passing no key restores the fully
+    // opaque template. Fails when the element is not part of the draft.
+    [[nodiscard]]
+    auto setElementColourKey(
+        AuthoringDraft draft,
+        annotation::RecognizerId id,
+        std::optional<annotation::ColourKey> colourKey
     ) -> Result<AuthoringDraft>;
 
     struct SharedRegionSpec final

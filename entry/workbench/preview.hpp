@@ -147,6 +147,57 @@ namespace uf::workbench
         annotation::RecognitionPolicy const& policy
     ) -> Result<PreviewAnchorRow>;
 
+    // What an author sees while picking a colour key: the template rectangle
+    // cropped out of its screen with the mask the key implies already written
+    // into the alpha channel -- the same bytes the compiler bakes -- and how
+    // much of the rectangle survived it.
+    //
+    // The counts are what make the picker usable. Colour alone is not a matcher:
+    // bright white covers 8% of the measured menu region but up to 19% of the
+    // artwork beside it, so an author has to see what they selected before
+    // trusting it, and a key that keeps 3% of the rectangle has caught a
+    // highlight rather than the text.
+    //
+    // Partially kept pixels are the antialiased rim the tolerance ramp readmits
+    // at reduced weight; they are counted apart from the fully kept core because
+    // the two answer different questions -- how much is certainly text, and how
+    // soft the edge around it is.
+    struct ColourKeyMaskPreview final
+    {
+        uint32 width{};
+        uint32 height{};
+
+        std::vector<std::byte> rgbaPixels{};
+
+        std::size_t totalPixels{};
+        std::size_t fullyKeptPixels{};
+        std::size_t partiallyKeptPixels{};
+    };
+
+    // Builds that preview. Without a key the mask is fully opaque, which is
+    // exactly what an unkeyed element compiles to.
+    [[nodiscard]]
+    auto previewColourKeyMask(
+        annotation::AuthoringSourceAsset const& asset,
+        PixelRect templateRect,
+        std::optional<annotation::ColourKey> colourKey
+    ) -> Result<ColourKeyMaskPreview>;
+
+    struct SampledSourcePixel final
+    {
+        uint8 red{};
+        uint8 green{};
+        uint8 blue{};
+    };
+
+    // The colour of one pixel of a captured screen -- the eyedropper. Picking a
+    // key is picking a pixel, so this is the whole of that gesture's model.
+    [[nodiscard]]
+    auto sampleSourcePixel(
+        annotation::AuthoringSourceAsset const& asset,
+        PixelPoint point
+    ) -> Result<SampledSourcePixel>;
+
     // How one captured screen resolved against the page the document says it
     // stands for.
     enum class ScreenCheckOutcome : uint8

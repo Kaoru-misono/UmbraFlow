@@ -84,6 +84,7 @@ namespace uf::workbench
                     .searchRoi             = element.searchRoi(),
                     .similarityBasisPoints = element.threshold().basisPoints(),
                     .defaultClick          = defaultClick,
+                    .colourKey             = element.colourKey(),
                     .shared                = element.shared(),
                 }
             );
@@ -221,6 +222,7 @@ namespace uf::workbench
                         .templateRect = recognizer.templateRect,
                         .searchRoi    = recognizer.searchRoi,
                         .threshold    = threshold,
+                        .colourKey    = recognizer.colourKey,
                         .kind         = std::move(kind),
                         .shared       = recognizer.shared,
                     }
@@ -650,6 +652,34 @@ namespace uf::workbench
         // region placed on several pages can be unmarked freely -- there are no
         // copies to keep linked, only one element placed N times.
         target->shared = shared;
+        return draft;
+    }
+
+    auto setElementColourKey(
+        AuthoringDraft draft,
+        annotation::RecognizerId id,
+        std::optional<annotation::ColourKey> colourKey
+    ) -> Result<AuthoringDraft>
+    {
+        auto const target = std::ranges::find(
+            draft.recognizers,
+            id,
+            &EditableRecognizer::id
+        );
+        if (target == draft.recognizers.end())
+        {
+            return fail(
+                AutomationErrorKind::InvalidResource,
+                std::format(
+                    "recognizer {} is not part of this draft",
+                    id.value().toString()
+                )
+            );
+        }
+
+        // An element is drawn once and placed on N pages, so its mask, like its
+        // template rectangle, is one fact that every placement sees.
+        target->colourKey = colourKey;
         return draft;
     }
 

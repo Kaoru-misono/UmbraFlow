@@ -522,6 +522,40 @@ namespace uf::annotation
             );
             UF_TRY_VALUE(threshold, SimilarityThreshold::create(thresholdValue));
 
+            // The key and its tolerance are one fact in two lines: the array is
+            // optional, and once it is there the tolerance is not, so a
+            // half-written key fails rather than defaulting to something the
+            // author never chose.
+            auto colourKey = std::optional<ColourKey>{};
+            UF_TRY_VALUE(hasColourKey, reader.nextIsField("colour_key"));
+            if (hasColourKey)
+            {
+                UF_TRY_VALUE(
+                    channels,
+                    reader.takeUnsigned32ArrayField("colour_key")
+                );
+                if (channels.size() != 3U)
+                {
+                    return invalidAuthoring(
+                        "authoring colour_key must have three channel values"
+                    );
+                }
+                UF_TRY_VALUE(
+                    tolerance,
+                    reader.takeUnsigned32Field("colour_key_tolerance")
+                );
+                UF_TRY_VALUE(
+                    key,
+                    ColourKey::create(
+                        checkedAt(channels, 0),
+                        checkedAt(channels, 1),
+                        checkedAt(channels, 2),
+                        tolerance
+                    )
+                );
+                colourKey = key;
+            }
+
             auto clickOffset = std::optional<TemplateOffset>{};
             UF_TRY_VALUE(hasDefaultClick, reader.nextIsField("default_click"));
             if (hasDefaultClick)
@@ -588,6 +622,7 @@ namespace uf::annotation
                     .templateRect = templateRect,
                     .searchRoi    = searchRoi,
                     .threshold    = threshold,
+                    .colourKey    = colourKey,
                     .kind         = std::move(kind),
                     .shared       = shared,
                 }
@@ -615,6 +650,70 @@ namespace uf::annotation
         }
     }
 
+    auto ColourKey::create(
+        uint32 red,
+        uint32 green,
+        uint32 blue,
+        uint32 tolerance
+    ) -> Result<ColourKey>
+    {
+        if (
+            red > k_maximumChannel
+            || green > k_maximumChannel
+            || blue > k_maximumChannel
+        )
+        {
+            return invalidAuthoring(
+                "colour key channels must each be between 0 and 255"
+            );
+        }
+        if (tolerance > k_maximumTolerance)
+        {
+            return invalidAuthoring(
+                "colour key tolerance must be between 0 and 765"
+            );
+        }
+        return ColourKey{
+            static_cast<uint8>(red),
+            static_cast<uint8>(green),
+            static_cast<uint8>(blue),
+            tolerance
+        };
+    }
+
+    auto ColourKey::alphaFor(
+        uint8 red,
+        uint8 green,
+        uint8 blue
+    ) const noexcept -> uint8
+    {
+        auto const spread = [](uint8 left, uint8 right) noexcept -> uint32
+        {
+            return left >= right
+                ? static_cast<uint32>(left) - static_cast<uint32>(right)
+                : static_cast<uint32>(right) - static_cast<uint32>(left);
+        };
+        auto const distance = (
+            spread(red, m_red)
+            + spread(green, m_green)
+            + spread(blue, m_blue)
+        );
+        if (distance <= m_tolerance)
+        {
+            return uint8{255};
+        }
+
+        auto const rampEnd = m_tolerance * 2U;
+        if (m_tolerance == 0U || distance >= rampEnd)
+        {
+            return uint8{0};
+        }
+        // Rounded rather than truncated, so the ramp is symmetric about its
+        // midpoint. The numerator peaks at 255 * 764 and stays inside uint32.
+        auto const weighted = 255U * (rampEnd - distance) + m_tolerance / 2U;
+        return static_cast<uint8>(weighted / m_tolerance);
+    }
+
     auto annotationTypeOfKind(ElementKind const& kind) noexcept -> AnnotationType
     {
         return matchVariant(
@@ -632,6 +731,7 @@ namespace uf::annotation
         , m_templateRect{spec.templateRect}
         , m_searchRoi{spec.searchRoi}
         , m_threshold{spec.threshold}
+        , m_colourKey{spec.colourKey}
         , m_kind{std::move(spec.kind)}
         , m_shared{spec.shared}
     {
@@ -707,6 +807,10 @@ namespace uf::annotation
         return annotationTypeOfKind(m_kind);
     }
     auto Element::shared() const noexcept -> bool { return m_shared; }
+    auto Element::colourKey() const noexcept -> std::optional<ColourKey>
+    {
+        return m_colourKey;
+    }
     auto Element::kind() const noexcept -> ElementKind const& { return m_kind; }
 
     AuthoringSource::AuthoringSource(AuthoringSourceSpec const& spec)
@@ -1220,6 +1324,23 @@ namespace uf::annotation
             output += "min_similarity_bp = ";
             output += std::to_string(element.threshold().basisPoints());
             output.push_back('\n');
+            // Written only when the author picked one, so a project with no
+            // colour key anywhere serializes exactly as it did before the field
+            // existed.
+            if (auto const key = element.colourKey())
+            {
+                output += "colour_key = ";
+                auto const channels = std::array{
+                    static_cast<uint32>(key->red()),
+                    static_cast<uint32>(key->green()),
+                    static_cast<uint32>(key->blue()),
+                };
+                detail::appendUnsigned32Array(output, channels);
+                output.push_back('\n');
+                output += "colour_key_tolerance = ";
+                output += std::to_string(key->tolerance());
+                output.push_back('\n');
+            }
             if (
                 auto const* p_interactive = std::get_if<InteractiveElement>(
                     &element.kind()

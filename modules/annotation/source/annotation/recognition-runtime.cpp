@@ -241,12 +241,26 @@ namespace uf::annotation
                 gray,
                 bgra8ToGray8(bgra, width, height, *stride)
             );
+            UF_TRY_VALUE(
+                alpha,
+                bgra8ToAlpha8(bgra, width, height, *stride)
+            );
+            // A template that excludes nothing keeps an empty mask, so it takes
+            // the same matcher call it took before templates carried one.
+            auto const opaque = std::ranges::all_of(
+                alpha,
+                [](std::byte weight) noexcept -> bool
+                {
+                    return weight == std::byte{255};
+                }
+            );
             templates.emplace_back(
                 GrayTemplate{
                     .hash   = encoded.hash,
                     .width  = width,
                     .height = height,
                     .pixels = std::move(gray),
+                    .mask   = opaque ? std::vector<std::byte>{} : std::move(alpha),
                 }
             );
         }
@@ -305,6 +319,55 @@ namespace uf::annotation
         return m_manifest;
     }
 
+    auto RecognitionRuntime::matchGrayTemplate(
+        GrayImage const& grayFrame,
+        GrayTemplate const& grayTemplate,
+        PixelRect roi,
+        uint64 maximumPixelComparisons,
+        SadSearchPoll const& poll
+    ) -> Result<SadSearchReport>
+    {
+        auto const templateStride = checkedCast<std::size_t>(grayTemplate.width);
+        UF_CHECK(templateStride.has_value());
+        UF_TRY_VALUE(
+            templateImage,
+            GrayImage::create(
+                grayTemplate.pixels,
+                grayTemplate.width,
+                grayTemplate.height,
+                *templateStride
+            )
+        );
+        if (grayTemplate.mask.empty())
+        {
+            return matchTemplateSad(
+                grayFrame,
+                templateImage,
+                roi,
+                maximumPixelComparisons,
+                poll
+            );
+        }
+
+        UF_TRY_VALUE(
+            maskImage,
+            GrayImage::create(
+                grayTemplate.mask,
+                grayTemplate.width,
+                grayTemplate.height,
+                *templateStride
+            )
+        );
+        return matchTemplateSad(
+            grayFrame,
+            templateImage,
+            maskImage,
+            roi,
+            maximumPixelComparisons,
+            poll
+        );
+    }
+
     auto RecognitionRuntime::evaluateGrayPage(
         Frame const& frame,
         GrayImage const& grayFrame,
@@ -329,17 +392,6 @@ namespace uf::annotation
             auto const* p_template = findTemplate(p_asset->templateHash);
             UF_CHECK(p_template != nullptr);
 
-            auto const templateStride = checkedCast<std::size_t>(p_template->width);
-            UF_CHECK(templateStride.has_value());
-            UF_TRY_VALUE(
-                templateImage,
-                GrayImage::create(
-                    p_template->pixels,
-                    p_template->width,
-                    p_template->height,
-                    *templateStride
-                )
-            );
             auto const remainingBudget = checkedSubtract(
                 policy.maximumPixelComparisons,
                 completedPixelComparisons
@@ -347,9 +399,9 @@ namespace uf::annotation
             UF_CHECK(remainingBudget.has_value());
             UF_TRY_VALUE(
                 sadReport,
-                matchTemplateSad(
+                matchGrayTemplate(
                     grayFrame,
-                    templateImage,
+                    *p_template,
                     p_recognizer->searchRoi(),
                     *remainingBudget,
                     poll
@@ -492,22 +544,11 @@ namespace uf::annotation
         SadSearchPoll const& poll
     ) const -> Result<ActionTargetAttempt>
     {
-        auto const templateStride = checkedCast<std::size_t>(grayTemplate.width);
-        UF_CHECK(templateStride.has_value());
-        UF_TRY_VALUE(
-            templateImage,
-            GrayImage::create(
-                grayTemplate.pixels,
-                grayTemplate.width,
-                grayTemplate.height,
-                *templateStride
-            )
-        );
         UF_TRY_VALUE(
             sadReport,
-            matchTemplateSad(
+            matchGrayTemplate(
                 grayFrame,
-                templateImage,
+                grayTemplate,
                 recognizer.searchRoi(),
                 policy.maximumPixelComparisons,
                 poll

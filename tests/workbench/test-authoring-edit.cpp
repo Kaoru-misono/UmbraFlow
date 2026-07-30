@@ -1,17 +1,23 @@
 #include "../annotation/test-helpers.hpp"
+#include "colour-key-fixture.hpp"
 
 #include <authoring-edit.hpp>
 
+#include <annotation/authoring-compiler.hpp>
 #include <annotation/authoring-document.hpp>
 #include <annotation/content-hash.hpp>
 
 #include <core/types/integer.hpp>
 
+#include <image/png.hpp>
+
 #include <doctest/doctest.h>
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <cstddef>
+#include <optional>
 #include <span>
 #include <string>
 #include <utility>
@@ -1447,5 +1453,418 @@ namespace uf::workbench
         }
         CHECK_FALSE(history.undo());
         CHECK(recognizerName(history, 0) == "marker_0");
+    }
+
+    namespace
+    {
+        constexpr auto k_menuSourceId = "00000000-0000-0000-0000-000000000901";
+        constexpr auto k_menuAnchorId = "00000000-0000-0000-0000-000000000902";
+        constexpr auto k_menuPageId   = "00000000-0000-0000-0000-000000000903";
+
+        // The tolerance the measurement in colour-key-fixture.hpp was taken at.
+        constexpr auto k_menuTolerance = uint32{12};
+
+        [[nodiscard]]
+        auto menuKey() -> annotation::ColourKey
+        {
+            auto const key = annotation::ColourKey::create(
+                colour_key_fixture::k_textRed,
+                colour_key_fixture::k_textGreen,
+                colour_key_fixture::k_textBlue,
+                k_menuTolerance
+            );
+            REQUIRE(key.has_value());
+            return *key;
+        }
+
+        // A one-screen project whose single anchor covers the whole menu crop.
+        // The crop is both the screen and the template, so the compiled asset is
+        // the mask itself with nothing else in it.
+        [[nodiscard]]
+        auto menuDocument(
+            std::span<uint8 const> screenPng,
+            std::optional<annotation::ColourKey> colourKey
+        ) -> annotation::AuthoringDocument
+        {
+            auto const fingerprint = annotation::test::fingerprint(
+                colour_key_fixture::k_width,
+                colour_key_fixture::k_height,
+                96,
+                96
+            );
+            auto const sourceId = annotation::test::sourceId(k_menuSourceId);
+            auto const anchorId = annotation::test::recognizerId(k_menuAnchorId);
+            auto const pageId   = annotation::test::pageId(k_menuPageId);
+
+            auto const hash = annotation::sha256(
+                colour_key_fixture::pngBytes(screenPng)
+            );
+            REQUIRE(hash.has_value());
+            auto source = annotation::AuthoringSource::create(
+                annotation::AuthoringSourceSpec{
+                    .id          = sourceId,
+                    .contentHash = *hash,
+                    .fingerprint = fingerprint,
+                    .provenance  = annotation::ImportedSourceProvenance{},
+                }
+            );
+            REQUIRE(source.has_value());
+
+            auto const wholeCrop = annotation::test::pixelRect(
+                0,
+                0,
+                colour_key_fixture::k_width,
+                colour_key_fixture::k_height
+            );
+            auto element = annotation::Element::create(
+                fingerprint,
+                annotation::Element::Spec{
+                    .id           = anchorId,
+                    .name         = annotation::test::resourceName("menu_entry"),
+                    .sourceId     = sourceId,
+                    .templateRect = wholeCrop,
+                    .searchRoi    = wholeCrop,
+                    .threshold    = annotation::test::threshold(),
+                    .colourKey    = colourKey,
+                    .kind         = annotation::AnchorElement{},
+                }
+            );
+            REQUIRE(element.has_value());
+
+            auto created = annotation::AuthoringDocument::create(
+                annotation::test::projectId(),
+                fingerprint,
+                {*source},
+                {*element},
+                {annotation::test::page(pageId, "menu", {anchorId})},
+                {},
+                {}
+            );
+            REQUIRE(created.has_value());
+            return *std::move(created);
+        }
+
+        struct DecodedImage final
+        {
+            uint32                 width{};
+            uint32                 height{};
+            std::vector<std::byte> rgba{};
+
+            [[nodiscard]]
+            auto channel(std::size_t pixel, std::size_t index) const -> uint32
+            {
+                return std::to_integer<uint32>(rgba.at(pixel * 4U + index));
+            }
+
+            [[nodiscard]]
+            auto grey(std::size_t pixel) const -> double
+            {
+                return (
+                    static_cast<double>(channel(pixel, 0))
+                    + static_cast<double>(channel(pixel, 1))
+                    + static_cast<double>(channel(pixel, 2))
+                ) / 3.0;
+            }
+        };
+
+        [[nodiscard]]
+        auto decodeFixture(std::span<uint8 const> png) -> DecodedImage
+        {
+            auto decoded = image::decodePng(
+                colour_key_fixture::pngBytes(png),
+                "colour-key-fixture.png"
+            );
+            REQUIRE(decoded.has_value());
+            return DecodedImage{
+                .width  = decoded->width,
+                .height = decoded->height,
+                .rgba   = std::move(decoded->pixels),
+            };
+        }
+
+        // Compiles the one-anchor project and decodes the single template asset
+        // it emits. That asset's alpha channel is the whole contract this
+        // feature owes the matcher.
+        [[nodiscard]]
+        auto compileMenuTemplate(
+            std::span<uint8 const> screenPng,
+            std::optional<annotation::ColourKey> colourKey
+        ) -> DecodedImage
+        {
+            auto const document = menuDocument(screenPng, colourKey);
+            auto const assets   = std::array{
+                annotation::AuthoringSourceAsset{
+                    .id       = annotation::test::sourceId(k_menuSourceId),
+                    .pngBytes = colour_key_fixture::pngBytes(screenPng),
+                },
+            };
+            auto compiled = annotation::compileAuthoringDocument(document, assets);
+            REQUIRE(compiled.has_value());
+            REQUIRE(compiled->templateAssets.size() == 1U);
+
+            auto decoded = image::decodePng(
+                compiled->templateAssets.at(0).pngBytes,
+                "compiled-template.png"
+            );
+            REQUIRE(decoded.has_value());
+            return DecodedImage{
+                .width  = decoded->width,
+                .height = decoded->height,
+                .rgba   = std::move(decoded->pixels),
+            };
+        }
+    }
+
+    TEST_CASE("a colour key round-trips through the authoring document exactly")
+    {
+        auto const key = menuKey();
+        auto const keyed = menuDocument(
+            colour_key_fixture::k_menuOverBlueArtwork,
+            key
+        );
+        auto const text = annotation::serializeAuthoringDocument(keyed);
+        CHECK(text.find("colour_key = [255, 255, 255]\n") != std::string::npos);
+        CHECK(text.find("colour_key_tolerance = 12\n") != std::string::npos);
+
+        // parseAuthoringDocument refuses anything that is not byte-for-byte the
+        // canonical output, so a successful parse of this text is already the
+        // serialize(parse(x)) == x property; asserting it again names it.
+        auto const parsed = annotation::parseAuthoringDocument(text);
+        REQUIRE(parsed.has_value());
+        CHECK(annotation::serializeAuthoringDocument(*parsed) == text);
+        REQUIRE(parsed->elements().size() == 1U);
+        CHECK(parsed->elements().front().colourKey() == key);
+
+        // The draft the GUI edits through has to carry the key across both
+        // conversions, or every edit made in the workbench would silently drop
+        // it.
+        auto const draft = makeAuthoringDraft(*parsed);
+        REQUIRE(draft.recognizers.size() == 1U);
+        CHECK(draft.recognizers.at(0).colourKey == key);
+        auto const rebuilt = buildAuthoringDocument(draft);
+        REQUIRE(rebuilt.has_value());
+        CHECK(annotation::serializeAuthoringDocument(*rebuilt) == text);
+    }
+
+    TEST_CASE("an element with no colour key serializes as it did before the field")
+    {
+        auto const plain = menuDocument(
+            colour_key_fixture::k_menuOverBlueArtwork,
+            std::nullopt
+        );
+        auto const text = annotation::serializeAuthoringDocument(plain);
+        CHECK(text.find("colour_key") == std::string::npos);
+
+        auto const parsed = annotation::parseAuthoringDocument(text);
+        REQUIRE(parsed.has_value());
+        CHECK(annotation::serializeAuthoringDocument(*parsed) == text);
+        REQUIRE(parsed->elements().size() == 1U);
+        CHECK_FALSE(parsed->elements().front().colourKey().has_value());
+
+        // The control for the case above: the same document with a key does emit
+        // those bytes, so "no colour_key in the text" is a fact about the absent
+        // key rather than about the serializer never writing one.
+        auto const keyed = menuDocument(
+            colour_key_fixture::k_menuOverBlueArtwork,
+            menuKey()
+        );
+        CHECK(
+            annotation::serializeAuthoringDocument(keyed).find("colour_key")
+            != std::string::npos
+        );
+    }
+
+    TEST_CASE("a compiled template's alpha is the mask its colour key implies")
+    {
+        auto const key    = menuKey();
+        auto const masked = compileMenuTemplate(
+            colour_key_fixture::k_menuOverBlueArtwork,
+            key
+        );
+        REQUIRE(masked.width == colour_key_fixture::k_width);
+        REQUIRE(masked.height == colour_key_fixture::k_height);
+
+        auto const screen = decodeFixture(
+            colour_key_fixture::k_menuOverBlueArtwork
+        );
+        auto const pixels = static_cast<std::size_t>(masked.width) * masked.height;
+
+        auto colourChanged = std::size_t{0};
+        auto alphaWrong    = std::size_t{0};
+        auto opaque        = std::size_t{0};
+        auto partial       = std::size_t{0};
+        auto clear         = std::size_t{0};
+        for (auto pixel = std::size_t{0}; pixel < pixels; ++pixel)
+        {
+            auto const red   = masked.channel(pixel, 0);
+            auto const green = masked.channel(pixel, 1);
+            auto const blue  = masked.channel(pixel, 2);
+            auto const alpha = masked.channel(pixel, 3);
+
+            // Baking a mask writes the alpha channel and nothing else.
+            if (
+                red != screen.channel(pixel, 0)
+                || green != screen.channel(pixel, 1)
+                || blue != screen.channel(pixel, 2)
+            )
+            {
+                ++colourChanged;
+            }
+            if (
+                alpha != key.alphaFor(
+                    static_cast<uint8>(red),
+                    static_cast<uint8>(green),
+                    static_cast<uint8>(blue)
+                )
+            )
+            {
+                ++alphaWrong;
+            }
+
+            if (alpha == 255U)
+            {
+                ++opaque;
+            }
+            else if (alpha == 0U)
+            {
+                ++clear;
+            }
+            else
+            {
+                ++partial;
+            }
+        }
+        CHECK(colourChanged == 0U);
+        CHECK(alphaWrong == 0U);
+
+        // Measured on this fixture at tolerance 12 around (255, 255, 255).
+        CHECK(opaque == 328U);
+        CHECK(partial == 32U);
+        CHECK(clear == 3640U);
+
+        // The no-key control. Without it every assertion above would also pass
+        // on a compiler that ignored the key and left the alpha at 255, because
+        // this fixture would then simply have 4000 opaque pixels.
+        auto const plain = compileMenuTemplate(
+            colour_key_fixture::k_menuOverBlueArtwork,
+            std::nullopt
+        );
+        auto plainOpaque = std::size_t{0};
+        for (auto pixel = std::size_t{0}; pixel < pixels; ++pixel)
+        {
+            if (plain.channel(pixel, 3) == 255U)
+            {
+                ++plainOpaque;
+            }
+        }
+        CHECK(plainOpaque == pixels);
+    }
+
+    TEST_CASE("a colour key mask keeps the menu text and drops the artwork")
+    {
+        auto const masked = compileMenuTemplate(
+            colour_key_fixture::k_menuOverBlueArtwork,
+            menuKey()
+        );
+        // The same rectangle of the same UI over a different character. The
+        // menu's own pixels are byte-identical between the two; everything else
+        // is a different picture.
+        auto const other = decodeFixture(
+            colour_key_fixture::k_menuOverPurpleArtwork
+        );
+        REQUIRE(other.width == masked.width);
+        REQUIRE(other.height == masked.height);
+
+        auto const pixels = static_cast<std::size_t>(masked.width) * masked.height;
+        auto keptCount    = std::size_t{0};
+        auto keptSum      = 0.0;
+        auto droppedCount = std::size_t{0};
+        auto droppedSum   = 0.0;
+        auto wholeSum     = 0.0;
+        for (auto pixel = std::size_t{0}; pixel < pixels; ++pixel)
+        {
+            auto const difference = std::abs(masked.grey(pixel) - other.grey(pixel));
+            wholeSum += difference;
+            if (masked.channel(pixel, 3) == 255U)
+            {
+                ++keptCount;
+                keptSum += difference;
+            }
+            else if (masked.channel(pixel, 3) == 0U)
+            {
+                ++droppedCount;
+                droppedSum += difference;
+            }
+        }
+        REQUIRE(keptCount > 0U);
+        REQUIRE(droppedCount > 0U);
+
+        // What the key selects agrees across the two backgrounds to within a
+        // fiftieth of one grey level: those pixels are the UI's own.
+        CHECK(keptSum / static_cast<double>(keptCount) < 0.05);
+
+        // What it drops does not agree at all: that is the artwork.
+        CHECK(droppedSum / static_cast<double>(droppedCount) > 40.0);
+
+        // The control that makes the first assertion mean something. An
+        // unmasked template compares this whole rectangle, and over it the two
+        // captures differ by more than a fifth of the grey range -- so "the kept
+        // pixels agree" is a fact about the mask, not about the rectangle.
+        CHECK(wholeSum / static_cast<double>(pixels) > 40.0);
+
+        // Roughly a twelfth of the box, which is what a line of text over
+        // artwork looks like. A key that had caught the artwork instead would
+        // keep most of the box and still pass the agreement test above on a
+        // second capture of the same artwork.
+        CHECK(keptCount * 100U / pixels == 8U);
+    }
+
+    TEST_CASE("a colour key change undoes and redoes like any other edit")
+    {
+        auto history        = AuthoringEditHistory{document()};
+        auto const anchorId = annotation::test::recognizerId(k_anchorId);
+        auto const key      = annotation::ColourKey::create(200, 40, 40, 9);
+        REQUIRE(key.has_value());
+
+        auto const storedKey = [&history, anchorId]
+        {
+            auto const* element = history.document().findElement(anchorId);
+            REQUIRE(element != nullptr);
+            return element->colourKey();
+        };
+        REQUIRE_FALSE(storedKey().has_value());
+
+        auto keyed = setElementColourKey(history.draft(), anchorId, *key);
+        REQUIRE(keyed.has_value());
+        auto const applied = history.apply(*keyed);
+        REQUIRE(applied.has_value());
+        REQUIRE(*applied);
+        CHECK(storedKey() == *key);
+        CHECK(history.canUndo());
+
+        REQUIRE(history.undo());
+        CHECK_FALSE(storedKey().has_value());
+        REQUIRE(history.canRedo());
+        REQUIRE(history.redo());
+        CHECK(storedKey() == *key);
+
+        // Setting the same key again is not a change, exactly as re-typing an
+        // unchanged name is not. Without this the case above would pass on an
+        // apply() that recorded an undo entry for every frame of a slider drag.
+        auto same = setElementColourKey(history.draft(), anchorId, *key);
+        REQUIRE(same.has_value());
+        auto const again = history.apply(*same);
+        REQUIRE(again.has_value());
+        CHECK_FALSE(*again);
+
+        // Clearing it is its own edit and its own undo entry.
+        auto cleared = setElementColourKey(history.draft(), anchorId, std::nullopt);
+        REQUIRE(cleared.has_value());
+        auto const removal = history.apply(*cleared);
+        REQUIRE(removal.has_value());
+        REQUIRE(*removal);
+        CHECK_FALSE(storedKey().has_value());
+        REQUIRE(history.undo());
+        CHECK(storedKey() == *key);
     }
 }

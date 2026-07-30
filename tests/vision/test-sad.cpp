@@ -1,3 +1,5 @@
+#include "label-fixture.hpp"
+
 #include <vision/sad.hpp>
 #include <vision/synthetic.hpp>
 
@@ -13,8 +15,10 @@
 
 #include <array>
 #include <cstddef>
+#include <limits>
 #include <optional>
 #include <span>
+#include <string_view>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -173,6 +177,92 @@ namespace uf
             auto const kind = automationErrorKind(error);
             REQUIRE(kind.has_value());
             CHECK(kind == expected);
+        }
+
+        // The grey level at which the label glyphs in the screenshot fixture
+        // stop being antialiased edge and start being the UI's own stroke.
+        constexpr auto k_nearWhiteGray = uint32{230};
+
+        [[nodiscard]]
+        auto decodeHex(std::string_view hex) -> std::vector<std::byte>
+        {
+            constexpr auto digits = std::string_view{"0123456789abcdef"};
+
+            REQUIRE(hex.size() % 2 == 0);
+            auto bytes = std::vector<std::byte>{};
+            bytes.reserve(hex.size() / 2);
+            for (auto index = std::size_t{0}; index < hex.size(); index += 2)
+            {
+                auto const high = digits.find(checkedAt(hex, index));
+                auto const low  = digits.find(checkedAt(hex, index + 1));
+                REQUIRE(high != std::string_view::npos);
+                REQUIRE(low != std::string_view::npos);
+                auto const value = checkedCast<uint8>(high * 16U + low);
+                REQUIRE(value.has_value());
+                bytes.emplace_back(asByte(*value));
+            }
+            return bytes;
+        }
+
+        [[nodiscard]]
+        auto uniformMask(
+            uint32 width,
+            uint32 height,
+            uint8 weight
+        ) -> std::vector<std::byte>
+        {
+            return build(
+                width,
+                height,
+                width,
+                asByte(0),
+                [weight](uint32, uint32) noexcept -> uint8
+                {
+                    return weight;
+                }
+            );
+        }
+
+        // Keeps the glyph strokes and drops everything the artwork owns, which
+        // is the mask a template author would paint into the alpha channel.
+        [[nodiscard]]
+        auto nearWhiteMask(
+            std::vector<std::byte> const& gray
+        ) -> std::vector<std::byte>
+        {
+            auto mask = std::vector<std::byte>{};
+            mask.reserve(gray.size());
+            for (auto const value : gray)
+            {
+                mask.emplace_back(
+                    std::to_integer<uint32>(value) >= k_nearWhiteGray
+                        ? asByte(255)
+                        : asByte(0)
+                );
+            }
+            return mask;
+        }
+
+        [[nodiscard]]
+        auto maskedPixelCount(std::vector<std::byte> const& mask) -> std::size_t
+        {
+            auto count = std::size_t{0};
+            for (auto const value : mask)
+            {
+                if (value != asByte(0))
+                {
+                    ++count;
+                }
+            }
+            return count;
+        }
+
+        [[nodiscard]]
+        auto matchScore(Result<std::optional<SadMatch>> const& result) -> uint64
+        {
+            REQUIRE(result.has_value());
+            REQUIRE(result->has_value());
+            return (*result)->score();
         }
 
         [[nodiscard]]
@@ -930,5 +1020,539 @@ namespace uf
             REQUIRE_FALSE(result.has_value());
             requireErrorKind(result.error(), AutomationErrorKind::InternalInvariant);
         }
+    }
+
+    TEST_CASE("bgra8 to alpha8 lifts the alpha channel into a gray8 plane")
+    {
+        auto constexpr stride = std::size_t{12};
+        auto const dataLength = checkedMultiply(stride, std::size_t{2});
+        UF_CHECK(dataLength.has_value());
+        auto data = std::vector<std::byte>(*dataLength, asByte(0xEE));
+        writeBgraPixel(data, 0, {1, 2, 3, 0});
+        writeBgraPixel(data, 4, {4, 5, 6, 128});
+        writeBgraPixel(data, stride, {7, 8, 9, 254});
+        auto const finalPixelOffset = checkedAdd(stride, std::size_t{4});
+        UF_CHECK(finalPixelOffset.has_value());
+        writeBgraPixel(data, *finalPixelOffset, {10, 11, 12, 255});
+
+        auto const result = bgra8ToAlpha8(data, 2, 2, stride);
+        REQUIRE(result.has_value());
+        auto const expected = std::vector<std::byte>{
+            asByte(0),
+            asByte(128),
+            asByte(254),
+            asByte(255),
+        };
+        CHECK(*result == expected);
+    }
+
+    TEST_CASE("an opaque mask reproduces the unmasked matcher exactly")
+    {
+        auto constexpr haystackWidth  = uint32{48};
+        auto constexpr haystackHeight = uint32{36};
+        auto constexpr paddedStride   = std::size_t{64};
+        auto constexpr templateWidth  = uint32{9};
+        auto constexpr templateHeight = uint32{7};
+        auto constexpr plantedX       = uint32{11};
+        auto constexpr plantedY       = uint32{5};
+
+        auto const background = hashed(23);
+        auto const haystackData = build(
+            haystackWidth,
+            haystackHeight,
+            haystackWidth,
+            asByte(0),
+            background
+        );
+        auto const paddedData = build(
+            haystackWidth,
+            haystackHeight,
+            paddedStride,
+            asByte(0xFF),
+            background
+        );
+        auto const plantedData = build(
+            templateWidth,
+            templateHeight,
+            templateWidth,
+            asByte(0),
+            [background](uint32 x, uint32 y) noexcept -> uint8
+            {
+                return background(plantedX + x, plantedY + y);
+            }
+        );
+        auto const foreignData = build(
+            templateWidth,
+            templateHeight,
+            templateWidth,
+            asByte(0),
+            hashed(97)
+        );
+        auto const maskData = uniformMask(templateWidth, templateHeight, 255);
+
+        auto const haystack = grayImage(
+            haystackData,
+            haystackWidth,
+            haystackHeight,
+            haystackWidth
+        );
+        auto const padded = grayImage(
+            paddedData,
+            haystackWidth,
+            haystackHeight,
+            paddedStride
+        );
+        auto const planted = grayImage(
+            plantedData,
+            templateWidth,
+            templateHeight,
+            templateWidth
+        );
+        auto const foreign = grayImage(
+            foreignData,
+            templateWidth,
+            templateHeight,
+            templateWidth
+        );
+        auto const mask = grayImage(
+            maskData,
+            templateWidth,
+            templateHeight,
+            templateWidth
+        );
+
+        auto const agree = [&mask](
+            GrayImage const& searched,
+            GrayImage const& templateImage,
+            PixelRect roi,
+            uint64 budget
+        ) -> void
+        {
+            auto unmaskedPolls = uint32{0};
+            auto maskedPolls   = uint32{0};
+            auto const unmaskedPoll = SadSearchPoll{
+                [&unmaskedPolls]() noexcept -> SadSearchControl
+                {
+                    ++unmaskedPolls;
+                    return SadSearchControl::Continue;
+                }
+            };
+            auto const maskedPoll = SadSearchPoll{
+                [&maskedPolls]() noexcept -> SadSearchControl
+                {
+                    ++maskedPolls;
+                    return SadSearchControl::Continue;
+                }
+            };
+
+            auto const unmasked = matchTemplateSad(
+                searched,
+                templateImage,
+                roi,
+                budget,
+                unmaskedPoll
+            );
+            auto const masked = matchTemplateSad(
+                searched,
+                templateImage,
+                mask,
+                roi,
+                budget,
+                maskedPoll
+            );
+            REQUIRE(unmasked.has_value());
+            REQUIRE(masked.has_value());
+            CHECK(masked->outcome == unmasked->outcome);
+            CHECK(
+                masked->completedPixelComparisons
+                == unmasked->completedPixelComparisons
+            );
+            CHECK(maskedPolls == unmaskedPolls);
+        };
+
+        auto constexpr unlimited = std::numeric_limits<uint64>::max();
+        auto const rois = std::array{
+            pixelRect(0, 0, haystackWidth, haystackHeight),
+            pixelRect(6, 4, 30, 24),
+            pixelRect(0, 0, 4, 4),
+        };
+        for (auto const roi : rois)
+        {
+            agree(haystack, planted, roi, unlimited);
+            agree(haystack, foreign, roi, unlimited);
+            agree(padded, planted, roi, unlimited);
+            agree(haystack, foreign, roi, 500);
+        }
+    }
+
+    TEST_CASE("a masked label template survives a changed background")
+    {
+        struct LabelCase final
+        {
+            test::LabelFixture fixture{};
+
+            uint64 maskedScore{};
+            uint64 opaqueScore{};
+        };
+
+        auto const cases = std::array{
+            LabelCase{test::k_sortieLabel, 1137, 227916},
+            LabelCase{test::k_storyLabel, 661, 96551},
+        };
+        for (auto const& testCase : cases)
+        {
+            auto const& fixture     = testCase.fixture;
+            auto const width        = fixture.templateWidth;
+            auto const height       = fixture.templateHeight;
+            auto const pixelCount   = uint64{width} * uint64{height};
+            auto const templateData = decodeHex(fixture.templateHex);
+            auto const haystackData = decodeHex(fixture.haystackHex);
+            REQUIRE(templateData.size() == pixelCount);
+            REQUIRE(
+                haystackData.size()
+                == uint64{fixture.haystackWidth} * uint64{fixture.haystackHeight}
+            );
+
+            auto const maskData   = nearWhiteMask(templateData);
+            auto const opaqueData = uniformMask(width, height, 255);
+
+            // The case only proves something while the glyph is a minority of
+            // its rectangle: the rest is artwork that changed completely.
+            CHECK(maskedPixelCount(maskData) * 2U < pixelCount);
+
+            auto const templateImage = grayImage(templateData, width, height, width);
+            auto const mask          = grayImage(maskData, width, height, width);
+            auto const opaque        = grayImage(opaqueData, width, height, width);
+            auto const haystack      = grayImage(
+                haystackData,
+                fixture.haystackWidth,
+                fixture.haystackHeight,
+                fixture.haystackWidth
+            );
+            auto const roi = pixelRect(
+                0,
+                0,
+                fixture.haystackWidth,
+                fixture.haystackHeight
+            );
+            auto const origin = test::k_labelTemplateOrigin;
+
+            auto const masked = matchTemplateSad(haystack, templateImage, mask, roi);
+            auto const unmaskable = matchTemplateSad(
+                haystack,
+                templateImage,
+                opaque,
+                roi
+            );
+            REQUIRE(masked.has_value());
+            REQUIRE(unmaskable.has_value());
+            REQUIRE(masked->has_value());
+            REQUIRE(unmaskable->has_value());
+            CHECK(
+                **masked
+                == SadMatch{origin, origin, testCase.maskedScore}
+            );
+            CHECK((*unmaskable)->score() == testCase.opaqueScore);
+
+            // The largest score a 99% similarity threshold accepts over this
+            // template rectangle, on the scale unmasked thresholds already use.
+            auto const maximumSad = uint64{255} * pixelCount / 100U;
+            CHECK((*masked)->score() <= maximumSad);
+            CHECK((*unmaskable)->score() > maximumSad);
+
+            // Control: over its own background the same template and mask are
+            // exact, so the fixture crops really do hold the same label.
+            auto const ownBackground = matchTemplateSad(
+                templateImage,
+                templateImage,
+                mask,
+                pixelRect(0, 0, width, height)
+            );
+            CHECK(matchScore(ownBackground) == 0);
+        }
+    }
+
+    TEST_CASE("masked scores normalize by the weight actually summed")
+    {
+        auto constexpr extent = uint32{8};
+        auto constexpr height = uint32{4};
+        auto constexpr stable = uint32{4};
+        auto constexpr pixels = uint64{extent} * uint64{height};
+
+        // The left half differs by a constant 10 and the right half by 250, so
+        // a mask that keeps only the left half must score exactly 10 per pixel
+        // however much of that half it keeps.
+        auto const templateData = build(
+            extent,
+            height,
+            extent,
+            asByte(0),
+            [](uint32 x, uint32) noexcept -> uint32
+            {
+                return x < stable ? 100U : 0U;
+            }
+        );
+        auto const haystackData = build(
+            extent,
+            height,
+            extent,
+            asByte(0),
+            [](uint32 x, uint32) noexcept -> uint32
+            {
+                return x < stable ? 110U : 250U;
+            }
+        );
+        auto const narrowData = build(
+            extent,
+            height,
+            extent,
+            asByte(0),
+            [](uint32 x, uint32) noexcept -> uint32
+            {
+                return x == 0 ? 255U : 0U;
+            }
+        );
+        auto const wideData = build(
+            extent,
+            height,
+            extent,
+            asByte(0),
+            [](uint32 x, uint32) noexcept -> uint32
+            {
+                return x < stable ? 255U : 0U;
+            }
+        );
+        auto const partialData = build(
+            extent,
+            height,
+            extent,
+            asByte(0),
+            [](uint32 x, uint32) noexcept -> uint32
+            {
+                return x < stable ? 255U : 51U;
+            }
+        );
+
+        auto const haystack = grayImage(haystackData, extent, height, extent);
+        auto const templateImage = grayImage(templateData, extent, height, extent);
+        auto const roi = pixelRect(0, 0, extent, height);
+        auto const scoreWith = [&](std::vector<std::byte> const& maskData) -> uint64
+        {
+            auto const mask = grayImage(maskData, extent, height, extent);
+            return matchScore(matchTemplateSad(haystack, templateImage, mask, roi));
+        };
+
+        // A quarter of the weight of the wide mask, and the same score.
+        CHECK(maskedPixelCount(narrowData) * 4U == maskedPixelCount(wideData));
+        CHECK(scoreWith(narrowData) == pixels * 10U);
+        CHECK(scoreWith(wideData) == pixels * 10U);
+
+        // Any uniform weight is the unmasked scale, because the constant
+        // cancels out of the quotient.
+        auto const unmasked = matchScore(
+            matchTemplateSad(haystack, templateImage, roi)
+        );
+        CHECK(unmasked == pixels * 130U);
+        CHECK(scoreWith(uniformMask(extent, height, 255)) == unmasked);
+        CHECK(scoreWith(uniformMask(extent, height, 128)) == unmasked);
+        CHECK(scoreWith(uniformMask(extent, height, 1)) == unmasked);
+
+        // A partial weight lands between the two, in proportion to its weight.
+        CHECK(scoreWith(partialData) == pixels * 50U);
+    }
+
+    TEST_CASE("a masked search keeps the budget, poll and cancellation contract")
+    {
+        auto const haystackData = std::vector<std::byte>{
+            asByte(0),
+            asByte(1),
+            asByte(2),
+        };
+        auto const templateData = std::vector<std::byte>{asByte(255), asByte(7)};
+        auto const maskData     = std::vector<std::byte>{asByte(0), asByte(255)};
+        auto const haystack      = grayImage(haystackData, 3, 1, 3);
+        auto const templateImage = grayImage(templateData, 2, 1, 2);
+        auto const mask          = grayImage(maskData, 2, 1, 2);
+        auto const roi           = pixelRect(0, 0, 3, 1);
+
+        struct BudgetCase final
+        {
+            uint64 budget{};
+            uint64 expectedComparisons{};
+            uint32 expectedPolls{};
+        };
+
+        // An excluded pixel still consumes its comparison, so the budget keeps
+        // measuring the rectangle the search walked rather than the weight.
+        auto const budgets = std::array{
+            BudgetCase{0, 0, 0},
+            BudgetCase{1, 1, 1},
+            BudgetCase{3, 3, 1},
+        };
+        for (auto const& testCase : budgets)
+        {
+            auto pollCount = uint32{0};
+            auto const poll = SadSearchPoll{
+                [&pollCount]() noexcept -> SadSearchControl
+                {
+                    ++pollCount;
+                    return SadSearchControl::Continue;
+                }
+            };
+            auto const result = matchTemplateSad(
+                haystack,
+                templateImage,
+                mask,
+                roi,
+                testCase.budget,
+                poll
+            );
+            REQUIRE(result.has_value());
+            CHECK(
+                std::get<SadSearchStopReason>(result->outcome)
+                == SadSearchStopReason::ComparisonBudgetExhausted
+            );
+            CHECK(result->completedPixelComparisons == testCase.expectedComparisons);
+            CHECK(pollCount == testCase.expectedPolls);
+        }
+
+        auto pollCount = uint32{0};
+        auto const poll = SadSearchPoll{
+            [&pollCount]() noexcept -> SadSearchControl
+            {
+                ++pollCount;
+                return SadSearchControl::Continue;
+            }
+        };
+        auto const completed = matchTemplateSad(
+            haystack,
+            templateImage,
+            mask,
+            roi,
+            4,
+            poll
+        );
+        REQUIRE(completed.has_value());
+        CHECK(
+            std::get<std::optional<SadMatch>>(completed->outcome)
+            == std::optional{SadMatch{1, 0, 10}}
+        );
+        CHECK(completed->completedPixelComparisons == 4);
+
+        struct InterruptionCase final
+        {
+            SadSearchControl    control{};
+            SadSearchStopReason expected{};
+        };
+
+        auto const interruptions = std::array{
+            InterruptionCase{
+                SadSearchControl::Cancelled,
+                SadSearchStopReason::Cancelled
+            },
+            InterruptionCase{
+                SadSearchControl::TimedOut,
+                SadSearchStopReason::TimedOut
+            },
+        };
+        for (auto const& testCase : interruptions)
+        {
+            auto const stopping = SadSearchPoll{
+                [control = testCase.control]() noexcept -> SadSearchControl
+                {
+                    return control;
+                }
+            };
+            auto const result = matchTemplateSad(
+                haystack,
+                templateImage,
+                mask,
+                roi,
+                4,
+                stopping
+            );
+            REQUIRE(result.has_value());
+            CHECK(
+                std::get<SadSearchStopReason>(result->outcome)
+                == testCase.expected
+            );
+            CHECK(result->completedPixelComparisons == 0);
+        }
+
+        auto constexpr wideWidth = uint32{4097};
+        auto const wideData = std::vector<std::byte>(wideWidth, asByte(0));
+        auto const singleData = std::vector<std::byte>{asByte(255)};
+        auto const singleMaskData = std::vector<std::byte>{asByte(255)};
+        auto const wide = grayImage(wideData, wideWidth, 1, wideWidth);
+        auto const single = grayImage(singleData, 1, 1, 1);
+        auto const singleMask = grayImage(singleMaskData, 1, 1, 1);
+        auto intervalPolls = uint32{0};
+        auto const cancelOnSecondPoll = SadSearchPoll{
+            [&intervalPolls]() noexcept -> SadSearchControl
+            {
+                ++intervalPolls;
+                if (intervalPolls == 2)
+                {
+                    return SadSearchControl::Cancelled;
+                }
+                return SadSearchControl::Continue;
+            }
+        };
+
+        auto const interval = matchTemplateSad(
+            wide,
+            single,
+            singleMask,
+            pixelRect(0, 0, wideWidth, 1),
+            uint64{wideWidth},
+            cancelOnSecondPoll
+        );
+        REQUIRE(interval.has_value());
+        CHECK(
+            std::get<SadSearchStopReason>(interval->outcome)
+            == SadSearchStopReason::Cancelled
+        );
+        CHECK(
+            interval->completedPixelComparisons
+            == k_sadSearchPollIntervalComparisons
+        );
+        CHECK(intervalPolls == 2);
+    }
+
+    TEST_CASE("an unusable template mask is rejected")
+    {
+        auto const haystackData  = std::vector<std::byte>{asByte(0), asByte(1)};
+        auto const templateData  = std::vector<std::byte>{asByte(255), asByte(7)};
+        auto const haystack      = grayImage(haystackData, 2, 1, 2);
+        auto const templateImage = grayImage(templateData, 2, 1, 2);
+        auto const roi           = pixelRect(0, 0, 2, 1);
+
+        auto const mismatchedData = std::vector<std::byte>{asByte(255)};
+        auto const mismatched = grayImage(mismatchedData, 1, 1, 1);
+        auto const mismatchedResult = matchTemplateSad(
+            haystack,
+            templateImage,
+            mismatched,
+            roi
+        );
+        REQUIRE_FALSE(mismatchedResult.has_value());
+        requireErrorKind(
+            mismatchedResult.error(),
+            AutomationErrorKind::InternalInvariant
+        );
+
+        auto const emptyData = std::vector<std::byte>{asByte(0), asByte(0)};
+        auto const empty = grayImage(emptyData, 2, 1, 2);
+        auto const emptyResult = matchTemplateSad(
+            haystack,
+            templateImage,
+            empty,
+            roi
+        );
+        REQUIRE_FALSE(emptyResult.has_value());
+        requireErrorKind(
+            emptyResult.error(),
+            AutomationErrorKind::InternalInvariant
+        );
     }
 }

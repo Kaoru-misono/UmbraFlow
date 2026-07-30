@@ -710,6 +710,13 @@ namespace uf::workbench
         return uf::workbench::pagesPlacedOn(m_page.draftView(), m_id);
     }
 
+    auto InteractiveRegion::colourKey() const -> std::optional<annotation::ColourKey>
+    {
+        auto const* target = m_page.findRecognizer(m_id);
+        UF_CHECK(target != nullptr);
+        return target->colourKey;
+    }
+
     auto InteractiveRegion::rename(std::string name) -> Status
     {
         auto draft   = m_page.draftCopy();
@@ -733,6 +740,18 @@ namespace uf::workbench
         }
         target->similarityBasisPoints = basisPoints;
         m_page.replaceDraft(std::move(draft));
+        return ok();
+    }
+
+    auto InteractiveRegion::setColourKey(
+        std::optional<annotation::ColourKey> key
+    ) -> Status
+    {
+        UF_TRY_VALUE(
+            updated,
+            setElementColourKey(m_page.draftCopy(), m_id, key)
+        );
+        m_page.replaceDraft(std::move(updated));
         return ok();
     }
 
@@ -900,6 +919,13 @@ namespace uf::workbench
         return target->shared;
     }
 
+    auto PageAnchor::colourKey() const -> std::optional<annotation::ColourKey>
+    {
+        auto const* target = m_page.findRecognizer(m_id);
+        UF_CHECK(target != nullptr);
+        return target->colourKey;
+    }
+
     auto PageAnchor::rename(std::string name) -> Status
     {
         auto draft   = m_page.draftCopy();
@@ -923,6 +949,18 @@ namespace uf::workbench
         }
         target->similarityBasisPoints = basisPoints;
         m_page.replaceDraft(std::move(draft));
+        return ok();
+    }
+
+    auto PageAnchor::setColourKey(
+        std::optional<annotation::ColourKey> key
+    ) -> Status
+    {
+        UF_TRY_VALUE(
+            updated,
+            setElementColourKey(m_page.draftCopy(), m_id, key)
+        );
+        m_page.replaceDraft(std::move(updated));
         return ok();
     }
 

@@ -17,10 +17,12 @@
 
 #include <doctest/doctest.h>
 
+#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <memory>
 #include <optional>
+#include <span>
 #include <stop_token>
 #include <string_view>
 #include <utility>
@@ -261,6 +263,43 @@ namespace uf::annotation
             );
             REQUIRE(frame.has_value());
             return *std::move(frame);
+        }
+
+        struct TemplatePixel final
+        {
+            uint8 gray{};
+            uint8 alpha{};
+        };
+
+        [[nodiscard]]
+        auto encodedAlphaTemplate(
+            std::span<TemplatePixel const> pixels
+        ) -> EncodedRuntimeTemplate
+        {
+            auto const width = checkedCast<uint32>(pixels.size());
+            REQUIRE(width.has_value());
+            auto rgba = std::vector<std::byte>{};
+            rgba.reserve(pixels.size() * 4U);
+            for (auto const pixel : pixels)
+            {
+                rgba.emplace_back(asByte(pixel.gray));
+                rgba.emplace_back(asByte(pixel.gray));
+                rgba.emplace_back(asByte(pixel.gray));
+                rgba.emplace_back(asByte(pixel.alpha));
+            }
+            auto encoded = image::encodeRgbaPng(
+                "recognition-runtime-alpha-template.png",
+                *width,
+                1,
+                rgba
+            );
+            REQUIRE(encoded.has_value());
+            auto const hash = sha256(*encoded);
+            REQUIRE(hash.has_value());
+            return EncodedRuntimeTemplate{
+                .hash     = *hash,
+                .pngBytes = *std::move(encoded),
+            };
         }
 
         struct ActionRuntimeInput final
@@ -854,6 +893,123 @@ namespace uf::annotation
             == SadSearchStopReason::ComparisonBudgetExhausted
         );
         CHECK(exhausted->completedPixelComparisons == 0);
+    }
+
+    TEST_CASE("a template's alpha channel excludes its pixels from recognition")
+    {
+        auto const fingerprint = test::fingerprint(3, 1, 96, 96);
+        auto const maskedId    = test::recognizerId(k_anchorAId);
+        auto const opaqueId    = test::recognizerId(k_anchorBId);
+        auto const pageA       = test::pageId(k_pageAId);
+
+        // The same two pixels twice: the second one is artwork the first
+        // template excludes through its alpha channel and the second keeps.
+        auto const maskedPixels = std::array{
+            TemplatePixel{2, 255},
+            TemplatePixel{200, 0},
+        };
+        auto const opaquePixels = std::array{
+            TemplatePixel{2, 255},
+            TemplatePixel{200, 255},
+        };
+        auto maskedTemplate = encodedAlphaTemplate(maskedPixels);
+        auto opaqueTemplate = encodedAlphaTemplate(opaquePixels);
+
+        auto const sourceBytes = std::array{asByte(42)};
+        auto const sourceHash  = sha256(sourceBytes);
+        REQUIRE(sourceHash.has_value());
+
+        auto manifest = RuntimeManifest::create(
+            test::projectId("personal.masked_runtime"),
+            fingerprint,
+            {
+                RuntimeRecognizerSpec{
+                    .definition = test::recognizer(
+                        fingerprint,
+                        maskedId,
+                        "masked_anchor",
+                        AnnotationType::PageAnchor,
+                        test::pixelRect(0, 0, 2, 1),
+                        test::pixelRect(0, 0, 3, 1),
+                        {},
+                        std::nullopt,
+                        test::threshold(10'000)
+                    ),
+                    .templateHash = maskedTemplate.hash,
+                    .sourceHash   = *sourceHash,
+                },
+                RuntimeRecognizerSpec{
+                    .definition = test::recognizer(
+                        fingerprint,
+                        opaqueId,
+                        "opaque_anchor",
+                        AnnotationType::PageAnchor,
+                        test::pixelRect(0, 0, 2, 1),
+                        test::pixelRect(0, 0, 3, 1),
+                        {},
+                        std::nullopt,
+                        test::threshold(10'000)
+                    ),
+                    .templateHash = opaqueTemplate.hash,
+                    .sourceHash   = *sourceHash,
+                },
+            },
+            {
+                test::page(pageA, "page_a", {maskedId, opaqueId}),
+            }
+        );
+        REQUIRE(manifest.has_value());
+        auto templates = std::vector<EncodedRuntimeTemplate>{};
+        templates.emplace_back(std::move(maskedTemplate));
+        templates.emplace_back(std::move(opaqueTemplate));
+        auto runtime = RecognitionRuntime::create(
+            *std::move(manifest),
+            std::move(templates)
+        );
+        REQUIRE(runtime.has_value());
+
+        // The frame keeps the first template pixel and replaces the artwork
+        // behind the second one.
+        auto const frame = runtimeFrame(
+            fingerprint,
+            {asByte(2), asByte(99), asByte(250)},
+            PixelFormat::Gray8
+        );
+        auto const attempt = runtime->evaluatePage(
+            frame,
+            fingerprint,
+            continuingPolicy(100)
+        );
+        REQUIRE(attempt.has_value());
+
+        auto const evidenceFor = [&attempt](RecognizerId id) -> AnchorEvidence
+        {
+            auto const found = std::ranges::find(
+                attempt->completedAnchorEvidence,
+                id,
+                &AnchorEvidence::recognizerId
+            );
+            REQUIRE(found != attempt->completedAnchorEvidence.end());
+            return *found;
+        };
+
+        auto const masked = evidenceFor(maskedId);
+        CHECK(masked.hit());
+        REQUIRE(masked.sadScore().has_value());
+        CHECK(masked.sadScore().value() == 0);
+        REQUIRE(masked.matchedRect().has_value());
+        CHECK(masked.matchedRect().value() == test::pixelRect(0, 0, 2, 1));
+
+        // The identical template without the alpha hole sees the artwork and
+        // misses under the same exact threshold.
+        auto const opaque = evidenceFor(opaqueId);
+        CHECK_FALSE(opaque.hit());
+        REQUIRE(opaque.sadScore().has_value());
+        CHECK(opaque.sadScore().value() == 101);
+
+        // The excluded pixel is still walked, so the budget is unchanged: the
+        // masked anchor exits on its exact hit and the opaque one prunes.
+        CHECK(attempt->completedPixelComparisons == 6);
     }
 
     TEST_CASE("resolveClickPixel derives deterministic integer click points")

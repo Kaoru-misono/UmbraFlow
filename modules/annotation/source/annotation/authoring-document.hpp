@@ -10,6 +10,7 @@
 
 #include <domain/ids.hpp>
 
+#include <optional>
 #include <span>
 #include <string>
 #include <string_view>
@@ -89,6 +90,80 @@ namespace uf::annotation
         auto provenance() const noexcept UF_LIFETIME_BOUND -> SourceProvenance const&;
     };
 
+    // The colour an author picked out of the source image, and how far another
+    // pixel may sit from it and still belong to the element's mask. Distance is
+    // the sum of the three absolute channel differences, so it runs 0..765 and
+    // one unit is one level on one channel.
+    //
+    // What is stored is the key, never the mask it produces. An author reopening
+    // a project has to be able to move the tolerance and watch the selection
+    // change; a baked mask cannot be moved back.
+    class ColourKey final
+    {
+    public:
+        // The full range of a channel, and of the distance across all three. A
+        // key at the maximum tolerance admits every colour, which is legal and
+        // useless -- the same mask as carrying no key at all.
+        static constexpr auto k_maximumChannel   = uint32{255};
+        static constexpr auto k_maximumTolerance = uint32{765};
+
+    private:
+        uint8  m_red;
+        uint8  m_green;
+        uint8  m_blue;
+        uint32 m_tolerance;
+
+        constexpr ColourKey(
+            uint8 red,
+            uint8 green,
+            uint8 blue,
+            uint32 tolerance
+        ) noexcept
+            : m_red{red}
+            , m_green{green}
+            , m_blue{blue}
+            , m_tolerance{tolerance}
+        {
+        }
+
+    public:
+        auto operator==(ColourKey const&) const -> bool = default;
+
+        // Channels are taken widened because both callers -- the canonical TOML
+        // reader and the picker UI -- hold values that are only supposed to be
+        // channel-sized, and this is where that is established.
+        [[nodiscard]]
+        static auto create(
+            uint32 red,
+            uint32 green,
+            uint32 blue,
+            uint32 tolerance
+        ) -> Result<ColourKey>;
+
+        [[nodiscard]] constexpr auto red() const noexcept -> uint8 { return m_red; }
+        [[nodiscard]] constexpr auto green() const noexcept -> uint8 { return m_green; }
+        [[nodiscard]] constexpr auto blue() const noexcept -> uint8 { return m_blue; }
+
+        [[nodiscard]]
+        constexpr auto tolerance() const noexcept -> uint32 { return m_tolerance; }
+
+        // The mask weight one source pixel earns, which is exactly the alpha
+        // byte the compiled template carries for it: 255 counts fully, 0 is
+        // excluded, and between them the matcher weights the pixel partially.
+        //
+        // Full weight out to the tolerance, then a linear ramp to nothing at
+        // twice it. The ramp is not decoration. A hard cut makes an author's
+        // tolerance control jump in steps, and it cuts through the antialiased
+        // skirt of a glyph, where the pixels just past the cut are still mostly
+        // glyph -- on the measured menu entry a tolerance of 12 around the white
+        // text takes 93.9% of the glyph and leaves a rim of edge pixels at
+        // distance 13..24. Those are the pixels the ramp readmits, at the weight
+        // they deserve. A tolerance of 0 has no ramp to speak of and stays an
+        // exact-colour mask.
+        [[nodiscard]]
+        auto alphaFor(uint8 red, uint8 green, uint8 blue) const noexcept -> uint8;
+    };
+
     // The three kinds an element can be. They are the payloads of the element
     // sum type below, matched with core/utility/variant-match.hpp. Only the
     // interactive kind carries a click, which is what turns "only an action
@@ -137,25 +212,27 @@ namespace uf::annotation
     public:
         struct Spec final
         {
-            RecognizerId        id;
-            ResourceName        name;
-            SourceId            sourceId;
-            PixelRect           templateRect;
-            PixelRect           searchRoi;
-            SimilarityThreshold threshold;
-            ElementKind         kind;
-            bool                shared{};
+            RecognizerId             id;
+            ResourceName             name;
+            SourceId                 sourceId;
+            PixelRect                templateRect;
+            PixelRect                searchRoi;
+            SimilarityThreshold      threshold;
+            std::optional<ColourKey> colourKey{};
+            ElementKind              kind;
+            bool                     shared{};
         };
 
     private:
-        RecognizerId        m_id;
-        ResourceName        m_name;
-        SourceId            m_sourceId;
-        PixelRect           m_templateRect;
-        PixelRect           m_searchRoi;
-        SimilarityThreshold m_threshold;
-        ElementKind         m_kind;
-        bool                m_shared;
+        RecognizerId             m_id;
+        ResourceName             m_name;
+        SourceId                 m_sourceId;
+        PixelRect                m_templateRect;
+        PixelRect                m_searchRoi;
+        SimilarityThreshold      m_threshold;
+        std::optional<ColourKey> m_colourKey;
+        ElementKind              m_kind;
+        bool                     m_shared;
 
         explicit Element(Spec spec) noexcept;
 
@@ -174,6 +251,13 @@ namespace uf::annotation
         [[nodiscard]] auto threshold() const noexcept -> SimilarityThreshold;
         [[nodiscard]] auto annotationType() const noexcept -> AnnotationType;
         [[nodiscard]] auto shared() const noexcept -> bool;
+
+        // Which of the template's pixels count. Absent means all of them, which
+        // is what every element authored before the key existed says and keeps
+        // saying: its compiled template is fully opaque, byte for byte as
+        // before.
+        [[nodiscard]]
+        auto colourKey() const noexcept -> std::optional<ColourKey>;
 
         [[nodiscard]]
         auto kind() const noexcept UF_LIFETIME_BOUND -> ElementKind const&;

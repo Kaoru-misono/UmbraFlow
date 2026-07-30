@@ -20,10 +20,13 @@
 #include <core/error/contracts.hpp>
 #include <core/error/error.hpp>
 #include <core/error/result.hpp>
+#include <core/safety/checked-access.hpp>
 #include <core/time/monotonic-time.hpp>
 #include <core/types/integer.hpp>
 
 #include <domain/space.hpp>
+
+#include <image/png.hpp>
 
 #include <vision/sad.hpp>
 
@@ -2163,6 +2166,96 @@ namespace uf::workbench
             ImGui::EndPopup();
         }
 
+        // The tolerance an eyedropper pick starts at. Measured on the game's own
+        // menu: around the white text, a tolerance of 12 takes 93.9% of the
+        // glyph and one pixel of the artwork beside it. Starting near zero would
+        // show the author an empty mask and teach them the feature is broken.
+        constexpr auto k_defaultColourKeyTolerance = uint32{12};
+
+        // Spends an armed eyedropper on one source pixel: the colour becomes the
+        // key, and the tolerance carries over, or starts at the measured default
+        // when there was no key to carry it from.
+        auto requestColourKeyPick(
+            AppState& state,
+            PanelUiState& ui,
+            CanvasPoint point
+        ) -> void
+        {
+            ui.colourKeyPicking = false;
+
+            auto const selected = state.selectedRecognizerId();
+            if (!selected.has_value())
+            {
+                return;
+            }
+            auto const authoredOn = sourceOfRecognizer(state, *selected);
+            if (!authoredOn.has_value())
+            {
+                return;
+            }
+            auto const asset = std::ranges::find(
+                state.sources(),
+                *authoredOn,
+                &annotation::AuthoringSourceAsset::id
+            );
+            // The canvas maps a screen point through the zoom, so a click far
+            // outside a zoomed-out image yields a coordinate no image has. The
+            // bound keeps the narrowing below defined; sampleSourcePixel then
+            // refuses anything merely outside this particular screen.
+            auto const withinAddressableImage = (
+                point.x >= 0.0F
+                && point.y >= 0.0F
+                && point.x < static_cast<float>(image::k_maximumPngDimension)
+                && point.y < static_cast<float>(image::k_maximumPngDimension)
+            );
+            if (asset == state.sources().end() || !withinAddressableImage)
+            {
+                ui.report(
+                    LogSeverity::Error,
+                    "that pixel is not part of this element's screen"
+                );
+                return;
+            }
+
+            auto const sampled = sampleSourcePixel(
+                *asset,
+                PixelPoint{
+                    static_cast<uint32>(point.x),
+                    static_cast<uint32>(point.y)
+                }
+            );
+            if (!sampled)
+            {
+                ui.report(
+                    LogSeverity::Error,
+                    std::format(
+                        "colour pick failed: {}",
+                        toString(sampled.error())
+                    )
+                );
+                return;
+            }
+
+            auto const key = annotation::ColourKey::create(
+                sampled->red,
+                sampled->green,
+                sampled->blue,
+                ui.colourKeyDraft
+                    ? ui.colourKeyDraft->tolerance()
+                    : k_defaultColourKeyTolerance
+            );
+            if (!key)
+            {
+                ui.report(
+                    LogSeverity::Error,
+                    std::format("colour pick failed: {}", toString(key.error()))
+                );
+                return;
+            }
+            ui.colourKeyDraft = *key;
+            requestElementColourKey(state, ui, *selected, *key);
+        }
+
         auto drawCanvasPanel(
             AppState& state,
             WorkbenchServices const& services,
@@ -2387,12 +2480,26 @@ namespace uf::workbench
                 mouse.y
             );
 
+            // An armed eyedropper claims the click before anything else: the
+            // author is naming a colour, not choosing an element, and picking one
+            // means clicking the pixel that has it.
+            auto const eyedropperClaimed = (
+                hovered
+                && ui.colourKeyPicking
+                && ImGui::IsMouseClicked(ImGuiMouseButton_Left)
+            );
+            if (eyedropperClaimed)
+            {
+                requestColourKeyPick(state, ui, mouseSource);
+            }
+
             // Left press arbitration, only when a grip did not already claim it: a
             // hit on a drawn template selects (cycling through an overlap), and an
             // empty press on a page begins a rubber-band; on an unclassified screen
             // it names the fix instead.
             if (
                 hovered
+                && !eyedropperClaimed
                 && ui.canvasGesture == PanelUiState::CanvasGesture::Idle
                 && ImGui::IsMouseClicked(ImGuiMouseButton_Left)
             )
@@ -2659,6 +2766,10 @@ namespace uf::workbench
             PixelRect                             templateRect;
             std::optional<EditableTemplateOffset> defaultClick{};
             std::vector<annotation::PageId>       allowedPages{};
+
+            // Authoring-only, so it comes off the element rather than off the
+            // catalog's recognizer definition, which never carries one.
+            std::optional<annotation::ColourKey> colourKey{};
         };
 
         // What a shared element's copy needs said about it. Putting it on another
@@ -2699,6 +2810,320 @@ namespace uf::workbench
                     shortId(authoredOn->value()).c_str()
                 );
             }
+        }
+
+        // The drag range of the tolerance control. The model allows up to 765
+        // (the largest possible channel-sum distance), but past about 64 the key
+        // is admitting artwork rather than antialiasing, so the useful range is
+        // where the pointer has resolution.
+        constexpr auto k_colourKeyToleranceDragMax = 64;
+
+        // The mask picture is drawn one filled rectangle per cell, so its cost
+        // has to be bounded by the widget rather than by how large a rectangle
+        // the author happened to draw. A bigger template is sampled down to this
+        // many cells per axis.
+        constexpr auto k_maskPreviewCells = uint32{128};
+        constexpr auto k_maskPreviewWidth = 240.0F;
+
+        // The ground a dropped pixel shows through: the usual two-tone
+        // checkerboard, so "excluded" reads as absent rather than as black.
+        constexpr auto k_maskCheckerLight = IM_COL32(78, 78, 84, 255);
+        constexpr auto k_maskCheckerDark  = IM_COL32(54, 54, 58, 255);
+        constexpr auto k_maskCheckerCell  = 8.0F;
+
+        // Brings ui.colourKeyMemo up to date for what the picker is showing.
+        // Refreshing that state is the whole operation, which is why it is the
+        // parameter: the picture is read back off the memo by the caller.
+        auto refreshColourKeyPreview(
+            AppState const& state,
+            PanelUiState& ui,
+            SelectedElement const& element,
+            annotation::SourceId sourceId,
+            std::optional<annotation::ColourKey> colourKey
+        ) -> void
+        {
+            auto const current = (
+                ui.colourKeyMemo.has_value()
+                && ui.colourKeyMemo->elementId == element.id
+                && ui.colourKeyMemo->sourceId == sourceId
+                && ui.colourKeyMemo->templateRect == element.templateRect
+                && ui.colourKeyMemo->colourKey == colourKey
+            );
+            if (current)
+            {
+                return;
+            }
+
+            auto const asset = std::ranges::find(
+                state.sources(),
+                sourceId,
+                &annotation::AuthoringSourceAsset::id
+            );
+            if (asset == state.sources().end())
+            {
+                ui.colourKeyMemo.reset();
+                return;
+            }
+            auto built = previewColourKeyMask(
+                *asset,
+                element.templateRect,
+                colourKey
+            );
+            if (!built)
+            {
+                ui.colourKeyMemo.reset();
+                return;
+            }
+            ui.colourKeyMemo = PanelUiState::ColourKeyMemo{
+                .elementId    = element.id,
+                .sourceId     = sourceId,
+                .templateRect = element.templateRect,
+                .colourKey    = colourKey,
+                .preview      = *std::move(built),
+            };
+        }
+
+        // The mask itself, at whatever size the inspector column allows. Kept
+        // pixels keep their own colour and their mask weight as opacity, so a
+        // partially kept antialiased edge looks like exactly what it is.
+        auto drawColourKeyMask(ColourKeyMaskPreview const& preview) -> void
+        {
+            if (preview.width == 0U || preview.height == 0U)
+            {
+                return;
+            }
+
+            auto const cellsX = std::min(preview.width, k_maskPreviewCells);
+            auto const cellsY = std::min(preview.height, k_maskPreviewCells);
+            auto const scale  = k_maskPreviewWidth / static_cast<float>(cellsX);
+            auto const boxHeight = scale * static_cast<float>(cellsY);
+
+            auto const origin = ImGui::GetCursorScreenPos();
+            ImGui::Dummy(ImVec2{k_maskPreviewWidth, boxHeight});
+
+            auto* p_drawList = ImGui::GetWindowDrawList();
+            p_drawList->PushClipRect(
+                origin,
+                ImVec2{origin.x + k_maskPreviewWidth, origin.y + boxHeight},
+                true
+            );
+            for (auto y = 0.0F; y < boxHeight; y += k_maskCheckerCell)
+            {
+                for (auto x = 0.0F; x < k_maskPreviewWidth; x += k_maskCheckerCell)
+                {
+                    auto const even = (
+                        static_cast<int>(x / k_maskCheckerCell)
+                        + static_cast<int>(y / k_maskCheckerCell)
+                    ) % 2 == 0;
+                    p_drawList->AddRectFilled(
+                        ImVec2{origin.x + x, origin.y + y},
+                        ImVec2{
+                            origin.x + x + k_maskCheckerCell,
+                            origin.y + y + k_maskCheckerCell
+                        },
+                        even ? k_maskCheckerLight : k_maskCheckerDark
+                    );
+                }
+            }
+
+            for (auto row = uint32{0}; row < cellsY; ++row)
+            {
+                auto const sampleY = row * preview.height / cellsY;
+                for (auto column = uint32{0}; column < cellsX; ++column)
+                {
+                    auto const sampleX = column * preview.width / cellsX;
+                    auto const offset  = (
+                        (static_cast<std::size_t>(sampleY) * preview.width
+                         + sampleX)
+                        * 4U
+                    );
+                    auto const alpha = std::to_integer<uint8>(
+                        checkedAt(preview.rgbaPixels, offset + 3U)
+                    );
+                    if (alpha == 0U)
+                    {
+                        continue;
+                    }
+                    auto const top = ImVec2{
+                        origin.x + static_cast<float>(column) * scale,
+                        origin.y + static_cast<float>(row) * scale,
+                    };
+                    p_drawList->AddRectFilled(
+                        top,
+                        ImVec2{top.x + scale, top.y + scale},
+                        IM_COL32(
+                            std::to_integer<uint8>(
+                                checkedAt(preview.rgbaPixels, offset)
+                            ),
+                            std::to_integer<uint8>(
+                                checkedAt(preview.rgbaPixels, offset + 1U)
+                            ),
+                            std::to_integer<uint8>(
+                                checkedAt(preview.rgbaPixels, offset + 2U)
+                            ),
+                            alpha
+                        )
+                    );
+                }
+            }
+            p_drawList->PopClipRect();
+        }
+
+        // Pick a pixel, say how far from it still counts, and see the mask that
+        // makes before trusting it. Colour alone is not a matcher -- the shape
+        // comparison still does the identifying -- so what this chooses is which
+        // pixels the comparison looks at.
+        auto drawColourKey(
+            AppState& state,
+            PanelUiState& ui,
+            SelectedElement const& element
+        ) -> void
+        {
+            ImGui::SeparatorText("Colour key");
+
+            auto const authoredOn = sourceOfRecognizer(state, element.id);
+            if (!authoredOn.has_value())
+            {
+                ui.colourKeySliderActive = false;
+                ImGui::TextUnformatted("This element has no screen to sample.");
+                return;
+            }
+
+            // Reseed the draft when the selection moves, or when the document's
+            // key has diverged from it -- an undo or a redo -- and nothing is in
+            // flight that a reseed would fight. A drag is one such thing; so is
+            // an edit already parked for this frame, whose whole point is that
+            // the draft is ahead of the document rather than stale.
+            if (
+                ui.colourKeyFor != element.id
+                || (
+                    ui.colourKeyDraft != element.colourKey
+                    && !ui.colourKeySliderActive
+                    && !ui.pendingEdit.has_value()
+                )
+            )
+            {
+                ui.colourKeyFor     = element.id;
+                ui.colourKeyDraft   = element.colourKey;
+                ui.colourKeyPicking = false;
+            }
+
+            ImGui::TextWrapped(
+                "White text over artwork that changes: pick the text's colour "
+                "and only those pixels are compared."
+            );
+
+            auto const picking = ui.colourKeyPicking;
+            if (ImGui::Button(picking ? "Picking - click a pixel" : "Pick colour"))
+            {
+                ui.colourKeyPicking = !picking;
+            }
+            if (ui.colourKeyDraft.has_value())
+            {
+                ImGui::SameLine();
+                ImGui::ColorButton(
+                    "##colour-key-swatch",
+                    ImVec4{
+                        static_cast<float>(ui.colourKeyDraft->red()) / 255.0F,
+                        static_cast<float>(ui.colourKeyDraft->green()) / 255.0F,
+                        static_cast<float>(ui.colourKeyDraft->blue()) / 255.0F,
+                        1.0F,
+                    },
+                    ImGuiColorEditFlags_NoAlpha,
+                    ImVec2{ImGui::GetFrameHeight(), ImGui::GetFrameHeight()}
+                );
+                ImGui::SameLine();
+                ImGui::Text(
+                    "%u, %u, %u",
+                    ui.colourKeyDraft->red(),
+                    ui.colourKeyDraft->green(),
+                    ui.colourKeyDraft->blue()
+                );
+                ImGui::SameLine();
+                if (ImGui::Button("Remove"))
+                {
+                    ui.colourKeyPicking = false;
+                    ui.colourKeyDraft.reset();
+                    requestElementColourKey(state, ui, element.id, std::nullopt);
+                }
+            }
+
+            auto tolerance = static_cast<int>(
+                ui.colourKeyDraft
+                    ? ui.colourKeyDraft->tolerance()
+                    : k_defaultColourKeyTolerance
+            );
+            ImGui::BeginDisabled(!ui.colourKeyDraft.has_value());
+            ImGui::SetNextItemWidth(k_maskPreviewWidth);
+            ImGui::SliderInt(
+                "Tolerance",
+                &tolerance,
+                0,
+                k_colourKeyToleranceDragMax,
+                "%d",
+                ImGuiSliderFlags_AlwaysClamp
+            );
+            ui.colourKeySliderActive = ImGui::IsItemActive();
+            auto const toleranceSettled = ImGui::IsItemDeactivatedAfterEdit();
+            ImGui::EndDisabled();
+
+            // The draft follows the drag every frame so the mask below moves
+            // with it; the document is written once, when the drag is let go, so
+            // the whole gesture is one undo entry.
+            if (ui.colourKeyDraft.has_value())
+            {
+                auto const dragged = annotation::ColourKey::create(
+                    ui.colourKeyDraft->red(),
+                    ui.colourKeyDraft->green(),
+                    ui.colourKeyDraft->blue(),
+                    static_cast<uint32>(tolerance)
+                );
+                if (dragged.has_value())
+                {
+                    ui.colourKeyDraft = *dragged;
+                    if (toleranceSettled && *dragged != element.colourKey)
+                    {
+                        requestElementColourKey(state, ui, element.id, *dragged);
+                    }
+                }
+            }
+
+            refreshColourKeyPreview(
+                state,
+                ui,
+                element,
+                *authoredOn,
+                ui.colourKeyDraft
+            );
+            if (!ui.colourKeyMemo.has_value())
+            {
+                ImGui::TextUnformatted("This screen's pixels are not loaded.");
+                return;
+            }
+
+            // The number that tells an author immediately that they picked the
+            // wrong pixel: a key keeping a few percent of the box has caught an
+            // artwork highlight rather than the text.
+            auto const& preview = ui.colourKeyMemo->preview;
+            auto const keptShare = preview.totalPixels == 0U
+                ? 0.0
+                : 100.0 * static_cast<double>(preview.fullyKeptPixels)
+                    / static_cast<double>(preview.totalPixels);
+            ImGui::Text(
+                "Keeps %zu of %zu px (%.1f%%), %zu partial",
+                preview.fullyKeptPixels,
+                preview.totalPixels,
+                keptShare,
+                preview.partiallyKeptPixels
+            );
+            if (ui.colourKeyDraft.has_value() && keptShare < 2.0)
+            {
+                ImGui::TextColored(
+                    k_failColor,
+                    "Almost nothing is selected - try another pixel."
+                );
+            }
+            drawColourKeyMask(preview);
         }
 
         // The recognizer's type, changed as one transaction. Nothing on the main
@@ -3079,6 +3504,7 @@ namespace uf::workbench
                     definition->allowedPageIds().begin(),
                     definition->allowedPageIds().end(),
                 },
+                .colourKey = elementColourKey(state, recognizerId),
             };
 
             // Reseed the name field from the document when the selection moves
@@ -3179,6 +3605,8 @@ namespace uf::workbench
                     );
                 }
             }
+
+            drawColourKey(state, ui, element);
 
             // Only an action target may define a default click, so the toggle is
             // unavailable for the other types instead of committing a rejected

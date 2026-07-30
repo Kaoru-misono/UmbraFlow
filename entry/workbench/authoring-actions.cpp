@@ -581,6 +581,51 @@ namespace uf::workbench
         );
     }
 
+    auto elementColourKey(
+        AppState const& state,
+        annotation::RecognizerId id
+    ) -> std::optional<annotation::ColourKey>
+    {
+        auto const* p_element = state.document().findElement(id);
+        return p_element == nullptr
+            ? std::nullopt
+            : p_element->colourKey();
+    }
+
+    auto requestElementColourKey(
+        AppState& state,
+        PanelUiState& ui,
+        annotation::RecognizerId id,
+        std::optional<annotation::ColourKey> colourKey
+    ) -> void
+    {
+        auto keyed = setElementColourKey(state.draft(), id, colourKey);
+        if (!keyed)
+        {
+            ui.report(
+                LogSeverity::Error,
+                std::format(
+                    "colour key change failed: {}",
+                    toString(keyed.error())
+                )
+            );
+            return;
+        }
+        requestEdit(
+            ui,
+            *std::move(keyed),
+            colourKey
+                ? std::format(
+                    "colour key set to {}, {}, {} within {}",
+                    colourKey->red(),
+                    colourKey->green(),
+                    colourKey->blue(),
+                    colourKey->tolerance()
+                )
+                : std::string{"colour key removed; the whole box is compared again"}
+        );
+    }
+
     auto requestScreenExpectation(
         AppState& state,
         PanelUiState& ui,

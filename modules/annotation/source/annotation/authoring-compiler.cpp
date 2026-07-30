@@ -34,15 +34,40 @@ namespace uf::annotation
 
         struct RecognizerWork final
         {
-            SourceId    sourceId;
-            std::size_t recognizerIndex{};
+            SourceId                 sourceId;
+            std::optional<ColourKey> colourKey{};
+            std::size_t              recognizerIndex{};
         };
 
+        // The colour key is part of the identity of a template, not a property
+        // of one: the same rectangle of the same screen masked two different
+        // ways is two different template images, and each needs its own asset.
         struct TemplateTaskKey final
         {
-            SourceId  sourceId;
-            PixelRect templateRect;
+            SourceId                 sourceId;
+            PixelRect                templateRect;
+            std::optional<ColourKey> colourKey{};
         };
+
+        // ColourKey carries equality but no order, because nothing about colours
+        // is ordered; this is a sort key and only has to be total and stable.
+        [[nodiscard]]
+        auto colourKeyOrder(
+            std::optional<ColourKey> const& key
+        ) noexcept -> std::tuple<bool, uint32, uint32, uint32, uint32>
+        {
+            if (!key)
+            {
+                return {false, 0U, 0U, 0U, 0U};
+            }
+            return {
+                true,
+                key->red(),
+                key->green(),
+                key->blue(),
+                key->tolerance()
+            };
+        }
 
         struct TemplateTaskLess final
         {
@@ -57,20 +82,23 @@ namespace uf::annotation
                     return left.sourceId.value() < right.sourceId.value();
                 }
 
-                return (
-                    std::tuple{
-                        left.templateRect.x(),
-                        left.templateRect.y(),
-                        left.templateRect.width(),
-                        left.templateRect.height()
-                    }
-                    < std::tuple{
-                        right.templateRect.x(),
-                        right.templateRect.y(),
-                        right.templateRect.width(),
-                        right.templateRect.height()
-                    }
-                );
+                auto const leftRect = std::tuple{
+                    left.templateRect.x(),
+                    left.templateRect.y(),
+                    left.templateRect.width(),
+                    left.templateRect.height()
+                };
+                auto const rightRect = std::tuple{
+                    right.templateRect.x(),
+                    right.templateRect.y(),
+                    right.templateRect.width(),
+                    right.templateRect.height()
+                };
+                if (leftRect != rightRect)
+                {
+                    return leftRect < rightRect;
+                }
+                return colourKeyOrder(left.colourKey) < colourKeyOrder(right.colourKey);
             }
         };
 
@@ -135,6 +163,7 @@ namespace uf::annotation
                     TemplateTaskKey{
                         .sourceId     = work.sourceId,
                         .templateRect = templateRect,
+                        .colourKey    = work.colourKey,
                     }
                 );
                 if (!insertion.second)
@@ -190,6 +219,100 @@ namespace uf::annotation
             );
         }
 
+        // The template PNG's alpha channel IS the mask the matcher weights by,
+        // so baking a colour key means writing that channel and nothing else.
+        // Templates are cropped as BGRA, where alpha is the fourth byte.
+        [[nodiscard]]
+        auto applyColourKeyAlpha(
+            std::vector<std::byte> croppedBgra,
+            ColourKey const& key
+        ) -> std::vector<std::byte>
+        {
+            auto const pixelCount = croppedBgra.size() / k_rgbaBytesPerPixel;
+            for (auto pixel = std::size_t{0}; pixel < pixelCount; ++pixel)
+            {
+                auto const base  = pixel * k_rgbaBytesPerPixel;
+                auto const blue  = std::to_integer<uint8>(checkedAt(croppedBgra, base));
+                auto const green = std::to_integer<uint8>(
+                    checkedAt(croppedBgra, base + 1U)
+                );
+                auto const red = std::to_integer<uint8>(
+                    checkedAt(croppedBgra, base + 2U)
+                );
+                checkedAt(croppedBgra, base + 3U) = static_cast<std::byte>(
+                    key.alphaFor(red, green, blue)
+                );
+            }
+            return croppedBgra;
+        }
+
+        // One template task's pixels. Without a colour key this is exactly the
+        // call the compiler has always made, so an unkeyed template's bytes do
+        // not move. With one, the crop is masked first and then handed to the
+        // same generator as a whole image -- the second crop is the identity,
+        // and the caller's error context already names the real rectangle, so
+        // nothing is lost by generating it at the origin.
+        [[nodiscard]]
+        auto generateTaskTemplate(
+            std::span<std::byte const> sourceBgra,
+            uint32 sourceWidth,
+            uint32 sourceHeight,
+            std::size_t sourceStride,
+            TemplateTaskKey const& task
+        ) -> Result<TemplateAsset>
+        {
+            if (!task.colourKey)
+            {
+                return generateTemplateAsset(
+                    sourceBgra,
+                    sourceWidth,
+                    sourceHeight,
+                    sourceStride,
+                    task.templateRect
+                );
+            }
+
+            UF_TRY_VALUE(
+                cropped,
+                image::cropBgra8(
+                    sourceBgra,
+                    sourceWidth,
+                    sourceHeight,
+                    sourceStride,
+                    task.templateRect
+                )
+            );
+            auto const masked = applyColourKeyAlpha(
+                std::move(cropped),
+                *task.colourKey
+            );
+            auto const maskedStride = checkedMultiply(
+                static_cast<std::size_t>(task.templateRect.width()),
+                k_rgbaBytesPerPixel
+            );
+            if (!maskedStride)
+            {
+                return invalidCompilation(
+                    "masked template stride overflowed addressable memory"
+                );
+            }
+            UF_TRY_VALUE(
+                wholeCrop,
+                PixelRect::create(
+                    0U,
+                    0U,
+                    task.templateRect.width(),
+                    task.templateRect.height()
+                )
+            );
+            return generateTemplateAsset(
+                masked,
+                task.templateRect.width(),
+                task.templateRect.height(),
+                *maskedStride,
+                wholeCrop
+            );
+        }
     }
 
     auto derivedRuntimeRecognizerId(
@@ -285,9 +408,18 @@ namespace uf::annotation
                 relationship.recognizerId == recognizer.id(),
                 "authoring recognizer source order is inconsistent"
             );
+            // The derived catalog carries no colour key -- it is authoring
+            // truth, and the runtime reads the mask off the template's alpha --
+            // so the key comes from the element the recognizer was derived from.
+            auto const* p_element = document.findElement(recognizer.id());
+            UF_CHECK_MSG(
+                p_element != nullptr,
+                "authoring recognizer has no element to derive from"
+            );
             recognizerWork.emplace_back(
                 RecognizerWork{
                     .sourceId        = relationship.sourceId,
+                    .colourKey       = p_element->colourKey(),
                     .recognizerIndex = index,
                 }
             );
@@ -390,12 +522,12 @@ namespace uf::annotation
             {
                 UF_TRY_VALUE_CONTEXT(
                     generated,
-                    generateTemplateAsset(
+                    generateTaskTemplate(
                         bgraPixels,
                         decoded.width,
                         decoded.height,
                         *stride,
-                        taskIterator->templateRect
+                        *taskIterator
                     ),
                     std::format(
                         "generating template [{}, {}, {}, {}] from source {}",
@@ -482,6 +614,7 @@ namespace uf::annotation
                 TemplateTaskKey{
                     .sourceId     = element.sourceId(),
                     .templateRect = element.templateRect(),
+                    .colourKey    = element.colourKey(),
                 }
             );
             UF_CHECK_MSG(

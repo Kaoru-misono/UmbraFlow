@@ -70,6 +70,11 @@ namespace uf::annotation
             uint32                 width{};
             uint32                 height{};
             std::vector<std::byte> pixels{};
+
+            // The decoded template's alpha channel, Gray8 shaped like pixels.
+            // Empty when every pixel is opaque, which selects the unmasked
+            // matcher and the behaviour projects authored before masks had.
+            std::vector<std::byte> mask{};
         };
 
         RuntimeManifest           m_manifest;
@@ -84,6 +89,15 @@ namespace uf::annotation
         auto findTemplate(
             ContentHash const& hash
         ) const noexcept UF_LIFETIME_BOUND -> GrayTemplate const*;
+
+        [[nodiscard]]
+        static auto matchGrayTemplate(
+            GrayImage const& grayFrame,
+            GrayTemplate const& grayTemplate,
+            PixelRect roi,
+            uint64 maximumPixelComparisons,
+            SadSearchPoll const& poll
+        ) -> Result<SadSearchReport>;
 
         [[nodiscard]]
         auto evaluateGrayPage(

@@ -7,6 +7,7 @@
 #include <core/error/result.hpp>
 #include <core/numeric/checked-arithmetic.hpp>
 #include <core/numeric/checked-cast.hpp>
+#include <core/safety/checked-access.hpp>
 #include <core/time/monotonic-time.hpp>
 #include <core/types/integer.hpp>
 
@@ -35,6 +36,8 @@ namespace uf::workbench
 {
     namespace
     {
+        constexpr auto k_rgbaBytesPerPixel = std::size_t{4};
+
         [[nodiscard]]
         auto toAnchorRow(annotation::AnchorEvidence const& evidence) -> PreviewAnchorRow
         {
@@ -1075,6 +1078,127 @@ namespace uf::workbench
             );
         }
         return toAnchorRow(*p_evidence);
+    }
+
+    auto previewColourKeyMask(
+        annotation::AuthoringSourceAsset const& asset,
+        PixelRect templateRect,
+        std::optional<annotation::ColourKey> colourKey
+    ) -> Result<ColourKeyMaskPreview>
+    {
+        UF_TRY_VALUE(
+            decoded,
+            image::decodePng(asset.pngBytes, "workbench-colour-key-source.png")
+        );
+        UF_TRY(templateRect.ensureWithinExtent(decoded.width, decoded.height));
+
+        auto const sourceStride = checkedMultiply(
+            static_cast<std::size_t>(decoded.width),
+            k_rgbaBytesPerPixel
+        );
+        auto const rowBytes = checkedMultiply(
+            static_cast<std::size_t>(templateRect.width()),
+            k_rgbaBytesPerPixel
+        );
+        auto maskBytes = std::optional<std::size_t>{};
+        if (rowBytes)
+        {
+            maskBytes = checkedMultiply(
+                *rowBytes,
+                static_cast<std::size_t>(templateRect.height())
+            );
+        }
+        if (!sourceStride || !rowBytes || !maskBytes)
+        {
+            return fail(
+                AutomationErrorKind::InvalidResource,
+                "colour key mask preview overflowed addressable memory"
+            );
+        }
+
+        auto preview = ColourKeyMaskPreview{
+            .width       = templateRect.width(),
+            .height      = templateRect.height(),
+            .rgbaPixels  = std::vector<std::byte>(*maskBytes, std::byte{0}),
+            .totalPixels = *maskBytes / k_rgbaBytesPerPixel,
+        };
+        for (auto row = uint32{0}; row < templateRect.height(); ++row)
+        {
+            auto const sourceRow = (
+                (static_cast<std::size_t>(templateRect.y()) + row) * *sourceStride
+                + static_cast<std::size_t>(templateRect.x()) * k_rgbaBytesPerPixel
+            );
+            auto const maskRow = static_cast<std::size_t>(row) * *rowBytes;
+            for (auto column = uint32{0}; column < templateRect.width(); ++column)
+            {
+                auto const from = sourceRow
+                    + static_cast<std::size_t>(column) * k_rgbaBytesPerPixel;
+                auto const into = maskRow
+                    + static_cast<std::size_t>(column) * k_rgbaBytesPerPixel;
+                auto const red   = std::to_integer<uint8>(checkedAt(decoded.pixels, from));
+                auto const green = std::to_integer<uint8>(
+                    checkedAt(decoded.pixels, from + 1U)
+                );
+                auto const blue = std::to_integer<uint8>(
+                    checkedAt(decoded.pixels, from + 2U)
+                );
+                auto const alpha = colourKey
+                    ? colourKey->alphaFor(red, green, blue)
+                    : uint8{255};
+
+                checkedAt(preview.rgbaPixels, into)      = std::byte{red};
+                checkedAt(preview.rgbaPixels, into + 1U) = std::byte{green};
+                checkedAt(preview.rgbaPixels, into + 2U) = std::byte{blue};
+                checkedAt(preview.rgbaPixels, into + 3U) = std::byte{alpha};
+
+                if (alpha == 255U)
+                {
+                    ++preview.fullyKeptPixels;
+                }
+                else if (alpha != 0U)
+                {
+                    ++preview.partiallyKeptPixels;
+                }
+            }
+        }
+        return preview;
+    }
+
+    auto sampleSourcePixel(
+        annotation::AuthoringSourceAsset const& asset,
+        PixelPoint point
+    ) -> Result<SampledSourcePixel>
+    {
+        UF_TRY_VALUE(
+            decoded,
+            image::decodePng(asset.pngBytes, "workbench-colour-key-source.png")
+        );
+        if (point.x() >= decoded.width || point.y() >= decoded.height)
+        {
+            return fail(
+                AutomationErrorKind::InvalidResource,
+                "the sampled pixel is outside the captured screen"
+            );
+        }
+
+        auto const stride = checkedMultiply(
+            static_cast<std::size_t>(decoded.width),
+            k_rgbaBytesPerPixel
+        );
+        if (!stride)
+        {
+            return fail(
+                AutomationErrorKind::InvalidResource,
+                "colour key source stride overflowed addressable memory"
+            );
+        }
+        auto const offset = static_cast<std::size_t>(point.y()) * *stride
+            + static_cast<std::size_t>(point.x()) * k_rgbaBytesPerPixel;
+        return SampledSourcePixel{
+            .red   = std::to_integer<uint8>(checkedAt(decoded.pixels, offset)),
+            .green = std::to_integer<uint8>(checkedAt(decoded.pixels, offset + 1U)),
+            .blue  = std::to_integer<uint8>(checkedAt(decoded.pixels, offset + 2U)),
+        };
     }
 
     auto runModelCheck(

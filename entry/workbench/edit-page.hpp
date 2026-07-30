@@ -249,9 +249,17 @@ namespace uf::workbench
         [[nodiscard]] auto isShared() const -> bool;
         [[nodiscard]] auto pagesPlacedOn() const -> std::vector<annotation::PageId>;
 
+        [[nodiscard]]
+        auto colourKey() const -> std::optional<annotation::ColourKey>;
+
         // Operations, mutating the owning EditPage's draft.
         [[nodiscard]] auto rename(std::string name) -> Status;
         [[nodiscard]] auto setThreshold(uint32 basisPoints) -> Status;
+
+        // Carries every page the element is placed on, like setTemplateRect:
+        // which of its pixels count is a fact about the pixels, drawn once.
+        [[nodiscard]]
+        auto setColourKey(std::optional<annotation::ColourKey> key) -> Status;
         [[nodiscard]] auto setClickOffset(std::optional<EditableTemplateOffset> click) -> Status;
         [[nodiscard]] auto setSearchRoi(PixelRect roi) -> Status;
 
@@ -299,11 +307,19 @@ namespace uf::workbench
         [[nodiscard]] auto threshold() const -> uint32;
         [[nodiscard]] auto isShared() const -> bool;
 
+        [[nodiscard]]
+        auto colourKey() const -> std::optional<annotation::ColourKey>;
+
         // Operations, mutating the owning EditPage's draft.
         [[nodiscard]] auto rename(std::string name) -> Status;
         [[nodiscard]] auto setThreshold(uint32 basisPoints) -> Status;
         [[nodiscard]] auto setSearchRoi(PixelRect roi) -> Status;
         [[nodiscard]] auto setTemplateRect(PixelRect templateRect) -> Status;
+
+        // An anchor is the commonest thing to key: the menu entry a page is
+        // identified by is white text over artwork that changes under it.
+        [[nodiscard]]
+        auto setColourKey(std::optional<annotation::ColourKey> key) -> Status;
 
         // Moves this anchor between the page's required and forbidden sets. An
         // anchor identifies the page (required) or must not match on it
