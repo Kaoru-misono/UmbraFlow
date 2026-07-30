@@ -318,9 +318,9 @@ namespace uf::annotation
     }
 
     auto derivedRuntimeRecognizerId(
-        RecognizerId elementId,
+        ElementId elementId,
         PageId pageId
-    ) -> RecognizerId
+    ) -> ElementId
     {
         auto seed             = std::vector<std::byte>{};
         auto const elementHex = elementId.value().toString();
@@ -349,7 +349,7 @@ namespace uf::annotation
                 checkedAt(digestBytes, index)
             );
         }
-        return RecognizerId{
+        return ElementId{
             ResourceId::fromBytes(std::span<std::byte const, 16>{truncated})
         };
     }
@@ -655,7 +655,7 @@ namespace uf::annotation
 
             auto buildSpec =
                 [&](
-                    RecognizerId id,
+                    ElementId id,
                     ResourceName name,
                     PixelRect searchRoi,
                     std::vector<PageId> allowedPageIds

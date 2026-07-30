@@ -531,7 +531,7 @@ namespace uf::annotation
         return RecognizerDefinition{std::move(normalizedSpec)};
     }
 
-    auto RecognizerDefinition::id() const -> RecognizerId { return m_id; }
+    auto RecognizerDefinition::id() const -> ElementId { return m_id; }
     auto RecognizerDefinition::name() const -> ResourceName { return m_name; }
     auto RecognizerDefinition::annotationType() const noexcept -> AnnotationType
     {
@@ -578,11 +578,11 @@ namespace uf::annotation
             );
         }
 
-        std::ranges::sort(normalizedSpec.required, lessId<RecognizerId>);
-        std::ranges::sort(normalizedSpec.forbidden, lessId<RecognizerId>);
+        std::ranges::sort(normalizedSpec.required, lessId<ElementId>);
+        std::ranges::sort(normalizedSpec.forbidden, lessId<ElementId>);
         if (
-            hasDuplicateIds<RecognizerId>(normalizedSpec.required)
-            || hasDuplicateIds<RecognizerId>(normalizedSpec.forbidden)
+            hasDuplicateIds<ElementId>(normalizedSpec.required)
+            || hasDuplicateIds<ElementId>(normalizedSpec.forbidden)
         )
         {
             return fail(
@@ -593,7 +593,7 @@ namespace uf::annotation
 
         for (auto const id : normalizedSpec.required)
         {
-            if (containsId<RecognizerId>(normalizedSpec.forbidden, id))
+            if (containsId<ElementId>(normalizedSpec.forbidden, id))
             {
                 return fail(
                     AutomationErrorKind::InvalidResource,
@@ -607,11 +607,11 @@ namespace uf::annotation
 
     auto PageSignature::id() const -> PageId { return m_id; }
     auto PageSignature::name() const -> ResourceName { return m_name; }
-    auto PageSignature::required() const noexcept -> std::span<RecognizerId const>
+    auto PageSignature::required() const noexcept -> std::span<ElementId const>
     {
         return m_required;
     }
-    auto PageSignature::forbidden() const noexcept -> std::span<RecognizerId const>
+    auto PageSignature::forbidden() const noexcept -> std::span<ElementId const>
     {
         return m_forbidden;
     }
@@ -621,7 +621,7 @@ namespace uf::annotation
         ProjectFingerprint fingerprint,
         std::vector<RecognizerDefinition> recognizers,
         std::vector<PageSignature> pages,
-        std::vector<RecognizerId> pageAnchorOrder
+        std::vector<ElementId> pageAnchorOrder
     ) noexcept
         : m_projectId{std::move(projectId)}
         , m_fingerprint{fingerprint}
@@ -735,7 +735,7 @@ namespace uf::annotation
         }
 
         auto findRecognizer = [&recognizers](
-            RecognizerId id
+            ElementId id
         ) noexcept -> RecognizerDefinition const*
         {
             auto const found = std::ranges::find(
@@ -751,7 +751,7 @@ namespace uf::annotation
             return found == pages.end() ? nullptr : &*found;
         };
 
-        auto pageAnchorOrder = std::vector<RecognizerId>{};
+        auto pageAnchorOrder = std::vector<ElementId>{};
         for (auto const& page : pages)
         {
             for (auto const id : page.required())
@@ -818,7 +818,7 @@ namespace uf::annotation
             }
         }
 
-        std::ranges::sort(pageAnchorOrder, lessId<RecognizerId>);
+        std::ranges::sort(pageAnchorOrder, lessId<ElementId>);
         pageAnchorOrder.erase(
             std::unique(pageAnchorOrder.begin(), pageAnchorOrder.end()),
             pageAnchorOrder.end()
@@ -854,7 +854,7 @@ namespace uf::annotation
     }
 
     auto RecognitionCatalog::findRecognizer(
-        RecognizerId id
+        ElementId id
     ) const noexcept -> RecognizerDefinition const*
     {
         auto const found = std::ranges::find(
@@ -871,7 +871,7 @@ namespace uf::annotation
         return found == m_pages.end() ? nullptr : &*found;
     }
 
-    auto RecognitionCatalog::pageAnchorOrder() const noexcept -> std::span<RecognizerId const>
+    auto RecognitionCatalog::pageAnchorOrder() const noexcept -> std::span<ElementId const>
     {
         return m_pageAnchorOrder;
     }

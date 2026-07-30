@@ -51,7 +51,7 @@ namespace uf::task
             auto recognizers = std::vector<annotation::RecognizerDefinition>{};
             recognizers.push_back(at::recognizer(
                 fingerprint,
-                at::recognizerId(k_anchorId),
+                at::elementId(k_anchorId),
                 "home_marker",
                 annotation::AnnotationType::PageAnchor,
                 at::pixelRect(0, 0, 1, 1),
@@ -59,7 +59,7 @@ namespace uf::task
             ));
             recognizers.push_back(at::recognizer(
                 fingerprint,
-                at::recognizerId(k_dailyId),
+                at::elementId(k_dailyId),
                 "daily_button",
                 annotation::AnnotationType::ActionTarget,
                 at::pixelRect(1, 1, 1, 1),
@@ -68,7 +68,7 @@ namespace uf::task
             ));
             recognizers.push_back(at::recognizer(
                 fingerprint,
-                at::recognizerId(k_battleId),
+                at::elementId(k_battleId),
                 "battle",
                 annotation::AnnotationType::ActionTarget,
                 at::pixelRect(2, 2, 1, 1),
@@ -79,7 +79,7 @@ namespace uf::task
             return at::catalog(
                 fingerprint,
                 std::move(recognizers),
-                {at::page(pageId, "home", {at::recognizerId(k_anchorId)})}
+                {at::page(pageId, "home", {at::elementId(k_anchorId)})}
             );
         }
 

@@ -120,7 +120,7 @@ namespace uf::workbench
     }
 
     auto AppState::Selection::recognizer() const noexcept
-        -> std::optional<annotation::RecognizerId>
+        -> std::optional<annotation::ElementId>
     {
         if (auto const* element = std::get_if<Element>(&m_value))
         {
@@ -265,7 +265,7 @@ namespace uf::workbench
     }
 
     auto AppState::selectedRecognizerId() const noexcept
-        -> std::optional<annotation::RecognizerId>
+        -> std::optional<annotation::ElementId>
     {
         return m_selection.recognizer();
     }
@@ -422,7 +422,7 @@ namespace uf::workbench
             );
         };
         auto const recognizerPresent =
-            [&document](annotation::RecognizerId id) -> bool
+            [&document](annotation::ElementId id) -> bool
         {
             return std::ranges::any_of(
                 document.catalog().recognizers(),

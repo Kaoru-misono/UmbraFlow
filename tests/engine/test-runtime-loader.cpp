@@ -97,8 +97,8 @@ namespace uf::engine
                 }
             );
             REQUIRE(source.has_value());
-            auto const anchorId = anno::test::recognizerId(k_anchorId);
-            auto const actionId = anno::test::recognizerId(k_actionId);
+            auto const anchorId = anno::test::elementId(k_anchorId);
+            auto const actionId = anno::test::elementId(k_actionId);
             auto const pageId   = anno::test::pageId(k_pageId);
             auto const click    = anno::TemplateOffset::create(1, 1, 2, 2);
             REQUIRE(click.has_value());

@@ -27,10 +27,10 @@ namespace uf::annotation
 
     struct RuntimeRecognizerAsset final
     {
-        RecognizerId id;
-        ContentHash  templateHash;
-        ContentHash  sourceHash;
-        std::string  templatePath{};
+        ElementId   id;
+        ContentHash templateHash;
+        ContentHash sourceHash;
+        std::string templatePath{};
     };
 
     class RuntimeManifest final
@@ -60,7 +60,7 @@ namespace uf::annotation
 
         [[nodiscard]]
         auto findAsset(
-            RecognizerId id
+            ElementId id
         ) const noexcept UF_LIFETIME_BOUND -> RuntimeRecognizerAsset const*;
     };
 

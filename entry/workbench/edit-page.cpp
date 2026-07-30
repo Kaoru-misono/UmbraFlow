@@ -129,7 +129,7 @@ namespace uf::workbench
                 std::move(draft),
                 NewPageSpec{
                     .pageId                = pageId,
-                    .anchorId              = annotation::RecognizerId{
+                    .anchorId              = annotation::ElementId{
                         mintResourceId()
                     },
                     .regressionId          = annotation::RegressionId{
@@ -168,7 +168,7 @@ namespace uf::workbench
     {
         UF_TRY_VALUE(rects, startingRects(m_draft.fingerprint));
 
-        auto const recognizerId = annotation::RecognizerId{mintResourceId()};
+        auto const recognizerId = annotation::ElementId{mintResourceId()};
         UF_TRY_VALUE(
             added,
             addPageMember(
@@ -341,7 +341,7 @@ namespace uf::workbench
     {
         UF_TRY_VALUE(rects, startingRects(m_draft.fingerprint));
 
-        auto const recognizerId = annotation::RecognizerId{mintResourceId()};
+        auto const recognizerId = annotation::ElementId{mintResourceId()};
         UF_TRY_VALUE(
             added,
             addPageMember(
@@ -368,7 +368,7 @@ namespace uf::workbench
     {
         UF_TRY_VALUE(rects, startingRects(m_draft.fingerprint));
 
-        auto const recognizerId = annotation::RecognizerId{mintResourceId()};
+        auto const recognizerId = annotation::ElementId{mintResourceId()};
         UF_TRY_VALUE(
             added,
             addPageMember(
@@ -417,7 +417,7 @@ namespace uf::workbench
             )
         );
 
-        auto const recognizerId = annotation::RecognizerId{mintResourceId()};
+        auto const recognizerId = annotation::ElementId{mintResourceId()};
         UF_TRY_VALUE(
             added,
             addPageMember(

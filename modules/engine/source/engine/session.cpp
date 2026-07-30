@@ -404,7 +404,7 @@ namespace uf::engine
 
     auto EngineSession::findAction(
         Observation const& observation,
-        annotation::RecognizerId recognizerId
+        annotation::ElementId recognizerId
     ) -> Result<std::optional<ActionFound>>
     {
         if (observation.m_sessionIdentity != m_identity)

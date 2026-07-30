@@ -225,7 +225,7 @@ namespace uf::task
 
     auto OperatorSession::findRecognizer(
         std::string_view name
-    ) const -> Result<annotation::RecognizerId>
+    ) const -> Result<annotation::ElementId>
     {
         auto const exposed = m_surface.recognizers();
         auto const found   = std::ranges::find(

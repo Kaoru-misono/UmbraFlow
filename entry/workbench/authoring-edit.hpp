@@ -33,7 +33,7 @@ namespace uf::workbench
 
     struct EditableRecognizer final
     {
-        annotation::RecognizerId   id;
+        annotation::ElementId      id;
         std::string                name{};
         annotation::AnnotationType annotationType{};
         annotation::SourceId       sourceId;
@@ -66,17 +66,17 @@ namespace uf::workbench
     // map it across with no inversion.
     struct EditablePlacement final
     {
-        annotation::PageId       pageId;
-        annotation::RecognizerId elementId;
-        PixelRect                searchRoi;
+        annotation::PageId    pageId;
+        annotation::ElementId elementId;
+        PixelRect             searchRoi;
     };
 
     struct EditablePage final
     {
-        annotation::PageId                    id;
-        std::string                           name{};
-        std::vector<annotation::RecognizerId> required{};
-        std::vector<annotation::RecognizerId> forbidden{};
+        annotation::PageId                 id;
+        std::string                        name{};
+        std::vector<annotation::ElementId> required{};
+        std::vector<annotation::ElementId> forbidden{};
     };
 
     struct EditableRegression final
@@ -123,7 +123,7 @@ namespace uf::workbench
     struct NewPageSpec final
     {
         annotation::PageId       pageId;
-        annotation::RecognizerId anchorId;
+        annotation::ElementId    anchorId;
         annotation::RegressionId regressionId;
         annotation::SourceId     sourceId;
         PixelRect                templateRect;
@@ -166,13 +166,13 @@ namespace uf::workbench
 
     struct PageMemberSpec final
     {
-        annotation::RecognizerId recognizerId;
-        annotation::PageId       pageId;
-        annotation::SourceId     sourceId;
-        PixelRect                templateRect;
-        PixelRect                searchRoi;
-        uint32                   similarityBasisPoints{};
-        PageMemberKind           kind{};
+        annotation::ElementId recognizerId;
+        annotation::PageId    pageId;
+        annotation::SourceId  sourceId;
+        PixelRect             templateRect;
+        PixelRect             searchRoi;
+        uint32                similarityBasisPoints{};
+        PageMemberKind        kind{};
     };
 
     struct AddedPageMember final
@@ -194,8 +194,8 @@ namespace uf::workbench
 
     struct DuplicateElementSpec final
     {
-        annotation::RecognizerId sourceElementId;
-        annotation::RecognizerId newElementId;
+        annotation::ElementId sourceElementId;
+        annotation::ElementId newElementId;
     };
 
     struct DuplicatedElement final
@@ -229,7 +229,7 @@ namespace uf::workbench
     [[nodiscard]]
     auto pagesPlacedOn(
         AuthoringDraft const& draft,
-        annotation::RecognizerId id
+        annotation::ElementId id
     ) -> std::vector<annotation::PageId>;
 
     // Withdraws one info or interactive element from one page. Page anchors use
@@ -239,7 +239,7 @@ namespace uf::workbench
     [[nodiscard]]
     auto removePlacementFromPage(
         AuthoringDraft draft,
-        annotation::RecognizerId id,
+        annotation::ElementId id,
         annotation::PageId pageId
     ) -> Result<AuthoringDraft>;
 
@@ -254,7 +254,7 @@ namespace uf::workbench
     [[nodiscard]]
     auto setRegionShared(
         AuthoringDraft draft,
-        annotation::RecognizerId id,
+        annotation::ElementId id,
         bool shared
     ) -> Result<AuthoringDraft>;
 
@@ -266,15 +266,15 @@ namespace uf::workbench
     [[nodiscard]]
     auto setElementColourKey(
         AuthoringDraft draft,
-        annotation::RecognizerId id,
+        annotation::ElementId id,
         std::optional<annotation::ColourKey> colourKey
     ) -> Result<AuthoringDraft>;
 
     struct SharedRegionSpec final
     {
-        annotation::RecognizerId elementId;
-        annotation::PageId       pageId;
-        PixelRect                searchRoi;
+        annotation::ElementId elementId;
+        annotation::PageId    pageId;
+        PixelRect             searchRoi;
     };
 
     struct SharedRegionPlacement final
@@ -315,7 +315,7 @@ namespace uf::workbench
     [[nodiscard]]
     auto setElementTemplateRect(
         AuthoringDraft draft,
-        annotation::RecognizerId id,
+        annotation::ElementId id,
         PixelRect templateRect
     ) -> Result<RetemplatedRegion>;
 
@@ -397,7 +397,7 @@ namespace uf::workbench
     [[nodiscard]]
     auto retypeRecognizer(
         AuthoringDraft draft,
-        annotation::RecognizerId id,
+        annotation::ElementId id,
         annotation::AnnotationType type
     ) -> Result<RetypedRecognizer>;
 
@@ -420,7 +420,7 @@ namespace uf::workbench
     [[nodiscard]]
     auto deleteRecognizer(
         AuthoringDraft draft,
-        annotation::RecognizerId id
+        annotation::ElementId id
     ) -> Result<DeletedEntity>;
 
     // Removes one page, withdraws it from every recognizer that authorizes it,

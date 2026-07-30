@@ -35,7 +35,7 @@ namespace uf::annotation
         auto anchorSpec() -> RecognizerSpec
         {
             return RecognizerSpec{
-                .id             = test::recognizerId(k_anchorId),
+                .id             = test::elementId(k_anchorId),
                 .name           = test::resourceName("home_marker"),
                 .annotationType = AnnotationType::PageAnchor,
                 .templateRect   = test::pixelRect(0, 0, 2, 2),
@@ -158,8 +158,8 @@ namespace uf::annotation
     TEST_CASE("recognition catalog closes page references and rejects duplicate signatures")
     {
         auto const projectFingerprint = test::fingerprint();
-        auto const anchorId = test::recognizerId(k_anchorId);
-        auto const actionId = test::recognizerId(k_actionId);
+        auto const anchorId = test::elementId(k_anchorId);
+        auto const actionId = test::elementId(k_actionId);
         auto const pageId = test::pageId(k_pageId);
         auto recognizers = std::vector<RecognizerDefinition>{};
         recognizers.emplace_back(
@@ -297,7 +297,7 @@ namespace uf::annotation
 
     TEST_CASE("page signature rejects duplicate and contradictory recognizer sets")
     {
-        auto const anchorId = test::recognizerId(k_anchorId);
+        auto const anchorId = test::elementId(k_anchorId);
         auto const pageId   = test::pageId(k_pageId);
 
         auto const duplicateRequired = PageSignature::create(
@@ -354,7 +354,7 @@ namespace uf::annotation
                 .id        = test::pageId(k_pageId),
                 .name      = test::resourceName("home"),
                 .required  = {},
-                .forbidden = {test::recognizerId(k_anchorId)},
+                .forbidden = {test::elementId(k_anchorId)},
             }
         );
 
@@ -364,15 +364,15 @@ namespace uf::annotation
     TEST_CASE("recognition catalog rejects every cross-resource inconsistency")
     {
         auto const projectFingerprint = test::fingerprint();
-        auto const anchorId           = test::recognizerId(k_anchorId);
-        auto const secondAnchorId     = test::recognizerId(k_secondAnchorId);
-        auto const actionId           = test::recognizerId(k_actionId);
-        auto const unknownId          = test::recognizerId(k_unknownId);
+        auto const anchorId           = test::elementId(k_anchorId);
+        auto const secondAnchorId     = test::elementId(k_secondAnchorId);
+        auto const actionId           = test::elementId(k_actionId);
+        auto const unknownId          = test::elementId(k_unknownId);
         auto const pageId             = test::pageId(k_pageId);
         auto const secondPageId       = test::pageId(k_secondPageId);
         auto const unknownPageId      = test::pageId(k_unknownPageId);
 
-        auto const anchor = [&](RecognizerId id, std::string name)
+        auto const anchor = [&](ElementId id, std::string name)
         {
             return test::recognizer(
                 projectFingerprint,

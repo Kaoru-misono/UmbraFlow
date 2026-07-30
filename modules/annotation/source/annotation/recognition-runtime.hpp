@@ -37,7 +37,7 @@ namespace uf::annotation
 
     struct PageRecognitionStop final
     {
-        RecognizerId        recognizerId;
+        ElementId           recognizerId;
         SadSearchStopReason reason{};
     };
 
@@ -143,7 +143,7 @@ namespace uf::annotation
         auto evaluateActionTarget(
             Frame const& frame,
             ProjectFingerprint liveFingerprint,
-            RecognizerId recognizerId,
+            ElementId recognizerId,
             RecognitionPolicy const& policy
         ) const -> Result<ActionTargetAttempt>;
 

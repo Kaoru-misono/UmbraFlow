@@ -164,7 +164,7 @@ namespace uf::task
         [[nodiscard]]
         auto cycleFind(
             CycleTicket ticket,
-            annotation::RecognizerId recognizerId
+            annotation::ElementId recognizerId
         ) -> Result<std::optional<engine::ActionFound>>;
 
         // Spends the cycle `ticket` names and delivers the click.

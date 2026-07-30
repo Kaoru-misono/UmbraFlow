@@ -39,7 +39,7 @@ namespace uf::workbench
         {
             auto const fingerprint = annotation::test::fingerprint(8, 8, 96, 96);
             auto const sourceId    = annotation::test::sourceId(k_sourceId);
-            auto const anchorId    = annotation::test::recognizerId(k_anchorId);
+            auto const anchorId    = annotation::test::elementId(k_anchorId);
             auto const pageId      = annotation::test::pageId(k_pageId);
             auto const sourceHash  = annotation::sha256(std::span<std::byte const>{});
             REQUIRE(sourceHash.has_value());
@@ -112,7 +112,7 @@ namespace uf::workbench
 
     TEST_CASE("a short id is the leading eight characters")
     {
-        auto const id = annotation::test::recognizerId(k_anchorId);
+        auto const id = annotation::test::elementId(k_anchorId);
         CHECK(shortId(id.value()) == "00000000");
         CHECK(shortId(id.value()).size() == 8U);
     }
@@ -229,7 +229,7 @@ namespace uf::workbench
     {
         auto state = appState();
         auto ui    = PanelUiState{};
-        auto const anchorId = annotation::test::recognizerId(k_anchorId);
+        auto const anchorId = annotation::test::elementId(k_anchorId);
 
         requestEditSelecting(
             ui,
@@ -260,7 +260,7 @@ namespace uf::workbench
             ui,
             renamedDraft(state, ""),
             "renamed the marker",
-            annotation::test::recognizerId(k_anchorId),
+            annotation::test::elementId(k_anchorId),
             std::nullopt
         );
         applyPendingEdit(state, ui);
@@ -387,13 +387,13 @@ namespace uf::workbench
 
         auto const found = sourceOfRecognizer(
             state,
-            annotation::test::recognizerId(k_anchorId)
+            annotation::test::elementId(k_anchorId)
         );
         REQUIRE(found.has_value());
         CHECK(*found == annotation::test::sourceId(k_sourceId));
 
         CHECK_FALSE(
-            sourceOfRecognizer(state, annotation::test::recognizerId(k_absentId)).has_value()
+            sourceOfRecognizer(state, annotation::test::elementId(k_absentId)).has_value()
         );
     }
 

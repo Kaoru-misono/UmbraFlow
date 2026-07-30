@@ -134,8 +134,8 @@ namespace uf::annotation
                 {1, 2, 1},
                 fingerprint
             );
-            auto const anchorA = test::recognizerId(k_anchorAId);
-            auto const anchorB = test::recognizerId(k_anchorBId);
+            auto const anchorA = test::elementId(k_anchorAId);
+            auto const anchorB = test::elementId(k_anchorBId);
             auto const pageA   = test::pageId(k_pageAId);
             auto const pageB   = test::pageId(k_pageBId);
             auto const resolvedExpectation = (

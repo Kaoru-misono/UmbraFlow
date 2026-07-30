@@ -39,7 +39,7 @@ namespace uf::workbench
         {
             auto const fingerprint = annotation::test::fingerprint(8, 8, 96, 96);
             auto const sourceId    = annotation::test::sourceId(k_sourceId);
-            auto const anchorId    = annotation::test::recognizerId(k_anchorId);
+            auto const anchorId    = annotation::test::elementId(k_anchorId);
             auto const pageId      = annotation::test::pageId(k_pageId);
             auto const sourceHash  = annotation::sha256(std::span<std::byte const>{});
             REQUIRE(sourceHash.has_value());
@@ -255,7 +255,7 @@ namespace uf::workbench
         check.screens.emplace_back(screen(ScreenCheckOutcome::Correct, k_sourceId));
         check.margins.emplace_back(
             RecognizerMargin{
-                .recognizerId = annotation::test::recognizerId(k_anchorId),
+                .recognizerId = annotation::test::elementId(k_anchorId),
                 .maximumSad   = 1234U,
             }
         );
@@ -265,7 +265,7 @@ namespace uf::workbench
         REQUIRE(p_screen != nullptr);
         CHECK(p_screen->outcome == ScreenCheckOutcome::Correct);
 
-        auto const* p_margin = findMargin(state, annotation::test::recognizerId(k_anchorId));
+        auto const* p_margin = findMargin(state, annotation::test::elementId(k_anchorId));
         REQUIRE(p_margin != nullptr);
         CHECK(p_margin->maximumSad == 1234U);
 
@@ -281,7 +281,7 @@ namespace uf::workbench
         auto check = ModelCheck{};
         check.cells.emplace_back(
             ModelCheckCell{
-                .elementId   = annotation::test::recognizerId(k_anchorId),
+                .elementId   = annotation::test::elementId(k_anchorId),
                 .screenId    = annotation::test::sourceId(k_sourceId),
                 .outcome     = ModelCellOutcome::Hit,
                 .sadScore    = std::optional<uint64>{0U},
@@ -293,7 +293,7 @@ namespace uf::workbench
 
         auto const* p_cell = findModelCell(
             state,
-            annotation::test::recognizerId(k_anchorId),
+            annotation::test::elementId(k_anchorId),
             annotation::test::sourceId(k_sourceId)
         );
         REQUIRE(p_cell != nullptr);
@@ -304,7 +304,7 @@ namespace uf::workbench
         CHECK(
             findModelCell(
                 state,
-                annotation::test::recognizerId(k_anchorId),
+                annotation::test::elementId(k_anchorId),
                 annotation::test::sourceId(k_otherId)
             )
             == nullptr

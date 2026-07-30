@@ -98,7 +98,7 @@ controller (Windows)        -> core, domain                    (不变)
   - `EngineSession::observe() -> Result<Observation>`:capture → 持有帧 + 租约;
     `EngineSession::resolvePage(Observation const&)`
     (有界 `evaluatePage` → `PageOutcome`)、
-    `EngineSession::findAction(Observation const&, RecognizerId)`
+    `EngineSession::findAction(Observation const&, ElementId)`
     (action_target 评估,缺席=Tier A 返回空)
     ——同一帧多查询只抓一次帧
   - `EngineSession::act(...)`:`ResolvedPage` + `ActionDetection` + `ObservationLease`

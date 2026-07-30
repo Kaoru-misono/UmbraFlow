@@ -33,7 +33,7 @@ namespace uf::workbench
         {
             auto const fingerprint = annotation::test::fingerprint(8, 8, 96, 96);
             auto const sourceId    = annotation::test::sourceId(k_sourceId);
-            auto const anchorId    = annotation::test::recognizerId(k_anchorId);
+            auto const anchorId    = annotation::test::elementId(k_anchorId);
             auto const pageId      = annotation::test::pageId(k_pageId);
             auto const sourceHash  = annotation::sha256(
                 std::span<std::byte const>{}
@@ -86,8 +86,8 @@ namespace uf::workbench
         {
             auto const fingerprint = annotation::test::fingerprint(8, 8, 96, 96);
             auto const sourceId    = annotation::test::sourceId(k_sourceId);
-            auto const anchorId    = annotation::test::recognizerId(k_anchorId);
-            auto const regionId    = annotation::test::recognizerId(k_regionId);
+            auto const anchorId    = annotation::test::elementId(k_anchorId);
+            auto const regionId    = annotation::test::elementId(k_regionId);
             auto const pageId      = annotation::test::pageId(k_pageId);
             auto const sourceHash  = annotation::sha256(
                 std::span<std::byte const>{}
@@ -336,7 +336,7 @@ namespace uf::workbench
     {
         auto state          = appState();
         auto const sourceId = annotation::test::sourceId(k_sourceId);
-        auto const anchorId = annotation::test::recognizerId(k_anchorId);
+        auto const anchorId = annotation::test::elementId(k_anchorId);
 
         state.select(AppState::Selection::Element{
             .recognizerId = anchorId,
@@ -358,7 +358,7 @@ namespace uf::workbench
     {
         auto state          = appState();
         auto const sourceId = annotation::test::sourceId(k_sourceId);
-        auto const anchorId = annotation::test::recognizerId(k_anchorId);
+        auto const anchorId = annotation::test::elementId(k_anchorId);
         auto const pageId   = annotation::test::pageId(k_pageId);
 
         state.select(AppState::Selection::Element{
@@ -379,7 +379,7 @@ namespace uf::workbench
     {
         auto state          = appState();
         auto const sourceId = annotation::test::sourceId(k_sourceId);
-        auto const anchorId = annotation::test::recognizerId(k_anchorId);
+        auto const anchorId = annotation::test::elementId(k_anchorId);
 
         state.select(AppState::Selection::Screen{sourceId});
         // No shown screen given: select inherits the one already shown, so the
@@ -396,7 +396,7 @@ namespace uf::workbench
     {
         auto state          = appState();
         auto const sourceId = annotation::test::sourceId(k_sourceId);
-        auto const anchorId = annotation::test::recognizerId(k_anchorId);
+        auto const anchorId = annotation::test::elementId(k_anchorId);
         auto const otherId  = annotation::test::sourceId(k_importA);
 
         state.select(AppState::Selection::Screen{sourceId});
@@ -424,7 +424,7 @@ namespace uf::workbench
     {
         auto state          = regionState();
         auto const sourceId = annotation::test::sourceId(k_sourceId);
-        auto const regionId = annotation::test::recognizerId(k_regionId);
+        auto const regionId = annotation::test::elementId(k_regionId);
 
         state.select(AppState::Selection::Element{
             .recognizerId = regionId,

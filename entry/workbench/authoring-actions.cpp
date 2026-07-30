@@ -35,7 +35,7 @@ namespace uf::workbench
     [[nodiscard]]
     auto findEditableRecognizer(
         AuthoringDraft& draft,
-        annotation::RecognizerId id
+        annotation::ElementId id
     ) -> EditableRecognizer*
     {
         auto const found = std::ranges::find(
@@ -78,10 +78,10 @@ namespace uf::workbench
     auto requestDuplicateElement(
         AppState& state,
         PanelUiState& ui,
-        annotation::RecognizerId id
+        annotation::ElementId id
     ) -> void
     {
-        auto const newId = annotation::RecognizerId{mintResourceId()};
+        auto const newId = annotation::ElementId{mintResourceId()};
         auto duplicated  = duplicateElement(
             state.draft(),
             DuplicateElementSpec{
@@ -237,7 +237,7 @@ namespace uf::workbench
         PanelUiState& ui,
         AuthoringDraft draft,
         std::string description,
-        annotation::RecognizerId recognizerId,
+        annotation::ElementId recognizerId,
         std::optional<annotation::SourceId> sourceId,
         LogSeverity severity
     ) -> void
@@ -431,7 +431,7 @@ namespace uf::workbench
     [[nodiscard]]
     auto sourceOfRecognizer(
         AppState const& state,
-        annotation::RecognizerId id
+        annotation::ElementId id
     ) -> std::optional<annotation::SourceId>
     {
         for (auto const& relationship : state.document().recognizerSources())
@@ -494,7 +494,7 @@ namespace uf::workbench
 
     auto placementContext(
         AppState const& state,
-        annotation::RecognizerId id,
+        annotation::ElementId id,
         annotation::SourceId shownScreen,
         std::optional<annotation::PageId> selectionPage
     ) -> std::optional<PlacementContext>
@@ -540,7 +540,7 @@ namespace uf::workbench
 
     auto isRegionShared(
         AppState const& state,
-        annotation::RecognizerId id
+        annotation::ElementId id
     ) -> bool
     {
         auto const found = std::ranges::find(
@@ -555,7 +555,7 @@ namespace uf::workbench
     auto requestRegionShared(
         AppState& state,
         PanelUiState& ui,
-        annotation::RecognizerId id,
+        annotation::ElementId id,
         bool shared
     ) -> void
     {
@@ -583,7 +583,7 @@ namespace uf::workbench
 
     auto elementColourKey(
         AppState const& state,
-        annotation::RecognizerId id
+        annotation::ElementId id
     ) -> std::optional<annotation::ColourKey>
     {
         auto const* p_element = state.document().findElement(id);
@@ -595,7 +595,7 @@ namespace uf::workbench
     auto requestElementColourKey(
         AppState& state,
         PanelUiState& ui,
-        annotation::RecognizerId id,
+        annotation::ElementId id,
         std::optional<annotation::ColourKey> colourKey
     ) -> void
     {
@@ -668,7 +668,7 @@ namespace uf::workbench
     auto requestSharedRegionOnPage(
         AppState& state,
         PanelUiState& ui,
-        annotation::RecognizerId shareFrom,
+        annotation::ElementId shareFrom,
         annotation::PageId pageId
     ) -> void
     {
@@ -776,7 +776,7 @@ namespace uf::workbench
     // display is not the one it was cut from.
     auto selectRecognizer(
         AppState& state,
-        annotation::RecognizerId id,
+        annotation::ElementId id,
         std::optional<annotation::SourceId> preferredScreen,
         std::optional<annotation::PageId> pageContext
     ) -> void
@@ -799,7 +799,7 @@ namespace uf::workbench
     auto editSelectedRectOnRelease(
         AppState& state,
         PanelUiState& ui,
-        annotation::RecognizerId recognizerId,
+        annotation::ElementId recognizerId,
         std::optional<annotation::PageId> pageContext,
         PixelRect const& editedRect
     ) -> void

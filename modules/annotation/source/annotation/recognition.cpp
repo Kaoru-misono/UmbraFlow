@@ -21,7 +21,7 @@ namespace uf::annotation
     {
         [[nodiscard]]
         auto stopFailure(
-            RecognizerId recognizerId,
+            ElementId recognizerId,
             SadSearchStopReason reason
         ) -> std::unexpected<Error>
         {
@@ -38,7 +38,7 @@ namespace uf::annotation
         [[nodiscard]]
         auto findEvidence(
             std::span<AnchorEvidence const> evidence,
-            RecognizerId id
+            ElementId id
         ) noexcept -> AnchorEvidence const*
         {
             auto const found = std::ranges::find(
@@ -92,7 +92,7 @@ namespace uf::annotation
     auto FrameIdentity::frameId() const noexcept -> FrameId { return m_frameId; }
 
     AnchorEvidence::AnchorEvidence(
-        RecognizerId recognizerId,
+        ElementId recognizerId,
         bool hit,
         std::optional<uint64> sadScore,
         uint64 maximumSad,
@@ -108,7 +108,7 @@ namespace uf::annotation
     {
     }
 
-    auto AnchorEvidence::recognizerId() const -> RecognizerId { return m_recognizerId; }
+    auto AnchorEvidence::recognizerId() const -> ElementId { return m_recognizerId; }
     auto AnchorEvidence::hit() const noexcept -> bool { return m_hit; }
     auto AnchorEvidence::sadScore() const noexcept -> std::optional<uint64> { return m_sadScore; }
     auto AnchorEvidence::maximumSad() const noexcept -> uint64 { return m_maximumSad; }
@@ -122,7 +122,7 @@ namespace uf::annotation
     }
 
     AnchorEvaluation::AnchorEvaluation(
-        RecognizerId recognizerId,
+        ElementId recognizerId,
         Evaluation evaluation
     ) noexcept
         : m_recognizerId{recognizerId}
@@ -244,7 +244,7 @@ namespace uf::annotation
         };
     }
 
-    auto AnchorEvaluation::recognizerId() const -> RecognizerId { return m_recognizerId; }
+    auto AnchorEvaluation::recognizerId() const -> ElementId { return m_recognizerId; }
     auto AnchorEvaluation::evaluation() const noexcept -> Evaluation const&
     {
         return m_evaluation;

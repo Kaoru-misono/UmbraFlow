@@ -255,7 +255,7 @@ namespace uf::workbench
         [[nodiscard]]
         auto placementCountOf(
             annotation::AuthoringDocument const& document,
-            annotation::RecognizerId elementId
+            annotation::ElementId elementId
         ) -> std::size_t
         {
             auto count = std::size_t{0};
@@ -284,9 +284,9 @@ namespace uf::workbench
         [[nodiscard]]
         auto runtimeRecognizerFor(
             annotation::AuthoringDocument const& document,
-            annotation::RecognizerId elementId,
+            annotation::ElementId elementId,
             std::optional<annotation::PageId> pageContext
-        ) -> std::optional<annotation::RecognizerId>
+        ) -> std::optional<annotation::ElementId>
         {
             if (placementCountOf(document, elementId) <= 1U)
             {
@@ -343,7 +343,7 @@ namespace uf::workbench
         // Which screen one recognizer has to work on, paired with its identity.
         struct WorkingScreen final
         {
-            annotation::RecognizerId            recognizerId;
+            annotation::ElementId               recognizerId;
             std::optional<annotation::SourceId> sourceId{};
         };
 
@@ -521,7 +521,7 @@ namespace uf::workbench
         [[nodiscard]]
         auto elementBelongsToPage(
             annotation::AuthoringDocument const& document,
-            annotation::RecognizerId elementId,
+            annotation::ElementId elementId,
             annotation::PageId pageId
         ) -> bool
         {
@@ -559,8 +559,8 @@ namespace uf::workbench
         // recognizer carries a derived id the UI never sees.
         struct ActionSearch final
         {
-            annotation::RecognizerId runtimeId;
-            annotation::RecognizerId elementId;
+            annotation::ElementId runtimeId;
+            annotation::ElementId elementId;
         };
 
         // An action search the policy interrupted before it produced evidence,
@@ -569,8 +569,8 @@ namespace uf::workbench
         // it as an explicit Stopped cell, so it is kept alongside the rows here.
         struct ActionStop final
         {
-            annotation::RecognizerId elementId;
-            SadSearchStopReason      reason{};
+            annotation::ElementId elementId;
+            SadSearchStopReason   reason{};
         };
 
         // Every action target's evidence on one frame, with the searches the
@@ -591,7 +591,7 @@ namespace uf::workbench
         [[nodiscard]]
         auto actionSearchesOn(
             annotation::AuthoringDocument const& document,
-            std::span<annotation::RecognizerId const> actionElementIds,
+            std::span<annotation::ElementId const> actionElementIds,
             std::optional<annotation::PageId> pageContext
         ) -> std::vector<ActionSearch>
         {
@@ -689,14 +689,14 @@ namespace uf::workbench
             annotation::AuthoringDocument const& document,
             annotation::SourceId screenId,
             std::optional<annotation::PageId> expectedPage,
-            std::span<annotation::RecognizerId const> anchorIds,
-            std::span<annotation::RecognizerId const> actionIds,
+            std::span<annotation::ElementId const> anchorIds,
+            std::span<annotation::ElementId const> actionIds,
             PreviewResult const& preview,
             std::span<ActionSearch const> searches,
             ActionEvaluation const& actionEval
         ) -> std::vector<ModelCheckCell>
         {
-            auto const belongs = [&](annotation::RecognizerId elementId)
+            auto const belongs = [&](annotation::ElementId elementId)
             {
                 return expectedPage.has_value()
                     && elementBelongsToPage(document, elementId, *expectedPage);
@@ -921,7 +921,7 @@ namespace uf::workbench
         annotation::AuthoringDocument const& document,
         std::span<annotation::AuthoringSourceAsset const> sourceAssets,
         annotation::SourceId selectedSourceId,
-        std::optional<annotation::RecognizerId> selectedRecognizerId,
+        std::optional<annotation::ElementId> selectedRecognizerId,
         annotation::RecognitionPolicy const& policy
     ) -> Result<PreviewResult>
     {
@@ -1031,7 +1031,7 @@ namespace uf::workbench
     auto scoreRegionOnScreen(
         annotation::AuthoringDocument const& document,
         std::span<annotation::AuthoringSourceAsset const> sourceAssets,
-        annotation::RecognizerId recognizerId,
+        annotation::ElementId recognizerId,
         annotation::SourceId screenId,
         annotation::RecognitionPolicy const& policy
     ) -> Result<PreviewAnchorRow>
@@ -1215,8 +1215,8 @@ namespace uf::workbench
         // The grid rows are the same set the margins cover: anchors, scored on
         // every screen by the page evaluation, and action targets, searched
         // per screen. Info regions take part in neither and get no row.
-        auto anchorIds = std::vector<annotation::RecognizerId>{};
-        auto actionIds = std::vector<annotation::RecognizerId>{};
+        auto anchorIds = std::vector<annotation::ElementId>{};
+        auto actionIds = std::vector<annotation::ElementId>{};
         for (auto const& recognizer : document.catalog().recognizers())
         {
             switch (recognizer.annotationType())

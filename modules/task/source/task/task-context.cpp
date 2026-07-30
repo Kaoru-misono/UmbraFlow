@@ -89,7 +89,7 @@ namespace uf::task
 
     auto TaskContext::cycleFind(
         CycleTicket ticket,
-        annotation::RecognizerId recognizerId
+        annotation::ElementId recognizerId
     ) -> Result<std::optional<engine::ActionFound>>
     {
         UF_TRY(m_cycles.requireOpen(ticket));

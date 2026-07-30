@@ -190,9 +190,9 @@ namespace uf::workbench
         // changes, and those are exactly the fields below.
         struct ColourKeyMemo final
         {
-            annotation::RecognizerId elementId;
-            annotation::SourceId     sourceId;
-            PixelRect                templateRect;
+            annotation::ElementId elementId;
+            annotation::SourceId  sourceId;
+            PixelRect             templateRect;
 
             std::optional<annotation::ColourKey> colourKey{};
             ColourKeyMaskPreview                 preview{};
@@ -205,9 +205,9 @@ namespace uf::workbench
         // it was raised for.
         struct PendingDelete final
         {
-            annotation::RecognizerId id;
-            std::string              name{};
-            std::string              detail{};
+            annotation::ElementId id;
+            std::string           name{};
+            std::string           detail{};
         };
 
         // How many events the in-memory history keeps. Older entries drop off the
@@ -217,14 +217,14 @@ namespace uf::workbench
         std::array<char, 256> targetTitle{};
         std::array<char, 256> nameBuffer{};
 
-        std::optional<annotation::RecognizerId> nameBufferFor{};
-        std::string                             nameSeededValue{};
-        bool                                    nameInputActive{};
-        std::string                             statusLine{};
-        LogSeverity                             statusSeverity{LogSeverity::Info};
-        std::string                             lastLoggedStatus{};
-        std::deque<LogEvent>                    logEvents{};
-        std::optional<PendingEdit>              pendingEdit{};
+        std::optional<annotation::ElementId> nameBufferFor{};
+        std::string                          nameSeededValue{};
+        bool                                 nameInputActive{};
+        std::string                          statusLine{};
+        LogSeverity                          statusSeverity{LogSeverity::Info};
+        std::string                          lastLoggedStatus{};
+        std::deque<LogEvent>                 logEvents{};
+        std::optional<PendingEdit>           pendingEdit{};
 
         // A toolbar command clicked this frame, dispatched after the parked edit
         // is committed; see ToolbarCommand for the ordering it protects. Capture
@@ -262,15 +262,15 @@ namespace uf::workbench
         std::optional<CanvasPoint> rubberBandStartSource{};
         std::optional<PixelRect>   pendingCreateRect{};
 
-        std::optional<annotation::RecognizerId> contextMenuTarget{};
-        std::optional<annotation::PageId>       contextMenuPage{};
+        std::optional<annotation::ElementId> contextMenuTarget{};
+        std::optional<annotation::PageId>    contextMenuPage{};
 
         // The shared region being dragged onto a page, remembered from the frame
         // the drag began. It cannot be a frame-local handed from the drag source
         // to the drop target: on the frame the mouse is released the source no
         // longer submits itself -- ImGui has already cleared the active id -- and
         // that is exactly the frame the drop is accepted on.
-        std::optional<annotation::RecognizerId> draggedRegion{};
+        std::optional<annotation::ElementId> draggedRegion{};
 
         // The colour-key picker's between-frame state.
         //
@@ -283,11 +283,11 @@ namespace uf::workbench
         //
         // colourKeyPicking arms the eyedropper: the next left click on the
         // canvas is spent naming a colour instead of selecting an element.
-        std::optional<annotation::RecognizerId> colourKeyFor{};
-        std::optional<annotation::ColourKey>    colourKeyDraft{};
-        bool                                    colourKeyPicking{};
-        bool                                    colourKeySliderActive{};
-        std::optional<ColourKeyMemo>            colourKeyMemo{};
+        std::optional<annotation::ElementId> colourKeyFor{};
+        std::optional<annotation::ColourKey> colourKeyDraft{};
+        bool                                 colourKeyPicking{};
+        bool                                 colourKeySliderActive{};
+        std::optional<ColourKeyMemo>         colourKeyMemo{};
 
         // The whole-model check runs off the GUI thread, so it lives across
         // frames. Neither copyable nor movable, which is why PanelUiState is

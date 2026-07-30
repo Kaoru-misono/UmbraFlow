@@ -69,7 +69,7 @@ namespace uf::annotation
     {
         friend class AnchorEvaluation;
 
-        RecognizerId             m_recognizerId;
+        ElementId                m_recognizerId;
         bool                     m_hit;
         std::optional<uint64>    m_sadScore;
         uint64                   m_maximumSad;
@@ -77,7 +77,7 @@ namespace uf::annotation
         std::optional<float>     m_displayConfidence;
 
         AnchorEvidence(
-            RecognizerId recognizerId,
+            ElementId recognizerId,
             bool hit,
             std::optional<uint64> sadScore,
             uint64 maximumSad,
@@ -88,7 +88,7 @@ namespace uf::annotation
     public:
         auto operator==(AnchorEvidence const&) const -> bool = default;
 
-        [[nodiscard]] auto recognizerId() const -> RecognizerId;
+        [[nodiscard]] auto recognizerId() const -> ElementId;
         [[nodiscard]] auto hit() const noexcept -> bool;
         [[nodiscard]] auto sadScore() const noexcept -> std::optional<uint64>;
         [[nodiscard]] auto maximumSad() const noexcept -> uint64;
@@ -102,11 +102,11 @@ namespace uf::annotation
         using Evaluation = std::variant<AnchorEvidence, SadSearchStopReason>;
 
     private:
-        RecognizerId m_recognizerId;
-        Evaluation   m_evaluation;
+        ElementId  m_recognizerId;
+        Evaluation m_evaluation;
 
         AnchorEvaluation(
-            RecognizerId recognizerId,
+            ElementId recognizerId,
             Evaluation evaluation
         ) noexcept;
 
@@ -117,7 +117,7 @@ namespace uf::annotation
             SadSearchOutcome const& outcome
         ) -> Result<AnchorEvaluation>;
 
-        [[nodiscard]] auto recognizerId() const -> RecognizerId;
+        [[nodiscard]] auto recognizerId() const -> ElementId;
 
         [[nodiscard]]
         auto evaluation() const noexcept UF_LIFETIME_BOUND -> Evaluation const&;

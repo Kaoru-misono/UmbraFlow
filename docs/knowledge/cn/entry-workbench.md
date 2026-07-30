@@ -92,7 +92,7 @@ Preview。dirty flag 则保守：undo 回已保存内容仍可能保持 dirty，
 `entry/workbench/workbench-app.cpp` 的 `mintResourceId` 用 `std::random_device` 填满 16 bytes，再设置 UUID version 4 nibble 和 RFC 4122 variant bits，最后调用 `modules/annotation/source/annotation/resource.hpp` 的 `ResourceId::fromBytes`。
 `fromBytes` 本身按契约不验证 version/variant，因此 authoring caller 负责设置 convention。
 
-`SourceId`、`RecognizerId`、`PageId` 等是 `ResourceId` 上的 distinct strong types；panel 在新增 source、recognizer 或 page 时先 mint，再包成对应 ID。随机性只决定新资源 identity，不进入 runtime matching。
+`SourceId`、`ElementId`、`PageId` 等是 `ResourceId` 上的 distinct strong types；panel 在新增 source、recognizer 或 page 时先 mint，再包成对应 ID。随机性只决定新资源 identity，不进入 runtime matching。
 ID 一旦进入 document，canonical compiler 以它作为稳定 ordering/reference key。
 
 ### 导入源图

@@ -50,7 +50,7 @@ namespace uf::annotation
     // dropping a recognizer.
     [[nodiscard]]
     auto derivedRuntimeRecognizerId(
-        RecognizerId elementId,
+        ElementId elementId,
         PageId pageId
-    ) -> RecognizerId;
+    ) -> ElementId;
 }

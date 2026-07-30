@@ -137,7 +137,7 @@ namespace uf::annotation
     public:
         struct Spec final
         {
-            RecognizerId             id;
+            ElementId                id;
             ResourceName             name;
             SourceId                 sourceId;
             PixelRect                templateRect;
@@ -149,7 +149,7 @@ namespace uf::annotation
         };
 
     private:
-        RecognizerId             m_id;
+        ElementId                m_id;
         ResourceName             m_name;
         SourceId                 m_sourceId;
         PixelRect                m_templateRect;
@@ -168,7 +168,7 @@ namespace uf::annotation
             Spec const& spec
         ) -> Result<Element>;
 
-        [[nodiscard]] auto id() const -> RecognizerId;
+        [[nodiscard]] auto id() const -> ElementId;
         [[nodiscard]] auto name() const -> ResourceName;
         [[nodiscard]] auto sourceId() const -> SourceId;
         [[nodiscard]] auto templateRect() const noexcept -> PixelRect;
@@ -194,18 +194,18 @@ namespace uf::annotation
     // as a flat table, which the canonical TOML reader can parse.
     struct AuthoringPlacement final
     {
-        PageId       pageId;
-        RecognizerId elementId;
-        PixelRect    searchRoi;
+        PageId    pageId;
+        ElementId elementId;
+        PixelRect searchRoi;
 
         auto operator==(AuthoringPlacement const&) const -> bool = default;
     };
 
     struct AuthoringRecognizerSource final
     {
-        RecognizerId recognizerId;
-        SourceId     sourceId;
-        bool         shared{};
+        ElementId recognizerId;
+        SourceId  sourceId;
+        bool      shared{};
     };
 
     enum class RegressionClassification : uint8
@@ -334,7 +334,7 @@ namespace uf::annotation
 
         [[nodiscard]]
         auto findElement(
-            RecognizerId id
+            ElementId id
         ) const noexcept UF_LIFETIME_BOUND -> Element const*;
     };
 

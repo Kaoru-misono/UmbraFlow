@@ -42,8 +42,8 @@ namespace uf::workbench
         {
             auto const fingerprint = annotation::test::fingerprint(8, 8, 96, 96);
             auto const sourceId    = annotation::test::sourceId(k_sourceId);
-            auto const anchorId    = annotation::test::recognizerId(k_anchorId);
-            auto const actionId    = annotation::test::recognizerId(k_actionId);
+            auto const anchorId    = annotation::test::elementId(k_anchorId);
+            auto const actionId    = annotation::test::elementId(k_actionId);
             auto const pageId      = annotation::test::pageId(k_pageId);
             auto const sourceHash = annotation::sha256(
                 std::span<std::byte const>{}
@@ -123,8 +123,8 @@ namespace uf::workbench
         {
             auto const fingerprint = annotation::test::fingerprint(8, 8, 96, 96);
             auto const sourceId    = annotation::test::sourceId(k_sourceId);
-            auto const anchorId    = annotation::test::recognizerId(k_anchorId);
-            auto const awayId      = annotation::test::recognizerId(k_awayId);
+            auto const anchorId    = annotation::test::elementId(k_anchorId);
+            auto const awayId      = annotation::test::elementId(k_awayId);
             auto const pageId      = annotation::test::pageId(k_pageId);
             auto const sourceHash = annotation::sha256(
                 std::span<std::byte const>{}
@@ -203,8 +203,8 @@ namespace uf::workbench
         {
             auto const fingerprint = annotation::test::fingerprint(8, 8, 96, 96);
             auto const sourceId    = annotation::test::sourceId(k_sourceId);
-            auto const anchorId    = annotation::test::recognizerId(k_anchorId);
-            auto const awayId      = annotation::test::recognizerId(k_awayId);
+            auto const anchorId    = annotation::test::elementId(k_anchorId);
+            auto const awayId      = annotation::test::elementId(k_awayId);
             auto const homeId      = annotation::test::pageId(k_pageId);
             auto const battleId    = annotation::test::pageId(k_secondPageId);
             auto const sourceHash  = annotation::sha256(
@@ -274,7 +274,7 @@ namespace uf::workbench
         [[nodiscard]]
         auto recognizerIn(
             AuthoringDraft const& draft,
-            annotation::RecognizerId id
+            annotation::ElementId id
         ) -> EditableRecognizer
         {
             auto const found = std::ranges::find(
@@ -320,7 +320,7 @@ namespace uf::workbench
         // rejected, and an anchor joins a page only through a signature.
         auto const sourceId  = annotation::test::sourceId(k_sourceId);
         auto const pageId    = annotation::test::pageId(k_secondPageId);
-        auto const anchorId  = annotation::test::recognizerId(k_awayId);
+        auto const anchorId  = annotation::test::elementId(k_awayId);
         auto const rect      = annotation::test::pixelRect(0, 0, 2, 2);
         auto const roi       = annotation::test::pixelRect(0, 0, 4, 4);
 
@@ -374,7 +374,7 @@ namespace uf::workbench
             makeAuthoringDraft(document()),
             NewPageSpec{
                 .pageId   = annotation::test::pageId(k_secondPageId),
-                .anchorId = annotation::test::recognizerId(k_awayId),
+                .anchorId = annotation::test::elementId(k_awayId),
                 .regressionId = annotation::test::regressionId(
                     "00000000-0000-0000-0000-000000000302"
                 ),
@@ -393,7 +393,7 @@ namespace uf::workbench
     {
         auto const sourceId = annotation::test::sourceId(k_sourceId);
         auto const pageId   = annotation::test::pageId(k_pageId);
-        auto const newId    = annotation::test::recognizerId(k_awayId);
+        auto const newId    = annotation::test::elementId(k_awayId);
 
         auto const spec = [&](PageMemberKind kind)
         {
@@ -480,8 +480,8 @@ namespace uf::workbench
 
     TEST_CASE("duplicating an element mints a distinct, valid copy")
     {
-        auto const actionId = annotation::test::recognizerId(k_actionId);
-        auto const newId    = annotation::test::recognizerId(k_awayId);
+        auto const actionId = annotation::test::elementId(k_actionId);
+        auto const newId    = annotation::test::elementId(k_awayId);
         auto const pageId   = annotation::test::pageId(k_pageId);
 
         auto const original = recognizerIn(makeAuthoringDraft(document()), actionId);
@@ -520,8 +520,8 @@ namespace uf::workbench
 
     TEST_CASE("an applied duplicate is removed by one undo")
     {
-        auto const actionId = annotation::test::recognizerId(k_actionId);
-        auto const newId    = annotation::test::recognizerId(k_awayId);
+        auto const actionId = annotation::test::elementId(k_actionId);
+        auto const newId    = annotation::test::elementId(k_awayId);
 
         auto history = AuthoringEditHistory{document()};
         auto const before = history.document().catalog().recognizers().size();
@@ -549,8 +549,8 @@ namespace uf::workbench
         auto const duplicated = duplicateElement(
             makeAuthoringDraft(document()),
             DuplicateElementSpec{
-                .sourceElementId = annotation::test::recognizerId(k_sharedId),
-                .newElementId    = annotation::test::recognizerId(k_awayId),
+                .sourceElementId = annotation::test::elementId(k_sharedId),
+                .newElementId    = annotation::test::elementId(k_awayId),
             }
         );
         CHECK_FALSE(duplicated.has_value());
@@ -558,7 +558,7 @@ namespace uf::workbench
 
     TEST_CASE("sharing a region places the same element with a range of its own")
     {
-        auto const actionId = annotation::test::recognizerId(k_actionId);
+        auto const actionId = annotation::test::elementId(k_actionId);
         auto const pageId   = annotation::test::pageId(k_secondPageId);
         auto const roi      = annotation::test::pixelRect(2, 2, 6, 6);
 
@@ -625,7 +625,7 @@ namespace uf::workbench
 
     TEST_CASE("placement withdrawal preserves page and interactive closure rules")
     {
-        auto const actionId = annotation::test::recognizerId(k_actionId);
+        auto const actionId = annotation::test::elementId(k_actionId);
         auto const pageId   = annotation::test::pageId(k_pageId);
 
         auto const lastPlacement = removePlacementFromPage(
@@ -637,7 +637,7 @@ namespace uf::workbench
 
         auto const anchor = removePlacementFromPage(
             makeAuthoringDraft(document()),
-            annotation::test::recognizerId(k_anchorId),
+            annotation::test::elementId(k_anchorId),
             pageId
         );
         CHECK_FALSE(anchor.has_value());
@@ -645,7 +645,7 @@ namespace uf::workbench
 
     TEST_CASE("sharing a region onto a page that already has it is refused")
     {
-        auto const actionId = annotation::test::recognizerId(k_actionId);
+        auto const actionId = annotation::test::elementId(k_actionId);
         auto const pageId   = annotation::test::pageId(k_pageId);
 
         auto const shared = shareRegionOnPage(
@@ -664,7 +664,7 @@ namespace uf::workbench
         auto const shared = shareRegionOnPage(
             makeAuthoringDraft(document()),
             SharedRegionSpec{
-                .elementId = annotation::test::recognizerId(k_anchorId),
+                .elementId = annotation::test::elementId(k_anchorId),
                 .pageId    = annotation::test::pageId(k_pageId),
                 .searchRoi = annotation::test::pixelRect(0, 0, 8, 8),
             }
@@ -677,7 +677,7 @@ namespace uf::workbench
         // The mark is intent, stated before any second page exists, so it has to
         // be stored: nothing else in the document distinguishes a region the
         // author means to reuse from one they do not.
-        auto const actionId = annotation::test::recognizerId(k_actionId);
+        auto const actionId = annotation::test::elementId(k_actionId);
 
         auto const marked = setRegionShared(
             makeAuthoringDraft(document()),
@@ -698,7 +698,7 @@ namespace uf::workbench
         // something else entirely.
         auto const marked = setRegionShared(
             makeAuthoringDraft(document()),
-            annotation::test::recognizerId(k_anchorId),
+            annotation::test::elementId(k_anchorId),
             true
         );
         CHECK_FALSE(marked.has_value());
@@ -709,7 +709,7 @@ namespace uf::workbench
         // Under v2 the shared mark is pure intent and groups nothing, so it can
         // be taken off freely -- there are no copies to leave orphaned, only one
         // element placed on N pages.
-        auto const actionId = annotation::test::recognizerId(k_actionId);
+        auto const actionId = annotation::test::elementId(k_actionId);
 
         auto draft = makeAuthoringDraft(document());
         draft.placements.emplace_back(
@@ -724,7 +724,7 @@ namespace uf::workbench
                 .id        = annotation::test::pageId(k_secondPageId),
                 .name      = "battle",
                 .required  = {},
-                .forbidden = {annotation::test::recognizerId(k_anchorId)},
+                .forbidden = {annotation::test::elementId(k_anchorId)},
             }
         );
         REQUIRE(pagesPlacedOn(draft, actionId).size() == 2U);
@@ -738,7 +738,7 @@ namespace uf::workbench
     {
         // Drawing the element once is only worth anything if correcting it
         // corrects it everywhere; under v2 that is one element and two placements.
-        auto const actionId = annotation::test::recognizerId(k_actionId);
+        auto const actionId = annotation::test::elementId(k_actionId);
         auto const moved    = annotation::test::pixelRect(3, 3, 2, 2);
 
         auto draft = makeAuthoringDraft(document());
@@ -766,7 +766,7 @@ namespace uf::workbench
     {
         // Widening a range the author drew would enlarge both the search cost and
         // the surface for a false match, so the author is told to fix it.
-        auto const actionId = annotation::test::recognizerId(k_actionId);
+        auto const actionId = annotation::test::elementId(k_actionId);
 
         auto draft = makeAuthoringDraft(document());
         draft.placements.emplace_back(
@@ -939,7 +939,7 @@ namespace uf::workbench
         auto const added = addPageMember(
             makeAuthoringDraft(document()),
             PageMemberSpec{
-                .recognizerId = annotation::test::recognizerId(k_awayId),
+                .recognizerId = annotation::test::elementId(k_awayId),
                 .pageId       = annotation::test::pageId(k_secondPageId),
                 .sourceId     = annotation::test::sourceId(k_sourceId),
                 .templateRect = annotation::test::pixelRect(0, 0, 2, 2),
@@ -955,7 +955,7 @@ namespace uf::workbench
     {
         // A page anchor cannot authorize a page and an action target must, so
         // neither half of this change can be committed on its own.
-        auto const awayId = annotation::test::recognizerId(k_awayId);
+        auto const awayId = annotation::test::elementId(k_awayId);
         auto const pageId = annotation::test::pageId(k_pageId);
 
         auto const retyped = retypeRecognizer(
@@ -989,7 +989,7 @@ namespace uf::workbench
     {
         // The recognizer anchors the second page, so authorizing the first would
         // be arbitrary: it is known to appear on its own page and nowhere else.
-        auto const awayId   = annotation::test::recognizerId(k_awayId);
+        auto const awayId   = annotation::test::elementId(k_awayId);
         auto const homeId   = annotation::test::pageId(k_pageId);
         auto const battleId = annotation::test::pageId(k_secondPageId);
 
@@ -1014,7 +1014,7 @@ namespace uf::workbench
 
     TEST_CASE("becoming a page anchor drops the click and the authorizations")
     {
-        auto const actionId = annotation::test::recognizerId(k_actionId);
+        auto const actionId = annotation::test::elementId(k_actionId);
 
         auto const retyped = retypeRecognizer(
             makeAuthoringDraft(document()),
@@ -1039,7 +1039,7 @@ namespace uf::workbench
 
     TEST_CASE("becoming an info region keeps the authorizations without the click")
     {
-        auto const actionId = annotation::test::recognizerId(k_actionId);
+        auto const actionId = annotation::test::elementId(k_actionId);
         auto const pageId   = annotation::test::pageId(k_pageId);
 
         auto const retyped = retypeRecognizer(
@@ -1066,7 +1066,7 @@ namespace uf::workbench
     {
         // Withdrawing the anchor would leave the page naming nothing, which no
         // repair inside this recognizer can fix.
-        auto const anchorId = annotation::test::recognizerId(k_anchorId);
+        auto const anchorId = annotation::test::elementId(k_anchorId);
 
         auto const retyped = retypeRecognizer(
             makeAuthoringDraft(document()),
@@ -1078,7 +1078,7 @@ namespace uf::workbench
 
     TEST_CASE("becoming an action target with no page to authorize is refused")
     {
-        auto const anchorId = annotation::test::recognizerId(k_anchorId);
+        auto const anchorId = annotation::test::elementId(k_anchorId);
 
         // A freshly captured project: recognizers but no page yet.
         auto draft = makeAuthoringDraft(document());
@@ -1095,7 +1095,7 @@ namespace uf::workbench
 
     TEST_CASE("retyping to the type already held changes nothing")
     {
-        auto const anchorId = annotation::test::recognizerId(k_anchorId);
+        auto const anchorId = annotation::test::elementId(k_anchorId);
         auto const original = document();
 
         auto const retyped = retypeRecognizer(
@@ -1116,7 +1116,7 @@ namespace uf::workbench
 
     TEST_CASE("deleting a recognizer withdraws it from the pages that name it")
     {
-        auto const awayId   = annotation::test::recognizerId(k_awayId);
+        auto const awayId   = annotation::test::elementId(k_awayId);
         auto const battleId = annotation::test::pageId(k_secondPageId);
 
         auto const deleted = deleteRecognizer(
@@ -1135,7 +1135,7 @@ namespace uf::workbench
     {
         // The page would be left identifying no screen, and only the author can
         // say whether the page goes too or another anchor takes over.
-        auto const anchorId = annotation::test::recognizerId(k_anchorId);
+        auto const anchorId = annotation::test::elementId(k_anchorId);
 
         auto const deleted = deleteRecognizer(
             makeAuthoringDraft(document()),
@@ -1148,7 +1148,7 @@ namespace uf::workbench
     {
         // The action target authorizes the page and one other, so the deletion
         // leaves it authorized somewhere and may proceed.
-        auto const actionId = annotation::test::recognizerId(k_actionId);
+        auto const actionId = annotation::test::elementId(k_actionId);
         auto const homeId   = annotation::test::pageId(k_pageId);
         auto const battleId = annotation::test::pageId(k_secondPageId);
 
@@ -1169,7 +1169,7 @@ namespace uf::workbench
                 .id        = battleId,
                 .name      = "battle",
                 .required  = {},
-                .forbidden = {annotation::test::recognizerId(k_anchorId)},
+                .forbidden = {annotation::test::elementId(k_anchorId)},
             }
         );
         // The document's regression expects the page under test to resolve, which
@@ -1252,7 +1252,7 @@ namespace uf::workbench
 
     TEST_CASE("retyping a recognizer the draft does not hold is refused")
     {
-        auto const strangerId = annotation::test::recognizerId(k_awayId);
+        auto const strangerId = annotation::test::elementId(k_awayId);
 
         auto const retyped = retypeRecognizer(
             makeAuthoringDraft(document()),
@@ -1494,7 +1494,7 @@ namespace uf::workbench
                 96
             );
             auto const sourceId = annotation::test::sourceId(k_menuSourceId);
-            auto const anchorId = annotation::test::recognizerId(k_menuAnchorId);
+            auto const anchorId = annotation::test::elementId(k_menuAnchorId);
             auto const pageId   = annotation::test::pageId(k_menuPageId);
 
             auto const hash = annotation::sha256(
@@ -1823,7 +1823,7 @@ namespace uf::workbench
     TEST_CASE("a colour key change undoes and redoes like any other edit")
     {
         auto history        = AuthoringEditHistory{document()};
-        auto const anchorId = annotation::test::recognizerId(k_anchorId);
+        auto const anchorId = annotation::test::elementId(k_anchorId);
         auto const key      = annotation::ColourKey::create(200, 40, 40, 9);
         REQUIRE(key.has_value());
 

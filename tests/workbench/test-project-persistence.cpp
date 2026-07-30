@@ -143,7 +143,7 @@ namespace uf::workbench
         {
             auto const fingerprint = annotation::test::fingerprint(2, 2, 96, 96);
             auto const sourceId    = annotation::test::sourceId(k_sourceId);
-            auto const anchorId    = annotation::test::recognizerId(k_anchorId);
+            auto const anchorId    = annotation::test::elementId(k_anchorId);
             auto const pageId      = annotation::test::pageId(k_pageId);
             auto pngBytes          = encodedSource(redOffset);
             auto const sourceHash  = annotation::sha256(pngBytes);
@@ -192,8 +192,8 @@ namespace uf::workbench
             auto const fingerprint    = annotation::test::fingerprint(2, 2, 96, 96);
             auto const firstSourceId  = annotation::test::sourceId(k_sourceId);
             auto const secondSourceId = annotation::test::sourceId(k_secondSourceId);
-            auto const firstAnchorId  = annotation::test::recognizerId(k_anchorId);
-            auto const secondAnchorId = annotation::test::recognizerId(k_secondAnchorId);
+            auto const firstAnchorId  = annotation::test::elementId(k_anchorId);
+            auto const secondAnchorId = annotation::test::elementId(k_secondAnchorId);
             auto const pageId         = annotation::test::pageId(k_pageId);
 
             auto firstPng  = encodedSource(0);

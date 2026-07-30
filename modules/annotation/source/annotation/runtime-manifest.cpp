@@ -54,7 +54,7 @@ namespace uf::annotation
         {
             UF_TRY_VALUE(idText, reader.takeStringField("id"));
             UF_TRY_VALUE(resourceId, ResourceId::parse(idText));
-            auto const id = RecognizerId{resourceId};
+            auto const id = ElementId{resourceId};
             UF_TRY_VALUE(nameText, reader.takeStringField("name"));
             UF_TRY_VALUE(name, ResourceName::create(std::move(nameText)));
             UF_TRY_VALUE(typeText, reader.takeStringField("annotation_type"));
@@ -180,7 +180,7 @@ namespace uf::annotation
             );
             UF_TRY_VALUE(
                 required,
-                detail::parseIds<RecognizerId>(requiredText)
+                detail::parseIds<ElementId>(requiredText)
             );
             UF_TRY_VALUE(
                 forbiddenText,
@@ -188,7 +188,7 @@ namespace uf::annotation
             );
             UF_TRY_VALUE(
                 forbidden,
-                detail::parseIds<RecognizerId>(forbiddenText)
+                detail::parseIds<ElementId>(forbiddenText)
             );
             return PageSignature::create(
                 PageSpec{
@@ -288,7 +288,7 @@ namespace uf::annotation
     }
 
     auto RuntimeManifest::findAsset(
-        RecognizerId id
+        ElementId id
     ) const noexcept -> RuntimeRecognizerAsset const*
     {
         auto const found = std::ranges::find(

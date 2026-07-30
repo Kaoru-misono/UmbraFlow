@@ -45,9 +45,9 @@ namespace uf::workbench
         {
             auto const fingerprint = annotation::test::fingerprint(8, 8, 96, 96);
             auto const sourceId    = annotation::test::sourceId(k_sourceId);
-            auto const anchorId    = annotation::test::recognizerId(k_anchorId);
-            auto const awayId      = annotation::test::recognizerId(k_awayId);
-            auto const regionId    = annotation::test::recognizerId(k_regionId);
+            auto const anchorId    = annotation::test::elementId(k_anchorId);
+            auto const awayId      = annotation::test::elementId(k_awayId);
+            auto const regionId    = annotation::test::elementId(k_regionId);
             auto const homePage    = annotation::test::pageId(k_homePage);
             auto const awayPage    = annotation::test::pageId(k_awayPage);
             auto const sourceHash  = annotation::sha256(
@@ -137,7 +137,7 @@ namespace uf::workbench
         [[nodiscard]]
         auto recognizerName(
             AppState const& state,
-            annotation::RecognizerId id
+            annotation::ElementId id
         ) -> std::string
         {
             for (auto const& recognizer : state.document().catalog().recognizers())
@@ -155,7 +155,7 @@ namespace uf::workbench
     {
         auto state = appState();
         auto ui    = PanelUiState{};
-        auto const anchorId = annotation::test::recognizerId(k_anchorId);
+        auto const anchorId = annotation::test::elementId(k_anchorId);
 
         auto page = EditPage::open(state, annotation::test::pageId(k_homePage));
         REQUIRE(page.has_value());
@@ -180,7 +180,7 @@ namespace uf::workbench
     {
         auto state = appState();
         auto ui    = PanelUiState{};
-        auto const anchorId = annotation::test::recognizerId(k_anchorId);
+        auto const anchorId = annotation::test::elementId(k_anchorId);
 
         // A first edit lands so there is something to undo, and to advance the
         // revision the second EditPage will be opened against.
@@ -215,7 +215,7 @@ namespace uf::workbench
     {
         auto state = appState();
         auto ui    = PanelUiState{};
-        auto const anchorId = annotation::test::recognizerId(k_anchorId);
+        auto const anchorId = annotation::test::elementId(k_anchorId);
 
         auto page = EditPage::open(state, annotation::test::pageId(k_homePage));
         REQUIRE(page.has_value());
@@ -233,7 +233,7 @@ namespace uf::workbench
     {
         auto state = appState();
         auto ui    = PanelUiState{};
-        auto const anchorId = annotation::test::recognizerId(k_anchorId);
+        auto const anchorId = annotation::test::elementId(k_anchorId);
 
         auto first  = EditPage::open(state, annotation::test::pageId(k_homePage));
         auto second = EditPage::open(state, annotation::test::pageId(k_homePage));
@@ -377,7 +377,7 @@ namespace uf::workbench
     {
         auto state = appState();
         auto ui    = PanelUiState{};
-        auto const regionId = annotation::test::recognizerId(k_regionId);
+        auto const regionId = annotation::test::elementId(k_regionId);
         auto const awayPage = annotation::test::pageId(k_awayPage);
 
         auto page = EditPage::open(state, awayPage);
@@ -487,7 +487,7 @@ namespace uf::workbench
     {
         auto state = appState();
         auto ui    = PanelUiState{};
-        auto const regionId = annotation::test::recognizerId(k_regionId);
+        auto const regionId = annotation::test::elementId(k_regionId);
         auto const awayPage = annotation::test::pageId(k_awayPage);
         auto const newRect  = annotation::test::pixelRect(3, 3, 3, 3);
 
@@ -515,8 +515,8 @@ namespace uf::workbench
     TEST_CASE("a page view assembles the authored data and ids")
     {
         auto const state = appState();
-        auto const anchorId = annotation::test::recognizerId(k_anchorId);
-        auto const regionId = annotation::test::recognizerId(k_regionId);
+        auto const anchorId = annotation::test::elementId(k_anchorId);
+        auto const regionId = annotation::test::elementId(k_regionId);
 
         auto page = EditPage::open(state, annotation::test::pageId(k_homePage));
         REQUIRE(page.has_value());
@@ -549,7 +549,7 @@ namespace uf::workbench
         // Reachability is a property of the VIEW, so the assertion is on the
         // view, not on the draft.
         auto const state    = appState();
-        auto const regionId = annotation::test::recognizerId(k_regionId);
+        auto const regionId = annotation::test::elementId(k_regionId);
 
         auto retyped = retypeRecognizer(
             state.draft(),
@@ -663,9 +663,9 @@ namespace uf::workbench
         {
             auto const fingerprint = annotation::test::fingerprint(8, 8, 96, 96);
             auto const sourceId    = annotation::test::sourceId(k_sourceId);
-            auto const anchorId    = annotation::test::recognizerId(k_anchorId);
-            auto const awayId      = annotation::test::recognizerId(k_awayId);
-            auto const regionId    = annotation::test::recognizerId(k_regionId);
+            auto const anchorId    = annotation::test::elementId(k_anchorId);
+            auto const awayId      = annotation::test::elementId(k_awayId);
+            auto const regionId    = annotation::test::elementId(k_regionId);
             auto const homePage    = annotation::test::pageId(k_homePage);
             auto const awayPage    = annotation::test::pageId(k_awayPage);
             auto const sourceHash  = annotation::sha256(
@@ -755,7 +755,7 @@ namespace uf::workbench
         auto placementRoi(
             AppState const& state,
             annotation::PageId page,
-            annotation::RecognizerId element
+            annotation::ElementId element
         ) -> std::optional<PixelRect>
         {
             for (auto const& placement : state.document().placements())
@@ -776,8 +776,8 @@ namespace uf::workbench
     {
         auto const state    = twoPlacementState();
         auto const sourceId = annotation::test::sourceId(k_sourceId);
-        auto const regionId = annotation::test::recognizerId(k_regionId);
-        auto const anchorId = annotation::test::recognizerId(k_anchorId);
+        auto const regionId = annotation::test::elementId(k_regionId);
+        auto const anchorId = annotation::test::elementId(k_anchorId);
         auto const homePage = annotation::test::pageId(k_homePage);
 
         // The source is recorded as the home page's example, and the region is
@@ -796,7 +796,7 @@ namespace uf::workbench
     {
         auto const state    = twoPlacementState();
         auto const sourceId = annotation::test::sourceId(k_sourceId);
-        auto const regionId = annotation::test::recognizerId(k_regionId);
+        auto const regionId = annotation::test::elementId(k_regionId);
         auto const homePage = annotation::test::pageId(k_homePage);
         auto const awayPage = annotation::test::pageId(k_awayPage);
 
@@ -825,7 +825,7 @@ namespace uf::workbench
     {
         auto state = twoPlacementState();
         auto ui    = PanelUiState{};
-        auto const regionId = annotation::test::recognizerId(k_regionId);
+        auto const regionId = annotation::test::elementId(k_regionId);
         auto const homePage = annotation::test::pageId(k_homePage);
         auto const awayPage = annotation::test::pageId(k_awayPage);
         auto const edited   = annotation::test::pixelRect(1, 1, 6, 6);
@@ -857,7 +857,7 @@ namespace uf::workbench
     {
         auto state = twoPlacementState();
         auto ui    = PanelUiState{};
-        auto const regionId = annotation::test::recognizerId(k_regionId);
+        auto const regionId = annotation::test::elementId(k_regionId);
         auto const homePage = annotation::test::pageId(k_homePage);
         auto const awayPage = annotation::test::pageId(k_awayPage);
         auto const edited   = annotation::test::pixelRect(1, 1, 6, 6);

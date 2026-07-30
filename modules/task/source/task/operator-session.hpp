@@ -140,7 +140,7 @@ namespace uf::task
         // resolve against the same surface a task's uf tables are built from.
         [[nodiscard]]
         auto findRecognizer(std::string_view name) const
-            -> Result<annotation::RecognizerId>;
+            -> Result<annotation::ElementId>;
 
         [[nodiscard]]
         auto findPage(std::string_view name) const -> Result<annotation::PageId>;

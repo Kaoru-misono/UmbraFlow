@@ -58,8 +58,8 @@ namespace uf::annotation
         {
             auto const fingerprint = test::fingerprint(8, 6, 96, 96);
             auto const sourceId    = test::sourceId(k_sourceId);
-            auto const anchorId    = test::recognizerId(k_anchorId);
-            auto const actionId    = test::recognizerId(k_actionId);
+            auto const anchorId    = test::elementId(k_anchorId);
+            auto const actionId    = test::elementId(k_actionId);
             auto const pageId      = test::pageId(k_pageId);
             auto source = AuthoringSource::create(
                 AuthoringSourceSpec{
@@ -330,11 +330,11 @@ namespace uf::annotation
     {
         auto const fingerprint = test::fingerprint(8, 6, 96, 96);
         auto const sourceId    = test::sourceId(k_sourceId);
-        auto const anchorId    = test::recognizerId(k_anchorId);
-        auto const lowerId     = test::recognizerId(
+        auto const anchorId    = test::elementId(k_anchorId);
+        auto const lowerId     = test::elementId(
             "00000000-0000-0000-0000-000000000002"
         );
-        auto const higherId    = test::recognizerId(
+        auto const higherId    = test::elementId(
             "00000000-0000-0000-0000-000000000003"
         );
         auto const pageId      = test::pageId(k_pageId);
@@ -411,8 +411,8 @@ namespace uf::annotation
     {
         auto const fingerprint = test::fingerprint(8, 6, 96, 96);
         auto const sourceId    = test::sourceId(k_sourceId);
-        auto const anchorId    = test::recognizerId(k_anchorId);
-        auto const regionId    = test::recognizerId(k_actionId);
+        auto const anchorId    = test::elementId(k_anchorId);
+        auto const regionId    = test::elementId(k_actionId);
         auto const pageId      = test::pageId(k_pageId);
         auto const roi         = test::pixelRect(0, 0, 3, 3);
         auto const templateRect = test::pixelRect(0, 0, 1, 1);

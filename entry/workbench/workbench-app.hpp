@@ -88,7 +88,7 @@ namespace uf::workbench
 
             struct Element final
             {
-                annotation::RecognizerId            recognizerId;
+                annotation::ElementId               recognizerId;
                 std::optional<annotation::SourceId> shownScreen{};
                 std::optional<annotation::PageId>   pageContext{};
             };
@@ -112,7 +112,7 @@ namespace uf::workbench
             [[nodiscard]] auto shownScreen() const noexcept
                 -> std::optional<annotation::SourceId>;
             [[nodiscard]] auto recognizer() const noexcept
-                -> std::optional<annotation::RecognizerId>;
+                -> std::optional<annotation::ElementId>;
             [[nodiscard]] auto pageContext() const noexcept
                 -> std::optional<annotation::PageId>;
 
@@ -212,7 +212,7 @@ namespace uf::workbench
 
         [[nodiscard]]
         auto selectedRecognizerId() const noexcept
-            -> std::optional<annotation::RecognizerId>;
+            -> std::optional<annotation::ElementId>;
 
         [[nodiscard]] auto canvasView() const noexcept -> CanvasView;
 

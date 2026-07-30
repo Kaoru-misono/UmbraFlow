@@ -41,7 +41,7 @@ namespace uf::workbench
     [[nodiscard]]
     auto findEditableRecognizer(
         AuthoringDraft& draft UF_LIFETIME_BOUND,
-        annotation::RecognizerId id
+        annotation::ElementId id
     ) -> EditableRecognizer*;
 
     // Says what retyping repaired as well as that it succeeded. An authorization
@@ -73,7 +73,7 @@ namespace uf::workbench
     auto requestDuplicateElement(
         AppState& state,
         PanelUiState& ui,
-        annotation::RecognizerId id
+        annotation::ElementId id
     ) -> void;
 
     // Parks a validated draft for this frame's single commit.
@@ -91,7 +91,7 @@ namespace uf::workbench
         PanelUiState& ui,
         AuthoringDraft draft,
         std::string description,
-        annotation::RecognizerId recognizerId,
+        annotation::ElementId recognizerId,
         std::optional<annotation::SourceId> sourceId,
         LogSeverity severity = LogSeverity::Info
     ) -> void;
@@ -146,7 +146,7 @@ namespace uf::workbench
     [[nodiscard]]
     auto sourceOfRecognizer(
         AppState const& state,
-        annotation::RecognizerId id
+        annotation::ElementId id
     ) -> std::optional<annotation::SourceId>;
 
     // The screen a page's regression case claims, if it has one.
@@ -190,7 +190,7 @@ namespace uf::workbench
     [[nodiscard]]
     auto placementContext(
         AppState const& state,
-        annotation::RecognizerId id,
+        annotation::ElementId id,
         annotation::SourceId shownScreen,
         std::optional<annotation::PageId> selectionPage = std::nullopt
     ) -> std::optional<PlacementContext>;
@@ -204,7 +204,7 @@ namespace uf::workbench
     // over whatever image the canvas happens to hold.
     auto selectRecognizer(
         AppState& state,
-        annotation::RecognizerId id,
+        annotation::ElementId id,
         std::optional<annotation::SourceId> preferredScreen,
         std::optional<annotation::PageId> pageContext = std::nullopt
     ) -> void;
@@ -214,7 +214,7 @@ namespace uf::workbench
     [[nodiscard]]
     auto isRegionShared(
         AppState const& state,
-        annotation::RecognizerId id
+        annotation::ElementId id
     ) -> bool;
 
     // The colour key one element carries, if any. It is authoring-only -- the
@@ -223,7 +223,7 @@ namespace uf::workbench
     [[nodiscard]]
     auto elementColourKey(
         AppState const& state,
-        annotation::RecognizerId id
+        annotation::ElementId id
     ) -> std::optional<annotation::ColourKey>;
 
     // Sets or clears one element's colour key, reporting a refusal rather than
@@ -233,7 +233,7 @@ namespace uf::workbench
     auto requestElementColourKey(
         AppState& state,
         PanelUiState& ui,
-        annotation::RecognizerId id,
+        annotation::ElementId id,
         std::optional<annotation::ColourKey> colourKey
     ) -> void;
 
@@ -242,7 +242,7 @@ namespace uf::workbench
     auto requestRegionShared(
         AppState& state,
         PanelUiState& ui,
-        annotation::RecognizerId id,
+        annotation::ElementId id,
         bool shared
     ) -> void;
 
@@ -259,7 +259,7 @@ namespace uf::workbench
     auto requestSharedRegionOnPage(
         AppState& state,
         PanelUiState& ui,
-        annotation::RecognizerId shareFrom,
+        annotation::ElementId shareFrom,
         annotation::PageId pageId
     ) -> void;
 
@@ -271,7 +271,7 @@ namespace uf::workbench
     auto editSelectedRectOnRelease(
         AppState& state,
         PanelUiState& ui,
-        annotation::RecognizerId recognizerId,
+        annotation::ElementId recognizerId,
         std::optional<annotation::PageId> pageContext,
         PixelRect const& editedRect
     ) -> void;

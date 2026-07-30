@@ -42,8 +42,8 @@ namespace uf::annotation
         struct ResolutionFixture final
         {
             RecognitionCatalog catalog;
-            RecognizerId anchorA{test::recognizerId(k_anchorAId)};
-            RecognizerId anchorB{test::recognizerId(k_anchorBId)};
+            ElementId anchorA{test::elementId(k_anchorAId)};
+            ElementId anchorB{test::elementId(k_anchorBId)};
             PageId pageA{test::pageId(k_pageAId)};
             PageId pageB{test::pageId(k_pageBId)};
         };
@@ -51,8 +51,8 @@ namespace uf::annotation
         auto resolutionFixture() -> ResolutionFixture
         {
             auto const projectFingerprint = test::fingerprint();
-            auto const anchorA = test::recognizerId(k_anchorAId);
-            auto const anchorB = test::recognizerId(k_anchorBId);
+            auto const anchorA = test::elementId(k_anchorAId);
+            auto const anchorB = test::elementId(k_anchorBId);
             auto const pageA = test::pageId(k_pageAId);
             auto const pageB = test::pageId(k_pageBId);
             auto recognizers = std::vector<RecognizerDefinition>{};
@@ -119,7 +119,7 @@ namespace uf::annotation
         auto const projectFingerprint = test::fingerprint();
         auto const anchor = test::recognizer(
             projectFingerprint,
-            test::recognizerId(k_anchorAId),
+            test::elementId(k_anchorAId),
             "anchor",
             AnnotationType::PageAnchor,
             test::pixelRect(0, 0, 2, 2),

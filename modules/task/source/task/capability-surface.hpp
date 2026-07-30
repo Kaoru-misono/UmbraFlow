@@ -23,8 +23,8 @@ namespace uf::task
     // copyable, so the installer can own its own snapshot.
     struct RecognizerHandleSpec final
     {
-        std::string              name;
-        annotation::RecognizerId id;
+        std::string           name;
+        annotation::ElementId id;
     };
 
     // One page the catalog exposes to scripts under uf.pages.<name>, with the

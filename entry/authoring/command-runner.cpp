@@ -218,7 +218,7 @@ namespace uf::authoring
         [[nodiscard]]
         auto elementNameJson(
             annotation::AuthoringDocument const& document,
-            annotation::RecognizerId id
+            annotation::ElementId id
         ) -> std::string
         {
             auto const* p_element = document.findElement(id);
@@ -513,7 +513,7 @@ namespace uf::authoring
         [[nodiscard]]
         auto renameRecognizer(
             workbench::AuthoringDraft draft,
-            annotation::RecognizerId id,
+            annotation::ElementId id,
             std::string name
         ) -> Result<workbench::AuthoringDraft>
         {
@@ -608,7 +608,7 @@ namespace uf::authoring
         [[nodiscard]]
         auto drawJson(
             annotation::AuthoringDocument const& document,
-            annotation::RecognizerId id,
+            annotation::ElementId id,
             bool ingested
         ) -> Result<std::string>
         {
@@ -989,7 +989,7 @@ namespace uf::authoring
                     std::move(session.draft),
                     workbench::NewPageSpec{
                         .pageId                = annotation::PageId{pageId},
-                        .anchorId              = annotation::RecognizerId{anchorId},
+                        .anchorId              = annotation::ElementId{anchorId},
                         .regressionId          = annotation::RegressionId{regressionId},
                         .sourceId              = resolved.id,
                         .templateRect          = command.anchor.templateRect,
@@ -1010,7 +1010,7 @@ namespace uf::authoring
                 namedAnchor,
                 renameRecognizer(
                     std::move(namedPage),
-                    annotation::RecognizerId{anchorId},
+                    annotation::ElementId{anchorId},
                     command.anchor.name
                 )
             );
@@ -1018,7 +1018,7 @@ namespace uf::authoring
                 keyed,
                 workbench::setElementColourKey(
                     std::move(namedAnchor),
-                    annotation::RecognizerId{anchorId},
+                    annotation::ElementId{anchorId},
                     command.anchor.colourKey
                 )
             );
@@ -1029,7 +1029,7 @@ namespace uf::authoring
                 drawn,
                 drawJson(
                     document,
-                    annotation::RecognizerId{anchorId},
+                    annotation::ElementId{anchorId},
                     resolved.ingested
                 )
             );
@@ -1069,7 +1069,7 @@ namespace uf::authoring
                 searchRoiOf(command.draw, session.draft.fingerprint)
             );
 
-            auto const recognizerId = annotation::RecognizerId{elementId};
+            auto const recognizerId = annotation::ElementId{elementId};
             UF_TRY_VALUE(
                 added,
                 workbench::addPageMember(

@@ -17,7 +17,7 @@ namespace uf::annotation
 {
     struct RecognizerSpec final
     {
-        RecognizerId id;
+        ElementId    id;
         ResourceName name;
 
         AnnotationType      annotationType{};
@@ -31,7 +31,7 @@ namespace uf::annotation
 
     class RecognizerDefinition final
     {
-        RecognizerId m_id;
+        ElementId    m_id;
         ResourceName m_name;
 
         AnnotationType      m_annotationType;
@@ -51,7 +51,7 @@ namespace uf::annotation
             RecognizerSpec const& spec
         ) -> Result<RecognizerDefinition>;
 
-        [[nodiscard]] auto id() const -> RecognizerId;
+        [[nodiscard]] auto id() const -> ElementId;
         [[nodiscard]] auto name() const -> ResourceName;
         [[nodiscard]] auto annotationType() const noexcept -> AnnotationType;
 
@@ -72,18 +72,18 @@ namespace uf::annotation
 
     struct PageSpec final
     {
-        PageId                    id;
-        ResourceName              name;
-        std::vector<RecognizerId> required{};
-        std::vector<RecognizerId> forbidden{};
+        PageId                 id;
+        ResourceName           name;
+        std::vector<ElementId> required{};
+        std::vector<ElementId> forbidden{};
     };
 
     class PageSignature final
     {
-        PageId                    m_id;
-        ResourceName              m_name;
-        std::vector<RecognizerId> m_required;
-        std::vector<RecognizerId> m_forbidden;
+        PageId                 m_id;
+        ResourceName           m_name;
+        std::vector<ElementId> m_required;
+        std::vector<ElementId> m_forbidden;
 
         explicit PageSignature(PageSpec spec) noexcept;
 
@@ -95,10 +95,10 @@ namespace uf::annotation
         [[nodiscard]] auto name() const -> ResourceName;
 
         [[nodiscard]]
-        auto required() const noexcept UF_LIFETIME_BOUND -> std::span<RecognizerId const>;
+        auto required() const noexcept UF_LIFETIME_BOUND -> std::span<ElementId const>;
 
         [[nodiscard]]
-        auto forbidden() const noexcept UF_LIFETIME_BOUND -> std::span<RecognizerId const>;
+        auto forbidden() const noexcept UF_LIFETIME_BOUND -> std::span<ElementId const>;
     };
 
     class RecognitionCatalog final
@@ -107,14 +107,14 @@ namespace uf::annotation
         ProjectFingerprint                m_fingerprint;
         std::vector<RecognizerDefinition> m_recognizers;
         std::vector<PageSignature>        m_pages;
-        std::vector<RecognizerId>         m_pageAnchorOrder;
+        std::vector<ElementId>            m_pageAnchorOrder;
 
         RecognitionCatalog(
             ProjectId projectId,
             ProjectFingerprint fingerprint,
             std::vector<RecognizerDefinition> recognizers,
             std::vector<PageSignature> pages,
-            std::vector<RecognizerId> pageAnchorOrder
+            std::vector<ElementId> pageAnchorOrder
         ) noexcept;
 
     public:
@@ -140,13 +140,13 @@ namespace uf::annotation
         // Returned observations remain valid only while this catalog is alive.
         [[nodiscard]]
         auto findRecognizer(
-            RecognizerId id
+            ElementId id
         ) const noexcept UF_LIFETIME_BOUND -> RecognizerDefinition const*;
 
         [[nodiscard]]
         auto findPage(PageId id) const noexcept UF_LIFETIME_BOUND -> PageSignature const*;
 
         [[nodiscard]]
-        auto pageAnchorOrder() const noexcept UF_LIFETIME_BOUND -> std::span<RecognizerId const>;
+        auto pageAnchorOrder() const noexcept UF_LIFETIME_BOUND -> std::span<ElementId const>;
     };
 }

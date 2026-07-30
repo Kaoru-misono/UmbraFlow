@@ -123,8 +123,8 @@ namespace uf::task
     inline auto singlePageRuntime() -> RuntimeParts
     {
         auto const fingerprint = anno::test::fingerprint(3, 1, 96, 96);
-        auto const anchorA     = anno::test::recognizerId(k_anchorId);
-        auto const actionT     = anno::test::recognizerId(k_actionId);
+        auto const anchorA     = anno::test::elementId(k_anchorId);
+        auto const actionT     = anno::test::elementId(k_actionId);
         auto const pageA       = anno::test::pageId(k_pageId);
         auto anchorTemplate = encodedTemplate(k_targetAnchorGray);
         auto actionTemplate = encodedTemplate(k_targetActionGray);
@@ -192,10 +192,10 @@ namespace uf::task
     inline auto interruptRuntime() -> RuntimeParts
     {
         auto const fingerprint  = anno::test::fingerprint(3, 1, 96, 96);
-        auto const targetAnchor = anno::test::recognizerId(k_anchorId);
-        auto const targetAction = anno::test::recognizerId(k_actionId);
-        auto const popupAnchor  = anno::test::recognizerId(k_popupAnchorId);
-        auto const popupClose   = anno::test::recognizerId(k_closeDialogId);
+        auto const targetAnchor = anno::test::elementId(k_anchorId);
+        auto const targetAction = anno::test::elementId(k_actionId);
+        auto const popupAnchor  = anno::test::elementId(k_popupAnchorId);
+        auto const popupClose   = anno::test::elementId(k_closeDialogId);
         auto const targetPage   = anno::test::pageId(k_pageId);
         auto const popupPage    = anno::test::pageId(k_popupPageId);
 
@@ -208,7 +208,7 @@ namespace uf::task
         auto const sourceHash  = anno::sha256(sourceBytes);
         REQUIRE(sourceHash.has_value());
 
-        auto const anchorSpec = [&](anno::RecognizerId id,
+        auto const anchorSpec = [&](anno::ElementId id,
                                     std::string_view name,
                                     anno::ContentHash templateHash)
         {
@@ -228,7 +228,7 @@ namespace uf::task
                 .sourceHash   = *sourceHash,
             };
         };
-        auto const actionSpec = [&](anno::RecognizerId id,
+        auto const actionSpec = [&](anno::ElementId id,
                                     std::string_view name,
                                     anno::PageId page,
                                     anno::ContentHash templateHash)

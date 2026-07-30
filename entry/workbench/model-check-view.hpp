@@ -61,7 +61,7 @@ namespace uf::workbench
     [[nodiscard]]
     auto findMargin(
         AppState const& state UF_LIFETIME_BOUND,
-        annotation::RecognizerId recognizerId
+        annotation::ElementId recognizerId
     ) -> RecognizerMargin const*;
 
     // The last check's grid cell for one element on one screen, or nullptr when
@@ -71,7 +71,7 @@ namespace uf::workbench
     [[nodiscard]]
     auto findModelCell(
         AppState const& state UF_LIFETIME_BOUND,
-        annotation::RecognizerId elementId,
+        annotation::ElementId elementId,
         annotation::SourceId screenId
     ) -> ModelCheckCell const*;
 

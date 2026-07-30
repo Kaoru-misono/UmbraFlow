@@ -129,7 +129,7 @@ calls the `ResourceId::fromBytes` from `modules/annotation/source/annotation/res
 By contract, `fromBytes` itself does not validate version/variant, so the authoring caller is
 responsible for setting the convention.
 
-`SourceId`, `RecognizerId`, `PageId`, and similar are distinct strong types over `ResourceId`; when
+`SourceId`, `ElementId`, `PageId`, and similar are distinct strong types over `ResourceId`; when
 adding a source, recognizer, or page, the panel mints first and then wraps the result in the
 corresponding ID. The randomness determines only the identity of a new resource and does not enter
 runtime matching.

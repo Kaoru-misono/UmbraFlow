@@ -150,7 +150,7 @@ The public runtime surface lives in `modules/engine/source/engine/session.hpp`:
 - `EngineSession::resolvePage(Observation const&)` calls its
   `RecognitionRuntime::evaluatePage` against the frame held by the supplied observation and returns
   a `PageOutcome` composed of `ResolvedPage`, `UnknownPage`, or `AmbiguousPages`.
-- `EngineSession::findAction(Observation const&, RecognizerId)` calls
+- `EngineSession::findAction(Observation const&, ElementId)` calls
   `evaluateActionTarget` against that same frame. A miss is a successful empty value of
   `Result<std::optional<ActionFound>>`, corresponding to D4 Tier A, and is not an error.
 - `ActionFound` stores the original `AnchorEvidence`, an `ActionDetection` bound to the recognizer

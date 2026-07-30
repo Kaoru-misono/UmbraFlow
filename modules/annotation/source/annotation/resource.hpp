@@ -39,12 +39,22 @@ namespace uf::annotation
 
     namespace detail
     {
-        struct RecognizerIdTag;
+        struct ElementIdTag;
         struct PageIdTag;
         struct SourceIdTag;
     }
 
-    using RecognizerId = StrongValue<detail::RecognizerIdTag, ResourceId>;
+    // Identifies one authored element. It was called RecognizerId while an
+    // element and a recognizer were the same thing; they are not. A recognizer
+    // is what the compiler emits, one per (element, page) pair, so an element
+    // placed on N pages has N of them and an element the task only reads state
+    // out of need not recognize anything at all. What the author mints and
+    // every authoring edit addresses is the element, which is what this names.
+    //
+    // The compiler's derived per-placement ids are minted into this same space
+    // (derivedRuntimeRecognizerId), because a runtime recognizer is addressed
+    // by the element it stands for whenever there is only one of it.
+    using ElementId = StrongValue<detail::ElementIdTag, ResourceId>;
     using PageId = StrongValue<detail::PageIdTag, ResourceId>;
     using SourceId = StrongValue<detail::SourceIdTag, ResourceId>;
 

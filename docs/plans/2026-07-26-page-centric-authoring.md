@@ -207,7 +207,7 @@ public:
 };
 ```
 
-`MemberId` is the page-local key. In phase 1 it **is** `RecognizerId` —
+`MemberId` is the page-local key. In phase 1 it **is** `ElementId` —
 the v1 model has no element identity, and a shared region on page P is
 its own recognizer there, so keying by recognizer is what makes
 `setSearchRoi` unambiguous over v1. In phase 3 it becomes the placement
@@ -319,7 +319,7 @@ Introduce `EditPage`, the two handles, and `PageView`, implemented on the
 current storage (the `allowed_page_ids` joins move inside `EditPage` and
 die nowhere else). `AuthoringEditHistory` gains the revision counter and
 `applyEdit` the stale-base refusal. Panels are rewritten to draw views
-and call handles. `MemberId` is `RecognizerId` in this phase, so
+and call handles. `MemberId` is `ElementId` in this phase, so
 `setSearchRoi` writes that page-member's own ROI — already per-page
 correct under the copy model; there is no ROI gap to document. Existing
 `authoring-actions` functions become the implementation guts or fold in;

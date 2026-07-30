@@ -22,7 +22,7 @@ namespace uf::annotation
 
     ActionDetection::ActionDetection(
         ProjectId&& projectId,
-        RecognizerId recognizerId,
+        ElementId recognizerId,
         Detection&& detection
     ) noexcept
         : m_projectId{std::move(projectId)}
@@ -33,7 +33,7 @@ namespace uf::annotation
 
     auto ActionDetection::create(
         RecognitionCatalog const& catalog,
-        RecognizerId recognizerId,
+        ElementId recognizerId,
         Detection detection
     ) -> Result<ActionDetection>
     {
@@ -68,7 +68,7 @@ namespace uf::annotation
     {
         return m_projectId;
     }
-    auto ActionDetection::recognizerId() const -> RecognizerId { return m_recognizerId; }
+    auto ActionDetection::recognizerId() const -> ElementId { return m_recognizerId; }
     auto ActionDetection::detection() const noexcept -> Detection const& { return m_detection; }
 
     auto authorizeCoordinateAction(

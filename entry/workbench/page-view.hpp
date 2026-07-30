@@ -29,7 +29,7 @@ namespace uf::workbench
         // The name carries the role rather than the current representation:
         // phase 3 rebases it onto the placement key (an element on this page)
         // without changing this API.
-        using MemberId = annotation::RecognizerId;
+        using MemberId = annotation::ElementId;
 
         // One anchor's authored data, for drawing a page's signature. Ids and
         // authored values only: margins and live scores are owned by the last

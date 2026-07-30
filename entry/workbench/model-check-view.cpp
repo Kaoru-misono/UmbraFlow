@@ -149,7 +149,7 @@ namespace uf::workbench
     [[nodiscard]]
     auto findMargin(
         AppState const& state,
-        annotation::RecognizerId recognizerId
+        annotation::ElementId recognizerId
     ) -> RecognizerMargin const*
     {
         auto const& check = state.lastModelCheck();
@@ -167,7 +167,7 @@ namespace uf::workbench
 
     auto findModelCell(
         AppState const& state,
-        annotation::RecognizerId elementId,
+        annotation::ElementId elementId,
         annotation::SourceId screenId
     ) -> ModelCheckCell const*
     {

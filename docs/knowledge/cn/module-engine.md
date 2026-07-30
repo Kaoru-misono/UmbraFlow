@@ -74,7 +74,7 @@ Windows 产品入口使用两个薄适配器：
 - `EngineSession::resolvePage(Observation const&)` 对传入 observation 持有的 frame
   调用自身 `RecognitionRuntime::evaluatePage`，返回由 `ResolvedPage`、
   `UnknownPage` 或 `AmbiguousPages` 组成的 `PageOutcome`。
-- `EngineSession::findAction(Observation const&, RecognizerId)` 对同一 frame 调用
+- `EngineSession::findAction(Observation const&, ElementId)` 对同一 frame 调用
   `evaluateActionTarget`。未命中是 `Result<std::optional<ActionFound>>` 的成功空值，
   对应 D4 Tier A，不是错误。
 - `ActionFound` 保存原始 `AnchorEvidence`、绑定 recognizer identity 的 `ActionDetection` 和确定性的 `PixelPoint`。点击点由 annotation 的 `resolveClickPixel` 决定；match rect 经 `pixelRectToFrameRect` 变成 authorization-ready `Detection`。

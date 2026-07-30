@@ -51,7 +51,7 @@
 catalog 定义则在 `modules/annotation/source/annotation/catalog.hpp` 上层组合它：
 
 - `ResourceId` 保存 16 字节 UUID，`parse` 接受固定的 36 字符 UUID 形状，`toString` 输出小写 canonical 形式。
-- `RecognizerId`、`PageId`、`SourceId` 和 `RegressionId` 是基于 `ResourceId` 的不同 `StrongValue`，避免跨资源类别误传。
+- `ElementId`、`PageId`、`SourceId` 和 `RegressionId` 是基于 `ResourceId` 的不同 `StrongValue`，避免跨资源类别误传。
 - `ProjectId` 要求非空有效 UTF-8；`ResourceName` 要求非空 ASCII identifier 且不是 Luau 保留字。
 - `ProjectFingerprint` 是非零的 `width`、`height`、`dpiX`、`dpiY`。S0 把 AnnotationSpace 固定为此 base resolution 下的整数 `FrameSpace`。
 - `AnnotationType` 当前有 `PageAnchor`、`ActionTarget`、`InfoRegion`。S0 schema 的 recognizer kind 仍只有 `gray_template`。
@@ -61,7 +61,7 @@ catalog 定义则在 `modules/annotation/source/annotation/catalog.hpp` 上层�
 `ActionTarget` 且落在模板内、`PageAnchor` 不携带 page membership、`ActionTarget` 至少授权一个页面。随后它按 `PageId` 排序 `allowedPageIds` 并拒绝重复项。
 
 `PageSignature::create` 接收 `PageSpec`，要求 `required` 与 `forbidden` 至少一边非空，分别按
-`RecognizerId` 排序，拒绝重复和交集。这里的“非空”很重要：空签名不会成为隐式 fallback page。
+`ElementId` 排序，拒绝重复和交集。这里的“非空”很重要：空签名不会成为隐式 fallback page。
 
 `RecognitionCatalog::create` 再做跨资源闭包验证：
 
@@ -259,7 +259,7 @@ required 全 hit 且 forbidden 全 miss 才是 candidate。零个候选返回 `U
 动作授权定义在 `modules/annotation/source/annotation/authorization.hpp` 和
 `modules/annotation/source/annotation/authorization.cpp`。`ActionDetection::create` 不信任字符串 label：
 它要求 recognizer 确实是 catalog 中的 `ActionTarget`，label 与该 recognizer name 相等，并把
-`ProjectId`、`RecognizerId` 和拥有的 `Detection` 绑定在一个值中。
+`ProjectId`、`ElementId` 和拥有的 `Detection` 绑定在一个值中。
 
 `authorizeCoordinateAction` 实现四条件 gate，并在每层继续做闭包校验：
 

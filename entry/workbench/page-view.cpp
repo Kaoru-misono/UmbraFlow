@@ -77,7 +77,7 @@ namespace uf::workbench
             return std::nullopt;
         }
 
-        auto const rowFor = [&draft](annotation::RecognizerId member)
+        auto const rowFor = [&draft](annotation::ElementId member)
             -> std::optional<PageView::AnchorRow>
         {
             auto const found = std::ranges::find(

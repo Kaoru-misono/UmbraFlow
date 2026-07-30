@@ -76,7 +76,7 @@ namespace uf::annotation
         [[nodiscard]]
         auto anchorOver(
             ProjectFingerprint fingerprint,
-            RecognizerId id,
+            ElementId id,
             std::string name,
             SourceId sourceId,
             std::optional<ColourKey> colourKey
@@ -133,8 +133,8 @@ namespace uf::annotation
             );
             REQUIRE(source.has_value());
 
-            auto const keyedId   = test::recognizerId(k_keyedId);
-            auto const unkeyedId = test::recognizerId(k_unkeyedId);
+            auto const keyedId   = test::elementId(k_keyedId);
+            auto const unkeyedId = test::elementId(k_unkeyedId);
             auto elements        = std::vector<Element>{};
             elements.emplace_back(
                 anchorOver(
@@ -280,10 +280,10 @@ namespace uf::annotation
             REQUIRE(compiled.has_value());
 
             auto const* p_keyed = compiled->runtimeManifest.findAsset(
-                test::recognizerId(k_keyedId)
+                test::elementId(k_keyedId)
             );
             auto const* p_unkeyed = compiled->runtimeManifest.findAsset(
-                test::recognizerId(k_unkeyedId)
+                test::elementId(k_unkeyedId)
             );
             REQUIRE(p_keyed != nullptr);
             REQUIRE(p_unkeyed != nullptr);
@@ -334,7 +334,7 @@ namespace uf::annotation
         [[nodiscard]]
         auto evidenceFor(
             std::span<AnchorEvidence const> evidence,
-            RecognizerId id
+            ElementId id
         ) -> AnchorEvidence
         {
             auto const found = std::ranges::find(
@@ -370,11 +370,11 @@ namespace uf::annotation
 
         auto const keyed = evidenceFor(
             outcome.evidence,
-            test::recognizerId(k_keyedId)
+            test::elementId(k_keyedId)
         );
         auto const unkeyed = evidenceFor(
             outcome.evidence,
-            test::recognizerId(k_unkeyedId)
+            test::elementId(k_unkeyedId)
         );
 
         // The whole point: the artwork under the glyphs changed completely, and

@@ -50,8 +50,8 @@ namespace uf::workbench
             annotation::AuthoringSourceAsset asset;
 
             annotation::SourceId     sourceId{annotation::test::sourceId(k_sourceId)};
-            annotation::RecognizerId anchorId{annotation::test::recognizerId(k_anchorId)};
-            annotation::RecognizerId actionId{annotation::test::recognizerId(k_actionId)};
+            annotation::ElementId anchorId{annotation::test::elementId(k_anchorId)};
+            annotation::ElementId actionId{annotation::test::elementId(k_actionId)};
             annotation::PageId       pageId{annotation::test::pageId(k_pageId)};
         };
 
@@ -60,8 +60,8 @@ namespace uf::workbench
         {
             auto const fingerprint = annotation::test::fingerprint(3, 1, 96, 96);
             auto const sourceId    = annotation::test::sourceId(k_sourceId);
-            auto const anchorId    = annotation::test::recognizerId(k_anchorId);
-            auto const actionId    = annotation::test::recognizerId(k_actionId);
+            auto const anchorId    = annotation::test::elementId(k_anchorId);
+            auto const actionId    = annotation::test::elementId(k_actionId);
             auto const pageId      = annotation::test::pageId(k_pageId);
 
             // Three distinct opaque pixels so each 1x1 template matches at exactly
@@ -325,8 +325,8 @@ namespace uf::workbench
             auto const fingerprint = annotation::test::fingerprint(8, 1, 96, 96);
             auto const screenA     = annotation::test::sourceId(k_screenAId);
             auto const screenB     = annotation::test::sourceId(k_screenBId);
-            auto const lowAnchor   = annotation::test::recognizerId(k_lowAnchorId);
-            auto const highAnchor  = annotation::test::recognizerId(k_highAnchorId);
+            auto const lowAnchor   = annotation::test::elementId(k_lowAnchorId);
+            auto const highAnchor  = annotation::test::elementId(k_highAnchorId);
             auto const pageId      = annotation::test::pageId(k_starvePageId);
 
             auto pngA = encodedWideRow(grayRow(10));
@@ -488,8 +488,8 @@ namespace uf::workbench
             auto const fingerprint  = annotation::test::fingerprint(3, 1, 96, 96);
             auto const sourceId     = annotation::test::sourceId(k_sourceId);
             auto const otherId      = annotation::test::sourceId(k_otherSourceId);
-            auto const anchorId     = annotation::test::recognizerId(k_anchorId);
-            auto const otherAnchor  = annotation::test::recognizerId(k_otherAnchorId);
+            auto const anchorId     = annotation::test::elementId(k_anchorId);
+            auto const otherAnchor  = annotation::test::elementId(k_otherAnchorId);
             auto const pageId       = annotation::test::pageId(k_pageId);
             auto const otherPageId  = annotation::test::pageId(k_otherPageId);
 
@@ -691,7 +691,7 @@ namespace uf::workbench
         // from one screen but which is authorized on another. Scoring it against
         // the screen it came from reports a perfect match for something that
         // never fires anywhere it is allowed to.
-        auto const sharedId = annotation::test::recognizerId(
+        auto const sharedId = annotation::test::elementId(
             "00000000-0000-0000-0000-000000000414"
         );
         auto const darkSource  = annotation::test::sourceId(k_sourceId);
@@ -774,8 +774,8 @@ namespace uf::workbench
         REQUIRE(check->live->resolvedPageId.has_value());
         CHECK(*check->live->resolvedPageId == annotation::test::pageId(k_pageId));
 
-        auto const darkId  = annotation::test::recognizerId(k_anchorId);
-        auto const lightId = annotation::test::recognizerId(k_otherAnchorId);
+        auto const darkId  = annotation::test::elementId(k_anchorId);
+        auto const lightId = annotation::test::elementId(k_otherAnchorId);
         for (auto const& margin : check->margins)
         {
             REQUIRE(margin.liveSadScore.has_value());
@@ -833,7 +833,7 @@ namespace uf::workbench
             annotation::SourceId     darkSource{annotation::test::sourceId(k_sourceId)};
             annotation::SourceId     lightSource{annotation::test::sourceId(k_otherSourceId)};
             annotation::SourceId     spareSource{annotation::test::sourceId(k_spareSourceId)};
-            annotation::RecognizerId menuId{annotation::test::recognizerId(k_menuId)};
+            annotation::ElementId menuId{annotation::test::elementId(k_menuId)};
             annotation::PageId       darkPageId{annotation::test::pageId(k_darkPageId)};
             annotation::PageId       lightPageId{annotation::test::pageId(k_lightPageId)};
         };
@@ -876,9 +876,9 @@ namespace uf::workbench
             auto const darkSource  = annotation::test::sourceId(k_sourceId);
             auto const lightSource = annotation::test::sourceId(k_otherSourceId);
             auto const spareSource = annotation::test::sourceId(k_spareSourceId);
-            auto const menuId      = annotation::test::recognizerId(k_menuId);
-            auto const darkMarkId  = annotation::test::recognizerId(k_darkMarkId);
-            auto const lightMarkId = annotation::test::recognizerId(k_lightMarkId);
+            auto const menuId      = annotation::test::elementId(k_menuId);
+            auto const darkMarkId  = annotation::test::elementId(k_darkMarkId);
+            auto const lightMarkId = annotation::test::elementId(k_lightMarkId);
             auto const darkPageId  = annotation::test::pageId(k_darkPageId);
             auto const lightPageId = annotation::test::pageId(k_lightPageId);
 
@@ -1084,7 +1084,7 @@ namespace uf::workbench
         [[nodiscard]]
         auto findCell(
             ModelCheck const& check,
-            annotation::RecognizerId element,
+            annotation::ElementId element,
             annotation::SourceId screen
         ) -> ModelCheckCell const*
         {
@@ -1107,7 +1107,7 @@ namespace uf::workbench
         ) -> ModelCheckCell
         {
             return ModelCheckCell{
-                .elementId   = annotation::test::recognizerId(k_anchorId),
+                .elementId   = annotation::test::elementId(k_anchorId),
                 .screenId    = annotation::test::sourceId(k_sourceId),
                 .outcome     = outcome,
                 .sadScore    = std::optional<uint64>{score},
@@ -1123,7 +1123,7 @@ namespace uf::workbench
         CHECK(
             classifyModelCell(
                 ModelCheckCell{
-                    .elementId = annotation::test::recognizerId(k_anchorId),
+                    .elementId = annotation::test::elementId(k_anchorId),
                     .screenId  = annotation::test::sourceId(k_sourceId),
                     .outcome   = ModelCellOutcome::NotSearchedHere,
                 }
@@ -1133,7 +1133,7 @@ namespace uf::workbench
         CHECK(
             classifyModelCell(
                 ModelCheckCell{
-                    .elementId = annotation::test::recognizerId(k_anchorId),
+                    .elementId = annotation::test::elementId(k_anchorId),
                     .screenId  = annotation::test::sourceId(k_sourceId),
                     .outcome   = ModelCellOutcome::Stopped,
                 }
@@ -1182,7 +1182,7 @@ namespace uf::workbench
         auto const fixture = modelFixture(true);
         auto const dark    = annotation::test::sourceId(k_sourceId);
         auto const light   = annotation::test::sourceId(k_otherSourceId);
-        auto const darkId  = annotation::test::recognizerId(k_anchorId);
+        auto const darkId  = annotation::test::elementId(k_anchorId);
 
         auto const check = runModelCheck(
             fixture.document,
@@ -1242,7 +1242,7 @@ namespace uf::workbench
         // completes, so every anchor cell is Stopped rather than a missing hole.
         auto const fixture = modelFixture(true);
         auto const dark    = annotation::test::sourceId(k_sourceId);
-        auto const darkId  = annotation::test::recognizerId(k_anchorId);
+        auto const darkId  = annotation::test::elementId(k_anchorId);
 
         auto const check = runModelCheck(
             fixture.document,

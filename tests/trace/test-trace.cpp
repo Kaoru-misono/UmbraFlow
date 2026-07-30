@@ -212,7 +212,7 @@ namespace uf::trace
                             resourceId("11111111-2222-3333-4444-555555555555")
                         },
                         .candidate   = true,
-                        .worstAnchor = annotation::RecognizerId{
+                        .worstAnchor = annotation::ElementId{
                             resourceId("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
                         },
                         .worstAnchorSad        = uint64{7},
@@ -251,7 +251,7 @@ namespace uf::trace
                 .cycleOrdinal    = uint64{4},
                 .hitCycleOrdinal = uint64{5},
             },
-            .recognizerId = annotation::RecognizerId{
+            .recognizerId = annotation::ElementId{
                 resourceId("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
             },
             .stopReason  = SadSearchStopReason::TimedOut,
@@ -448,7 +448,7 @@ namespace uf::trace
                     .outcome      = NativeCallOutcome::Empty,
                     .cycleOrdinal = uint64{2},
                 },
-                .recognizerId = annotation::RecognizerId{
+                .recognizerId = annotation::ElementId{
                     resourceId("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
                 },
             };
@@ -648,7 +648,7 @@ namespace uf::trace
                                 resourceId("11111111-2222-3333-4444-555555555555")
                             },
                             .candidate   = false,
-                            .worstAnchor = annotation::RecognizerId{
+                            .worstAnchor = annotation::ElementId{
                                 resourceId("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
                             },
                             .worstAnchorSad        = uint64{2},
@@ -689,7 +689,7 @@ namespace uf::trace
                 .kind  = TraceEventKind::EnginePageResolved,
                 .frame = frame,
                 .page         = TraceEvent::Page{.outcome = PageResolution::Stopped},
-                .recognizerId = annotation::RecognizerId{
+                .recognizerId = annotation::ElementId{
                     resourceId("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
                 },
                 .stopReason   = SadSearchStopReason::ComparisonBudgetExhausted,
@@ -731,7 +731,7 @@ namespace uf::trace
             TargetGeneration::fromValue(3),
             FrameId{uint64{17}},
         };
-        auto const recognizer = annotation::RecognizerId{
+        auto const recognizer = annotation::ElementId{
             resourceId("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
         };
         auto constexpr prefix = std::string_view{

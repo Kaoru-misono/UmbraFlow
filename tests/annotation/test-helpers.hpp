@@ -30,9 +30,9 @@ namespace uf::annotation::test
         return *result;
     }
 
-    inline auto recognizerId(std::string_view value) -> RecognizerId
+    inline auto elementId(std::string_view value) -> ElementId
     {
-        return RecognizerId{resourceId(value)};
+        return ElementId{resourceId(value)};
     }
 
     inline auto sourceId(std::string_view value) -> SourceId
@@ -97,7 +97,7 @@ namespace uf::annotation::test
 
     inline auto recognizer(
         ProjectFingerprint projectFingerprint,
-        RecognizerId id,
+        ElementId id,
         std::string name,
         AnnotationType annotationType,
         PixelRect templateRect,
@@ -127,8 +127,8 @@ namespace uf::annotation::test
     inline auto page(
         PageId id,
         std::string name,
-        std::vector<RecognizerId> required,
-        std::vector<RecognizerId> forbidden = {}
+        std::vector<ElementId> required,
+        std::vector<ElementId> forbidden = {}
     ) -> PageSignature
     {
         auto result = PageSignature::create(
@@ -145,7 +145,7 @@ namespace uf::annotation::test
 
     inline auto anchorElement(
         ProjectFingerprint projectFingerprint,
-        RecognizerId id,
+        ElementId id,
         std::string name,
         SourceId sourceId,
         PixelRect templateRect,
@@ -173,7 +173,7 @@ namespace uf::annotation::test
 
     inline auto interactiveElement(
         ProjectFingerprint projectFingerprint,
-        RecognizerId id,
+        ElementId id,
         std::string name,
         SourceId sourceId,
         PixelRect templateRect,
@@ -202,7 +202,7 @@ namespace uf::annotation::test
 
     inline auto infoElement(
         ProjectFingerprint projectFingerprint,
-        RecognizerId id,
+        ElementId id,
         std::string name,
         SourceId sourceId,
         PixelRect templateRect,
@@ -229,7 +229,7 @@ namespace uf::annotation::test
 
     inline auto placement(
         PageId pageId,
-        RecognizerId elementId,
+        ElementId elementId,
         PixelRect searchRoi
     ) -> AuthoringPlacement
     {

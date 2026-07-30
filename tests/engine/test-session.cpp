@@ -91,7 +91,7 @@ namespace uf::engine
         {
             LoadedRuntime            loaded;
             anno::ProjectFingerprint fingerprint;
-            anno::RecognizerId       actionTarget;
+            anno::ElementId          actionTarget;
         };
 
         // A runtime with one page (page_a, required anchor_a) and one action
@@ -101,8 +101,8 @@ namespace uf::engine
         auto singlePageRuntime() -> RuntimeParts
         {
             auto const fingerprint = anno::test::fingerprint(3, 1, 96, 96);
-            auto const anchorA     = anno::test::recognizerId(k_anchorAId);
-            auto const actionT     = anno::test::recognizerId(k_actionId);
+            auto const anchorA     = anno::test::elementId(k_anchorAId);
+            auto const actionT     = anno::test::elementId(k_actionId);
             auto const pageA       = anno::test::pageId(k_pageAId);
             auto anchorTemplate = encodedTemplate(2);
             auto actionTemplate = encodedTemplate(5);
@@ -170,9 +170,9 @@ namespace uf::engine
         auto wrongPageRuntime() -> RuntimeParts
         {
             auto const fingerprint = anno::test::fingerprint(3, 1, 96, 96);
-            auto const anchorA     = anno::test::recognizerId(k_anchorAId);
-            auto const anchorB     = anno::test::recognizerId(k_anchorBId);
-            auto const actionT     = anno::test::recognizerId(k_actionId);
+            auto const anchorA     = anno::test::elementId(k_anchorAId);
+            auto const anchorB     = anno::test::elementId(k_anchorBId);
+            auto const actionT     = anno::test::elementId(k_actionId);
             auto const homePage    = anno::test::pageId(k_pageAId);
             auto const awayPage    = anno::test::pageId(k_awayPageId);
             auto anchorATemplate = encodedTemplate(2);

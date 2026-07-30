@@ -73,7 +73,7 @@ The shared resource vocabulary begins at
 
 - `ResourceId` holds a 16-byte UUID; `parse` accepts the fixed 36-character UUID shape, and
   `toString` emits the lowercase canonical form.
-- `RecognizerId`, `PageId`, `SourceId`, and `RegressionId` are distinct `StrongValue`s built on
+- `ElementId`, `PageId`, `SourceId`, and `RegressionId` are distinct `StrongValue`s built on
   `ResourceId`, preventing cross-category resource mix-ups.
 - `ProjectId` requires non-empty valid UTF-8; `ResourceName` requires a non-empty ASCII identifier
   that is not a Luau reserved word.
@@ -90,7 +90,7 @@ membership, and that an `ActionTarget` authorizes at least one page. It then sor
 by `PageId` and rejects duplicates.
 
 `PageSignature::create` accepts a `PageSpec`, requires that at least one of `required` and
-`forbidden` be non-empty, sorts each by `RecognizerId`, and rejects duplicates and intersections. The
+`forbidden` be non-empty, sorts each by `ElementId`, and rejects duplicates and intersections. The
 "non-empty" requirement matters here: an empty signature will not become an implicit fallback page.
 
 `RecognitionCatalog::create` then performs cross-resource closure validation:
@@ -330,7 +330,7 @@ a later conflicting page cannot be hidden by ordering.
 Action authorization is defined in `modules/annotation/source/annotation/authorization.hpp` and
 `modules/annotation/source/annotation/authorization.cpp`. `ActionDetection::create` does not trust the
 string label: it requires the recognizer to genuinely be an `ActionTarget` in the catalog, the label
-to equal that recognizer's name, and binds the `ProjectId`, `RecognizerId`, and an owned `Detection`
+to equal that recognizer's name, and binds the `ProjectId`, `ElementId`, and an owned `Detection`
 into a single value.
 
 `authorizeCoordinateAction` implements a four-condition gate and continues to perform closure

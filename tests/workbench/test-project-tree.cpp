@@ -89,8 +89,8 @@ namespace uf::workbench
         auto document() -> annotation::AuthoringDocument
         {
             auto const fingerprint = annotation::test::fingerprint(8, 8, 96, 96);
-            auto const anchorPId   = annotation::test::recognizerId(k_anchorPId);
-            auto const anchorQId   = annotation::test::recognizerId(k_anchorQId);
+            auto const anchorPId   = annotation::test::elementId(k_anchorPId);
+            auto const anchorQId   = annotation::test::elementId(k_anchorQId);
             auto const pageP       = annotation::test::pageId(k_pageP);
 
             auto created = annotation::AuthoringDocument::create(

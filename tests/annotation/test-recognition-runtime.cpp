@@ -95,10 +95,10 @@ namespace uf::annotation
             std::vector<EncodedRuntimeTemplate> templates{};
             ProjectFingerprint                  fingerprint;
 
-            RecognizerId anchorA;
-            RecognizerId anchorB;
-            PageId       pageA;
-            PageId       pageB;
+            ElementId anchorA;
+            ElementId anchorB;
+            PageId    pageA;
+            PageId    pageB;
         };
 
         [[nodiscard]]
@@ -107,8 +107,8 @@ namespace uf::annotation
         ) -> RuntimeInput
         {
             auto const fingerprint    = test::fingerprint(3, 1, 96, 96);
-            auto const anchorA        = test::recognizerId(k_anchorAId);
-            auto const anchorB        = test::recognizerId(k_anchorBId);
+            auto const anchorA        = test::elementId(k_anchorAId);
+            auto const anchorB        = test::elementId(k_anchorBId);
             auto const pageA          = test::pageId(k_pageAId);
             auto const pageB          = test::pageId(k_pageBId);
             auto const templateAWidth = (
@@ -190,8 +190,8 @@ namespace uf::annotation
         {
             RecognitionRuntime runtime;
             ProjectFingerprint fingerprint{test::fingerprint()};
-            RecognizerId       anchorA{test::recognizerId(k_anchorAId)};
-            RecognizerId       anchorB{test::recognizerId(k_anchorBId)};
+            ElementId       anchorA{test::elementId(k_anchorAId)};
+            ElementId       anchorB{test::elementId(k_anchorBId)};
             PageId             pageA{test::pageId(k_pageAId)};
             PageId             pageB{test::pageId(k_pageBId)};
         };
@@ -308,17 +308,17 @@ namespace uf::annotation
             std::vector<EncodedRuntimeTemplate> templates{};
             ProjectFingerprint                  fingerprint;
 
-            RecognizerId anchorA;
-            RecognizerId actionTarget;
-            PageId       pageA;
+            ElementId anchorA;
+            ElementId actionTarget;
+            PageId    pageA;
         };
 
         [[nodiscard]]
         auto actionRuntimeInput() -> ActionRuntimeInput
         {
             auto const fingerprint = test::fingerprint(3, 1, 96, 96);
-            auto const anchorA     = test::recognizerId(k_anchorAId);
-            auto const actionT     = test::recognizerId(k_actionId);
+            auto const anchorA     = test::elementId(k_anchorAId);
+            auto const actionT     = test::elementId(k_actionId);
             auto const pageA       = test::pageId(k_pageAId);
             auto anchorTemplate = encodedTemplate(2);
             auto actionTemplate = encodedTemplate(5);
@@ -383,8 +383,8 @@ namespace uf::annotation
         {
             RecognitionRuntime runtime;
             ProjectFingerprint fingerprint{test::fingerprint(3, 1, 96, 96)};
-            RecognizerId       anchorA{test::recognizerId(k_anchorAId)};
-            RecognizerId       actionTarget{test::recognizerId(k_actionId)};
+            ElementId       anchorA{test::elementId(k_anchorAId)};
+            ElementId       actionTarget{test::elementId(k_actionId)};
             PageId             pageA{test::pageId(k_pageAId)};
         };
 
@@ -804,7 +804,7 @@ namespace uf::annotation
         auto const unknown = fixture.runtime.evaluateActionTarget(
             frame,
             fixture.fingerprint,
-            test::recognizerId(k_anchorBId),
+            test::elementId(k_anchorBId),
             continuingPolicy(100)
         );
         REQUIRE_FALSE(unknown.has_value());
@@ -902,8 +902,8 @@ namespace uf::annotation
     TEST_CASE("a template's alpha channel excludes its pixels from recognition")
     {
         auto const fingerprint = test::fingerprint(3, 1, 96, 96);
-        auto const maskedId    = test::recognizerId(k_anchorAId);
-        auto const opaqueId    = test::recognizerId(k_anchorBId);
+        auto const maskedId    = test::elementId(k_anchorAId);
+        auto const opaqueId    = test::elementId(k_anchorBId);
         auto const pageA       = test::pageId(k_pageAId);
 
         // The same two pixels twice: the second one is artwork the first
@@ -986,7 +986,7 @@ namespace uf::annotation
         );
         REQUIRE(attempt.has_value());
 
-        auto const evidenceFor = [&attempt](RecognizerId id) -> AnchorEvidence
+        auto const evidenceFor = [&attempt](ElementId id) -> AnchorEvidence
         {
             auto const found = std::ranges::find(
                 attempt->completedAnchorEvidence,
@@ -1019,7 +1019,7 @@ namespace uf::annotation
     TEST_CASE("resolveClickPixel derives deterministic integer click points")
     {
         auto const fingerprint = test::fingerprint(8, 8, 96, 96);
-        auto const actionT     = test::recognizerId(k_actionId);
+        auto const actionT     = test::elementId(k_actionId);
         auto const pageA       = test::pageId(k_pageAId);
 
         auto const offset = TemplateOffset::create(2, 1, 4, 3);
@@ -1063,7 +1063,7 @@ namespace uf::annotation
 
         auto const anchor = test::recognizer(
             fingerprint,
-            test::recognizerId(k_anchorAId),
+            test::elementId(k_anchorAId),
             "anchor_a",
             AnnotationType::PageAnchor,
             test::pixelRect(0, 0, 3, 5),

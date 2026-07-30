@@ -478,7 +478,7 @@ namespace uf::workbench
 
     auto pagesPlacedOn(
         AuthoringDraft const& draft,
-        annotation::RecognizerId id
+        annotation::ElementId id
     ) -> std::vector<annotation::PageId>
     {
         auto pages = std::vector<annotation::PageId>{};
@@ -497,7 +497,7 @@ namespace uf::workbench
 
     auto removePlacementFromPage(
         AuthoringDraft draft,
-        annotation::RecognizerId id,
+        annotation::ElementId id,
         annotation::PageId pageId
     ) -> Result<AuthoringDraft>
     {
@@ -619,7 +619,7 @@ namespace uf::workbench
 
     auto setRegionShared(
         AuthoringDraft draft,
-        annotation::RecognizerId id,
+        annotation::ElementId id,
         bool shared
     ) -> Result<AuthoringDraft>
     {
@@ -659,7 +659,7 @@ namespace uf::workbench
 
     auto setElementColourKey(
         AuthoringDraft draft,
-        annotation::RecognizerId id,
+        annotation::ElementId id,
         std::optional<annotation::ColourKey> colourKey
     ) -> Result<AuthoringDraft>
     {
@@ -770,7 +770,7 @@ namespace uf::workbench
 
     auto setElementTemplateRect(
         AuthoringDraft draft,
-        annotation::RecognizerId id,
+        annotation::ElementId id,
         PixelRect templateRect
     ) -> Result<RetemplatedRegion>
     {
@@ -954,7 +954,7 @@ namespace uf::workbench
 
     auto retypeRecognizer(
         AuthoringDraft draft,
-        annotation::RecognizerId id,
+        annotation::ElementId id,
         annotation::AnnotationType type
     ) -> Result<RetypedRecognizer>
     {
@@ -1115,7 +1115,7 @@ namespace uf::workbench
 
     auto deleteRecognizer(
         AuthoringDraft draft,
-        annotation::RecognizerId id
+        annotation::ElementId id
     ) -> Result<DeletedEntity>
     {
         auto const target = std::ranges::find(

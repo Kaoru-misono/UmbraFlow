@@ -201,11 +201,11 @@ namespace uf::trace
             // omitting `candidate` would assert a page was ruled out.
             struct Score final
             {
-                annotation::PageId                      pageId;
-                bool                                    candidate;
-                std::optional<annotation::RecognizerId> worstAnchor{};
-                std::optional<uint64>                   worstAnchorSad{};
-                std::optional<uint64>                   worstAnchorMaximumSad{};
+                annotation::PageId                   pageId;
+                bool                                 candidate;
+                std::optional<annotation::ElementId> worstAnchor{};
+                std::optional<uint64>                worstAnchorSad{};
+                std::optional<uint64>                worstAnchorMaximumSad{};
             };
 
             PageResolution                    outcome;
@@ -338,12 +338,12 @@ namespace uf::trace
         // action search or an authorization refusal names; why a recognition
         // search stopped early; how the run ended; and the failure detail any
         // event may carry.
-        std::optional<annotation::RecognizerId> recognizerId{};
-        std::optional<SadSearchStopReason>      stopReason{};
-        std::optional<RunOutcome>               runOutcome{};
-        std::optional<AutomationErrorKind>      errorKind{};
-        std::optional<std::string>              message{};
-        std::optional<Point<ClientSpace>>       clickClient{};
+        std::optional<annotation::ElementId> recognizerId{};
+        std::optional<SadSearchStopReason>   stopReason{};
+        std::optional<RunOutcome>            runOutcome{};
+        std::optional<AutomationErrorKind>   errorKind{};
+        std::optional<std::string>           message{};
+        std::optional<Point<ClientSpace>>    clickClient{};
 
         // The key one engine.key_delivered posted, as the target's UI prints it.
         // It is the whole content of that event: a keystroke names no coordinate,

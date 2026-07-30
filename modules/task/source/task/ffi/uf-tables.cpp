@@ -665,7 +665,7 @@ namespace uf::task
 
             auto* ticket = checkBox<CycleTicket>(state, 1, k_cycleType, "cycle");
             auto* recognizer =
-                checkBox<annotation::RecognizerId>(state, 2, k_recognizerType, "recognizer");
+                checkBox<annotation::ElementId>(state, 2, k_recognizerType, "recognizer");
             auto const call = NativeCallIdentity{
                 .verb           = "cycle_find",
                 .cycleOrdinal = ticket->ordinal,
@@ -1601,7 +1601,7 @@ namespace uf::task
             lua_newtable(state);
             int const root = lua_gettop(state);
 
-            installResourceTable<RecognizerHandleSpec, annotation::RecognizerId>(
+            installResourceTable<RecognizerHandleSpec, annotation::ElementId>(
                 state,
                 root,
                 "recognizers",

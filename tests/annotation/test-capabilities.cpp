@@ -288,7 +288,7 @@ namespace uf::annotation
     TEST_CASE("a recognizer definition derives its capability from its annotation type")
     {
         auto const projectFingerprint = test::fingerprint();
-        auto const elementId          = test::recognizerId(k_elementId);
+        auto const elementId          = test::elementId(k_elementId);
         auto const pageId             = test::pageId(k_pageId);
         auto const templateRect       = test::pixelRect(0, 0, 2, 2);
         auto const searchRoi          = test::pixelRect(0, 0, 4, 4);

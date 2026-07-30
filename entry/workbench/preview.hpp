@@ -38,7 +38,7 @@ namespace uf::workbench
     // never depends on the recognition module's evidence type.
     struct PreviewAnchorRow final
     {
-        annotation::RecognizerId recognizerId;
+        annotation::ElementId recognizerId;
 
         bool                     hit{};
         std::optional<uint64>    sadScore{};
@@ -50,8 +50,8 @@ namespace uf::workbench
     // evidence, naming the recognizer that was running and why it stopped.
     struct PreviewStop final
     {
-        annotation::RecognizerId recognizerId;
-        SadSearchStopReason      reason{};
+        annotation::ElementId recognizerId;
+        SadSearchStopReason   reason{};
     };
 
     // The outcome of previewing the current document against one source image.
@@ -125,7 +125,7 @@ namespace uf::workbench
         annotation::AuthoringDocument const& document,
         std::span<annotation::AuthoringSourceAsset const> sourceAssets,
         annotation::SourceId selectedSourceId,
-        std::optional<annotation::RecognizerId> selectedRecognizerId,
+        std::optional<annotation::ElementId> selectedRecognizerId,
         annotation::RecognitionPolicy const& policy
     ) -> Result<PreviewResult>;
 
@@ -143,7 +143,7 @@ namespace uf::workbench
     auto scoreRegionOnScreen(
         annotation::AuthoringDocument const& document,
         std::span<annotation::AuthoringSourceAsset const> sourceAssets,
-        annotation::RecognizerId recognizerId,
+        annotation::ElementId recognizerId,
         annotation::SourceId screenId,
         annotation::RecognitionPolicy const& policy
     ) -> Result<PreviewAnchorRow>;
@@ -233,8 +233,8 @@ namespace uf::workbench
     // passes elsewhere will eventually resolve the wrong page.
     struct RecognizerMargin final
     {
-        annotation::RecognizerId recognizerId;
-        uint64                   maximumSad{};
+        annotation::ElementId recognizerId;
+        uint64                maximumSad{};
 
         // The screen this recognizer has to work on -- the one recorded for the
         // page it belongs to -- and its score there. For anything drawn on the
@@ -281,9 +281,9 @@ namespace uf::workbench
     // the same per-screen evaluation the margins fold in, with no second search.
     struct ModelCheckCell final
     {
-        annotation::RecognizerId elementId;
-        annotation::SourceId     screenId;
-        ModelCellOutcome         outcome{};
+        annotation::ElementId elementId;
+        annotation::SourceId  screenId;
+        ModelCellOutcome      outcome{};
 
         // The measured score and the threshold it was read against, present for
         // Hit and Miss. maximumSad is the same per-element budget the margins

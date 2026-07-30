@@ -256,7 +256,7 @@ namespace uf::annotation
             );
             UF_TRY_VALUE(
                 required,
-                detail::parseIds<RecognizerId>(requiredText)
+                detail::parseIds<ElementId>(requiredText)
             );
             UF_TRY_VALUE(
                 forbiddenText,
@@ -264,7 +264,7 @@ namespace uf::annotation
             );
             UF_TRY_VALUE(
                 forbidden,
-                detail::parseIds<RecognizerId>(forbiddenText)
+                detail::parseIds<ElementId>(forbiddenText)
             );
             return PageSignature::create(
                 PageSpec{
@@ -489,7 +489,7 @@ namespace uf::annotation
         ) -> Result<Element>
         {
             UF_TRY_VALUE(idText, reader.takeStringField("id"));
-            UF_TRY_VALUE(id, detail::parseId<RecognizerId>(idText));
+            UF_TRY_VALUE(id, detail::parseId<ElementId>(idText));
             UF_TRY_VALUE(nameText, reader.takeStringField("name"));
             UF_TRY_VALUE(name, ResourceName::create(std::move(nameText)));
             UF_TRY_VALUE(typeText, reader.takeStringField("type"));
@@ -638,7 +638,7 @@ namespace uf::annotation
             UF_TRY_VALUE(pageIdText, reader.takeStringField("page_id"));
             UF_TRY_VALUE(pageId, detail::parseId<PageId>(pageIdText));
             UF_TRY_VALUE(elementIdText, reader.takeStringField("element_id"));
-            UF_TRY_VALUE(elementId, detail::parseId<RecognizerId>(elementIdText));
+            UF_TRY_VALUE(elementId, detail::parseId<ElementId>(elementIdText));
             UF_TRY_VALUE(
                 searchRoi,
                 detail::parsePixelRectField(reader, "search_roi")
@@ -733,7 +733,7 @@ namespace uf::annotation
         return Element{spec};
     }
 
-    auto Element::id() const -> RecognizerId { return m_id; }
+    auto Element::id() const -> ElementId { return m_id; }
     auto Element::name() const -> ResourceName { return m_name; }
     auto Element::sourceId() const -> SourceId { return m_sourceId; }
     auto Element::templateRect() const noexcept -> PixelRect { return m_templateRect; }
@@ -902,7 +902,7 @@ namespace uf::annotation
             }
         }
 
-        auto findElement = [&elements](RecognizerId id) noexcept -> Element const*
+        auto findElement = [&elements](ElementId id) noexcept -> Element const*
         {
             auto const found = std::ranges::find(elements, id, &Element::id);
             return found == elements.end() ? nullptr : &*found;
@@ -1165,7 +1165,7 @@ namespace uf::annotation
         return found == m_sources.end() ? nullptr : &*found;
     }
     auto AuthoringDocument::findElement(
-        RecognizerId id
+        ElementId id
     ) const noexcept -> Element const*
     {
         auto const found = std::ranges::find(m_elements, id, &Element::id);

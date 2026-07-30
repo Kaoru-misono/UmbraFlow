@@ -39,7 +39,7 @@ namespace uf::workbench
             auto check = ModelCheck{};
             check.margins.emplace_back(
                 RecognizerMargin{
-                    .recognizerId = annotation::test::recognizerId(
+                    .recognizerId = annotation::test::elementId(
                         k_markerRecognizerId
                     ),
                     .maximumSad = marker,

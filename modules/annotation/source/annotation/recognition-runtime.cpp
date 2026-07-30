@@ -587,7 +587,7 @@ namespace uf::annotation
     auto RecognitionRuntime::evaluateActionTarget(
         Frame const& frame,
         ProjectFingerprint liveFingerprint,
-        RecognizerId recognizerId,
+        ElementId recognizerId,
         RecognitionPolicy const& policy
     ) const -> Result<ActionTargetAttempt>
     {

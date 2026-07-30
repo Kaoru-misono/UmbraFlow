@@ -40,8 +40,8 @@ namespace uf::annotation
         auto runtimeManifest(std::string project = "personal.test") -> RuntimeManifest
         {
             auto const fingerprint = test::fingerprint(8, 6, 96, 96);
-            auto const anchorId = test::recognizerId(k_anchorId);
-            auto const actionId = test::recognizerId(k_actionId);
+            auto const anchorId = test::elementId(k_anchorId);
+            auto const actionId = test::elementId(k_actionId);
             auto const pageId = test::pageId(k_pageId);
             auto const click = TemplateOffset::create(1, 0, 2, 1);
             REQUIRE(click.has_value());
@@ -148,7 +148,7 @@ namespace uf::annotation
         CHECK(serializeRuntimeManifest(*parsed) == encoded);
         CHECK(parsed->catalog().recognizers().size() == 2U);
         CHECK(parsed->catalog().pages().size() == 1U);
-        auto const* p_asset = parsed->findAsset(test::recognizerId(k_anchorId));
+        auto const* p_asset = parsed->findAsset(test::elementId(k_anchorId));
         REQUIRE(p_asset != nullptr);
         CHECK(p_asset->templateHash == contentHash(k_anchorHash));
     }

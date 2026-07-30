@@ -110,8 +110,8 @@ namespace uf::annotation
                 }
             );
             REQUIRE(source.has_value());
-            auto const anchorId = test::recognizerId(k_anchorId);
-            auto const actionId = test::recognizerId(k_actionId);
+            auto const anchorId = test::elementId(k_anchorId);
+            auto const actionId = test::elementId(k_actionId);
             auto const pageId   = test::pageId(k_pageId);
             auto const click    = TemplateOffset::create(1, 1, 2, 2);
             REQUIRE(click.has_value());
@@ -179,13 +179,13 @@ namespace uf::annotation
             REQUIRE(source.has_value());
 
             auto elements      = std::vector<Element>{};
-            auto recognizerIds = std::vector<RecognizerId>{};
+            auto recognizerIds = std::vector<ElementId>{};
             elements.reserve(templateRects.size());
             recognizerIds.reserve(templateRects.size());
             auto const searchRoi = test::pixelRect(0, 0, 8192, 8192);
             for (auto index = std::size_t{0}; index < templateRects.size(); ++index)
             {
-                auto const recognizerId = test::recognizerId(
+                auto const recognizerId = test::elementId(
                     std::format(
                         "00000000-0000-0000-0000-{:012x}",
                         index + 0x300U
@@ -277,7 +277,7 @@ namespace uf::annotation
             auto const searchRoi = test::pixelRect(0, 0, 8192, 8192);
             for (auto index = std::size_t{0}; index < templateRects.size(); ++index)
             {
-                auto const recognizerId = test::recognizerId(
+                auto const recognizerId = test::elementId(
                     std::format(
                         "00000000-0000-0000-0000-{:012x}",
                         index + 0x500U
@@ -405,10 +405,10 @@ namespace uf::annotation
         REQUIRE(compiled.has_value());
 
         auto const* p_anchor = compiled->runtimeManifest.findAsset(
-            test::recognizerId(k_anchorId)
+            test::elementId(k_anchorId)
         );
         auto const* p_action = compiled->runtimeManifest.findAsset(
-            test::recognizerId(k_actionId)
+            test::elementId(k_actionId)
         );
         REQUIRE(p_anchor != nullptr);
         REQUIRE(p_action != nullptr);
@@ -565,7 +565,7 @@ namespace uf::annotation
             }
         );
         REQUIRE(replacementSource.has_value());
-        auto const anchorId = test::recognizerId(k_anchorId);
+        auto const anchorId = test::elementId(k_anchorId);
         auto const pageId   = test::pageId(k_pageId);
         auto replacementDocument = AuthoringDocument::create(
             test::projectId(),
@@ -685,9 +685,9 @@ namespace uf::annotation
         );
         REQUIRE(source.has_value());
 
-        auto const anchorOneId = test::recognizerId(k_anchorId);
-        auto const anchorTwoId = test::recognizerId(k_anchorTwoId);
-        auto const actionId    = test::recognizerId(k_actionId);
+        auto const anchorOneId = test::elementId(k_anchorId);
+        auto const anchorTwoId = test::elementId(k_anchorTwoId);
+        auto const actionId    = test::elementId(k_actionId);
         auto const pageOneId   = test::pageId(k_pageId);
         auto const pageTwoId   = test::pageId(k_pageTwoId);
         auto const roiOne      = test::pixelRect(0, 0, 3, 2);
