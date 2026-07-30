@@ -106,6 +106,12 @@ namespace uf::authoring
     {
         Anchor,
         Target,
+
+        // A region the runtime READS rather than clicks: a level, a count, a
+        // timer. Its rectangle says where to look; what is inside it is text
+        // that changes, which is exactly what a template cannot carry and why
+        // this is a third role rather than a target nobody clicks.
+        Info,
     };
 
     struct AddElement final

@@ -550,6 +550,40 @@ namespace uf::authoring
             return draft;
         }
 
+        // The two things a role decides, each as one total mapping rather than a
+        // ternary. A ternary over three roles silently files the new one with
+        // whichever branch it falls into; a switch over a scoped enum makes the
+        // compiler name the case that was forgotten.
+        [[nodiscard]]
+        auto memberKindOf(ElementRole role) noexcept -> workbench::PageMemberKind
+        {
+            switch (role)
+            {
+            case ElementRole::Anchor:
+                return workbench::PageMemberKind::Anchor;
+            case ElementRole::Target:
+                return workbench::PageMemberKind::ActionTarget;
+            case ElementRole::Info:
+                return workbench::PageMemberKind::InfoRegion;
+            }
+            UF_UNREACHABLE();
+        }
+
+        [[nodiscard]]
+        auto commandNameOf(ElementRole role) noexcept -> std::string_view
+        {
+            switch (role)
+            {
+            case ElementRole::Anchor:
+                return "page add-anchor";
+            case ElementRole::Target:
+                return "page add-target";
+            case ElementRole::Info:
+                return "page add-info";
+            }
+            UF_UNREACHABLE();
+        }
+
         [[nodiscard]]
         auto searchRoiOf(
             ElementDraw const& draw,
@@ -1047,9 +1081,7 @@ namespace uf::authoring
                         .templateRect          = command.draw.templateRect,
                         .searchRoi             = searchRoi,
                         .similarityBasisPoints = command.draw.threshold.basisPoints(),
-                        .kind                  = command.role == ElementRole::Anchor
-                            ? workbench::PageMemberKind::Anchor
-                            : workbench::PageMemberKind::ActionTarget,
+                        .kind                  = memberKindOf(command.role),
                     }
                 )
             );
@@ -1078,12 +1110,7 @@ namespace uf::authoring
                 JsonMember{.key = "page", .value = jsonString(command.page)},
                 JsonMember{.key = "authored", .value = drawn},
             };
-            return successJson(
-                command.role == ElementRole::Anchor
-                    ? "page add-anchor"
-                    : "page add-target",
-                members
-            );
+            return successJson(commandNameOf(command.role), members);
         }
 
         [[nodiscard]]

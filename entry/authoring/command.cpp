@@ -395,13 +395,34 @@ namespace uf::authoring
             std::span<std::string const> raw
         ) -> Result<AuthoringCommand>
         {
-            UF_TRY_VALUE(verb, positional(raw, 0, "create|add-anchor|add-target"));
+            UF_TRY_VALUE(
+                verb,
+                positional(raw, 0, "create|add-anchor|add-target|add-info")
+            );
             UF_TRY_VALUE(root, positional(raw, 1, "root"));
             UF_TRY_VALUE(page, positional(raw, 2, "page"));
 
+            // A table rather than a chain: the verb set is closed, and a chain
+            // over a closed set accepts a new member with no branch while the
+            // compiler stays silent. Adding a verb here is adding a row.
+            struct RoleVerb final
+            {
+                std::string_view verb;
+                ElementRole      role;
+            };
+            constexpr auto k_roleVerbs = std::array{
+                RoleVerb{.verb = "add-anchor", .role = ElementRole::Anchor},
+                RoleVerb{.verb = "add-target", .role = ElementRole::Target},
+                RoleVerb{.verb = "add-info",   .role = ElementRole::Info},
+            };
+
             auto const isCreate = (verb == "create");
-            auto const isAnchor = (verb == "add-anchor");
-            if (!isCreate && !isAnchor && verb != "add-target")
+            auto const named    = std::ranges::find(
+                k_roleVerbs,
+                verb,
+                &RoleVerb::verb
+            );
+            if (!isCreate && named == k_roleVerbs.end())
             {
                 return invalid(std::format("unknown page verb \"{}\"", verb));
             }
@@ -424,7 +445,7 @@ namespace uf::authoring
             return AddElement{
                 .root = std::filesystem::path{root},
                 .page = std::move(page),
-                .role = isAnchor ? ElementRole::Anchor : ElementRole::Target,
+                .role = named->role,
                 .draw = std::move(draw),
             };
         }
@@ -774,6 +795,7 @@ namespace uf::authoring
             "  umbra-authoring page create     ROOT PAGE ANCHOR <draw>\n"
             "  umbra-authoring page add-anchor ROOT PAGE NAME   <draw>\n"
             "  umbra-authoring page add-target ROOT PAGE NAME   <draw>\n"
+            "  umbra-authoring page add-info   ROOT PAGE NAME   <draw>\n"
             "  umbra-authoring match ROOT RECOGNIZER --frame PNG [--budget N]\n"
             "  umbra-authoring frames stability PNG PNG... [--rect x,y,w,h]\n"
             "                                   [--gray-tolerance N] [--gap N]\n"
