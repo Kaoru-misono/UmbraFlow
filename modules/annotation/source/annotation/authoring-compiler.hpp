@@ -1,6 +1,7 @@
 #pragma once
 
 #include "authoring-document.hpp"
+#include "resource.hpp"
 #include "runtime-manifest.hpp"
 #include "template-asset.hpp"
 

@@ -1,5 +1,7 @@
 #include "workbench-app.hpp"
 
+#include <annotation/resource.hpp>
+
 #include <core/types/integer.hpp>
 
 #include <domain/error.hpp>

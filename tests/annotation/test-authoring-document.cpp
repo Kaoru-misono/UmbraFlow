@@ -2,6 +2,7 @@
 
 #include <annotation/authoring-document.hpp>
 #include <annotation/content-hash.hpp>
+#include <annotation/resource.hpp>
 
 #include <doctest/doctest.h>
 

@@ -71,6 +71,7 @@ cpp_add_test(
         annotation/test-authoring-compiler.cpp
         annotation/test-authoring-document.cpp
         annotation/test-authorization.cpp
+        annotation/test-capabilities.cpp
         annotation/test-catalog.cpp
         annotation/test-colour-key-join.cpp
         annotation/test-content-hash.cpp
@@ -79,6 +80,7 @@ cpp_add_test(
         annotation/test-regression-runner.cpp
         annotation/test-runtime-manifest.cpp
         annotation/test-template-asset.cpp
+        annotation/test-variant.cpp
     LIBS
         ${PROJECT_NAME}_annotation
         ${PROJECT_NAME}_image

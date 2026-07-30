@@ -1,5 +1,6 @@
 #pragma once
 
+#include "capabilities.hpp"
 #include "resource.hpp"
 
 #include <core/error/result.hpp>
@@ -53,6 +54,13 @@ namespace uf::annotation
         [[nodiscard]] auto id() const -> RecognizerId;
         [[nodiscard]] auto name() const -> ResourceName;
         [[nodiscard]] auto annotationType() const noexcept -> AnnotationType;
+
+        // Derived from the annotation type on every call rather than stored. A
+        // stored set would be a second source of truth for the same fact, and it
+        // would grow this type, which both RecognitionCatalog and
+        // AuthoringDocument move around inside a vector.
+        [[nodiscard]] auto capabilities() const noexcept -> ElementCapabilities;
+
         [[nodiscard]] auto templateRect() const noexcept -> PixelRect;
         [[nodiscard]] auto searchRoi() const noexcept -> PixelRect;
         [[nodiscard]] auto threshold() const noexcept -> SimilarityThreshold;

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <annotation/authoring-document.hpp>
+#include <annotation/resource.hpp>
 
 #include <core/error/result.hpp>
 #include <core/safety/annotations.hpp>

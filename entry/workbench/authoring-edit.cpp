@@ -1,5 +1,7 @@
 #include "authoring-edit.hpp"
 
+#include <annotation/resource.hpp>
+
 #include <core/error/contracts.hpp>
 #include <core/safety/checked-access.hpp>
 

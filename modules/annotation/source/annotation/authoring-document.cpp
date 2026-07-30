@@ -2,6 +2,7 @@
 
 #include "detail/annotation-fields.hpp"
 #include "detail/canonical-toml.hpp"
+#include "resource.hpp"
 
 #include <core/error/contracts.hpp>
 #include <core/safety/checked-access.hpp>
@@ -9,8 +10,6 @@
 #include <core/utility/variant-match.hpp>
 
 #include <domain/error.hpp>
-
-#include <vision/frame-analysis.hpp>
 
 #include <algorithm>
 #include <array>
@@ -650,58 +649,6 @@ namespace uf::annotation
                 .searchRoi = searchRoi,
             };
         }
-    }
-
-    auto ColourKey::create(
-        uint32 red,
-        uint32 green,
-        uint32 blue,
-        uint32 tolerance
-    ) -> Result<ColourKey>
-    {
-        if (
-            red > k_maximumChannel
-            || green > k_maximumChannel
-            || blue > k_maximumChannel
-        )
-        {
-            return invalidAuthoring(
-                "colour key channels must each be between 0 and 255"
-            );
-        }
-        if (tolerance > k_maximumTolerance)
-        {
-            return invalidAuthoring(
-                "colour key tolerance must be between 0 and 765"
-            );
-        }
-        return ColourKey{
-            static_cast<uint8>(red),
-            static_cast<uint8>(green),
-            static_cast<uint8>(blue),
-            tolerance
-        };
-    }
-
-    // Delegated rather than duplicated. The ramp had two byte-identical copies
-    // for a while -- one here, one behind probeColour, which needs it to answer
-    // how many pixels a key selects. Two copies of one rule is exactly what
-    // drifts, and the drift would be silent: authoring would bake one mask and
-    // the probe would report another. annotation depends on vision, so the call
-    // goes this way and the rule lives once.
-    auto ColourKey::alphaFor(
-        uint8 red,
-        uint8 green,
-        uint8 blue
-    ) const noexcept -> uint8
-    {
-        return colourKeyAlpha(
-            Bgra8Pixel{.blue = blue, .green = green, .red = red, .alpha = 255},
-            m_red,
-            m_green,
-            m_blue,
-            m_tolerance
-        );
     }
 
     auto annotationTypeOfKind(ElementKind const& kind) noexcept -> AnnotationType

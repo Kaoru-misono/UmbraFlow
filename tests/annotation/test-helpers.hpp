@@ -1,6 +1,7 @@
 #pragma once
 
 #include <annotation/authoring-document.hpp>
+#include <annotation/resource.hpp>
 
 #include <core/numeric/checked-arithmetic.hpp>
 #include <core/numeric/checked-cast.hpp>

@@ -2,6 +2,7 @@
 
 #include "authoring-compiler.hpp"
 #include "recognition-runtime.hpp"
+#include "resource.hpp"
 
 #include <core/error/result.hpp>
 

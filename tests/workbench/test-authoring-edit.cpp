@@ -6,6 +6,7 @@
 #include <annotation/authoring-compiler.hpp>
 #include <annotation/authoring-document.hpp>
 #include <annotation/content-hash.hpp>
+#include <annotation/resource.hpp>
 
 #include <core/types/integer.hpp>
 

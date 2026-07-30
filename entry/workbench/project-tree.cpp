@@ -1,6 +1,7 @@
 #include "project-tree.hpp"
 
 #include <annotation/authoring-document.hpp>
+#include <annotation/resource.hpp>
 
 #include <algorithm>
 #include <variant>

@@ -3,6 +3,7 @@
 #include <annotation/authoring-compiler.hpp>
 #include <annotation/authoring-document.hpp>
 #include <annotation/recognition-runtime.hpp>
+#include <annotation/resource.hpp>
 
 #include <core/error/result.hpp>
 #include <core/types/integer.hpp>

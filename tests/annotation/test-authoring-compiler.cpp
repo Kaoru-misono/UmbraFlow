@@ -3,6 +3,7 @@
 #include <annotation/authoring-compiler.hpp>
 #include <annotation/authoring-document.hpp>
 #include <annotation/content-hash.hpp>
+#include <annotation/resource.hpp>
 
 #include <core/numeric/checked-arithmetic.hpp>
 #include <core/safety/checked-access.hpp>

@@ -1,11 +1,15 @@
 #include "catalog.hpp"
 
+#include "resource.hpp"
+
 #include <core/numeric/checked-arithmetic.hpp>
 #include <core/safety/checked-access.hpp>
 #include <core/text/utf8.hpp>
 #include <core/types/integer.hpp>
 
 #include <domain/error.hpp>
+
+#include <vision/frame-analysis.hpp>
 
 #include <algorithm>
 #include <array>
@@ -362,6 +366,60 @@ namespace uf::annotation
         return TemplateOffset{x, y};
     }
 
+    auto ColourKey::create(
+        uint32 red,
+        uint32 green,
+        uint32 blue,
+        uint32 tolerance
+    ) -> Result<ColourKey>
+    {
+        if (
+            red > k_maximumChannel
+            || green > k_maximumChannel
+            || blue > k_maximumChannel
+        )
+        {
+            return fail(
+                AutomationErrorKind::InvalidResource,
+                "colour key channels must each be between 0 and 255"
+            );
+        }
+        if (tolerance > k_maximumTolerance)
+        {
+            return fail(
+                AutomationErrorKind::InvalidResource,
+                "colour key tolerance must be between 0 and 765"
+            );
+        }
+        return ColourKey{
+            static_cast<uint8>(red),
+            static_cast<uint8>(green),
+            static_cast<uint8>(blue),
+            tolerance
+        };
+    }
+
+    // Delegated rather than duplicated. The ramp had two byte-identical copies
+    // for a while -- one here, one behind probeColour, which needs it to answer
+    // how many pixels a key selects. Two copies of one rule is exactly what
+    // drifts, and the drift would be silent: authoring would bake one mask and
+    // the probe would report another. annotation depends on vision, so the call
+    // goes this way and the rule lives once.
+    auto ColourKey::alphaFor(
+        uint8 red,
+        uint8 green,
+        uint8 blue
+    ) const noexcept -> uint8
+    {
+        return colourKeyAlpha(
+            Bgra8Pixel{.blue = blue, .green = green, .red = red, .alpha = 255},
+            m_red,
+            m_green,
+            m_blue,
+            m_tolerance
+        );
+    }
+
     RecognizerDefinition::RecognizerDefinition(RecognizerSpec spec) noexcept
         : m_id{spec.id}
         , m_name{std::move(spec.name)}
@@ -478,6 +536,10 @@ namespace uf::annotation
     auto RecognizerDefinition::annotationType() const noexcept -> AnnotationType
     {
         return m_annotationType;
+    }
+    auto RecognizerDefinition::capabilities() const noexcept -> ElementCapabilities
+    {
+        return ElementCapabilities::fromAnnotationType(m_annotationType, m_defaultClick);
     }
     auto RecognizerDefinition::templateRect() const noexcept -> PixelRect { return m_templateRect; }
     auto RecognizerDefinition::searchRoi() const noexcept -> PixelRect { return m_searchRoi; }

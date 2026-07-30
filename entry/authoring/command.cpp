@@ -1,5 +1,7 @@
 #include "command.hpp"
 
+#include <annotation/resource.hpp>
+
 #include <core/numeric/checked-cast.hpp>
 #include <core/safety/checked-access.hpp>
 #include <core/types/integer.hpp>

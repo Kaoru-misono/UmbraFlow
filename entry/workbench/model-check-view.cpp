@@ -8,6 +8,7 @@
 #include <annotation/authoring-document.hpp>
 #include <annotation/catalog.hpp>
 #include <annotation/recognition-runtime.hpp>
+#include <annotation/resource.hpp>
 
 #include <core/error/contracts.hpp>
 #include <core/error/result.hpp>

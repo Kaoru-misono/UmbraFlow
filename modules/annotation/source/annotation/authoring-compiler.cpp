@@ -1,5 +1,7 @@
 #include "authoring-compiler.hpp"
 
+#include "resource.hpp"
+
 #include <core/numeric/checked-arithmetic.hpp>
 #include <core/safety/checked-access.hpp>
 #include <core/types/integer.hpp>
