@@ -155,4 +155,13 @@ namespace uf::task
         m_open.reset();
         return consumed;
     }
+
+    auto CycleLedger::spend(CycleTicket ticket) -> Result<engine::Observation>
+    {
+        UF_TRY(requireOpen(ticket));
+
+        auto observation = std::move(m_open->observation);
+        m_open.reset();
+        return observation;
+    }
 }

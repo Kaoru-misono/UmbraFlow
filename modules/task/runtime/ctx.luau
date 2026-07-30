@@ -168,6 +168,22 @@ local function newCycleView(state)
         state.live     = false
     end
 
+    -- A delivered keystroke CONSUMES the cycle for the same reason a click does:
+    -- the key changed the screen, so this frame no longer describes it. That is
+    -- the host's rule rather than this file's -- the ledger spends the cycle
+    -- either way -- and the bookkeeping here follows it so the view goes dead at
+    -- the same moment the host's cycle does.
+    --
+    -- It takes no hit. The whole difference between this and view:click is that a
+    -- key names no position, so there is nothing to have found first; what the
+    -- author writes is the name their target prints, "E" or "3" or "F1".
+    function view:key(name)
+        requireLive(state)
+        native.key(state.ticket, name)
+        state.consumed = true
+        state.live     = false
+    end
+
     return table.freeze(view)
 end
 
@@ -558,6 +574,13 @@ end
 
 function ctx:cycle_click(ticket, hit)
     return native.cycle_click(ticket, hit)
+end
+
+-- Named `key` rather than `cycle_key` because that is the primitive's name on the
+-- private surface, and this block forwards each primitive under its own name. It
+-- takes a ticket like every cycle verb does; what it does not take is a hit.
+function ctx:key(ticket, name)
+    return native.key(ticket, name)
 end
 
 -- There is no ctx:now: a script reads no clock, so the only shapes waiting can

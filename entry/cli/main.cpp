@@ -1,5 +1,6 @@
 #include "args.hpp"
 #include "application-info.hpp"
+#include "drive.hpp"
 #include "run.hpp"
 
 #include <core/numeric/checked-cast.hpp>
@@ -58,12 +59,48 @@ namespace uf::cli
         }
 
         [[nodiscard]]
+        auto dispatchDrive(std::span<std::string const> raw) -> ExitCode
+        {
+            auto const args = parseDriveArguments(raw);
+            if (!args)
+            {
+                std::cerr << formatRunError(args.error()) << '\n';
+                std::cerr << driveUsageText();
+                return exitCodeForError(args.error(), false);
+            }
+
+            auto const report = driveProduct(*args);
+            if (!report)
+            {
+                std::cerr << formatRunError(report.error()) << '\n';
+                return exitCodeForError(report.error(), runCancellationRequested());
+            }
+
+            if (report->failure)
+            {
+                std::cerr << formatRunError(*report->failure) << '\n';
+            }
+            std::cout << std::format(
+                "drive: queue=\"{}\" results=\"{}\" trace=\"{}\"\n",
+                args->queue.string(),
+                args->results.string(),
+                report->tracePath.string()
+            );
+            return exitCodeForReport(*report, runCancellationRequested());
+        }
+
+        // The mode is chosen HERE and nowhere else, and there is exactly one choice
+        // per process: one subcommand token selects one handler, and neither handler
+        // can reach the other. That is the argument-level half of the exclusion; the
+        // half that actually holds it is TaskHost's per-generation front-end claim,
+        // which refuses the second front-end however it was reached.
+        [[nodiscard]]
         auto dispatch(std::span<std::string const> raw) -> ExitCode
         {
             if (raw.empty())
             {
                 std::cout << application::k_name << '\n';
-                std::cout << runUsageText();
+                std::cout << usageText();
                 return ExitCode::Success;
             }
 
@@ -71,9 +108,13 @@ namespace uf::cli
             {
                 return dispatchRun(raw.subspan(1));
             }
+            if (raw.front() == "drive")
+            {
+                return dispatchDrive(raw.subspan(1));
+            }
 
             std::cerr << std::format("unknown subcommand \"{}\"\n", raw.front());
-            std::cerr << runUsageText();
+            std::cerr << usageText();
             return ExitCode::Failure;
         }
     }

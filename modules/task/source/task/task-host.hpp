@@ -12,6 +12,8 @@
 
 #include <engine/ports.hpp>
 
+#include <trace/event.hpp>
+
 #include <filesystem>
 #include <memory>
 #include <optional>
@@ -22,6 +24,11 @@
 
 namespace uf::task
 {
+    // The operator front-end's consumer of the capability surface, defined in
+    // task/operator-session.hpp. Declared here so startOperatorSession can hand one
+    // back without this header depending on that one, which depends on this.
+    class OperatorSession;
+
     // The event stream a resident host subscribes to. Deliberately declared and
     // never defined. subscribeEvents' shape is frozen here because the verb set
     // must not change between the one-run-per-process P0 and the resident P2
@@ -201,6 +208,39 @@ namespace uf::task
             std::string_view taskName,
             TaskRunConfig config
         ) -> Result<TaskRunReport>;
+
+        // Binds `generation`'s project to an operator front-end and hands back the
+        // session it drives. The operator is a SIBLING consumer of the same private
+        // capability surface a task's Luau framework consumes, never a route into
+        // Luau; see task/operator-session.hpp for what that means and what it
+        // deliberately does not include.
+        //
+        // WHY THIS IS THE MUTUAL EXCLUSION, AND WHY IT IS HERE. A generation holds
+        // the single-open-cycle ledger, so two policy sources driving one generation
+        // would contend for it: a task's wait loop and an operator's commands would
+        // each believe they owned the one open cycle. This is where that is made
+        // impossible rather than documented. The first of startTask and
+        // startOperatorSession to reach a generation LATCHES that generation's
+        // front-end, and the other is refused for the life of the generation --
+        // whichever order they arrive in, and however many times either is called.
+        //
+        // The latched value is also what the generation hands the trace recorder, so
+        // a stream's attribution and the exclusion that produced it are one fact.
+        // Nothing above this can weaken it: a CLI that dispatched both subcommands in
+        // one process would meet this refusal, and so would a resident host.
+        //
+        // A second call under the SAME front-end is allowed, because a generation
+        // legitimately runs several tasks in sequence and would legitimately host
+        // several operator sessions; what it must never do is mix them.
+        //
+        // Unlike startTask this does not block: the session is returned live and the
+        // caller drives it verb by verb, then calls OperatorSession::finish to close
+        // the run bracket.
+        [[nodiscard]]
+        auto startOperatorSession(
+            GenerationId generation,
+            TaskRunConfig config
+        ) -> Result<std::unique_ptr<OperatorSession>>;
 
         // Spends `generation`: the engine returns Cancelled from its next verb
         // and the VM interrupt hard-breaks the running task thread. Idempotent,

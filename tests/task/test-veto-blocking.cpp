@@ -255,6 +255,18 @@ namespace uf::task
                 m_gate->blockOn(m_gate->token());
                 return ok();
             }
+
+            // A keystroke reaches the same port, so it blocks on the same gate: what
+            // the veto cases prove about a blocked click holds for a blocked key.
+            [[nodiscard]]
+            auto pressKey(
+                KeyName /*key*/,
+                TargetGeneration /*actionGeneration*/
+            ) -> Status override
+            {
+                m_gate->blockOn(m_gate->token());
+                return ok();
+            }
         };
 
         // Blocks inside emit(), on the first event matching its target.
@@ -335,7 +347,8 @@ namespace uf::task
             auto recorder = std::make_unique<trace::TraceRecorder>(
                 std::move(traceSink),
                 k_fixtureRunId,
-                k_fixtureGenerationId
+                k_fixtureGenerationId,
+                trace::FrontEnd::Task
             );
             auto session = engine::EngineSession::create(
                 std::move(parts.loaded),

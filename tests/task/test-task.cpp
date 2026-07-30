@@ -172,6 +172,7 @@ namespace uf::task
                     std::move(sink),
                     TaskRunId{1},
                     GenerationId{1},
+                    trace::FrontEnd::Task,
                 };
 
                 auto const status = recorder.emit(trace::TraceEvent{

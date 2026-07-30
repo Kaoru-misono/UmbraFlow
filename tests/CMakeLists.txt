@@ -105,6 +105,7 @@ cpp_add_test(
 
 set(CLI_TEST_SOURCES
     cli/test-args.cpp
+    cli/test-drive-protocol.cpp
 )
 # selectCandidate operates on the controller's TargetCandidate and is compiled
 # into cli_support only on Windows, so its test is registered only there.
@@ -144,6 +145,7 @@ if(TARGET ${PROJECT_NAME}_task)
             task/test-framework-bundle.cpp
             task/test-framework-context.cpp
             task/test-framework-surface.cpp
+            task/test-operator-front-end.cpp
             task/test-semantic-events.cpp
             task/test-veto-blocking.cpp
             task/test-task-loader.cpp

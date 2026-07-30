@@ -406,39 +406,6 @@ namespace uf::m0_demo
             );
         }
 
-        struct ClickResult final
-        {
-            std::optional<uint64> beforeFrame{};
-            std::optional<uint64> afterFrame{};
-            bool                  delivered{};
-            std::optional<Error>  error{};
-        };
-
-        [[nodiscard]] auto serializeClickResult(ClickResult const& result) -> std::string
-        {
-            auto output = std::string{"{\"op\":\"click\",\"ok\":"};
-            output += result.error ? "false" : "true";
-            output += ",\"before_frame_id\":";
-            appendOptionalNumber(output, result.beforeFrame);
-            output += ",\"after_frame_id\":";
-            appendOptionalNumber(output, result.afterFrame);
-            output += ",\"delivered\":";
-            output += result.delivered ? "true" : "false";
-            output += ",\"error\":";
-            if (result.error)
-            {
-                output += escapeJsonString(
-                    formatAutomationError(*result.error)
-                );
-            }
-            else
-            {
-                output += "null";
-            }
-            output += '}';
-            return output;
-        }
-
         struct CommandExecution final
         {
             std::string resultLine{};
@@ -446,13 +413,14 @@ namespace uf::m0_demo
         };
 
         [[nodiscard]]
-        auto finishClick(
-            ClickResult const& result,
+        auto finishAction(
+            std::string_view operation,
+            InputAgentActionResult const& result,
             bool stopAgent = false
         ) -> CommandExecution
         {
             return CommandExecution{
-                .resultLine = serializeClickResult(result),
+                .resultLine = serializeInputAgentActionResult(operation, result),
                 .stopAgent  = stopAgent,
             };
         }
@@ -547,6 +515,7 @@ namespace uf::m0_demo
         }
 
         auto addReleaseFailures(
+            std::string_view operation,
             Error& error,
             std::vector<ReleaseOutcome> const& releases
         ) -> void
@@ -556,13 +525,162 @@ namespace uf::m0_demo
                 if (!release.result)
                 {
                     error.addContext(
-                        "input-agent click compensation failed: "
-                        + formatAutomationError(
-                            release.result.error()
+                        std::format(
+                            "input-agent {} compensation failed: {}",
+                            operation,
+                            formatAutomationError(release.result.error())
                         )
                     );
                 }
             }
+        }
+
+        [[nodiscard]]
+        auto checkSettleBound(
+            std::string_view operation,
+            MonotonicInstant::Duration settle
+        ) -> Status
+        {
+            if (settle <= k_maximumInputAgentSettle)
+            {
+                return ok();
+            }
+            return fail(
+                AutomationErrorKind::InvalidResource,
+                std::format(
+                    "input-agent {} settle_ms exceeds the 5000 ms limit",
+                    operation
+                )
+            );
+        }
+
+        struct FramedAction final
+        {
+            OutputFile before;
+            OutputFile after;
+
+            // The observation the action is decided from. Its PNG is written
+            // only after delivery; see writeFramesAfterDelivery.
+            Frame frame;
+        };
+
+        // Reserves both output files before capturing, so a path that is not
+        // confined, aliases another output, or already exists is refused before
+        // the target is observed at all. The before-frame is deliberately left
+        // unencoded here: the slow encode plus durable flush must not sit inside
+        // the observe->act window, where it would inflate this observation's age
+        // against max_action_frame_age and produce a false StaleObservation.
+        [[nodiscard]]
+        auto beginFramedAction(
+            InputAgentFramePaths const& paths,
+            std::filesystem::path const& canonicalOutputDirectory,
+            WgcCaptureSession& session
+        ) -> Result<FramedAction>
+        {
+            UF_TRY_VALUE(
+                before,
+                openOutputFile(paths.before, canonicalOutputDirectory)
+            );
+            UF_TRY_VALUE(
+                after,
+                openOutputFile(paths.after, canonicalOutputDirectory)
+            );
+            UF_TRY_VALUE(frame, session.capture());
+            return FramedAction{
+                .before = std::move(before),
+                .after  = std::move(after),
+                .frame  = std::move(frame),
+            };
+        }
+
+        // Runs once delivery has succeeded and the observe->act window is
+        // closed. The before-Frame is immutable, so its file still shows the
+        // pre-action observation even though it is encoded now. The output
+        // handles were reserved with CREATE_NEW before the capture, so moving
+        // the encode past delivery does not weaken path confinement.
+        [[nodiscard]]
+        auto writeFramesAfterDelivery(
+            FramedAction& action,
+            MonotonicInstant::Duration settle,
+            WgcCaptureSession& session
+        ) -> Result<Frame>
+        {
+            UF_TRY(writeFramePng(action.frame, action.before));
+            if (settle > MonotonicInstant::Duration::zero())
+            {
+                std::this_thread::sleep_for(settle);
+            }
+            return captureToOutput(session, action.after);
+        }
+
+        // Both action ops prove the target is still the one the observation came
+        // from before posting anything. Every failure here is terminal for the
+        // agent: the window it was launched against is gone or was replaced.
+        // The borrows are mutable because revalidate() and
+        // validateTargetInstance() refresh their own owner's continuity state;
+        // nothing is returned through them.
+        [[nodiscard]]
+        auto ensureTargetUnchanged(
+            ResolvedTarget& resolved,
+            WgcCaptureSession& session
+        ) -> Status
+        {
+            UF_TRY_VALUE(revalidated, resolved.revalidate());
+            UF_TRY(requireUnchangedTarget(revalidated));
+            return session.validateTargetInstance();
+        }
+
+        struct DeliveryCompensation final
+        {
+            Error error;
+            bool  stopAgent{};
+        };
+
+        // A failed post can leave a key or the pointer button held, so the
+        // release has to reach a target the controller still accepts. When the
+        // capture target instance has changed, posting to it would reach a
+        // window that is no longer the observed one, so the release is aimed at
+        // a deliberately rejected identity: HeldInputs then drops the holds and
+        // no message leaves the process.
+        [[nodiscard]]
+        auto compensateFailedDelivery(
+            std::string_view operation,
+            Error failure,
+            DeliveryTarget const& delivery,
+            WgcCaptureSession& session,
+            HeldInputs& held,
+            AuditLog& audit
+        ) -> DeliveryCompensation
+        {
+            auto error                = std::move(failure);
+            auto cleanupTarget        = delivery;
+            auto instanceAfterFailure = session.validateTargetInstance();
+            auto const stopAgent = !instanceAfterFailure;
+            if (!instanceAfterFailure)
+            {
+                error.addContext(
+                    std::format(
+                        "input-agent {} compensation blocked because the capture target instance changed: {}",
+                        operation,
+                        formatAutomationError(instanceAfterFailure.error())
+                    )
+                );
+                auto rejectedTarget = DeliveryTarget::create(
+                    delivery.windowHandle(),
+                    CaptureSessionId{~delivery.sessionId().value()},
+                    delivery.generation(),
+                    delivery.clientWidth(),
+                    delivery.clientHeight()
+                );
+                UF_CHECK(rejectedTarget.has_value());
+                cleanupTarget = *rejectedTarget;
+            }
+            auto const releases = releaseHeld(cleanupTarget, held, audit);
+            addReleaseFailures(operation, error, releases);
+            return DeliveryCompensation{
+                .error     = std::move(error),
+                .stopAgent = stopAgent,
+            };
         }
 
         [[nodiscard]]
@@ -578,101 +696,48 @@ namespace uf::m0_demo
             std::filesystem::path const& canonicalResults
         ) -> CommandExecution
         {
-            auto result = ClickResult{};
-            auto canonicalBefore = validateOutputPath(
+            auto constexpr operation = std::string_view{"click"};
+            auto result = InputAgentActionResult{};
+            auto framePaths = resolveInputAgentFramePaths(
                 command.outputBefore,
-                canonicalOutputDirectory,
-                canonicalQueue,
-                canonicalResults,
-                "click out_before"
-            );
-            if (!canonicalBefore)
-            {
-                result.error = std::move(canonicalBefore).error();
-                return finishClick(result);
-            }
-            auto canonicalAfter = validateOutputPath(
                 command.outputAfter,
                 canonicalOutputDirectory,
                 canonicalQueue,
                 canonicalResults,
-                "click out_after"
+                operation
             );
-            if (!canonicalAfter)
+            if (!framePaths)
             {
-                result.error = std::move(canonicalAfter).error();
-                return finishClick(result);
+                result.error = std::move(framePaths).error();
+                return finishAction(operation, result);
             }
-            auto pathsAlias = canonicalPathsAlias(
-                *canonicalBefore,
-                *canonicalAfter
-            );
-            if (!pathsAlias)
+            auto settleBound = checkSettleBound(operation, command.settle);
+            if (!settleBound)
             {
-                result.error = std::move(pathsAlias).error();
-                return finishClick(result);
-            }
-            if (*pathsAlias)
-            {
-                auto failure = fail(
-                    AutomationErrorKind::InvalidResource,
-                    "input-agent click out_before and out_after paths alias"
-                );
-                result.error = std::move(failure).error();
-                return finishClick(result);
+                result.error = std::move(settleBound).error();
+                return finishAction(operation, result);
             }
 
-            if (command.settle > k_maximumInputAgentSettle)
-            {
-                auto failure = fail(
-                    AutomationErrorKind::InvalidResource,
-                    "input-agent click settle_ms exceeds the 5000 ms limit"
-                );
-                result.error = std::move(failure).error();
-                return finishClick(result);
-            }
-
-            auto beforeOutput = openOutputFile(
-                *canonicalBefore,
-                canonicalOutputDirectory
+            auto action = beginFramedAction(
+                *framePaths,
+                canonicalOutputDirectory,
+                session
             );
-            if (!beforeOutput)
+            if (!action)
             {
-                result.error = std::move(beforeOutput).error();
-                return finishClick(result);
+                result.error = std::move(action).error();
+                return finishAction(operation, result);
             }
-            auto afterOutput = openOutputFile(
-                *canonicalAfter,
-                canonicalOutputDirectory
-            );
-            if (!afterOutput)
-            {
-                result.error = std::move(afterOutput).error();
-                return finishClick(result);
-            }
-
-            // Capture the before-frame only. Its PNG is encoded and written AFTER
-            // the click is delivered (below), so the slow encode + durable flush do
-            // not sit inside the observe->act window and inflate this observation's
-            // age against max_action_frame_age (a false StaleObservation on
-            // slow-delivering screens). The before-Frame is immutable, so the file
-            // still shows the pre-click observation.
-            auto before = session.capture();
-            if (!before)
-            {
-                result.error = std::move(before).error();
-                return finishClick(result);
-            }
-            result.beforeFrame = before->id().value();
+            result.beforeFrame = action->frame.id().value();
 
             auto lease = ObservationLease::forFrame(
-                *before,
+                action->frame,
                 k_defaultMaxActionFrameAge
             );
             if (!lease)
             {
                 result.error = std::move(lease).error();
-                return finishClick(result);
+                return finishAction(operation, result);
             }
             auto const point = Point<ClientSpace>{
                 command.x,
@@ -687,26 +752,14 @@ namespace uf::m0_demo
             if (!coordinate)
             {
                 result.error = std::move(coordinate).error();
-                return finishClick(result);
+                return finishAction(operation, result);
             }
 
-            auto revalidated = resolved.revalidate();
-            if (!revalidated)
+            auto current = ensureTargetUnchanged(resolved, session);
+            if (!current)
             {
-                result.error = std::move(revalidated).error();
-                return finishClick(result, true);
-            }
-            auto unchanged = requireUnchangedTarget(*revalidated);
-            if (!unchanged)
-            {
-                result.error = std::move(unchanged).error();
-                return finishClick(result, true);
-            }
-            auto instance = session.validateTargetInstance();
-            if (!instance)
-            {
-                result.error = std::move(instance).error();
-                return finishClick(result, true);
+                result.error = std::move(current).error();
+                return finishAction(operation, result, true);
             }
 
             auto clicked = click(
@@ -718,64 +771,216 @@ namespace uf::m0_demo
             );
             if (!clicked)
             {
-                auto error                = std::move(clicked).error();
-                auto cleanupTarget        = delivery;
-                auto instanceAfterFailure = session.validateTargetInstance();
-                auto const stopAgent = !instanceAfterFailure;
-                if (!instanceAfterFailure)
-                {
-                    error.addContext(
-                        "input-agent click compensation blocked because the capture target instance changed: "
-                        + formatAutomationError(
-                            instanceAfterFailure.error()
-                        )
-                    );
-                    auto rejectedTarget = DeliveryTarget::create(
-                        delivery.windowHandle(),
-                        CaptureSessionId{~delivery.sessionId().value()},
-                        delivery.generation(),
-                        delivery.clientWidth(),
-                        delivery.clientHeight()
-                    );
-                    UF_CHECK(rejectedTarget.has_value());
-                    cleanupTarget = *rejectedTarget;
-                }
-                auto const releases = releaseHeld(cleanupTarget, held, audit);
-                addReleaseFailures(error, releases);
-                result.error = std::move(error);
-                return finishClick(result, stopAgent);
+                auto compensation = compensateFailedDelivery(
+                    operation,
+                    std::move(clicked).error(),
+                    delivery,
+                    session,
+                    held,
+                    audit
+                );
+                result.error = std::move(compensation.error);
+                return finishAction(operation, result, compensation.stopAgent);
             }
             result.delivered = true;
 
-            // Off the observe->act path now: encode + durably write the before-frame
-            // PNG. The output handle was reserved (CREATE_NEW) before capture, so the
-            // path-confinement guarantee is unaffected; only the encode/write/flush
-            // moved past delivery.
-            auto beforeWrite = writeFramePng(*before, *beforeOutput);
-            if (!beforeWrite)
-            {
-                result.error = std::move(beforeWrite).error();
-                return finishClick(result);
-            }
-
-            if (command.settle > MonotonicInstant::Duration::zero())
-            {
-                std::this_thread::sleep_for(command.settle);
-            }
-            auto after = captureToOutput(session, *afterOutput);
+            auto after = writeFramesAfterDelivery(
+                *action,
+                command.settle,
+                session
+            );
             if (!after)
             {
                 result.error = std::move(after).error();
-                return finishClick(result);
+                return finishAction(operation, result);
             }
             result.afterFrame = after->id().value();
-            return finishClick(result);
+            return finishAction(operation, result);
+        }
+
+        // The key path deliberately has no lease freshness fence. A keystroke
+        // names no position, so an older observation cannot make it land in the
+        // wrong place; the only staleness that matters is the target having been
+        // replaced, which the generation check and ensureTargetUnchanged cover.
+        [[nodiscard]]
+        auto executeKey(
+            InputAgentKeyCommand const& command,
+            ResolvedTarget& resolved,
+            WgcCaptureSession& session,
+            DeliveryTarget const& delivery,
+            HeldInputs& held,
+            AuditLog& audit,
+            std::filesystem::path const& canonicalOutputDirectory,
+            std::filesystem::path const& canonicalQueue,
+            std::filesystem::path const& canonicalResults
+        ) -> CommandExecution
+        {
+            auto constexpr operation = std::string_view{"key"};
+            auto result = InputAgentActionResult{};
+            auto framePaths = resolveInputAgentFramePaths(
+                command.outputBefore,
+                command.outputAfter,
+                canonicalOutputDirectory,
+                canonicalQueue,
+                canonicalResults,
+                operation
+            );
+            if (!framePaths)
+            {
+                result.error = std::move(framePaths).error();
+                return finishAction(operation, result);
+            }
+            auto settleBound = checkSettleBound(operation, command.settle);
+            if (!settleBound)
+            {
+                result.error = std::move(settleBound).error();
+                return finishAction(operation, result);
+            }
+
+            auto action = beginFramedAction(
+                *framePaths,
+                canonicalOutputDirectory,
+                session
+            );
+            if (!action)
+            {
+                result.error = std::move(action).error();
+                return finishAction(operation, result);
+            }
+            result.beforeFrame = action->frame.id().value();
+
+            auto current = ensureTargetUnchanged(resolved, session);
+            if (!current)
+            {
+                result.error = std::move(current).error();
+                return finishAction(operation, result, true);
+            }
+
+            // keyPress posts WM_KEYDOWN then WM_KEYUP with nothing in between,
+            // which is the same zero hold click uses. A hold between DOWN and UP
+            // is exactly what made a hand-rolled pointer sequence read as a drag
+            // and activate nothing against this target
+            // (docs/pitfalls/capture-and-target-selection.md), so no wait
+            // belongs inside the keystroke; settle_ms waits after it.
+            auto pressed = keyPress(
+                delivery,
+                action->frame.targetGeneration(),
+                command.key,
+                held,
+                audit
+            );
+            if (!pressed)
+            {
+                auto compensation = compensateFailedDelivery(
+                    operation,
+                    std::move(pressed).error(),
+                    delivery,
+                    session,
+                    held,
+                    audit
+                );
+                result.error = std::move(compensation.error);
+                return finishAction(operation, result, compensation.stopAgent);
+            }
+            result.delivered = true;
+
+            auto after = writeFramesAfterDelivery(
+                *action,
+                command.settle,
+                session
+            );
+            if (!after)
+            {
+                result.error = std::move(after).error();
+                return finishAction(operation, result);
+            }
+            result.afterFrame = after->id().value();
+            return finishAction(operation, result);
         }
     }
 
     auto clearInputAgentCommandAudit(AuditLog& audit) noexcept -> void
     {
         audit = AuditLog{};
+    }
+
+    auto resolveInputAgentFramePaths(
+        std::filesystem::path const& outputBefore,
+        std::filesystem::path const& outputAfter,
+        std::filesystem::path const& canonicalOutputDirectory,
+        std::filesystem::path const& canonicalQueue,
+        std::filesystem::path const& canonicalResults,
+        std::string_view operation
+    ) -> Result<InputAgentFramePaths>
+    {
+        auto const beforeRole = std::format("{} out_before", operation);
+        auto const afterRole  = std::format("{} out_after", operation);
+        UF_TRY_VALUE(
+            canonicalBefore,
+            validateOutputPath(
+                outputBefore,
+                canonicalOutputDirectory,
+                canonicalQueue,
+                canonicalResults,
+                beforeRole
+            )
+        );
+        UF_TRY_VALUE(
+            canonicalAfter,
+            validateOutputPath(
+                outputAfter,
+                canonicalOutputDirectory,
+                canonicalQueue,
+                canonicalResults,
+                afterRole
+            )
+        );
+        UF_TRY_VALUE(
+            pathsAlias,
+            canonicalPathsAlias(canonicalBefore, canonicalAfter)
+        );
+        if (pathsAlias)
+        {
+            return fail(
+                AutomationErrorKind::InvalidResource,
+                std::format(
+                    "input-agent {} out_before and out_after paths alias",
+                    operation
+                )
+            );
+        }
+        return InputAgentFramePaths{
+            .before = std::move(canonicalBefore),
+            .after  = std::move(canonicalAfter),
+        };
+    }
+
+    auto serializeInputAgentActionResult(
+        std::string_view operation,
+        InputAgentActionResult const& result
+    ) -> std::string
+    {
+        auto output = std::format("{{\"op\":\"{}\",\"ok\":", operation);
+        output += result.error ? "false" : "true";
+        output += ",\"before_frame_id\":";
+        appendOptionalNumber(output, result.beforeFrame);
+        output += ",\"after_frame_id\":";
+        appendOptionalNumber(output, result.afterFrame);
+        output += ",\"delivered\":";
+        output += result.delivered ? "true" : "false";
+        output += ",\"error\":";
+        if (result.error)
+        {
+            output += escapeJsonString(
+                formatAutomationError(*result.error)
+            );
+        }
+        else
+        {
+            output += "null";
+        }
+        output += '}';
+        return output;
     }
 
     auto validateInputAgentClick(
@@ -930,6 +1135,24 @@ namespace uf::m0_demo
                 {
                     auto execution = executeClick(
                         *clickCommand,
+                        resolved,
+                        session,
+                        delivery,
+                        held,
+                        audit,
+                        canonicalOutputDirectory,
+                        canonicalQueue,
+                        canonicalResults
+                    );
+                    resultLine = std::move(execution.resultLine);
+                    stopAgent  = execution.stopAgent;
+                }
+                else if (auto const* keyCommand = std::get_if<InputAgentKeyCommand>(
+                    &*command
+                ))
+                {
+                    auto execution = executeKey(
+                        *keyCommand,
                         resolved,
                         session,
                         delivery,

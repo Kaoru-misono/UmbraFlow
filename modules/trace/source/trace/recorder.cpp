@@ -38,11 +38,14 @@ namespace uf::trace
     TraceRecorder::TraceRecorder(
         std::unique_ptr<ITraceSink> sink,
         TaskRunId runId,
-        GenerationId generationId
+        GenerationId generationId,
+        FrontEnd frontEnd
     ) noexcept
         : m_sink{std::move(sink)}
+        , m_validator{frontEnd}
         , m_runId{runId}
         , m_generationId{generationId}
+        , m_frontEnd{frontEnd}
     {
         UF_CHECK_MSG(m_sink != nullptr, "a trace recorder requires a sink");
     }
@@ -60,6 +63,7 @@ namespace uf::trace
             sequence,
             m_runId,
             m_generationId,
+            m_frontEnd,
             wallClockUnixMillis(),
         };
         return m_sink->emit(stamped);
@@ -76,4 +80,6 @@ namespace uf::trace
     {
         return m_generationId;
     }
+
+    auto TraceRecorder::frontEnd() const noexcept -> FrontEnd { return m_frontEnd; }
 }

@@ -16,6 +16,10 @@ set(CLI_LIBRARY ${PROJECT_NAME}_cli_support)
 add_library(${CLI_LIBRARY} STATIC
     cli/args.cpp
     cli/args.hpp
+    cli/drive.cpp
+    cli/drive.hpp
+    cli/drive-protocol.cpp
+    cli/drive-protocol.hpp
     cli/run.cpp
     cli/run.hpp
 )
@@ -39,9 +43,12 @@ if(WIN32 AND TARGET ${PROJECT_NAME}_controller)
         PRIVATE
             cli/candidate-selection.cpp
             cli/candidate-selection.hpp
+            cli/drive-windows.cpp
             cli/run-windows.cpp
             cli/platform/controller-action-sink.cpp
             cli/platform/controller-action-sink.hpp
+            cli/platform/target-binding.cpp
+            cli/platform/target-binding.hpp
             cli/platform/wgc-frame-source.hpp
             cli/platform/windows-console-cancellation.cpp
             cli/platform/windows-console-cancellation.hpp
@@ -57,6 +64,7 @@ if(WIN32 AND TARGET ${PROJECT_NAME}_controller)
 else()
     target_sources(${CLI_LIBRARY}
         PRIVATE
+            cli/drive-unsupported.cpp
             cli/run-unsupported.cpp
     )
 endif()

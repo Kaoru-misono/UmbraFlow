@@ -90,6 +90,23 @@ namespace uf::trace
         }
     }
 
+    TraceStreamValidator::TraceStreamValidator(FrontEnd frontEnd) noexcept
+        : m_frontEnd{frontEnd}
+    {
+    }
+
+    auto TraceStreamValidator::requireFramework() const -> Status
+    {
+        if (m_frontEnd != FrontEnd::Task)
+        {
+            return fail(
+                AutomationErrorKind::InternalInvariant,
+                "a framework event reached a stream no Luau framework drove"
+            );
+        }
+        return ok();
+    }
+
     auto TraceStreamValidator::admit(
         TraceEvent const& event
     ) -> Result<std::vector<std::string>>
@@ -129,26 +146,32 @@ namespace uf::trace
             return ok();
 
         case TraceEventKind::FrameworkStepStarted:
+            UF_TRY(requireFramework());
             UF_TRY(requirePayload(event));
             return startStep(*event.framework);
 
         case TraceEventKind::FrameworkStepFinished:
+            UF_TRY(requireFramework());
             UF_TRY(requirePayload(event));
             return finishStep(*event.framework);
 
         case TraceEventKind::FrameworkRetryAttempt:
+            UF_TRY(requireFramework());
             UF_TRY(requirePayload(event));
             return retryAttempt(*event.framework);
 
         case TraceEventKind::FrameworkInterruptMatched:
+            UF_TRY(requireFramework());
             UF_TRY(requirePayload(event));
             return matchInterrupt(*event.framework);
 
         case TraceEventKind::FrameworkInterruptHandled:
+            UF_TRY(requireFramework());
             UF_TRY(requirePayload(event));
             return closeInterrupt(*event.framework, "interrupt_handled");
 
         case TraceEventKind::FrameworkInterruptExhausted:
+            UF_TRY(requireFramework());
             UF_TRY(requirePayload(event));
             return closeInterrupt(*event.framework, "interrupt_exhausted");
 
@@ -156,6 +179,7 @@ namespace uf::trace
         case TraceEventKind::FrameworkSettled:
             // A declared pause opens no scope: its whole content is the duration,
             // which the emitting boundary already converted and bounded.
+            UF_TRY(requireFramework());
             return requirePayload(event);
 
         case TraceEventKind::RunResourcesValidated:
@@ -165,6 +189,7 @@ namespace uf::trace
         case TraceEventKind::EngineActionAuthorized:
         case TraceEventKind::EngineActionRejected:
         case TraceEventKind::EngineActionDelivered:
+        case TraceEventKind::EngineKeyDelivered:
         case TraceEventKind::EngineObservationInvalidated:
         case TraceEventKind::TaskNativeCall:
             // Host-authored lines. The only rule that binds them is the run

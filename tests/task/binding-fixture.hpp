@@ -21,6 +21,7 @@
 #include <domain/error.hpp>
 #include <domain/frame.hpp>
 #include <domain/ids.hpp>
+#include <domain/key.hpp>
 #include <domain/space.hpp>
 
 #include <engine/ports.hpp>
@@ -411,7 +412,8 @@ namespace uf::task
     // Counts delivered clicks so fail-closed cases can assert none escaped.
     class CountingActionSink final : public engine::IActionSink
     {
-        uint32 m_clickCount{0};
+        uint32               m_clickCount{0};
+        std::vector<KeyName> m_keys{};
 
     public:
         [[nodiscard]]
@@ -424,9 +426,28 @@ namespace uf::task
             return ok();
         }
 
+        [[nodiscard]]
+        auto pressKey(
+            KeyName key,
+            TargetGeneration /*actionGeneration*/
+        ) -> Status override
+        {
+            m_keys.emplace_back(key);
+            return ok();
+        }
+
         [[nodiscard]] auto clickCount() const noexcept -> uint32
         {
             return m_clickCount;
+        }
+
+        // The keys this sink was asked to deliver, in order. A test that must prove
+        // a keystroke was refused reads it: a refusal that still posted input would
+        // be a different, weaker guarantee.
+        [[nodiscard]] auto keys() const noexcept UF_LIFETIME_BOUND
+            -> std::vector<KeyName> const&
+        {
+            return m_keys;
         }
     };
 
@@ -445,6 +466,15 @@ namespace uf::task
         ) -> Status override
         {
             m_points.emplace_back(point);
+            return ok();
+        }
+
+        [[nodiscard]]
+        auto pressKey(
+            KeyName /*key*/,
+            TargetGeneration /*actionGeneration*/
+        ) -> Status override
+        {
             return ok();
         }
 
@@ -658,7 +688,8 @@ namespace uf::task
         auto recorder        = std::make_unique<trace::TraceRecorder>(
             std::move(traceSink),
             k_fixtureRunId,
-            k_fixtureGenerationId
+            k_fixtureGenerationId,
+            trace::FrontEnd::Task
         );
         auto session = engine::EngineSession::create(
             std::move(parts.loaded),

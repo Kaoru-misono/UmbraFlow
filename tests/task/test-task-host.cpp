@@ -3,6 +3,7 @@
 #include "../annotation/test-helpers.hpp"
 
 #include <task/framework-bundle.hpp>
+#include <task/operator-session.hpp>
 #include <task/task-host.hpp>
 #include <task/task-loader.hpp>
 
@@ -370,7 +371,7 @@ namespace uf::task
         {
             return std::format(
                 R"({{"schema":"umbraflow-trace/v1","kind":"{}")"
-                R"(,"seq":{},"runId":1,"generationId":1)",
+                R"(,"seq":{},"runId":1,"generationId":1,"frontEnd":"task")",
                 kind,
                 sequence
             );
@@ -473,6 +474,135 @@ namespace uf::task
         );
         // A rejected run opens no trace file, so nothing was written for it.
         CHECK_FALSE(std::filesystem::exists(temp.path() / "unreachable.jsonl"));
+    }
+
+    TEST_CASE("a generation drives one front-end, whichever arrives first")
+    {
+        // The mutual exclusion, made structural. A generation holds the single-open-
+        // cycle ledger, so two policy sources driving one generation would contend for
+        // it. Both orders are checked, because "the first one wins" is only a rule if
+        // it holds symmetrically -- and both are checked on the SAME host, so nothing
+        // about process-level dispatch is doing the work.
+        SUBCASE("a task run refuses an operator session afterwards")
+        {
+            auto const temp = TemporaryDir{"exclusion-task-first"};
+            publishProject(temp.path(), "daily", k_taskSource);
+
+            auto host             = TaskHost{};
+            auto const generation = host.loadProject(temp.path());
+            REQUIRE(generation.has_value());
+
+            auto const report = host.startTask(
+                *generation,
+                "daily",
+                runConfig(temp.path() / "task.jsonl")
+            );
+            REQUIRE(report.has_value());
+
+            auto refused = host.startOperatorSession(
+                *generation,
+                runConfig(temp.path() / "operator.jsonl")
+            );
+            REQUIRE_FALSE(refused.has_value());
+            CHECK(
+                automationErrorKind(refused.error())
+                == AutomationErrorKind::UnsupportedCapability
+            );
+            // A refused claim opens no trace file, so the operator session left no
+            // evidence of a run that never happened.
+            CHECK_FALSE(std::filesystem::exists(temp.path() / "operator.jsonl"));
+        }
+
+        SUBCASE("an operator session refuses a task run afterwards")
+        {
+            auto const temp = TemporaryDir{"exclusion-operator-first"};
+            publishProject(temp.path(), "daily", k_taskSource);
+
+            auto host             = TaskHost{};
+            auto const generation = host.loadProject(temp.path());
+            REQUIRE(generation.has_value());
+
+            auto session = host.startOperatorSession(
+                *generation,
+                runConfig(temp.path() / "operator.jsonl")
+            );
+            REQUIRE(session.has_value());
+
+            auto const refused = host.startTask(
+                *generation,
+                "daily",
+                runConfig(temp.path() / "task.jsonl")
+            );
+            REQUIRE_FALSE(refused.has_value());
+            CHECK(
+                automationErrorKind(refused.error())
+                == AutomationErrorKind::UnsupportedCapability
+            );
+            CHECK_FALSE(std::filesystem::exists(temp.path() / "task.jsonl"));
+        }
+
+        SUBCASE("the same front-end twice is allowed")
+        {
+            // A generation legitimately runs several tasks in sequence. What it must
+            // never do is mix the two front-ends, so this half of the rule has to hold
+            // or the exclusion would be a ban on reuse rather than on contention.
+            auto const temp = TemporaryDir{"exclusion-same"};
+            publishProject(temp.path(), "daily", k_taskSource);
+
+            auto host             = TaskHost{};
+            auto const generation = host.loadProject(temp.path());
+            REQUIRE(generation.has_value());
+
+            auto const first = host.startTask(
+                *generation,
+                "daily",
+                runConfig(temp.path() / "first.jsonl")
+            );
+            REQUIRE(first.has_value());
+            auto const second = host.startTask(
+                *generation,
+                "daily",
+                runConfig(temp.path() / "second.jsonl")
+            );
+            CHECK(second.has_value());
+        }
+    }
+
+    TEST_CASE("an operator session's run bracket names the operator front-end")
+    {
+        auto const temp = TemporaryDir{"operator-bracket"};
+        publishProject(temp.path(), "daily", k_taskSource);
+
+        auto host             = TaskHost{};
+        auto const generation = host.loadProject(temp.path());
+        REQUIRE(generation.has_value());
+
+        auto const tracePath = temp.path() / "operator.jsonl";
+        auto session = host.startOperatorSession(*generation, runConfig(tracePath));
+        REQUIRE(session.has_value());
+
+        auto cycle = (*session)->cycleOpen();
+        REQUIRE(cycle.has_value());
+        auto const page = (*session)->cyclePage(*cycle);
+        REQUIRE(page.has_value());
+        REQUIRE(page->has_value());
+        CHECK(**page == std::string{"home"});
+
+        auto const report = (*session)->finish(std::nullopt);
+        CHECK(report.outcome() == TaskRunOutcome::Completed);
+        // An operator session names no task, so the report carries no task name: the
+        // frontEnd member on every line is what explains the absence.
+        CHECK(report.taskName.empty());
+
+        auto const lines = traceLines(tracePath);
+        REQUIRE_FALSE(lines.empty());
+        for (auto const& line : lines)
+        {
+            CAPTURE(line);
+            CHECK(line.contains("\"frontEnd\":\"operator\""));
+        }
+        CHECK(lines.front().contains("\"kind\":\"run.started\""));
+        CHECK(lines.back().contains("\"kind\":\"run.finished\""));
     }
 
     TEST_CASE("TaskHost cancel spends the generation and queryTask reports it")
@@ -730,7 +860,7 @@ namespace uf::task
             lines.front()
             == std::format(
                 R"({{"schema":"umbraflow-trace/v1","kind":"run.started")"
-                R"(,"seq":1,"runId":1,"generationId":1)"
+                R"(,"seq":1,"runId":1,"generationId":1,"frontEnd":"task")"
                 R"(,"projectId":"{}","taskName":"daily")"
                 R"(,"sourceHash":"{}","frameworkVersion":"{}")"
                 R"(,"frameworkHash":"{}","luauVersion":"{}","seed":{}}})",
@@ -745,13 +875,13 @@ namespace uf::task
         CHECK(
             lines[1]
             == R"({"schema":"umbraflow-trace/v1","kind":"run.resources_validated")"
-               R"(,"seq":2,"runId":1,"generationId":1)"
+               R"(,"seq":2,"runId":1,"generationId":1,"frontEnd":"task")"
                R"(,"recognizers":["daily_button"],"pages":["home"]})"
         );
         CHECK(
             lines.back()
             == R"({"schema":"umbraflow-trace/v1","kind":"run.finished")"
-               R"(,"seq":13,"runId":1,"generationId":1,"runOutcome":"Completed"})"
+               R"(,"seq":13,"runId":1,"generationId":1,"frontEnd":"task","runOutcome":"Completed"})"
         );
 
         // The engine event that opened the observation and the one that

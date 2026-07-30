@@ -2,6 +2,7 @@
 
 #include "capability-surface.hpp"
 #include "framework-bundle.hpp"
+#include "operator-session.hpp"
 #include "script-validator.hpp"
 #include "task-context.hpp"
 #include "task-loader.hpp"
@@ -199,6 +200,10 @@ namespace uf::task
 
         TaskStatus m_status{};
 
+        // The front-end that owns this generation, empty until one drives it. See
+        // TaskHost::startOperatorSession for why the latch lives here.
+        std::optional<trace::FrontEnd> m_frontEnd{};
+
     public:
         Generation(
             GenerationId id,
@@ -273,6 +278,37 @@ namespace uf::task
             auto snapshot                  = m_status;
             snapshot.cancellationRequested = m_stop.stop_requested();
             return snapshot;
+        }
+
+        // Latches `frontEnd` as this generation's owner, or refuses because the other
+        // one already owns it.
+        //
+        // Idempotent under the same front-end and permanent under a different one:
+        // the ledger below this generation holds one open cycle, and two policy
+        // sources sharing it is the failure this exists to make unrepresentable. It
+        // is reported as UnsupportedCapability rather than as an invariant failure
+        // because asking is legitimate -- the caller simply cannot have it -- and
+        // because nothing in this binary is broken when it happens.
+        [[nodiscard]] auto claimFrontEnd(trace::FrontEnd frontEnd) -> Status
+        {
+            if (!m_frontEnd.has_value())
+            {
+                m_frontEnd = frontEnd;
+                return ok();
+            }
+            if (*m_frontEnd == frontEnd)
+            {
+                return ok();
+            }
+            return fail(
+                AutomationErrorKind::UnsupportedCapability,
+                std::format(
+                    "generation {} is already driven by the {} front-end; a task run "
+                    "and an operator session must not share one generation",
+                    m_id.value(),
+                    *m_frontEnd == trace::FrontEnd::Task ? "task" : "operator"
+                )
+            );
         }
 
         auto noteRunStarted(std::string taskName) -> void
@@ -351,6 +387,11 @@ namespace uf::task
             );
         }
 
+        // Claim the generation for the task front-end before anything else. It runs
+        // ahead of loading the task so a generation an operator already owns refuses
+        // here rather than after reading and validating a script it will never run.
+        UF_TRY(p_generation->claimFrontEnd(trace::FrontEnd::Task));
+
         // Source the task from its owning project and validate every uf
         // reference before anything observable exists: a missing or unsafe task
         // name, or a reference the capability surface cannot resolve, must fail
@@ -379,7 +420,8 @@ namespace uf::task
         auto recorder = std::make_unique<trace::TraceRecorder>(
             std::move(traceSink),
             runId,
-            generation
+            generation,
+            trace::FrontEnd::Task
         );
 
         auto const seed = drawRunSeed();
@@ -531,6 +573,44 @@ namespace uf::task
 
         p_generation->noteRunFinished(report.outcome());
         return report;
+    }
+
+    auto TaskHost::startOperatorSession(
+        GenerationId generation,
+        TaskRunConfig config
+    ) -> Result<std::unique_ptr<OperatorSession>>
+    {
+        auto* const p_generation = findGeneration(generation);
+        if (p_generation == nullptr)
+        {
+            return fail(
+                AutomationErrorKind::InvalidResource,
+                std::format(
+                    "no loaded project for generation {}",
+                    generation.value()
+                )
+            );
+        }
+
+        UF_TRY(p_generation->claimFrontEnd(trace::FrontEnd::Operator));
+
+        auto const runId = TaskRunId{m_nextRunValue};
+        ++m_nextRunValue;
+
+        // The session takes the runtime by value for the same reason a task run does:
+        // a generation outlives its sessions and must still have a runtime for the
+        // next one, so it hands over a copy and keeps its own.
+        return OperatorSession::create(
+            p_generation->runtime(),
+            std::move(config),
+            OperatorSession::Spec{
+                .projectId    = p_generation->projectId(),
+                .surface      = p_generation->surface(),
+                .cancellation = p_generation->cancellation(),
+            },
+            runId,
+            generation
+        );
     }
 
     auto TaskHost::cancel(GenerationId generation) -> Status

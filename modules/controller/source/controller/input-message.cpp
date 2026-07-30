@@ -2,14 +2,18 @@
 
 #include "platform/windows-controller.hpp"
 
+#include <core/error/contracts.hpp>
 #include <core/types/integer.hpp>
 #include <domain/error.hpp>
+#include <domain/key.hpp>
 
 #include <algorithm>
 #include <array>
 #include <bit>
 #include <format>
 #include <limits>
+#include <optional>
+#include <string_view>
 
 namespace uf::controller_detail
 {
@@ -33,6 +37,44 @@ namespace uf::controller_detail
 
 namespace uf
 {
+    namespace
+    {
+        // VK_F1..VK_F12 are consecutive, so the printed number indexes them.
+        constexpr auto k_virtualKeyF1 = uint16{0x0070U};
+        constexpr auto k_functionKeyCount = uint32{12U};
+
+        [[nodiscard]]
+        constexpr auto functionKeyNumber(
+            std::string_view name
+        ) noexcept -> std::optional<uint32>
+        {
+            if (!name.starts_with('F'))
+            {
+                return std::nullopt;
+            }
+            auto const digits = name.substr(1U);
+            if (digits.empty() || digits.size() > 2U || digits.front() == '0')
+            {
+                return std::nullopt;
+            }
+
+            auto number = uint32{};
+            for (auto const digit : digits)
+            {
+                if (digit < '0' || digit > '9')
+                {
+                    return std::nullopt;
+                }
+                number = (number * 10U) + static_cast<uint32>(digit - '0');
+            }
+            if (number > k_functionKeyCount)
+            {
+                return std::nullopt;
+            }
+            return number;
+        }
+    }
+
     auto ClientPixel::create(int32 x, int32 y) -> Result<ClientPixel>
     {
         if (
@@ -85,6 +127,30 @@ namespace uf
         : m_virtualKey{virtualKey}
         , m_extended{controller_detail::isExtendedKey(virtualKey)}
     {
+    }
+
+    auto KeyInput::fromName(std::string_view name) -> Result<KeyInput>
+    {
+        UF_TRY_VALUE(validated, KeyName::create(name));
+        return fromKeyName(validated);
+    }
+
+    auto KeyInput::fromKeyName(KeyName name) noexcept -> KeyInput
+    {
+        auto const text = name.value();
+        if (auto const number = functionKeyNumber(text))
+        {
+            return KeyInput{
+                static_cast<uint16>(k_virtualKeyF1 + (*number - 1U))
+            };
+        }
+
+        // KeyName admits only a function key or exactly one uppercase letter or
+        // digit, so this branch has one byte to read. VK_A..VK_Z and VK_0..VK_9
+        // are defined as the ASCII codes of the uppercase letter and of the
+        // digit, so the character is the key code.
+        UF_CHECK(text.size() == 1U);
+        return KeyInput{static_cast<uint16>(text.front())};
     }
 }
 

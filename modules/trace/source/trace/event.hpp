@@ -8,6 +8,7 @@
 
 #include <domain/error.hpp>
 #include <domain/ids.hpp>
+#include <domain/key.hpp>
 #include <domain/space.hpp>
 
 #include <vision/sad.hpp>
@@ -75,6 +76,33 @@ namespace uf::trace
     // framework.subtask_entered / subtask_exited are P1 and deliberately absent:
     // cross-file reuse does not exist yet, so a subtask event could only ever be
     // written by nothing.
+    // Which front-end drove the run this line belongs to.
+    //
+    // It exists because the capability surface has two consumers at the same
+    // level -- the trusted Luau framework a task runs on, and an operator sending
+    // commands from outside -- and without the attribution no reader of a trace
+    // can answer "did the task do this, or did the operator". That question is
+    // asked of every line, so the answer is part of the STAMP rather than of the
+    // event: TraceRecorder carries one value for the whole run and writes it onto
+    // every line, so no emitter can forget it and none can claim the other
+    // front-end's work.
+    //
+    // It is also what makes the two mutually exclusive rather than merely
+    // documented. TaskHost latches one of these per generation the first time a
+    // front-end drives it and refuses the other, and the latched value is what it
+    // hands the recorder -- so a stream's attribution and the exclusion that
+    // produced it are the same fact and cannot disagree.
+    enum class FrontEnd : uint8
+    {
+        // A project task running on the trusted Luau framework, driven by
+        // `umbra-flow run`.
+        Task = 1,
+
+        // An operator sending commands from outside the process, driven by
+        // `umbra-flow drive`.
+        Operator,
+    };
+
     enum class TraceEventKind : uint8
     {
         RunStarted = 1,
@@ -86,6 +114,7 @@ namespace uf::trace
         EngineActionAuthorized,
         EngineActionRejected,
         EngineActionDelivered,
+        EngineKeyDelivered,
         EngineObservationInvalidated,
         TaskNativeCall,
         FrameworkStepStarted,
@@ -315,6 +344,12 @@ namespace uf::trace
         std::optional<AutomationErrorKind>      errorKind{};
         std::optional<std::string>              message{};
         std::optional<Point<ClientSpace>>       clickClient{};
+
+        // The key one engine.key_delivered posted, as the target's UI prints it.
+        // It is the whole content of that event: a keystroke names no coordinate,
+        // so there is no clickClient to record and the name is the only thing that
+        // distinguishes one delivered key from another.
+        std::optional<KeyName> key{};
     };
 
     // A TraceEvent with the run identity stamped onto it. Only TraceRecorder can
@@ -330,6 +365,7 @@ namespace uf::trace
         uint64                   m_sequence;
         TaskRunId                m_runId;
         GenerationId             m_generationId;
+        FrontEnd                 m_frontEnd;
         int64                    m_wallClockUnixMillis;
 
         StampedTraceEvent(
@@ -338,6 +374,7 @@ namespace uf::trace
             uint64 sequence,
             TaskRunId runId,
             GenerationId generationId,
+            FrontEnd frontEnd,
             int64 wallClockUnixMillis
         );
 
@@ -360,6 +397,11 @@ namespace uf::trace
         [[nodiscard]] auto sequence() const noexcept -> uint64;
         [[nodiscard]] auto runId() const noexcept -> TaskRunId;
         [[nodiscard]] auto generationId() const noexcept -> GenerationId;
+
+        // Which front-end drove the run this line belongs to. Part of the stamp
+        // for the reason the sequence is: an emitter does not get to say who it
+        // is. See FrontEnd.
+        [[nodiscard]] auto frontEnd() const noexcept -> FrontEnd;
 
         // Milliseconds since the Unix epoch, read from the system clock when the
         // recorder stamped the event. It is the sole content of the non-golden

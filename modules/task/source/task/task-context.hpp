@@ -11,6 +11,7 @@
 #include <annotation/recognition.hpp>
 
 #include <domain/error.hpp>
+#include <domain/key.hpp>
 
 #include <engine/session.hpp>
 
@@ -186,6 +187,34 @@ namespace uf::task
             uint64 hitCycleOrdinal,
             engine::ActionFound const& action
         ) -> Result<engine::ActReceipt>;
+
+        // Spends the cycle `ticket` names and delivers one keystroke.
+        //
+        // ITS CONTRACT, and where it differs from cycleClick's. The full reasoning
+        // is at engine::EngineSession::pressKey; what this layer decides is the
+        // part the ledger owns.
+        //
+        // It requires the ticket to name the generation's OPEN cycle, and that is
+        // the whole of what it requires. There is no hit ordinal, because there is
+        // no hit: a keystroke names no screen position, so nothing has to have been
+        // found on this frame. There is no page requirement either -- an annotation
+        // project declares which recognizers a page authorizes, and it declares
+        // nothing at all about keys, so a resolved page here would be evidence with
+        // nothing to check it against.
+        //
+        // Requiring the open cycle is not ceremony. It is what puts the keystroke
+        // in the single-open-cycle ordering with every observation and click around
+        // it, and what gives its trace line a cycle ordinal to join on, so a reader
+        // can see which frame the operator or the task was looking at when it
+        // pressed the key.
+        //
+        // It CONSUMES the cycle, exactly as a click does. A delivered keystroke
+        // changes the screen, so the frame the cycle retains no longer describes the
+        // target; leaving the cycle open would let a later find or click in the same
+        // cycle act on a screen this key had already changed. "A delivered input
+        // ends its observation" therefore holds for both verbs, which is a stricter
+        // rule than the click alone needed.
+        [[nodiscard]] auto cycleKey(CycleTicket ticket, KeyName key) -> Status;
 
         // Sleeps until `deadline`, or for `interval`, whichever comes first, and
         // reports whether budget remains afterwards -- false means the deadline

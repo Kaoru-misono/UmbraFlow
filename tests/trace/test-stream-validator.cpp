@@ -68,6 +68,7 @@ namespace uf::trace
                       std::make_unique<CollectingSink>(&m_events),
                       k_runId,
                       k_generationId,
+                      FrontEnd::Task,
                   }
             {
             }

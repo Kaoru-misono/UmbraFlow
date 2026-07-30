@@ -142,7 +142,8 @@ namespace uf::task
             auto        recorder   = std::make_unique<trace::TraceRecorder>(
                 std::move(traceSink),
                 k_fixtureRunId,
-                k_fixtureGenerationId
+                k_fixtureGenerationId,
+                trace::FrontEnd::Task
             );
             auto session = engine::EngineSession::create(
                 std::move(parts.loaded),

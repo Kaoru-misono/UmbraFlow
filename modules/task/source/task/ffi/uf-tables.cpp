@@ -1,5 +1,6 @@
 #include <task/capability-surface.hpp>
 #include <task/cycle-ledger.hpp>
+#include <task/native-call-trace.hpp>
 #include <task/task-context.hpp>
 
 #include <core/error/error.hpp>
@@ -14,6 +15,7 @@
 #include <annotation/recognition.hpp>
 
 #include <domain/error.hpp>
+#include <domain/key.hpp>
 
 #include <engine/session.hpp>
 
@@ -460,26 +462,20 @@ namespace uf::task
         // generation terminal, so a script that swallowed what was raised cannot
         // drive one more engine verb before the host tears the generation down.
         //
-        // It re-raises under the kind that spent the generation rather than one
-        // fixed value: a cancelled run and a run stopped by a framework bug are
-        // different verdicts, and reporting either as the other would send a
-        // reader looking in the wrong place.
+        // The question itself is requireLiveGeneration's, shared with the operator
+        // front-end, so both consumers of the capability surface refuse a spent
+        // generation on the same terms; what stays here is only the raise. It is
+        // still asked BEFORE this primitive decodes its arguments, so a spent
+        // generation outranks a bad handle -- the caller is told what ended the run
+        // rather than what was wrong with the call that came after it.
         auto guardFatal(lua_State* state, TaskContext* context) -> void
         {
-            auto const terminal = context->terminalKind();
-            if (!terminal.has_value())
+            auto const live = requireLiveGeneration(*context);
+            if (live)
             {
                 return;
             }
-            if (*terminal == AutomationErrorKind::Cancelled)
-            {
-                raiseCancelled(state, context);
-            }
-            raiseInvariant(
-                state,
-                context,
-                "the task generation is spent after a framework invariant failure"
-            );
+            raiseFromError(state, context, live.error());
         }
 
         // Reads the TaskContext bound as upvalue 1 of a primitive.
@@ -507,51 +503,11 @@ namespace uf::task
                 .value_or(AutomationErrorKind::InternalInvariant);
         }
 
-        // Which primitive ran and what it was handed. Every task.native_call
-        // carries it, so a primitive the host fails before the engine is reached
-        // -- a ticket or a hit naming a cycle that is no longer open, which is
-        // the only failure that produces no engine event at all -- still names
-        // the cycle the script tried to use. A call-scoped parameter type: `verb`
-        // views a string literal and the struct never outlives the call that
-        // builds it.
-        struct NativeCallIdentity final
-        {
-            std::string_view                        verb;
-            std::optional<uint64>                   cycleOrdinal{};
-            std::optional<uint64>                   hitCycleOrdinal{};
-            std::optional<annotation::RecognizerId> recognizerId{};
-
-            // The pause a settle declared, in whole milliseconds. It is the only
-            // argument of a primitive that carries no handle at all, and a replay
-            // cannot reconstruct the run without it.
-            std::optional<uint64> durationMillis{};
-        };
-
-        [[nodiscard]]
-        auto nativeCallEvent(
-            NativeCallIdentity const& call,
-            trace::NativeCallOutcome outcome,
-            std::optional<AutomationErrorKind> errorKind
-        ) -> trace::TraceEvent
-        {
-            return trace::TraceEvent{
-                .kind       = trace::TraceEventKind::TaskNativeCall,
-                .nativeCall = trace::TraceEvent::NativeCall{
-                    .verb            = std::string{call.verb},
-                    .outcome         = outcome,
-                    .cycleOrdinal    = call.cycleOrdinal,
-                    .hitCycleOrdinal = call.hitCycleOrdinal,
-                    .durationMillis  = call.durationMillis,
-                },
-                .recognizerId = call.recognizerId,
-                .errorKind    = errorKind,
-            };
-        }
-
-        // Emits the task.native_call trace event for a verb at its exit. A sink
-        // failure aborts the verb as a Tier B IoFailure: losing trace evidence is
-        // a hard error, not a silent drop, matching the engine's throw-instant
-        // emit discipline (D4).
+        // Emits the task.native_call trace event for a verb at its exit, and turns
+        // a lost line into a Tier B IoFailure that aborts the verb. Both halves --
+        // the line's shape and what a sink failure costs -- are
+        // native-call-trace.hpp's, shared with the operator front-end; what this
+        // adds is the raise.
         auto traceHostCall(
             lua_State* state,
             TaskContext* context,
@@ -559,9 +515,7 @@ namespace uf::task
             trace::NativeCallOutcome outcome
         ) -> void
         {
-            auto status = context->emitTrace(
-                nativeCallEvent(call, outcome, std::nullopt)
-            );
+            auto status = recordNativeCall(*context, call, outcome);
             if (!status)
             {
                 raiseTierB(
@@ -572,15 +526,11 @@ namespace uf::task
             }
         }
 
-        // Records a failed verb and then raises that verb's own error. Emitting
-        // first and raising the sink's failure instead would report the wrong
-        // cause: a script asking why its click failed would be told the trace file
-        // was unwritable. The verb is failing either way, so its own cause wins and
-        // the sink failure is latched on the context, where the host reads it after
-        // the run rather than losing it silently.
+        // Records a failed verb and then raises that verb's own error, never the
+        // sink's -- see recordNativeCallFailure for why the original cause wins.
         //
-        // For a cancellation this also keeps the Tier C sentinel on the raise path,
-        // which latches fatal before anything else can run. That ordering is now
+        // For a cancellation this keeps the Tier C sentinel on the raise path,
+        // which latches fatal before anything else can run. That ordering is
         // load-bearing rather than defensive: ctx:try is pure Luau and consults
         // nothing, so the latch set here is the only thing standing between a
         // swallowed sentinel and one more primitive call. Never returns.
@@ -591,17 +541,7 @@ namespace uf::task
             Error const& error
         ) -> void
         {
-            auto status = context->emitTrace(
-                nativeCallEvent(
-                    call,
-                    trace::NativeCallOutcome::Failed,
-                    kindOf(error)
-                )
-            );
-            if (!status)
-            {
-                context->latchTraceFailure();
-            }
+            recordNativeCallFailure(*context, call, error);
             raiseFromError(state, context, error);
         }
 
@@ -793,6 +733,71 @@ namespace uf::task
             return 0;
         }
 
+        // key(ticket, name) -> (). Consumes the cycle and delivers one
+        // press-and-release of the key `name` prints.
+        //
+        // Its authorization contract is deliberately NOT a click's, and the full
+        // reasoning is at TaskContext::cycleKey and EngineSession::pressKey. In one
+        // sentence: it requires an open cycle and nothing else, because a keystroke
+        // names no screen position -- so there is no detection to be same-frame with
+        // and no coordinate whose shelf life a lease could bound -- while it still
+        // consumes the cycle, because a delivered keystroke changes the screen
+        // exactly as a click does.
+        //
+        // The name is a string rather than a handle because it is a scalar the
+        // target itself publishes ("E ends the turn"), not an identity the catalog
+        // mints. domain::KeyName is the single definition of which names exist, so a
+        // name outside the set is a Tier B ActionRejected an author can catch and
+        // correct, refused BEFORE the cycle is spent -- a typo must not cost a
+        // frame.
+        auto keyFn(lua_State* state) -> int
+        {
+            auto* context = boundContext(state);
+            guardFatal(state, context);
+
+            auto* ticket = checkBox<CycleTicket>(state, 1, k_cycleType, "cycle");
+            if (lua_type(state, 2) != LUA_TSTRING)
+            {
+                raiseTierB(
+                    state,
+                    AutomationErrorKind::InvalidResource,
+                    "ctx:key needs the key's printed name as a string"
+                );
+            }
+
+            // SAFETY: the value was just confirmed to be a string, so lua_tolstring
+            // performs no conversion and returns the VM-owned bytes with their
+            // length. It stays on the stack for the whole call, so the view is taken
+            // from live storage.
+            std::size_t nameLength = 0;
+            char const* p_nameText = lua_tolstring(state, 2, &nameLength);
+            auto const  keyName    = KeyName::create(
+                std::string_view{p_nameText, nameLength}
+            );
+            if (!keyName)
+            {
+                raiseTierB(
+                    state,
+                    kindOf(keyName.error()),
+                    std::string{keyName.error().message()}
+                );
+            }
+
+            auto const call = NativeCallIdentity{
+                .verb         = "key",
+                .cycleOrdinal = ticket->ordinal,
+                .key          = *keyName,
+            };
+
+            auto result = context->cycleKey(*ticket, *keyName);
+            if (!result)
+            {
+                traceHostCallFailure(state, context, call, result.error());
+            }
+            traceHostCall(state, context, call, trace::NativeCallOutcome::Succeeded);
+            return 0;
+        }
+
         // page:is(pageReference) -> bool. page:is desugars to page.is(page, ref).
         auto isFn(lua_State* state) -> int
         {
@@ -961,12 +966,18 @@ namespace uf::task
         // that lands mid-sleep ends the primitive on the terminal path rather
         // than as a normal return. Every later primitive is then refused by
         // guardFatal, before any capture.
+        // The question itself is requireNotCancelled's, shared with the operator
+        // front-end so a stop refuses a pause on the same terms whichever front-end
+        // asked; what stays here is the raise, which reaches the Tier C sentinel
+        // through raiseFromError's Cancelled branch.
         auto guardCancelled(lua_State* state, TaskContext* context) -> void
         {
-            if (context->cancellationRequested())
+            auto const live = requireNotCancelled(*context);
+            if (live)
             {
-                raiseCancelled(state, context);
+                return;
             }
+            raiseFromError(state, context, live.error());
         }
 
         // deadline(ms) -> deadline handle. Mints the absolute instant `ms` from
@@ -1667,6 +1678,7 @@ namespace uf::task
                 "uf_cycle_click",
                 context
             );
+            installPrimitive(state, surface, "key", &keyFn, "uf_key", context);
             installPrimitive(state, surface, "raise", &raiseFn, "uf_raise", context);
             installPrimitive(
                 state,

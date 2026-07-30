@@ -135,5 +135,17 @@ namespace uf::task
         // then the click has no authorization evidence and no script can supply
         // any.
         [[nodiscard]] auto consume(CycleTicket ticket) -> Result<Consumed>;
+
+        // Spends the cycle `ticket` names without demanding a resolved page, for
+        // an input that names no screen position.
+        //
+        // It is a SEPARATE entry point rather than a flag on consume, because the
+        // page requirement is not optional for a click and never becomes so: a
+        // caller reaching for this instead is stating that its input has no
+        // coordinate to authorize, and the two spellings keep that statement
+        // visible at the call site. It still fails StaleObservation for a ticket
+        // that names no open cycle, and the frame still leaves the ledger, so one
+        // observation delivers at most one input whichever verb spent it.
+        [[nodiscard]] auto spend(CycleTicket ticket) -> Result<engine::Observation>;
     };
 }

@@ -7,6 +7,7 @@
 #include <core/time/monotonic-time.hpp>
 #include <core/types/integer.hpp>
 #include <domain/detection.hpp>
+#include <domain/key.hpp>
 
 #include <array>
 #include <compare>
@@ -79,6 +80,19 @@ namespace uf
         {
             return KeyInput{0x000DU, true};
         }
+
+        // Resolves a key hint as a target's own UI prints it ("E", "1", "F3")
+        // to a virtual key. Which names exist is domain::KeyName's single
+        // definition, which this routes through rather than repeating, so the
+        // accepted set cannot drift between the name a project may write and the
+        // name this can resolve.
+        [[nodiscard]]
+        static auto fromName(std::string_view name) -> Result<KeyInput>;
+
+        // The virtual key one already-validated name resolves to. Total: KeyName's
+        // construction invariant admits only names this maps, so there is no
+        // failure left to report.
+        [[nodiscard]] static auto fromKeyName(KeyName name) noexcept -> KeyInput;
 
         [[nodiscard]]
         constexpr auto virtualKey() const noexcept -> uint16 { return m_virtualKey; }

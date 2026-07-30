@@ -11,7 +11,10 @@
 #include <algorithm>
 #include <array>
 #include <cstddef>
+#include <format>
 #include <memory>
+#include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -94,6 +97,83 @@ namespace uf
             );
             REQUIRE(lease.has_value());
             return *lease;
+        }
+    }
+
+    TEST_CASE("supported key names map one-to-one onto distinct virtual keys")
+    {
+        auto names = std::vector<std::string>{};
+        for (auto letter = 'A'; letter <= 'Z'; ++letter)
+        {
+            names.emplace_back(1U, letter);
+        }
+        for (auto digit = '0'; digit <= '9'; ++digit)
+        {
+            names.emplace_back(1U, digit);
+        }
+        for (auto number = uint32{1}; number <= 12U; ++number)
+        {
+            names.emplace_back(std::format("F{}", number));
+        }
+        REQUIRE(names.size() == 48U);
+
+        auto virtualKeys = std::vector<uint16>{};
+        for (auto const& name : names)
+        {
+            CAPTURE(name);
+            auto const key = KeyInput::fromName(name);
+            REQUIRE(key.has_value());
+            CHECK_FALSE(key->isExtended());
+            virtualKeys.emplace_back(key->virtualKey());
+        }
+        std::ranges::sort(virtualKeys);
+        CHECK(std::ranges::adjacent_find(virtualKeys) == virtualKeys.end());
+
+        // Anchored to the Win32 virtual-key values the target actually reads, so
+        // a shifted table cannot pass on internal consistency alone.
+        for (auto const& [name, virtualKey] : std::array{
+            std::pair{std::string_view{"A"}, uint16{0x0041U}},
+            std::pair{std::string_view{"E"}, uint16{0x0045U}},
+            std::pair{std::string_view{"Z"}, uint16{0x005AU}},
+            std::pair{std::string_view{"0"}, uint16{0x0030U}},
+            std::pair{std::string_view{"8"}, uint16{0x0038U}},
+            // "F" is the letter key, not a truncated function key.
+            std::pair{std::string_view{"F"}, uint16{0x0046U}},
+            std::pair{std::string_view{"F1"}, uint16{0x0070U}},
+            std::pair{std::string_view{"F3"}, uint16{0x0072U}},
+            std::pair{std::string_view{"F12"}, uint16{0x007BU}},
+        })
+        {
+            CAPTURE(name);
+            auto const key = KeyInput::fromName(name);
+            REQUIRE(key.has_value());
+            CHECK(key->virtualKey() == virtualKey);
+        }
+    }
+
+    TEST_CASE("unsupported key names are rejected instead of guessed")
+    {
+        for (auto const name : std::array<std::string_view, 11>{
+            "",
+            "e",
+            "f1",
+            "F0",
+            "F01",
+            "F13",
+            "F1 ",
+            "AB",
+            "10",
+            "ENTER",
+            "+",
+        })
+        {
+            CAPTURE(name);
+            auto const result = KeyInput::fromName(name);
+            REQUIRE_FALSE(result.has_value());
+            CHECK(
+                automationKind(result.error())
+                == AutomationErrorKind::ActionRejected
+            );
         }
     }
 

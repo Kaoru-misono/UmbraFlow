@@ -82,4 +82,62 @@ namespace uf::cli
     auto parseRunArguments(std::span<std::string const> raw) -> Result<RunArgs>;
 
     [[nodiscard]] auto runUsageText() noexcept -> std::string_view;
+
+    // How long `drive` waits with an empty command queue before it ends the session
+    // on its own.
+    //
+    // CALIBRATION: two minutes matches the m0-demo input agent's own idle timeout,
+    // which is the protocol this one follows. It exists so an operator that walks
+    // away, or a driving process that died, does not leave a session holding a
+    // capture device and a bound target indefinitely.
+    inline constexpr auto k_defaultDriveIdleTimeout = (
+        std::chrono::duration_cast<MonotonicInstant::Duration>(
+            std::chrono::seconds{120}
+        )
+    );
+
+    // Parsed inputs for the `drive` subcommand: the operator front-end.
+    //
+    // It binds a target and a project exactly as RunArgs does, and every recognition
+    // and delivery bound below is the same field with the same default, because the
+    // two front-ends must not be able to run under different guarantees. What
+    // replaces --task is the pair of IPC files: commands arrive as JSON lines
+    // appended to `queue`, and one JSON result line per command is appended to
+    // `results`.
+    //
+    // There is deliberately no --task here and no --queue on RunArgs. The two modes
+    // are exclusive, and the argument shapes say so before anything else does: there
+    // is no way to spell a session that has both a task and a command queue. The
+    // structural refusal is TaskHost's front-end claim; this is the same fact stated
+    // where an operator meets it first.
+    //
+    // There are likewise no timeout, poll-interval or retry defaults here. Those are
+    // policy, every convenience command requires them as fields, and a CLI flag for
+    // them would be a second place task-side policy could live.
+    struct DriveArgs final
+    {
+        std::filesystem::path project{};
+        std::string           selector{};
+
+        std::filesystem::path queue{};
+        std::filesystem::path results{};
+
+        uint64                     budget{k_defaultPixelComparisonBudget};
+        MonotonicInstant::Duration recognitionTimeout{k_defaultRunRecognitionTimeout};
+        MonotonicInstant::Duration maxFrameAge{k_defaultRunMaxFrameAge};
+        MonotonicInstant::Duration idleTimeout{k_defaultDriveIdleTimeout};
+
+        std::filesystem::path trace{k_defaultTracePath};
+
+        auto operator==(DriveArgs const&) const -> bool = default;
+    };
+
+    [[nodiscard]]
+    auto parseDriveArguments(std::span<std::string const> raw) -> Result<DriveArgs>;
+
+    [[nodiscard]] auto driveUsageText() noexcept -> std::string_view;
+
+    // Both usages, for the bare invocation and for an unknown subcommand: the two
+    // modes are equal citizens, so neither is the one a reader is shown by default.
+    [[nodiscard]] auto usageText() -> std::string;
 }

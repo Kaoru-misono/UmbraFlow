@@ -14,6 +14,7 @@
 #include <domain/error.hpp>
 #include <domain/frame.hpp>
 #include <domain/ids.hpp>
+#include <domain/key.hpp>
 #include <domain/space.hpp>
 
 #include <trace/event.hpp>
@@ -638,6 +639,100 @@ namespace uf::engine
         return ActReceipt{
             .frameId    = identity.frameId(),
             .clickPoint = clientPoint,
+        };
+    }
+
+    auto EngineSession::pressKey(
+        Observation&& observation,
+        KeyName key
+    ) -> Result<KeyReceipt>
+    {
+        // The same three fail-closed gates act() opens with, in the same order and
+        // for the same reasons: a requested stop outranks every other outcome, a
+        // foreign handle is rejected before anything else touches it, and a
+        // consumed or moved-from handle is dead.
+        if (m_config.cancellation.stop_requested())
+        {
+            return fail(
+                AutomationErrorKind::Cancelled,
+                "cancelled before key delivery"
+            );
+        }
+        if (observation.m_sessionIdentity != m_identity)
+        {
+            return fail(
+                AutomationErrorKind::InternalInvariant,
+                "observation belongs to a different session"
+            );
+        }
+        if (observation.m_invalidated)
+        {
+            return fail(
+                AutomationErrorKind::StaleObservation,
+                "pressKey called on an invalidated observation"
+            );
+        }
+
+        auto const identity = observation.m_frameIdentity;
+
+        // Revalidate the bound target instance immediately before the post, exactly
+        // as act() does. This is the whole of what replaces the coordinate
+        // authorization: the keystroke must reach the target instance the
+        // observation came from, and a window replaced since then is refused here
+        // with zero sink calls.
+        auto revalidation = m_frameSource->validateTargetInstance();
+        if (!revalidation)
+        {
+            auto event      = identityEvent(
+                trace::TraceEventKind::EngineActionRejected,
+                identity
+            );
+            event.key       = key;
+            event.errorKind = automationErrorKind(revalidation.error());
+            event.message   = std::string{revalidation.error().message()};
+            UF_TRY(emit(event));
+            return std::unexpected{std::move(revalidation).error()};
+        }
+
+        auto delivered = m_actionSink->pressKey(key, identity.targetGeneration());
+        if (!delivered)
+        {
+            auto event      = identityEvent(
+                trace::TraceEventKind::EngineActionRejected,
+                identity
+            );
+            event.key       = key;
+            event.errorKind = automationErrorKind(delivered.error());
+            event.message   = std::string{delivered.error().message()};
+            UF_TRY(emit(event));
+            return std::unexpected{std::move(delivered).error()};
+        }
+
+        // The keystroke has landed, so the handle dies before any fallible
+        // post-delivery emit -- the same ordering act() uses, and for the same
+        // reason: a retry over a surviving alias must find the handle already dead
+        // rather than deliver twice.
+        observation.m_invalidated = true;
+
+        auto keyEvent = identityEvent(
+            trace::TraceEventKind::EngineKeyDelivered,
+            identity
+        );
+        keyEvent.key = key;
+        UF_TRY(emit(keyEvent));
+
+        UF_TRY(
+            emit(
+                identityEvent(
+                    trace::TraceEventKind::EngineObservationInvalidated,
+                    identity
+                )
+            )
+        );
+
+        return KeyReceipt{
+            .frameId = identity.frameId(),
+            .key     = key,
         };
     }
 }

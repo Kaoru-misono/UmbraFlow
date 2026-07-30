@@ -67,6 +67,7 @@ namespace uf::m0_demo
             using Duration = MonotonicInstant::Duration;
             std::optional<std::string> operation{};
             std::optional<std::string> output{};
+            std::optional<std::string> key{};
             std::optional<float>       x{};
             std::optional<float>       y{};
             std::optional<std::string> outputBefore{};
@@ -458,6 +459,11 @@ namespace uf::m0_demo
                     UF_TRY_VALUE(value, parseString());
                     return setOnce(fields.output, std::move(value), field);
                 }
+                if (field == "key")
+                {
+                    UF_TRY_VALUE(value, parseString());
+                    return setOnce(fields.key, std::move(value), field);
+                }
                 if (field == "x")
                 {
                     UF_TRY_VALUE(value, parseCoordinate(field));
@@ -590,7 +596,8 @@ namespace uf::m0_demo
             if (*fields.operation == "capture")
             {
                 if (
-                    fields.x
+                    fields.key
+                    || fields.x
                     || fields.y
                     || fields.outputBefore
                     || fields.outputAfter
@@ -598,7 +605,7 @@ namespace uf::m0_demo
                 )
                 {
                     return invalidCommand(
-                        "input-agent capture command contains click-only fields"
+                        "input-agent capture command contains action-only fields"
                     );
                 }
                 UF_TRY_VALUE(output, requirePath(std::move(fields.output), "out"));
@@ -613,6 +620,12 @@ namespace uf::m0_demo
                 {
                     return invalidCommand(
                         "input-agent click command contains capture-only field out"
+                    );
+                }
+                if (fields.key)
+                {
+                    return invalidCommand(
+                        "input-agent click command contains key-only field key"
                     );
                 }
                 if (!fields.x || !fields.y)
@@ -640,10 +653,59 @@ namespace uf::m0_demo
                 };
             }
 
+            if (*fields.operation == "key")
+            {
+                if (fields.output)
+                {
+                    return invalidCommand(
+                        "input-agent key command contains capture-only field out"
+                    );
+                }
+                if (fields.x || fields.y)
+                {
+                    return invalidCommand(
+                        "input-agent key command contains click-only coordinate fields"
+                    );
+                }
+                if (!fields.key)
+                {
+                    return invalidCommand(
+                        "input-agent key command requires a key field"
+                    );
+                }
+                auto const key = KeyInput::fromName(*fields.key);
+                if (!key)
+                {
+                    return invalidCommand(
+                        std::format(
+                            "input-agent key command has an unsupported key: {}",
+                            key.error().message()
+                        )
+                    );
+                }
+                UF_TRY_VALUE(
+                    outputBefore,
+                    requirePath(std::move(fields.outputBefore), "out_before")
+                );
+                UF_TRY_VALUE(
+                    outputAfter,
+                    requirePath(std::move(fields.outputAfter), "out_after")
+                );
+                return InputAgentKeyCommand{
+                    .key          = *key,
+                    .outputBefore = std::move(outputBefore),
+                    .outputAfter  = std::move(outputAfter),
+                    .settle = fields.settle.value_or(
+                        k_defaultInputAgentSettle
+                    ),
+                };
+            }
+
             if (*fields.operation == "quit")
             {
                 if (
                     fields.output
+                    || fields.key
                     || fields.x
                     || fields.y
                     || fields.outputBefore

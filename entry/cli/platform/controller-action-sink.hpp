@@ -4,6 +4,8 @@
 #include <core/error/result.hpp>
 
 #include <domain/detection.hpp>
+#include <domain/ids.hpp>
+#include <domain/key.hpp>
 #include <domain/space.hpp>
 #include <engine/ports.hpp>
 
@@ -30,6 +32,21 @@ namespace uf::cli::platform
         auto click(
             Point<ClientSpace> point,
             ObservationLease const& lease
+        ) -> Status override;
+
+        // Resolves the key's printed name to a virtual key and delivers one
+        // press-and-release through controller::keyPress, which is the same
+        // deliver -> postInputMessage -> PostMessageW route click() takes.
+        //
+        // It forwards the observation's target generation where click() forwards a
+        // lease, because that is what the delivery layer fences a keystroke on: there
+        // is no coordinate here whose frame identity or age could matter, and the
+        // controller's keyPress accordingly takes the generation alone. Resolving
+        // cannot fail -- domain::KeyName admits only names controller::KeyInput maps.
+        [[nodiscard]]
+        auto pressKey(
+            KeyName key,
+            TargetGeneration actionGeneration
         ) -> Status override;
     };
 }

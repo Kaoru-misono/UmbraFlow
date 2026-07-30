@@ -12,6 +12,7 @@
 #include <annotation/recognition.hpp>
 
 #include <domain/error.hpp>
+#include <domain/key.hpp>
 
 #include <engine/session.hpp>
 
@@ -117,6 +118,22 @@ namespace uf::task
             consumed.page,
             action
         );
+    }
+
+    auto TaskContext::cycleKey(CycleTicket ticket, KeyName key) -> Status
+    {
+        // spend rather than consume: a keystroke names no coordinate, so there is
+        // no page for it to be authorized against (see the header). The ticket is
+        // still checked against the one open cycle first, so a stale ticket leaves
+        // the cycle open for the framework to close rather than destroying a frame
+        // a live ticket still names.
+        UF_TRY_VALUE(observation, m_cycles.spend(ticket));
+
+        // pressKey consumes the frame by rvalue, so the cycle is spent whatever the
+        // outcome; spend already dropped the ledger entry, which is what makes
+        // every later use of this ticket fail StaleObservation.
+        UF_TRY(m_session.pressKey(std::move(observation), key));
+        return ok();
     }
 
     auto TaskContext::waitUntil(

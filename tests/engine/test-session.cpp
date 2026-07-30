@@ -427,6 +427,10 @@ namespace uf::engine
             std::optional<Point<ClientSpace>> m_lastClick{};
             std::optional<ObservationLease>   m_lastLease{};
 
+            uint32                          m_keyCount{0};
+            std::optional<KeyName>          m_lastKey{};
+            std::optional<TargetGeneration> m_lastKeyGeneration{};
+
         public:
             [[nodiscard]]
             auto click(
@@ -437,6 +441,21 @@ namespace uf::engine
                 ++m_clickCount;
                 m_lastClick = point;
                 m_lastLease = lease;
+                return ok();
+            }
+
+            // A keystroke carries no lease, so this records the generation it was
+            // fenced on instead: that is the whole of what pressKey forwards, and the
+            // difference from click() above is the authorization difference under test.
+            [[nodiscard]]
+            auto pressKey(
+                KeyName key,
+                TargetGeneration actionGeneration
+            ) -> Status override
+            {
+                ++m_keyCount;
+                m_lastKey           = key;
+                m_lastKeyGeneration = actionGeneration;
                 return ok();
             }
 
@@ -455,6 +474,22 @@ namespace uf::engine
             auto lastLease() const noexcept -> std::optional<ObservationLease>
             {
                 return m_lastLease;
+            }
+
+            [[nodiscard]] auto keyCount() const noexcept -> uint32
+            {
+                return m_keyCount;
+            }
+
+            [[nodiscard]] auto lastKey() const noexcept -> std::optional<KeyName>
+            {
+                return m_lastKey;
+            }
+
+            [[nodiscard]]
+            auto lastKeyGeneration() const noexcept -> std::optional<TargetGeneration>
+            {
+                return m_lastKeyGeneration;
             }
         };
 
@@ -548,7 +583,8 @@ namespace uf::engine
             auto recorder = std::make_unique<trace::TraceRecorder>(
                 std::move(traceSink),
                 k_runId,
-                k_generationId
+                k_generationId,
+                trace::FrontEnd::Task
             );
             auto session = EngineSession::create(
                 std::move(parts.loaded),
@@ -955,6 +991,7 @@ namespace uf::engine
             std::move(traceSink),
             k_runId,
             k_generationId,
+            trace::FrontEnd::Task,
         };
         auto session = EngineSession::create(
             std::move(parts.loaded),
@@ -1229,7 +1266,8 @@ namespace uf::engine
         auto recorder        = std::make_unique<trace::TraceRecorder>(
             std::make_unique<CollectingTraceSink>(),
             k_runId,
-            k_generationId
+            k_generationId,
+            trace::FrontEnd::Task
         );
         auto under = EngineSession::create(
             std::move(parts.loaded),

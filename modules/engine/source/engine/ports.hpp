@@ -5,6 +5,7 @@
 
 #include <domain/detection.hpp>
 #include <domain/frame.hpp>
+#include <domain/key.hpp>
 #include <domain/space.hpp>
 
 #include <stop_token>
@@ -83,6 +84,26 @@ namespace uf::engine
         virtual auto click(
             Point<ClientSpace> point,
             ObservationLease const& lease
+        ) -> Status = 0;
+
+        // Delivers one press-and-release of `key` to the bound target.
+        //
+        // It takes a TargetGeneration where click() takes a lease, and the
+        // difference is the whole authorization difference between the two verbs.
+        // A lease fences a COORDINATE: its frameId and age exist because a click
+        // point silently means something else once the layout moved. A keystroke
+        // names no point, so there is no rect whose position could have gone
+        // stale, and there is nothing for a frame age to protect. What must still
+        // hold is that the keystroke reaches the target instance the observation
+        // came from, which is what the generation carries.
+        //
+        // The implementation MUST forward that generation to the delivery layer so
+        // the controller's revalidation runs at post time, MUST deliver strictly in
+        // the background, and MUST never steal focus or activate the target window.
+        [[nodiscard]]
+        virtual auto pressKey(
+            KeyName key,
+            TargetGeneration actionGeneration
         ) -> Status = 0;
     };
 }

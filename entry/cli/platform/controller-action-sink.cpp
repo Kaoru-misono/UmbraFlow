@@ -37,4 +37,41 @@ namespace uf::cli::platform
         }
         return std::unexpected{std::move(error)};
     }
+
+    auto ControllerActionSink::pressKey(
+        KeyName key,
+        TargetGeneration actionGeneration
+    ) -> Status
+    {
+        auto delivered = uf::keyPress(
+            m_target,
+            actionGeneration,
+            KeyInput::fromKeyName(key),
+            m_held,
+            m_audit
+        );
+        if (delivered)
+        {
+            return ok();
+        }
+
+        // The press may have landed while the release did not, leaving the key held
+        // down in the target. Drain any residual held input so the target is not
+        // stranded mid-press -- the same compensation click() performs, and for the
+        // same reason. The original failure remains the reported error; a compensation
+        // release that itself fails only adds context.
+        auto error    = std::move(delivered).error();
+        auto releases = releaseHeld(m_target, m_held, m_audit);
+        for (auto const& release : releases)
+        {
+            if (!release.result)
+            {
+                error.addContext(
+                    "input compensation after a failed key also failed: "
+                        + std::string{release.result.error().message()}
+                );
+            }
+        }
+        return std::unexpected{std::move(error)};
+    }
 }

@@ -62,8 +62,17 @@ namespace uf::trace
     //   - InternalInvariant is a PROTOCOL breach: a second run.started, an event
     //     after run.finished, a step finish naming other than the innermost open
     //     step, a retry attempt that continues no open scope or exceeds its
-    //     declared attempts, an interrupt handled that no match opened. Only the
-    //     framework or the host can produce one, so it is a bug in this binary.
+    //     declared attempts, an interrupt handled that no match opened, and a
+    //     framework.* event on an operator stream. Only the framework or the host
+    //     can produce one, so it is a bug in this binary.
+    //
+    // The front-end is part of the protocol rather than only part of the stamp.
+    // framework.* events describe the trusted Luau framework's own structure --
+    // which step is open, which retry attempt this is, which interrupt matched --
+    // and on an operator stream that framework does not exist, so such a line
+    // could only ever be a host bug attributing task structure to the operator.
+    // Refusing it here is what keeps the attribution worth reading: `frontEnd`
+    // does not merely label a stream, it decides which events the stream may hold.
     //
     // NOT thread-safe: one recorder writes one run on one thread.
     class TraceStreamValidator final
@@ -77,6 +86,8 @@ namespace uf::trace
             std::size_t stepDepth{};
         };
 
+        FrontEnd m_frontEnd;
+
         std::vector<std::string> m_steps{};
         std::vector<std::string> m_interrupts{};
         std::vector<RetryScope>  m_retries{};
@@ -86,6 +97,11 @@ namespace uf::trace
         bool        m_runFinished{false};
 
         [[nodiscard]] auto apply(TraceEvent const& event) -> Status;
+
+        // Refuses a framework.* event on a stream no Luau framework drove. See the
+        // class comment for why the front-end is a protocol rule.
+        [[nodiscard]] auto requireFramework() const -> Status;
+
         [[nodiscard]] auto startStep(TraceEvent::Framework const& payload) -> Status;
         [[nodiscard]] auto finishStep(TraceEvent::Framework const& payload) -> Status;
         [[nodiscard]] auto retryAttempt(TraceEvent::Framework const& payload) -> Status;
@@ -97,6 +113,8 @@ namespace uf::trace
         ) -> Status;
 
     public:
+        explicit TraceStreamValidator(FrontEnd frontEnd) noexcept;
+
         // Admits `event` into the stream, returning the framework step scope that
         // was open WHEN IT WAS WRITTEN -- the scope the recorder stamps onto it --
         // or the reason the stream refuses it. A refused event never reaches a

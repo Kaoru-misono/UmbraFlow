@@ -16,6 +16,7 @@
 #include <domain/detection.hpp>
 #include <domain/frame.hpp>
 #include <domain/ids.hpp>
+#include <domain/key.hpp>
 #include <domain/space.hpp>
 
 #include <trace/event.hpp>
@@ -136,6 +137,16 @@ namespace uf::engine
         Point<ClientSpace> clickPoint;
     };
 
+    // The record of one delivered keystroke: the frame whose observation it spent
+    // and the key posted to the sink. There is no point, because a keystroke has
+    // none -- which is the whole reason it is a separate receipt rather than an
+    // ActReceipt with an invented coordinate.
+    struct KeyReceipt final
+    {
+        FrameId frameId;
+        KeyName key;
+    };
+
     // The recognition and action pipeline over one bound capture target.
     //
     // Trace lifetime contract: the session does NOT own its trace sink. It stores
@@ -216,5 +227,43 @@ namespace uf::engine
             annotation::ResolvedPage const& page,
             ActionFound const& action
         ) -> Result<ActReceipt>;
+
+        // Delivers one keystroke, spending `observation`.
+        //
+        // ITS AUTHORIZATION CONTRACT, and how it differs from act()'s. Stated here
+        // because this is the only place both verbs are visible at once.
+        //
+        // Shared with act(), and for the same reasons:
+        //   - a requested stop refuses before any sink call, so a cancelled run
+        //     never posts input;
+        //   - an observation from another session is an InternalInvariant, and an
+        //     invalidated one is StaleObservation, so a handle cannot be reused or
+        //     smuggled across sessions;
+        //   - the bound target instance is revalidated immediately before the post,
+        //     which closes the HWND-reuse window;
+        //   - the observation is spent, so one observation delivers at most one
+        //     input. A keystroke changes the screen exactly as a click does, so a
+        //     frame that survived it would describe a target that no longer exists.
+        //
+        // Deliberately NOT shared, because a keystroke names no screen position:
+        //   - there is no page authorization and no same-frame detection. Those
+        //     answer "is the thing I am about to click still where I saw it, and is
+        //     it allowed on this page" -- questions a virtual key does not raise,
+        //     and which could only be honoured here by inventing a detection;
+        //   - the observation's lease is not enforced. A lease bounds a
+        //     coordinate's shelf life; a key's meaning does not decay with layout.
+        //     Enforcing it would refuse keystrokes for a reason that cannot apply
+        //     to them, and would push an operator to widen --max-frame-age for the
+        //     whole run to get keys through -- weakening every click to serve a key.
+        //
+        // What the caller supplies instead of a detection is the requirement that
+        // an observation exist at all: the keystroke is ordered against the
+        // observation cycle that produced it, and the trace joins it to that
+        // frame.
+        [[nodiscard]]
+        auto pressKey(
+            Observation&& observation,
+            KeyName key
+        ) -> Result<KeyReceipt>;
     };
 }

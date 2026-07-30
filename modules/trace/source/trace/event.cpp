@@ -81,6 +81,7 @@ namespace uf::trace
             case TraceEventKind::EngineActionAuthorized: return "engine.action_authorized";
             case TraceEventKind::EngineActionRejected: return "engine.action_rejected";
             case TraceEventKind::EngineActionDelivered: return "engine.action_delivered";
+            case TraceEventKind::EngineKeyDelivered: return "engine.key_delivered";
             case TraceEventKind::EngineObservationInvalidated:
                 return "engine.observation_invalidated";
             case TraceEventKind::TaskNativeCall: return "task.native_call";
@@ -98,6 +99,22 @@ namespace uf::trace
             }
 
             UF_UNREACHABLE_MSG("Unknown TraceEventKind value");
+        }
+
+        // The wire spelling of one front-end. Lower case like every other
+        // schema-owned enumerator spelling that names a layer rather than an
+        // outcome, and independent of the enumerator name for the reason above the
+        // kind table.
+        [[nodiscard]]
+        auto frontEndName(FrontEnd frontEnd) noexcept -> std::string_view
+        {
+            switch (frontEnd)
+            {
+            case FrontEnd::Task: return "task";
+            case FrontEnd::Operator: return "operator";
+            }
+
+            UF_UNREACHABLE_MSG("Unknown FrontEnd value");
         }
 
         [[nodiscard]]
@@ -512,6 +529,7 @@ namespace uf::trace
         uint64 sequence,
         TaskRunId runId,
         GenerationId generationId,
+        FrontEnd frontEnd,
         int64 wallClockUnixMillis
     )
         : m_event{std::move(event)}
@@ -519,6 +537,7 @@ namespace uf::trace
         , m_sequence{sequence}
         , m_runId{runId}
         , m_generationId{generationId}
+        , m_frontEnd{frontEnd}
         , m_wallClockUnixMillis{wallClockUnixMillis}
     {
     }
@@ -539,6 +558,11 @@ namespace uf::trace
         return m_generationId;
     }
 
+    auto StampedTraceEvent::frontEnd() const noexcept -> FrontEnd
+    {
+        return m_frontEnd;
+    }
+
     auto StampedTraceEvent::wallClockUnixMillis() const noexcept -> int64
     {
         return m_wallClockUnixMillis;
@@ -557,6 +581,7 @@ namespace uf::trace
             "generationId",
             std::format("{}", stamped.generationId().value())
         );
+        builder.addString("frontEnd", frontEndName(stamped.frontEnd()));
 
         // Part of the stamp, so it sits with the identity triple rather than
         // among the event's own fields. Omitted when no step is open, which is
@@ -682,6 +707,11 @@ namespace uf::trace
         {
             builder.addLiteral("clickClientX", std::format("{}", event.clickClient->x()));
             builder.addLiteral("clickClientY", std::format("{}", event.clickClient->y()));
+        }
+
+        if (event.key.has_value())
+        {
+            builder.addString("key", event.key->value());
         }
 
         // The non-golden member goes last, so a reader scanning a line meets the

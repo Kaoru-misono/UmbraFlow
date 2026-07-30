@@ -31,9 +31,10 @@ namespace uf::trace
     class TraceRecorder final
     {
         std::unique_ptr<ITraceSink> m_sink;
-        TraceStreamValidator        m_validator{};
+        TraceStreamValidator        m_validator;
         TaskRunId                   m_runId;
         GenerationId                m_generationId;
+        FrontEnd                    m_frontEnd;
         uint64                      m_nextSequence{1};
 
     public:
@@ -41,10 +42,19 @@ namespace uf::trace
         // configured with a sink that deliberately discards it, and a null sink
         // would make "tracing is off" an untyped third state every emitter would
         // have to reason about.
+        //
+        // `frontEnd` has no default. Which front-end drove a run is not something
+        // a construction site may leave unsaid -- a defaulted attribution would
+        // silently name one of them on every stream that forgot to choose -- and
+        // the value belongs to the caller that already latched it (see
+        // trace::FrontEnd). It reaches both the stamp and the validator, so the
+        // rules that depend on it and the attribution a reader sees come from one
+        // value.
         TraceRecorder(
             std::unique_ptr<ITraceSink> sink,
             TaskRunId runId,
-            GenerationId generationId
+            GenerationId generationId,
+            FrontEnd frontEnd
         ) noexcept;
 
         TraceRecorder(TraceRecorder const&) = delete;
@@ -75,5 +85,6 @@ namespace uf::trace
 
         [[nodiscard]] auto runId() const noexcept -> TaskRunId;
         [[nodiscard]] auto generationId() const noexcept -> GenerationId;
+        [[nodiscard]] auto frontEnd() const noexcept -> FrontEnd;
     };
 }

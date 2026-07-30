@@ -111,6 +111,18 @@ namespace uf::m0_demo
         }
 
         [[nodiscard]]
+        auto parsedKey(std::string_view line) -> InputAgentKeyCommand
+        {
+            auto command = parseInputAgentCommand(line);
+            REQUIRE(command.has_value());
+            auto const* key = std::get_if<InputAgentKeyCommand>(
+                &*command
+            );
+            REQUIRE(key != nullptr);
+            return *key;
+        }
+
+        [[nodiscard]]
         auto createTemporaryDirectory(std::string_view role) -> std::filesystem::path
         {
             auto const token = std::chrono::steady_clock::now()
@@ -137,7 +149,7 @@ namespace uf::m0_demo
             }
         }
 
-        auto writeQueue(
+        auto writeFile(
             std::filesystem::path const& path,
             std::string_view content,
             std::ios::openmode mode
@@ -218,6 +230,170 @@ namespace uf::m0_demo
                 AutomationErrorKind::InvalidResource
             );
         }
+    }
+
+    TEST_CASE("m0 input-agent parses a key command over every supported family")
+    {
+        auto const letter = parsedKey(
+            R"({"op":"key","key":"E","out_before":"a.png","out_after":"b.png",)"
+            R"("settle_ms":2000})"
+        );
+        CHECK(letter.key.virtualKey() == uint16{0x0045U});
+        CHECK_FALSE(letter.key.isExtended());
+        CHECK(letter.outputBefore == std::filesystem::path{"a.png"});
+        CHECK(letter.outputAfter == std::filesystem::path{"b.png"});
+        CHECK(
+            letter.settle
+            == std::chrono::duration_cast<MonotonicInstant::Duration>(
+                std::chrono::milliseconds{2000}
+            )
+        );
+
+        auto const digit = parsedKey(
+            R"({"op":"key","key":"1","out_before":"a.png","out_after":"b.png"})"
+        );
+        CHECK(digit.key.virtualKey() == uint16{0x0031U});
+        CHECK(digit.settle == k_defaultInputAgentSettle);
+
+        auto const function = parsedKey(
+            R"({"op":"key","key":"F3","out_before":"a.png","out_after":"b.png"})"
+        );
+        CHECK(function.key.virtualKey() == uint16{0x0072U});
+    }
+
+    TEST_CASE("m0 input-agent key result line reports delivery separately from ok")
+    {
+        auto const delivered = InputAgentActionResult{
+            .beforeFrame = uint64{7},
+            .afterFrame  = uint64{8},
+            .delivered   = true,
+            .error       = std::nullopt,
+        };
+        CHECK(
+            serializeInputAgentActionResult("key", delivered)
+            == R"({"op":"key","ok":true,"before_frame_id":7,)"
+               R"("after_frame_id":8,"delivered":true,"error":null})"
+        );
+
+        auto rejected = fail(
+            AutomationErrorKind::ActionRejected,
+            "unsupported key"
+        );
+        auto const failed = InputAgentActionResult{
+            .beforeFrame = uint64{7},
+            .afterFrame  = std::nullopt,
+            .delivered   = false,
+            .error       = std::move(rejected).error(),
+        };
+        auto const line = serializeInputAgentActionResult("key", failed);
+        CHECK(line.starts_with(R"({"op":"key","ok":false,)"));
+        CHECK(line.contains(R"("delivered":false)"));
+        CHECK(line.contains("unsupported key"));
+        CHECK_FALSE(line.contains(R"("delivered":true)"));
+    }
+
+    TEST_CASE("m0 input-agent rejects unknown key names and misplaced key fields")
+    {
+        for (auto const line : std::array<std::string_view, 11>{
+            R"({"op":"key","out_before":"a.png","out_after":"b.png"})",
+            R"({"op":"key","key":"","out_before":"a.png","out_after":"b.png"})",
+            R"({"op":"key","key":"e","out_before":"a.png","out_after":"b.png"})",
+            R"({"op":"key","key":"F13","out_before":"a.png","out_after":"b.png"})",
+            R"({"op":"key","key":"ENTER","out_before":"a.png","out_after":"b.png"})",
+            R"({"op":"key","key":"E","out_before":"a.png"})",
+            R"({"op":"key","key":"E","x":1,"y":2,"out_before":"a.png","out_after":"b.png"})",
+            R"({"op":"key","key":"E","out":"c.png","out_before":"a.png","out_after":"b.png"})",
+            R"({"op":"click","key":"E","x":1,"y":2,"out_before":"a.png","out_after":"b.png"})",
+            R"({"op":"capture","key":"E","out":"c.png"})",
+            R"({"op":"quit","key":"E"})",
+        })
+        {
+            CAPTURE(line);
+            auto const result = parseInputAgentCommand(line);
+            REQUIRE_FALSE(result.has_value());
+            test_m0_demo::requireErrorKind(
+                result.error(),
+                AutomationErrorKind::InvalidResource
+            );
+        }
+
+        // An unrecognized name must be legible as one, and must never produce a
+        // command that the agent could go on to deliver.
+        auto const unknown = parseInputAgentCommand(
+            R"({"op":"key","key":"CTRL","out_before":"a.png","out_after":"b.png"})"
+        );
+        REQUIRE_FALSE(unknown.has_value());
+        CHECK(unknown.error().message().contains("unsupported key"));
+        CHECK(unknown.error().message().contains("CTRL"));
+    }
+
+    TEST_CASE("m0 input-agent key frames must be fresh non-aliasing files")
+    {
+        auto const directory = createTemporaryDirectory("input-agent-key-frames");
+        auto const cleanup = scopeExit(
+            [cleanupPath = directory]() noexcept
+            {
+                removeAllBestEffort(cleanupPath);
+            }
+        );
+        auto const outputDirectory = directory / "out";
+        auto error = std::error_code{};
+        REQUIRE(std::filesystem::create_directory(outputDirectory, error));
+        REQUIRE_FALSE(error);
+        auto const canonical = canonicalizeOutputDirectory(outputDirectory);
+        REQUIRE(canonical.has_value());
+        auto const queue = directory / "queue.jsonl";
+        auto const results = directory / "results.jsonl";
+        writeFile(queue, "", std::ios::trunc);
+        writeFile(results, "", std::ios::trunc);
+
+        auto const fresh = resolveInputAgentFramePaths(
+            "before.png",
+            "after.png",
+            *canonical,
+            queue,
+            results,
+            "key"
+        );
+        REQUIRE(fresh.has_value());
+        CHECK(fresh->before == *canonical / "before.png");
+        CHECK(fresh->after == *canonical / "after.png");
+
+        auto const aliased = resolveInputAgentFramePaths(
+            "same.png",
+            "same.png",
+            *canonical,
+            queue,
+            results,
+            "key"
+        );
+        REQUIRE_FALSE(aliased.has_value());
+        CHECK(
+            aliased.error().message().contains(
+                "input-agent key out_before and out_after paths alias"
+            )
+        );
+
+        writeFile(outputDirectory / "before.png", "stale", std::ios::trunc);
+        auto const stale = resolveInputAgentFramePaths(
+            "before.png",
+            "after.png",
+            *canonical,
+            queue,
+            results,
+            "key"
+        );
+        REQUIRE_FALSE(stale.has_value());
+        test_m0_demo::requireErrorKind(
+            stale.error(),
+            AutomationErrorKind::InvalidResource
+        );
+        CHECK(stale.error().message().contains("key out_before"));
+        CHECK(
+            stale.error().message().contains(
+                "input-agent outputs must be fresh files"
+            )
+        );
     }
 
     TEST_CASE("m0 input-agent rejects settle times above the bounded wait")
@@ -321,24 +497,24 @@ namespace uf::m0_demo
             }
         );
         auto const queue = directory / "queue.jsonl";
-        writeQueue(queue, "", std::ios::trunc);
+        writeFile(queue, "", std::ios::trunc);
 
         auto reader = InputAgentQueueReader::create(queue);
         REQUIRE(reader.has_value());
 
-        writeQueue(queue, "partial", std::ios::app);
+        writeFile(queue, "partial", std::ios::app);
         auto first = reader->readAvailable();
         REQUIRE(first.has_value());
         CHECK(first->empty());
 
-        writeQueue(queue, "-one\r\nsecond\nthird", std::ios::app);
+        writeFile(queue, "-one\r\nsecond\nthird", std::ios::app);
         auto second = reader->readAvailable();
         REQUIRE(second.has_value());
         REQUIRE(second->size() == 2U);
         CHECK((*second)[0] == "partial-one");
         CHECK((*second)[1] == "second");
 
-        writeQueue(queue, "-tail\nfour\n", std::ios::app);
+        writeFile(queue, "-tail\nfour\n", std::ios::app);
         auto third = reader->readAvailable();
         REQUIRE(third.has_value());
         REQUIRE(third->size() == 2U);
@@ -356,7 +532,7 @@ namespace uf::m0_demo
             }
         );
         auto const queue = directory / "queue.jsonl";
-        writeQueue(queue, "first\n", std::ios::trunc);
+        writeFile(queue, "first\n", std::ios::trunc);
 
         auto reader = InputAgentQueueReader::create(queue);
         REQUIRE(reader.has_value());
@@ -364,7 +540,7 @@ namespace uf::m0_demo
         REQUIRE(first.has_value());
         REQUIRE(first->size() == 1U);
 
-        writeQueue(queue, "x", std::ios::trunc);
+        writeFile(queue, "x", std::ios::trunc);
         auto const truncated = reader->readAvailable();
         REQUIRE_FALSE(truncated.has_value());
         test_m0_demo::requireErrorKind(
@@ -384,14 +560,14 @@ namespace uf::m0_demo
             }
         );
         auto const queue = directory / "queue.jsonl";
-        writeQueue(queue, "", std::ios::trunc);
+        writeFile(queue, "", std::ios::trunc);
 
         auto reader = InputAgentQueueReader::create(queue);
         REQUIRE(reader.has_value());
         auto constexpr maximumPendingBytes = std::size_t{1024} * 1024U;
         auto constexpr readsPerMebibyte = std::size_t{16};
         auto const maximumLine = std::string(maximumPendingBytes, 'a');
-        writeQueue(queue, maximumLine, std::ios::app);
+        writeFile(queue, maximumLine, std::ios::app);
         for (auto index = std::size_t{}; index < readsPerMebibyte; ++index)
         {
             auto const chunk = reader->readAvailable();
@@ -399,7 +575,7 @@ namespace uf::m0_demo
             CHECK(chunk->empty());
         }
 
-        writeQueue(queue, "\n", std::ios::app);
+        writeFile(queue, "\n", std::ios::app);
         auto const boundary = reader->readAvailable();
         REQUIRE(boundary.has_value());
         REQUIRE(boundary->size() == 1U);
@@ -407,7 +583,7 @@ namespace uf::m0_demo
 
         auto oversizedLine = std::string(maximumPendingBytes + 1U, 'b');
         oversizedLine += '\n';
-        writeQueue(queue, oversizedLine, std::ios::app);
+        writeFile(queue, oversizedLine, std::ios::app);
         for (auto index = std::size_t{}; index < readsPerMebibyte; ++index)
         {
             auto const chunk = reader->readAvailable();
