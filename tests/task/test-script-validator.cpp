@@ -3,12 +3,14 @@
 #include <task/capability-surface.hpp>
 #include <task/script-validator.hpp>
 
+#include <annotation/capabilities.hpp>
 #include <annotation/catalog.hpp>
 
 #include <domain/error.hpp>
 
 #include <doctest/doctest.h>
 
+#include <optional>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -25,47 +27,54 @@ namespace uf::task
         constexpr auto k_battleId = "00000000-0000-0000-0000-000000000003";
         constexpr auto k_pageId   = "00000000-0000-0000-0000-000000000101";
 
-        // The same minimal catalog the binding tests use: one page anchor (never
-        // findable), two action targets (daily_button, battle), and one page
-        // (home). The surface built from it is exactly what the script sees, so
-        // the validator resolves against the identical name set.
+        // The same minimal catalog the binding tests use: one identify-only
+        // element (never findable), two interactive ones (daily_button,
+        // battle), and one page (home). The surface built from it is exactly
+        // what the script sees, so the validator resolves against the identical
+        // name set.
         auto buildSurface() -> CapabilitySurface
         {
             auto const fingerprint = at::fingerprint();
             auto const pageId      = at::pageId(k_pageId);
+            auto const anchorId    = at::elementId(k_anchorId);
+            auto const dailyId     = at::elementId(k_dailyId);
+            auto const battleId    = at::elementId(k_battleId);
 
             auto recognizers = std::vector<annotation::RecognizerDefinition>{};
             recognizers.push_back(at::recognizer(
                 fingerprint,
-                at::elementId(k_anchorId),
+                anchorId,
                 "home_marker",
-                annotation::AnnotationType::PageAnchor,
-                at::pixelRect(0, 0, 1, 1),
-                at::pixelRect(0, 0, 4, 4)
+                at::capabilities(annotation::Identify{}),
+                at::pixelRect(0, 0, 4, 4),
+                {at::recognizerVariant("default", at::pixelRect(0, 0, 1, 1))}
             ));
             recognizers.push_back(at::recognizer(
                 fingerprint,
-                at::elementId(k_dailyId),
+                dailyId,
                 "daily_button",
-                annotation::AnnotationType::ActionTarget,
-                at::pixelRect(1, 1, 1, 1),
+                at::capabilities(std::nullopt, annotation::Interact{}),
                 at::pixelRect(0, 0, 4, 4),
-                {pageId}
+                {at::recognizerVariant("default", at::pixelRect(1, 1, 1, 1))}
             ));
             recognizers.push_back(at::recognizer(
                 fingerprint,
-                at::elementId(k_battleId),
+                battleId,
                 "battle",
-                annotation::AnnotationType::ActionTarget,
-                at::pixelRect(2, 2, 1, 1),
+                at::capabilities(std::nullopt, annotation::Interact{}),
                 at::pixelRect(0, 0, 4, 4),
-                {pageId}
+                {at::recognizerVariant("default", at::pixelRect(2, 2, 1, 1))}
             ));
 
             auto const catalog = at::catalog(
                 fingerprint,
                 std::move(recognizers),
-                {at::page(pageId, "home", {at::elementId(k_anchorId)})}
+                {at::page(pageId, "home")},
+                {
+                    at::reference(pageId, anchorId, at::identifiesAs()),
+                    at::reference(pageId, dailyId, at::interacts()),
+                    at::reference(pageId, battleId, at::interacts()),
+                }
             );
 
             auto surface = CapabilitySurface::create(catalog);

@@ -93,7 +93,28 @@ namespace uf::task
     ) -> Result<std::optional<engine::ActionFound>>
     {
         UF_TRY(m_cycles.requireOpen(ticket));
-        return m_session.findAction(m_cycles.observation(), recognizerId);
+
+        // Locating an element is page-scoped: the reference row carries the
+        // search region this page refines and the appearance it pins, and a
+        // page that does not exercise interact on the element has no action
+        // there to find. So the cycle's own resolved page is what the search
+        // runs against -- the same page a click on the result would be
+        // authorized by, and one no script can substitute.
+        //
+        // A cycle that resolved none has nothing to search against. Refusing
+        // here rather than reporting an absence keeps "the search looked and
+        // found nothing" distinct from "the search could not run".
+        auto const pageId = m_cycles.resolvedPageId();
+        if (!pageId)
+        {
+            return fail(
+                AutomationErrorKind::ActionRejected,
+                "this observation cycle resolved no page, so there is no page "
+                "reference to locate the element by; resolve the cycle's page "
+                "first"
+            );
+        }
+        return m_session.findAction(m_cycles.observation(), *pageId, recognizerId);
     }
 
     auto TaskContext::cycleClick(

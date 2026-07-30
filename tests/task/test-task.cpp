@@ -6,6 +6,7 @@
 #include <script/engine.hpp>
 #include <script/testing/environment-probe.hpp>
 
+#include <annotation/capabilities.hpp>
 #include <annotation/catalog.hpp>
 
 #include <core/error/result.hpp>
@@ -23,6 +24,7 @@
 
 #include <cstddef>
 #include <memory>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -39,47 +41,54 @@ namespace uf::task
         constexpr auto k_battleId  = "00000000-0000-0000-0000-000000000003";
         constexpr auto k_pageId    = "00000000-0000-0000-0000-000000000101";
 
-        // A minimal but complete catalog: one page anchor, two action targets,
-        // and one page. Built from the annotation module's own test fixtures
-        // (tests/annotation/test-helpers.hpp) so the surface is driven by exactly
-        // the catalog shape the engine loads at runtime.
+        // A minimal but complete catalog: one identify-only element, two
+        // interactive ones, and one page referencing all three. Built from the
+        // annotation module's own test fixtures (tests/annotation/test-helpers.hpp)
+        // so the surface is driven by exactly the catalog shape the engine loads
+        // at runtime.
         auto buildCatalog() -> annotation::RecognitionCatalog
         {
             auto const fingerprint = at::fingerprint();
             auto const pageId      = at::pageId(k_pageId);
+            auto const anchorId    = at::elementId(k_anchorId);
+            auto const dailyId     = at::elementId(k_dailyId);
+            auto const battleId    = at::elementId(k_battleId);
 
             auto recognizers = std::vector<annotation::RecognizerDefinition>{};
             recognizers.push_back(at::recognizer(
                 fingerprint,
-                at::elementId(k_anchorId),
+                anchorId,
                 "home_marker",
-                annotation::AnnotationType::PageAnchor,
-                at::pixelRect(0, 0, 1, 1),
-                at::pixelRect(0, 0, 4, 4)
+                at::capabilities(annotation::Identify{}),
+                at::pixelRect(0, 0, 4, 4),
+                {at::recognizerVariant("default", at::pixelRect(0, 0, 1, 1))}
             ));
             recognizers.push_back(at::recognizer(
                 fingerprint,
-                at::elementId(k_dailyId),
+                dailyId,
                 "daily_button",
-                annotation::AnnotationType::ActionTarget,
-                at::pixelRect(1, 1, 1, 1),
+                at::capabilities(std::nullopt, annotation::Interact{}),
                 at::pixelRect(0, 0, 4, 4),
-                {pageId}
+                {at::recognizerVariant("default", at::pixelRect(1, 1, 1, 1))}
             ));
             recognizers.push_back(at::recognizer(
                 fingerprint,
-                at::elementId(k_battleId),
+                battleId,
                 "battle",
-                annotation::AnnotationType::ActionTarget,
-                at::pixelRect(2, 2, 1, 1),
+                at::capabilities(std::nullopt, annotation::Interact{}),
                 at::pixelRect(0, 0, 4, 4),
-                {pageId}
+                {at::recognizerVariant("default", at::pixelRect(2, 2, 1, 1))}
             ));
 
             return at::catalog(
                 fingerprint,
                 std::move(recognizers),
-                {at::page(pageId, "home", {at::elementId(k_anchorId)})}
+                {at::page(pageId, "home")},
+                {
+                    at::reference(pageId, anchorId, at::identifiesAs()),
+                    at::reference(pageId, dailyId, at::interacts()),
+                    at::reference(pageId, battleId, at::interacts()),
+                }
             );
         }
 
@@ -200,19 +209,19 @@ namespace uf::task
             return spellings;
         }
 
-        TEST_CASE("CapabilitySurface exposes only action targets and every page")
+        TEST_CASE("CapabilitySurface exposes only interactive elements and every page")
         {
             auto const catalog = buildCatalog();
             auto surface       = CapabilitySurface::create(catalog);
             REQUIRE(surface.has_value());
 
-            // Page anchors are not findable, so only the two action targets are
-            // exposed; every page is exposed.
+            // An element that only identifies is not findable, so only the two
+            // that declare interact are exposed; every page is exposed.
             CHECK(surface->recognizerCount() == 2);
             CHECK(surface->pageCount() == 1);
         }
 
-        TEST_CASE("Scripts read named handles and see nil for absent or anchor names")
+        TEST_CASE("Scripts read named handles and see nil for absent or identify-only names")
         {
             auto const catalog = buildCatalog();
             auto surface       = CapabilitySurface::create(catalog);
@@ -233,7 +242,8 @@ namespace uf::task
             }
 
             constexpr std::string_view absent[] = {
-                // A page anchor is page-internal evidence, never a findable handle.
+                // An element that only identifies is page-internal evidence,
+                // never a findable handle.
                 "uf.recognizers.home_marker == nil",
                 // Names that do not exist resolve to nil, not an error.
                 "uf.recognizers.does_not_exist == nil",

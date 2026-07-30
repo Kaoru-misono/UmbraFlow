@@ -223,32 +223,36 @@ namespace uf::task
             CHECK(p_frames->captureCount() == 1U);
         }
 
-        TEST_CASE("The task binding refuses a click on a cycle that resolved no page")
+        TEST_CASE("The task binding refuses to act on a cycle that resolved no page")
         {
-            // The structural authorization guarantee. cycle_click takes no page:
+            // The structural authorization guarantee. Neither verb takes a page:
             // the host uses the page THIS cycle resolved, so a script cannot hand
             // over evidence from another frame. A cycle that never resolved one
-            // has no evidence at all and the click is refused -- and refused
-            // without spending the cycle, which the successful click afterwards
-            // proves.
+            // has no evidence at all, and the refusal now lands on the find --
+            // authorisation IS the page's reference to the element, so with no
+            // page there is no reference to locate it by and no hit to click
+            // with. The refusal spends nothing, which the successful click on the
+            // very same ticket afterwards proves.
             auto built = buildBinding(resolvingFrames(FrameId{19}));
             REQUIRE(built.session.has_value());
             TaskContext context{*std::move(built.session), *built.recorder};
 
             constexpr std::string_view source = R"lua(
                 local cycle = ctx:cycle_open()
-                local hit = ctx:cycle_find(cycle, uf.recognizers.action_target)
-                if hit == nil then return 0 end
 
-                local ok, err = pcall(function() return ctx:cycle_click(cycle, hit) end)
+                local ok, err = pcall(function()
+                    return ctx:cycle_find(cycle, uf.recognizers.action_target)
+                end)
                 if ok then return 0 end
                 if err.kind ~= 'action_rejected' then return 0 end
                 if getmetatable(err) ~= 'uf.error' then return 0 end
 
                 -- Resolving the page gives the cycle its evidence, and the very
-                -- same ticket and hit now deliver.
+                -- same ticket now finds and delivers.
                 local page = ctx:cycle_page(cycle)
                 if page == nil then return 0 end
+                local hit = ctx:cycle_find(cycle, uf.recognizers.action_target)
+                if hit == nil then return 0 end
                 ctx:cycle_click(cycle, hit)
                 return 1
             )lua";
@@ -296,6 +300,7 @@ namespace uf::task
                 -- A closed cycle is equally dead, and its hit is refused even
                 -- against a cycle that IS open.
                 local closed = ctx:cycle_open()
+                if ctx:cycle_page(closed) == nil then return 0 end
                 local staleHit = ctx:cycle_find(closed, uf.recognizers.action_target)
                 ctx:cycle_close(closed)
                 local okClosed, errClosed = pcall(function()
@@ -420,14 +425,25 @@ namespace uf::task
 
         TEST_CASE("The task binding returns nil for a find that completes without a match")
         {
+            // The frame resolves page_a and the target is absent from it, which
+            // is what a completed miss looks like: the page supplies the
+            // reference the search runs against, and the search then finds
+            // nothing.
             auto frames = std::vector<Frame>{};
-            frames.emplace_back(grayFrame(anno::test::fingerprint(3, 1, 96, 96), unknownPixels(), FrameId{26}));
+            frames.emplace_back(
+                grayFrame(
+                    anno::test::fingerprint(3, 1, 96, 96),
+                    resolvedTargetlessPixels(),
+                    FrameId{26}
+                )
+            );
             auto built = buildBinding(std::move(frames));
             REQUIRE(built.session.has_value());
             TaskContext context{*std::move(built.session), *built.recorder};
 
             constexpr std::string_view source = R"lua(
                 local cycle = ctx:cycle_open()
+                if ctx:cycle_page(cycle) == nil then return 0 end
                 local hit = ctx:cycle_find(cycle, uf.recognizers.action_target)
                 ctx:cycle_close(cycle)
                 return (hit == nil) and 1 or 0
@@ -1201,10 +1217,18 @@ namespace uf::task
             CHECK(p_close->outcome == trace::NativeCallOutcome::Empty);
         }
 
-        TEST_CASE("The task binding emits an Empty native call for a find that finds nothing")
+        TEST_CASE("The task binding emits Empty native calls for a page and a find that find nothing")
         {
-            auto frames = std::vector<Frame>{};
-            frames.emplace_back(grayFrame(anno::test::fingerprint(3, 1, 96, 96), unknownPixels(), FrameId{71}));
+            // Two frames, because the two Empty outcomes can no longer share a
+            // cycle: a page that resolves nothing leaves the find no reference to
+            // search against, so a find that COMPLETES and misses has to be
+            // observed on a resolved page whose target is absent.
+            auto const fingerprint = anno::test::fingerprint(3, 1, 96, 96);
+            auto frames            = std::vector<Frame>{};
+            frames.emplace_back(grayFrame(fingerprint, unknownPixels(), FrameId{71}));
+            frames.emplace_back(
+                grayFrame(fingerprint, resolvedTargetlessPixels(), FrameId{72})
+            );
             auto traceSink       = std::make_unique<RecordingTraceSink>();
             auto* const p_traces = traceSink.get();
             auto built = buildBindingWith(
@@ -1215,15 +1239,20 @@ namespace uf::task
             REQUIRE(built.session.has_value());
             TaskContext context{*std::move(built.session), *built.recorder};
 
-            // The frame resolves nothing, so cycle_page completes Unknown and
-            // cycle_find completes without a match; both record Empty (Tier A)
-            // rather than Succeeded or Failed.
+            // The first frame resolves nothing, so its cycle_page completes
+            // Unknown; the second resolves page_a without the target on it, so
+            // its cycle_find completes without a match. Both record Empty (Tier
+            // A) rather than Succeeded or Failed.
             constexpr std::string_view source = R"lua(
-                local cycle = ctx:cycle_open()
-                local page = ctx:cycle_page(cycle)
-                local hit = ctx:cycle_find(cycle, uf.recognizers.action_target)
-                ctx:cycle_close(cycle)
-                return (page == nil and hit == nil) and 1 or 0
+                local unknown = ctx:cycle_open()
+                local page1 = ctx:cycle_page(unknown)
+                ctx:cycle_close(unknown)
+
+                local resolved = ctx:cycle_open()
+                local page2 = ctx:cycle_page(resolved)
+                local hit = ctx:cycle_find(resolved, uf.recognizers.action_target)
+                ctx:cycle_close(resolved)
+                return (page1 == nil and page2 ~= nil and hit == nil) and 1 or 0
             )lua";
 
             CHECK(runBound(context, built, source) == doctest::Approx(1.0));
@@ -1234,11 +1263,15 @@ namespace uf::task
                 == std::vector<std::string>{
                     "cycle_open",
                     "cycle_page",
+                    "cycle_close",
+                    "cycle_open",
+                    "cycle_page",
                     "cycle_find",
                     "cycle_close",
                 }
             );
 
+            // The first cycle_page is the unknown one.
             auto const* p_page = findNativeCall(events, "cycle_page");
             REQUIRE(p_page != nullptr);
             CHECK(p_page->outcome == trace::NativeCallOutcome::Empty);

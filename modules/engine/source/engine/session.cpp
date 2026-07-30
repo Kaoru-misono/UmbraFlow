@@ -404,6 +404,7 @@ namespace uf::engine
 
     auto EngineSession::findAction(
         Observation const& observation,
+        annotation::PageId pageId,
         annotation::ElementId recognizerId
     ) -> Result<std::optional<ActionFound>>
     {
@@ -427,6 +428,7 @@ namespace uf::engine
         auto attempt = m_loadedRuntime.runtime.evaluateActionTarget(
             frame,
             m_config.liveFingerprint,
+            pageId,
             recognizerId,
             makeRecognitionPolicy()
         );
@@ -482,8 +484,9 @@ namespace uf::engine
         }
 
         auto const* p_recognizer = catalog().findRecognizer(recognizerId);
-        // evaluateActionTarget has already proven the recognizer is a catalog
-        // action target, so its definition is necessarily present here.
+        // evaluateActionTarget has already proven that this page references the
+        // element and exercises interact on it, so its definition is
+        // necessarily present here.
         UF_CHECK(p_recognizer != nullptr);
         auto const matchedRect = evidence.matchedRect();
         UF_CHECK(matchedRect.has_value());

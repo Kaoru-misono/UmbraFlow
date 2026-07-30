@@ -9,6 +9,7 @@
 
 #include <annotation/authoring-compiler.hpp>
 #include <annotation/authoring-document.hpp>
+#include <annotation/capabilities.hpp>
 #include <annotation/content-hash.hpp>
 #include <annotation/recognition.hpp>
 #include <annotation/resource.hpp>
@@ -181,10 +182,11 @@ namespace uf::task
             return anno::test::fingerprint(3, 2, 96, 96);
         }
 
-        // Publishes a project at `root` holding one page `home` (required anchor
-        // `home_marker`) and one action target `daily_button` authorized on it,
-        // then writes `tasks/<name>.luau`. This is the on-disk shape TaskHost
-        // addresses: it never executes a loose-path script.
+        // Publishes a project at `root` holding one page `home`, whose reference
+        // to `home_marker` is required identity evidence and whose reference to
+        // `daily_button` exercises interact, then writes `tasks/<name>.luau`.
+        // This is the on-disk shape TaskHost addresses: it never executes a
+        // loose-path script.
         auto publishProject(
             std::filesystem::path const& root,
             std::string_view taskName,
@@ -220,31 +222,42 @@ namespace uf::task
                 fingerprint,
                 {*source},
                 {
-                    anno::test::anchorElement(
+                    anno::test::element(
                         fingerprint,
                         anchorId,
                         "home_marker",
-                        sourceId,
-                        anno::test::pixelRect(0, 0, 1, 1),
-                        anno::test::pixelRect(0, 0, 3, 2)
+                        anno::test::capabilities(anno::Identify{}),
+                        anno::test::pixelRect(0, 0, 3, 2),
+                        {
+                            anno::test::variant(
+                                "default",
+                                sourceId,
+                                anno::test::pixelRect(0, 0, 1, 1)
+                            ),
+                        }
                     ),
-                    anno::test::interactiveElement(
+                    anno::test::element(
                         fingerprint,
                         actionId,
                         "daily_button",
-                        sourceId,
-                        anno::test::pixelRect(1, 0, 2, 2),
+                        anno::test::capabilities(
+                            std::nullopt,
+                            anno::Interact{.clickOffset = *click}
+                        ),
                         anno::test::pixelRect(0, 0, 3, 2),
-                        *click
+                        {
+                            anno::test::variant(
+                                "default",
+                                sourceId,
+                                anno::test::pixelRect(1, 0, 2, 2)
+                            ),
+                        }
                     ),
                 },
-                {anno::test::page(pageId, "home", {anchorId})},
+                {anno::test::page(pageId, "home")},
                 {
-                    anno::test::placement(
-                        pageId,
-                        actionId,
-                        anno::test::pixelRect(0, 0, 3, 2)
-                    ),
+                    anno::test::reference(pageId, anchorId, anno::test::identifiesAs()),
+                    anno::test::reference(pageId, actionId, anno::test::interacts()),
                 },
                 {}
             );

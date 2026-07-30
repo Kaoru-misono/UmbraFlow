@@ -248,11 +248,16 @@ namespace uf::task
         }
     }
 
-    TEST_CASE("a click with no same-frame page is refused identically on both paths")
+    TEST_CASE("an action with no same-frame page is refused identically on both paths")
     {
         // The four-requisite authorization's page evidence is the page THAT cycle
         // resolved. Neither path resolves one here, so neither has evidence, and the
         // refusal has to be the same because it comes from the same ledger.
+        //
+        // The refusal lands on the find rather than the click: authorisation IS
+        // the page's reference to the element, so with no page there is no
+        // reference to locate it by. The kind is unchanged, and so is the point --
+        // one ledger, one answer, whichever front end asked.
         auto const taskKind = [&]
         {
             auto side = buildTaskSide(resolvingFrames(FrameId{31}), lenientFrameAge());
@@ -280,14 +285,10 @@ namespace uf::task
             );
             auto cycle = side.session->cycleOpen();
             REQUIRE(cycle.has_value());
-            auto hit = side.session->cycleFind(*cycle, "action_target");
-            REQUIRE(hit.has_value());
-            REQUIRE(hit->has_value());
-
-            auto const clicked = side.session->cycleClick(*cycle, **hit);
-            REQUIRE_FALSE(clicked.has_value());
+            auto const found = side.session->cycleFind(*cycle, "action_target");
+            REQUIRE_FALSE(found.has_value());
             CHECK(side.actions->clickCount() == 0U);
-            return automationErrorKind(clicked.error());
+            return automationErrorKind(found.error());
         }();
 
         CHECK(taskKind == AutomationErrorKind::ActionRejected);

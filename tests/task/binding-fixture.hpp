@@ -7,6 +7,7 @@
 #include <task/task-context.hpp>
 
 #include <annotation/resource.hpp>
+#include <annotation/capabilities.hpp>
 #include <annotation/content-hash.hpp>
 #include <annotation/recognition.hpp>
 #include <annotation/recognition-runtime.hpp>
@@ -115,10 +116,41 @@ namespace uf::task
         anno::ProjectFingerprint fingerprint;
     };
 
-    // One page (page_a, required anchor grey 2) plus one action target
-    // (grey 5) authorized for that page. A grey [2,5,0] frame resolves page_a
-    // and the target hits at position 1; a grey [0,0,0] frame resolves nothing
-    // and the target misses.
+    // One element's only appearance. Every element in these fixtures has
+    // exactly one, so its name is fixed here rather than threaded through each
+    // call.
+    [[nodiscard]]
+    inline auto soleVariant() -> anno::RecognizerVariant
+    {
+        return anno::test::recognizerVariant(
+            "default",
+            anno::test::pixelRect(0, 0, 1, 1),
+            anno::test::threshold(10'000)
+        );
+    }
+
+    [[nodiscard]]
+    inline auto soleVariantAsset(
+        anno::ContentHash const& templateHash,
+        anno::ContentHash const& sourceHash
+    ) -> std::vector<anno::RuntimeVariantAsset>
+    {
+        auto assets = std::vector<anno::RuntimeVariantAsset>{};
+        assets.emplace_back(
+            anno::RuntimeVariantAsset{
+                .variantName  = anno::test::resourceName("default"),
+                .templateHash = templateHash,
+                .sourceHash   = sourceHash,
+            }
+        );
+        return assets;
+    }
+
+    // One page (page_a, whose reference to the grey-2 anchor is required
+    // identity evidence) plus one action target (grey 5) the same page
+    // exercises interact on. A grey [2,5,0] frame resolves page_a and the
+    // target hits at position 1; a grey [0,0,0] frame resolves nothing and the
+    // target misses.
     [[nodiscard]]
     inline auto singlePageRuntime() -> RuntimeParts
     {
@@ -141,33 +173,29 @@ namespace uf::task
                         fingerprint,
                         anchorA,
                         "anchor_a",
-                        anno::AnnotationType::PageAnchor,
-                        anno::test::pixelRect(0, 0, 1, 1),
+                        anno::test::capabilities(anno::Identify{}),
                         anno::test::pixelRect(0, 0, 3, 1),
-                        {},
-                        std::nullopt,
-                        anno::test::threshold(10'000)
+                        {soleVariant()}
                     ),
-                    .templateHash = anchorTemplate.hash,
-                    .sourceHash   = *sourceHash,
+                    .variants = soleVariantAsset(anchorTemplate.hash, *sourceHash),
                 },
                 anno::RuntimeRecognizerSpec{
                     .definition = anno::test::recognizer(
                         fingerprint,
                         actionT,
                         "action_target",
-                        anno::AnnotationType::ActionTarget,
-                        anno::test::pixelRect(0, 0, 1, 1),
+                        anno::test::capabilities(std::nullopt, anno::Interact{}),
                         anno::test::pixelRect(0, 0, 3, 1),
-                        {pageA},
-                        std::nullopt,
-                        anno::test::threshold(10'000)
+                        {soleVariant()}
                     ),
-                    .templateHash = actionTemplate.hash,
-                    .sourceHash   = *sourceHash,
+                    .variants = soleVariantAsset(actionTemplate.hash, *sourceHash),
                 },
             },
-            {anno::test::page(pageA, "page_a", {anchorA})}
+            {anno::test::page(pageA, "page_a")},
+            {
+                anno::test::reference(pageA, anchorA, anno::test::identifiesAs()),
+                anno::test::reference(pageA, actionT, anno::test::interacts()),
+            }
         );
         REQUIRE(manifest.has_value());
         auto templates = std::vector<anno::EncodedRuntimeTemplate>{};
@@ -217,20 +245,15 @@ namespace uf::task
                     fingerprint,
                     id,
                     std::string{name},
-                    anno::AnnotationType::PageAnchor,
-                    anno::test::pixelRect(0, 0, 1, 1),
+                    anno::test::capabilities(anno::Identify{}),
                     anno::test::pixelRect(0, 0, 3, 1),
-                    {},
-                    std::nullopt,
-                    anno::test::threshold(10'000)
+                    {soleVariant()}
                 ),
-                .templateHash = templateHash,
-                .sourceHash   = *sourceHash,
+                .variants = soleVariantAsset(templateHash, *sourceHash),
             };
         };
         auto const actionSpec = [&](anno::ElementId id,
                                     std::string_view name,
-                                    anno::PageId page,
                                     anno::ContentHash templateHash)
         {
             return anno::RuntimeRecognizerSpec{
@@ -238,15 +261,11 @@ namespace uf::task
                     fingerprint,
                     id,
                     std::string{name},
-                    anno::AnnotationType::ActionTarget,
-                    anno::test::pixelRect(0, 0, 1, 1),
+                    anno::test::capabilities(std::nullopt, anno::Interact{}),
                     anno::test::pixelRect(0, 0, 3, 1),
-                    {page},
-                    std::nullopt,
-                    anno::test::threshold(10'000)
+                    {soleVariant()}
                 ),
-                .templateHash = templateHash,
-                .sourceHash   = *sourceHash,
+                .variants = soleVariantAsset(templateHash, *sourceHash),
             };
         };
 
@@ -255,23 +274,31 @@ namespace uf::task
             fingerprint,
             {
                 anchorSpec(targetAnchor, "anchor_a", targetAnchorTemplate.hash),
-                actionSpec(
-                    targetAction,
-                    "action_target",
-                    targetPage,
-                    targetActionTemplate.hash
-                ),
+                actionSpec(targetAction, "action_target", targetActionTemplate.hash),
                 anchorSpec(popupAnchor, "anchor_popup", popupAnchorTemplate.hash),
-                actionSpec(
-                    popupClose,
-                    "close_dialog",
-                    popupPage,
-                    popupCloseTemplate.hash
-                ),
+                actionSpec(popupClose, "close_dialog", popupCloseTemplate.hash),
             },
             {
-                anno::test::page(targetPage, "page_a", {targetAnchor}),
-                anno::test::page(popupPage, "popup", {popupAnchor}),
+                anno::test::page(targetPage, "page_a"),
+                anno::test::page(popupPage, "popup"),
+            },
+            {
+                anno::test::reference(
+                    targetPage,
+                    targetAnchor,
+                    anno::test::identifiesAs()
+                ),
+                anno::test::reference(
+                    targetPage,
+                    targetAction,
+                    anno::test::interacts()
+                ),
+                anno::test::reference(
+                    popupPage,
+                    popupAnchor,
+                    anno::test::identifiesAs()
+                ),
+                anno::test::reference(popupPage, popupClose, anno::test::interacts()),
             }
         );
         REQUIRE(manifest.has_value());
@@ -340,6 +367,22 @@ namespace uf::task
         return std::vector<std::byte>{
             asByte(k_targetAnchorGray),
             asByte(k_targetActionGray),
+            asByte(0),
+        };
+    }
+
+    // A frame that resolves page_a while the action target is nowhere on it.
+    //
+    // It is what a find that COMPLETES and matches nothing needs now: locating
+    // an element runs against the page's reference to it, so a frame that
+    // resolves no page refuses the search instead of missing, and "the search
+    // looked and found nothing" can only be observed on a page that resolved.
+    [[nodiscard]]
+    inline auto resolvedTargetlessPixels() -> std::vector<std::byte>
+    {
+        return std::vector<std::byte>{
+            asByte(k_targetAnchorGray),
+            asByte(0),
             asByte(0),
         };
     }

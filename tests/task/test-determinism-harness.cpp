@@ -44,10 +44,16 @@ namespace uf::task
     namespace
     {
         // The representative script. It walks a PageUnknown -> PageResolved
-        // transition (cycle 1 then cycle 2), records a find that misses on the
-        // unknown frame and a successful recognition + click on the resolved one,
-        // and reads ctx:settle / ctx:random -- the two host facilities that make
-        // determinism a real risk rather than a triviality.
+        // transition (cycle 1 then cycle 2), records a find that completes with
+        // no match and a successful recognition + click, and reads ctx:settle /
+        // ctx:random -- the two host facilities that make determinism a real risk
+        // rather than a triviality.
+        //
+        // The miss sits on cycle 2 rather than on the unknown frame because
+        // locating an element runs against the resolved page's reference to it:
+        // an unknown page refuses the search instead of missing, so a completed
+        // miss can only be observed on a page that resolved without the target
+        // on it.
         //
         // settle() is the declarative pause, and a zero-millisecond one is still
         // a traced native call: its line carries the duration the script asked
@@ -60,23 +66,32 @@ namespace uf::task
         constexpr std::string_view k_harnessScript = R"lua(
             ctx:settle(0)
 
-            -- Cycle 1: an unknown page and a find that completes with no match.
+            -- Cycle 1: an unknown page.
             local c1 = ctx:cycle_open()
             local page1 = ctx:cycle_page(c1)
-            local miss = ctx:cycle_find(c1, uf.recognizers.action_target)
             if page1 ~= nil then error("frame 1 must be an unknown page") end
-            if miss ~= nil then error("frame 1 find must miss") end
             ctx:cycle_close(c1)
 
-            -- Cycle 2: resolves page_a, the target hits, one click is delivered.
+            -- Cycle 2: page_a resolves without the target on it, so the find
+            -- completes with no match.
             local c2 = ctx:cycle_open()
             local page2 = ctx:cycle_page(c2)
             if page2 == nil or not page2:is(uf.pages.page_a) then
                 error("frame 2 must resolve page_a")
             end
-            local hit = ctx:cycle_find(c2, uf.recognizers.action_target)
-            if hit == nil then error("frame 2 target must hit") end
-            ctx:cycle_click(c2, hit)
+            local miss = ctx:cycle_find(c2, uf.recognizers.action_target)
+            if miss ~= nil then error("frame 2 find must miss") end
+            ctx:cycle_close(c2)
+
+            -- Cycle 3: resolves page_a, the target hits, one click is delivered.
+            local c3 = ctx:cycle_open()
+            local page3 = ctx:cycle_page(c3)
+            if page3 == nil or not page3:is(uf.pages.page_a) then
+                error("frame 3 must resolve page_a")
+            end
+            local hit = ctx:cycle_find(c3, uf.recognizers.action_target)
+            if hit == nil then error("frame 3 target must hit") end
+            ctx:cycle_click(c3, hit)
 
             -- Seed-dependent tail: a fixed number of draws, each deciding whether
             -- to run one extra observation cycle. The resulting native call
@@ -92,8 +107,9 @@ namespace uf::task
             return 1
         )lua";
 
-        // The fixed synthetic frame sequence: one unknown frame then one that
-        // resolves page_a. Materialized fresh on every call so each frame's
+        // The fixed synthetic frame sequence: one unknown frame, one that
+        // resolves page_a without the action target on it, then one that
+        // resolves page_a with it. Materialized fresh on every call so each frame's
         // capture instant is current -- the 750 ms action-frame lease
         // (k_defaultMaxActionFrameAge) would otherwise expire partway through a
         // long veto loop and make late runs diverge from early ones. The pixel
@@ -106,7 +122,8 @@ namespace uf::task
             auto const fp = anno::test::fingerprint(3, 1, 96, 96);
             auto frames   = std::vector<Frame>{};
             frames.emplace_back(grayFrame(fp, unknownPixels(), FrameId{101}));
-            frames.emplace_back(grayFrame(fp, resolvingPixels(), FrameId{102}));
+            frames.emplace_back(grayFrame(fp, resolvedTargetlessPixels(), FrameId{102}));
+            frames.emplace_back(grayFrame(fp, resolvingPixels(), FrameId{103}));
             return frames;
         }
 
@@ -238,14 +255,14 @@ namespace uf::task
 
             // The baseline must carry real content, or the equality checks below
             // would be vacuous: it starts with the clicks section, records exactly
-            // one delivered click (frame 2), and contains the successful click
+            // one delivered click (frame 3), and contains the successful click
             // HostCall the script's automation flow emits.
             REQUIRE(baseline.starts_with("clicks\n"));
             CHECK(baseline.find("\ntrace\n") != std::string::npos);
             CHECK(
                 baseline.find(
-                    "\"verb\":\"cycle_click\",\"cycleOrdinal\":2"
-                    ",\"hitCycleOrdinal\":2,\"outcome\":\"Succeeded\""
+                    "\"verb\":\"cycle_click\",\"cycleOrdinal\":3"
+                    ",\"hitCycleOrdinal\":3,\"outcome\":\"Succeeded\""
                 )
                 != std::string::npos
             );

@@ -32,9 +32,14 @@ namespace uf::task
 
         for (auto const& definition : catalog.recognizers())
         {
-            // Only action targets are findable from a script; page anchors are
-            // page-internal evidence and info regions have no verb yet.
-            if (definition.annotationType() != annotation::AnnotationType::ActionTarget)
+            // Findable means interactable: a handle a script holds is one it
+            // could go on to click. Identify contributes page-internal
+            // evidence and read has no verb yet, so neither earns a handle on
+            // its own. Asking for the capability rather than for the absence of
+            // the other two is what lets an element that both names its page
+            // and can be clicked appear here exactly once -- which is the whole
+            // point of capabilities being a set rather than a choice.
+            if (!definition.capabilities().hasInteract())
             {
                 continue;
             }
@@ -47,7 +52,7 @@ namespace uf::task
             {
                 return fail(
                     AutomationErrorKind::InvalidResource,
-                    "duplicate action-target name in uf.recognizers: " + name
+                    "duplicate interactive element name in uf.recognizers: " + name
                 );
             }
 

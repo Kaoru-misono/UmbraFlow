@@ -128,6 +128,16 @@ namespace uf::task
         // ticket against this ledger.
         auto rememberPage(annotation::ResolvedPage page) -> void;
 
+        // The page the open cycle resolved, or empty when it has resolved none.
+        // Same precondition as observation().
+        //
+        // It hands back the identity rather than the evidence because locating
+        // an element only has to name which page's reference row applies;
+        // delivering against that page still goes through consume(), which
+        // yields the evidence itself.
+        [[nodiscard]]
+        auto resolvedPageId() const noexcept -> std::optional<annotation::PageId>;
+
         // Spends the cycle `ticket` names: the frame leaves the ledger and the
         // ticket dies here, before the click that follows can do anything with
         // the frame. Fails StaleObservation for a ticket that names no open

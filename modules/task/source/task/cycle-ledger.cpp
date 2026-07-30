@@ -12,6 +12,7 @@
 
 #include <atomic>
 #include <limits>
+#include <optional>
 #include <utility>
 
 namespace uf::task
@@ -130,6 +131,16 @@ namespace uf::task
     {
         UF_ASSERT(m_open.has_value());
         m_open->page = std::move(page);
+    }
+
+    auto CycleLedger::resolvedPageId() const noexcept -> std::optional<annotation::PageId>
+    {
+        UF_ASSERT(m_open.has_value());
+        if (!m_open->page.has_value())
+        {
+            return std::nullopt;
+        }
+        return m_open->page->pageId();
     }
 
     auto CycleLedger::consume(CycleTicket ticket) -> Result<Consumed>
