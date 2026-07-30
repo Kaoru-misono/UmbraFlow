@@ -53,6 +53,22 @@ namespace uf::m0_demo
         auto operator==(InputAgentKeyCommand const&) const -> bool = default;
     };
 
+    // A wheel notch lands wherever the target hit-tests the pointer, so this
+    // command names a coordinate exactly as click does. It carries the same
+    // before-frame and after-frame framing too, because a scrolled list is only
+    // observable in the target's own pixels.
+    struct InputAgentScrollCommand final
+    {
+        float x{};
+        float y{};
+        WheelDelta delta;
+        std::filesystem::path outputBefore{};
+        std::filesystem::path outputAfter{};
+        MonotonicInstant::Duration settle{};
+
+        auto operator==(InputAgentScrollCommand const&) const -> bool = default;
+    };
+
     struct InputAgentQuitCommand final
     {
         auto operator==(InputAgentQuitCommand const&) const -> bool = default;
@@ -62,6 +78,7 @@ namespace uf::m0_demo
         InputAgentCaptureCommand,
         InputAgentClickCommand,
         InputAgentKeyCommand,
+        InputAgentScrollCommand,
         InputAgentQuitCommand
     >;
 

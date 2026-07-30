@@ -242,16 +242,23 @@ split-process approach: the developer manually launches `m0-demo input-agent` on
 reads results. The elevation boundary is thus concentrated in a single long-lived agent, rather than
 triggering UAC on every click.
 
-`entry/m0-demo/input-agent-protocol.hpp` defines three variants:
+`entry/m0-demo/input-agent-protocol.hpp` defines five variants:
 
-- `InputAgentCaptureCommand{m_output}`;
-- `InputAgentClickCommand{m_x, m_y, m_outputBefore, m_outputAfter, m_settle}`;
+- `InputAgentCaptureCommand{output}`;
+- `InputAgentClickCommand{x, y, outputBefore, outputAfter, settle}`;
+- `InputAgentKeyCommand{key, outputBefore, outputAfter, settle}`;
+- `InputAgentScrollCommand{x, y, delta, outputBefore, outputAfter, settle}`;
 - `InputAgentQuitCommand`.
 
-The corresponding JSON objects accept only `op=capture|click|quit` and each one's exact field set.
-`parseInputAgentCommand()` rejects anything over 64 KiB, invalid UTF-8, duplicate/unknown fields,
-malformed JSON numbers, empty paths, NUL, non-finite coordinates, and a settle over 5000 ms. The
-default click settle is 400 ms.
+The corresponding JSON objects accept only `op=capture|click|key|scroll|quit` and each one's exact
+field set. `parseInputAgentCommand()` rejects anything over 64 KiB, invalid UTF-8, duplicate/unknown
+fields, malformed JSON numbers, empty paths, NUL, non-finite coordinates, and a settle over 5000 ms.
+The default action settle is 400 ms.
+
+`delta` is a whole number of wheel notches rather than raw `WHEEL_DELTA` units, and the parser
+resolves it through `WheelDelta::create`, so a zero, a fraction, and a count whose raw form would
+not fit `wParam`'s signed 16-bit word are all refused before any command is queued — the same way
+`key` is resolved through `KeyInput::fromName`.
 
 `InputAgentQueueReader` reads the append-only queue incrementally by offset, accepts LF/CRLF, and
 retains incomplete lines; it fails closed when the queue is truncated or a pending command exceeds
@@ -264,13 +271,14 @@ output directory by a confinement check and must not alias the IPC files.
 chain of already-verified, kept-open directory handles, rejecting overwrite, reparse escape,
 alternate data streams, and directory-rename races.
 
-The observe -> act hot path of `executeClick()` is:
+The observe -> act hot path of `executeClick()` is, and `executeScroll()` runs the same one with
+`scroll` in place of `click`:
 
 ```text
 reserve fresh before/after outputs
 -> capture immutable before Frame
 -> ObservationLease::forFrame
--> validateInputAgentClick
+-> validateInputAgentPointerAction
 -> ResolvedTarget::revalidate
 -> requireUnchangedTarget
 -> WgcCaptureSession::validateTargetInstance

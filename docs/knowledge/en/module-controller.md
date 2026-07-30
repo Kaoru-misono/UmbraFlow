@@ -183,8 +183,8 @@ accepting=false closes its frame and does not refill the slot.
 follow `ResolvedTarget`; when the generation or session changes, a new value should be created.
 
 The public entry points for coordinate actions are `movePointer`, `click`, `pointerDown`,
-`pointerUp`, and `longPress`. They accept a `Point<ClientSpace>` and an `ObservationLease`. The actual
-rejection order of `checkPointerPreconditions` is:
+`pointerUp`, `longPress`, and `scroll`. They accept a `Point<ClientSpace>` and an `ObservationLease`.
+The actual rejection order of `checkPointerPreconditions` is:
 
 1. the lease session must equal `DeliveryTarget::sessionId()`;
 2. the current monotonic time must not be later than the lease expiry;
@@ -199,6 +199,19 @@ the down succeeds but the up fails, the held state is deliberately retained for 
 compensate. `longPress` waits after the down, then, through a caller-provided refresh callback,
 requires the HWND, session, and generation to be all unchanged before delivering the up; a change in
 client geometry itself does not affect this identity comparison.
+
+`scroll` posts one `WM_MOUSEWHEEL` at that point, and it is the only entry point here whose `lParam`
+is in **screen** coordinates: Win32 documents the wheel message's position that way, while
+`WM_MOUSEMOVE` and the button messages are in client coordinates. It therefore translates the
+`ClientPixel` by `ClientToScreen(hwnd, {0, 0})` into a `controller_detail::ScreenPixel` before
+building the message. That is a separate type on purpose — a screen coordinate is negative on any
+monitor left of or above the primary one, which `ClientPixel` refuses by construction, so the two
+spaces cannot be passed interchangeably to a message builder. It still runs the full
+`checkPointerPreconditions` fence, because the wheel's position is what the target hit-tests to
+decide which control scrolls. `WheelDelta` counts notches of `WHEEL_DELTA` (120), positive away from
+the operator, refuses zero, and is bounded so the raw delta still fits the signed 16-bit high word of
+`wParam`. Vertical only: `WM_MOUSEHWHEEL` is deliberately absent, because it would need its own axis
+in every layer down to the wire and nothing in this project scrolls sideways.
 
 The keyboard entry points `keyPress`, `keyDown`, `keyUp`, `inputText`, and `inputUnichar` do not
 accept an `ObservationLease`; they only compare the action generation. `KeyInput` records the virtual

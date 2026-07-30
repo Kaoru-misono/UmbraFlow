@@ -70,6 +70,7 @@ namespace uf::m0_demo
             std::optional<std::string> key{};
             std::optional<float>       x{};
             std::optional<float>       y{};
+            std::optional<int32>       delta{};
             std::optional<std::string> outputBefore{};
             std::optional<std::string> outputAfter{};
             std::optional<Duration>    settle{};
@@ -379,6 +380,30 @@ namespace uf::m0_demo
                 return coordinate;
             }
 
+            // Whole wheel notches, so a fraction or an exponent is refused here
+            // rather than silently truncated. WheelDelta decides which counts are
+            // deliverable.
+            [[nodiscard]] auto parseWheelDelta() -> Result<int32>
+            {
+                UF_TRY_VALUE(token, parseNumberToken());
+                auto notches = int32{};
+                auto const* const begin = std::to_address(token.cbegin());
+                auto const* const end = std::to_address(token.cend());
+                auto const parsed = std::from_chars(
+                    begin,
+                    end,
+                    notches,
+                    10
+                );
+                if (parsed.ec != std::errc{} || parsed.ptr != end)
+                {
+                    return invalidCommand(
+                        "input-agent command field delta must be a whole number of wheel notches"
+                    );
+                }
+                return notches;
+            }
+
             [[nodiscard]]
             auto parseSettle() -> Result<MonotonicInstant::Duration>
             {
@@ -473,6 +498,11 @@ namespace uf::m0_demo
                 {
                     UF_TRY_VALUE(value, parseCoordinate(field));
                     return setOnce(fields.y, value, field);
+                }
+                if (field == "delta")
+                {
+                    UF_TRY_VALUE(value, parseWheelDelta());
+                    return setOnce(fields.delta, value, field);
                 }
                 if (field == "out_before")
                 {
@@ -599,6 +629,7 @@ namespace uf::m0_demo
                     fields.key
                     || fields.x
                     || fields.y
+                    || fields.delta
                     || fields.outputBefore
                     || fields.outputAfter
                     || fields.settle
@@ -626,6 +657,12 @@ namespace uf::m0_demo
                 {
                     return invalidCommand(
                         "input-agent click command contains key-only field key"
+                    );
+                }
+                if (fields.delta)
+                {
+                    return invalidCommand(
+                        "input-agent click command contains scroll-only field delta"
                     );
                 }
                 if (!fields.x || !fields.y)
@@ -667,6 +704,12 @@ namespace uf::m0_demo
                         "input-agent key command contains click-only coordinate fields"
                     );
                 }
+                if (fields.delta)
+                {
+                    return invalidCommand(
+                        "input-agent key command contains scroll-only field delta"
+                    );
+                }
                 if (!fields.key)
                 {
                     return invalidCommand(
@@ -701,6 +744,62 @@ namespace uf::m0_demo
                 };
             }
 
+            if (*fields.operation == "scroll")
+            {
+                if (fields.output)
+                {
+                    return invalidCommand(
+                        "input-agent scroll command contains capture-only field out"
+                    );
+                }
+                if (fields.key)
+                {
+                    return invalidCommand(
+                        "input-agent scroll command contains key-only field key"
+                    );
+                }
+                if (!fields.x || !fields.y)
+                {
+                    return invalidCommand(
+                        "input-agent scroll command requires x and y fields"
+                    );
+                }
+                if (!fields.delta)
+                {
+                    return invalidCommand(
+                        "input-agent scroll command requires a delta field"
+                    );
+                }
+                auto const delta = WheelDelta::create(*fields.delta);
+                if (!delta)
+                {
+                    return invalidCommand(
+                        std::format(
+                            "input-agent scroll command has an undeliverable delta: {}",
+                            delta.error().message()
+                        )
+                    );
+                }
+                UF_TRY_VALUE(
+                    outputBefore,
+                    requirePath(std::move(fields.outputBefore), "out_before")
+                );
+                UF_TRY_VALUE(
+                    outputAfter,
+                    requirePath(std::move(fields.outputAfter), "out_after")
+                );
+                return InputAgentScrollCommand{
+                    .x            = *fields.x,
+                    .y            = *fields.y,
+                    .delta        = *delta,
+                    .outputBefore = std::move(outputBefore),
+                    .outputAfter  = std::move(outputAfter),
+                    .settle = fields.settle.value_or(
+                        k_defaultInputAgentSettle
+                    ),
+                };
+            }
+
             if (*fields.operation == "quit")
             {
                 if (
@@ -708,6 +807,7 @@ namespace uf::m0_demo
                     || fields.key
                     || fields.x
                     || fields.y
+                    || fields.delta
                     || fields.outputBefore
                     || fields.outputAfter
                     || fields.settle

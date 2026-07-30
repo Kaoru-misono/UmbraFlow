@@ -1,5 +1,6 @@
 #pragma once
 
+#include "controller/detail/input-message.hpp"
 #include "controller/discovery.hpp"
 
 #include <core/error/result.hpp>
@@ -7,16 +8,6 @@
 
 #include <optional>
 #include <vector>
-
-namespace uf
-{
-    class AuditLog;
-
-    namespace controller_detail
-    {
-        struct PostSpec;
-    }
-}
 
 namespace uf::controller_platform
 {
@@ -36,6 +27,10 @@ namespace uf::controller_platform
     ) -> Result<std::optional<ProcessStartTime>>;
     [[nodiscard]] auto setPerMonitorAwareV2() noexcept -> DpiSetObservation;
     [[nodiscard]] auto scanCodeFor(uint16 virtualKey) noexcept -> uint8;
+    [[nodiscard]]
+    auto clientOriginOnScreen(
+        WindowHandle handle
+    ) -> Result<controller_detail::ClientOrigin>;
     [[nodiscard]]
     auto postInputMessage(
         WindowHandle windowHandle,

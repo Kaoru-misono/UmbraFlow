@@ -299,6 +299,59 @@ namespace uf
         CHECK(held.empty());
     }
 
+    TEST_CASE("scroll fences its point and its lease before posting anything")
+    {
+        auto const deliveryTarget = target(0x10);
+        auto const notch = WheelDelta::create(-3);
+        REQUIRE(notch.has_value());
+        auto const held = HeldInputs{};
+
+        auto outOfBounds = AuditLog{};
+        auto const outside = scroll(
+            deliveryTarget,
+            observationLease(),
+            Point<ClientSpace>{800.0F, 1.0F},
+            *notch,
+            held,
+            outOfBounds
+        );
+        REQUIRE_FALSE(outside.has_value());
+        CHECK(automationKind(outside.error()) == AutomationErrorKind::ActionRejected);
+        CHECK(outside.error().message().contains("outside client area"));
+        CHECK(outOfBounds.empty());
+
+        auto stale = AuditLog{};
+        auto const next = deliveryTarget.generation().next();
+        REQUIRE(next.has_value());
+        auto const replaced = scroll(
+            target(0x10, CaptureSessionId{1}, *next),
+            observationLease(),
+            Point<ClientSpace>{1.0F, 1.0F},
+            *notch,
+            held,
+            stale
+        );
+        REQUIRE_FALSE(replaced.has_value());
+        CHECK(automationKind(replaced.error()) == AutomationErrorKind::StaleObservation);
+        CHECK(stale.empty());
+
+        // A point and a lease that both pass still reach the liveness check
+        // before any message is built, so a dead window is never posted to.
+        auto dead = AuditLog{};
+        auto const gone = scroll(
+            deliveryTarget,
+            observationLease(),
+            Point<ClientSpace>{1.0F, 1.0F},
+            *notch,
+            held,
+            dead
+        );
+        REQUIRE_FALSE(gone.has_value());
+        CHECK(automationKind(gone.error()) == AutomationErrorKind::ActionRejected);
+        CHECK(gone.error().message().contains("no longer a valid window"));
+        CHECK(dead.empty());
+    }
+
     TEST_CASE("long press rejects a negative hold before delivery")
     {
         auto const deliveryTarget = target(0);

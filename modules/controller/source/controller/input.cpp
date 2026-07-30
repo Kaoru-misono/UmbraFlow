@@ -345,6 +345,42 @@ namespace uf
         return deliverPointerUp(refreshed, pixel, held, audit);
     }
 
+    auto scroll(
+        DeliveryTarget const& target,
+        ObservationLease lease,
+        Point<ClientSpace> point,
+        WheelDelta delta,
+        HeldInputs const& held,
+        AuditLog& audit
+    ) -> Status
+    {
+        // The same pointer preconditions a click gets, deliberately: the wheel
+        // message carries a position the target hit-tests to pick which control
+        // scrolls, so an expired lease or a point outside the client area aims it
+        // exactly as wrongly as it would aim a click.
+        UF_TRY_VALUE(pixel, pointerPixel(target, lease, point));
+        UF_TRY(controller_detail::HeldInputsAccess::ensureTarget(held, target));
+        UF_TRY(controller_detail::ensureWindowAlive(target.windowHandle()));
+
+        // WM_MOUSEWHEEL is the one message here whose lParam is in screen
+        // coordinates, so the client pixel every other pointer message posts
+        // directly has to be translated by the window's client origin first.
+        UF_TRY_VALUE(
+            origin,
+            controller_detail::clientOriginOnScreen(target.windowHandle())
+        );
+        UF_TRY_VALUE(screenPixel, controller_detail::screenPixelFor(origin, pixel));
+        return controller_detail::deliver(
+            target.windowHandle(),
+            controller_detail::wheelSpec(
+                screenPixel,
+                delta,
+                held.holdsPointer(PointerButton::Left)
+            ),
+            audit
+        );
+    }
+
     auto keyPress(
         DeliveryTarget const& target,
         TargetGeneration actionGeneration,

@@ -743,7 +743,7 @@ namespace uf::m0_demo
                 command.x,
                 command.y
             };
-            auto coordinate = validateInputAgentClick(
+            auto coordinate = validateInputAgentPointerAction(
                 delivery,
                 *lease,
                 point,
@@ -774,6 +774,127 @@ namespace uf::m0_demo
                 auto compensation = compensateFailedDelivery(
                     operation,
                     std::move(clicked).error(),
+                    delivery,
+                    session,
+                    held,
+                    audit
+                );
+                result.error = std::move(compensation.error);
+                return finishAction(operation, result, compensation.stopAgent);
+            }
+            result.delivered = true;
+
+            auto after = writeFramesAfterDelivery(
+                *action,
+                command.settle,
+                session
+            );
+            if (!after)
+            {
+                result.error = std::move(after).error();
+                return finishAction(operation, result);
+            }
+            result.afterFrame = after->id().value();
+            return finishAction(operation, result);
+        }
+
+        // A wheel notch is a pointer action, so this runs the same fences in the
+        // same order executeClick does; only the message delivered differs. The
+        // after-frame matters more here than anywhere else, because a scrolled
+        // list that had already reached its end looks identical to one that never
+        // received the wheel at all, and only the two frames tell them apart.
+        [[nodiscard]]
+        auto executeScroll(
+            InputAgentScrollCommand const& command,
+            ResolvedTarget& resolved,
+            WgcCaptureSession& session,
+            DeliveryTarget const& delivery,
+            HeldInputs& held,
+            AuditLog& audit,
+            std::filesystem::path const& canonicalOutputDirectory,
+            std::filesystem::path const& canonicalQueue,
+            std::filesystem::path const& canonicalResults
+        ) -> CommandExecution
+        {
+            auto constexpr operation = std::string_view{"scroll"};
+            auto result = InputAgentActionResult{};
+            auto framePaths = resolveInputAgentFramePaths(
+                command.outputBefore,
+                command.outputAfter,
+                canonicalOutputDirectory,
+                canonicalQueue,
+                canonicalResults,
+                operation
+            );
+            if (!framePaths)
+            {
+                result.error = std::move(framePaths).error();
+                return finishAction(operation, result);
+            }
+            auto settleBound = checkSettleBound(operation, command.settle);
+            if (!settleBound)
+            {
+                result.error = std::move(settleBound).error();
+                return finishAction(operation, result);
+            }
+
+            auto action = beginFramedAction(
+                *framePaths,
+                canonicalOutputDirectory,
+                session
+            );
+            if (!action)
+            {
+                result.error = std::move(action).error();
+                return finishAction(operation, result);
+            }
+            result.beforeFrame = action->frame.id().value();
+
+            auto lease = ObservationLease::forFrame(
+                action->frame,
+                k_defaultMaxActionFrameAge
+            );
+            if (!lease)
+            {
+                result.error = std::move(lease).error();
+                return finishAction(operation, result);
+            }
+            auto const point = Point<ClientSpace>{
+                command.x,
+                command.y
+            };
+            auto coordinate = validateInputAgentPointerAction(
+                delivery,
+                *lease,
+                point,
+                MonotonicInstant::now()
+            );
+            if (!coordinate)
+            {
+                result.error = std::move(coordinate).error();
+                return finishAction(operation, result);
+            }
+
+            auto current = ensureTargetUnchanged(resolved, session);
+            if (!current)
+            {
+                result.error = std::move(current).error();
+                return finishAction(operation, result, true);
+            }
+
+            auto scrolled = scroll(
+                delivery,
+                *lease,
+                point,
+                command.delta,
+                held,
+                audit
+            );
+            if (!scrolled)
+            {
+                auto compensation = compensateFailedDelivery(
+                    operation,
+                    std::move(scrolled).error(),
                     delivery,
                     session,
                     held,
@@ -983,7 +1104,7 @@ namespace uf::m0_demo
         return output;
     }
 
-    auto validateInputAgentClick(
+    auto validateInputAgentPointerAction(
         DeliveryTarget const& target,
         ObservationLease lease,
         Point<ClientSpace> point,
@@ -1153,6 +1274,24 @@ namespace uf::m0_demo
                 {
                     auto execution = executeKey(
                         *keyCommand,
+                        resolved,
+                        session,
+                        delivery,
+                        held,
+                        audit,
+                        canonicalOutputDirectory,
+                        canonicalQueue,
+                        canonicalResults
+                    );
+                    resultLine = std::move(execution.resultLine);
+                    stopAgent  = execution.stopAgent;
+                }
+                else if (auto const* scrollCommand = std::get_if<InputAgentScrollCommand>(
+                    &*command
+                ))
+                {
+                    auto execution = executeScroll(
+                        *scrollCommand,
                         resolved,
                         session,
                         delivery,

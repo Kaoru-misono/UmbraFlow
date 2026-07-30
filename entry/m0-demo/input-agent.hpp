@@ -85,16 +85,19 @@ namespace uf::m0_demo
         std::string_view operation
     ) -> Result<InputAgentFramePaths>;
 
-    // click and key share this line shape, because both frame one delivered
-    // action between a before-frame and an after-frame.
+    // click, key, and scroll share this line shape, because each frames one
+    // delivered action between a before-frame and an after-frame.
     [[nodiscard]]
     auto serializeInputAgentActionResult(
         std::string_view operation,
         InputAgentActionResult const& result
     ) -> std::string;
 
+    // The coordinate fence every pointer action passes before the target is
+    // revalidated, so a point the caller got wrong is answered as a rejected
+    // action rather than as a target that vanished.
     [[nodiscard]]
-    auto validateInputAgentClick(
+    auto validateInputAgentPointerAction(
         DeliveryTarget const& target,
         ObservationLease lease,
         Point<ClientSpace> point,

@@ -169,8 +169,8 @@ accepting=false 后会关闭其 frame，不会重新填充 slot。
 `TargetGeneration` 和非空 `ClientSize` 固定为一个投递 capability。它不拥有
 窗口，也不自动跟随 `ResolvedTarget`；generation 或 session 改变时应创建新值。
 
-坐标动作的公开入口是 `movePointer`、`click`、`pointerDown`、`pointerUp` 和
-`longPress`。它们接受 `Point<ClientSpace>` 与 `ObservationLease`。
+坐标动作的公开入口是 `movePointer`、`click`、`pointerDown`、`pointerUp`、
+`longPress` 和 `scroll`。它们接受 `Point<ClientSpace>` 与 `ObservationLease`。
 `checkPointerPreconditions` 的实际拒绝顺序为：
 
 1. lease session 必须等于 `DeliveryTarget::sessionId()`；
@@ -185,6 +185,17 @@ accepting=false 后会关闭其 frame，不会重新填充 slot。
 up 失败，held 状态有意保留给调用者补偿。`longPress` 在 down 后等待，再通过
 调用者提供的 refresh callback 要求 HWND、session、generation 全部未变，才投递
 up；client geometry 变化本身不影响该 identity 比较。
+
+`scroll` 在该点投递一条 `WM_MOUSEWHEEL`，也是这里唯一 `lParam` 用**屏幕**坐标的入口：
+Win32 对滚轮消息的位置就是这么规定的，而 `WM_MOUSEMOVE` 和按键消息用的是 client 坐标。
+所以它先用 `ClientToScreen(hwnd, {0, 0})` 把 `ClientPixel` 平移成
+`controller_detail::ScreenPixel` 再构造消息。分成两个类型是刻意的——窗口落在主显示器
+左侧或上方时屏幕坐标会是负数，而 `ClientPixel` 在构造时就拒绝负值，两个空间因此不可能
+被混着传进消息构造函数。它同样跑完整的 `checkPointerPreconditions` 围栏，因为滚轮的位置
+正是目标用来判定「滚哪个控件」的依据。`WheelDelta` 以格（`WHEEL_DELTA` = 120）计数，
+正值表示远离操作者，拒绝 0，并且做了上界约束，保证原始 delta 仍放得进 `wParam` 的
+有符号 16 位高字。只做垂直方向：`WM_MOUSEHWHEEL` 是有意不做的，它会在从这里一直到
+线上协议的每一层都多出一个轴，而本项目没有需要横向滚动的地方。
 
 键盘入口 `keyPress`、`keyDown`、`keyUp`、`inputText` 与 `inputUnichar` 不接受
 `ObservationLease`，只比较 action generation。`KeyInput` 记录 virtual key 与

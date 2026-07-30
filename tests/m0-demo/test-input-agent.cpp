@@ -123,6 +123,18 @@ namespace uf::m0_demo
         }
 
         [[nodiscard]]
+        auto parsedScroll(std::string_view line) -> InputAgentScrollCommand
+        {
+            auto command = parseInputAgentCommand(line);
+            REQUIRE(command.has_value());
+            auto const* scrollCommand = std::get_if<InputAgentScrollCommand>(
+                &*command
+            );
+            REQUIRE(scrollCommand != nullptr);
+            return *scrollCommand;
+        }
+
+        [[nodiscard]]
         auto createTemporaryDirectory(std::string_view role) -> std::filesystem::path
         {
             auto const token = std::chrono::steady_clock::now()
@@ -259,6 +271,83 @@ namespace uf::m0_demo
             R"({"op":"key","key":"F3","out_before":"a.png","out_after":"b.png"})"
         );
         CHECK(function.key.virtualKey() == uint16{0x0072U});
+    }
+
+    TEST_CASE("m0 input-agent parses a scroll command with its wheel delta")
+    {
+        auto const scrollCommand = parsedScroll(
+            R"({"op":"scroll","x":12.5,"y":4e1,"delta":-3,"out_before":"before.png",)"
+            R"("out_after":"after.png","settle_ms":250})"
+        );
+        CHECK(scrollCommand.x == 12.5F);
+        CHECK(scrollCommand.y == 40.0F);
+        CHECK(scrollCommand.delta.notches() == -3);
+        CHECK(scrollCommand.delta.rawUnits() == int16{-360});
+        CHECK(scrollCommand.outputBefore == std::filesystem::path{"before.png"});
+        CHECK(scrollCommand.outputAfter == std::filesystem::path{"after.png"});
+        CHECK(
+            scrollCommand.settle
+            == std::chrono::duration_cast<MonotonicInstant::Duration>(
+                std::chrono::milliseconds{250}
+            )
+        );
+
+        auto const defaultSettle = parsedScroll(
+            R"({"op":"scroll","x":1,"y":2,"delta":1,"out_before":"a.png","out_after":"b.png"})"
+        );
+        CHECK(defaultSettle.settle == k_defaultInputAgentSettle);
+
+        // The largest notch count whose raw delta still fits the word wParam
+        // encodes it in.
+        auto const boundary = parsedScroll(
+            std::format(
+                R"({{"op":"scroll","x":1,"y":2,"delta":{},"out_before":"a.png","out_after":"b.png"}})",
+                k_maxWheelNotches
+            )
+        );
+        CHECK(boundary.delta.notches() == k_maxWheelNotches);
+    }
+
+    TEST_CASE("m0 input-agent rejects scroll commands it could not deliver")
+    {
+        for (auto const line : std::array<std::string_view, 13>{
+            R"({"op":"scroll","x":1,"y":2,"out_before":"a.png","out_after":"b.png"})",
+            R"({"op":"scroll","x":1,"y":2,"delta":0,"out_before":"a.png","out_after":"b.png"})",
+            R"({"op":"scroll","x":1,"y":2,"delta":274,"out_before":"a.png","out_after":"b.png"})",
+            R"({"op":"scroll","x":1,"y":2,"delta":-274,"out_before":"a.png","out_after":"b.png"})",
+            R"({"op":"scroll","x":1,"y":2,"delta":1.5,"out_before":"a.png","out_after":"b.png"})",
+            R"({"op":"scroll","x":1,"y":2,"delta":1,"delta":2,"out_before":"a.png","out_after":"b.png"})",
+            R"({"op":"scroll","delta":1,"out_before":"a.png","out_after":"b.png"})",
+            R"({"op":"scroll","x":1,"y":2,"delta":1,"out_before":"a.png"})",
+            R"({"op":"scroll","x":1,"y":2,"delta":1,"key":"E","out_before":"a.png","out_after":"b.png"})",
+            R"({"op":"click","x":1,"y":2,"delta":1,"out_before":"a.png","out_after":"b.png"})",
+            R"({"op":"key","key":"E","delta":1,"out_before":"a.png","out_after":"b.png"})",
+            R"({"op":"capture","out":"a.png","delta":1})",
+            R"({"op":"quit","delta":1})",
+        })
+        {
+            CAPTURE(line);
+            auto const result = parseInputAgentCommand(line);
+            REQUIRE_FALSE(result.has_value());
+            test_m0_demo::requireErrorKind(
+                result.error(),
+                AutomationErrorKind::InvalidResource
+            );
+        }
+
+        // A wheel that moves nothing must be legible as the mistyped command it
+        // is, never as an accepted no-op.
+        auto const still = parseInputAgentCommand(
+            R"({"op":"scroll","x":1,"y":2,"delta":0,"out_before":"a.png","out_after":"b.png"})"
+        );
+        REQUIRE_FALSE(still.has_value());
+        CHECK(still.error().message().contains("non-zero"));
+
+        auto const missing = parseInputAgentCommand(
+            R"({"op":"scroll","x":1,"y":2,"out_before":"a.png","out_after":"b.png"})"
+        );
+        REQUIRE_FALSE(missing.has_value());
+        CHECK(missing.error().message().contains("requires a delta field"));
     }
 
     TEST_CASE("m0 input-agent key result line reports delivery separately from ok")
@@ -715,7 +804,7 @@ namespace uf::m0_demo
             R"({"op":"click","x":799.9,"y":449.9,"out_before":"a.png","out_after":"b.png"})"
         );
         CHECK(
-            validateInputAgentClick(
+            validateInputAgentPointerAction(
                 target,
                 lease,
                 Point<ClientSpace>{valid.x, valid.y},
@@ -732,7 +821,7 @@ namespace uf::m0_demo
         for (auto const line : cases)
         {
             auto const click = parsedClick(line);
-            auto const result = validateInputAgentClick(
+            auto const result = validateInputAgentPointerAction(
                 target,
                 lease,
                 Point<ClientSpace>{click.x, click.y},
@@ -752,7 +841,7 @@ namespace uf::m0_demo
         auto const next = TargetGeneration{}.next();
         REQUIRE(next.has_value());
         auto const now = instantAt(MonotonicInstant::Duration{10});
-        auto const result = validateInputAgentClick(
+        auto const result = validateInputAgentPointerAction(
             deliveryTarget(*next),
             observationLease(now),
             Point<ClientSpace>{1.0F, 1.0F},

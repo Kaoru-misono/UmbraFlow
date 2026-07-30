@@ -3,6 +3,7 @@
 #include "platform/windows-controller.hpp"
 
 #include <core/error/contracts.hpp>
+#include <core/numeric/checked-cast.hpp>
 #include <core/types/integer.hpp>
 #include <domain/error.hpp>
 #include <domain/key.hpp>
@@ -31,6 +32,20 @@ namespace uf::controller_detail
             {
                 return static_cast<intptr>(bits);
             }
+        }
+
+        // Every mouse message packs its point the same way, y in the high word
+        // and x in the low one. Which space those coordinates are in is the
+        // caller's contract, not this packing's: the button messages pass client
+        // coordinates and WM_MOUSEWHEEL passes screen coordinates. Both pixel
+        // types bound their coordinates to a signed 16-bit value, so the
+        // conversion below reproduces exactly the word GET_X_LPARAM reads back.
+        [[nodiscard]]
+        constexpr auto packPointBits(int32 x, int32 y) noexcept -> uint32
+        {
+            auto const low  = static_cast<uint32>(static_cast<uint16>(x));
+            auto const high = static_cast<uint32>(static_cast<uint16>(y));
+            return (high << 16U) | low;
         }
     }
 }
@@ -123,6 +138,30 @@ namespace uf
         return ClientPixel{narrowedX, narrowedY};
     }
 
+    auto WheelDelta::create(int32 notches) -> Result<WheelDelta>
+    {
+        if (notches == 0)
+        {
+            return fail(
+                AutomationErrorKind::ActionRejected,
+                "wheel delta must be a non-zero number of notches"
+            );
+        }
+        if (notches < -k_maxWheelNotches || notches > k_maxWheelNotches)
+        {
+            return fail(
+                AutomationErrorKind::ActionRejected,
+                std::format(
+                    "wheel delta of {} notches is outside the deliverable range -{}..={}",
+                    notches,
+                    k_maxWheelNotches,
+                    k_maxWheelNotches
+                )
+            );
+        }
+        return WheelDelta{static_cast<int16>(notches)};
+    }
+
     KeyInput::KeyInput(uint16 virtualKey) noexcept
         : m_virtualKey{virtualKey}
         , m_extended{controller_detail::isExtendedKey(virtualKey)}
@@ -178,13 +217,35 @@ namespace uf::controller_detail
 
     auto pointerLParamBits(ClientPixel pixel) noexcept -> uint32
     {
-        auto const low = static_cast<uint32>(
-            static_cast<uint16>(pixel.x())
+        return packPointBits(pixel.x(), pixel.y());
+    }
+
+    auto ScreenPixel::create(int64 x, int64 y) -> Result<ScreenPixel>
+    {
+        auto const narrowedX = checkedCast<int16>(x);
+        auto const narrowedY = checkedCast<int16>(y);
+        if (!narrowedX || !narrowedY)
+        {
+            return fail(
+                AutomationErrorKind::ActionRejected,
+                std::format(
+                    "screen point ({}, {}) cannot be encoded as signed-16-bit mouse coordinates",
+                    x,
+                    y
+                )
+            );
+        }
+        return ScreenPixel{*narrowedX, *narrowedY};
+    }
+
+    auto screenPixelFor(ClientOrigin origin, ClientPixel pixel) -> Result<ScreenPixel>
+    {
+        // Widened before adding: two separately encodable coordinates need not
+        // sum to an encodable one.
+        return ScreenPixel::create(
+            static_cast<int64>(origin.x) + static_cast<int64>(pixel.x()),
+            static_cast<int64>(origin.y) + static_cast<int64>(pixel.y())
         );
-        auto const high = static_cast<uint32>(
-            static_cast<uint16>(pixel.y())
-        );
-        return (high << 16U) | low;
     }
 
     auto isExtendedKey(uint16 virtualKey) noexcept -> bool
@@ -254,6 +315,30 @@ namespace uf::controller_detail
         };
     }
 
+    auto wheelSpec(
+        ScreenPixel pixel,
+        WheelDelta delta,
+        bool leftButtonHeld
+    ) noexcept -> PostSpec
+    {
+        // wParam carries the signed raw delta in its high word and the button
+        // and modifier state in its low word. Only the left button can appear
+        // there: KeyName admits no modifier key, so nothing this process can be
+        // holding would set MK_CONTROL or MK_SHIFT.
+        auto const rawDelta = static_cast<uintptr>(
+            static_cast<uint16>(delta.rawUnits())
+        );
+        auto const buttons = leftButtonHeld ? k_leftButtonMask : uintptr{};
+        return PostSpec{
+            .message = k_wmMouseWheel,
+            .wParam  = (rawDelta << 16U) | buttons,
+            // Screen coordinates. Every other pointer message on this path packs
+            // client coordinates, and posting those here would aim the wheel at
+            // whatever sits that far from the desktop origin instead.
+            .lParam  = lParamFromBits(packPointBits(pixel.x(), pixel.y())),
+        };
+    }
+
     auto charSpec(uint16 codeUnit) noexcept -> PostSpec
     {
         return PostSpec{
@@ -275,6 +360,11 @@ namespace uf::controller_detail
     auto scanCodeFor(uint16 virtualKey) noexcept -> uint8
     {
         return controller_platform::scanCodeFor(virtualKey);
+    }
+
+    auto clientOriginOnScreen(WindowHandle windowHandle) -> Result<ClientOrigin>
+    {
+        return controller_platform::clientOriginOnScreen(windowHandle);
     }
 
     auto deliver(

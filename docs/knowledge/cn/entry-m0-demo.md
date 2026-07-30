@@ -228,15 +228,21 @@ releaseHeld -> session.close -> audit/summary -> log.flush
 `m0-demo input-agent`；之后非提权一侧只向 queue 追加命令并读取 results。
 提权边界因此集中在一个长期存活的 agent，而不是每次点击都触发 UAC。
 
-`entry/m0-demo/input-agent-protocol.hpp` 定义三个 variant：
+`entry/m0-demo/input-agent-protocol.hpp` 定义五个 variant：
 
-- `InputAgentCaptureCommand{m_output}`；
-- `InputAgentClickCommand{m_x, m_y, m_outputBefore, m_outputAfter, m_settle}`；
+- `InputAgentCaptureCommand{output}`；
+- `InputAgentClickCommand{x, y, outputBefore, outputAfter, settle}`；
+- `InputAgentKeyCommand{key, outputBefore, outputAfter, settle}`；
+- `InputAgentScrollCommand{x, y, delta, outputBefore, outputAfter, settle}`；
 - `InputAgentQuitCommand`。
 
-对应的 JSON object 只接受 `op=capture|click|quit` 及各自的精确字段集。
+对应的 JSON object 只接受 `op=capture|click|key|scroll|quit` 及各自的精确字段集。
 `parseInputAgentCommand()` 拒绝超过 64 KiB、非法 UTF-8、重复/未知字段、错误 JSON number、
-空路径、NUL、非有限坐标和超过 5000 ms 的 settle。click 默认 settle 为 400 ms。
+空路径、NUL、非有限坐标和超过 5000 ms 的 settle。动作默认 settle 为 400 ms。
+
+`delta` 的单位是整数格（notch），不是 `WHEEL_DELTA` 原始单位；解析时经 `WheelDelta::create`
+解析，所以 0、小数、以及原始值放不进 `wParam` 有符号 16 位字的格数，都会在命令入队前被拒绝，
+与 `key` 经 `KeyInput::fromName` 解析是同一种做法。
 
 `InputAgentQueueReader` 按 offset 增量读取 append-only queue，接受 LF/CRLF，
 保留未完成行；queue 被截断或 pending command 超过 1 MiB 时 fail closed。
@@ -248,13 +254,14 @@ output directory 之外；截图路径必须被 confinement 检查限制在 outp
 目录 handle 链做相对 `NtCreateFile(FILE_CREATE)`，拒绝 overwrite、reparse escape、
 alternate data stream 和目录重命名竞态。
 
-`executeClick()` 的 observe -> act 热路径是：
+`executeClick()` 的 observe -> act 热路径如下，`executeScroll()` 走同一条，
+只是把 `click` 换成 `scroll`：
 
 ```text
 reserve fresh before/after outputs
 -> capture immutable before Frame
 -> ObservationLease::forFrame
--> validateInputAgentClick
+-> validateInputAgentPointerAction
 -> ResolvedTarget::revalidate
 -> requireUnchangedTarget
 -> WgcCaptureSession::validateTargetInstance
