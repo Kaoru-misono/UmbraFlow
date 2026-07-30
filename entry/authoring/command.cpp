@@ -170,6 +170,8 @@ namespace uf::authoring
 
             uint32 tolerance{k_defaultColourTolerance};
             uint32 similarityBasisPoints{k_defaultSimilarityBasisPoints};
+
+            bool shared{};
         };
 
         [[nodiscard]]
@@ -182,6 +184,17 @@ namespace uf::authoring
             while (index < raw.size())
             {
                 auto const& flag = raw[index];
+
+                // The one valueless draw flag, so it is taken before the
+                // missing-value guard below: a trailing --shared is a complete
+                // argument rather than a flag whose value is absent.
+                if (flag == "--shared")
+                {
+                    options.shared = true;
+                    index += 1U;
+                    continue;
+                }
+
                 if (index + 1U >= raw.size())
                 {
                     return invalid(std::format("missing value for {}", flag));
@@ -274,6 +287,7 @@ namespace uf::authoring
                 .searchRoi    = searchRoi,
                 .colourKey    = colourKey,
                 .threshold    = threshold,
+                .shared       = options.shared,
             };
         }
 
@@ -816,6 +830,11 @@ namespace uf::authoring
             "  --min-similarity-bp N   Similarity threshold in basis points, "
             "0..10000;\n"
             "                          default: 9000\n"
+            "  --shared                Mark these pixels reusable on other "
+            "pages.\n"
+            "                          Takes no value. add-target only: an "
+            "anchor\n"
+            "                          identifies one page by definition\n"
             "\n"
             "<frames> options:\n"
             "  --rect x,y,w,h          The rectangle analysed inside every "

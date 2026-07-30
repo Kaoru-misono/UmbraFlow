@@ -1102,7 +1102,20 @@ namespace uf::authoring
                 )
             );
 
-            session.draft = std::move(keyed);
+            // Applied only when asked, because setRegionShared refuses anything
+            // that is not an interactive region: calling it unconditionally
+            // would turn every --shared-less anchor into a failure.
+            auto drafted = std::move(keyed);
+            if (command.draw.shared)
+            {
+                UF_TRY_VALUE(
+                    marked,
+                    workbench::setRegionShared(std::move(drafted), recognizerId, true)
+                );
+                drafted = std::move(marked);
+            }
+
+            session.draft = std::move(drafted);
             UF_TRY_VALUE(document, commitSession(command.root, session));
             UF_TRY_VALUE(drawn, drawJson(document, recognizerId, resolved.ingested));
 

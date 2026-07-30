@@ -65,6 +65,14 @@ namespace uf::authoring
         std::optional<annotation::ColourKey> colourKey{};
 
         annotation::SimilarityThreshold threshold;
+
+        // Whether these pixels are meant to be reused on other pages. It is a
+        // statement of intent rather than a placement -- a global control like a
+        // menu button is drawn once and then placed wherever it appears -- and
+        // intent has to be stored because no other field implies it before that
+        // second page exists. Only an interactive region can carry it; an anchor
+        // is evidence for one page's identity by definition.
+        bool shared{};
     };
 
     struct InitProject final
