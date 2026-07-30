@@ -125,6 +125,37 @@ using MaybeOffset = std::optional<TemplateOffset>;
 using FrameRef = std::shared_ptr<Frame const>;
 ```
 
+## Whether a type exists
+
+Type placement below answers where a type goes; this answers whether there is one.
+It is the easier question to skip, because a free function can always be written
+and so nothing forces the question to be asked.
+
+A free function is usually the right answer. Parsers, encoders, pure transforms,
+and anything operating on a foreign or standard type stay free functions.
+
+One shape means a type is already there, unnamed: three or more free functions
+taking the same first parameter are a class with its receiver passed by hand. Two
+exclusions, both principled. The subject may be unable to carry methods -- a
+standard type, an OS handle, a foreign library's type, an enumeration -- as with
+the forty-six free functions `lua_State*` heads in `uf-tables.cpp`. Or the
+functions may sit in a layer above the subject, as the queries `entry/workbench`
+runs over an `annotation::AuthoringDocument` do; making those members would move
+workbench concerns into annotation, and dependency direction wins as it does
+below.
+
+A repeated parameter GROUP is not that shape, and reading it as one produced a
+worse API than it replaced: two overloads of one function, a friend
+redeclaration, and a value threaded from a public function into its own private
+helpers are one occurrence, not four. Bundle a group only when it outlives the
+parameter list -- stored, returned, or named by a virtual contract more than one
+implementation satisfies, as `IFrameSource::CaptureBudget` is. A bundle that only
+shortens one signature lengthens every call site instead.
+
+Struct or class turns on whether any combination of the field values is invalid.
+If some combination is, the fields are private behind something that can refuse;
+if every combination is valid, it is a plain aggregate. Size decides nothing.
+
 ## Type placement
 
 The alias question extends to types: a name must earn the scope it is declared

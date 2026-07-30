@@ -66,6 +66,15 @@ concurrency, numeric safety, serialization, or an `unsafe/`, `platform/`, or
     operation, an external API/ABI contract requires it, or a measured hot-path
     requirement rules out returning the value; justify every non-obvious
     exception at the declaration.
+19. Ask whether an operation needs a type before writing its signature, following
+    "Whether a type exists" in `references/coding-standard.md`. Ask then, because
+    afterwards nothing asks. A free function is usually right; three or more free
+    functions sharing a first parameter this module owns and operates on are a
+    receiver passed by hand.
+20. Dispatch over a closed set -- variant alternatives, enumerators, a fixed
+    command vocabulary -- as a table or an overload set, never as a chain of
+    `if`/`else if`. A closed set has a known size, so a chain over it accepts a new
+    member with no branch and the compiler cannot say so.
 
 ## Checklist
 
@@ -97,6 +106,9 @@ so verify each one deliberately:
   alignment recognizer skips
 - Each new alias classified by external reachability, and justified under that
   category
+- Whether a type exists at all, asked before the signature was written: no third
+  free function sharing a first parameter this module owns and operates on
+- No `if`/`else if` chain dispatching over a closed set
 - Each new header-level type placed by ownership: nested in its class when
   nothing names it except that class's operations, at namespace scope when it
   has independent consumers or belongs to a free-function layer
