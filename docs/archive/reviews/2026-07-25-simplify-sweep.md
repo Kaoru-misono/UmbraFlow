@@ -1,5 +1,11 @@
 # Repo-wide C++ simplification sweep — 2026-07-25
 
+> **Closed and archived 2026-08-01.** Retained as a dated record. The tree it
+> cites has moved since — the workbench GUI was archived in `b57b67b` and the
+> annotation model layer is migrating per
+> [script-owned page model](../../plans/2026-07-31-script-owned-page-model.md) —
+> so re-verify every cited line before acting on any item here.
+
 > Status: **Report-only (2026-07-25)**. No C++ source was changed. This is the
 > single deliverable of a repo-wide reuse/simplification sweep over the
 > first-party C++ under `modules/` and `entry/`. Every item below is a

@@ -1,302 +1,15 @@
 # 标注模型重构 — 能力集合、持有关系、多形态
 
-> **归属变更(2026-07-31 深夜,开发者裁决)。** 本文的模型结论**仍然有效**:能力是集合
-> 不是种类,签名由引用派生,`identify` 的方向属于页面而非元素,外观是具名的,空外观表示
-> 由页面定位。**变的是这套模型实现在哪一层**——它上移到第二层 Luau,C++ 只保留原语。
-> 所以本文中一切关于 C++ 类型、CLI 动词、schema 键名的具体安排都是过渡态,不要据此判断
-> 目标形态。见
-> [`2026-07-31-script-owned-page-model.md`](2026-07-31-script-owned-page-model.md),
-> 该文尚未实施。
+> 状态:**设计结论有效并已落地**——能力集合 `{identify, interact, read}`、引用侧的
+> `Holding` 与 `exercised`、具名 `Appearance`(空列表 = 由页面定位)、由引用派生的页面
+> 签名都在代码里;词汇是 element / appearance(权威表见 `CONTEXT.md`),schema 是
+> `umbraflow-authoring/v4` / `umbraflow-annotations/v3` / `umbraflow-trace/v2`。
+> **变的只是实现位置**:模型按[页面模型上移到脚本层](2026-07-31-script-owned-page-model.md)
+> 上移第二层 Luau,所以本文里关于 C++ 类型、CLI 动词、schema 键名的具体安排都是过渡态。
 >
-> **裁决链(读到 §四之二 之后按这个顺序往下读)**:归属上移见
-> [`2026-07-31-script-owned-page-model.md`](2026-07-31-script-owned-page-model.md);
-> 顶层形态与 2026-08-01 的融合裁决见
-> [`2026-08-01-three-layers-and-agent-operator.md`](2026-08-01-three-layers-and-agent-operator.md)。
-
-> **词汇统一(2026-07-31,同日第二次改名)。** 本文正文已按新词汇改写:
-> `recognizer` → `element`,`RecognizerDefinition`/`RecognizerVariant` →
-> `CompiledElement`/`CompiledAppearance`,`uf.recognizers` → `uf.elements`,
-> trace 的 `recognizerId` → `elementId`,`Variant`/`variant` →
-> `Appearance`/`appearance`(CLI 旗标 `--variant` → `--appearance`)。
-> `RecognitionCatalog`、`RecognitionRuntime`、`recognition-runtime.cpp` 不变——
-> 它们指的是「识别」这个动作。授权文档里的 `[[annotation]]` 表(三选一分类留下的最后一个
-> 持久化名字)也在这一次改名 `[[element]]`。三个 schema 都随之升版:
-> `umbraflow-authoring/v4`、`umbraflow-annotations/v3`、`umbraflow-trace/v2`。
-> 权威词汇见 `CONTEXT.md` 的「Annotation model」一节。
-
-> 状态:**已定方向,2026-07-31 开发者确认**。与 `chaos-super` 的标注工作**并行**推进,
-> 标注不因此停下。
->
-> 口径沿用 [三层 Task System](2026-07-29-three-layer-task-system.md):
-> **「完美」= 恰好贴合目标,没有历史包袱,也没有为想象需求预留的机械。**
->
-> 本文只改**标注模型**。脚本层的三层划分不变,「C++ 拥有所有保证,Luau 拥有所有
-> 策略」这条规则在本文每一处裁决中仍然有效。
-
-> ## 裁决记录(2026-07-31,一轮代码 review 之后开发者复核)
->
-> 下文的更正注记里,有两条被读成了对设计的质疑。开发者复核后**维持原设计**,并把
-> 两个读法钉死。后来的会话不要再翻这两条:
->
-> 1. **`holding: Owned | Referenced` 留在引用侧。** 它的价值不是表达基数,是**编辑
->    护栏**加**第二个页面出现之前把意图记下来**:`Owned` 是作者声明「这个元素只属于
->    这一页」,工具据此在别处引用时拒绝。`bool shared` 由它取代。
-> 2. **required / forbidden 是 `Identify` 能力自己的配套数据,而且它跟着*页面侧那一份*
->    `Capabilities` 走。** 这正是「每个能力带自己的数据」要买的东西:元素侧的
->    `Capabilities` 声明**能做什么**,`PageReference.exercised` 里的那份声明**这一页
->    怎么用**——所以「这一页拿它当 required 还是 forbidden」天然落在引用上,不是元素
->    上,也不会变成 `allowed_page_ids` 的翻版。
->
-> 同样定下来的:`PageReference.searchRoi` 是**可选细化**(缺省即继承元素默认值),
-> 不是必填。
->
-> **补裁(2026-07-31,实现启动时):元素侧和引用侧是两个类型,不是同一个。**
-> `ElementCapabilities`(元素声明能做什么)与 `ExercisedCapabilities`(这一页怎么用它),
-> 后者提供 `isSubsetOf(ElementCapabilities const&)`。原本考虑过共用一个类型、让
-> `Identify` 带一个 `optional<SignatureRole>`,但那样类型上允许两种非法组合(元素侧
-> 带了 role、引用侧没 role),两条不变量要在两处分别检查。拆开之后
-> `ExercisedIdentify { SignatureRole role; }` 里的 role 是**必填**的——「这一页拿它
-> 当正面还是反面证据」在引用侧永远有答案,而元素侧永远没有,这条事实由类型直接说出。
-> 代价是多一个类型和一条显式的子集关系,换来的是「后者是前者的子集」从一句话变成
-> 一个可调用、可测试的谓词。
->
-> **§四之二 记录同日晚些时候的四条追加裁决**:GUI 弃用及其三个前置条件;`appearances`
-> 为空表示「由页面定位」;三种多形态各自的表示法与 appearance 的定义边界;`cycle_read`
-> 的形状、trace 字段与独立预算。其中「点击不再要求命中已标注元素」**已撤销**——
-> 四要件一条不掉。
->
-> 下文其余更正注记都是**实现层面的后果**,不是对设计的异议:编译器的派生 id 策略、
-> 页面签名的严格合取、两个 schema 的升版顺序、证伪矩阵的形状、`ProjectFingerprint`
-> 守的是窗口几何而非窗口内布局。这些是「怎么落地」的清单。
-
-> ## 两条实现期裁决(2026-07-31 深夜,开发者确认)
->
-> ### A. `find` 需要页面 —— 写进脚本约定,不让框架自动解析
->
-> `cycle_find` 现在要求周期已解析出页面。这是**被逼的**:细化的 `searchRoi`、钉死的
-> appearance、以及 interact 那条边(也就是授权)全都挂在页面引用行上,所以
-> `evaluateActionTarget` 必须先知道是哪一页,不存在无页入口。
->
-> 症状:`ctx.luau` 的 `ctx:cycle(fn)` 不解析页面,脚本在里面直接 `find` 会被拒。
-> (`ctx:wait_for_page` 不受影响,`observeCycle` 总是先解析。)
->
-> **裁决:不让 `view:find` 自动解析。** 自动解析的两个缺点是结构性的、修不掉的——
-> 它**藏起了成本**(页面解析要走完 `pageAnchorOrder`,是一个周期里最贵的部分),
-> 而且**失败时更难懂**(解析不出页面会以「find 失败」的形式冒出来)。约定方案的
-> 唯一实际代价全部集中在错误消息上,而那是可以修的。
->
-> 两件要跟着做的:
-> 1. **诊断改成说人话** —— 现在返回 `ActionRejected`,读起来像「你没权限点这个」,
->    真相是「你少调了一步」。要明确说出「这个周期还没有解析出页面;`find` 需要页面,
->    因为细化的搜索范围、钉死的形态和 interact 授权都在页面引用上」。
-> 2. **错误种类可能就不该是 `ActionRejected`** —— 这里根本没有动作被尝试,`find` 只是
->    定位。用同一个种类,脚本就无法区分「我少调了一步」和「这一页真的不授权点这个」,
->    而这两件事的处理方式完全不同。
->
-> > **落地(2026-07-31,同日实现)。两件都做了,而且第 2 条选了「新增种类」。**
-> >
-> > **新种类 `AutomationErrorKind::PageUnresolved`,wire 名 `page_unresolved`,
-> > `FailureResponse::StepFailed`。** 选它而不是留着 `ActionRejected`,理由就是上面
-> > 第 2 条那句:两种失败要求的修法相反——`page_unresolved` 要改**脚本的调用顺序**,
-> > `action_rejected` 要改**标注**。合用一个种类,脚本连分辨都做不到。而
-> > `ActionRejected` 这个名字本身也在说谎:动作被「拒绝」意味着它被判过,而这里
-> > `find` 只是定位、`consume` 里那次 click 根本没走到那条能拒绝它的授权检查。
-> >
-> > **为什么 response 仍是 `StepFailed` 而不是 `Retry`。** 换一帧确实可能解析出这一帧
-> > 没解析出的页面,但页面是解析到**周期上**的:拿同一个周期重复同一次调用永远不会成功。
-> > 要拿到页面就得重新观察,那是这一步从头再来,不是这次操作被重试。
-> >
-> > **同一个种类覆盖两处**:`task-context.cpp` 的 `cycleFind`,以及 `cycle-ledger.cpp`
-> > 的 `consume`——同一个漏掉的步骤,晚一个动词而已。
-> >
-> > **消息**(`cycleFind`):「this observation cycle has not resolved a page, and
-> > finding an element is page-scoped: the refined search region, the pinned appearance
-> > and the interact authorisation all live on the page's reference to the element, so a
-> > find has nothing to work from until a page resolves. Resolve this cycle's page first,
-> > then find」。三个名词是刻意的——只写「先解析页面」会被读成仪式,作者会去找绕过它的
-> > 办法。
-> >
-> > **脚本约定写在**`modules/task/runtime/ctx.luau` 的三处:`view:find`(含两段
-> > 示例:`ctx:cycle` 要自己先 `cycle:page()` 并判 nil,`ctx:wait_for_page` 已经解析好)、
-> > `ctx:cycle`、以及原语转发 `ctx:cycle_find`。
-> >
-> > **顺带更正 §2.2 末尾那条诚实标注**:那里写「`consume` 里那个没有页面的分支从任务面
-> > 已经不可达,没有任何东西能让它变红」。**前半句仍然成立,后半句不成立了**——
-> > `tests/task/test-task-binding.cpp` 直接走 C++ 原语,把第一个周期取到的 hit 带到
-> > 第二个未解析的周期上,就能打到那个分支;把它的种类改回 `ActionRejected` 该用例当场变红。
-> > 脚本做不到这件事(拿不到 hit),C++ 做得到。
->
-> ### B. §2.3 的 P0 掩码下限降级为警告,闸门交给证伪矩阵
->
-> P0 原文要求「掩码全选像素低于 ~50 在 `Appearance::create` 构造时拒绝」。**那一层做不到**:
-> `Appearance::Spec` 携带的是 `sourceId`,不是像素;数掩码需要图像,而那一层够不着。
->
-> 更要紧的是**像素数本身就是错的度量**。今晚实测:
->
-> | 案例 | 全选像素 | 结论 |
-> |---|---|---|
-> | pitfall 的 27 像素白掩码 | 27 | 太小,测不到东西 |
-> | `繼續進行` 键橙色底 | **14112(77.2%)** | 太均匀,**分不出东西** |
-> | `繼續進行` 键白字 | 179 | 字形掩码,有结构 |
->
-> 一条「≥50」的下限会放过第二行,而它和第一行一样没用。原因在遮罩比较的机制:它只看
-> **选中像素的值**,而 14112 个几乎相同的橙色像素意味着任何同尺寸橙块都匹配,白字的洞
-> 对比较毫无贡献。真正决定区分度的是「这个掩码图案被随便一块屏幕碰巧满足的概率」,
-> 那和面积占比、空间分散度都有关,不是一个计数能表达的。
->
-> **裁决:**
-> 1. **CLI 绘制路径放一个计数警告,不是拒绝。** `previewColourKeyMask` 已经返回
->    `fullyKeptPixels`(`preview.hpp:172`),几乎零成本,能在作者画的当下抓住最露骨的
->    那种(0 像素、27 像素)。它可绕过,但它是提醒不是闸门,所以不重要。
-> 2. **闸门是 `umbra-authoring check`** —— 证伪矩阵测的正是「这个元素在它不该命中的
->    屏幕上会不会命中」,那是实测而不是猜。
-> 3. **编译期不设拒绝。** 用一个错的度量在编译期拒绝,会既漏掉均匀掩码、又误杀合法的
->    小掩码(有些字形本来就只有一百来个像素,比如上表那个 179)。
->
-> 换句话说:**P0 想守的东西已经由证伪矩阵守住了**——那正是 §2.3 自己说「这是最大的
-> 风险」的地方,现在有了工具。将来若要硬闸门,它该量**结构**而不是**计数**;但那需要
-> 先定义结构怎么量,而目前只有三个数据点,不足以把一个没验过的公式钉进构造函数。
->
-> > **落地(2026-07-31,同日实现):第 1 条已做,而且带了两条判据而不是一条。**
-> > `page create` / `page add` 在 `authored.mask` 下报出 `rect_pixels`、
-> > `fully_selected_pixels`、`selected_fraction`,并在下面两种情况附上 `warning`:
-> > **全选像素 < 50**,或**占矩形 ≥ 50%**。`ok` 仍为 true,元素照常写盘——它是提醒不是
-> > 闸门,闸门仍是 `umbra-authoring check`。
-> >
-> > 加第二条判据正是本节自己的论证要求的:一条「≥50」的下限会放过 68% 的橙底。上限取
-> > **一半**,因为它说的是「键选中的是图形还是底」这件事,是比例而不是计数;项目实测把它
-> > 夹得很宽——通过跨页证伪的元素占比 6.6%–25.8%,而三个已知的均匀掩码是 63%、68%、75%。
-> >
-> > 测量走 `probeColour`(`frames probe` 用的同一个函数),不在 CLI 里另写一份计数;绘制
-> > 动词只有一帧,所以同一个 view 传两次——选择只读 frames[0],两个 spread 归零,这也正是
-> > 警告只用计数、不用 spread 的原因。红证与实现见
-> > `entry/authoring/command-runner.cpp` 的 `maskWarning` 与
-> > `tests/authoring/test-authoring-cli.cpp`,以及
-> > `docs/pitfalls/colour-key-annotation.md` 新增的「另一个极端」一节。
-
-> ## 落地进度(2026-07-31 晚,doc-drift 扫描时记录)
->
-> 本文写作时是计划;下面这些已经是代码里的事实,读到后文的将来时请按此校正。
->
-> - **§三 第 1–2 步已完成。** 能力集合、`ExercisedCapabilities`、`PageReference`
->   (`holding` / `exercised` / `searchRoi?` / `appearance?`)、`Appearance`、`SignatureRole`
->   都在 `modules/annotation` 里;两个 schema 在一次原子改动里升到
->   `umbraflow-authoring/v3` 与 `umbraflow-annotations/v2`,旧 id 没有读路径,
->   `PERMANENT BRIDGE` 那段随之删除。`AnnotationType`、`ElementKind`、`bool shared`、
->   `allowed_page_ids`、`retypeRecognizer`、公开的 `PageSignature::create`、
->   `derivedRuntimeRecognizerId` 都已不存在,`RecognizerId` 已改名 `ElementId`
->   (§四之二.5)。编译器现在**每个元素只产出一个 `CompiledElement`**,用元素自己的 id。
-> - **§四 的三个动词已收敛。** `page add-anchor` / `add-target` / `add-info` 变成
->   `page add ROOT PAGE NAME --capability C... <draw>`,`--shared` 退掉;
->   `page reference ROOT PAGE ELEMENT [--capability C...] [--search-roi x,y,w,h]`
->   已落地——就是 §三 那条「必须在删 `shared` 之前或同时落地」的硬前置。`match` 增加了
->   `--page`。
-> - **`page reference` 的 `--capability` 已补齐(2026-07-31,本条之后)。** 此前这个动词
->   只能继承「放置自带的那几种用法」(interact / read),于是 §2.4 那个例子——同一个元素在
->   A 页认页、在 B 页只能点、在 C 页必须缺席——**在 CLI 上表达不出来**,`SignatureRole`
->   的一半是不可达的。现在 `--capability identify:required|:forbidden` 就是第二个页面把
->   已有标记收进自己签名的入口,`interact` / `read` 同一套词汇;不给标志仍然是继承,
->   identify 永远不继承(哪一面证据是引用侧的事实,元素答不出来)。
->   同一次改动修掉一个会让上面那条永远失败的 bug:`page reference` 过去在缺省时把**元素
->   自己的 ROI 复制到引用行上**,于是每一行引用都在「细化 ROI」,而行使 identify 的引用
->   恰恰不许细化——缺省现在写成 `nullopt`,运行时照旧回退到元素的 ROI
->   (`recognition-runtime.cpp` 的 `value_or`)。「identify + `--search-roi`」改为在**解析期**
->   就拒绝,消息点名这两个标志。
-> - **§四之二.1 的 GUI 弃用已执行**(`b57b67b`)。`entry/workbench/app/`、ImGui + D3D11
->   外壳、文件对话框、一次性抓帧源、imgui submodule 与 ASan smoke fixture 都已归档;
->   `entry/workbench` 剩下的是 `umbra-authoring` 链接的标注后端。三个前置条件**都已补上**:
->   `placeExisting`(经 `page reference`)、按页 `searchRoi`,以及证伪矩阵的 CLI 动词
->   `umbra-authoring check`(`41e0816`)——它带了 appearance 维度(`ModelCellSubject::Element`
->   与 `::Appearance` 两种行),P1–P4 与 R1–R4 落在 `entry/workbench/preview.*` 与
->   `tests/workbench/test-preview.cpp`。判据后来又收窄过一次(`d489979`):页面签名是合取,
->   所以离对角格的期望是**整条签名**的性质,不是逐个成员读出来的,`ModelCellExpectation`
->   因此是三态而不是 bool。
-> - **裁决记录第 1 条的后半句从未落地,而且照字面落地会自相矛盾——需要开发者裁决。**
->   原话是「`Owned` 是作者声明『这个元素只属于这一页』,工具据此在别处引用时拒绝」,
->   `catalog.hpp:98-100` 的注释也照抄了这句(「the editing tools refuse to reference them
->   elsewhere」)。**代码里没有任何一处这样拒绝**,而且不能有:画出来的元素一律是它那一页的
->   `Owned`(`runAddElement` 写死),所以「Owned 的元素不得在别处引用」等于「`page reference`
->   永远失败」,§2.4 那个 `back` 被两页引用的例子首当其冲。今天真正被守住的是
->   `catalog.cpp:826-850` 的**唯一所有者**:同一个元素最多有一行 `Owned`,第二行必须是
->   `Referenced`。两种读法要选一个:要么把 `Owned` 读成「家在这一页」(现状,注释要改),
->   要么给作者一个显式的「独占」声明(新字段或新标志,`page add` 上加),不能两者都不选。
-> - ~~**仍未开始:** §三 第 4 步之后的 appearance 作者入口~~ —— **已落地(2026-07-31)**,
->   连同 §四之二.2 的「空 appearance 列表」一起,因为两者是同一个问题的两半:
->   **像素只在某个能力需要像素时才被切出来**。
->
->   - **`page add` 的能力集合里没有 `identify` 时不切模板。** `--rect` 成为**元素自己的
->     `searchRoi`**,元素的 appearance 列表为空,`--source` / `--search-roi` / `--key` /
->     `--tolerance` / `--min-similarity-bp` 一律**拒绝并点名**——它们描述的是要比较的
->     像素,而这里没有。放在元素侧而不是引用侧,是因为引用侧的 `searchRoi` 是**可选
->     细化**、语义是「这一页收窄元素的那一份」,所以必须先有一份可收窄的;把元素的留成
->     整屏等于声明「这块像素可以在任何地方」,而任何没有自己细化的引用都会把它定位到
->     屏幕中心。何况 `page add` 是在一次编辑里同时写元素和**拥有它的那一页**的引用,
->     此刻作者描述的就是元素本身。
->   - **`element appearance ROOT ELEMENT NAME <draw>`** 给已有元素追加一个**具名**形态,
->     用的是 `page add` 那套 `<draw>` 选项,只去掉两个不属于形态的:`--capability`
->     (元素画出来时就定了)与 `--search-roi`(区域是元素的,每个形态都在这一个区域里搜)。
->     没有形态的元素也可以被补上一个——那正是 §四之二.6 缓解措施 (2)「给槽位加一个可
->     匹配的小特征」的入口。
->   - **`page reference --appearance NAME`** 钉死这一页期望的形态。只对**页面作用域**的搜索
->     生效,所以「只行使 identify」的引用给 `--appearance` 会被拒(锚点扫描跑在页面确定之前,
->     无论钉什么都跨形态折叠)。
->   - **`match` 拒绝没有形态的元素**:运行时会答「命中」,而且在**任何**一帧上都答命中,
->     因为什么都没比较过。
->   - **一个后果要认账:只行使 interact / read 的元素不能在一条命令里带模板了。** 想给
->     点击目标一份可复验的像素,是两步:`page add ... --capability interact --rect <区域>`
->     再 `element appearance ... --rect <模板>`。这比原来多一条命令,但它把「这块像素稳不
->     稳定」这个判断从工具手里还给了作者——而那正是 `battle_hand_area` 被切出 940x250
->     模板的由来。
->   - **一个缺口,留给后续裁决:拥有元素的那一页钉不了形态。** `page add` 在画元素的同一次
->     编辑里就写了拥有页的引用,而 `page reference` 拒绝已有引用的页面,所以第二个形态出现
->     之后,拥有页只能跨形态折叠(结果正确,但每周期多搜一次)。补法二选一:一个
->     `page pin ROOT PAGE ELEMENT NAME` 动词,或让 `page reference --appearance` 能更新已有的
->     那一行。测试 `the page that owns the element still folds across both` 把这个现状钉住了。
-> - **`check` 的 JSON 从 `expected_hit`(bool)改成 `expectation`(`match` /
->   `absent` / `unclaimed`)。** 三态是 `ModelCellExpectation` 本来就有的,而 bool 把
->   `absent`(这一页说这个标记**不该**在)和 `unclaimed`(没有任何页面的身份依赖它)压成同一个
->   `false`,两者对读矩阵的人是相反的指令。没有形态的元素恰好大量产生 `unclaimed` 行,
->   所以这一改是本次的直接后果。同一次改动删掉了 `ModelCheckCell::expectedHit` 这个
->   `TODO(cpp-debt)` 镜像字段。
-> - **仍未开始:** 第 5 步的 `read` 动词与 OCR 接线(`cycle_read` 尚不存在)、§2.3 更正里
->   点名要先修的 `pitfalls/colour-key-annotation.md` 机制段(已于 2026-07-31 修正)。
-> - ~~**§2.2 那条留给开发者的裁决仍然开着**~~ —— **已关闭(2026-07-31)**,裁决见
->   「两条实现期裁决」A,两件配套工作也已落地:`view:find` 仍然不自动解析,
->   「先解析页面再 find」写进了脚本约定,诊断换成了新的错误种类
->   **`PageUnresolved`**(wire `page_unresolved`)。落地细节见 A 下面的注记。
-
-> ## 标注前端成为第三个 `trace::FrontEnd`(2026-07-31 落地)
->
-> 开发者此前的裁决是「标注前端成为第三个 `trace::FrontEnd`,有自己的动词与事件;永远不要把
-> 裸点击接到 `OperatorSession` 上」。第一步已落地,同时把 input agent 的后端拆成两层。
->
-> **枚举加了 `FrontEnd::Annotation`,wire 名 `annotation`。** 消费者全部处理到位:
-> `frontEndName` 那个开关升级成**公开**的 `trace::frontEndWireName`,`task-host.cpp` 里
-> `*m_frontEnd == FrontEnd::Task ? "task" : "operator"` 那个三目表达式改成调它——原样留着的话,
-> 第三个值持有 generation 时那句拒绝会当场把它报成 operator。校验器的
-> `if (m_frontEnd != FrontEnd::Task)` 不用改:它写的是「不是 task 流就拒 `framework.*`」,
-> 后加的前端由构造继承。
->
-> **它盖在哪里,以及为什么不是 trace 行。** `umbraflow-trace/v1` 的每一行都带 `runId` 与
-> `generationId`,而 `GenerationId` 的定义是「脚本层的一个已加载项目实例」。input agent 够不到
-> 项目——它经 `controller` 直接驱动裸窗口——所以给它编一个 generation 是**假归属**,正是这个
-> 仓库到处在防的那种。裁决:**agent 不写 trace 行**,它把同一个值盖在自己唯一的证据流,
-> 即 results 文件上,每行行首一个 `"front_end":"annotation"`;盖章由
-> `InputAgentResultWriter` 完成——它是每一条应答(包括循环自己写的 quit 与解析失败)唯一都要
-> 经过的地方,理由与「`TraceRecorder` 而不是各个发射方拥有那枚章」完全相同。等标注前端真的
-> 接上宿主、有了 run 与 generation,这枚章原样搬到 recorder 上,读者已经认识的那条归属不变。
->
-> **后端拆成 drive 层与 annotation 层。** *驱动*是「把一次输入投给窗口并拿回一帧」,它不认识
-> 页面也不认识元素;*标注*是一次授权会话拿这些帧做的事。落地为
-> `IInputAgentDrive`(capture / click / scroll / key / clearAudit / close)与
-> `AnnotationSession`(路径围栏、before/after 取景、PNG 编码、results 行形状)。
-> **§四之二.7 的 `cycle_read` 那一类动词将来加在 annotation 层**,drive 层一个字都不用动——
-> 这正是这道接缝要买的东西。`IInputAgentDrive` 与上面那个 `IInputAgentSession` 一样刻意不是
-> `engine::IActionSink`:那个端口说的是「针对**已标注元素**的一次已授权动作」,而标注会话进行时
-> 什么都还没标注。
->
-> **仍未做:** 标注前端自己的动词与事件(裁决里的「own verbs/events」)。今天它只有 drive 词汇
-> (capture / click / key / scroll),枚举值先到位,是为了让这些动词落地时归属已经存在。
+> **裁决链(读序)**:本文 §二 + §四之二(模型语义)→
+> [页面模型上移到脚本层](2026-07-31-script-owned-page-model.md)(归属与第一层能力面)
+> → [三层系统与 Agent 操作者](2026-08-01-three-layers-and-agent-operator.md)(顶层形态)。
 
 ## 一、为什么现在改
 
@@ -319,23 +32,17 @@
 影响谁**。
 
 汉堡菜单把这个缺口暴露得很直接。它在 `home` 上标了一次,`sortie` 上还有一个、后面
-几乎每一页都有。今天要么每页重画(N 份要同步的真相),要么用 `shared` 标记意图然后
-——没有然后,授权 CLI 根本没有把共享元素放到第二个页面的动词。
+几乎每一页都有。当时要么每页重画(N 份要同步的真相),要么用 `shared` 标记意图然后
+——没有然后:「一个元素放在 N 页,不复制 element,改模板一次到位」这件事只在 GUI 里
+有(`EditPage::placeExisting` / `shareRegionOnPage`),而这个项目是**用 CLI/agent
+标注的**,四个 `page` CLI 动词全都在画新像素。
 
-> **更正(2026-07-31):关系本身已经存在,缺口在 CLI。** workbench 有
-> `EditPage::placeExisting`,底下是 `shareRegionOnPage`——「一个元素放在 N 页,不
-> 复制 element,改模板一次到位」。四个 `page` CLI 动词却全都在画新像素,而这个
-> 项目是**用 CLI/agent 标注的**,GUI 有不等于标注流程有。
->
-> 而「布尔说不出关系」这一条,有比原文更硬的证据:`shareRegionOnPage` 只是在放到
-> 第二页时**单向写一次** `shared = true`(`authoring-edit.cpp:753`),没有任何东西
-> 反过来重算或清除它,另有两个独立的手动设置口(`setRegionShared`、CLI `--shared`)。
-> 所以 `umbra-authoring page add-target ... --shared` 能造出一个**只有一次放置、
-> 却 `shared = true`** 的元素——旗标和关系当场矛盾,而且没有谁会发现。这才是
-> §2.2 推论 1 要删掉它的理由。
->
-> 补一句本节没说的:模型能说「被哪几页引用」,说不出「家在哪一页」。`Owned` 补的是
-> 后者,`bool shared` 从来补不了。
+「布尔说不出关系」还有比意图更硬的证据:`shareRegionOnPage` 只在放到第二页时**单向
+写一次** `shared = true`,没有任何东西反过来重算或清除它,另有两个独立的手动设置口
+(`setRegionShared`、CLI `--shared`)。所以 `page add-target ... --shared` 能造出一个
+**只有一次放置却 `shared = true`** 的元素——旗标和关系当场矛盾,而且没有谁会发现。
+这才是 §2.2 推论 1 要删掉它的理由。模型能说「被哪几页引用」,说不出「家在哪一页」;
+`Owned` 补的是后者,`bool shared` 从来补不了。
 
 ### 3. 一个语义元素只能有一套像素
 
@@ -406,7 +113,7 @@ PageReference {
 
 > **更正(2026-07-31,对照 `modules/annotation/source/annotation/authoring-document.hpp`)。**
 > 本节描述的页面侧引用**已经落地**,由
-> [page-centric authoring](2026-07-26-page-centric-authoring.md) 的 Phase 2 完成:
+> [page-centric authoring](../archive/plans/2026-07-26-page-centric-authoring.md) 的 Phase 2 完成:
 > 授权文档 schema 已经是 `umbraflow-authoring/v2`,元素是项目级的,放置是页面侧的,
 > 今天的 `AuthoringPlacement` 就是 `{ pageId, elementId, searchRoi }`。那份计划的
 > §2 第 3 条写的「Sharing becomes what it claims to be: one element, N placements」
@@ -423,7 +130,7 @@ PageReference {
    作者声明「这个元素只属于这一页」,工具据此在别处引用时拒绝。
 
    > 更正(2026-07-31):这是一次**反转**,不是收尾。
-   > [page-centric authoring](2026-07-26-page-centric-authoring.md) §2 第 5 条当时
+   > [page-centric authoring](../archive/plans/2026-07-26-page-centric-authoring.md) §2 第 5 条当时
    > 明确裁定「The authoring-only `shared` flag **stays what it is today** — author
    > intent that an element is offered for reuse — carried on the element」。本条推翻
    > 它。推翻是对的(理由见 §一.2 更正:旗标能和关系当场矛盾),但要认账这是改判,
@@ -436,7 +143,7 @@ PageReference {
    >
    > > **这条已作废(2026-07-31,`b57b67b` + `f768e6c`)。** 面板连同整个 GUI 都归档了,
    > > 所以没有面板要改。它守的那个入口改由 CLI 提供:`umbra-authoring page reference`
-   > > 就是「把已有元素放到第二页」的动词(见顶部落地进度)。本条保留,是因为它记下的
+   > > 就是「把已有元素放到第二页」的动词。本条保留,是因为它记下的
    > > 那个顾虑——「删 `shared` 会连带删掉通往第二次放置的唯一入口」——正是 §四之二.1
    > > 把 `placeExisting` 列为硬前置的理由。
 2. **这是编辑护栏,这才是它真正的价值。** 改一个 `Owned` 元素的矩形是安全的;改一个
@@ -474,8 +181,8 @@ PageReference {
    > 还有一段必须同一次改动一起处理:`authoring-document.cpp:403-409` 那条
    > `PERMANENT BRIDGE -- do not "clean this up"` 注释,把
    > `umbraflow-annotations/v1` 称作 **FROZEN**,并说明这个反演之所以必须留在原地,
-   > 正是因为运行时契约冻着。§三 解冻它,本条删掉它要产出的东西——那段注释要跟着
-   > 删或改,否则下一个维护者会把它读成否决票。
+   > 正是因为运行时契约冻着。schema 升版解冻了它,本条又删掉了它要产出的东西——所以
+   > 那段注释必须跟着走,否则下一个维护者会把它读成否决票。**已随升版一起删除。**
 
 > **实现后果(2026-07-31):`cycle_find` 从此要求该周期已解析出页面。** 这不是选择,
 > 是被逼出来的——每页的细化 ROI、钉死的形态、以及 interact 那条边都挂在引用行上,
@@ -491,7 +198,13 @@ PageReference {
 >
 > > **已裁决并落地(2026-07-31):写进脚本约定,不自动解析;错误种类换成
 > > `page_unresolved`。** 上面那句「会得到 `action_rejected`」按此读作
-> > `page_unresolved`。完整理由与消息原文见顶部「两条实现期裁决」A 下面的落地注记。
+> > `page_unresolved`。不让 `view:find` 自动解析,是因为自动解析的两个缺点是结构性的:
+> > 它**藏起成本**(页面解析是一个周期里最贵的部分),而且**失败时更难懂**(解析不出
+> > 页面会以「find 失败」的形式冒出来)。新种类 `AutomationErrorKind::PageUnresolved`
+> > (wire `page_unresolved`,`FailureResponse::StepFailed`)与 `ActionRejected` 分开,
+> > 是因为两种失败的修法相反——前者要改**脚本的调用顺序**,后者要改**标注**;response
+> > 不是 `Retry`,是因为页面解析到**周期**上,同一个周期重复调用永远不会成功。约定写在
+> > `modules/task/runtime/ctx.luau` 的 `view:find` / `ctx:cycle` / `ctx:cycle_find` 三处。
 >
 > 另一条诚实标注:`CycleLedger::consume` 里那个「没有页面」的分支从任务面已经
 > **不可达**了(拿不到 hit 就无从点击)。它作为 fail-closed 守卫保留。
@@ -592,17 +305,24 @@ Element {
    > - **P4 分离度**(整数、精确):对每个 `v ≠ v*`,
    >   `score_{v*}(s) · maxSad_v · k <= score_v(s) · maxSad_{v*}`。`k` 取仓库里已测得的
    >   跨屏 miss 落差 2.85×–4.15×,`k = 4` 站得住。
-   > - **P0 构造期前置**(不是测试):每个 appearance 的掩码全选像素 ≥ ~50,在
-   >   `Appearance::create` 里**拒绝**。今天没有任何代码级守卫,而「加一个 appearance」对
-   >   作者来说比「修矩形」便宜,所以 appearance 让这条更容易被违反。
+   > - **P0 构造期前置** —— ~~掩码全选像素 ≥ ~50,在 `Appearance::create` 里**拒绝**~~
+   >   **已推翻(2026-07-31 开发者裁决),降级为绘制期警告。** `Appearance::Spec` 携带的
+   >   是 `sourceId` 不是像素,那一层数不了掩码;更要紧的是**像素数本身就是错的度量**
+   >   ——实测 27 像素白掩码太小测不到东西,而 `繼續進行` 键的橙底 14112 像素(占 77.2%)
+   >   太均匀,同样分不出东西,一条「≥50」的下限会放过后者。落地形状:`page create` /
+   >   `page add` 在全选像素 < 50 **或**占矩形 ≥ 50% 时附 `warning`,`ok` 仍为 true,元素
+   >   照常写盘;**闸门是 `umbra-authoring check` 的证伪矩阵**,那是实测而不是猜。将来若
+   >   要硬闸门,它该量**结构**而不是**计数**。
    >
    > **红证**(项目纪律:测试只有在去掉性质后会变红才算数):
    > R1 把那个 27 像素病态掩码当 `v₀`,断言检查器在 `(v₀, S_light)` 报 misfire——
    > 删掉 P1 非对角格它就再也红不了。**R2 最值钱**:把过宽的 `v₀` 声明在**前**,
    > 匹配 `S_light`,断言返回 `v₁` 和 `v₁` 的矩形——「先过阈值者胜」下它是红的,
    > 这一条才让「声明顺序只是平局裁决」从一句话变成事实。R3 造一个赢但裕度 `< k` 的
-   > 样例,断言证伪器**拒绝该模型**(否则 `k` 会在调参中漂到 1)。R4 断言 <50 像素的
-   > appearance 在构造期就报错,而不是匹配期。
+   > 样例,断言证伪器**拒绝该模型**(否则 `k` 会在调参中漂到 1)。R4 随 P0 一起改判:
+   > 断言的是绘制期**警告**而不是构造期报错,红证在
+   > `tests/authoring/test-authoring-cli.cpp` 与 `entry/authoring/command-runner.cpp` 的
+   > `maskWarning`。
    >
    > **落点**:`ModelCheckCell`(`preview.hpp:278-303`)已经是「元素 × 屏幕」的证伪
    > 矩阵,`classifyModelCell` 已经会把「不该命中却命中」标成 `Misfire`——**它就是这个
@@ -651,99 +371,32 @@ Page "battle"  -> PageReference{ back, Referenced, exercised = { interact, ident
 > 不同 ROI 搜两次,恰好把「一个周期只匹配一次」这个收益吃掉。这条同时把 §五.2 收窄成
 > 「只对不行使 identify 的引用暴露细化入口」。
 
-## 三、迁移
+## 三、迁移(已废止)
 
-**schema 要升版**(`umbraflow-annotations/v1` -> `v2`),而且新旧不兼容:三值的
-`AnnotationType` 变成能力集合,`shared` 消失,`allowed_page_ids` 消失。
+> 本节那份「两个 schema 一起升版」的迁移计划已作废。实际落地的是
+> `umbraflow-authoring/v4` 与 `umbraflow-annotations/v3`(外加 `umbraflow-trace/v2`),
+> 与本节写的 v3/v2 顺序都不同;此后模型的实现位置又按
+> [页面模型上移到脚本层](2026-07-31-script-owned-page-model.md)上移第二层,项目文件格式
+> 改由第二层定。经过在 git 历史里。
 
-> **注(2026-07-31):写全名,别写「v2」。** 这里升的是**运行时清单**
-> `umbraflow-annotations/v2`。项目里另有一个已经是 v2 的 schema——授权文档
-> `umbraflow-authoring/v2`,2026-07-26 就升上去了(CONTEXT.md 同时登记了这两个
-> id)。代码注释里已经有裸用「the v2 truth」指后者的地方,两个 v2 混着说会串。
->
-> **上一次升版的先例值得照搬。** 授权文档没有保留 v1 读路径:唯一一个真实项目在
-> 磁盘上迁过去,旧 schema 串直接报 unsupported
-> (`authoring-document.hpp` 里 `k_authoringDocumentSchema` 的注释)。运行时清单
-> 的处境更宽松——它是编译器从授权文档**生成**的产物,不是手写资产,所以迁移就是
-> 重新生成一次。据此,下面「能读旧文档」这一句要重新判断:很可能一份 v1 读路径都
-> 不需要写。
+## 四、已落地的相关改动(已废止)
 
-**但今晚标的东西不会白费。** 真正贵的是**测量**——矩形、颜色键、阈值,以及每个元素
-过没过证伪矩阵。这些数字在任何 schema 下都成立,迁移只是换个容器装它们。
-`E:\umbraflow-projects\session-0731\author-*.ps1` 是可重放的重建脚本,每个非默认
-阈值旁边都写了为什么是这个数,它们本身就是迁移工具。
-
-**顺序建议**:先让 v2 的读写跑通并能读旧文档,再改 workbench 与 CLI,最后接运行时。
-不要先动运行时——`InfoRegion` 今天在 engine 里一个引用都没有,是最空的那一段,反而
-最不急。
-
-> **更正(2026-07-31):这个顺序走不通,而且漏了一个 schema。** 三条硬依赖:
->
-> 1. **授权与运行时之间没有接缝。** `CompiledElement`(`catalog.hpp:31-63`)
->    **同时**是运行时清单的载荷和授权文档的派生读模型,`annotationType` 和
->    `allowedPageIds` 都是它的字段。「先改授权、运行时以后再说」在类型上表达不出来。
-> 2. **两个解析器都要求逐字节规范输出**(`runtime-manifest.cpp:474-479` 把序列化
->    结果和原文比对),而 `annotationTypeText` 是两个 writer 共用的
->    (`detail/annotation-fields.cpp`)。不拆这个 helper,两个 schema 就没法在这个
->    字段上分头演进。
-> 3. **`umbra-authoring match` 坐在运行时路径上**(`command-runner.cpp` 调
->    `evaluateActionTarget`)。「最后接运行时」会让这个动词在中间整段坏掉——而它正是
->    产出上面所说「贵的是测量」的那个工具。
->
-> **漏掉的 schema**:本节只提了运行时清单。但能力集合改的是 `Element`,它的序列化
-> 形态是 `annotations.toml`——**手写的、不可重新生成的**那份。所以是两个 schema 一起动:
-> `umbraflow-authoring/v2 -> /v3` **和** `umbraflow-annotations/v1 -> /v2`。
->
-> **可行的顺序**(每一步都能过完整门禁):
->
-> - **第 1 步:只加词汇,不改一个字节。** 引入 `Capabilities`,让
->   `CompiledElement` 从现有三值枚举**派生**出 `capabilities()`
->   (PageAnchor→`{identify}`、ActionTarget→`{interact}`、InfoRegion→`{read}`),
->   `annotationType()` 保留。不动序列化、不升版,所有 golden 测试逐字节不变。然后
->   一次一个小提交地把读方改过来。**这一步的价值是把第 2 步从 ~40 个调用点压到
->   「只改表示」。**
-> - **第 2 步:一个原子提交,两个 schema 同时升。** 这一步不可再分——规范往返校验
->   让任何中间态都不可表示。`PERMANENT BRIDGE` 那段和它描述的反演一起删。
-> - **第 3 步:重放/迁移磁盘上的项目**(见下面的前置条件)。
-> - **第 4 步:`appearances`。** 没有数据、没有消费者、没有测试钉着它。
-> - **第 5 步:`read` 动词 + OCR 接线。** 到这里,本节「最不急」的直觉才是对的。
->
-> **前置条件,必须在删 `shared` 的那一步之前或同时落地**:CLI 至今没有「把已有元素
-> 放到第二页」的动词(见 §四 补注)。`Referenced` 只有在第二次放置存在之后才表达得
-> 出来,而 `author-sortie.ps1` 记录的正是「因为没有这个动词,汉堡菜单在 sortie 上被
-> **重画**了一遍」。没有它,重放会丢掉这次重构唯一要表达的那个关系。它是前置条件,
-> 不是可选补丁。
->
-> **另外两条与重放有关的事实**:证伪矩阵的结论**不在项目文件里**——
-> `chaos-super/annotations.toml` 只有 2 条 regression 且都是 positive,「过没过矩阵」
-> 只存在于那些 `.ps1` 注释里,所以脚本不是「方便」,是唯一副本;而脚本读的 17 张
-> PNG 在仓库外,门禁看不见它们,丢了就再也切不出模板。
-
-## 四、已落地的相关改动(2026-07-31,本文之前)
-
-这两条是为了不阻塞当晚的标注临时补的,重构时会被上面的设计取代:
-
-- **`umbra-authoring page add-info`**(`631cbf3`)— 授权 CLI 原本只有 `add-anchor` /
-  `add-target`,`InfoRegion` 这个类型在模型和 TOML 里一直存在却无路可走。现在能标了。
-  重构后 `add-info` 会变成 `--capability read`,三个动词收敛成一个。
-- **`umbra-authoring ... --shared`**(`5c7b2c1`)— 把 `bool shared` 设上。§2.2 会
-  删掉这个字段,届时这个标志一并退掉。
-
-> 补(2026-07-31):§一.2 的更正指出授权 CLI 还缺**把已有元素放到第二个页面**的动词
-> (workbench 有 `placeExisting`,CLI 没有)。它不在上面两条里,今晚也没补。如果
-> `chaos-super` 的标注在 v2 落地之前就撞上汉堡菜单,这个动词会是第三条临时补丁;
-> 它按 placements 实现,不依赖本文的任何新字段。
+> 那两条为了不阻塞当晚标注而加的临时补丁都已被落地的能力模型收回:`page add-info` 并进
+> `page add --capability read`,`--shared` 与它设置的 `bool shared` 由引用侧的 `Holding`
+> 取代。
 
 ## 四之二、2026-07-31 追加裁决(开发者,review 之后)
 
-### 1. workbench GUI 计划弃用
+### 1. workbench GUI 弃用(已于 `b57b67b` 执行)
 
 爆炸半径因此缩小(`entry/workbench` 是 `AnnotationType` 与 `shared` 最大的消费者),
-但有三样东西**今天只存在于 GUI 里**,弃用等于它们消失,必须在 CLI 侧补上:
+但有三样东西当时**只存在于 GUI 里**,弃用等于它们消失,必须在 CLI 侧补上——三条都已
+补上:`page reference`、按页 `searchRoi`,以及证伪矩阵的 CLI 动词
+`umbra-authoring check`(`41e0816`)。
 
 | 只在 GUI | 后果 |
 |---|---|
-| `placeExisting` / `shareRegionOnPage` | `Referenced` 将无法产生,`holding` 失去意义。**已是 §三 的硬前置** |
+| `placeExisting` / `shareRegionOnPage` | `Referenced` 将无法产生,`holding` 失去意义。**硬前置** |
 | `InteractiveRegion::setSearchRoi` | `PageReference.searchRoi?` 没有作者入口 |
 | `ModelCheckCell` / `classifyModelCell` | **证伪矩阵消失** |
 
@@ -975,8 +628,8 @@ confidence + rect 是它的替代证据。
    把这个情况排除在列表之外,所以它永远不会逼出能力差异。
 2. **per-reference 的 searchRoi 细化。** 今天没有一个页面需要它。同上,有实例再做。
 
-   > **已裁决(2026-07-31):`searchRoi?` 是可选细化,缺省继承元素默认值。** 见顶部
-   > 裁决记录。下面这段保留为实现现状的说明。
+   > **已裁决(2026-07-31):`searchRoi?` 是可选细化,缺省继承元素默认值**——即 §2.2
+   > 结构块写的那个形状,不是必填。下面这段保留为实现现状的说明。
    >
    > 补充(2026-07-31):
    > `AuthoringPlacement.searchRoi` 今天存在、已经通到运行时(编译器按放置展开,
@@ -1006,3 +659,15 @@ confidence + rect 是它的替代证据。
    > `optional<CharsetRestriction>`,缺省表示不限制。`CharsetRestriction` 目前只有
    > `Digits` 一个枚举值——那是唯一实测到的需求(`sortie_level` 读的是 `Lv.65`)。
    > 单值枚举是故意的:它可扩展,而 `bool digitsOnly` 不可。
+4. ~~**`Owned` 的两种读法。**~~ —— **已关闭(2026-07-31):`Owned` 读作「家在这一页」。**
+   另一种读法——「作者声明这个元素只属于这一页,工具据此在别处引用时拒绝」——不可能
+   成立:`runAddElement` 把每个画出来的元素都标成它那一页的 `Owned`,照字面执行等于
+   「`page reference` 永远失败」,§2.4 那个 `back` 被两页引用的例子首当其冲。真正守住的是
+   **唯一所有者**:同一个元素最多一行 `Owned`,其余用它的页面一律 `Referenced`。
+   **持有不是独占**;真要声明独占,那是元素上的另一句话,不是给这个枚举加第二种含义。
+5. **拥有元素的那一页钉不了 appearance。** `page add` 在画元素的同一次编辑里就写了拥有页
+   的引用,而 `page reference` 拒绝已有引用的页面,所以第二个 appearance 出现之后,拥有页
+   只能跨 appearance 折叠(结果正确,但每周期多搜一次)。补法二选一:一个
+   `page pin ROOT PAGE ELEMENT NAME` 动词,或让 `page reference --appearance` 更新已有的
+   那一行。现状由测试 `the page that owns the element still folds across both` 钉住。
+   这一条会随模型上移第二层重新提问,但今天没有答案。

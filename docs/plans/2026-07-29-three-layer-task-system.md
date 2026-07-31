@@ -16,13 +16,13 @@
 > 状态:**已定方向,2026-07-29 开发者确认**。允许大范围重构与删除。
 >
 > 权威性:本文取代
-> [`2026-07-28-luau-first-task-system-design-draft.md`](2026-07-28-luau-first-task-system-design-draft.md)
-> 与 [`2026-07-27-p0b-script-layer.md`](2026-07-27-p0b-script-layer.md) 的脚本层
+> [`2026-07-28-luau-first-task-system-design-draft.md`](../archive/plans/2026-07-28-luau-first-task-system-design-draft.md)
+> 与 [`2026-07-27-p0b-script-layer.md`](../archive/plans/2026-07-27-p0b-script-layer.md) 的脚本层
 > 裁决部分。产品方向仍看
 > [roadmap](2026-07-21-product-form-and-roadmap.md);S0 标注契约仍看
-> [annotation-design](2026-07-22-annotation-design.md),但其 §4 的脚本拼写按本文
+> [annotation-design](../archive/plans/2026-07-22-annotation-design.md),但其 §4 的脚本拼写按本文
 > 修正。评审依据见
-> [`docs/reviews/2026-07-28-luau-first-draft-review.md`](../reviews/2026-07-28-luau-first-draft-review.md)。
+> [`2026-07-28-luau-first-draft-review.md`](../archive/reviews/2026-07-28-luau-first-draft-review.md)。
 >
 > 口径:**「完美」= 恰好贴合目标,没有历史包袱,也没有为想象需求预留的机械。**
 > 本项目拒绝投机性泛化的规则不因为放开重构而失效。

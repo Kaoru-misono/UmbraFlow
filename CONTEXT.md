@@ -191,6 +191,12 @@ to one vocabulary: the thing is an **element** everywhere, and *recognition*
 survives only where it names the activity (`RecognitionCatalog`,
 `RecognitionRuntime`, `recognition-runtime.cpp`), never the thing.
 
+Relocation pending (2026-08-01):
+`docs/plans/2026-07-31-script-owned-page-model.md` moves *element* and *page* up
+to the trusted Luau framework, which makes them layer-two concepts rather than
+C++ types. The nouns below and what they mean do not change; their C++ spellings
+go away when that migration executes its retirement list.
+
 **Element (`annotation::Element`, `annotation::ElementId`)**:
 What an author draws: one rectangle of the target's screen, the set of uses it
 may be put to, and the appearances it can take. It is project-level — nothing on
@@ -235,7 +241,11 @@ searchRoi?, appearance?}`. It is the edge the model is built on — authorisatio
 the reference, and a page's signature is *derived* from the references whose
 `exercised` identify carries `Required` or `Forbidden`, never authored. `holding`
 is `Owned | Referenced`: an authoring-side editing guard rail the runtime never
-reads, recording that these pixels are this page's alone.
+reads, recording which page an element is at home on — exactly one `Owned` row
+per element, every other page that uses it `Referenced`. Ownership is not
+exclusivity: every drawn element is `Owned` by the page it was drawn on, so
+reading `Owned` as "refuse to reference these pixels elsewhere" would make
+`page reference` fail for every element there is.
 _Avoid_: `allowed_page_ids` / `allowedPageIds` (the separate authorisation list
 the reference replaced), `bool shared` (an intent flag that could contradict the
 placements with nothing noticing), `PageSignature::create` (a signature has no

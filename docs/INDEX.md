@@ -7,38 +7,44 @@
 
 ## Current plans
 
+Six documents, in reading order. Everything else is archived.
+
 - Target form — three layers plus the Agent operator (approved 2026-08-01):
   [Three layers and the Agent operator](plans/2026-08-01-three-layers-and-agent-operator.md)
 - Layer ownership — element and page move up to trusted Luau (ruled 2026-07-31,
-  reconciled 2026-08-01 in §十二):
+  reconciled 2026-08-01 in §十二); the migration now in progress:
   [Script-owned page model](plans/2026-07-31-script-owned-page-model.md)
 - Current product direction:
   [Product form and Roadmap](plans/2026-07-21-product-form-and-roadmap.md)
-- Current task-system architecture (approved 2026-07-29; supersedes the
-  script-layer rulings below):
+- Current task-system architecture (approved 2026-07-29; its layer-one boundary
+  is amended by the script-owned page model above):
   [Three-layer task system](plans/2026-07-29-three-layer-task-system.md)
-- Current annotation-model decisions (approved 2026-07-31; design conclusions
-  stand, implementation position moved by the script-owned page model above):
+- Current annotation-model decisions (approved 2026-07-31, slimmed 2026-08-01 to
+  §二 design and §四之二 rulings; design conclusions stand, implementation
+  position moved by the script-owned page model above):
   [Annotation model — capabilities, holding, appearances](plans/2026-07-31-annotation-model-capabilities.md)
-- Superseded in full on 2026-07-29 by the three-layer task system, retained as
-  history:
-  [Luau-first task system design draft](plans/2026-07-28-luau-first-task-system-design-draft.md)
-- Review whose conclusions the three-layer plan adopted:
-  [Luau-first draft review](reviews/2026-07-28-luau-first-draft-review.md)
+- Frozen real-machine acceptance ledger, retained until parity retires it:
+  [M0 demo port deviations](plans/2026-07-20-m0-demo-port-deviations.md)
 - [Plans](plans/README.md)
 
 ## Archive
 
-Archived planning and research material lives under `archive/plans/` (ten more
-completed plans moved there on 2026-08-01); closed reviews live under
-`archive/reviews/`.
+Archived planning and research material lives under `archive/plans/`; closed
+reviews live under `archive/reviews/`. `docs/reviews/` no longer exists — the
+three reviews it held were closed and moved on 2026-08-01.
 
 - [Locked S0 annotation contract](archive/plans/2026-07-22-annotation-design.md)
 - [Luau task-model grill decisions](archive/plans/2026-07-21-lua-task-model-grill-decisions.md)
 - [P0-B script layer](archive/plans/2026-07-27-p0b-script-layer.md)
 - [Lua task-model decision package](archive/plans/2026-07-21-lua-task-model-decision-package.md)
 - [Safe C++ core plan](archive/plans/2026-07-20-safe-cpp-core.md)
+- [Luau-first task system design draft](archive/plans/2026-07-28-luau-first-task-system-design-draft.md)
+  — superseded in full on 2026-07-29 by the three-layer task system.
 - [Annotation backend branch review](archive/reviews/2026-07-22-annotation-backend-review.md)
+- [Luau-first draft review](archive/reviews/2026-07-28-luau-first-draft-review.md)
+  — the review whose conclusions the three-layer plan adopted.
+- [Full-project architecture review](archive/reviews/2026-07-27-full-project-review.md)
+- [Repo-wide C++ simplification sweep](archive/reviews/2026-07-25-simplify-sweep.md)
 
 The knowledge base (`docs/knowledge/`) was deleted on 2026-08-01: with the code
 framework mid-migration it was pure maintenance burden. Reusable failure

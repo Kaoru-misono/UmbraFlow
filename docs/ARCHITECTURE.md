@@ -26,6 +26,13 @@ controller (Windows)  -> core, domain
 tests                 -> modules under test
 ```
 
+> Note (2026-08-01): the graph above is the **pre-migration** one and stands
+> until the script-owned migration retires `modules/annotation`'s model layer.
+> The target graph — C++ keeps `script` / `vision` / `ocr` / `controller` /
+> `engine` / `task`, and `engine -> annotation` goes away — is
+> [script-owned page model](plans/2026-07-31-script-owned-page-model.md) §三.
+> Redraw this section when that plan's retirement list (its §九) is executed.
+
 Edges list every declared module dependency, including private ones such as
 `annotation -> image`. Vendored third-party targets, such as `image_stb` and the
 Luau libraries, are omitted. (Corrected 2026-07-31: Dear ImGui was named here

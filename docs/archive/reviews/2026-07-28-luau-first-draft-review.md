@@ -10,7 +10,7 @@
 > 权威词汇见 `CONTEXT.md` 的「Annotation model」一节。
 
 > **2026-07-29**:本文结论已被开发者采纳,并并入
-> [`docs/plans/2026-07-29-three-layer-task-system.md`](../plans/2026-07-29-three-layer-task-system.md)。
+> [`docs/plans/2026-07-29-three-layer-task-system.md`](../../plans/2026-07-29-three-layer-task-system.md)。
 > 以下正文保留为该日期的评审记录,不再更新。
 >
 > 评审对象:[`docs/plans/2026-07-28-luau-first-task-system-design-draft.md`](../plans/2026-07-28-luau-first-task-system-design-draft.md)(提交 `45f91cb`)。

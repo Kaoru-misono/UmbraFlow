@@ -10,7 +10,7 @@
 > 权威词汇见 `CONTEXT.md` 的「Annotation model」一节。
 
 > **已被取代(2026-07-29)。** 本文**全文**由
-> [`2026-07-29-three-layer-task-system.md`](2026-07-29-three-layer-task-system.md)
+> [`2026-07-29-three-layer-task-system.md`](../../plans/2026-07-29-three-layer-task-system.md)
 > 取代,不再是任何实现的依据。促成该决定的评审是
 > [`docs/reviews/2026-07-28-luau-first-draft-review.md`](../reviews/2026-07-28-luau-first-draft-review.md):
 > 分层判断被采纳,阶段排序与 yield/request driver 论证被落地代码证伪(见新文 §11)。
