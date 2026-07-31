@@ -73,20 +73,6 @@ namespace uf::workbench
         }
 
         [[nodiscard]]
-        auto findRecognizerIn(
-            AuthoringDraft& draft,
-            annotation::ElementId id
-        ) noexcept -> EditableRecognizer*
-        {
-            auto const found = std::ranges::find(
-                draft.recognizers,
-                id,
-                &EditableRecognizer::id
-            );
-            return found == draft.recognizers.end() ? nullptr : &*found;
-        }
-
-        [[nodiscard]]
         auto findReferenceIn(
             AuthoringDraft& draft,
             annotation::PageId pageId,
@@ -393,6 +379,19 @@ namespace uf::workbench
         return recognizer.variants.empty()
             ? nullptr
             : &recognizer.variants.front();
+    }
+
+    auto findEditableRecognizer(
+        AuthoringDraft& draft,
+        annotation::ElementId id
+    ) noexcept -> EditableRecognizer*
+    {
+        auto const found = std::ranges::find(
+            draft.recognizers,
+            id,
+            &EditableRecognizer::id
+        );
+        return found == draft.recognizers.end() ? nullptr : &*found;
     }
 
     auto makeAuthoringDraft(
@@ -888,7 +887,7 @@ namespace uf::workbench
         annotation::PageId pageId
     ) -> Result<AuthoringDraft>
     {
-        auto const* p_target = findRecognizerIn(draft, id);
+        auto const* p_target = findEditableRecognizer(draft, id);
         if (p_target == nullptr)
         {
             return missingElement(id);
@@ -995,7 +994,7 @@ namespace uf::workbench
         std::optional<annotation::ColourKey> colourKey
     ) -> Result<AuthoringDraft>
     {
-        auto* p_target = findRecognizerIn(draft, id);
+        auto* p_target = findEditableRecognizer(draft, id);
         if (p_target == nullptr)
         {
             return missingElement(id);
@@ -1015,7 +1014,7 @@ namespace uf::workbench
         ReferenceElementSpec const& spec
     ) -> Result<ReferencedElement>
     {
-        auto const* p_origin = findRecognizerIn(draft, spec.elementId);
+        auto const* p_origin = findEditableRecognizer(draft, spec.elementId);
         if (p_origin == nullptr)
         {
             return missingElement(spec.elementId);
@@ -1084,7 +1083,7 @@ namespace uf::workbench
             return std::move(referenced.draft);
         }
 
-        auto const* p_element = findRecognizerIn(draft, id);
+        auto const* p_element = findEditableRecognizer(draft, id);
         if (p_element == nullptr)
         {
             return missingElement(id);
@@ -1108,7 +1107,7 @@ namespace uf::workbench
         PixelRect templateRect
     ) -> Result<RetemplatedElement>
     {
-        auto* p_target = findRecognizerIn(draft, id);
+        auto* p_target = findEditableRecognizer(draft, id);
         if (p_target == nullptr)
         {
             return missingElement(id);
@@ -1303,7 +1302,7 @@ namespace uf::workbench
         annotation::ElementId id
     ) -> Result<DeletedEntity>
     {
-        auto const* p_target = findRecognizerIn(draft, id);
+        auto const* p_target = findEditableRecognizer(draft, id);
         if (p_target == nullptr)
         {
             return missingElement(id);

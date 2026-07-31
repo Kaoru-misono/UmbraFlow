@@ -203,18 +203,12 @@ if(TARGET ${PROJECT_NAME}_workbench_support)
     cpp_add_test(
         NAME test-workbench
         SOURCES
-            workbench/test-authoring-actions.cpp
             workbench/test-authoring-edit.cpp
-            workbench/test-canvas-math.cpp
             workbench/test-edit-page.cpp
             workbench/test-model-check-job.cpp
-            workbench/test-model-check-view.cpp
-            workbench/test-panel-state.cpp
             workbench/test-preview.cpp
             workbench/test-project-persistence.cpp
-            workbench/test-project-tree.cpp
             workbench/test-source-ingestion.cpp
-            workbench/test-workbench-app.cpp
         LIBS
             ${PROJECT_NAME}_workbench_support
             ${PROJECT_NAME}_image

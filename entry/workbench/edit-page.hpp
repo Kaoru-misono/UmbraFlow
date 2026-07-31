@@ -20,13 +20,38 @@ namespace uf::workbench
 {
     // Forward declarations: EditPage and the two handles reference one another
     // (EditPage mints handles; handles name EditPage's nested result types, so
-    // their definitions follow it), and the commit path borrows the panels'
-    // between-frame state, which no part of this header needs the layout of.
+    // their definitions follow it).
     class EditPage;
     class InteractiveRegion;
     class PageAnchor;
-    struct PanelUiState;
-    class AppState;
+
+    // Mints a fresh identifier for a new authoring resource as an RFC 4122
+    // version-4 UUID: 122 random bits with the version nibble stamped to 0100
+    // and the variant bits to 10. A v4 UUID is the project's stable id
+    // convention and its entropy makes an authoring-time collision negligible.
+    // Only authoring mints ids, so a std::random_device fill is sufficient; the
+    // runtime never mints and therefore imposes no determinism requirement here.
+    //
+    // It lives beside EditPage rather than in authoring-edit because the edit
+    // transactions take their ids from the caller on purpose -- that is what
+    // keeps them pure and replayable -- and this editor is the caller that
+    // mints. A front end wanting derived rather than random ids passes its own.
+    [[nodiscard]]
+    auto mintResourceId() -> annotation::ResourceId;
+
+    // The initial search region for a member whose rectangle the caller
+    // supplied: the template grown by its own extent on every side and clamped
+    // to the frame, so the runtime first looks for the mark near where it was
+    // marked out rather than across the whole frame. Always contains the
+    // template, since it only grows outward from a template already inside the
+    // frame. Fails only if the clamped rectangle is somehow rejected by
+    // PixelRect.
+    [[nodiscard]]
+    auto searchRoiForDrawnTemplate(
+        PixelRect templateRect,
+        uint32 frameWidth,
+        uint32 frameHeight
+    ) -> Result<PixelRect>;
 
     namespace detail
     {
@@ -49,10 +74,10 @@ namespace uf::workbench
     // edited half-page. Every operation mutates the owned copy; the live document
     // is untouched until commit.
     //
-    // Frame-scoped, and enforced rather than asked for. The editor records the
-    // history revision it was opened against, and a commit whose base is no
-    // longer current is refused. An EditPage stored across frames cannot
-    // resurrect state the author undid; its commit fails visibly instead.
+    // Short-lived, and enforced rather than asked for. The editor records the
+    // revision it was opened against, and applyCommittedPage refuses a commit
+    // whose base is no longer current. An EditPage held while the project moves
+    // on cannot resurrect state the author undid; its commit fails visibly.
     class EditPage final
     {
     public:
@@ -85,11 +110,11 @@ namespace uf::workbench
             std::string name{};
         };
 
-        // A member drawn straight onto the canvas: one transaction carrying the
-        // capability the author picked and the template rectangle they dragged
-        // out. Draw-to-create cannot be a create-then-retemplate pair -- the
-        // one-commit-per-frame queue rejects the second edit -- so the drawn
-        // geometry has to ride in with the creation.
+        // A member whose pixels the caller already knows: one transaction
+        // carrying the capability they picked and the template rectangle they
+        // marked out. It is a single transaction rather than a
+        // create-then-retemplate pair because the rectangle is the point of the
+        // creation, not a correction to it.
         struct NewDrawnMemberSpec final
         {
             annotation::SourceId sourceId;
@@ -97,13 +122,24 @@ namespace uf::workbench
             PixelRect            templateRect;
         };
 
-        // The outcome of a draw-to-create, naming the new element so the caller
-        // selects it once the commit lands, and echoing the kind it was made as.
+        // The outcome of placeDrawn, naming the new element so the caller can
+        // address it, and echoing the kind it was made as.
         struct AddedMember final
         {
             MemberId       id;
             std::string    name{};
             PageMemberKind kind{};
+        };
+
+        // What one finished editing session produces: the whole draft to
+        // install, and the revision it was built against so whoever owns the
+        // history can refuse it if the project has moved on. Returned rather
+        // than pushed, so an editor has no opinion about who installs it or
+        // when.
+        struct Committed final
+        {
+            AuthoringDraft draft;
+            uint64         baseRevision{};
         };
 
     private:
@@ -121,23 +157,29 @@ namespace uf::workbench
         );
 
     public:
+        // Opens one page of a draft for editing. The revision is the caller's
+        // name for the version this draft was taken from; it is carried through
+        // to the commit untouched and compared there. A caller with no history
+        // to be stale against passes 0 and never looks at it again.
         [[nodiscard]]
         static auto open(
-            AppState const& state,
+            AuthoringDraft draft,
+            uint64 baseRevision,
             annotation::PageId id
         ) -> Result<EditPage>;
 
         [[nodiscard]]
         static auto createFrom(
-            AppState const& state,
+            AuthoringDraft draft,
+            uint64 baseRevision,
             annotation::SourceId source
         ) -> Result<EditPage>;
 
-        // The page this editor targets, and the revision it was opened against.
+        // The page this editor targets. createFrom mints its page, so this is
+        // the only way to learn which one it made.
         [[nodiscard]] auto id() const noexcept -> annotation::PageId;
-        [[nodiscard]] auto baseRevision() const noexcept -> uint64;
 
-        // The drawing snapshot for this page, built from the owned draft.
+        // The value snapshot of this page, built from the owned draft.
         [[nodiscard]] auto view() const -> PageView;
 
         // Signature edits. Both move this page's reference to the element
@@ -160,10 +202,10 @@ namespace uf::workbench
         [[nodiscard]] auto placeRegion(NewRegionSpec const& spec) -> Result<AddedRegion>;
         [[nodiscard]] auto placeInfo(NewRegionSpec const& spec) -> Result<AddedRegion>;
 
-        // Adds a member drawn on the canvas: the element the author dragged out,
-        // with the capability they picked. Refuses a template smaller than a
-        // minimum extent, since a box too small to see is one the author did not
-        // mean to draw.
+        // Adds a member at a rectangle the caller supplies, with the capability
+        // they picked, seeding its search region from that rectangle. Refuses a
+        // template smaller than a minimum extent, since a box too small to see
+        // is one the author did not mean to mark out.
         [[nodiscard]] auto placeDrawn(NewDrawnMemberSpec const& spec) -> Result<AddedMember>;
 
         // References an element this page does not have yet, borrowing pixels
@@ -176,19 +218,11 @@ namespace uf::workbench
         [[nodiscard]] auto anchor(MemberId member) UF_LIFETIME_BOUND -> Result<PageAnchor>;
         [[nodiscard]] auto region(MemberId member) UF_LIFETIME_BOUND -> Result<InteractiveRegion>;
 
-        // The only exits. Both route through the existing requestEdit queue,
-        // preserving the one-commit-per-frame guard and, for the selecting form,
-        // select-only-after-landing, and both stamp the base revision so a stale
-        // commit is refused. Consuming the editor is what makes "one EditPage,
-        // one commit" structural.
-        auto commit(PanelUiState& ui, std::string description) && -> void;
-
-        auto commitSelecting(
-            PanelUiState& ui,
-            std::string description,
-            MemberId select,
-            std::optional<annotation::SourceId> selectSource
-        ) && -> void;
+        // The only exit: hands back the edited draft stamped with the revision
+        // it was opened against. Consuming the editor is what makes "one
+        // EditPage, one commit" structural -- the draft is moved out, so a
+        // second commit does not compile.
+        [[nodiscard]] auto commit() && -> Committed;
 
     private:
         // Borrowed by the handles, which are friends. draftCopy hands out a copy
@@ -208,12 +242,26 @@ namespace uf::workbench
         [[nodiscard]] auto pageId() const noexcept -> annotation::PageId;
     };
 
+    // Installs a committed page into the history it was opened against, and
+    // reports whether the draft differed from the current document and so
+    // became a new undo entry.
+    //
+    // Refuses a commit whose base is no longer current: a page opened, then
+    // left behind by an undo or redo, must not overwrite the version that
+    // replaced it. The history is mutated because installing a version is this
+    // function's whole operation.
+    [[nodiscard]]
+    auto applyCommittedPage(
+        AuthoringEditHistory& history,
+        EditPage::Committed const& committed
+    ) -> Result<bool>;
+
     // A live borrow onto one clickable element of the page being edited. Holds
     // its owning EditPage and the member's id, and re-resolves the id on every
     // call, so a structural edit made through another handle cannot leave this
     // one pointing at freed storage. Non-copyable and non-movable: it exists
-    // only as a local inside the draw that asked for it, and a PanelUiState
-    // member of this type does not compile.
+    // only as a local inside the operation that asked for it, and storing one
+    // as a member does not compile.
     class InteractiveRegion final
     {
         EditPage&          m_page;

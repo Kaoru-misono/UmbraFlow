@@ -14,11 +14,11 @@
 
 namespace uf::workbench
 {
-    // A per-frame value snapshot of one page: the object the panels iterate to
-    // draw it. Authored data and ids only -- no margins, no verdicts, no live
-    // scores. Those stay owned once by the last model check and are merged at
-    // draw time through the existing id-keyed lookups, so a completed check does
-    // not force a view rebuild and no second owner of "the score for X" exists.
+    // A value snapshot of one page: the object a caller iterates to present it.
+    // Authored data and ids only -- no margins, no verdicts, no live scores.
+    // Those stay owned once by the last model check and are joined by id where
+    // they are needed, so a completed check does not force a view rebuild and no
+    // second owner of "the score for X" exists.
     struct PageView final
     {
         // The page-local key for a member of a page: the element id, which is
@@ -28,7 +28,7 @@ namespace uf::workbench
 
         // One element's authored data as it sits on one page. Ids and authored
         // values only: margins and live scores are owned by the last model check
-        // and merged in by the panels at draw time, never embedded here.
+        // and joined in by the caller that wants them, never embedded here.
         //
         // One row type covers every capability, because a capability set means
         // one element can be several of them at once -- the same patch of pixels
@@ -78,8 +78,8 @@ namespace uf::workbench
             annotation::PageId id
         ) -> std::optional<PageView>;
 
-        // Builds a snapshot per page, in the draft's page order, so the pages
-        // panel draws every page reflectively from one pass.
+        // Builds a snapshot per page, in the draft's page order, so a caller
+        // covers every page reflectively from one pass.
         [[nodiscard]]
         static auto all(AuthoringDraft const& draft) -> std::vector<PageView>;
     };

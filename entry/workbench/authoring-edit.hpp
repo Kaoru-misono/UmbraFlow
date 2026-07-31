@@ -159,6 +159,16 @@ namespace uf::workbench
         EditableRecognizer const& recognizer UF_LIFETIME_BOUND
     ) noexcept -> EditableVariant const*;
 
+    // The draft's own copy of one element, or nullptr when the draft does not
+    // hold it. Every verb that edits an element in place resolves it through
+    // this, so the observation is valid only until the draft is mutated or
+    // rebuilt.
+    [[nodiscard]]
+    auto findEditableRecognizer(
+        AuthoringDraft& draft UF_LIFETIME_BOUND,
+        annotation::ElementId id
+    ) noexcept -> EditableRecognizer*;
+
     [[nodiscard]]
     auto makeAuthoringDraft(
         annotation::AuthoringDocument const& document

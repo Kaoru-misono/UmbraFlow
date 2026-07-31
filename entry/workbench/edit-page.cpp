@@ -1,11 +1,7 @@
 #include "edit-page.hpp"
 
-#include "authoring-actions.hpp"
 #include "authoring-edit.hpp"
 #include "page-view.hpp"
-#include "panel-state.hpp"
-#include "canvas-math.hpp"
-#include "workbench-app.hpp"
 
 #include <annotation/authoring-document.hpp>
 #include <annotation/capabilities.hpp>
@@ -19,9 +15,11 @@
 #include <domain/space.hpp>
 
 #include <algorithm>
+#include <array>
 #include <cstddef>
 #include <format>
 #include <optional>
+#include <random>
 #include <string>
 #include <utility>
 #include <vector>
@@ -30,16 +28,20 @@ namespace uf::workbench
 {
     namespace
     {
-        // What a newly drawn element starts as before the author drags it,
-        // mirroring authoring-actions: a box small enough to be legal at any
-        // project resolution, and the annotation design's default similarity.
+        // What a newly placed element starts as before the author moves it: a
+        // box small enough to be legal at any project resolution, and the
+        // annotation design's default similarity.
         constexpr auto k_startingTemplateExtent        = uint32{16};
         constexpr auto k_startingSimilarityBasisPoints = uint32{9'000};
 
-        // The smallest template a draw-to-create gesture accepts, in source
-        // pixels. A box below this in either axis is a stray click-drag rather
-        // than a mark the author meant to draw, and is refused with a message.
+        // The smallest template placeDrawn accepts, in source pixels. A box
+        // below this in either axis is a stray gesture rather than a mark the
+        // author meant to draw, and is refused with a message.
         constexpr auto k_minimumDrawnTemplateExtent = uint32{2};
+
+        constexpr auto k_uuidVersionByte = std::size_t{6};
+        constexpr auto k_uuidVariantByte = std::size_t{8};
+        constexpr auto k_randomWordBytes = std::size_t{4};
 
         struct StartingRects final
         {
@@ -83,6 +85,76 @@ namespace uf::workbench
         }
     }
 
+    auto mintResourceId() -> annotation::ResourceId
+    {
+        auto device = std::random_device{};
+        auto bytes  = std::array<std::byte, 16>{};
+
+        // std::random_device yields 32-bit words, so fill four bytes per draw.
+        for (
+            auto offset = std::size_t{0};
+            offset < bytes.size();
+            offset += k_randomWordBytes
+        )
+        {
+            auto const word = static_cast<uint32>(device());
+            bytes.at(offset + 0U) = static_cast<std::byte>(word & 0xFFU);
+            bytes.at(offset + 1U) = static_cast<std::byte>((word >> 8U) & 0xFFU);
+            bytes.at(offset + 2U) = static_cast<std::byte>((word >> 16U) & 0xFFU);
+            bytes.at(offset + 3U) = static_cast<std::byte>((word >> 24U) & 0xFFU);
+        }
+
+        // Version 4: clear the high nibble of byte 6 and set it to 0100.
+        bytes.at(k_uuidVersionByte) = (
+            (bytes.at(k_uuidVersionByte) & std::byte{0x0F}) | std::byte{0x40}
+        );
+        // Variant 1 (RFC 4122): clear the top two bits of byte 8 and set 10.
+        bytes.at(k_uuidVariantByte) = (
+            (bytes.at(k_uuidVariantByte) & std::byte{0x3F}) | std::byte{0x80}
+        );
+
+        return annotation::ResourceId::fromBytes(bytes);
+    }
+
+    auto searchRoiForDrawnTemplate(
+        PixelRect templateRect,
+        uint32 frameWidth,
+        uint32 frameHeight
+    ) -> Result<PixelRect>
+    {
+        auto const extentX = static_cast<int64>(frameWidth);
+        auto const extentY = static_cast<int64>(frameHeight);
+        auto const marginX = static_cast<int64>(templateRect.width());
+        auto const marginY = static_cast<int64>(templateRect.height());
+
+        auto const left = std::clamp(
+            static_cast<int64>(templateRect.x()) - marginX,
+            int64{0},
+            extentX
+        );
+        auto const top = std::clamp(
+            static_cast<int64>(templateRect.y()) - marginY,
+            int64{0},
+            extentY
+        );
+        auto const right = std::clamp(
+            static_cast<int64>(templateRect.x() + templateRect.width()) + marginX,
+            int64{0},
+            extentX
+        );
+        auto const bottom = std::clamp(
+            static_cast<int64>(templateRect.y() + templateRect.height()) + marginY,
+            int64{0},
+            extentY
+        );
+        return PixelRect::create(
+            static_cast<uint32>(left),
+            static_cast<uint32>(top),
+            static_cast<uint32>(right - left),
+            static_cast<uint32>(bottom - top)
+        );
+    }
+
     EditPage::EditPage(
         AuthoringDraft draft,
         annotation::PageId id,
@@ -95,11 +167,11 @@ namespace uf::workbench
     }
 
     auto EditPage::open(
-        AppState const& state,
+        AuthoringDraft draft,
+        uint64 baseRevision,
         annotation::PageId id
     ) -> Result<EditPage>
     {
-        auto draft = state.draft();
         if (
             !std::ranges::contains(draft.pages, id, &EditablePage::id)
         )
@@ -112,15 +184,15 @@ namespace uf::workbench
                 )
             );
         }
-        return EditPage{std::move(draft), id, state.revision()};
+        return EditPage{std::move(draft), id, baseRevision};
     }
 
     auto EditPage::createFrom(
-        AppState const& state,
+        AuthoringDraft draft,
+        uint64 baseRevision,
         annotation::SourceId source
     ) -> Result<EditPage>
     {
-        auto draft = state.draft();
         UF_TRY_VALUE(rects, startingRects(draft.fingerprint));
 
         auto const pageId = annotation::PageId{mintResourceId()};
@@ -143,17 +215,12 @@ namespace uf::workbench
                 }
             )
         );
-        return EditPage{std::move(created.draft), pageId, state.revision()};
+        return EditPage{std::move(created.draft), pageId, baseRevision};
     }
 
     auto EditPage::id() const noexcept -> annotation::PageId
     {
         return m_id;
-    }
-
-    auto EditPage::baseRevision() const noexcept -> uint64
-    {
-        return m_baseRevision;
     }
 
     auto EditPage::view() const -> PageView
@@ -480,39 +547,31 @@ namespace uf::workbench
         };
     }
 
-    auto EditPage::commit(PanelUiState& ui, std::string description) && -> void
+    auto EditPage::commit() && -> Committed
     {
-        // Only stamp the base revision onto the request this call actually
-        // parked. A frame already carrying an edit keeps it -- the
-        // one-commit-per-frame guard lives in requestEdit -- and touching that
-        // other request's revision would corrupt a commit this one did not make.
-        auto const parkedBefore = ui.pendingEdit.has_value();
-        requestEdit(ui, std::move(m_draft), std::move(description));
-        if (!parkedBefore && ui.pendingEdit.has_value())
-        {
-            ui.pendingEdit->baseRevision = m_baseRevision;
-        }
+        return Committed{
+            .draft        = std::move(m_draft),
+            .baseRevision = m_baseRevision,
+        };
     }
 
-    auto EditPage::commitSelecting(
-        PanelUiState& ui,
-        std::string description,
-        MemberId select,
-        std::optional<annotation::SourceId> selectSource
-    ) && -> void
+    auto applyCommittedPage(
+        AuthoringEditHistory& history,
+        EditPage::Committed const& committed
+    ) -> Result<bool>
     {
-        auto const parkedBefore = ui.pendingEdit.has_value();
-        requestEditSelecting(
-            ui,
-            std::move(m_draft),
-            std::move(description),
-            select,
-            selectSource
-        );
-        if (!parkedBefore && ui.pendingEdit.has_value())
+        // The draft was built against a specific history version. If the author
+        // has since undone or redone, the version it edits is gone, and
+        // installing it would resurrect state they left behind.
+        if (committed.baseRevision != history.revision())
         {
-            ui.pendingEdit->baseRevision = m_baseRevision;
+            return fail(
+                AutomationErrorKind::ActionRejected,
+                "the project changed while this edit was open; reopen it and "
+                "try again"
+            );
         }
+        return history.apply(committed.draft);
     }
 
     auto EditPage::draftCopy() const -> AuthoringDraft

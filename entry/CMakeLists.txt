@@ -158,30 +158,18 @@ if(WIN32 AND TARGET ${PROJECT_NAME}_annotation)
     set(WORKBENCH_LIBRARY ${PROJECT_NAME}_workbench_support)
 
     add_library(${WORKBENCH_LIBRARY} STATIC
-        workbench/canvas-math.cpp
-        workbench/canvas-math.hpp
-        workbench/workbench-app.cpp
-        workbench/workbench-app.hpp
-        workbench/authoring-actions.cpp
-        workbench/authoring-actions.hpp
         workbench/authoring-edit.cpp
         workbench/authoring-edit.hpp
         workbench/edit-page.cpp
         workbench/edit-page.hpp
         workbench/model-check-job.cpp
         workbench/model-check-job.hpp
-        workbench/model-check-view.cpp
-        workbench/model-check-view.hpp
         workbench/page-view.cpp
         workbench/page-view.hpp
-        workbench/panel-state.cpp
-        workbench/panel-state.hpp
         workbench/platform/windows-file-publication.cpp
         workbench/platform/windows-file-publication.hpp
         workbench/preview.cpp
         workbench/preview.hpp
-        workbench/project-tree.cpp
-        workbench/project-tree.hpp
         workbench/project-persistence.cpp
         workbench/project-persistence.hpp
         workbench/source-ingestion.cpp
