@@ -1,13 +1,10 @@
 #include "edit-page.hpp"
 
-#include "authoring-actions.hpp"
 #include "authoring-edit.hpp"
 #include "page-view.hpp"
-#include "panel-state.hpp"
-#include "canvas-math.hpp"
-#include "workbench-app.hpp"
 
 #include <annotation/authoring-document.hpp>
+#include <annotation/capabilities.hpp>
 #include <annotation/resource.hpp>
 
 #include <core/error/contracts.hpp>
@@ -18,9 +15,11 @@
 #include <domain/space.hpp>
 
 #include <algorithm>
+#include <array>
 #include <cstddef>
 #include <format>
 #include <optional>
+#include <random>
 #include <string>
 #include <utility>
 #include <vector>
@@ -29,16 +28,20 @@ namespace uf::workbench
 {
     namespace
     {
-        // What a newly drawn recognizer starts as before the author drags it,
-        // mirroring authoring-actions: a box small enough to be legal at any
-        // project resolution, and the annotation design's default similarity.
+        // What a newly placed element starts as before the author moves it: a
+        // box small enough to be legal at any project resolution, and the
+        // annotation design's default similarity.
         constexpr auto k_startingTemplateExtent        = uint32{16};
         constexpr auto k_startingSimilarityBasisPoints = uint32{9'000};
 
-        // The smallest template a draw-to-create gesture accepts, in source
-        // pixels. A box below this in either axis is a stray click-drag rather
-        // than a mark the author meant to draw, and is refused with a message.
+        // The smallest template placeDrawn accepts, in source pixels. A box
+        // below this in either axis is a stray gesture rather than a mark the
+        // author meant to draw, and is refused with a message.
         constexpr auto k_minimumDrawnTemplateExtent = uint32{2};
+
+        constexpr auto k_uuidVersionByte = std::size_t{6};
+        constexpr auto k_uuidVariantByte = std::size_t{8};
+        constexpr auto k_randomWordBytes = std::size_t{4};
 
         struct StartingRects final
         {
@@ -82,6 +85,76 @@ namespace uf::workbench
         }
     }
 
+    auto mintResourceId() -> annotation::ResourceId
+    {
+        auto device = std::random_device{};
+        auto bytes  = std::array<std::byte, 16>{};
+
+        // std::random_device yields 32-bit words, so fill four bytes per draw.
+        for (
+            auto offset = std::size_t{0};
+            offset < bytes.size();
+            offset += k_randomWordBytes
+        )
+        {
+            auto const word = static_cast<uint32>(device());
+            bytes.at(offset + 0U) = static_cast<std::byte>(word & 0xFFU);
+            bytes.at(offset + 1U) = static_cast<std::byte>((word >> 8U) & 0xFFU);
+            bytes.at(offset + 2U) = static_cast<std::byte>((word >> 16U) & 0xFFU);
+            bytes.at(offset + 3U) = static_cast<std::byte>((word >> 24U) & 0xFFU);
+        }
+
+        // Version 4: clear the high nibble of byte 6 and set it to 0100.
+        bytes.at(k_uuidVersionByte) = (
+            (bytes.at(k_uuidVersionByte) & std::byte{0x0F}) | std::byte{0x40}
+        );
+        // Appearance 1 (RFC 4122): clear the top two bits of byte 8 and set 10.
+        bytes.at(k_uuidVariantByte) = (
+            (bytes.at(k_uuidVariantByte) & std::byte{0x3F}) | std::byte{0x80}
+        );
+
+        return annotation::ResourceId::fromBytes(bytes);
+    }
+
+    auto searchRoiForDrawnTemplate(
+        PixelRect templateRect,
+        uint32 frameWidth,
+        uint32 frameHeight
+    ) -> Result<PixelRect>
+    {
+        auto const extentX = static_cast<int64>(frameWidth);
+        auto const extentY = static_cast<int64>(frameHeight);
+        auto const marginX = static_cast<int64>(templateRect.width());
+        auto const marginY = static_cast<int64>(templateRect.height());
+
+        auto const left = std::clamp(
+            static_cast<int64>(templateRect.x()) - marginX,
+            int64{0},
+            extentX
+        );
+        auto const top = std::clamp(
+            static_cast<int64>(templateRect.y()) - marginY,
+            int64{0},
+            extentY
+        );
+        auto const right = std::clamp(
+            static_cast<int64>(templateRect.x() + templateRect.width()) + marginX,
+            int64{0},
+            extentX
+        );
+        auto const bottom = std::clamp(
+            static_cast<int64>(templateRect.y() + templateRect.height()) + marginY,
+            int64{0},
+            extentY
+        );
+        return PixelRect::create(
+            static_cast<uint32>(left),
+            static_cast<uint32>(top),
+            static_cast<uint32>(right - left),
+            static_cast<uint32>(bottom - top)
+        );
+    }
+
     EditPage::EditPage(
         AuthoringDraft draft,
         annotation::PageId id,
@@ -94,11 +167,11 @@ namespace uf::workbench
     }
 
     auto EditPage::open(
-        AppState const& state,
+        AuthoringDraft draft,
+        uint64 baseRevision,
         annotation::PageId id
     ) -> Result<EditPage>
     {
-        auto draft = state.draft();
         if (
             !std::ranges::contains(draft.pages, id, &EditablePage::id)
         )
@@ -111,15 +184,15 @@ namespace uf::workbench
                 )
             );
         }
-        return EditPage{std::move(draft), id, state.revision()};
+        return EditPage{std::move(draft), id, baseRevision};
     }
 
     auto EditPage::createFrom(
-        AppState const& state,
+        AuthoringDraft draft,
+        uint64 baseRevision,
         annotation::SourceId source
     ) -> Result<EditPage>
     {
-        auto draft = state.draft();
         UF_TRY_VALUE(rects, startingRects(draft.fingerprint));
 
         auto const pageId = annotation::PageId{mintResourceId()};
@@ -129,7 +202,7 @@ namespace uf::workbench
                 std::move(draft),
                 NewPageSpec{
                     .pageId                = pageId,
-                    .anchorId              = annotation::RecognizerId{
+                    .anchorId              = annotation::ElementId{
                         mintResourceId()
                     },
                     .regressionId          = annotation::RegressionId{
@@ -142,17 +215,12 @@ namespace uf::workbench
                 }
             )
         );
-        return EditPage{std::move(created.draft), pageId, state.revision()};
+        return EditPage{std::move(created.draft), pageId, baseRevision};
     }
 
     auto EditPage::id() const noexcept -> annotation::PageId
     {
         return m_id;
-    }
-
-    auto EditPage::baseRevision() const noexcept -> uint64
-    {
-        return m_baseRevision;
     }
 
     auto EditPage::view() const -> PageView
@@ -168,13 +236,13 @@ namespace uf::workbench
     {
         UF_TRY_VALUE(rects, startingRects(m_draft.fingerprint));
 
-        auto const recognizerId = annotation::RecognizerId{mintResourceId()};
+        auto const elementId = annotation::ElementId{mintResourceId()};
         UF_TRY_VALUE(
             added,
             addPageMember(
                 m_draft,
                 PageMemberSpec{
-                    .recognizerId          = recognizerId,
+                    .elementId             = elementId,
                     .pageId                = m_id,
                     .sourceId              = spec.sourceId,
                     .templateRect          = rects.templateRect,
@@ -186,87 +254,37 @@ namespace uf::workbench
         );
         m_draft = std::move(added.draft);
         return AddedAnchor{
-            .id   = recognizerId,
+            .id   = elementId,
             .name = std::move(added.name),
         };
     }
 
     auto EditPage::requireAnchor(MemberId member) -> Status
     {
-        auto draft         = m_draft;
-        auto const* target = findEditableRecognizer(draft, member);
-        if (target == nullptr)
-        {
-            return missingMember(member);
-        }
-        if (target->annotationType != annotation::AnnotationType::PageAnchor)
-        {
-            return fail(
-                AutomationErrorKind::InvalidResource,
-                std::format(
-                    "\"{}\" is not an identifying mark",
-                    target->name
-                )
-            );
-        }
-
-        auto const page = std::ranges::find(
-            draft.pages,
-            m_id,
-            &EditablePage::id
+        UF_TRY_VALUE(
+            draft,
+            setReferenceIdentifyRole(
+                m_draft,
+                member,
+                m_id,
+                annotation::SignatureRole::Required
+            )
         );
-        if (page == draft.pages.end())
-        {
-            return fail(
-                AutomationErrorKind::InvalidResource,
-                "this page is no longer in the project"
-            );
-        }
-        std::erase(page->forbidden, member);
-        if (!std::ranges::contains(page->required, member))
-        {
-            page->required.emplace_back(member);
-        }
         m_draft = std::move(draft);
         return ok();
     }
 
     auto EditPage::forbidAnchor(MemberId member) -> Status
     {
-        auto draft         = m_draft;
-        auto const* target = findEditableRecognizer(draft, member);
-        if (target == nullptr)
-        {
-            return missingMember(member);
-        }
-        if (target->annotationType != annotation::AnnotationType::PageAnchor)
-        {
-            return fail(
-                AutomationErrorKind::InvalidResource,
-                std::format(
-                    "\"{}\" is not an identifying mark",
-                    target->name
-                )
-            );
-        }
-
-        auto const page = std::ranges::find(
-            draft.pages,
-            m_id,
-            &EditablePage::id
+        UF_TRY_VALUE(
+            draft,
+            setReferenceIdentifyRole(
+                m_draft,
+                member,
+                m_id,
+                annotation::SignatureRole::Forbidden
+            )
         );
-        if (page == draft.pages.end())
-        {
-            return fail(
-                AutomationErrorKind::InvalidResource,
-                "this page is no longer in the project"
-            );
-        }
-        std::erase(page->required, member);
-        if (!std::ranges::contains(page->forbidden, member))
-        {
-            page->forbidden.emplace_back(member);
-        }
         m_draft = std::move(draft);
         return ok();
     }
@@ -341,13 +359,13 @@ namespace uf::workbench
     {
         UF_TRY_VALUE(rects, startingRects(m_draft.fingerprint));
 
-        auto const recognizerId = annotation::RecognizerId{mintResourceId()};
+        auto const elementId = annotation::ElementId{mintResourceId()};
         UF_TRY_VALUE(
             added,
             addPageMember(
                 m_draft,
                 PageMemberSpec{
-                    .recognizerId          = recognizerId,
+                    .elementId             = elementId,
                     .pageId                = m_id,
                     .sourceId              = spec.sourceId,
                     .templateRect          = rects.templateRect,
@@ -359,7 +377,7 @@ namespace uf::workbench
         );
         m_draft = std::move(added.draft);
         return AddedRegion{
-            .id   = recognizerId,
+            .id   = elementId,
             .name = std::move(added.name),
         };
     }
@@ -368,13 +386,13 @@ namespace uf::workbench
     {
         UF_TRY_VALUE(rects, startingRects(m_draft.fingerprint));
 
-        auto const recognizerId = annotation::RecognizerId{mintResourceId()};
+        auto const elementId = annotation::ElementId{mintResourceId()};
         UF_TRY_VALUE(
             added,
             addPageMember(
                 m_draft,
                 PageMemberSpec{
-                    .recognizerId          = recognizerId,
+                    .elementId             = elementId,
                     .pageId                = m_id,
                     .sourceId              = spec.sourceId,
                     .templateRect          = rects.templateRect,
@@ -386,7 +404,7 @@ namespace uf::workbench
         );
         m_draft = std::move(added.draft);
         return AddedRegion{
-            .id   = recognizerId,
+            .id   = elementId,
             .name = std::move(added.name),
         };
     }
@@ -417,13 +435,13 @@ namespace uf::workbench
             )
         );
 
-        auto const recognizerId = annotation::RecognizerId{mintResourceId()};
+        auto const elementId = annotation::ElementId{mintResourceId()};
         UF_TRY_VALUE(
             added,
             addPageMember(
                 m_draft,
                 PageMemberSpec{
-                    .recognizerId          = recognizerId,
+                    .elementId             = elementId,
                     .pageId                = m_id,
                     .sourceId              = spec.sourceId,
                     .templateRect          = spec.templateRect,
@@ -435,7 +453,7 @@ namespace uf::workbench
         );
         m_draft = std::move(added.draft);
         return AddedMember{
-            .id   = recognizerId,
+            .id   = elementId,
             .name = std::move(added.name),
             .kind = spec.kind,
         };
@@ -443,93 +461,56 @@ namespace uf::workbench
 
     auto EditPage::placeExisting(MemberId member) -> Status
     {
-        auto draft         = m_draft;
-        auto const* target = findEditableRecognizer(draft, member);
-        if (target == nullptr)
+        auto const* p_target = findElement(member);
+        if (p_target == nullptr)
         {
             return missingMember(member);
         }
-        if (target->annotationType == annotation::AnnotationType::PageAnchor)
-        {
-            return fail(
-                AutomationErrorKind::InvalidResource,
-                std::format(
-                    "\"{}\" is a page anchor and joins a page through its "
-                    "signature, not a placement",
-                    target->name
-                )
-            );
-        }
-        // The placement seeds its per-page search region from the element's own,
-        // the same region a fresh placement of it would start with.
-        auto const seedRoi = target->searchRoi;
         auto const already = std::ranges::any_of(
-            draft.placements,
-            [member, this](EditablePlacement const& placement)
+            m_draft.references,
+            [member, this](EditableReference const& reference)
             {
-                return placement.elementId == member && placement.pageId == m_id;
+                return reference.elementId == member
+                    && reference.pageId == m_id;
             }
         );
-        if (!already)
+        if (already)
         {
-            draft.placements.emplace_back(
-                EditablePlacement{
-                    .pageId    = m_id,
-                    .elementId = member,
-                    .searchRoi = seedRoi,
-                }
-            );
-        }
-        m_draft = std::move(draft);
-        return ok();
-    }
-
-    auto EditPage::acceptSharedRegion(MemberId from) -> Result<EditPage::SharedRegionScore>
-    {
-        auto const* origin = findRecognizer(from);
-        if (origin == nullptr)
-        {
-            return fail(
-                AutomationErrorKind::InvalidResource,
-                "that region is no longer in the project"
-            );
+            return ok();
         }
 
-        auto const roi = origin->searchRoi;
+        // Nothing is asked for: the reference exercises what the element
+        // declares a placement can carry, and inherits the element's own search
+        // region rather than pinning a copy that would go stale the moment the
+        // element's own moved.
         UF_TRY_VALUE(
-            shared,
-            shareRegionOnPage(
+            referenced,
+            referenceElementOnPage(
                 m_draft,
-                SharedRegionSpec{
-                    .elementId = from,
+                ReferenceElementSpec{
+                    .elementId = member,
                     .pageId    = m_id,
-                    .searchRoi = roi,
                 }
             )
         );
-        m_draft = std::move(shared.draft);
-        // The same element is now placed here; there is no copy to select, so the
-        // element itself is what the caller selects.
-        return EditPage::SharedRegionScore{
-            .id   = from,
-            .name = std::move(shared.name),
-        };
+        m_draft = std::move(referenced.draft);
+        return ok();
     }
 
     auto EditPage::anchor(MemberId member) -> Result<PageAnchor>
     {
-        auto const* target = findRecognizer(member);
-        if (target == nullptr)
+        auto const* p_target = findElement(member);
+        if (p_target == nullptr)
         {
             return missingMember(member);
         }
-        if (target->annotationType != annotation::AnnotationType::PageAnchor)
+        if (!p_target->capabilities.identify.has_value())
         {
             return fail(
                 AutomationErrorKind::InvalidResource,
                 std::format(
                     "\"{}\" is not an identifying mark",
-                    target->name
+                    p_target->name
                 )
             );
         }
@@ -543,18 +524,18 @@ namespace uf::workbench
 
     auto EditPage::region(MemberId member) -> Result<InteractiveRegion>
     {
-        auto const* target = findRecognizer(member);
-        if (target == nullptr)
+        auto const* p_target = findElement(member);
+        if (p_target == nullptr)
         {
             return missingMember(member);
         }
-        if (target->annotationType != annotation::AnnotationType::ActionTarget)
+        if (!p_target->capabilities.interact.has_value())
         {
             return fail(
                 AutomationErrorKind::InvalidResource,
                 std::format(
                     "\"{}\" is not an interactive region",
-                    target->name
+                    p_target->name
                 )
             );
         }
@@ -566,39 +547,31 @@ namespace uf::workbench
         };
     }
 
-    auto EditPage::commit(PanelUiState& ui, std::string description) && -> void
+    auto EditPage::commit() && -> Committed
     {
-        // Only stamp the base revision onto the request this call actually
-        // parked. A frame already carrying an edit keeps it -- the
-        // one-commit-per-frame guard lives in requestEdit -- and touching that
-        // other request's revision would corrupt a commit this one did not make.
-        auto const parkedBefore = ui.pendingEdit.has_value();
-        requestEdit(ui, std::move(m_draft), std::move(description));
-        if (!parkedBefore && ui.pendingEdit.has_value())
-        {
-            ui.pendingEdit->baseRevision = m_baseRevision;
-        }
+        return Committed{
+            .draft        = std::move(m_draft),
+            .baseRevision = m_baseRevision,
+        };
     }
 
-    auto EditPage::commitSelecting(
-        PanelUiState& ui,
-        std::string description,
-        MemberId select,
-        std::optional<annotation::SourceId> selectSource
-    ) && -> void
+    auto applyCommittedPage(
+        AuthoringEditHistory& history,
+        EditPage::Committed const& committed
+    ) -> Result<bool>
     {
-        auto const parkedBefore = ui.pendingEdit.has_value();
-        requestEditSelecting(
-            ui,
-            std::move(m_draft),
-            std::move(description),
-            select,
-            selectSource
-        );
-        if (!parkedBefore && ui.pendingEdit.has_value())
+        // The draft was built against a specific history version. If the author
+        // has since undone or redone, the version it edits is gone, and
+        // installing it would resurrect state they left behind.
+        if (committed.baseRevision != history.revision())
         {
-            ui.pendingEdit->baseRevision = m_baseRevision;
+            return fail(
+                AutomationErrorKind::ActionRejected,
+                "the project changed while this edit was open; reopen it and "
+                "try again"
+            );
         }
+        return history.apply(committed.draft);
     }
 
     auto EditPage::draftCopy() const -> AuthoringDraft
@@ -616,14 +589,14 @@ namespace uf::workbench
         return m_draft;
     }
 
-    auto EditPage::findRecognizer(MemberId member) const -> EditableRecognizer const*
+    auto EditPage::findElement(MemberId member) const -> EditableElement const*
     {
         auto const found = std::ranges::find(
-            m_draft.recognizers,
+            m_draft.elements,
             member,
-            &EditableRecognizer::id
+            &EditableElement::id
         );
-        if (found == m_draft.recognizers.end())
+        if (found == m_draft.elements.end())
         {
             return nullptr;
         }
@@ -647,80 +620,82 @@ namespace uf::workbench
 
     auto InteractiveRegion::name() const -> std::string
     {
-        auto const* target = m_page.findRecognizer(m_id);
+        auto const* target = m_page.findElement(m_id);
         UF_CHECK(target != nullptr);
         return target->name;
     }
 
-    auto InteractiveRegion::templateRect() const -> PixelRect
+    auto InteractiveRegion::templateRect() const -> std::optional<PixelRect>
     {
-        auto const* target = m_page.findRecognizer(m_id);
+        auto const* target = m_page.findElement(m_id);
         UF_CHECK(target != nullptr);
-        return target->templateRect;
+        auto const* p_appearance = primaryAppearance(*target);
+        return p_appearance == nullptr
+            ? std::nullopt
+            : std::optional<PixelRect>{p_appearance->templateRect};
     }
 
     auto InteractiveRegion::searchRoiOnThisPage() const -> PixelRect
     {
-        // The per-page range is the placement's, not the element's default: an
-        // element placed on several pages searches a different rectangle on each.
-        auto const& draft     = m_page.draftView();
-        auto const placement  = std::ranges::find_if(
-            draft.placements,
-            [this](EditablePlacement const& candidate)
+        // The per-page range is the reference's refinement when it made one:
+        // an element referenced by several pages may search a different
+        // rectangle on each.
+        auto const& draft    = m_page.draftView();
+        auto const reference = std::ranges::find_if(
+            draft.references,
+            [this](EditableReference const& candidate)
             {
                 return candidate.pageId == m_page.pageId()
                     && candidate.elementId == m_id;
             }
         );
-        if (placement != draft.placements.end())
-        {
-            return placement->searchRoi;
-        }
-        // Not placed here yet: the element's own default range is the seed a
-        // placement would start from.
-        auto const* target = m_page.findRecognizer(m_id);
+        auto const* target = m_page.findElement(m_id);
         UF_CHECK(target != nullptr);
+        if (reference != draft.references.end())
+        {
+            return reference->searchRoi.value_or(target->searchRoi);
+        }
+        // Not referenced here yet: the element's own region is the seed a
+        // reference would inherit.
         return target->searchRoi;
     }
 
-    auto InteractiveRegion::threshold() const -> uint32
+    auto InteractiveRegion::threshold() const -> std::optional<uint32>
     {
-        auto const* target = m_page.findRecognizer(m_id);
+        auto const* target = m_page.findElement(m_id);
         UF_CHECK(target != nullptr);
-        return target->similarityBasisPoints;
+        auto const* p_appearance = primaryAppearance(*target);
+        return p_appearance == nullptr
+            ? std::nullopt
+            : std::optional<uint32>{p_appearance->similarityBasisPoints};
     }
 
     auto InteractiveRegion::clickOffset() const
         -> std::optional<EditableTemplateOffset>
     {
-        auto const* target = m_page.findRecognizer(m_id);
+        auto const* target = m_page.findElement(m_id);
         UF_CHECK(target != nullptr);
-        return target->defaultClick;
+        auto const& interact = target->capabilities.interact;
+        return interact.has_value() ? interact->clickOffset : std::nullopt;
     }
 
-    auto InteractiveRegion::isShared() const -> bool
+    auto InteractiveRegion::pagesReferencing() const -> std::vector<annotation::PageId>
     {
-        auto const* target = m_page.findRecognizer(m_id);
-        UF_CHECK(target != nullptr);
-        return target->shared;
-    }
-
-    auto InteractiveRegion::pagesPlacedOn() const -> std::vector<annotation::PageId>
-    {
-        return uf::workbench::pagesPlacedOn(m_page.draftView(), m_id);
+        return uf::workbench::pagesReferencing(m_page.draftView(), m_id);
     }
 
     auto InteractiveRegion::colourKey() const -> std::optional<annotation::ColourKey>
     {
-        auto const* target = m_page.findRecognizer(m_id);
+        auto const* target = m_page.findElement(m_id);
         UF_CHECK(target != nullptr);
-        return target->colourKey;
+        auto const* p_appearance = primaryAppearance(*target);
+        return p_appearance == nullptr ? std::nullopt : p_appearance->colourKey;
     }
 
     auto InteractiveRegion::rename(std::string name) -> Status
     {
         auto draft   = m_page.draftCopy();
-        auto* target = findEditableRecognizer(draft, m_id);
+        auto* target = findEditableElement(draft, m_id);
         if (target == nullptr)
         {
             return missingMember(m_id);
@@ -733,12 +708,23 @@ namespace uf::workbench
     auto InteractiveRegion::setThreshold(uint32 basisPoints) -> Status
     {
         auto draft   = m_page.draftCopy();
-        auto* target = findEditableRecognizer(draft, m_id);
+        auto* target = findEditableElement(draft, m_id);
         if (target == nullptr)
         {
             return missingMember(m_id);
         }
-        target->similarityBasisPoints = basisPoints;
+        if (target->appearances.empty())
+        {
+            return fail(
+                AutomationErrorKind::InvalidResource,
+                std::format(
+                    "\"{}\" is located by its page and matches no pixels, so it "
+                    "has no threshold to set",
+                    target->name
+                )
+            );
+        }
+        target->appearances.front().similarityBasisPoints = basisPoints;
         m_page.replaceDraft(std::move(draft));
         return ok();
     }
@@ -760,12 +746,16 @@ namespace uf::workbench
     ) -> Status
     {
         auto draft   = m_page.draftCopy();
-        auto* target = findEditableRecognizer(draft, m_id);
+        auto* target = findEditableElement(draft, m_id);
         if (target == nullptr)
         {
             return missingMember(m_id);
         }
-        target->defaultClick = click;
+        // The offset lives inside the interact capability, so an element that
+        // cannot be clicked has nowhere to put one. region() already refused
+        // such an element, which is why this is a check rather than a failure.
+        UF_CHECK(target->capabilities.interact.has_value());
+        target->capabilities.interact->clickOffset = click;
         m_page.replaceDraft(std::move(draft));
         return ok();
     }
@@ -773,26 +763,35 @@ namespace uf::workbench
     auto InteractiveRegion::setSearchRoi(PixelRect roi) -> Status
     {
         auto draft = m_page.draftCopy();
-        // Write this page's placement, so refining the range here leaves every
+        // Write this page's reference, so refining the range here leaves every
         // other page's range untouched -- the defect this replaces mutated the
-        // element's shared default and moved the ROI on every page at once.
-        auto const placement = std::ranges::find_if(
-            draft.placements,
-            [this](EditablePlacement const& candidate)
+        // element's shared default and moved the region on every page at once.
+        auto const reference = std::ranges::find_if(
+            draft.references,
+            [this](EditableReference const& candidate)
             {
                 return candidate.pageId == m_page.pageId()
                     && candidate.elementId == m_id;
             }
         );
-        if (placement != draft.placements.end())
+        if (reference != draft.references.end())
         {
-            placement->searchRoi = roi;
+            if (reference->exercised.identify.has_value())
+            {
+                return fail(
+                    AutomationErrorKind::InvalidResource,
+                    "this page identifies by these pixels, and the anchor pass "
+                    "reads the element's own range, so it cannot be refined here"
+                );
+            }
+            reference->searchRoi = roi;
             m_page.replaceDraft(std::move(draft));
             return ok();
         }
-        // Not placed here: fall back to the element's default so an unplaced
-        // region stays editable rather than silently dropping the edit.
-        auto* target = findEditableRecognizer(draft, m_id);
+        // Not referenced here: fall back to the element's default so an
+        // unreferenced element stays editable rather than silently dropping the
+        // edit.
+        auto* target = findEditableElement(draft, m_id);
         if (target == nullptr)
         {
             return missingMember(m_id);
@@ -812,50 +811,33 @@ namespace uf::workbench
         return ok();
     }
 
-    auto InteractiveRegion::setShared(bool shared) -> Status
+    auto InteractiveRegion::referenceOnPage(annotation::PageId page) -> Status
     {
-        UF_TRY_VALUE(
-            marked,
-            setRegionShared(m_page.draftCopy(), m_id, shared)
-        );
-        m_page.replaceDraft(std::move(marked));
-        return ok();
-    }
-
-    auto InteractiveRegion::shareToPage(
-        annotation::PageId page
-    ) -> Result<EditPage::SharedRegionScore>
-    {
-        auto const* origin = m_page.findRecognizer(m_id);
+        auto const* origin = m_page.findElement(m_id);
         if (origin == nullptr)
         {
             return missingMember(m_id);
         }
 
-        auto const roi = origin->searchRoi;
         UF_TRY_VALUE(
-            shared,
-            shareRegionOnPage(
+            referenced,
+            referenceElementOnPage(
                 m_page.draftCopy(),
-                SharedRegionSpec{
+                ReferenceElementSpec{
                     .elementId = m_id,
                     .pageId    = page,
-                    .searchRoi = roi,
                 }
             )
         );
-        m_page.replaceDraft(std::move(shared.draft));
-        return EditPage::SharedRegionScore{
-            .id   = m_id,
-            .name = std::move(shared.name),
-        };
+        m_page.replaceDraft(std::move(referenced.draft));
+        return ok();
     }
 
     auto InteractiveRegion::removeFromThisPage() -> Status
     {
         UF_TRY_VALUE(
             draft,
-            removePlacementFromPage(
+            removeReferenceFromPage(
                 m_page.draftCopy(),
                 m_id,
                 m_page.pageId()
@@ -867,9 +849,9 @@ namespace uf::workbench
 
     auto InteractiveRegion::deleteEverywhere() -> Result<DeletedEntity>
     {
-        // One element, deleted once: deleteRecognizer withdraws it from every
-        // signature and removes all its placements.
-        UF_TRY_VALUE(deleted, deleteRecognizer(m_page.draftCopy(), m_id));
+        // One element, deleted once: deleteElement withdraws every page's
+        // reference to it along with the element itself.
+        UF_TRY_VALUE(deleted, deleteElement(m_page.draftCopy(), m_id));
         m_page.replaceDraft(deleted.draft);
         return deleted;
     }
@@ -886,50 +868,50 @@ namespace uf::workbench
 
     auto PageAnchor::name() const -> std::string
     {
-        auto const* target = m_page.findRecognizer(m_id);
+        auto const* target = m_page.findElement(m_id);
         UF_CHECK(target != nullptr);
         return target->name;
     }
 
-    auto PageAnchor::templateRect() const -> PixelRect
+    auto PageAnchor::templateRect() const -> std::optional<PixelRect>
     {
-        auto const* target = m_page.findRecognizer(m_id);
+        auto const* target = m_page.findElement(m_id);
         UF_CHECK(target != nullptr);
-        return target->templateRect;
+        auto const* p_appearance = primaryAppearance(*target);
+        return p_appearance == nullptr
+            ? std::nullopt
+            : std::optional<PixelRect>{p_appearance->templateRect};
     }
 
     auto PageAnchor::searchRoi() const -> PixelRect
     {
-        auto const* target = m_page.findRecognizer(m_id);
+        auto const* target = m_page.findElement(m_id);
         UF_CHECK(target != nullptr);
         return target->searchRoi;
     }
 
-    auto PageAnchor::threshold() const -> uint32
+    auto PageAnchor::threshold() const -> std::optional<uint32>
     {
-        auto const* target = m_page.findRecognizer(m_id);
+        auto const* target = m_page.findElement(m_id);
         UF_CHECK(target != nullptr);
-        return target->similarityBasisPoints;
-    }
-
-    auto PageAnchor::isShared() const -> bool
-    {
-        auto const* target = m_page.findRecognizer(m_id);
-        UF_CHECK(target != nullptr);
-        return target->shared;
+        auto const* p_appearance = primaryAppearance(*target);
+        return p_appearance == nullptr
+            ? std::nullopt
+            : std::optional<uint32>{p_appearance->similarityBasisPoints};
     }
 
     auto PageAnchor::colourKey() const -> std::optional<annotation::ColourKey>
     {
-        auto const* target = m_page.findRecognizer(m_id);
+        auto const* target = m_page.findElement(m_id);
         UF_CHECK(target != nullptr);
-        return target->colourKey;
+        auto const* p_appearance = primaryAppearance(*target);
+        return p_appearance == nullptr ? std::nullopt : p_appearance->colourKey;
     }
 
     auto PageAnchor::rename(std::string name) -> Status
     {
         auto draft   = m_page.draftCopy();
-        auto* target = findEditableRecognizer(draft, m_id);
+        auto* target = findEditableElement(draft, m_id);
         if (target == nullptr)
         {
             return missingMember(m_id);
@@ -942,12 +924,15 @@ namespace uf::workbench
     auto PageAnchor::setThreshold(uint32 basisPoints) -> Status
     {
         auto draft   = m_page.draftCopy();
-        auto* target = findEditableRecognizer(draft, m_id);
+        auto* target = findEditableElement(draft, m_id);
         if (target == nullptr)
         {
             return missingMember(m_id);
         }
-        target->similarityBasisPoints = basisPoints;
+        // An element that identifies always declares an appearance: pixels are
+        // what it is evidence with, and the model refuses one without them.
+        UF_CHECK(!target->appearances.empty());
+        target->appearances.front().similarityBasisPoints = basisPoints;
         m_page.replaceDraft(std::move(draft));
         return ok();
     }
@@ -967,7 +952,7 @@ namespace uf::workbench
     auto PageAnchor::setSearchRoi(PixelRect roi) -> Status
     {
         auto draft   = m_page.draftCopy();
-        auto* target = findEditableRecognizer(draft, m_id);
+        auto* target = findEditableElement(draft, m_id);
         if (target == nullptr)
         {
             return missingMember(m_id);
@@ -999,9 +984,9 @@ namespace uf::workbench
 
     auto PageAnchor::deleteEverywhere() -> Result<DeletedEntity>
     {
-        // One anchor, deleted once: deleteRecognizer withdraws it from every
-        // signature it names.
-        UF_TRY_VALUE(deleted, deleteRecognizer(m_page.draftCopy(), m_id));
+        // One element, deleted once: deleteElement withdraws every page's
+        // reference to it along with the element itself.
+        UF_TRY_VALUE(deleted, deleteElement(m_page.draftCopy(), m_id));
         m_page.replaceDraft(deleted.draft);
         return deleted;
     }

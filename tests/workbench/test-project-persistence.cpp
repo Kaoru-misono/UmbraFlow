@@ -1,4 +1,5 @@
 #include "../annotation/test-helpers.hpp"
+#include "authoring-fixture.hpp"
 
 #include <project-persistence.hpp>
 
@@ -143,7 +144,7 @@ namespace uf::workbench
         {
             auto const fingerprint = annotation::test::fingerprint(2, 2, 96, 96);
             auto const sourceId    = annotation::test::sourceId(k_sourceId);
-            auto const anchorId    = annotation::test::recognizerId(k_anchorId);
+            auto const anchorId    = annotation::test::elementId(k_anchorId);
             auto const pageId      = annotation::test::pageId(k_pageId);
             auto pngBytes          = encodedSource(redOffset);
             auto const sourceHash  = annotation::sha256(pngBytes);
@@ -163,7 +164,7 @@ namespace uf::workbench
                 fingerprint,
                 {*source},
                 {
-                    annotation::test::anchorElement(
+                    test::markElement(
                         fingerprint,
                         anchorId,
                         "home_marker",
@@ -172,8 +173,14 @@ namespace uf::workbench
                         annotation::test::pixelRect(0, 0, 2, 2)
                     ),
                 },
-                {annotation::test::page(pageId, "home", {anchorId})},
-                {},
+                {annotation::test::page(pageId, "home")},
+                {
+                    annotation::test::reference(
+                        pageId,
+                        anchorId,
+                        annotation::test::identifiesAs()
+                    ),
+                },
                 {}
             );
             REQUIRE(document.has_value());
@@ -192,8 +199,8 @@ namespace uf::workbench
             auto const fingerprint    = annotation::test::fingerprint(2, 2, 96, 96);
             auto const firstSourceId  = annotation::test::sourceId(k_sourceId);
             auto const secondSourceId = annotation::test::sourceId(k_secondSourceId);
-            auto const firstAnchorId  = annotation::test::recognizerId(k_anchorId);
-            auto const secondAnchorId = annotation::test::recognizerId(k_secondAnchorId);
+            auto const firstAnchorId  = annotation::test::elementId(k_anchorId);
+            auto const secondAnchorId = annotation::test::elementId(k_secondAnchorId);
             auto const pageId         = annotation::test::pageId(k_pageId);
 
             auto firstPng  = encodedSource(0);
@@ -227,7 +234,7 @@ namespace uf::workbench
                 fingerprint,
                 {*firstSource, *secondSource},
                 {
-                    annotation::test::anchorElement(
+                    test::markElement(
                         fingerprint,
                         firstAnchorId,
                         "first_marker",
@@ -235,7 +242,7 @@ namespace uf::workbench
                         annotation::test::pixelRect(0, 0, 1, 1),
                         annotation::test::pixelRect(0, 0, 2, 2)
                     ),
-                    annotation::test::anchorElement(
+                    test::markElement(
                         fingerprint,
                         secondAnchorId,
                         "second_marker",
@@ -244,14 +251,19 @@ namespace uf::workbench
                         annotation::test::pixelRect(0, 0, 2, 2)
                     ),
                 },
+                {annotation::test::page(pageId, "home")},
                 {
-                    annotation::test::page(
+                    annotation::test::reference(
                         pageId,
-                        "home",
-                        {firstAnchorId, secondAnchorId}
+                        firstAnchorId,
+                        annotation::test::identifiesAs()
+                    ),
+                    annotation::test::reference(
+                        pageId,
+                        secondAnchorId,
+                        annotation::test::identifiesAs()
                     ),
                 },
-                {},
                 {}
             );
             REQUIRE(document.has_value());

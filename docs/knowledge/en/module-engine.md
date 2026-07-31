@@ -150,10 +150,18 @@ The public runtime surface lives in `modules/engine/source/engine/session.hpp`:
 - `EngineSession::resolvePage(Observation const&)` calls its
   `RecognitionRuntime::evaluatePage` against the frame held by the supplied observation and returns
   a `PageOutcome` composed of `ResolvedPage`, `UnknownPage`, or `AmbiguousPages`.
-- `EngineSession::findAction(Observation const&, RecognizerId)` calls
+- `EngineSession::findAction(Observation const&, annotation::PageId, annotation::ElementId)` calls
   `evaluateActionTarget` against that same frame. A miss is a successful empty value of
   `Result<std::optional<ActionFound>>`, corresponding to D4 Tier A, and is not an error.
-- `ActionFound` stores the original `AnchorEvidence`, an `ActionDetection` bound to the recognizer
+
+  > Corrected 2026-07-31: the page parameter is new. The per-page facts moved onto
+  > `annotation::PageReference` — the search region that page refines and the appearance it pins —
+  > and a page that does not exercise `interact` on the element has no action there to locate at
+  > all. It authorizes nothing: the page selects a reference row rather than granting one, and a
+  > located hit is still refused at delivery unless `act`'s resolved page references the element
+  > for interaction. Deciding artifact:
+  > [the capability plan](../../plans/2026-07-31-annotation-model-capabilities.md) §2.2.
+- `ActionFound` stores the original `AnchorEvidence`, an `ActionDetection` bound to the element
   identity, and a deterministic `PixelPoint`. The click point is decided by annotation's
   `resolveClickPixel`; the match rect becomes an authorization-ready `Detection` through
   `pixelRectToFrameRect`.
@@ -202,7 +210,7 @@ loadRuntimeProject
   -> (one turn of ctx.luau's wait loop)
        EngineSession::observe
        -> EngineSession::resolvePage
-       -> EngineSession::findAction(observation, recognizerId)
+       -> EngineSession::findAction(observation, pageId, elementId)
        -> EngineSession::act
        -> IActionSink::click
 ```
@@ -226,7 +234,7 @@ failed.
 
 ### Trace Events
 
-The schema is owned by `modules/trace/source/trace/event.hpp` under the id `umbraflow-trace/v1`;
+The schema is owned by `modules/trace/source/trace/event.hpp` under the id `umbraflow-trace/v2`;
 engine and task write into the same stream. The events engine emits are:
 
 - `engine.observed`, `engine.observation_invalidated`.
@@ -255,18 +263,33 @@ the run lifecycle into `TaskHost`.
 run's recorder, and opening the file, writing each line and flushing belong to `FileTraceSink` in
 `modules/trace`.
 
-**`frontEnd` is part of the stamp rather than of the event** (2026-07-30, `ed38124`). It is
-`"task"` or `"operator"`, from `trace::FrontEnd`, and it exists because the capability surface now
-has two consumers at the same level — the trusted Luau framework a task runs on, and an operator
-sending commands from outside. Without the attribution, no reader of a trace can answer "did the
-task do this, or did the operator", and that question is asked of every line; so one recorder
-carries one value for the whole run and writes it onto every line, and no emitter can forget it or
-claim the other front-end's work. The same latched value is what `TaskHost` hands the recorder, so a
-stream's attribution and the mutual exclusion that produced it are one fact rather than two that
-have to agree.
+**`frontEnd` is part of the stamp rather than of the event** (2026-07-30, `ed38124`). It comes from
+`trace::FrontEnd`, and it exists because more than one thing drives a target at the same level.
+Without the attribution, no reader of the evidence can answer "which of them did this", and that
+question is asked of every line; so one recorder carries one value for the whole run and writes it
+onto every line, and no emitter can forget it or claim another front-end's work. The same latched
+value is what `TaskHost` hands the recorder, so a stream's attribution and the mutual exclusion that
+produced it are one fact rather than two that have to agree.
+
+**The enum has three values, and only two of them reach `TaskHost`** (2026-07-31). `"task"` and
+`"operator"` are the two consumers of the capability surface, and the latch makes them mutually
+exclusive per generation. `"annotation"` is `umbra-input-agent` — an authoring session driving a
+raw window to measure it. It reaches no project, so it has no generation to latch and no capability
+surface to consume, and it therefore writes no `umbraflow-trace/v2` line at all: every line of that
+schema carries a `runId` and a `generationId`, and an annotation session has neither. What it stamps
+is its own results file, using this enum's value and `trace::frontEndWireName`'s spelling, so the
+day it joins the host the attribution a reader already knows does not change. See
+[`entry-input-agent.md`](entry-input-agent.md).
+
+`trace::frontEndWireName` is public for the same reason: `task::TaskHost` names the front-end that
+already holds a generation when it refuses the other, and the input agent names its own. A second
+spelling of a closed set is how a third value comes to be reported as the second — which is exactly
+what the local ternary in `TaskHost::Generation::claimFrontEnd` would have done.
 
 It is also a protocol rule, not merely a label: `TraceStreamValidator` **refuses a `framework.*`
-event on an operator stream** as `InternalInvariant`. Those events describe the trusted Luau
+event on any stream but the task one** as `InternalInvariant`. The rule is stated against
+`FrontEnd::Task` rather than against the others by name, so a front-end added later is refused by
+construction instead of by remembering to list it. Those events describe the trusted Luau
 framework's own structure — which step is open, which retry attempt this is, which interrupt matched
 — and on an operator stream that framework does not exist, so such a line could only be a host bug
 attributing task structure to the operator. Refusing it is what keeps the field authoritative
@@ -282,8 +305,12 @@ All conditions that would make "what to do where" uncertain fail toward rejectio
 - When the live fingerprint differs from the catalog fingerprint, recognition or authorization
   rejects.
 - The `CaptureSessionId`, `TargetGeneration`, and `FrameId` of the page evidence, action detection, and
-  delivery must be identical; the action recognizer must additionally belong to the active catalog,
-  be of type `ActionTarget`, and be allowed on the resolved page.
+  delivery must be identical; the action element must additionally belong to the active catalog and
+  declare `interact`, and the resolved page must hold a reference to it that exercises `interact`.
+  (Corrected
+  2026-07-31: this read "be of type `ActionTarget`, and be allowed on the resolved page" — two
+  checks against a three-way type and a separate `allowed_page_ids` list. Both are gone; the
+  reference IS the authorization.)
 - `ObservationLease::validate` validates session, generation, frame, and expiration; any mismatch
   returns `StaleObservation`.
 - A recognition budget, deadline, or cancellation produces an explicit stop reason rather than

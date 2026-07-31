@@ -12,6 +12,7 @@
 | `engine` | `modules/engine` | `docs/knowledge/cn/module-engine.md` |
 | `script` | `modules/script/source`（跳过 vendored Luau：`modules/script/external/`） | `docs/knowledge/cn/module-script.md` |
 | `entry-cli` | `entry/cli`（`entry/m0-demo` 已冻结，summary 一句话带过即可） | `docs/knowledge/cn/entry-cli.md` |
+| `entry-input-agent` | `entry/input-agent` | `docs/knowledge/cn/entry-input-agent.md` |
 | `entry-workbench` | `entry/workbench` | `docs/knowledge/cn/entry-workbench.md` |
 
 ## JSON schema

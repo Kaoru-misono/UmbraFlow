@@ -2,7 +2,6 @@
 
 #include <domain/error.hpp>
 
-#include <ranges>
 #include <utility>
 
 namespace uf::annotation
@@ -22,44 +21,44 @@ namespace uf::annotation
 
     ActionDetection::ActionDetection(
         ProjectId&& projectId,
-        RecognizerId recognizerId,
+        ElementId elementId,
         Detection&& detection
     ) noexcept
         : m_projectId{std::move(projectId)}
-        , m_recognizerId{recognizerId}
+        , m_elementId{elementId}
         , m_detection{std::move(detection)}
     {
     }
 
     auto ActionDetection::create(
         RecognitionCatalog const& catalog,
-        RecognizerId recognizerId,
+        ElementId elementId,
         Detection detection
     ) -> Result<ActionDetection>
     {
-        auto const* p_recognizer = catalog.findRecognizer(recognizerId);
+        auto const* p_element = catalog.findElement(elementId);
         if (
-            p_recognizer == nullptr
-            || p_recognizer->annotationType() != AnnotationType::ActionTarget
+            p_element == nullptr
+            || !p_element->capabilities().hasInteract()
         )
         {
             return fail(
                 AutomationErrorKind::ActionRejected,
-                "detection is not bound to a catalog action_target"
+                "detection is not bound to an interactive catalog element"
             );
         }
 
-        if (p_recognizer->name().value() != detection.label().value())
+        if (p_element->name().value() != detection.label().value())
         {
             return fail(
                 AutomationErrorKind::ActionRejected,
-                "detection label does not match its bound recognizer identity"
+                "detection label does not match its bound element identity"
             );
         }
 
         return ActionDetection{
             ProjectId{catalog.projectId()},
-            recognizerId,
+            elementId,
             std::move(detection)
         };
     }
@@ -68,7 +67,7 @@ namespace uf::annotation
     {
         return m_projectId;
     }
-    auto ActionDetection::recognizerId() const -> RecognizerId { return m_recognizerId; }
+    auto ActionDetection::elementId() const -> ElementId { return m_elementId; }
     auto ActionDetection::detection() const noexcept -> Detection const& { return m_detection; }
 
     auto authorizeCoordinateAction(
@@ -100,25 +99,31 @@ namespace uf::annotation
         }
 
         auto const* p_page = catalog.findPage(resolvedPage.pageId());
-        auto const* p_recognizer = catalog.findRecognizer(actionDetection.recognizerId());
+        auto const* p_element = catalog.findElement(actionDetection.elementId());
         if (
             p_page == nullptr
-            || p_recognizer == nullptr
-            || p_recognizer->annotationType() != AnnotationType::ActionTarget
+            || p_element == nullptr
+            || !p_element->capabilities().hasInteract()
         )
         {
             return fail(
                 AutomationErrorKind::ActionRejected,
-                "page or action recognizer is absent from the active catalog"
+                "page or interactive element is absent from the active catalog"
             );
         }
 
-        auto const allowedPageIds = p_recognizer->allowedPageIds();
-        if (std::ranges::find(allowedPageIds, resolvedPage.pageId()) == allowedPageIds.end())
+        // Authorisation IS the reference. The separate allowed-page list said
+        // exactly this and had to be kept equal to it by hand, with nothing
+        // checking that it was.
+        auto const* p_reference = catalog.findReference(
+            resolvedPage.pageId(),
+            actionDetection.elementId()
+        );
+        if (p_reference == nullptr || !p_reference->exercised.hasInteract())
         {
             return fail(
                 AutomationErrorKind::ActionRejected,
-                "action recognizer does not authorize the resolved page"
+                "the resolved page does not exercise interact on this element"
             );
         }
 

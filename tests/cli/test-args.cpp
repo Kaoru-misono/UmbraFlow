@@ -176,7 +176,7 @@ namespace uf::cli
                 * templateHeight;
         };
 
-        // The two real authored recognizers this default was found wanting by.
+        // The two real authored elements this default was found wanting by.
         auto constexpr narrowAnchor = searchCost(90, 33, 180, 70);
         auto constexpr widestAnchor = searchCost(200, 50, 480, 90);
         static_assert(narrowAnchor == 10'270'260U);

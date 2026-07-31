@@ -248,17 +248,24 @@ namespace uf::task
         }
     }
 
-    TEST_CASE("a click with no same-frame page is refused identically on both paths")
+    TEST_CASE("an action with no same-frame page is refused identically on both paths")
     {
         // The four-requisite authorization's page evidence is the page THAT cycle
         // resolved. Neither path resolves one here, so neither has evidence, and the
         // refusal has to be the same because it comes from the same ledger.
+        //
+        // The refusal lands on the find rather than the click: authorisation IS
+        // the page's reference to the element, so with no page there is no
+        // reference to locate it by. The kind is PageUnresolved rather than
+        // ActionRejected because neither path attempted anything -- a find only
+        // looks -- and the point is unchanged: one ledger, one answer, whichever
+        // front end asked.
         auto const taskKind = [&]
         {
             auto side = buildTaskSide(resolvingFrames(FrameId{31}), lenientFrameAge());
             auto const source = std::string{
                 "local cycle = ctx:cycle_open()\n"
-                "local hit = ctx:cycle_find(cycle, uf.recognizers.action_target)\n"
+                "local hit = ctx:cycle_find(cycle, uf.elements.action_target)\n"
                 "ctx:cycle_click(cycle, hit)\n"
                 "return 1\n"
             };
@@ -280,17 +287,14 @@ namespace uf::task
             );
             auto cycle = side.session->cycleOpen();
             REQUIRE(cycle.has_value());
-            auto hit = side.session->cycleFind(*cycle, "action_target");
-            REQUIRE(hit.has_value());
-            REQUIRE(hit->has_value());
-
-            auto const clicked = side.session->cycleClick(*cycle, **hit);
-            REQUIRE_FALSE(clicked.has_value());
+            auto const found = side.session->cycleFind(*cycle, "action_target");
+            REQUIRE_FALSE(found.has_value());
             CHECK(side.actions->clickCount() == 0U);
-            return automationErrorKind(clicked.error());
+            return automationErrorKind(found.error());
         }();
 
-        CHECK(taskKind == AutomationErrorKind::ActionRejected);
+        CHECK(taskKind == AutomationErrorKind::PageUnresolved);
+        CHECK(taskKind != AutomationErrorKind::ActionRejected);
         CHECK(operatorKind == taskKind);
     }
 
@@ -310,7 +314,7 @@ namespace uf::task
             auto const source = std::string{
                 "local cycle = ctx:cycle_open()\n"
                 "local page = ctx:cycle_page(cycle)\n"
-                "local hit = ctx:cycle_find(cycle, uf.recognizers.action_target)\n"
+                "local hit = ctx:cycle_find(cycle, uf.elements.action_target)\n"
                 "ctx:cycle_click(cycle, hit)\n"
                 "return 1\n"
             };

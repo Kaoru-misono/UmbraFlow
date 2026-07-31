@@ -8,7 +8,7 @@ unity_build = false
 
 # The single evidence stream every layer writes into. It sits below engine and
 # task so both can emit the same schema: it needs annotation's page and
-# recognizer identities, vision's search stop reason, and domain's ids, spaces
+# element identities, vision's search stop reason, and domain's ids, spaces
 # and error kinds, and nothing those depend on depends on trace.
 [dependencies]
 public = core domain annotation vision

@@ -69,16 +69,18 @@ namespace uf::annotation
     {
         friend class AnchorEvaluation;
 
-        RecognizerId             m_recognizerId;
-        bool                     m_hit;
-        std::optional<uint64>    m_sadScore;
-        uint64                   m_maximumSad;
-        std::optional<PixelRect> m_matchedRect;
-        std::optional<float>     m_displayConfidence;
+        ElementId                   m_elementId;
+        bool                        m_hit;
+        std::optional<ResourceName> m_appearanceName;
+        std::optional<uint64>       m_sadScore;
+        uint64                      m_maximumSad;
+        std::optional<PixelRect>    m_matchedRect;
+        std::optional<float>        m_displayConfidence;
 
         AnchorEvidence(
-            RecognizerId recognizerId,
+            ElementId elementId,
             bool hit,
+            std::optional<ResourceName> appearanceName,
             std::optional<uint64> sadScore,
             uint64 maximumSad,
             std::optional<PixelRect> matchedRect,
@@ -88,8 +90,29 @@ namespace uf::annotation
     public:
         auto operator==(AnchorEvidence const&) const -> bool = default;
 
-        [[nodiscard]] auto recognizerId() const -> RecognizerId;
+        // The evidence for an element that declares no appearances: the page's own
+        // resolution located it, so the rectangle is where it was annotated and
+        // there are no pixels of its own to score. It always hits, and its
+        // maximum SAD is zero because no comparison was made. This is section
+        // 2.1's accepted cost for reading, applied to interaction by section
+        // 4.2.2, and it is why nothing can re-verify such a rectangle before a
+        // click.
+        [[nodiscard]]
+        static auto locatedByPage(
+            ElementId elementId,
+            PixelRect rect
+        ) -> AnchorEvidence;
+
+        [[nodiscard]] auto elementId() const -> ElementId;
         [[nodiscard]] auto hit() const noexcept -> bool;
+
+        // Which appearance produced this evidence, absent only when the element
+        // declares none. "Why did this match" cannot be answered from the
+        // evidence stream without it.
+        [[nodiscard]]
+        auto appearanceName() const noexcept UF_LIFETIME_BOUND
+            -> std::optional<ResourceName> const&;
+
         [[nodiscard]] auto sadScore() const noexcept -> std::optional<uint64>;
         [[nodiscard]] auto maximumSad() const noexcept -> uint64;
         [[nodiscard]] auto matchedRect() const noexcept -> std::optional<PixelRect>;
@@ -102,22 +125,37 @@ namespace uf::annotation
         using Evaluation = std::variant<AnchorEvidence, SadSearchStopReason>;
 
     private:
-        RecognizerId m_recognizerId;
-        Evaluation   m_evaluation;
+        ElementId  m_elementId;
+        Evaluation m_evaluation;
 
         AnchorEvaluation(
-            RecognizerId recognizerId,
+            ElementId elementId,
             Evaluation evaluation
         ) noexcept;
 
     public:
+        // One appearance's search, turned into evidence. Every threshold and every
+        // template rectangle here belongs to that appearance, not to the element,
+        // because maximumSad is a function of the template's own size and
+        // threshold. The search region is passed rather than read off the
+        // element, because a page reference may have refined it and the
+        // matched rectangle has to be checked against the region actually
+        // searched.
         [[nodiscard]]
         static auto fromSadOutcome(
-            RecognizerDefinition const& recognizer,
+            CompiledElement const& element,
+            CompiledAppearance const& appearance,
+            PixelRect searchRoi,
             SadSearchOutcome const& outcome
         ) -> Result<AnchorEvaluation>;
 
-        [[nodiscard]] auto recognizerId() const -> RecognizerId;
+        // One element's settled answer. An appearance set is folded into a single
+        // piece of evidence before the resolver sees it, so this is how the
+        // fold's result re-enters the pipeline.
+        [[nodiscard]]
+        static auto fromEvidence(AnchorEvidence evidence) -> AnchorEvaluation;
+
+        [[nodiscard]] auto elementId() const -> ElementId;
 
         [[nodiscard]]
         auto evaluation() const noexcept UF_LIFETIME_BOUND -> Evaluation const&;

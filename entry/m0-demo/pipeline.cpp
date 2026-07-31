@@ -1,6 +1,7 @@
 #include "pipeline.hpp"
 
 #include "log-jsonl.hpp"
+#include <error-text.hpp>
 #include "platform/windows-background-messages.hpp"
 #include "shutdown.hpp"
 
@@ -32,6 +33,11 @@
 
 namespace uf::m0_demo
 {
+    // Borrowed from the input agent, which owns the shared entry substrate
+    // this frozen demo was split away from.
+    using input_agent::formatAutomationError;
+    using input_agent::requireUnchangedTarget;
+
     namespace
     {
         constexpr auto k_bgraBytesPerPixel = std::size_t{4};
@@ -1206,39 +1212,6 @@ namespace uf::m0_demo
             .height = decoded.height,
             .roi    = roi,
         };
-    }
-
-    auto requireUnchangedTarget(RevalidateOutcome outcome) -> Status
-    {
-        switch (outcome)
-        {
-        case RevalidateOutcome::Unchanged:
-            return ok();
-        case RevalidateOutcome::GenerationBumped:
-            return fail(
-                AutomationErrorKind::StaleObservation,
-                "target generation changed; rebuild the capture/input session"
-            );
-        case RevalidateOutcome::InstanceUnconfirmed:
-            return fail(
-                AutomationErrorKind::StaleObservation,
-                "target process instance is unconfirmed; re-resolve before continuing"
-            );
-        case RevalidateOutcome::Lost:
-        {
-            auto lost = errorOnLost(outcome);
-            if (!lost)
-            {
-                return std::unexpected{std::move(lost).error()};
-            }
-            return ok();
-        }
-        }
-
-        return fail(
-            AutomationErrorKind::InternalInvariant,
-            "unknown target revalidation outcome"
-        );
     }
 
     auto hitCenterFrame(

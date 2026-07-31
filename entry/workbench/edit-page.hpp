@@ -14,18 +14,44 @@
 
 #include <optional>
 #include <string>
+#include <vector>
 
 namespace uf::workbench
 {
     // Forward declarations: EditPage and the two handles reference one another
     // (EditPage mints handles; handles name EditPage's nested result types, so
-    // their definitions follow it), and the commit path borrows the panels'
-    // between-frame state, which no part of this header needs the layout of.
+    // their definitions follow it).
     class EditPage;
     class InteractiveRegion;
     class PageAnchor;
-    struct PanelUiState;
-    class AppState;
+
+    // Mints a fresh identifier for a new authoring resource as an RFC 4122
+    // version-4 UUID: 122 random bits with the version nibble stamped to 0100
+    // and the variant bits to 10. A v4 UUID is the project's stable id
+    // convention and its entropy makes an authoring-time collision negligible.
+    // Only authoring mints ids, so a std::random_device fill is sufficient; the
+    // runtime never mints and therefore imposes no determinism requirement here.
+    //
+    // It lives beside EditPage rather than in authoring-edit because the edit
+    // transactions take their ids from the caller on purpose -- that is what
+    // keeps them pure and replayable -- and this editor is the caller that
+    // mints. A front end wanting derived rather than random ids passes its own.
+    [[nodiscard]]
+    auto mintResourceId() -> annotation::ResourceId;
+
+    // The initial search region for a member whose rectangle the caller
+    // supplied: the template grown by its own extent on every side and clamped
+    // to the frame, so the runtime first looks for the mark near where it was
+    // marked out rather than across the whole frame. Always contains the
+    // template, since it only grows outward from a template already inside the
+    // frame. Fails only if the clamped rectangle is somehow rejected by
+    // PixelRect.
+    [[nodiscard]]
+    auto searchRoiForDrawnTemplate(
+        PixelRect templateRect,
+        uint32 frameWidth,
+        uint32 frameHeight
+    ) -> Result<PixelRect>;
 
     namespace detail
     {
@@ -48,21 +74,20 @@ namespace uf::workbench
     // edited half-page. Every operation mutates the owned copy; the live document
     // is untouched until commit.
     //
-    // Frame-scoped, and enforced rather than asked for. The editor records the
-    // history revision it was opened against, and a commit whose base is no
-    // longer current is refused. An EditPage stored across frames cannot
-    // resurrect state the author undid; its commit fails visibly instead.
+    // Short-lived, and enforced rather than asked for. The editor records the
+    // revision it was opened against, and applyCommittedPage refuses a commit
+    // whose base is no longer current. An EditPage held while the project moves
+    // on cannot resurrect state the author undid; its commit fails visibly.
     class EditPage final
     {
     public:
         // The page-local key this editor speaks in, re-exposed so its API reads
-        // EditPage::MemberId. Same key the view snapshot uses; kept as one name
-        // so both sides rebase together when the placement key arrives.
+        // EditPage::MemberId. Same key the view snapshot uses.
         using MemberId = PageView::MemberId;
 
-        // The screen a new anchor is authored against. Everything else -- the
+        // The screen a new element is authored against. Everything else -- the
         // starting rectangles and the default threshold -- follows from the
-        // project, exactly as drawing a "+ Identifying mark" does today.
+        // project.
         struct NewAnchorSpec final
         {
             annotation::SourceId sourceId;
@@ -85,12 +110,11 @@ namespace uf::workbench
             std::string name{};
         };
 
-        // A member drawn straight onto the canvas: one transaction carrying the
-        // kind the author picked, the template rectangle they dragged out, and,
-        // derived from it, the initial per-page search region. Draw-to-create
-        // cannot be a create-then-retemplate pair -- the one-commit-per-frame
-        // queue rejects the second edit -- so the drawn geometry has to ride in
-        // with the creation.
+        // A member whose pixels the caller already knows: one transaction
+        // carrying the capability they picked and the template rectangle they
+        // marked out. It is a single transaction rather than a
+        // create-then-retemplate pair because the rectangle is the point of the
+        // creation, not a correction to it.
         struct NewDrawnMemberSpec final
         {
             annotation::SourceId sourceId;
@@ -98,8 +122,8 @@ namespace uf::workbench
             PixelRect            templateRect;
         };
 
-        // The outcome of a draw-to-create, naming the new element so the caller
-        // selects it once the commit lands, and echoing the kind it was made as.
+        // The outcome of placeDrawn, naming the new element so the caller can
+        // address it, and echoing the kind it was made as.
         struct AddedMember final
         {
             MemberId       id;
@@ -107,17 +131,15 @@ namespace uf::workbench
             PageMemberKind kind{};
         };
 
-        // The outcome of placing a shared element onto a page. It names the new
-        // per-page member so the caller can select it. In this phase it carries
-        // no pixel score: scoring needs the source assets, which live in
-        // AppState and which this layer deliberately does not borrow (the
-        // editing layer owns a draft copy and nothing else). The panels keep
-        // scoring at draw time through the existing id-keyed lookups, where the
-        // live document and its assets are in reach.
-        struct SharedRegionScore final
+        // What one finished editing session produces: the whole draft to
+        // install, and the revision it was built against so whoever owns the
+        // history can refuse it if the project has moved on. Returned rather
+        // than pushed, so an editor has no opinion about who installs it or
+        // when.
+        struct Committed final
         {
-            MemberId    id;
-            std::string name{};
+            AuthoringDraft draft;
+            uint64         baseRevision{};
         };
 
     private:
@@ -135,26 +157,34 @@ namespace uf::workbench
         );
 
     public:
+        // Opens one page of a draft for editing. The revision is the caller's
+        // name for the version this draft was taken from; it is carried through
+        // to the commit untouched and compared there. A caller with no history
+        // to be stale against passes 0 and never looks at it again.
         [[nodiscard]]
         static auto open(
-            AppState const& state,
+            AuthoringDraft draft,
+            uint64 baseRevision,
             annotation::PageId id
         ) -> Result<EditPage>;
 
         [[nodiscard]]
         static auto createFrom(
-            AppState const& state,
+            AuthoringDraft draft,
+            uint64 baseRevision,
             annotation::SourceId source
         ) -> Result<EditPage>;
 
-        // The page this editor targets, and the revision it was opened against.
+        // The page this editor targets. createFrom mints its page, so this is
+        // the only way to learn which one it made.
         [[nodiscard]] auto id() const noexcept -> annotation::PageId;
-        [[nodiscard]] auto baseRevision() const noexcept -> uint64;
 
-        // The drawing snapshot for this page, built from the owned draft.
+        // The value snapshot of this page, built from the owned draft.
         [[nodiscard]] auto view() const -> PageView;
 
-        // Signature edits.
+        // Signature edits. Both move this page's reference to the element
+        // between the two identify roles, minting the reference when the page
+        // does not have one yet.
         [[nodiscard]] auto placeAnchor(NewAnchorSpec const& spec) -> Result<AddedAnchor>;
         [[nodiscard]] auto requireAnchor(MemberId member) -> Status;
         [[nodiscard]] auto forbidAnchor(MemberId member) -> Status;
@@ -166,46 +196,38 @@ namespace uf::workbench
             annotation::RegressionClassification classification
         ) -> Status;
 
-        // Region membership. placeInfo mints an info region rather than an
-        // interactive one -- same page placement, no click offset -- so an info
-        // element can be authored directly instead of only reached by retype.
+        // Region membership. placeInfo mints an element that is read rather than
+        // clicked -- same page reference, no click offset -- so a readable cell
+        // can be authored directly.
         [[nodiscard]] auto placeRegion(NewRegionSpec const& spec) -> Result<AddedRegion>;
         [[nodiscard]] auto placeInfo(NewRegionSpec const& spec) -> Result<AddedRegion>;
 
-        // Adds a member drawn on the canvas: the anchor, interactive region, or
-        // info region the author dragged out, with a search region seeded from the
-        // drawn template. Refuses a template smaller than a minimum extent, since a
-        // box too small to see is one the author did not mean to draw.
+        // Adds a member at a rectangle the caller supplies, with the capability
+        // they picked, seeding its search region from that rectangle. Refuses a
+        // template smaller than a minimum extent, since a box too small to see
+        // is one the author did not mean to mark out.
         [[nodiscard]] auto placeDrawn(NewDrawnMemberSpec const& spec) -> Result<AddedMember>;
 
+        // References an element this page does not have yet, borrowing pixels
+        // whose home is another page. Idempotent: a page that already references
+        // the element is left alone.
         [[nodiscard]] auto placeExisting(MemberId member) -> Status;
-
-        [[nodiscard]]
-        auto acceptSharedRegion(MemberId from) -> Result<SharedRegionScore>;
 
         // Handles onto members of this page: local-scope only, resolved by id on
         // every call.
         [[nodiscard]] auto anchor(MemberId member) UF_LIFETIME_BOUND -> Result<PageAnchor>;
         [[nodiscard]] auto region(MemberId member) UF_LIFETIME_BOUND -> Result<InteractiveRegion>;
 
-        // The only exits. Both route through the existing requestEdit queue,
-        // preserving the one-commit-per-frame guard and, for the selecting form,
-        // select-only-after-landing, and both stamp the base revision so a stale
-        // commit is refused. Consuming the editor is what makes "one EditPage,
-        // one commit" structural.
-        auto commit(PanelUiState& ui, std::string description) && -> void;
-
-        auto commitSelecting(
-            PanelUiState& ui,
-            std::string description,
-            MemberId select,
-            std::optional<annotation::SourceId> selectSource
-        ) && -> void;
+        // The only exit: hands back the edited draft stamped with the revision
+        // it was opened against. Consuming the editor is what makes "one
+        // EditPage, one commit" structural -- the draft is moved out, so a
+        // second commit does not compile.
+        [[nodiscard]] auto commit() && -> Committed;
 
     private:
         // Borrowed by the handles, which are friends. draftCopy hands out a copy
         // to feed the value-taking edit transactions; replaceDraft installs the
-        // result; findRecognizer resolves a member for a read, valid only until
+        // result; findElement resolves a member for a read, valid only until
         // the next mutation.
         [[nodiscard]] auto draftCopy() const -> AuthoringDraft;
         auto replaceDraft(AuthoringDraft draft) -> void;
@@ -214,18 +236,32 @@ namespace uf::workbench
         auto draftView() const noexcept UF_LIFETIME_BOUND -> AuthoringDraft const&;
 
         [[nodiscard]]
-        auto findRecognizer(MemberId member) const UF_LIFETIME_BOUND
-            -> EditableRecognizer const*;
+        auto findElement(MemberId member) const UF_LIFETIME_BOUND
+            -> EditableElement const*;
 
         [[nodiscard]] auto pageId() const noexcept -> annotation::PageId;
     };
 
-    // A live borrow onto one interactive region of the page being edited. Holds
+    // Installs a committed page into the history it was opened against, and
+    // reports whether the draft differed from the current document and so
+    // became a new undo entry.
+    //
+    // Refuses a commit whose base is no longer current: a page opened, then
+    // left behind by an undo or redo, must not overwrite the version that
+    // replaced it. The history is mutated because installing a version is this
+    // function's whole operation.
+    [[nodiscard]]
+    auto applyCommittedPage(
+        AuthoringEditHistory& history,
+        EditPage::Committed const& committed
+    ) -> Result<bool>;
+
+    // A live borrow onto one clickable element of the page being edited. Holds
     // its owning EditPage and the member's id, and re-resolves the id on every
     // call, so a structural edit made through another handle cannot leave this
     // one pointing at freed storage. Non-copyable and non-movable: it exists
-    // only as a local inside the draw that asked for it, and a PanelUiState
-    // member of this type does not compile.
+    // only as a local inside the operation that asked for it, and storing one
+    // as a member does not compile.
     class InteractiveRegion final
     {
         EditPage&          m_page;
@@ -240,14 +276,14 @@ namespace uf::workbench
         auto operator=(InteractiveRegion&&) -> InteractiveRegion&          = delete;
         ~InteractiveRegion()                                               = default;
 
-        // Data, read from the owning draft.
+        // Data, read from the owning draft. The appearance-derived reads are
+        // absent for an element located by its page, which declares none.
         [[nodiscard]] auto name() const -> std::string;
-        [[nodiscard]] auto templateRect() const -> PixelRect;
+        [[nodiscard]] auto templateRect() const -> std::optional<PixelRect>;
         [[nodiscard]] auto searchRoiOnThisPage() const -> PixelRect;
-        [[nodiscard]] auto threshold() const -> uint32;
+        [[nodiscard]] auto threshold() const -> std::optional<uint32>;
         [[nodiscard]] auto clickOffset() const -> std::optional<EditableTemplateOffset>;
-        [[nodiscard]] auto isShared() const -> bool;
-        [[nodiscard]] auto pagesPlacedOn() const -> std::vector<annotation::PageId>;
+        [[nodiscard]] auto pagesReferencing() const -> std::vector<annotation::PageId>;
 
         [[nodiscard]]
         auto colourKey() const -> std::optional<annotation::ColourKey>;
@@ -256,35 +292,31 @@ namespace uf::workbench
         [[nodiscard]] auto rename(std::string name) -> Status;
         [[nodiscard]] auto setThreshold(uint32 basisPoints) -> Status;
 
-        // Carries every page the element is placed on, like setTemplateRect:
+        // Carries every page the element is referenced by, like setTemplateRect:
         // which of its pixels count is a fact about the pixels, drawn once.
         [[nodiscard]]
         auto setColourKey(std::optional<annotation::ColourKey> key) -> Status;
         [[nodiscard]] auto setClickOffset(std::optional<EditableTemplateOffset> click) -> Status;
         [[nodiscard]] auto setSearchRoi(PixelRect roi) -> Status;
 
-        // Carries every member of the shared element, exactly as retemplating
-        // does today: the element is drawn once, so correcting its pixels
-        // corrects it on every page it appears on. Each member keeps its own
-        // search region.
+        // Carries every page the element is on, exactly as retemplating always
+        // did: the element is drawn once, so correcting its pixels corrects it
+        // wherever it appears. Each reference keeps its own search region.
         [[nodiscard]] auto setTemplateRect(PixelRect templateRect) -> Status;
 
-        [[nodiscard]] auto setShared(bool shared) -> Status;
+        // Puts these pixels on a second page as a borrowed reference.
+        [[nodiscard]] auto referenceOnPage(annotation::PageId page) -> Status;
 
-        [[nodiscard]]
-        auto shareToPage(annotation::PageId page) -> Result<EditPage::SharedRegionScore>;
-
-        // Withdraws this page's placement. When the page was this region's only
-        // placement, the region's per-page copy has no reason to remain and is
-        // removed entirely.
+        // Withdraws this page's reference to the element. Refused when it would
+        // leave the element clickable nowhere.
         [[nodiscard]] auto removeFromThisPage() -> Status;
 
         [[nodiscard]] auto deleteEverywhere() -> Result<DeletedEntity>;
     };
 
-    // The symmetric handle for a signature member: an anchor that identifies (or
-    // must not identify) the page. Same borrow contract as InteractiveRegion --
-    // non-copyable, non-movable, id-resolved every call, mintable only by
+    // The symmetric handle for a signature member: an element that identifies
+    // (or must not identify) the page. Same borrow contract as InteractiveRegion
+    // -- non-copyable, non-movable, id-resolved every call, mintable only by
     // EditPage.
     class PageAnchor final
     {
@@ -302,10 +334,9 @@ namespace uf::workbench
 
         // Data, read from the owning draft.
         [[nodiscard]] auto name() const -> std::string;
-        [[nodiscard]] auto templateRect() const -> PixelRect;
+        [[nodiscard]] auto templateRect() const -> std::optional<PixelRect>;
         [[nodiscard]] auto searchRoi() const -> PixelRect;
-        [[nodiscard]] auto threshold() const -> uint32;
-        [[nodiscard]] auto isShared() const -> bool;
+        [[nodiscard]] auto threshold() const -> std::optional<uint32>;
 
         [[nodiscard]]
         auto colourKey() const -> std::optional<annotation::ColourKey>;
@@ -313,17 +344,21 @@ namespace uf::workbench
         // Operations, mutating the owning EditPage's draft.
         [[nodiscard]] auto rename(std::string name) -> Status;
         [[nodiscard]] auto setThreshold(uint32 basisPoints) -> Status;
+
+        // The element's own region, never a per-page refinement: the anchor pass
+        // runs before any page is known, so a reference exercising identify is
+        // refused a region of its own.
         [[nodiscard]] auto setSearchRoi(PixelRect roi) -> Status;
         [[nodiscard]] auto setTemplateRect(PixelRect templateRect) -> Status;
 
-        // An anchor is the commonest thing to key: the menu entry a page is
-        // identified by is white text over artwork that changes under it.
+        // An identifying mark is the commonest thing to key: the menu entry a
+        // page is identified by is white text over artwork that changes under it.
         [[nodiscard]]
         auto setColourKey(std::optional<annotation::ColourKey> key) -> Status;
 
-        // Moves this anchor between the page's required and forbidden sets. An
-        // anchor identifies the page (required) or must not match on it
-        // (forbidden); it is always exactly one of the two here.
+        // Moves this element between the page's required and forbidden sets. It
+        // is evidence for the page or evidence against it; here it is always
+        // exactly one of the two.
         [[nodiscard]] auto require() -> Status;
         [[nodiscard]] auto forbid() -> Status;
 

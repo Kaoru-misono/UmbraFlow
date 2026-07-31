@@ -4,6 +4,7 @@
 
 #include <annotation/authoring-compiler.hpp>
 #include <annotation/authoring-document.hpp>
+#include <annotation/capabilities.hpp>
 #include <annotation/content-hash.hpp>
 #include <annotation/recognition.hpp>
 #include <annotation/recognition-runtime.hpp>
@@ -29,6 +30,7 @@
 #include <fstream>
 #include <ios>
 #include <memory>
+#include <optional>
 #include <span>
 #include <string>
 #include <string_view>
@@ -97,8 +99,8 @@ namespace uf::engine
                 }
             );
             REQUIRE(source.has_value());
-            auto const anchorId = anno::test::recognizerId(k_anchorId);
-            auto const actionId = anno::test::recognizerId(k_actionId);
+            auto const anchorId = anno::test::elementId(k_anchorId);
+            auto const actionId = anno::test::elementId(k_actionId);
             auto const pageId   = anno::test::pageId(k_pageId);
             auto const click    = anno::TemplateOffset::create(1, 1, 2, 2);
             REQUIRE(click.has_value());
@@ -107,31 +109,42 @@ namespace uf::engine
                 fingerprint,
                 {*source},
                 {
-                    anno::test::anchorElement(
+                    anno::test::element(
                         fingerprint,
                         anchorId,
                         "home_marker",
-                        sourceId,
-                        anno::test::pixelRect(0, 0, 1, 1),
-                        anno::test::pixelRect(0, 0, 3, 2)
+                        anno::test::capabilities(anno::Identify{}),
+                        anno::test::pixelRect(0, 0, 3, 2),
+                        {
+                            anno::test::appearance(
+                                "default",
+                                sourceId,
+                                anno::test::pixelRect(0, 0, 1, 1)
+                            ),
+                        }
                     ),
-                    anno::test::interactiveElement(
+                    anno::test::element(
                         fingerprint,
                         actionId,
                         "daily_button",
-                        sourceId,
-                        anno::test::pixelRect(1, 0, 2, 2),
+                        anno::test::capabilities(
+                            std::nullopt,
+                            anno::Interact{.clickOffset = *click}
+                        ),
                         anno::test::pixelRect(0, 0, 3, 2),
-                        *click
+                        {
+                            anno::test::appearance(
+                                "default",
+                                sourceId,
+                                anno::test::pixelRect(1, 0, 2, 2)
+                            ),
+                        }
                     ),
                 },
-                {anno::test::page(pageId, "home", {anchorId})},
+                {anno::test::page(pageId, "home")},
                 {
-                    anno::test::placement(
-                        pageId,
-                        actionId,
-                        anno::test::pixelRect(0, 0, 3, 2)
-                    ),
+                    anno::test::reference(pageId, anchorId, anno::test::identifiesAs()),
+                    anno::test::reference(pageId, actionId, anno::test::interacts()),
                 },
                 {}
             );

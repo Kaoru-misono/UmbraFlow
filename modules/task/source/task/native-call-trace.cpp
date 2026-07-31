@@ -43,9 +43,9 @@ namespace uf::task
                 .hitCycleOrdinal = call.hitCycleOrdinal,
                 .durationMillis  = call.durationMillis,
             },
-            .recognizerId = call.recognizerId,
-            .errorKind    = errorKind,
-            .key          = call.key,
+            .elementId = call.elementId,
+            .errorKind = errorKind,
+            .key       = call.key,
         };
     }
 

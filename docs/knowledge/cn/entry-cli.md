@@ -60,7 +60,7 @@ adapter，并把它们装进 `task::TaskRunConfig` 交给 `task::TaskHost`。CLI
   （等待一个页面、寻找一个 action target、存在时点击一次）已于 2026-07-29 删除
   （`docs/plans/2026-07-29-three-layer-task-system.md` 第十六节）。`runProduct`
   绑定目标后调用 `TaskHost::startTask`，run 内部发生什么由项目的 task 脚本决定。
-- 不做资源名称翻译。脚本直接以 `uf.pages.NAME` 与 `uf.recognizers.NAME`
+- 不做资源名称翻译。脚本直接以 `uf.pages.NAME` 与 `uf.elements.NAME`
   命名资源（根已于 2026-07-29 由 `umbra` 改名为 `uf`，`2f4af93`），
   `modules/task/source/task/script-validator.hpp` 的
   `task::validateScriptResources` 在 VM 存在之前就把每处引用对能力面闭合。
@@ -115,7 +115,7 @@ adapter，并把它们装进 `task::TaskRunConfig` 交给 `task::TaskHost`。CLI
 - `--project DIR`、`--selector TITLE-SUBSTRING`、`--queue PATH`、`--results PATH` 是
   **`drive` 的**必填项。
 - `--idle-timeout S` 默认 120 秒，命令队列安静下来就结束会话，免得操作者走开、或驱动进程
-  已经死了，会话还一直占着捕获设备和一个绑定目标。这个数与 m0-demo input agent 自己的
+  已经死了，会话还一直占着捕获设备和一个绑定目标。这个数与 `umbra-input-agent` 自己的
   idle timeout 一致——它遵循的就是那套协议。
 
 `DriveArgs` 上**有意没有任何 timeout、轮询间隔或重试默认值**。那些是 policy；每个便利命令
@@ -138,13 +138,13 @@ config 字段一起删除；今天它们会被上面那条未知 flag 规则**�
 `entry/cli/drive-protocol.{hpp,cpp}` 定义线协议，`entry/cli/drive.{hpp,cpp}` 跑循环。命令以
 **JSON 行追加进 `--queue`**，**每条命令有且只有一行 JSON 结果追加进 `--results` 并立即 flush**，
 因此读文件的操作者在下一条命令执行之前就能看到上一条的回答。`k_maxDriveCommandBytes` 把单行
-封顶在 64 KiB，与 m0-demo input agent 的上限一致：一条命令是几个标量，接近这个数的只可能是
+封顶在 64 KiB，与 `umbra-input-agent` 的上限一致：一条命令是几个标量，接近这个数的只可能是
 畸形行而不是大行。
 
 **IPC 路径上的三条拒绝，由 `validateDriveIpcPaths` 在触碰桌面之前完成。** 队列必须已经存在，
 因为由会话创建它会与正在追加的操作者相竞争；两个路径必须不同，因为读自己 results 的会话会把
 它们重新执行一遍；而**results 路径必须不存在**——操作者的输出永远是一个新文件，于是上一次会话
-留下的旧 results 绝不会被当成这一次的，也不会被静默追加或覆盖。最后这条是 m0-demo input agent
+留下的旧 results 绝不会被当成这一次的，也不会被静默追加或覆盖。最后这条是 `umbra-input-agent`
 的守卫，有意照搬过来：它抓到过两次真实的操作者失误。
 
 **队列按字节偏移读。** `QueueReader` 持有会话自己的偏移量，因此无论轮询多少次，一行只执行一次；
@@ -177,7 +177,7 @@ config 字段一起删除；今天它们会被上面那条未知 flag 规则**�
 观察周期账本、四要件点击授权、指纹检查和 trace 全在 `TaskContext` 背后的 C++ 里——所以操作者
 拿到的原语与拒绝，和 task 拿到的一模一样。这里没有 chunk、没有源码、没有任何字符串会变成代码，
 沙箱关掉的 eval 路径也一条都没重开。操作者能命名的只有 task 能命名的：会话持有一份与
-`uf.recognizers` / `uf.pages` 同源的 `CapabilitySurface`。`raise`、`emit` 与 `random` 被有意
+`uf.elements` / `uf.pages` 同源的 `CapabilitySurface`。`raise`、`emit` 与 `random` 被有意
 排除——操作者没有自己的 framework 结构要记录，而放进 `emit` 会给 `framework.*` 事件添第二个
 作者，而 trace 校验状态机现在在 operator 流上对这类事件直接拒绝。
 
@@ -392,7 +392,7 @@ PUBLIC，因为两个 adapter 实现的是 engine 端口。跨边界的是：
   ——这是两个前端唯一的生命周期差别。
 
 `task` 与 `engine` 都不看到 HWND、console handler、文件选择语法、标题 substring，也不看到
-queue 与 results 文件。反方向，CLI 不解释 recognizer evidence、page outcome 或授权规则，
+queue 与 results 文件。反方向，CLI 不解释 element evidence、page outcome 或授权规则，
 也不再驱动 `EngineSession` 的任何动词：它只调用 `loadProject`，然后调 `startTask` 或
 `startOperatorSession`，再读报告。
 
@@ -442,7 +442,7 @@ operator 流对 `framework.*` 事件直接拒绝。它还钉住一次投出去�
 
 `tests/task/test-task-host.cpp` 覆盖原先住在这里的运行生命周期。它把一个真实
 annotation 项目发布到临时目录，用 fake 端口把 `TaskHost` 端到端跑通，再把 trace 文件
-读回来：验收用例断言整条有序的 `umbraflow-trace/v1` 括号——从 `run.started` 经 engine
+读回来：验收用例断言整条有序的 `umbraflow-trace/v2` 括号——从 `run.started` 经 engine
 事件与 `task.native_call` 直到 `run.finished`，且处在同一 seq、同一 run 与 generation
 身份下。它还钉住同一 task 的两次 run 抽到不同种子、报告里的种子就是 `run.started`
 记录的那枚、失败的 run 是被报告而不是让调用失败、缺失的 task 在打开任何 trace 文件
@@ -494,8 +494,9 @@ CLI adapter 的安全语义由下游测试分层固定：
   `waitForPage` 于 2026-07-29(`8b16f2d`)删除，弹窗现在由受信任 Luau framework 的
   interrupt 注册表处理（`task.interrupt` 声明，`ctx:wait_for_page` 每轮匹配）。这一条
   对 CLI 的结论不变：它仍然不该塞进窗口发现或 argument parsing。
-- P0-C 若 UIPI 真机验证要求分进程提权，计划要求把 m0-demo input-agent 的协议
-  语义复制到 runner adapter 层，而不是链接已经冻结的 m0-demo。
+- P0-C 若 UIPI 真机验证要求分进程提权，计划要求把 `umbra-input-agent` 的协议
+  语义复制到 runner adapter 层，而不是链接 `entry/input-agent`
+  （见 [`entry-input-agent.md`](entry-input-agent.md)）。
 
 `drive` 前端不改变这条权威：它是同一张 `TaskHost` 表面的第二个消费者，所以除
 `startOperatorSession` 之外没有新增任何 host 动词。操作者想要而 task 做不到的东西，属于

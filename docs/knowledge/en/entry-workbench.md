@@ -1,5 +1,96 @@
 # entry/workbench Architecture Knowledge
 
+> **DIRTY (2026-07-31): the binary this document is about no longer exists, and
+> the model it describes has been replaced.** Trust the code,
+> [`docs/plans/2026-07-31-annotation-model-capabilities.md`](../../plans/2026-07-31-annotation-model-capabilities.md),
+> and [`entry-cli.md`](entry-cli.md) until resynced. This banner subsumes the
+> 2026-07-26 one below, which is kept as the record of the drift that had already
+> accumulated.
+>
+> **Two independent changes landed on 2026-07-31.**
+>
+> *One: the GUI was archived* (`b57b67b`, plan §四之二.1). Gone from the tree:
+> `entry/workbench/app/` (`main.cpp`, `panels.*`), the Dear ImGui + Direct3D 11
+> shell (`windows-gui-shell.*`, `windows-texture-cache.*`), the file dialog, the
+> one-shot WGC capture source (`windows-capture-source.*`), the imgui submodule,
+> and the ASan smoke fixture that launched the executable. There is no
+> `umbra-workbench` binary and no `--smoke` flag. Every panel, dock, canvas,
+> hotkey, texture, and mouse-interaction passage below describes archived code;
+> git history holds it.
+>
+> *What remains under `entry/workbench` is the authoring backend*, built as the
+> static library `${PROJECT_NAME}_workbench_support` and linked by
+> `umbra-authoring`: the editing layer (`authoring-edit.*`, `edit-page.*`,
+> `page-view.*`), the falsification matrix (`preview.*`), project persistence
+> (`project-persistence.*` over `platform/windows-file-publication.*`), and
+> source ingestion (`source-ingestion.*`). That is the whole list. The sections
+> below on the edit/validate/publish flow and on `AuthoringDocument` being the
+> only write path remain conceptually right — read "the workbench does X" as
+> "the authoring backend does X, driven by the CLI". One entanglement is worth
+> keeping: `project-persistence` reaches `windows-file-publication` for the
+> atomic write behind every `umbra-authoring` save, which is why that file is not
+> GUI and did not go.
+>
+> > **Corrected 2026-07-31 (`f768e6c`, plus the `model-check-job` deletion in the
+> > same working tree).** The list above first named `authoring-actions.*`,
+> > `project-tree.*`, `panel-state.*`, `model-check-job.*`, and
+> > `model-check-view.*` as survivors. They are gone. `f768e6c` archived the
+> > remaining panel layer — `workbench-app` (`AppState`, `CanvasView`,
+> > `mintResourceId`), `panel-state` (`PanelUiState`, `ToolbarCommand`,
+> > `PendingEdit`, `InlineRename`, `ColourKeyMemo`, `PendingDelete`),
+> > `authoring-actions`, `canvas-math` (`CanvasPoint`, `ScreenPixelRect`,
+> > `RectGripKind`), `model-check-view`, and `project-tree` (`ScreenBucket`) —
+> > with their tests, rescuing `mintResourceId` and `searchRoiForDrawnTemplate`
+> > into `edit-page` and `findEditableElement` into `authoring-edit`.
+> > `model-check-job` followed: `ModelCheckJob` existed only to run
+> > `runModelCheck` off the GUI thread, and with the GUI archived
+> > `umbra-authoring check` runs the matrix synchronously, so its only remaining
+> > consumer was its own test. `runModelCheck`, `ModelCheck`, `ModelCheckCell`,
+> > `classifyModelCell`, and `ElementMargin` are untouched in `preview.*`.
+> >
+> > The entanglement this banner recorded is therefore **resolved**: `EditPage` no
+> > longer names `AppState` or `PanelUiState`. It takes an `AuthoringDraft` by
+> > value plus an opaque `baseRevision`, `commit() &&` moves out a
+> > `Committed{draft, baseRevision}`, `commitSelecting` is deleted, and the
+> > stale-base refusal moved into
+> > `applyCommittedPage(AuthoringEditHistory&, EditPage::Committed const&)`.
+> > Deciding artifact:
+> > [the capability plan](../../plans/2026-07-31-annotation-model-capabilities.md)
+> > §四之二.
+> >
+> > This widens the banner rather than narrowing it. **Every** passage below that
+> > names `AppState`, `PanelUiState`, `CanvasView`, canvas math, the project tree,
+> > or a panel describes deleted code — including *Editing State and Mutation
+> > Entry Points*, *ResourceId minting* (the function now lives in `edit-page`),
+> > *Ownership and lifetime*, and *Future Extensions*, whose proposed
+> > `modules/authoring` seam is defined in terms of `AppState`. The *Tests*
+> > section is wrong in both directions: it says seven synthetic files where
+> > `tests/CMakeLists.txt` now registers five, three of the seven it lists
+> > (`test-workbench-app`, `test-canvas-math`, `test-model-check-job`) no longer
+> > exist, and `test-edit-page.cpp` — 19 cases, now the editing layer's main
+> > coverage — is missing from it. What still reads true: *Source ingestion*,
+> > *Save, Reopen, and Publication Order*, *Resource-Bounded Preview*, and
+> > *Picking a colour key*.
+>
+> *The authoring surface is now `umbra-authoring`, not this binary.* It is the
+> only way to author a project (`docs/ARCHITECTURE.md`; the entry-point table in
+> [`00-overview.md`](00-overview.md) has said "the only authoring tool" since
+> 2026-07-30). No knowledge page covers it yet — [`entry-cli.md`](entry-cli.md)
+> is about `umbra-flow`'s `run`/`drive` and mentions `umbra-authoring` once, in
+> passing — so a resync owes an `entry-authoring.md`; see
+> [`README.md`](README.md).
+>
+> *Two: the annotation model changed.* `AnnotationType`, `ElementKind`,
+> `AnchorElement` / `InteractiveElement` / `InfoElement`, `bool shared`,
+> `allowed_page_ids`, `retypeRecognizer`, the public `PageSignature::create`, and
+> `derivedRuntimeRecognizerId` are all gone; `RecognizerId` is `ElementId`. See
+> [`module-annotation.md`](module-annotation.md)'s banner for the itemized list.
+> Concretely for this document: the construction chain no longer runs through
+> `PageSignature::create` (a signature is derived by `RecognitionCatalog::create`
+> from the page references that exercise `identify`), and "if the selected
+> element is an `ActionTarget`" now reads "if the selected element declares
+> `interact`" — with `evaluateActionTarget` additionally taking the page.
+
 > **DIRTY (2026-07-26)**: This document predates the page-centric refactor
 > (the EditPage/PageView handle layer, authoring schema v2's Element+placement
 > model, the v1 sunset, and per-placement runtime manifest expansion). Trust
@@ -19,7 +110,7 @@ The Workbench owns the author workflow that runs from "obtaining a complete sour
 - persist session state such as source selection, canvas view, and the live Preview;
 - turn every modification produced by a widget into a complete, verifiable `AuthoringDocument`
   version, with undo/redo;
-- display and edit recognizers, pages, regressions, `template_rect`, `search_roi`, thresholds, and
+- display and edit elements, pages, regressions, `template_rect`, `search_roi`, thresholds, and
   click offsets;
 - compile template assets and the runtime manifest from the current in-memory sources;
 - run a bounded Preview over the selected source with the same `RecognitionRuntime` used in
@@ -80,13 +171,13 @@ frame. Failures are written to `stderr` only at the `dispatch`/`main` boundary.
 ### Editing State and Mutation Entry Points
 
 `entry/workbench/authoring-edit.hpp` defines the editable transport: `AuthoringDraft` aggregates
-`EditableSource`, `EditableRecognizer`, `EditablePage`, and `EditableRegression`. These types let a
+`EditableSource`, `EditableElement`, `EditablePage`, and `EditableRegression`. These types let a
 widget temporarily write plain strings, integers, and vectors, but they are not the persistable
 truth.
 
 `makeAuthoringDraft` expands the canonical `annotation::AuthoringDocument` into the transport above;
 `buildAuthoringDocument` runs the reverse, calling `AuthoringSource::create`, `ResourceName::create`,
-`SimilarityThreshold::create`, `TemplateOffset::create`, `RecognizerDefinition::create`,
+`SimilarityThreshold::create`, `TemplateOffset::create`, `CompiledElement::create`,
 `PageSignature::create`, and finally `AuthoringDocument::create`.
 This rebuild path explains why the GUI never does "mutate half an object now, validate later": an
 edit either yields a complete, valid document or leaves the original version untouched.
@@ -95,7 +186,7 @@ edit either yields a complete, valid document or leaves the original version unt
 of the new and old documents. An identical draft returns `false` and does not pollute the history; a
 genuine change moves the current document into undo, clears redo, and caps undo at
 `k_maximumAuthoringUndoEntries == 100`.
-`undo`/`redo` move a complete document value, so references spanning recognizers/pages are always
+`undo`/`redo` move a complete document value, so references spanning elements/pages are always
 restored as one and the same version.
 
 The `AppState` in `entry/workbench/workbench-app.hpp` is the ImGui-free session aggregate behind
@@ -129,8 +220,8 @@ calls the `ResourceId::fromBytes` from `modules/annotation/source/annotation/res
 By contract, `fromBytes` itself does not validate version/variant, so the authoring caller is
 responsible for setting the convention.
 
-`SourceId`, `RecognizerId`, `PageId`, and similar are distinct strong types over `ResourceId`; when
-adding a source, recognizer, or page, the panel mints first and then wraps the result in the
+`SourceId`, `ElementId`, `PageId`, and similar are distinct strong types over `ResourceId`; when
+adding a source, element, or page, the panel mints first and then wraps the result in the
 corresponding ID. The randomness determines only the identity of a new resource and does not enter
 runtime matching.
 Once an ID enters the document, the canonical compiler uses it as a stable ordering/reference key.
@@ -226,11 +317,11 @@ The `runPreview` in `entry/workbench/preview.hpp` contains no private matcher:
 4. calls `annotation::RecognitionRuntime::create`;
 5. decodes the selected PNG into a project-fingerprint-sized BGRA `Frame`;
 6. calls `RecognitionRuntime::evaluatePage`;
-7. if the selected recognizer is an `ActionTarget`, additionally calls `evaluateActionTarget`.
+7. if the selected element is an `ActionTarget`, additionally calls `evaluateActionTarget`.
 
 The `RecognitionPolicy` constructed by the panel provides both a comparison budget and a deadline;
 the API also supports a `std::stop_token`. `PreviewResult` retains the completed `PreviewAnchorRow`,
-Resolved/Unknown/Ambiguous, the resolved page ID, and the recognizer ID and `SadSearchStopReason`
+Resolved/Unknown/Ambiguous, the resolved page ID, and the element ID and `SadSearchStopReason`
 inside `PreviewStop`. A stop is never collapsed into `hit=false`. The synthetic
 frame/session/generation identity of the Preview frame exists only to satisfy the real recognition
 API; the result does not enter the document, the history, or action delivery.

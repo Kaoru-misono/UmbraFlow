@@ -73,7 +73,7 @@ namespace uf::task
         // that one error's fields and so exists per instance; the label is still
         // what a script sees, and the label is what the framework compares
         // against, but the carrier's identity to C++ is its userdata tag.
-        constexpr auto k_recognizerType   = "uf.recognizer";
+        constexpr auto k_elementType   = "uf.element";
         constexpr auto k_pageRefType      = "uf.page";
         constexpr auto k_cycleType        = "uf.cycle";
         constexpr auto k_resolvedPageType = "uf.resolved_page";
@@ -655,24 +655,29 @@ namespace uf::task
             return 1;
         }
 
-        // cycle_find(ticket, recognizer) -> hit handle, or nil for a
-        // completed miss (Tier A). A non-recognizer argument is a Tier B
+        // cycle_find(ticket, element) -> hit handle, or nil for a
+        // completed miss (Tier A). A non-element argument is a Tier B
         // InvalidResource.
+        //
+        // It requires the ticket's cycle to have resolved a page already, and
+        // does not resolve one itself; a cycle with none fails Tier B
+        // PageUnresolved. See TaskContext::cycleFind for why the ordering is the
+        // script's to keep rather than the host's to hide.
         auto cycleFindFn(lua_State* state) -> int
         {
             auto* context = boundContext(state);
             guardFatal(state, context);
 
             auto* ticket = checkBox<CycleTicket>(state, 1, k_cycleType, "cycle");
-            auto* recognizer =
-                checkBox<annotation::RecognizerId>(state, 2, k_recognizerType, "recognizer");
+            auto* element =
+                checkBox<annotation::ElementId>(state, 2, k_elementType, "element");
             auto const call = NativeCallIdentity{
                 .verb           = "cycle_find",
                 .cycleOrdinal = ticket->ordinal,
-                .recognizerId   = *recognizer,
+                .elementId   = *element,
             };
 
-            auto result = context->cycleFind(*ticket, *recognizer);
+            auto result = context->cycleFind(*ticket, *element);
             if (!result)
             {
                 traceHostCallFailure(state, context, call, result.error());
@@ -706,7 +711,9 @@ namespace uf::task
         // evidence, so a script cannot hand over evidence from another frame:
         // there is no parameter to hand it through, and with at most one cycle
         // open there is no other frame to take it from. A cycle that never
-        // resolved a page fails ActionRejected.
+        // resolved a page fails PageUnresolved, which is the skipped step rather
+        // than a refusal on the merits; ActionRejected stays for a page that DID
+        // resolve and does not authorise the element.
         //
         // Both ordinals reach the wire: they agree on every delivered click, and
         // differ exactly when a hit from a spent cycle was refused.
@@ -1477,14 +1484,14 @@ namespace uf::task
         }
 
         // Registers the metatables of the handle kinds the DATA surface mints:
-        // the recognizer and page references named under uf.recognizers and
+        // the element and page references named under uf.elements and
         // uf.pages. Both exist whether or not a session is bound, because a
         // reference is an identity rather than a capability.
         [[nodiscard]]
         auto installResourceMetatables(lua_State* state) -> Status
         {
-            beginMetatable(state, k_recognizerType);
-            UF_TRY(finishMetatable(state, k_recognizerType));
+            beginMetatable(state, k_elementType);
+            UF_TRY(finishMetatable(state, k_elementType));
 
             beginMetatable(state, k_pageRefType);
             return finishMetatable(state, k_pageRefType);
@@ -1586,13 +1593,13 @@ namespace uf::task
             lua_setfield(state, surface, fieldName);
         }
 
-        // Assembles the frozen global uf table: recognizers, pages and error
+        // Assembles the frozen global uf table: elements, pages and error
         // kinds. Every entry is data. Nothing here can observe or act, which is
         // why it is safe as a project global.
         [[nodiscard]]
         auto buildUfData(
             lua_State* state,
-            std::vector<RecognizerHandleSpec> const& recognizers,
+            std::vector<ElementHandleSpec> const& elements,
             std::vector<PageHandleSpec> const& pages
         ) -> Status
         {
@@ -1601,12 +1608,12 @@ namespace uf::task
             lua_newtable(state);
             int const root = lua_gettop(state);
 
-            installResourceTable<RecognizerHandleSpec, annotation::RecognizerId>(
+            installResourceTable<ElementHandleSpec, annotation::ElementId>(
                 state,
                 root,
-                "recognizers",
-                k_recognizerType,
-                recognizers
+                "elements",
+                k_elementType,
+                elements
             );
             installResourceTable<PageHandleSpec, annotation::PageId>(
                 state,
@@ -1742,13 +1749,13 @@ namespace uf::task
     {
         // The installer owns its own snapshot of the specs so it stays valid
         // independently of this surface's lifetime; the specs are plain values.
-        auto recognizers = m_recognizers;
-        auto pages       = m_pages;
-        return [recognizers = std::move(recognizers), pages = std::move(pages)](
+        auto elements = m_elements;
+        auto pages    = m_pages;
+        return [elements = std::move(elements), pages = std::move(pages)](
                    lua_State* state
                ) -> Status
         {
-            return buildUfData(state, recognizers, pages);
+            return buildUfData(state, elements, pages);
         };
     }
 

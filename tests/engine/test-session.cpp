@@ -3,6 +3,7 @@
 #include <session.hpp>
 
 #include <annotation/resource.hpp>
+#include <annotation/capabilities.hpp>
 #include <annotation/content-hash.hpp>
 #include <annotation/recognition.hpp>
 #include <annotation/recognition-runtime.hpp>
@@ -91,18 +92,55 @@ namespace uf::engine
         {
             LoadedRuntime            loaded;
             anno::ProjectFingerprint fingerprint;
-            anno::RecognizerId       actionTarget;
+            anno::ElementId          actionTarget;
+
+            // The page whose reference exercises interact on `actionTarget`,
+            // which is the page a search for it has to run against. It is a
+            // fixture field rather than a constant because the wrong-page
+            // runtime deliberately puts it somewhere other than the page its
+            // frame resolves.
+            anno::PageId actionPage;
         };
 
-        // A runtime with one page (page_a, required anchor_a) and one action
-        // target authorized for that page. A frame carrying grey 2 and grey 5
-        // resolves page_a and the action target hits.
+        // One element's only appearance, named the way a single-form element is
+        // named throughout these fixtures.
+        [[nodiscard]]
+        auto soleAppearance() -> anno::CompiledAppearance
+        {
+            return anno::test::compiledAppearance(
+                "default",
+                anno::test::pixelRect(0, 0, 1, 1),
+                anno::test::threshold(10'000)
+            );
+        }
+
+        [[nodiscard]]
+        auto soleAppearanceAsset(
+            anno::ContentHash const& templateHash,
+            anno::ContentHash const& sourceHash
+        ) -> std::vector<anno::RuntimeAppearanceAsset>
+        {
+            auto assets = std::vector<anno::RuntimeAppearanceAsset>{};
+            assets.emplace_back(
+                anno::RuntimeAppearanceAsset{
+                    .appearanceName = anno::test::resourceName("default"),
+                    .templateHash   = templateHash,
+                    .sourceHash     = sourceHash,
+                }
+            );
+            return assets;
+        }
+
+        // A runtime with one page (page_a, whose reference to anchor_a is
+        // required identity evidence) and one action target the same page
+        // exercises interact on. A frame carrying grey 2 and grey 5 resolves
+        // page_a and the action target hits.
         [[nodiscard]]
         auto singlePageRuntime() -> RuntimeParts
         {
             auto const fingerprint = anno::test::fingerprint(3, 1, 96, 96);
-            auto const anchorA     = anno::test::recognizerId(k_anchorAId);
-            auto const actionT     = anno::test::recognizerId(k_actionId);
+            auto const anchorA     = anno::test::elementId(k_anchorAId);
+            auto const actionT     = anno::test::elementId(k_actionId);
             auto const pageA       = anno::test::pageId(k_pageAId);
             auto anchorTemplate = encodedTemplate(2);
             auto actionTemplate = encodedTemplate(5);
@@ -114,38 +152,34 @@ namespace uf::engine
                 anno::test::projectId("personal.engine_session"),
                 fingerprint,
                 {
-                    anno::RuntimeRecognizerSpec{
-                        .definition = anno::test::recognizer(
+                    anno::RuntimeElementSpec{
+                        .definition = anno::test::element(
                             fingerprint,
                             anchorA,
                             "anchor_a",
-                            anno::AnnotationType::PageAnchor,
-                            anno::test::pixelRect(0, 0, 1, 1),
+                            anno::test::capabilities(anno::Identify{}),
                             anno::test::pixelRect(0, 0, 3, 1),
-                            {},
-                            std::nullopt,
-                            anno::test::threshold(10'000)
+                            {soleAppearance()}
                         ),
-                        .templateHash = anchorTemplate.hash,
-                        .sourceHash   = *sourceHash,
+                        .appearances = soleAppearanceAsset(anchorTemplate.hash, *sourceHash),
                     },
-                    anno::RuntimeRecognizerSpec{
-                        .definition = anno::test::recognizer(
+                    anno::RuntimeElementSpec{
+                        .definition = anno::test::element(
                             fingerprint,
                             actionT,
                             "action_target",
-                            anno::AnnotationType::ActionTarget,
-                            anno::test::pixelRect(0, 0, 1, 1),
+                            anno::test::capabilities(std::nullopt, anno::Interact{}),
                             anno::test::pixelRect(0, 0, 3, 1),
-                            {pageA},
-                            std::nullopt,
-                            anno::test::threshold(10'000)
+                            {soleAppearance()}
                         ),
-                        .templateHash = actionTemplate.hash,
-                        .sourceHash   = *sourceHash,
+                        .appearances = soleAppearanceAsset(actionTemplate.hash, *sourceHash),
                     },
                 },
-                {anno::test::page(pageA, "page_a", {anchorA})}
+                {anno::test::page(pageA, "page_a")},
+                {
+                    anno::test::reference(pageA, anchorA, anno::test::identifiesAs()),
+                    anno::test::reference(pageA, actionT, anno::test::interacts()),
+                }
             );
             REQUIRE(manifest.has_value());
             auto templates = std::vector<anno::EncodedRuntimeTemplate>{};
@@ -160,19 +194,20 @@ namespace uf::engine
                 .loaded       = LoadedRuntime{.runtime = *std::move(runtime)},
                 .fingerprint  = fingerprint,
                 .actionTarget = actionT,
+                .actionPage   = pageA,
             };
         }
 
-        // A runtime whose action target is authorized only for the away page,
+        // A runtime whose action target is referenced only by the away page,
         // while a grey-2 frame resolves the home page. Exercises the coordinate
         // authorization refusal without contriving a malformed detection.
         [[nodiscard]]
         auto wrongPageRuntime() -> RuntimeParts
         {
             auto const fingerprint = anno::test::fingerprint(3, 1, 96, 96);
-            auto const anchorA     = anno::test::recognizerId(k_anchorAId);
-            auto const anchorB     = anno::test::recognizerId(k_anchorBId);
-            auto const actionT     = anno::test::recognizerId(k_actionId);
+            auto const anchorA     = anno::test::elementId(k_anchorAId);
+            auto const anchorB     = anno::test::elementId(k_anchorBId);
+            auto const actionT     = anno::test::elementId(k_actionId);
             auto const homePage    = anno::test::pageId(k_pageAId);
             auto const awayPage    = anno::test::pageId(k_awayPageId);
             auto anchorATemplate = encodedTemplate(2);
@@ -186,55 +221,48 @@ namespace uf::engine
                 anno::test::projectId("personal.engine_session_wrong_page"),
                 fingerprint,
                 {
-                    anno::RuntimeRecognizerSpec{
-                        .definition = anno::test::recognizer(
+                    anno::RuntimeElementSpec{
+                        .definition = anno::test::element(
                             fingerprint,
                             anchorA,
                             "anchor_a",
-                            anno::AnnotationType::PageAnchor,
-                            anno::test::pixelRect(0, 0, 1, 1),
+                            anno::test::capabilities(anno::Identify{}),
                             anno::test::pixelRect(0, 0, 3, 1),
-                            {},
-                            std::nullopt,
-                            anno::test::threshold(10'000)
+                            {soleAppearance()}
                         ),
-                        .templateHash = anchorATemplate.hash,
-                        .sourceHash   = *sourceHash,
+                        .appearances = soleAppearanceAsset(anchorATemplate.hash, *sourceHash),
                     },
-                    anno::RuntimeRecognizerSpec{
-                        .definition = anno::test::recognizer(
+                    anno::RuntimeElementSpec{
+                        .definition = anno::test::element(
                             fingerprint,
                             anchorB,
                             "anchor_b",
-                            anno::AnnotationType::PageAnchor,
-                            anno::test::pixelRect(0, 0, 1, 1),
+                            anno::test::capabilities(anno::Identify{}),
                             anno::test::pixelRect(0, 0, 3, 1),
-                            {},
-                            std::nullopt,
-                            anno::test::threshold(10'000)
+                            {soleAppearance()}
                         ),
-                        .templateHash = anchorBTemplate.hash,
-                        .sourceHash   = *sourceHash,
+                        .appearances = soleAppearanceAsset(anchorBTemplate.hash, *sourceHash),
                     },
-                    anno::RuntimeRecognizerSpec{
-                        .definition = anno::test::recognizer(
+                    anno::RuntimeElementSpec{
+                        .definition = anno::test::element(
                             fingerprint,
                             actionT,
                             "action_target",
-                            anno::AnnotationType::ActionTarget,
-                            anno::test::pixelRect(0, 0, 1, 1),
+                            anno::test::capabilities(std::nullopt, anno::Interact{}),
                             anno::test::pixelRect(0, 0, 3, 1),
-                            {awayPage},
-                            std::nullopt,
-                            anno::test::threshold(10'000)
+                            {soleAppearance()}
                         ),
-                        .templateHash = actionTemplate.hash,
-                        .sourceHash   = *sourceHash,
+                        .appearances = soleAppearanceAsset(actionTemplate.hash, *sourceHash),
                     },
                 },
                 {
-                    anno::test::page(homePage, "home", {anchorA}),
-                    anno::test::page(awayPage, "away", {anchorB}),
+                    anno::test::page(homePage, "home"),
+                    anno::test::page(awayPage, "away"),
+                },
+                {
+                    anno::test::reference(homePage, anchorA, anno::test::identifiesAs()),
+                    anno::test::reference(awayPage, anchorB, anno::test::identifiesAs()),
+                    anno::test::reference(awayPage, actionT, anno::test::interacts()),
                 }
             );
             REQUIRE(manifest.has_value());
@@ -251,6 +279,7 @@ namespace uf::engine
                 .loaded       = LoadedRuntime{.runtime = *std::move(runtime)},
                 .fingerprint  = fingerprint,
                 .actionTarget = actionT,
+                .actionPage   = awayPage,
             };
         }
 
@@ -639,6 +668,7 @@ namespace uf::engine
         auto parts             = singlePageRuntime();
         auto const fingerprint = parts.fingerprint;
         auto const actionT     = parts.actionTarget;
+        auto const actionPage  = parts.actionPage;
         auto frames            = std::vector<Frame>{};
         frames.emplace_back(
             grayFrame(fingerprint, resolvingPixels(), FrameId{17}, MonotonicInstant::now())
@@ -656,7 +686,7 @@ namespace uf::engine
         REQUIRE(std::holds_alternative<anno::ResolvedPage>(*outcome));
         auto const& resolved = std::get<anno::ResolvedPage>(*outcome);
 
-        auto found = session.findAction(*observation, actionT);
+        auto found = session.findAction(*observation, actionPage, actionT);
         REQUIRE(found.has_value());
         REQUIRE(found->has_value());
 
@@ -750,11 +780,12 @@ namespace uf::engine
         CHECK(p_page->errorKind.has_value());
     }
 
-    TEST_CASE("engine session refuses an action the recognizer does not authorize")
+    TEST_CASE("engine session refuses an action the resolved page does not authorize")
     {
         auto parts             = wrongPageRuntime();
         auto const fingerprint = parts.fingerprint;
         auto const actionT     = parts.actionTarget;
+        auto const actionPage  = parts.actionPage;
         auto frames            = std::vector<Frame>{};
         frames.emplace_back(
             grayFrame(fingerprint, resolvingPixels(), FrameId{17}, MonotonicInstant::now())
@@ -771,7 +802,26 @@ namespace uf::engine
         REQUIRE(std::holds_alternative<anno::ResolvedPage>(*outcome));
         auto const& resolved = std::get<anno::ResolvedPage>(*outcome);
 
-        auto found = session.findAction(*observation, actionT);
+        // Authorisation IS the reference, so the refusal now has two edges and
+        // both are load bearing. On the page this frame actually resolved there
+        // is no reference to the element at all, so there is nothing to locate
+        // and the search itself refuses.
+        auto const unauthorized = session.findAction(
+            *observation,
+            resolved.pageId(),
+            actionT
+        );
+        REQUIRE_FALSE(unauthorized.has_value());
+        anno::test::requireErrorKind(
+            unauthorized.error(),
+            AutomationErrorKind::InvalidResource
+        );
+
+        // Locating it under the page that does reference it still cannot
+        // deliver it here: the delivery edge authorizes against the page THIS
+        // frame resolved, so a hit carried over from another page's reference is
+        // refused with no sink call.
+        auto found = session.findAction(*observation, actionPage, actionT);
         REQUIRE(found.has_value());
         REQUIRE(found->has_value());
 
@@ -793,6 +843,7 @@ namespace uf::engine
         auto parts             = singlePageRuntime();
         auto const fingerprint = parts.fingerprint;
         auto const actionT     = parts.actionTarget;
+        auto const actionPage  = parts.actionPage;
         auto frames            = std::vector<Frame>{};
         // A frame captured at the clock epoch with a zero max age produces a
         // lease that is already expired by the time the action is delivered.
@@ -818,7 +869,7 @@ namespace uf::engine
         REQUIRE(std::holds_alternative<anno::ResolvedPage>(*outcome));
         auto const& resolved = std::get<anno::ResolvedPage>(*outcome);
 
-        auto found = session.findAction(*observation, actionT);
+        auto found = session.findAction(*observation, actionPage, actionT);
         REQUIRE(found.has_value());
         REQUIRE(found->has_value());
 
@@ -840,6 +891,7 @@ namespace uf::engine
         auto parts             = singlePageRuntime();
         auto const fingerprint = parts.fingerprint;
         auto const actionT     = parts.actionTarget;
+        auto const actionPage  = parts.actionPage;
         auto frames            = std::vector<Frame>{};
         frames.emplace_back(
             grayFrame(fingerprint, resolvingPixels(), FrameId{17}, MonotonicInstant::now())
@@ -854,7 +906,7 @@ namespace uf::engine
         auto outcome = session.resolvePage(*observation);
         REQUIRE(outcome.has_value());
         auto const& resolved = std::get<anno::ResolvedPage>(*outcome);
-        auto found           = session.findAction(*observation, actionT);
+        auto found           = session.findAction(*observation, actionPage, actionT);
         REQUIRE(found.has_value());
         REQUIRE(found->has_value());
 
@@ -920,6 +972,7 @@ namespace uf::engine
         auto partsA            = singlePageRuntime();
         auto const fingerprint = partsA.fingerprint;
         auto const actionT     = partsA.actionTarget;
+        auto const actionPage  = partsA.actionPage;
         auto framesA           = std::vector<Frame>{};
         framesA.emplace_back(
             grayFrame(fingerprint, resolvingPixels(), FrameId{17}, MonotonicInstant::now())
@@ -948,7 +1001,7 @@ namespace uf::engine
             foreignResolve.error(),
             AutomationErrorKind::InternalInvariant
         );
-        auto const foreignFind = sessionB.findAction(*observation, actionT);
+        auto const foreignFind = sessionB.findAction(*observation, actionPage, actionT);
         REQUIRE_FALSE(foreignFind.has_value());
         anno::test::requireErrorKind(
             foreignFind.error(),
@@ -959,7 +1012,7 @@ namespace uf::engine
         REQUIRE(outcome.has_value());
         REQUIRE(std::holds_alternative<anno::ResolvedPage>(*outcome));
         auto const& resolved = std::get<anno::ResolvedPage>(*outcome);
-        auto found           = sessionA.findAction(*observation, actionT);
+        auto found           = sessionA.findAction(*observation, actionPage, actionT);
         REQUIRE(found.has_value());
         REQUIRE(found->has_value());
 
@@ -974,6 +1027,7 @@ namespace uf::engine
         auto parts             = singlePageRuntime();
         auto const fingerprint = parts.fingerprint;
         auto const actionT     = parts.actionTarget;
+        auto const actionPage  = parts.actionPage;
         auto frames            = std::vector<Frame>{};
         frames.emplace_back(
             grayFrame(fingerprint, resolvingPixels(), FrameId{17}, MonotonicInstant::now())
@@ -1008,7 +1062,7 @@ namespace uf::engine
         REQUIRE(outcome.has_value());
         REQUIRE(std::holds_alternative<anno::ResolvedPage>(*outcome));
         auto const& resolved = std::get<anno::ResolvedPage>(*outcome);
-        auto found           = session->findAction(*observation, actionT);
+        auto found           = session->findAction(*observation, actionPage, actionT);
         REQUIRE(found.has_value());
         REQUIRE(found->has_value());
 
@@ -1068,6 +1122,7 @@ namespace uf::engine
         auto parts             = singlePageRuntime();
         auto const fingerprint = parts.fingerprint;
         auto const actionT     = parts.actionTarget;
+        auto const actionPage  = parts.actionPage;
         auto frames            = std::vector<Frame>{};
         frames.emplace_back(
             grayFrame(fingerprint, resolvingPixels(), FrameId{17}, MonotonicInstant::now())
@@ -1081,7 +1136,7 @@ namespace uf::engine
 
         auto observation = session.observe();
         REQUIRE(observation.has_value());
-        auto const found = session.findAction(*observation, actionT);
+        auto const found = session.findAction(*observation, actionPage, actionT);
         REQUIRE_FALSE(found.has_value());
         anno::test::requireErrorKind(
             found.error(),
@@ -1149,6 +1204,7 @@ namespace uf::engine
         auto parts             = singlePageRuntime();
         auto const fingerprint = parts.fingerprint;
         auto const actionT     = parts.actionTarget;
+        auto const actionPage  = parts.actionPage;
         auto frames            = std::vector<Frame>{};
         frames.emplace_back(
             grayFrame(fingerprint, resolvingPixels(), FrameId{17}, MonotonicInstant::now())
@@ -1164,7 +1220,7 @@ namespace uf::engine
         REQUIRE(outcome.has_value());
         REQUIRE(std::holds_alternative<anno::ResolvedPage>(*outcome));
         auto const& resolved = std::get<anno::ResolvedPage>(*outcome);
-        auto found           = session.findAction(*observation, actionT);
+        auto found           = session.findAction(*observation, actionPage, actionT);
         REQUIRE(found.has_value());
         REQUIRE(found->has_value());
 
@@ -1191,6 +1247,7 @@ namespace uf::engine
         auto parts             = singlePageRuntime();
         auto const fingerprint = parts.fingerprint;
         auto const actionT     = parts.actionTarget;
+        auto const actionPage  = parts.actionPage;
         auto frames            = std::vector<Frame>{};
         frames.emplace_back(
             grayFrame(fingerprint, resolvingPixels(), FrameId{17}, MonotonicInstant::now())
@@ -1209,7 +1266,7 @@ namespace uf::engine
         REQUIRE(outcome.has_value());
         REQUIRE(std::holds_alternative<anno::ResolvedPage>(*outcome));
         auto const& resolved = std::get<anno::ResolvedPage>(*outcome);
-        auto found           = session.findAction(*observation, actionT);
+        auto found           = session.findAction(*observation, actionPage, actionT);
         REQUIRE(found.has_value());
         REQUIRE(found->has_value());
 

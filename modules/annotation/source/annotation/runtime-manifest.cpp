@@ -10,7 +10,6 @@
 #include <domain/error.hpp>
 
 #include <algorithm>
-#include <array>
 #include <cstddef>
 #include <format>
 #include <optional>
@@ -27,6 +26,8 @@ namespace uf::annotation
     {
         constexpr auto k_maximumRuntimeManifestBytes = std::size_t{16} * 1024U * 1024U;
         constexpr auto k_maximumRuntimeResources     = std::size_t{4096};
+        constexpr auto k_maximumRuntimeAppearances      = std::size_t{4096} * 8U;
+        constexpr auto k_maximumRuntimeReferences    = std::size_t{4096} * 16U;
 
         [[nodiscard]]
         auto invalidManifest(std::string message) -> std::unexpected<Error>
@@ -46,30 +47,63 @@ namespace uf::annotation
             return path;
         }
 
+        // An element as its own table row leaves it. Its appearances arrive in
+        // later rows, and the click offset cannot become a TemplateOffset until
+        // one of those templates is known.
+        struct ParsedElement final
+        {
+            ElementId                id;
+            ResourceName             name;
+            PixelRect                searchRoi;
+            detail::CapabilityFields capabilities;
+
+            std::vector<CompiledAppearance>     appearances{};
+            std::vector<RuntimeAppearanceAsset> assets{};
+        };
+
+        struct ParsedAppearance final
+        {
+            ElementId              elementId;
+            CompiledAppearance     appearance;
+            RuntimeAppearanceAsset asset;
+        };
+
         [[nodiscard]]
-        auto parseRecognizer(
-            detail::CanonicalTomlReader& reader,
-            ProjectFingerprint fingerprint
-        ) -> Result<RuntimeRecognizerSpec>
+        auto parseElement(
+            detail::CanonicalTomlReader& reader
+        ) -> Result<ParsedElement>
         {
             UF_TRY_VALUE(idText, reader.takeStringField("id"));
-            UF_TRY_VALUE(resourceId, ResourceId::parse(idText));
-            auto const id = RecognizerId{resourceId};
+            UF_TRY_VALUE(id, detail::parseId<ElementId>(idText));
             UF_TRY_VALUE(nameText, reader.takeStringField("name"));
             UF_TRY_VALUE(name, ResourceName::create(std::move(nameText)));
-            UF_TRY_VALUE(typeText, reader.takeStringField("annotation_type"));
-            auto const annotationType = detail::annotationTypeFromText(typeText);
-            if (!annotationType)
-            {
-                return invalidManifest(
-                    std::format("runtime manifest has unknown annotation_type '{}'", typeText)
-                );
-            }
+            UF_TRY_VALUE(
+                searchRoi,
+                detail::parsePixelRectField(reader, "search_roi")
+            );
+            UF_TRY_VALUE(capabilities, detail::parseCapabilityFields(reader));
+            return ParsedElement{
+                .id           = id,
+                .name         = std::move(name),
+                .searchRoi    = searchRoi,
+                .capabilities = capabilities,
+            };
+        }
+
+        [[nodiscard]]
+        auto parseAppearance(
+            detail::CanonicalTomlReader& reader
+        ) -> Result<ParsedAppearance>
+        {
+            UF_TRY_VALUE(elementIdText, reader.takeStringField("element_id"));
+            UF_TRY_VALUE(elementId, detail::parseId<ElementId>(elementIdText));
+            UF_TRY_VALUE(nameText, reader.takeStringField("name"));
+            UF_TRY_VALUE(name, ResourceName::create(std::move(nameText)));
             UF_TRY_VALUE(kind, reader.takeStringField("kind"));
             if (kind != "gray_template")
             {
                 return invalidManifest(
-                    "runtime manifest P0 recognizer kind must be gray_template"
+                    "runtime manifest P0 element kind must be gray_template"
                 );
             }
             UF_TRY_VALUE(path, reader.takeStringField("template"));
@@ -89,122 +123,99 @@ namespace uf::annotation
                 reader.takeStringField("source_hash")
             );
             UF_TRY_VALUE(sourceHash, ContentHash::parse(sourceHashText));
-            UF_TRY_VALUE(templateRect, detail::parsePixelRectField(reader, "template_rect"));
-            UF_TRY_VALUE(searchRoi, detail::parsePixelRectField(reader, "search_roi"));
+            UF_TRY_VALUE(
+                templateRect,
+                detail::parsePixelRectField(reader, "template_rect")
+            );
             UF_TRY_VALUE(
                 thresholdValue,
                 reader.takeUnsigned32Field("min_similarity_bp")
             );
             UF_TRY_VALUE(threshold, SimilarityThreshold::create(thresholdValue));
 
-            auto defaultClick = std::optional<TemplateOffset>{};
-            UF_TRY_VALUE(
-                hasDefaultClick,
-                reader.nextIsField("default_click")
-            );
-            if (hasDefaultClick)
-            {
-                UF_TRY_VALUE(
-                    values,
-                    reader.takeUnsigned32ArrayField("default_click")
-                );
-                if (values.size() != 2U)
-                {
-                    return invalidManifest(
-                        "runtime manifest default_click must have two integers"
-                    );
-                }
-                UF_TRY_VALUE(
-                    offset,
-                    TemplateOffset::create(
-                        checkedAt(values, 0),
-                        checkedAt(values, 1),
-                        templateRect.width(),
-                        templateRect.height()
-                    )
-                );
-                defaultClick = offset;
-            }
-
-            auto allowedPageIds = std::vector<PageId>{};
-            UF_TRY_VALUE(
-                hasAllowedPages,
-                reader.nextIsField("allowed_page_ids")
-            );
-            if (hasAllowedPages)
-            {
-                UF_TRY_VALUE(
-                    encoded,
-                    reader.takeStringArrayField("allowed_page_ids")
-                );
-                UF_TRY_VALUE(parsed, detail::parseIds<PageId>(encoded));
-                allowedPageIds = std::move(parsed);
-            }
-
-            UF_TRY_VALUE(
-                definition,
-                RecognizerDefinition::create(
-                    fingerprint,
-                    RecognizerSpec{
-                        .id             = id,
-                        .name           = std::move(name),
-                        .annotationType = *annotationType,
-                        .templateRect   = templateRect,
-                        .searchRoi      = searchRoi,
-                        .threshold      = threshold,
-                        .defaultClick   = defaultClick,
-                        .allowedPageIds = std::move(allowedPageIds),
-                    }
-                )
-            );
-            return RuntimeRecognizerSpec{
-                .definition   = std::move(definition),
-                .templateHash = templateHash,
-                .sourceHash   = sourceHash,
+            return ParsedAppearance{
+                .elementId = elementId,
+                .appearance   = CompiledAppearance{
+                    .name         = name,
+                    .templateRect = templateRect,
+                    .threshold    = threshold,
+                },
+                .asset = RuntimeAppearanceAsset{
+                    .appearanceName = std::move(name),
+                    .templateHash   = templateHash,
+                    .sourceHash     = sourceHash,
+                },
             };
         }
 
         [[nodiscard]]
         auto parsePage(
             detail::CanonicalTomlReader& reader
-        ) -> Result<PageSignature>
+        ) -> Result<PageSpec>
         {
             UF_TRY_VALUE(idText, reader.takeStringField("id"));
-            UF_TRY_VALUE(resourceId, ResourceId::parse(idText));
-            auto const id = PageId{resourceId};
+            UF_TRY_VALUE(id, detail::parseId<PageId>(idText));
             UF_TRY_VALUE(nameText, reader.takeStringField("name"));
             UF_TRY_VALUE(name, ResourceName::create(std::move(nameText)));
-            UF_TRY_VALUE(
-                requiredText,
-                reader.takeStringArrayField("required")
-            );
-            UF_TRY_VALUE(
-                required,
-                detail::parseIds<RecognizerId>(requiredText)
-            );
-            UF_TRY_VALUE(
-                forbiddenText,
-                reader.takeStringArrayField("forbidden")
-            );
-            UF_TRY_VALUE(
-                forbidden,
-                detail::parseIds<RecognizerId>(forbiddenText)
-            );
-            return PageSignature::create(
-                PageSpec{
-                    .id        = id,
-                    .name      = std::move(name),
-                    .required  = std::move(required),
-                    .forbidden = std::move(forbidden),
-                }
-            );
+            return PageSpec{
+                .id   = id,
+                .name = std::move(name),
+            };
         }
 
+        [[nodiscard]]
+        auto parseReference(
+            detail::CanonicalTomlReader& reader
+        ) -> Result<PageReference>
+        {
+            UF_TRY_VALUE(pageIdText, reader.takeStringField("page_id"));
+            UF_TRY_VALUE(pageId, detail::parseId<PageId>(pageIdText));
+            UF_TRY_VALUE(elementIdText, reader.takeStringField("element_id"));
+            UF_TRY_VALUE(elementId, detail::parseId<ElementId>(elementIdText));
+            UF_TRY_VALUE(holdingName, reader.takeStringField("holding"));
+            auto const holding = detail::holdingFromText(holdingName);
+            if (!holding)
+            {
+                return invalidManifest(
+                    std::format("unknown page reference holding '{}'", holdingName)
+                );
+            }
+            UF_TRY_VALUE(exercised, detail::parseExercisedFields(reader));
+
+            auto searchRoi = std::optional<PixelRect>{};
+            UF_TRY_VALUE(hasSearchRoi, reader.nextIsField("search_roi"));
+            if (hasSearchRoi)
+            {
+                UF_TRY_VALUE(
+                    refined,
+                    detail::parsePixelRectField(reader, "search_roi")
+                );
+                searchRoi = refined;
+            }
+
+            auto appearance = std::optional<ResourceName>{};
+            UF_TRY_VALUE(hasAppearance, reader.nextIsField("appearance"));
+            if (hasAppearance)
+            {
+                UF_TRY_VALUE(appearanceText, reader.takeStringField("appearance"));
+                UF_TRY_VALUE(name, ResourceName::create(std::move(appearanceText)));
+                appearance = std::move(name);
+            }
+
+            return PageReference{
+                .pageId     = pageId,
+                .elementId  = elementId,
+                .holding    = *holding,
+                .exercised  = exercised,
+                .searchRoi  = searchRoi,
+                .appearance = std::move(appearance),
+            };
+        }
     }
 
     RuntimeManifest::RuntimeManifest(
         RecognitionCatalog catalog,
-        std::vector<RuntimeRecognizerAsset> assets
+        std::vector<RuntimeElementAsset> assets
     ) noexcept
         : m_catalog{std::move(catalog)}
         , m_assets{std::move(assets)}
@@ -214,45 +225,68 @@ namespace uf::annotation
     auto RuntimeManifest::create(
         ProjectId projectId,
         ProjectFingerprint fingerprint,
-        std::vector<RuntimeRecognizerSpec> recognizers,
-        std::vector<PageSignature> pages
+        std::vector<RuntimeElementSpec> elements,
+        std::vector<PageSpec> pages,
+        std::vector<PageReference> references
     ) -> Result<RuntimeManifest>
     {
         if (
-            recognizers.size() > k_maximumRuntimeResources
+            elements.size() > k_maximumRuntimeResources
             || pages.size() > k_maximumRuntimeResources
+            || references.size() > k_maximumRuntimeReferences
         )
         {
             return invalidManifest(
-                "runtime manifest exceeds the recognizer or page quota"
+                "runtime manifest exceeds the element, page, or reference quota"
             );
         }
 
         std::ranges::sort(
-            recognizers,
+            elements,
             {},
-            [](RuntimeRecognizerSpec const& recognizer) -> ResourceId
+            [](RuntimeElementSpec const& element) -> ResourceId
             {
-                return recognizer.definition.id().value();
+                return element.definition.id().value();
             }
         );
 
-        auto definitions = std::vector<RecognizerDefinition>{};
-        auto assets      = std::vector<RuntimeRecognizerAsset>{};
-        definitions.reserve(recognizers.size());
-        assets.reserve(recognizers.size());
-        for (auto& recognizer : recognizers)
+        auto definitions = std::vector<CompiledElement>{};
+        auto assets      = std::vector<RuntimeElementAsset>{};
+        definitions.reserve(elements.size());
+        for (auto& element : elements)
         {
-            auto const id = recognizer.definition.id();
-            assets.emplace_back(
-                RuntimeRecognizerAsset{
-                    .id           = id,
-                    .templateHash = recognizer.templateHash,
-                    .sourceHash   = recognizer.sourceHash,
-                    .templatePath = templatePath(recognizer.templateHash),
+            auto const id       = element.definition.id();
+            auto const appearances = element.definition.appearances();
+            if (element.appearances.size() != appearances.size())
+            {
+                return invalidManifest(
+                    "runtime manifest needs exactly one template asset per declared appearance"
+                );
+            }
+            for (auto index = std::size_t{0}; index < appearances.size(); ++index)
+            {
+                auto const& asset = checkedAt(element.appearances, index);
+                if (asset.appearanceName != checkedAt(appearances, index).name)
+                {
+                    return invalidManifest(
+                        "runtime manifest template assets are not in appearance order"
+                    );
                 }
-            );
-            definitions.emplace_back(std::move(recognizer.definition));
+                assets.emplace_back(
+                    RuntimeElementAsset{
+                        .elementId      = id,
+                        .appearanceName = asset.appearanceName,
+                        .templateHash   = asset.templateHash,
+                        .sourceHash     = asset.sourceHash,
+                        .templatePath   = templatePath(asset.templateHash),
+                    }
+                );
+            }
+            definitions.emplace_back(std::move(element.definition));
+        }
+        if (assets.size() > k_maximumRuntimeAppearances)
+        {
+            return invalidManifest("runtime manifest exceeds the appearance quota");
         }
 
         UF_TRY_VALUE(
@@ -261,7 +295,8 @@ namespace uf::annotation
                 std::move(projectId),
                 fingerprint,
                 std::move(definitions),
-                std::move(pages)
+                std::move(pages),
+                std::move(references)
             )
         );
         auto manifest = RuntimeManifest{
@@ -282,19 +317,25 @@ namespace uf::annotation
         return m_catalog;
     }
 
-    auto RuntimeManifest::assets() const noexcept -> std::span<RuntimeRecognizerAsset const>
+    auto RuntimeManifest::assets() const noexcept -> std::span<RuntimeElementAsset const>
     {
         return m_assets;
     }
 
     auto RuntimeManifest::findAsset(
-        RecognizerId id
-    ) const noexcept -> RuntimeRecognizerAsset const*
+        ElementId elementId,
+        ResourceName const& appearanceName
+    ) const noexcept -> RuntimeElementAsset const*
     {
-        auto const found = std::ranges::find(
+        auto const found = std::ranges::find_if(
             m_assets,
-            id,
-            &RuntimeRecognizerAsset::id
+            [elementId, &appearanceName](RuntimeElementAsset const& asset) noexcept -> bool
+            {
+                return (
+                    asset.elementId == elementId
+                    && asset.appearanceName == appearanceName
+                );
+            }
         );
         return found == m_assets.end() ? nullptr : &*found;
     }
@@ -316,50 +357,54 @@ namespace uf::annotation
             "base_dpi"
         );
 
-        for (auto const& recognizer : manifest.catalog().recognizers())
+        for (auto const& element : manifest.catalog().elements())
         {
-            auto const* p_asset = manifest.findAsset(recognizer.id());
-            UF_CHECK_MSG(p_asset != nullptr, "runtime recognizer asset is missing");
-            output += "\n[[recognizer]]\n";
+            output += "\n[[element]]\n";
             detail::appendStringField(
                 output,
                 "id",
-                recognizer.id().value().toString()
+                element.id().value().toString()
             );
-            detail::appendStringField(output, "name", recognizer.name().value());
-            detail::appendStringField(
-                output,
-                "annotation_type",
-                detail::annotationTypeText(recognizer.annotationType())
-            );
-            detail::appendStringField(output, "kind", "gray_template");
-            detail::appendStringField(output, "template", p_asset->templatePath);
-            detail::appendStringField(
-                output,
-                "template_hash",
-                p_asset->templateHash.toString()
-            );
-            detail::appendStringField(
-                output,
-                "source_hash",
-                p_asset->sourceHash.toString()
-            );
-            detail::appendRectField(output, "template_rect", recognizer.templateRect());
-            detail::appendRectField(output, "search_roi", recognizer.searchRoi());
-            output += "min_similarity_bp = ";
-            output += std::to_string(recognizer.threshold().basisPoints());
-            output.push_back('\n');
-            if (auto const click = recognizer.defaultClick())
+            detail::appendStringField(output, "name", element.name().value());
+            detail::appendRectField(output, "search_roi", element.searchRoi());
+            detail::appendCapabilityFields(output, element.capabilities());
+        }
+
+        for (auto const& element : manifest.catalog().elements())
+        {
+            for (auto const& appearance : element.appearances())
             {
-                output += "default_click = ";
-                auto const values = std::array{click->x(), click->y()};
-                detail::appendUnsigned32Array(output, values);
-                output.push_back('\n');
-            }
-            if (!recognizer.allowedPageIds().empty())
-            {
-                output += "allowed_page_ids = ";
-                detail::appendIdArray(output, recognizer.allowedPageIds());
+                auto const* p_asset = manifest.findAsset(
+                    element.id(),
+                    appearance.name
+                );
+                UF_CHECK_MSG(p_asset != nullptr, "runtime appearance asset is missing");
+                output += "\n[[appearance]]\n";
+                detail::appendStringField(
+                    output,
+                    "element_id",
+                    element.id().value().toString()
+                );
+                detail::appendStringField(output, "name", appearance.name.value());
+                detail::appendStringField(output, "kind", "gray_template");
+                detail::appendStringField(output, "template", p_asset->templatePath);
+                detail::appendStringField(
+                    output,
+                    "template_hash",
+                    p_asset->templateHash.toString()
+                );
+                detail::appendStringField(
+                    output,
+                    "source_hash",
+                    p_asset->sourceHash.toString()
+                );
+                detail::appendRectField(
+                    output,
+                    "template_rect",
+                    appearance.templateRect
+                );
+                output += "min_similarity_bp = ";
+                output += std::to_string(appearance.threshold.basisPoints());
                 output.push_back('\n');
             }
         }
@@ -369,12 +414,35 @@ namespace uf::annotation
             output += "\n[[page]]\n";
             detail::appendStringField(output, "id", page.id().value().toString());
             detail::appendStringField(output, "name", page.name().value());
-            output += "required = ";
-            detail::appendIdArray(output, page.required());
-            output.push_back('\n');
-            output += "forbidden = ";
-            detail::appendIdArray(output, page.forbidden());
-            output.push_back('\n');
+        }
+
+        for (auto const& reference : manifest.catalog().references())
+        {
+            output += "\n[[reference]]\n";
+            detail::appendStringField(
+                output,
+                "page_id",
+                reference.pageId.value().toString()
+            );
+            detail::appendStringField(
+                output,
+                "element_id",
+                reference.elementId.value().toString()
+            );
+            detail::appendStringField(
+                output,
+                "holding",
+                detail::holdingText(reference.holding)
+            );
+            detail::appendExercisedFields(output, reference.exercised);
+            if (auto const refined = reference.searchRoi)
+            {
+                detail::appendRectField(output, "search_roi", *refined);
+            }
+            if (auto const& pinned = reference.appearance)
+            {
+                detail::appendStringField(output, "appearance", pinned->value());
+            }
         }
         return output;
     }
@@ -415,35 +483,57 @@ namespace uf::annotation
             )
         );
 
-        auto recognizers  = std::vector<RuntimeRecognizerSpec>{};
-        auto pages        = std::vector<PageSignature>{};
-        auto parsingPages = false;
+        auto parsedElements  = std::vector<ParsedElement>{};
+        auto pages           = std::vector<PageSpec>{};
+        auto references      = std::vector<PageReference>{};
+        auto appearanceCount = std::size_t{0};
+        auto section         = uint8{0};
         while (!reader.eof())
         {
             UF_TRY(reader.expect(""));
             auto const headerLine = reader.line();
             UF_TRY_VALUE(header, reader.take());
-            if (header == "[[recognizer]]")
+            auto rank = uint8{0};
+            if (header == "[[element]]")
             {
-                if (parsingPages)
+                rank = 1;
+                if (parsedElements.size() >= k_maximumRuntimeResources)
                 {
                     return invalidManifest(
-                        "runtime manifest recognizers must precede pages"
+                        "runtime manifest exceeds the element quota"
                     );
                 }
-                if (recognizers.size() >= k_maximumRuntimeResources)
-                {
-                    return invalidManifest(
-                        "runtime manifest exceeds the recognizer quota"
-                    );
-                }
-                UF_TRY_VALUE(recognizer, parseRecognizer(reader, fingerprint));
-                recognizers.emplace_back(std::move(recognizer));
-                continue;
+                UF_TRY_VALUE(element, parseElement(reader));
+                parsedElements.emplace_back(std::move(element));
             }
-            if (header == "[[page]]")
+            else if (header == "[[appearance]]")
             {
-                parsingPages = true;
+                rank = 2;
+                if (appearanceCount >= k_maximumRuntimeAppearances)
+                {
+                    return invalidManifest(
+                        "runtime manifest exceeds the appearance quota"
+                    );
+                }
+                UF_TRY_VALUE(parsed, parseAppearance(reader));
+                auto const owner = std::ranges::find(
+                    parsedElements,
+                    parsed.elementId,
+                    &ParsedElement::id
+                );
+                if (owner == parsedElements.end())
+                {
+                    return invalidManifest(
+                        "runtime manifest appearance references an unknown element"
+                    );
+                }
+                owner->appearances.emplace_back(std::move(parsed.appearance));
+                owner->assets.emplace_back(std::move(parsed.asset));
+                ++appearanceCount;
+            }
+            else if (header == "[[page]]")
+            {
+                rank = 3;
                 if (pages.size() >= k_maximumRuntimeResources)
                 {
                     return invalidManifest(
@@ -452,14 +542,69 @@ namespace uf::annotation
                 }
                 UF_TRY_VALUE(page, parsePage(reader));
                 pages.emplace_back(std::move(page));
-                continue;
             }
-            return invalidManifest(
-                std::format(
-                    "runtime manifest line {} has unknown table header '{}'",
-                    headerLine,
-                    header
+            else if (header == "[[reference]]")
+            {
+                rank = 4;
+                if (references.size() >= k_maximumRuntimeReferences)
+                {
+                    return invalidManifest(
+                        "runtime manifest exceeds the reference quota"
+                    );
+                }
+                UF_TRY_VALUE(reference, parseReference(reader));
+                references.emplace_back(std::move(reference));
+            }
+            else
+            {
+                return invalidManifest(
+                    std::format(
+                        "runtime manifest line {} has unknown table header '{}'",
+                        headerLine,
+                        header
+                    )
+                );
+            }
+            if (rank < section)
+            {
+                return invalidManifest(
+                    "runtime manifest element, appearance, page, and reference tables are out of order"
+                );
+            }
+            section = rank;
+        }
+
+        auto elements = std::vector<RuntimeElementSpec>{};
+        elements.reserve(parsedElements.size());
+        for (auto& parsed : parsedElements)
+        {
+            auto boundingTemplate = std::optional<PixelRect>{};
+            if (!parsed.appearances.empty())
+            {
+                boundingTemplate = parsed.appearances.front().templateRect;
+            }
+            UF_TRY_VALUE(
+                capabilities,
+                detail::toElementCapabilities(parsed.capabilities, boundingTemplate)
+            );
+            UF_TRY_VALUE(
+                definition,
+                CompiledElement::create(
+                    fingerprint,
+                    CompiledElementSpec{
+                        .id           = parsed.id,
+                        .name         = std::move(parsed.name),
+                        .capabilities = capabilities,
+                        .searchRoi    = parsed.searchRoi,
+                        .appearances  = std::move(parsed.appearances),
+                    }
                 )
+            );
+            elements.emplace_back(
+                RuntimeElementSpec{
+                    .definition  = std::move(definition),
+                    .appearances = std::move(parsed.assets),
+                }
             );
         }
 
@@ -468,8 +613,9 @@ namespace uf::annotation
             RuntimeManifest::create(
                 std::move(projectId),
                 fingerprint,
-                std::move(recognizers),
-                std::move(pages)
+                std::move(elements),
+                std::move(pages),
+                std::move(references)
             )
         );
         if (serializeRuntimeManifest(manifest) != canonicalToml)

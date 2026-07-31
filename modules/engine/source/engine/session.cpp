@@ -106,7 +106,7 @@ namespace uf::engine
                 };
                 if (auto const worst = worstRequiredAnchor(evaluation))
                 {
-                    score.worstAnchor           = worst->recognizerId();
+                    score.worstAnchor           = worst->elementId();
                     score.worstAnchorSad        = worst->sadScore();
                     score.worstAnchorMaximumSad = worst->maximumSad();
                 }
@@ -354,7 +354,7 @@ namespace uf::engine
             event.page         = trace::TraceEvent::Page{
                 .outcome = trace::PageResolution::Stopped,
             };
-            event.recognizerId = p_stop->recognizerId;
+            event.elementId = p_stop->elementId;
             event.stopReason   = p_stop->reason;
             UF_TRY(emit(event));
             return fail(
@@ -404,7 +404,8 @@ namespace uf::engine
 
     auto EngineSession::findAction(
         Observation const& observation,
-        annotation::RecognizerId recognizerId
+        annotation::PageId pageId,
+        annotation::ElementId elementId
     ) -> Result<std::optional<ActionFound>>
     {
         if (observation.m_sessionIdentity != m_identity)
@@ -427,7 +428,8 @@ namespace uf::engine
         auto attempt = m_loadedRuntime.runtime.evaluateActionTarget(
             frame,
             m_config.liveFingerprint,
-            recognizerId,
+            pageId,
+            elementId,
             makeRecognitionPolicy()
         );
         // As with resolvePage, every exit writes one engine.action_found event
@@ -438,9 +440,9 @@ namespace uf::engine
             event.action       = trace::TraceEvent::Action{
                 .outcome = trace::ActionSearch::Failed,
             };
-            event.recognizerId = recognizerId;
-            event.errorKind    = automationErrorKind(attempt.error());
-            event.message      = std::string{attempt.error().message()};
+            event.elementId = elementId;
+            event.errorKind = automationErrorKind(attempt.error());
+            event.message   = std::string{attempt.error().message()};
             UF_TRY(emit(event));
             return std::unexpected{std::move(attempt).error()};
         }
@@ -455,7 +457,7 @@ namespace uf::engine
             event.action       = trace::TraceEvent::Action{
                 .outcome = trace::ActionSearch::Stopped,
             };
-            event.recognizerId = p_stop->recognizerId;
+            event.elementId = p_stop->elementId;
             event.stopReason   = p_stop->reason;
             UF_TRY(emit(event));
             return fail(
@@ -476,24 +478,25 @@ namespace uf::engine
                 .sadScore   = evidence.sadScore(),
                 .maximumSad = evidence.maximumSad(),
             };
-            event.recognizerId = recognizerId;
+            event.elementId = elementId;
             UF_TRY(emit(event));
             return std::optional<ActionFound>{std::nullopt};
         }
 
-        auto const* p_recognizer = catalog().findRecognizer(recognizerId);
-        // evaluateActionTarget has already proven the recognizer is a catalog
-        // action target, so its definition is necessarily present here.
-        UF_CHECK(p_recognizer != nullptr);
+        auto const* p_element = catalog().findElement(elementId);
+        // evaluateActionTarget has already proven that this page references the
+        // element and exercises interact on it, so its definition is
+        // necessarily present here.
+        UF_CHECK(p_element != nullptr);
         auto const matchedRect = evidence.matchedRect();
         UF_CHECK(matchedRect.has_value());
 
         UF_TRY_VALUE(
             clickPixel,
-            annotation::resolveClickPixel(*p_recognizer, *matchedRect)
+            annotation::resolveClickPixel(*p_element, *matchedRect)
         );
         UF_TRY_VALUE(frameRect, pixelRectToFrameRect(*matchedRect));
-        UF_TRY_VALUE(label, Label::create(std::string{p_recognizer->name().value()}));
+        UF_TRY_VALUE(label, Label::create(std::string{p_element->name().value()}));
 
         auto detection = Detection{
             frame.sessionId(),
@@ -507,7 +510,7 @@ namespace uf::engine
             actionDetection,
             annotation::ActionDetection::create(
                 catalog(),
-                recognizerId,
+                elementId,
                 std::move(detection)
             )
         );
@@ -519,7 +522,7 @@ namespace uf::engine
             .maximumSad  = evidence.maximumSad(),
             .matchedRect = *matchedRect,
         };
-        event.recognizerId = recognizerId;
+        event.elementId = elementId;
         UF_TRY(emit(event));
 
         return std::optional<ActionFound>{
@@ -581,10 +584,10 @@ namespace uf::engine
         );
         if (!authorized)
         {
-            auto event         = identityEvent(trace::TraceEventKind::EngineActionRejected, identity);
-            event.recognizerId = action.actionDetection().recognizerId();
-            event.errorKind    = automationErrorKind(authorized.error());
-            event.message      = std::string{authorized.error().message()};
+            auto event      = identityEvent(trace::TraceEventKind::EngineActionRejected, identity);
+            event.elementId = action.actionDetection().elementId();
+            event.errorKind = automationErrorKind(authorized.error());
+            event.message   = std::string{authorized.error().message()};
             UF_TRY(emit(event));
             return std::unexpected{std::move(authorized).error()};
         }
@@ -601,10 +604,10 @@ namespace uf::engine
         auto revalidation = m_frameSource->validateTargetInstance();
         if (!revalidation)
         {
-            auto event         = identityEvent(trace::TraceEventKind::EngineActionRejected, identity);
-            event.recognizerId = action.actionDetection().recognizerId();
-            event.errorKind    = automationErrorKind(revalidation.error());
-            event.message      = std::string{revalidation.error().message()};
+            auto event      = identityEvent(trace::TraceEventKind::EngineActionRejected, identity);
+            event.elementId = action.actionDetection().elementId();
+            event.errorKind = automationErrorKind(revalidation.error());
+            event.message   = std::string{revalidation.error().message()};
             UF_TRY(emit(event));
             return std::unexpected{std::move(revalidation).error()};
         }

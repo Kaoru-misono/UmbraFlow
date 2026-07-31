@@ -3,12 +3,14 @@
 #include <task/capability-surface.hpp>
 #include <task/script-validator.hpp>
 
+#include <annotation/capabilities.hpp>
 #include <annotation/catalog.hpp>
 
 #include <domain/error.hpp>
 
 #include <doctest/doctest.h>
 
+#include <optional>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -25,47 +27,54 @@ namespace uf::task
         constexpr auto k_battleId = "00000000-0000-0000-0000-000000000003";
         constexpr auto k_pageId   = "00000000-0000-0000-0000-000000000101";
 
-        // The same minimal catalog the binding tests use: one page anchor (never
-        // findable), two action targets (daily_button, battle), and one page
-        // (home). The surface built from it is exactly what the script sees, so
-        // the validator resolves against the identical name set.
+        // The same minimal catalog the binding tests use: one identify-only
+        // element (never findable), two interactive ones (daily_button,
+        // battle), and one page (home). The surface built from it is exactly
+        // what the script sees, so the validator resolves against the identical
+        // name set.
         auto buildSurface() -> CapabilitySurface
         {
             auto const fingerprint = at::fingerprint();
             auto const pageId      = at::pageId(k_pageId);
+            auto const anchorId    = at::elementId(k_anchorId);
+            auto const dailyId     = at::elementId(k_dailyId);
+            auto const battleId    = at::elementId(k_battleId);
 
-            auto recognizers = std::vector<annotation::RecognizerDefinition>{};
-            recognizers.push_back(at::recognizer(
+            auto elements = std::vector<annotation::CompiledElement>{};
+            elements.push_back(at::element(
                 fingerprint,
-                at::recognizerId(k_anchorId),
+                anchorId,
                 "home_marker",
-                annotation::AnnotationType::PageAnchor,
-                at::pixelRect(0, 0, 1, 1),
-                at::pixelRect(0, 0, 4, 4)
+                at::capabilities(annotation::Identify{}),
+                at::pixelRect(0, 0, 4, 4),
+                {at::compiledAppearance("default", at::pixelRect(0, 0, 1, 1))}
             ));
-            recognizers.push_back(at::recognizer(
+            elements.push_back(at::element(
                 fingerprint,
-                at::recognizerId(k_dailyId),
+                dailyId,
                 "daily_button",
-                annotation::AnnotationType::ActionTarget,
-                at::pixelRect(1, 1, 1, 1),
+                at::capabilities(std::nullopt, annotation::Interact{}),
                 at::pixelRect(0, 0, 4, 4),
-                {pageId}
+                {at::compiledAppearance("default", at::pixelRect(1, 1, 1, 1))}
             ));
-            recognizers.push_back(at::recognizer(
+            elements.push_back(at::element(
                 fingerprint,
-                at::recognizerId(k_battleId),
+                battleId,
                 "battle",
-                annotation::AnnotationType::ActionTarget,
-                at::pixelRect(2, 2, 1, 1),
+                at::capabilities(std::nullopt, annotation::Interact{}),
                 at::pixelRect(0, 0, 4, 4),
-                {pageId}
+                {at::compiledAppearance("default", at::pixelRect(2, 2, 1, 1))}
             ));
 
             auto const catalog = at::catalog(
                 fingerprint,
-                std::move(recognizers),
-                {at::page(pageId, "home", {at::recognizerId(k_anchorId)})}
+                std::move(elements),
+                {at::page(pageId, "home")},
+                {
+                    at::reference(pageId, anchorId, at::identifiesAs()),
+                    at::reference(pageId, dailyId, at::interacts()),
+                    at::reference(pageId, battleId, at::interacts()),
+                }
             );
 
             auto surface = CapabilitySurface::create(catalog);
@@ -112,7 +121,7 @@ namespace uf::task
                     id = "battle_prompt",
                     when = uf.pages.home,
                     handle = function(ctx, cycle)
-                        local close = cycle:find(uf.recognizers.battle)
+                        local close = cycle:find(uf.elements.battle)
                         if close ~= nil then
                             cycle:click(close)
                         end
@@ -129,7 +138,7 @@ namespace uf::task
                                     { timeout_ms = 1000 },
                                     function(home)
                                         local hit =
-                                            home:find(uf.recognizers.daily_button)
+                                            home:find(uf.elements.daily_button)
                                         if hit ~= nil then
                                             home:click(hit)
                                         end
@@ -144,7 +153,7 @@ namespace uf::task
             auto const report = validateScriptResources(source, "daily", surface);
             REQUIRE(report.has_value());
             CHECK(
-                report->recognizers
+                report->elements
                 == std::vector<std::string>{"battle", "daily_button"}
             );
             CHECK(report->pages == std::vector<std::string>{"home"});
@@ -157,7 +166,7 @@ namespace uf::task
             auto const report =
                 validateScriptResources("local x = 1 + 2\nreturn x", "noop", surface);
             REQUIRE(report.has_value());
-            CHECK(report->recognizers.empty());
+            CHECK(report->elements.empty());
             CHECK(report->pages.empty());
         }
 
@@ -173,21 +182,21 @@ namespace uf::task
             // registers as the global is pinned separately, on a real task VM,
             // by the binding suite's retired-root case.
             auto const retired = validateScriptResources(
-                "return uf.pages.home ~= nil and umbra.recognizers.battle",
+                "return uf.pages.home ~= nil and umbra.elements.battle",
                 "retired-root",
                 surface
             );
             REQUIRE(retired.has_value());
-            CHECK(retired->recognizers.empty());
+            CHECK(retired->elements.empty());
             CHECK(retired->pages == std::vector<std::string>{"home"});
 
             auto const current = validateScriptResources(
-                "return uf.recognizers.battle",
+                "return uf.elements.battle",
                 "current-root",
                 surface
             );
             REQUIRE(current.has_value());
-            CHECK(current->recognizers == std::vector<std::string>{"battle"});
+            CHECK(current->elements == std::vector<std::string>{"battle"});
         }
 
         TEST_CASE("A method call on the uf root is rejected: there are no verbs")
@@ -234,7 +243,7 @@ namespace uf::task
                 surface
             );
             REQUIRE(report.has_value());
-            CHECK(report->recognizers.empty());
+            CHECK(report->elements.empty());
             CHECK(report->pages == std::vector<std::string>{"home"});
         }
 
@@ -255,7 +264,7 @@ namespace uf::task
                 surface
             );
             REQUIRE(report.has_value());
-            CHECK(report->recognizers.empty());
+            CHECK(report->elements.empty());
             CHECK(report->pages.empty());
         }
 
@@ -264,7 +273,7 @@ namespace uf::task
             auto const surface = buildSurface();
             // Left as a runtime nil this would make every comparison against it
             // silently false, which is exactly the failure the pre-VM pass closes
-            // for a missing recognizer.
+            // for a missing element.
             expectRejected(
                 surface,
                 "return uf.errors.time_out",
@@ -272,13 +281,13 @@ namespace uf::task
             );
         }
 
-        TEST_CASE("A reference to a missing recognizer is rejected by name")
+        TEST_CASE("A reference to a missing element is rejected by name")
         {
             auto const surface = buildSurface();
             expectRejected(
                 surface,
-                "return ctx:cycle_find(cycle, uf.recognizers.does_not_exist)",
-                {"does_not_exist", "recognizer"}
+                "return ctx:cycle_find(cycle, uf.elements.does_not_exist)",
+                {"does_not_exist", "element"}
             );
         }
 
@@ -292,15 +301,15 @@ namespace uf::task
             );
         }
 
-        TEST_CASE("A page anchor is not exposed under uf.recognizers")
+        TEST_CASE("A page anchor is not exposed under uf.elements")
         {
             auto const surface = buildSurface();
-            // home_marker is a real catalog recognizer, but a page anchor, so it
+            // home_marker is a real catalog element, but a page anchor, so it
             // is never a findable handle; the validator rejects it as missing.
             expectRejected(
                 surface,
-                "return ctx:cycle_find(cycle, uf.recognizers.home_marker)",
-                {"home_marker", "recognizer"}
+                "return ctx:cycle_find(cycle, uf.elements.home_marker)",
+                {"home_marker", "element"}
             );
         }
 
@@ -312,7 +321,7 @@ namespace uf::task
             {
                 expectRejected(
                     surface,
-                    "local u = uf\nreturn u.recognizers.battle",
+                    "local u = uf\nreturn u.elements.battle",
                     {"uf"}
                 );
             }
@@ -320,7 +329,7 @@ namespace uf::task
             {
                 expectRejected(
                     surface,
-                    "local r = uf.recognizers\nreturn r.battle",
+                    "local r = uf.elements\nreturn r.battle",
                     {"uf"}
                 );
             }
@@ -357,7 +366,7 @@ namespace uf::task
             {
                 expectRejected(
                     surface,
-                    "local u = _G.uf\nreturn u.recognizers.battle",
+                    "local u = _G.uf\nreturn u.elements.battle",
                     {"_G"}
                 );
             }
@@ -365,7 +374,7 @@ namespace uf::task
             {
                 expectRejected(
                     surface,
-                    "local n = 'bat' .. 'tle'\nreturn _G.uf.recognizers[n]",
+                    "local n = 'bat' .. 'tle'\nreturn _G.uf.elements[n]",
                     {"_G"}
                 );
             }
@@ -373,7 +382,7 @@ namespace uf::task
             {
                 expectRejected(
                     surface,
-                    "for k in pairs(_G.uf.recognizers) do end\nreturn 0",
+                    "for k in pairs(_G.uf.elements) do end\nreturn 0",
                     {"_G"}
                 );
             }
@@ -392,7 +401,7 @@ namespace uf::task
                 // promise; the alias door is closed before the leaf is ever reached.
                 expectRejected(
                     surface,
-                    "return _G.uf.recognizers.does_not_exist",
+                    "return _G.uf.elements.does_not_exist",
                     {"_G"}
                 );
             }
@@ -403,7 +412,7 @@ namespace uf::task
             auto const surface = buildSurface();
             expectRejected(
                 surface,
-                "local name = 'battle'\nreturn uf.recognizers[name]",
+                "local name = 'battle'\nreturn uf.elements[name]",
                 {"uf", "two-level"}
             );
         }
@@ -411,12 +420,12 @@ namespace uf::task
         TEST_CASE("Indexing past a two-level handle literal is rejected")
         {
             auto const surface = buildSurface();
-            // uf.recognizers.battle is a valid handle, but the only permitted
+            // uf.elements.battle is a valid handle, but the only permitted
             // spelling is the two-level literal itself; reading a field off it is
             // a deeper chain and rejected as the wrong shape.
             expectRejected(
                 surface,
-                "return uf.recognizers.battle.foo",
+                "return uf.elements.battle.foo",
                 {"uf", "two-level"}
             );
         }
@@ -434,11 +443,11 @@ namespace uf::task
         TEST_CASE("Calling a one-level field of the namespace is rejected")
         {
             auto const surface = buildSurface();
-            // uf.recognizers as a value is a one-level field access, and it is
+            // uf.elements as a value is a one-level field access, and it is
             // rejected whether it is called, aliased, or returned.
             expectRejected(
                 surface,
-                "return uf.recognizers(uf)",
+                "return uf.elements(uf)",
                 {"uf"}
             );
         }

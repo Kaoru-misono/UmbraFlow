@@ -369,7 +369,7 @@ namespace uf::cli
             }
         }
 
-        // LAYER TWO: find `recognizer` and click it, in one command.
+        // LAYER TWO: find `element` and click it, in one command.
         //
         // It composes cycle_open, cycle_page, cycle_find, cycle_click, cycle_close,
         // deadline and wait. cycle_page is not optional here and not a policy choice:
@@ -409,7 +409,7 @@ namespace uf::cli
                     return refused(operation, std::move(resolved).error());
                 }
 
-                auto hit = session.cycleFind(*cycle, command.recognizer);
+                auto hit = session.cycleFind(*cycle, command.element);
                 if (!hit)
                 {
                     static_cast<void>(session.cycleClose(*cycle));
@@ -449,9 +449,9 @@ namespace uf::cli
                     return timedOut(
                         operation,
                         std::format(
-                            "recognizer \"{}\" was not on screen before the wait "
+                            "element \"{}\" was not on screen before the wait "
                             "deadline",
-                            command.recognizer
+                            command.element
                         )
                     );
                 }
@@ -564,7 +564,7 @@ namespace uf::cli
 
         if (auto const* p_find = std::get_if<DriveCycleFindCommand>(&command))
         {
-            auto hit = session.cycleFind(p_find->cycle, p_find->recognizer);
+            auto hit = session.cycleFind(p_find->cycle, p_find->element);
             if (!hit)
             {
                 return refused(operation, std::move(hit).error());

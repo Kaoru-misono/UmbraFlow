@@ -15,10 +15,10 @@
 namespace uf::task
 {
     CapabilitySurface::CapabilitySurface(
-        std::vector<RecognizerHandleSpec> recognizers,
+        std::vector<ElementHandleSpec> elements,
         std::vector<PageHandleSpec> pages
     ) noexcept
-        : m_recognizers{std::move(recognizers)}
+        : m_elements{std::move(elements)}
         , m_pages{std::move(pages)}
     {
     }
@@ -27,14 +27,19 @@ namespace uf::task
         annotation::RecognitionCatalog const& catalog
     ) -> Result<CapabilitySurface>
     {
-        auto recognizers = std::vector<RecognizerHandleSpec>{};
-        auto seenNames   = std::unordered_set<std::string>{};
+        auto elements  = std::vector<ElementHandleSpec>{};
+        auto seenNames = std::unordered_set<std::string>{};
 
-        for (auto const& definition : catalog.recognizers())
+        for (auto const& definition : catalog.elements())
         {
-            // Only action targets are findable from a script; page anchors are
-            // page-internal evidence and info regions have no verb yet.
-            if (definition.annotationType() != annotation::AnnotationType::ActionTarget)
+            // Findable means interactable: a handle a script holds is one it
+            // could go on to click. Identify contributes page-internal
+            // evidence and read has no verb yet, so neither earns a handle on
+            // its own. Asking for the capability rather than for the absence of
+            // the other two is what lets an element that both names its page
+            // and can be clicked appear here exactly once -- which is the whole
+            // point of capabilities being a set rather than a choice.
+            if (!definition.capabilities().hasInteract())
             {
                 continue;
             }
@@ -47,12 +52,12 @@ namespace uf::task
             {
                 return fail(
                     AutomationErrorKind::InvalidResource,
-                    "duplicate action-target name in uf.recognizers: " + name
+                    "duplicate interactive element name in uf.elements: " + name
                 );
             }
 
-            recognizers.push_back(
-                RecognizerHandleSpec{.name = std::move(name), .id = definition.id()}
+            elements.push_back(
+                ElementHandleSpec{.name = std::move(name), .id = definition.id()}
             );
         }
 
@@ -75,12 +80,12 @@ namespace uf::task
             );
         }
 
-        return CapabilitySurface{std::move(recognizers), std::move(pages)};
+        return CapabilitySurface{std::move(elements), std::move(pages)};
     }
 
-    auto CapabilitySurface::recognizerCount() const noexcept -> std::size_t
+    auto CapabilitySurface::elementCount() const noexcept -> std::size_t
     {
-        return m_recognizers.size();
+        return m_elements.size();
     }
 
     auto CapabilitySurface::pageCount() const noexcept -> std::size_t
@@ -88,10 +93,10 @@ namespace uf::task
         return m_pages.size();
     }
 
-    auto CapabilitySurface::recognizers() const noexcept
-        -> std::span<RecognizerHandleSpec const>
+    auto CapabilitySurface::elements() const noexcept
+        -> std::span<ElementHandleSpec const>
     {
-        return m_recognizers;
+        return m_elements;
     }
 
     auto CapabilitySurface::pages() const noexcept -> std::span<PageHandleSpec const>

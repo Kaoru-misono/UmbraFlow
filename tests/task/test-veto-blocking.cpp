@@ -530,7 +530,7 @@ namespace uf::task
                 ctx:cycle_page(ticket)
                 mark()
                 pcall(function()
-                    return ctx:cycle_find(ticket, uf.recognizers.action_target)
+                    return ctx:cycle_find(ticket, uf.elements.action_target)
                 end)
                 mark()
                 return 1
@@ -561,7 +561,7 @@ namespace uf::task
             constexpr std::string_view source = R"lua(
                 local ticket = ctx:cycle_open()
                 ctx:cycle_page(ticket)
-                local hit = ctx:cycle_find(ticket, uf.recognizers.action_target)
+                local hit = ctx:cycle_find(ticket, uf.elements.action_target)
                 if hit == nil then return 0 end
                 mark()
                 pcall(function() ctx:cycle_click(ticket, hit) end)

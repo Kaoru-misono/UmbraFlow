@@ -31,11 +31,16 @@
 >   拿哪些像素来比,同一对目标降到 0.28 / 0.18。落地形状:vision 的 `matchTemplateSad` 增加
 >   两个带 mask 的 overload(增量,现有调用一处未改;全不透明 mask 与无 mask 逐位一致),
 >   annotation 把 `ColourKey` 烘进模板 PNG 的 **alpha 通道**(无新资产、无 manifest 变更;
->   不带键的模板字节不动),workbench 加取色器与选中像素叠加预览。**注意阈值陷阱**:阈值按
->   模板全部像素数推出,对 mask 一无所知,所以带色键的模板要严得多的阈值(真机 9000 bp →
->   9900 bp),细节见 [`pitfalls/colour-key-annotation.md`](pitfalls/colour-key-annotation.md)。
+>   不带键的模板字节不动),workbench 加取色器与选中像素叠加预览。**注意小掩码陷阱**:
+>   带色键的模板实测需要严得多的阈值(真机 9000 bp → 9900 bp),细节见
+>   [`pitfalls/colour-key-annotation.md`](pitfalls/colour-key-annotation.md)。
+>
+>   > 更正(2026-07-31):此处原本写「阈值按模板全部像素数推出,**对 mask 一无所知**」。
+>   > 那个机制说法是错的——`normalizedScore` 会把加权和缩回整模板尺度,所以阈值其实是
+>   > **掩码相对**的。真正的驱动因素是**掩码大小对 ROI 大小**:27 个饱和白像素总能在大 ROI
+>   > 里找到一个全对齐的位置。该 pitfall 已于同日按此更正,这里跟着改,免得两处机制打架。
 > - **`umbra-authoring`**(`eacb05f`)——第二个二进制,开发工具,让 agent 不开 GUI 也能标注
->   一个项目。它自己不写任何东西,每一次改动都经过 `AuthoringDocument`,因为标注产物就是点击
+>   一个项目。**(2026-07-31 起它是唯一的标注工具:GUI 已归档。)**它自己不写任何东西,每一次改动都经过 `AuthoringDocument`,因为标注产物就是点击
 >   授权的证据。同批加入 vision 的三个帧分析原语(稳定性 / 色键探针 / 颜色普查),它们**收 N 帧
 >   而不是两帧**:两种背景找出「不随背景变的 UI」,几秒后再拍的第三帧才找出「正在动的东西」。
 >   `match` 子命令是重点:标注、对着留出来的截图验证、迭代,回路里没有人。
@@ -46,9 +51,40 @@
 > 文件没有显示密度,唯一可能正确的是窗口的密度,也就是项目的密度——这不是便利,而是因为
 > 运行时在 live 指纹与 catalog 不符时拒绝投递点击,所以按错密度标注的项目是不可用而不是近似。
 
+> **进展(2026-07-31)——标注模型换代 + GUI 弃用,下面 §1 的 checkbox 尚未按此重述。**
+> 裁决与理由见
+> [`2026-07-31-annotation-model-capabilities.md`](plans/2026-07-31-annotation-model-capabilities.md);
+> 该文顶部的「落地进度」块是逐条状态。要点:
+>
+> - **能力模型已落地。** 三选一的 `AnnotationType` 变成能力集合
+>   `{identify, interact, read}`;`bool shared` 换成引用侧的 `Holding{Owned, Referenced}`;
+>   `allowed_page_ids` 整个删除,授权就是「这一页引用了它且行使 `interact`」;元素带的是
+>   有序的具名 `Appearance` 列表(空列表 = 由页面定位);`RecognizerId` 改名 `ElementId`;
+>   页面签名不再是作者写的,而是从引用派生。两个 schema 一次原子升到
+>   `umbraflow-authoring/v3` 与 `umbraflow-annotations/v2`,旧 id 没有读路径。
+> - **词汇统一(2026-07-31,同日第二次改名)。** `recognizer` 这个词整个退出模型:
+>   `uf.recognizers` → `uf.elements`,trace 的 `recognizerId` → `elementId`,
+>   `RecognizerDefinition`/`RecognizerVariant` → `CompiledElement`/`CompiledAppearance`,
+>   `Variant`/`variant` → `Appearance`/`appearance`(CLI 旗标 `--variant` → `--appearance`)。
+>   `RecognitionCatalog`/`RecognitionRuntime` 不变。三个 schema 再升一版:
+>   `umbraflow-authoring/v4`、`umbraflow-annotations/v3`、`umbraflow-trace/v2`。
+>   授权文档里的 `[[annotation]]` 表——三选一分类留下的最后一个持久化名字——在同一次
+>   v4 升版里改名 `[[element]]`。
+> - **GUI 已归档**(`b57b67b`):`entry/workbench/app/`、ImGui + D3D11 外壳、文件对话框、
+>   一次性抓帧源、imgui submodule 与 ASan smoke fixture 一并移除;没有 `umbra-workbench.exe`,
+>   没有 `--smoke`,没有 `AsanSmoke` 测试标签。`entry/workbench` 剩下的是
+>   `umbra-authoring` 链接的标注后端(编辑层、`preview.*` 的证伪矩阵、持久化、源图导入)。
+> - **CLI 动词收敛**:`page add-anchor|add-target|add-info` → `page add --capability C...`;
+>   `--shared` 退掉;新增 `page reference`(把已有元素放到第二个页面);`match` 增加 `--page`。
+> - **仍欠的**:证伪矩阵还没有 CLI 动词、还没有 appearance 维度(§2.3 的 P1–P4 / R1–R4 一条未落);
+>   CLI 还没有画 appearance 的动词;`read` 能力的 `cycle_read` 与 OCR 接线未开始。
+
 - [x] 锁定 authoring/runtime schema、`template_rect`/`search_roi`、page resolution、动作证据、
       项目级尺寸/DPI 兼容契约与 Dear ImGui + D3D11 技术栈(2026-07-23)。
-- [ ] 独立 GUI:WGC 抓帧/导入图片、样本列表、画布缩放/平移、框选编辑、undo/redo。
+      **注(2026-07-31)**:schema 与技术栈两项都已被推翻——schema 见上面的进展块,
+      Dear ImGui + D3D11 随 GUI 一起归档。其余四项仍然有效。
+- [ ] ~~独立 GUI~~(**2026-07-31 弃用**,保留原文作为它曾经存在过的记录):
+      WGC 抓帧/导入图片、样本列表、画布缩放/平移、框选编辑、undo/redo。
       **A1 最小实现已落地(2026-07-24)**:`umbra-workbench`(Dear ImGui 1.92.8-docking +
       D3D11)、四面板、`--smoke` 自检通过。**2026-07-25 真机 GUI 使能修复**(`fix(workbench)` 提交):
       WGC 抓帧在高 DPI 目标上采用线程级 per-monitor 感知 + 真实 DPI 串入 source fingerprint(否则
@@ -56,22 +92,25 @@
       启用 docking(vendored 已是 docking 分支,原先没接线)。
       **2026-07-25 人工 GUI 走查暴露并修复的可用性/正确性缺口**(见
       [`pitfalls/workbench-authoring-ui.md`](pitfalls/workbench-authoring-ui.md)):
-      ① recognizer 只在新建那一刻可选中(`setSelectedRecognizerId` 全项目仅一处调用),
-      建了第二个后第一个永久不可达 → 新增 **Recognizers 面板**,选中时同步跟到它所属 source
-      (否则框会画在无关图上);② page 只在选中某 recognizer 时才在属性面板露一眼且**无法删除**
+      ① element 只在新建那一刻可选中(`setSelectedElementId` 全项目仅一处调用),
+      建了第二个后第一个永久不可达 → 新增 **Elements 面板**,选中时同步跟到它所属 source
+      (否则框会画在无关图上);② page 只在选中某 element 时才在属性面板露一眼且**无法删除**
       → 新增 **Pages 面板**;③ **完全没有删除**(建错只能立刻 undo)→ 补
-      `deleteRecognizer`/`deletePage`/`deleteSource`,连带撤出 page signature、清授权、
+      `deleteElement`/`deletePage`/`deleteSource`,连带撤出 page signature、清授权、
       删源上的回归用例,级联会触及只有作者能决定的东西时改为拒绝并给出可执行提示;
       ④ `page_anchor` ↔ `action_target` 类型切换在逐控件提交模型下**无解**(两条规则互锁)
       → `retypeRecognizer` 单事务改写类型及全部依赖字段;⑤ 默认名固定导致第二次新建必撞
-      (名字跨 recognizer/page 全局唯一)→ 取第一个空闲 `<stem>_N`;
+      (名字跨 element/page 全局唯一)→ 取第一个空闲 `<stem>_N`;
       ⑥ 成功编辑不写日志,只有失败留痕 → 每次被接受的编辑都要带描述;
-      ⑦ **既有 use-after-free**:属性面板持有 `RecognizerDefinition const*` 贯穿整帧,
+      ⑦ **既有 use-after-free**:属性面板持有 `CompiledElement const*` 贯穿整帧,
       而每次提交 `m_current = std::move(next)` 会整体换掉 document → 改为
       `PendingEdit` 延迟提交,在借用 document 的面板画完之后、actions 面板之前统一 apply。
-- [ ] 标注类型:`page_anchor`、`action_target`、`info_region`;分别编辑 `template_rect` 与
-      `search_roi`,以及 page、整数定点阈值和 required/forbidden 关系。
-      **A1 属性面板已覆盖全部字段(2026-07-24)**;多 page 编辑体验留 A2。
+- [ ] 标注能力:`identify` / `interact` / `read`(**2026-07-31 起是集合,不再是三选一的
+      `page_anchor` / `action_target` / `info_region`**);编辑 `template_rect` 与
+      `search_roi`,以及页面引用、整数定点阈值和 required/forbidden 关系
+      (required/forbidden 现在挂在**引用侧**的 `exercised.identify` 上,不在元素上)。
+      **A1 属性面板已覆盖全部字段(2026-07-24)**——该面板已随 GUI 归档,现在的作者入口是
+      `umbra-authoring page add --capability`;多 page 编辑体验留 A2。
 - [ ] 保存可完整 round-trip 的 authoring document,一键生成切分模板与 runtime manifest,无需手改配置。
   - [x] 平台无关后端:canonical authoring document 严格往返、完整引用校验、源 PNG hash/尺寸校验、
         内容寻址模板与 runtime manifest 的纯确定性编译(PNG 编码配置已 pin,2026-07-24)。
@@ -173,6 +212,12 @@
 >   `ObservationLease`——按键不指名坐标,没有会过时的矩形。它要求周期打开并花掉周期,
 >   为此 `CycleLedger` 多了 `spend` 与 `consume` 并列。键名集合是 `domain::KeyName` 这一份
 >   (A-Z / 0-9 / F1-F12,48 个,无别名)。
+>   **2026-07-31 更正并加宽**:上一条里「出牌需要拖拽」是错的——战斗界面自己印着
+>   `ENTER 使用卡牌` / `ESC 取消選擇` / `CAPS 確認卡牌資訊`,出牌就是 ENTER;真机复核也确认
+>   选中卡牌后点击目标敌人是**取消选择**而不是出牌,所以鼠标不是替代路径。键名集合因此加入
+>   具名键族 `ENTER` / `ESC` / `CAPS` / `SHIFT`(同屏右上角的锁定开关),变成 52 个名字对应
+>   52 个虚拟键;`TAB` 不收,因为没有观察到任何界面提供它。集合仍然封闭、仍然区分大小写,
+>   拒绝信息改为把整套词汇和大小写规则都写出来。
 > - trace 每条事件多一个 `frontEnd`(`"task"` / `"operator"`),校验状态机在 operator 流上
 >   拒绝 `framework.*`。
 >
@@ -194,7 +239,7 @@
       (2026-07-29 核对:`installSandbox` / `createStateWithQuota` /
       `ffi/cancellation.cpp`),此前这里写的「沙箱/取消/配额未做」已过时。
       历史记录见 `2026-07-21-p0b-luau-hardening-ledger.md`。
-- [ ] 最小 capability API 与 observe/resolve/act/wait 引擎循环;manifest 只读 recognizer/page 句柄,
+- [ ] 最小 capability API 与 observe/resolve/act/wait 引擎循环;manifest 只读 element/page 句柄,
       `ResolvedPage` + Detection + lease 才能授权坐标动作。
 - [ ] 每任务 VM generation、allocator 配额、interrupt 硬取消、逻辑时钟/RNG 与 generation 热加载
       (热加载 P0 只做加载边界语义,活体中途热切推 P2——2026-07-27 裁决)。

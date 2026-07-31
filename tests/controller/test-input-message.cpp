@@ -198,6 +198,101 @@ namespace uf
         );
     }
 
+    TEST_CASE("wheel notches convert to raw deltas and refuse undeliverable counts")
+    {
+        auto const up = WheelDelta::create(1);
+        REQUIRE(up.has_value());
+        CHECK(up->notches() == 1);
+        CHECK(up->rawUnits() == int16{120});
+
+        auto const down = WheelDelta::create(-3);
+        REQUIRE(down.has_value());
+        CHECK(down->rawUnits() == int16{-360});
+
+        auto const boundary = WheelDelta::create(k_maxWheelNotches);
+        REQUIRE(boundary.has_value());
+        CHECK(boundary->rawUnits() == int16{32'760});
+
+        for (auto const notches : std::array<int32, 3>{
+            0,
+            k_maxWheelNotches + 1,
+            -k_maxWheelNotches - 1,
+        })
+        {
+            CAPTURE(notches);
+            auto const result = WheelDelta::create(notches);
+            REQUIRE_FALSE(result.has_value());
+            CHECK(automationKind(result.error()) == AutomationErrorKind::ActionRejected);
+        }
+    }
+
+    TEST_CASE("screen pixels admit the negative coordinates client pixels refuse")
+    {
+        auto const offScreen = controller_detail::ScreenPixel::create(-1, -2);
+        REQUIRE(offScreen.has_value());
+        CHECK(offScreen->x() == -1);
+        CHECK(offScreen->y() == -2);
+        CHECK_FALSE(ClientPixel::create(-1, -2).has_value());
+
+        // A window on a monitor left of and above the primary one puts its whole
+        // client area at negative screen coordinates.
+        auto const translated = controller_detail::screenPixelFor(
+            controller_detail::ClientOrigin{.x = -1'920, .y = -50},
+            pixel(100, 200)
+        );
+        REQUIRE(translated.has_value());
+        CHECK(translated->x() == -1'820);
+        CHECK(translated->y() == 150);
+
+        auto const unencodable = controller_detail::screenPixelFor(
+            controller_detail::ClientOrigin{.x = 32'700, .y = 0},
+            pixel(100, 0)
+        );
+        REQUIRE_FALSE(unencodable.has_value());
+        CHECK(automationKind(unencodable.error()) == AutomationErrorKind::ActionRejected);
+    }
+
+    TEST_CASE("wheel lParam is screen space where the button messages are client space")
+    {
+        auto const clientPixel = pixel(100, 200);
+        auto const screenPixel = controller_detail::screenPixelFor(
+            controller_detail::ClientOrigin{.x = 30, .y = 40},
+            clientPixel
+        );
+        REQUIRE(screenPixel.has_value());
+        auto const delta = WheelDelta::create(1);
+        REQUIRE(delta.has_value());
+
+        auto const wheel = controller_detail::wheelSpec(*screenPixel, *delta, false);
+        CHECK(wheel.message == controller_detail::k_wmMouseWheel);
+        // (130, 240) on screen, not the (100, 200) the same point has in the
+        // client area a WM_LBUTTONDOWN would be posted with.
+        CHECK(wheel.lParam == intptr{0x00F0'0082});
+        CHECK(
+            controller_detail::pointerSpec(
+                controller_detail::PointerMessage::LeftDown,
+                clientPixel
+            ).lParam == intptr{0x00C8'0064}
+        );
+    }
+
+    TEST_CASE("wheel wParam packs the signed delta above the held-button state")
+    {
+        auto const at = controller_detail::ScreenPixel::create(0, 0);
+        auto const forward = WheelDelta::create(2);
+        auto const back = WheelDelta::create(-2);
+        REQUIRE(at.has_value());
+        REQUIRE(forward.has_value());
+        REQUIRE(back.has_value());
+
+        CHECK(controller_detail::wheelSpec(*at, *forward, false).wParam == uintptr{0x00F0'0000});
+        CHECK(controller_detail::wheelSpec(*at, *back, false).wParam == uintptr{0xFF10'0000});
+        CHECK(
+            controller_detail::wheelSpec(*at, *forward, true).wParam
+            == (uintptr{0x00F0'0000} | controller_detail::k_leftButtonMask)
+        );
+    }
+
     TEST_CASE("character and Unicode-character specs post code points directly")
     {
         CHECK(

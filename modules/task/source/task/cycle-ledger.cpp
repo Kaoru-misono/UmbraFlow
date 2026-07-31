@@ -12,6 +12,7 @@
 
 #include <atomic>
 #include <limits>
+#include <optional>
 #include <utility>
 
 namespace uf::task
@@ -132,16 +133,33 @@ namespace uf::task
         m_open->page = std::move(page);
     }
 
+    auto CycleLedger::resolvedPageId() const noexcept -> std::optional<annotation::PageId>
+    {
+        UF_ASSERT(m_open.has_value());
+        if (!m_open->page.has_value())
+        {
+            return std::nullopt;
+        }
+        return m_open->page->pageId();
+    }
+
     auto CycleLedger::consume(CycleTicket ticket) -> Result<Consumed>
     {
         UF_TRY(requireOpen(ticket));
 
         if (!m_open->page.has_value())
         {
+            // The same skipped step the find refusal names, one verb later, so
+            // it carries the same kind: nothing was judged and refused here
+            // either -- the click never reached the authorization check that
+            // could have rejected it.
             return fail(
-                AutomationErrorKind::ActionRejected,
-                "this observation cycle resolved no page, so the click has no "
-                "authorization evidence; resolve the cycle's page first"
+                AutomationErrorKind::PageUnresolved,
+                "this observation cycle has not resolved a page, and the page "
+                "IS a click's authorization evidence -- authorisation is the "
+                "resolved page's reference to the element, and no script can "
+                "supply one. Resolve this cycle's page first, then find and "
+                "click"
             );
         }
 

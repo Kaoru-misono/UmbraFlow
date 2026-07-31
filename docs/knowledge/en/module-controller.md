@@ -152,7 +152,12 @@ failures are also published to the same wait predicate.
 1. `waitForFrame` waits for the latest frame, item closed, callback failure, or a stall timeout.
    `StallTracker` judges freshness by arrival time rather than by pixel change or consumption time;
    even if a frame is already in the slot, if the timeout is exceeded at consumption time it still
-   returns `CaptureStalled`.
+   returns `CaptureStalled`. `StallTracker::check` requires a `TargetWindowState` alongside the
+   instant, because a minimized or destroyed window composites nothing and is therefore the *cause*
+   of the stall rather than an unrelated fact. `observeTargetWindow` (in `windows-capture.cpp`,
+   `IsWindow` then `IsIconic`) supplies it, and `stalledFrameFailure` turns it into a message that
+   names the window state and the action that clears it. Occlusion and an off-screen position are
+   deliberately not probed: DWM keeps composing for both, so neither can be the cause.
 2. `CaptureGeometryState::observeContentSize` requires every frame's `ContentSize` to be exactly the
    same as at creation, and the D3D surface size must also equal the confirmed size. Any invalid value
    or mismatch permanently latches invalidated, after which the session must be rebuilt even if the
@@ -183,8 +188,8 @@ accepting=false closes its frame and does not refill the slot.
 follow `ResolvedTarget`; when the generation or session changes, a new value should be created.
 
 The public entry points for coordinate actions are `movePointer`, `click`, `pointerDown`,
-`pointerUp`, and `longPress`. They accept a `Point<ClientSpace>` and an `ObservationLease`. The actual
-rejection order of `checkPointerPreconditions` is:
+`pointerUp`, `longPress`, and `scroll`. They accept a `Point<ClientSpace>` and an `ObservationLease`.
+The actual rejection order of `checkPointerPreconditions` is:
 
 1. the lease session must equal `DeliveryTarget::sessionId()`;
 2. the current monotonic time must not be later than the lease expiry;
@@ -200,6 +205,19 @@ compensate. `longPress` waits after the down, then, through a caller-provided re
 requires the HWND, session, and generation to be all unchanged before delivering the up; a change in
 client geometry itself does not affect this identity comparison.
 
+`scroll` posts one `WM_MOUSEWHEEL` at that point, and it is the only entry point here whose `lParam`
+is in **screen** coordinates: Win32 documents the wheel message's position that way, while
+`WM_MOUSEMOVE` and the button messages are in client coordinates. It therefore translates the
+`ClientPixel` by `ClientToScreen(hwnd, {0, 0})` into a `controller_detail::ScreenPixel` before
+building the message. That is a separate type on purpose — a screen coordinate is negative on any
+monitor left of or above the primary one, which `ClientPixel` refuses by construction, so the two
+spaces cannot be passed interchangeably to a message builder. It still runs the full
+`checkPointerPreconditions` fence, because the wheel's position is what the target hit-tests to
+decide which control scrolls. `WheelDelta` counts notches of `WHEEL_DELTA` (120), positive away from
+the operator, refuses zero, and is bounded so the raw delta still fits the signed 16-bit high word of
+`wParam`. Vertical only: `WM_MOUSEHWHEEL` is deliberately absent, because it would need its own axis
+in every layer down to the wire and nothing in this project scrolls sideways.
+
 The keyboard entry points `keyPress`, `keyDown`, `keyUp`, `inputText`, and `inputUnichar` do not
 accept an `ObservationLease`; they only compare the action generation. `KeyInput` records the virtual
 key and the extended-key bit; `inputText` first strictly decodes UTF-8, then sends `WM_CHAR` per
@@ -214,6 +232,21 @@ mapping: `KeyInput::fromName` and `KeyInput::fromKeyName` resolve one, and **whi
 `KeyName`'s single definition in `modules/domain`**, which `fromName` routes through rather than
 repeating, so the two cannot come to disagree. The other four entry points still have no production
 caller.
+
+`fromKeyName` resolves three families, each as a rule rather than a comparison chain: the named keys
+through a `NamedKeyCode` table, `"F1".."F12"` through `VK_F1 + n - 1` since those codes are
+consecutive, and a single letter or digit through its own ASCII code, since `VK_A..VK_Z` and
+`VK_0..VK_9` are defined as exactly that. The named table is paired with `domain::k_namedKeys` by a
+`static_assert`, so a name admitted in `domain` with no virtual key here fails the build rather than
+reaching the single-character branch and tripping its `UF_CHECK` on a keystroke the author was
+entitled to write. That guard is what keeps `fromKeyName` `noexcept` and total. `"ENTER"` is
+`VK_RETURN` and **not** extended; the extended numpad Enter remains its own named factory,
+`KeyInput::numpadEnter()`.
+
+One consequence of admitting `"SHIFT"` is worth stating: `wheelSpec` still reports only the left
+button in the wheel's `wParam`, never `MK_SHIFT`. A held modifier has become expressible, but
+reaching that state needs `keyDown`, which has no production caller, so no wheel this project posts
+can be missing a modifier it should carry. Derive one there the day `keyDown` acquires a caller.
 
 `modules/controller/source/controller/detail/input-message.hpp` encodes action determinism into a
 `PostSpec`: the mouse uses only `WM_MOUSEMOVE`, `WM_LBUTTONDOWN`, and `WM_LBUTTONUP`, and the keyboard
@@ -348,8 +381,10 @@ one-shot authoring source capture and then hands the `Frame` to source ingestion
 visible/non-iconic and "first title substring match" policy belongs to workbench, not to controller's
 resolution contract.
 
-`entry/m0-demo/` uses the target, capture, and input surfaces directly and is now frozen as a
-real-machine acceptance reference; the product path is superseded by the engine/CLI composition. The
+`entry/input-agent/` and `entry/m0-demo/` use the target, capture, and input surfaces directly.
+The agent is the annotation front-end (see [`entry-input-agent.md`](entry-input-agent.md)); the demo
+is frozen as a real-machine acceptance reference, and its product path is superseded by the
+engine/CLI composition. The
 low-level `AuditLog` records Win32 message attempts, while the engine `ITraceSink` records product
 events such as observe/authorize/deliver; the two serve different purposes and cannot substitute for
 each other.

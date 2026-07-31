@@ -118,7 +118,7 @@ struct Args final
 };
 
 // Avoid: hides optionality and container shape.
-using Ids = std::vector<RecognizerId>;
+using Ids = std::vector<ElementId>;
 using MaybeOffset = std::optional<TemplateOffset>;
 
 // Avoid: a borrow word naming an owner.

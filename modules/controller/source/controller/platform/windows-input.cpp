@@ -36,6 +36,35 @@ namespace uf::controller_platform
         return static_cast<uint8>(scanCode & 0xFFU);
     }
 
+    auto clientOriginOnScreen(
+        WindowHandle handle
+    ) -> Result<controller_detail::ClientOrigin>
+    {
+        auto const nativeHandle = toNativeHandle(handle);
+        auto origin = POINT{.x = 0, .y = 0};
+        // SAFETY: ClientToScreen reads the opaque HWND's own geometry and writes only
+        // the live stack-local POINT whose address it is given, which is that API's own
+        // in-out contract. It retains neither the handle nor the pointer.
+        if (ClientToScreen(nativeHandle, &origin) == FALSE)
+        {
+            // SAFETY: GetLastError reads calling-thread state immediately after the failed
+            // ClientToScreen call and does not access caller-owned memory.
+            auto const error = GetLastError();
+            return fail(
+                AutomationErrorKind::ControllerDisconnected,
+                std::format(
+                    "ClientToScreen failed for window {:#x}: win32 error {}",
+                    static_cast<uintptr>(handle.value()),
+                    error
+                )
+            );
+        }
+        return controller_detail::ClientOrigin{
+            .x = static_cast<int32>(origin.x),
+            .y = static_cast<int32>(origin.y),
+        };
+    }
+
     auto postInputMessage(
         WindowHandle windowHandle,
         controller_detail::PostSpec spec,

@@ -1,5 +1,18 @@
 # 三层 Task System — 目标架构与实施计划
 
+> **第一层边界已改(2026-07-31 开发者裁决)。** 三层划分本身有效,观察周期与票据账本
+> 有效。但第三节第一层清单里的 `resolvePage` 与 `findAction`、依赖方向图里的
+> `engine -> annotation`、第四节的 `cycle_page` 与 `cycle_find`,**都已作废**:
+> element 与 page 上移到第二层 Luau,C++ 只保留 `cycle_match` / `cycle_read` /
+> `cycle_click` 三个原语,外加项目文件读写。读本文这几处时以
+> [`2026-07-31-script-owned-page-model.md`](2026-07-31-script-owned-page-model.md)
+> 为准,该文尚未实施。
+
+> **词汇统一(2026-07-31)。** 本文正文已按新词汇改写:脚本能力根表
+> `uf.recognizers` 改名 `uf.elements`,trace 字段 `recognizerId` 改名 `elementId`,
+> 合并 trace schema 随之升到 `umbraflow-trace/v2`。裁决与理由见
+> `CONTEXT.md` 的「Annotation model」一节。
+
 > 状态:**已定方向,2026-07-29 开发者确认**。允许大范围重构与删除。
 >
 > 权威性:本文取代
@@ -102,7 +115,7 @@ framework 若用 C++ 写,上面每一个都是「C++ 回调进 Lua」:project �
 cycle_open(deadline)              -> ticket        一次 capture
 cycle_close(ticket)               -> ()            确定性释放,幂等
 cycle_page(ticket)                -> page | nil    同帧页面解析
-cycle_find(ticket, recognizer)    -> hit | nil     同帧查找
+cycle_find(ticket, element)    -> hit | nil     同帧查找
 cycle_click(ticket, hit)          -> receipt       消费周期
 ```
 
@@ -129,6 +142,32 @@ interrupt handler 拿到的是**当前**周期,handler 消费掉观察后由外�
 
 > **修订 2026-07-29(orchestrator)**:本节初稿写的是「票据账本」,隐含账本可装多条。
 > 那样「跨帧结构性不可能」这句话不成立。上面的硬规则是收紧后的版本。
+
+> **补一条周期协议的排序规则(2026-07-31)——先解析页面,再 find。**
+>
+> 上面那张表把 `cycle_page` 和 `cycle_find` 并列写着,读起来像两个互不相干的同帧动词。
+> 不是:**`cycle_find` 要求这个周期已经解析出页面**,没有就失败,而且它**不会替你解析**。
+> 失败的种类是 `page_unresolved`(不是 `action_rejected`,因为什么都没被尝试)。
+>
+> 原因在标注模型这一侧:一次 find 要用的东西全部挂在**页面对元素的那一行引用**上——
+> 本页细化的搜索范围、本页钉死的形态、以及 interact 那条授权边。页面未知,就没有那一行
+> 可读。详见
+> [标注模型重构](2026-07-31-annotation-model-capabilities.md) §2.2 与「两条实现期裁决」A。
+>
+> **不替脚本解析是裁决,不是遗漏。** 自动解析会**藏起成本**(解析要走完 `pageAnchorOrder`,
+> 是一个周期里最贵的部分,而 wait 循环每轮都要付),而且会让**解析不出页面**以
+> 「find 失败」的形式冒出来,更难懂。
+>
+> 落到三个写法上:
+>
+> - `ctx:wait_for_page(...)` 交出来的周期**已经解析过**(`observeCycle` 总是先解析),
+>   interrupt handler 拿到的同理;
+> - `ctx:cycle(fn)` **不解析**,块里要自己先 `cycle:page()` 并判 nil;
+> - 直接用原语(`ctx:cycle_open` / `ctx:cycle_find`)最容易踩,因为它上面没有任何东西
+>   替你做。
+>
+> 同一条规则也管 `cycle_click`:第 2 点说的「C++ 要求该 ticket 已成功解析出页面」失败时
+> 同样是 `page_unresolved`。
 
 **嵌套 wait 的行为**:点击已消费周期,所以「等首页 → 点按钮 → 等下一页」这种顺序
 嵌套天然可行,而且是最常见的写法。真正的嵌套(外层周期仍开着就再等一个页面)会撞上
@@ -160,7 +199,7 @@ C++ 兜底释放账本里的一切。
 cycle_open()                      -> ticket | raise        捕获期限由宿主铸,不经脚本
 cycle_close(ticket)               -> ()
 cycle_page(ticket)                -> page | nil          nil = Unknown/Ambiguous(已入 trace)
-cycle_find(ticket, recognizer)    -> hit | nil           nil = Tier A 未命中
+cycle_find(ticket, element)    -> hit | nil           nil = Tier A 未命中
 cycle_click(ticket, hit)          -> receipt | raise
 
 -- 时间与等待:全部有界、感知 stop token
@@ -255,11 +294,18 @@ random(...)                       -> number
 > 手牌);而鼠标路径根本表达不了「打出一张牌」——真机验证过,点卡牌不会选中它,点敌人打开的
 > 是那个敌人的查看面板——所以出牌需要拖拽,而当时没有任何前端能做拖拽。
 >
+> **2026-07-31 更正:出牌不需要拖拽,需要 `ENTER`。** 战斗界面自己把这条契约印成三行——
+> `CAPS 確認卡牌資訊` / `ENTER 使用卡牌` / `ESC 取消選擇`——上面那句「需要拖拽」是当时读错了
+> 界面。鼠标不是替代路径这一点仍然成立,而且更强:选中卡牌、准星指向敌人时点击那个敌人是
+> **取消选择**(手牌、EP 与 05/10 牌堆计数全部原样回退)。结论因此不变——这必须是一个按键
+> 原语——但缺的东西变了:缺的不是拖拽,是键名集合里没有 `ENTER`。`domain::KeyName` 已于同日
+> 加入具名键族 `ENTER` / `ESC` / `CAPS` / `SHIFT`,详见 `docs/knowledge/*/module-domain.md`。
+>
 > **它的形状与 `cycle_click` 的差别,每一处都是有理由的:**
 >
 > - **收 ticket,不收 hit。** 没有命中序数,因为根本没有命中:按键不指名位置,没有「先找到
 >   什么」这一步。
-> - **不要求已解析的 page。** 标注项目声明的是「这一页授权哪些 recognizer」,对按键则什么
+> - **不要求已解析的 page。** 标注项目声明的是「这一页授权哪些 element」,对按键则什么
 >   都没声明;这里的一个 resolved page 会是一份没有东西能核对它的证据。
 > - **仍然要求周期打开,并且花掉它。** 要求打开的周期不是仪式:它把这次按键放进「同时只有
 >   一个周期」的定序里,与它前后的每次观察和点击排在一起,并给它的 trace 行一个周期序数,
@@ -311,7 +357,7 @@ random(...)                       -> number
 
 ```lua
 uf.pages.<name>          -- 冻结句柄
-uf.recognizers.<name>    -- 冻结句柄
+uf.elements.<name>    -- 冻结句柄
 uf.task                  -- define / interrupt / import(P1) / backoff
 uf.errors.<kind>         -- 错误 kind 常量,由 AutomationErrorKind 生成
 ```
@@ -349,7 +395,7 @@ return uf.task.define {
     run = function(ctx)
         ctx:step("daily", function()
             ctx:wait_for_page(uf.pages.home, { timeout_ms = 60000 }, function(home)
-                local hit = home:find(uf.recognizers.daily_button)
+                local hit = home:find(uf.elements.daily_button)
                 if hit then
                     home:click(hit)
                 end
@@ -380,7 +426,7 @@ return uf.task.interrupt {
     max_hits = 3,
 
     handle = function(ctx, cycle)
-        local close = cycle:find(uf.recognizers.close_dialog)
+        local close = cycle:find(uf.elements.close_dialog)
         if close then
             cycle:click(close)
         end
@@ -511,7 +557,7 @@ boot 顺序:
 -> C++ 构造私有能力面,留在栈上
 -> luau_load(framework bundle, env = framework env, arg = 私有能力面),执行,
    冻结每个模块的 exports 并按模块名绑进 framework env;随后丢掉宿主自己那份引用
--> 装宿主数据表(uf.recognizers / uf.pages / uf.errors)为普通全局并递归冻结
+-> 装宿主数据表(uf.elements / uf.pages / uf.errors)为普通全局并递归冻结
 -> luaL_sandbox
 -> C++ 构造 project env 原型:显式白名单,【没有】metatable,因而没有 __index 链
    指向 framework env 或主 globals;白名单含 projectGlobals(`uf`)与
@@ -683,7 +729,7 @@ veto 第 6 条(人为阻塞每个长耗时 binding,验证总退出仍在预算�
   合并前有两份(`uf-tables.cpp`——当时还叫 `umbra-tables.cpp`——的 `snakeName` 与
   `trace/event.cpp` 的
   `errorKindWireName`),注释要求二者恒等但无共享真相、无一致性测试(p0b §6 第 5 项)。
-- `uf.errors` 由**宿主在装能力面时用 C++ 直接构建**,与 `uf.pages` / `uf.recognizers`
+- `uf.errors` 由**宿主在装能力面时用 C++ 直接构建**,与 `uf.pages` / `uf.elements`
   并列,递归只读。
 - 两条测试:表覆盖 enum 的每个取值(不多不少);同一 kind 在 trace 里的拼写与脚本
   可见的拼写是同一个字符串。
@@ -855,7 +901,7 @@ run.resources_validated
 run.finished             outcome / error kind
 engine.observed          capture session id / target generation / frame id
 engine.page_resolved     page id | unknown | ambiguous,分数
-engine.action_found      recognizer id / sad score / matched rect
+engine.action_found      element id / sad score / matched rect
 engine.action_authorized
 engine.action_rejected   原因
 engine.action_delivered  client 坐标 / receipt
@@ -874,6 +920,16 @@ task.native_call         序号 / 原语 / 入参身份 / outcome / error kind /
 >   能力面现在有两个同级消费者(task 跑的受信任 Luau framework,和从进程外送命令的操作者),
 >   「这件事是谁做的」对每一行都要问一次,所以答案由 recorder 为整次 run 持有一份并写到每一
 >   行上——没有任何发射方能忘掉它,也没有谁能冒领另一个前端的活。
+>
+>   > **更正(2026-07-31):枚举有第三个值 `"annotation"`,但 trace 行上仍然只可能看到前两个。**
+>   > 第三个是 `umbra-input-agent`(2026-07-31 前拼作 `m0-demo input-agent`)——标注会话
+>   > 为了量一个裸窗口而驱动它。它够不到项目,
+>   > 于是没有 generation、没有能力面,也**写不出这个 schema 的任何一行**:每一行都带
+>   > `runId` 与 `generationId`,而它两者皆无。它把同一个值盖在自己的 results 文件上,
+>   > 拼写来自新公开的 `trace::frontEndWireName`。把它放进同一个枚举而不是另造一个词,
+>   > 是因为「是谁驱动了这个目标」是一个问题、一套答案;拼成两套,正是「第三个值被报成第二个」
+>   > 的成因——`TaskHost::Generation::claimFrontEnd` 原来那个三目表达式会一字不差地这么干,
+>   > 现在它调 `frontEndWireName`。
 > - **`TaskHost` 交给 recorder 的就是它闩住的那个前端值**,所以「一条流归属谁」与「产生它的
 >   互斥」是同一件事,而不是两件必须彼此吻合的事。互斥本身见本节下面的校验状态机与 §13。
 > - **`frontEnd` 同时是一条协议规则,不只是标签**:§12 的校验状态机在 operator 流上**拒绝
@@ -881,6 +937,10 @@ task.native_call         序号 / 原语 / 入参身份 / outcome / error kind /
 >   结构,而 operator 流上没有那个 framework,这样一行只可能是宿主 bug 把 task 的结构安到了
 >   操作者头上。拒绝它,这个字段才是权威而不是装饰。因此本节「两个失败 kind 的分界」那份
 >   `InternalInvariant` 清单要多读一条:operator 流上的 `framework.*`。
+>
+>   > **更正(2026-07-31):规则写的是「不是 task 流就拒」,不是「operator 流就拒」。**
+>   > 差别在第三个值出现时才显形:后加的前端由构造继承这条拒绝,而不是靠谁记得去列它。
+>   > `tests/trace/test-stream-validator.cpp` 用 `FrontEnd::Annotation` 钉住了这一点。
 
 > **补记 2026-07-29(阶段 2c `c37ee5b`)——`run.finished` 的 error kind 是真 kind 了**:
 > 在此之前,一个**没人捕获**的 Tier B 错误穿出脚本时,`script` 只知道「栈顶是个非字符串
@@ -1251,7 +1311,7 @@ SLA;一条 trace 足以解释每一步。
   `domain::automationErrorWireName`,错误 kind 表由宿主从它构建。根改名已于阶段 2d
   `2f4af93` 落地,这张表今天挂在 `uf.errors` 上。)
 - project 环境里的全部裸动词。(**已删,阶段 2b-2 `e89bc53`**:project 全局 `uf` 只剩
-  数据——`uf.recognizers` / `uf.pages` / `uf.errors`,`buildUfData` 里没有任何能观察或
+  数据——`uf.elements` / `uf.pages` / `uf.errors`,`buildUfData` 里没有任何能观察或
   动作的东西;原来的动词由 `ctx` 顶替。)
 
 **entry/cli**
@@ -1362,13 +1422,19 @@ SLA;一条 trace 足以解释每一步。
 #### 2d — 根 `umbra` → `uf`(**已完成,`2f4af93`**)
 
 - `lua_setglobal` 的根名与校验器的 `k_namespace` 都改成 `uf`;六张句柄 metatable 的标签
-  改成 `uf.recognizer` / `uf.page` / `uf.cycle` / `uf.resolved_page` / `uf.hit` /
+  改成 `uf.element` / `uf.page` / `uf.cycle` / `uf.resolved_page` / `uf.hit` /
   `uf.error`;Tier C 哨兵串改成 `"uf: task cancelled"`;错误消息与示例一并改。
   `umbra-tables.cpp` 随之改名为 `uf-tables.cpp`。
 - **刻意不动的边界**:产品名 `UmbraFlow` / `umbra-flow` / `umbra-workbench`,以及
   schema id `umbraflow-authoring/v2` / `umbraflow-annotations/v1` /
   `umbraflow-trace/v1`,全部保持原样。改的是**脚本能力根**这一个词,不是产品的名字,
   也不是任何线上契约的 id。文档若把这两件事混在一起,以此条为准。
+
+  > 后续事实(2026-07-31,不影响本条裁决):本条要说的是「`uf` 改名不碰这些东西」,那句话
+  > 至今成立。但被点名的三样东西此后各自变了,别把这一行当作它们今天的值:两个标注 schema
+  > 已升到 `umbraflow-authoring/v3` 与 `umbraflow-annotations/v2`(旧 id 无读路径),
+  > `umbraflow-trace/v1` 不变;`umbra-workbench` 这个二进制已随 GUI 归档(`b57b67b`)。
+  > 见 [`2026-07-31-annotation-model-capabilities.md`](2026-07-31-annotation-model-capabilities.md)。
 
 #### 2c — 错误改宿主 mint 的 userdata(**已完成,`c37ee5b`**)
 
@@ -1512,7 +1578,7 @@ pause 的实现(只留 §13 的签名,以及「framework 的观察周期边界�
    代价是错误报得晚:一个从不触发的 interrupt 带着非法 id 也不会有人说什么。
    第一个真日常时一并看:要么接受这个延迟,要么给 framework 一个查上限的原语。
 
-2. workbench 共享元素展开名(`back_<page>`)直接成为 `uf.recognizers.back_main`
+2. workbench 共享元素展开名(`back_<page>`)直接成为 `uf.elements.back_main`
    这类 member key,可读性是否接受(p0b 遗留项)。
 3. **最小验证门是否补一道 clang 检查。** 2026-07-29 实测发现一个结构性盲区:
    `modules/core/source/core/safety/annotations.hpp` 里的 `UF_LIFETIME_BOUND` 等
@@ -1545,6 +1611,12 @@ pause 的实现(只留 §13 的签名,以及「framework 的观察周期边界�
 > 升到 v2 的是**授权文档** `umbraflow-authoring/v2`(`authoring-document.hpp:27`);
 > 两者是不同的 schema,此前被混为一谈。
 >
+> > 再更正(2026-07-31):「两者是不同的 schema」这条区分仍然是本条的要点,但两个版本号都
+> > 已经不是这里写的了——能力模型在一次原子改动里把它们一起升到
+> > `umbraflow-authoring/v3` 与 `umbraflow-annotations/v2`,并且旧 id 都没有读路径。
+> > 恰恰因为版本号会错位,写全名而不是「v2」这条纪律更要紧了。见
+> > [`2026-07-31-annotation-model-capabilities.md`](2026-07-31-annotation-model-capabilities.md) §三。
+>
 > 未处理、留给开发者的治理问题:`docs/adr/` 已空,而
 > `.claude/skills/improve-codebase-architecture` 仍教「读 `docs/adr/`、按需写
 > `docs/adr/NNNN-*.md`」。ADR 在本仓库是否还作为决策记录格式,是治理裁决而非漂移。
@@ -1554,7 +1626,7 @@ pause 的实现(只留 §13 的签名,以及「framework 的观察周期边界�
 - `CONTEXT.md` — capability 根改 `uf`;新增词条「观察周期(Observation cycle)」、
   「票据(Ticket)」、「私有能力面」;`umbra` 移入 _Avoid_。
 - `docs/plans/2026-07-22-annotation-design.md` §4 — S0 拼写改
-  `uf.recognizers.NAME` / `uf.pages.NAME`,加日期注记。
+  `uf.elements.NAME` / `uf.pages.NAME`,加日期注记。
 - `docs/plans/2026-07-21-product-form-and-roadmap.md` — 落地约束「脚本只看到
   `umbra.*`」改 `uf.*`;`:244` 指向已删 ADR 0001 的注记改为指向本文 §11 的可逆性论证。
 - `docs/plans/2026-07-27-p0b-script-layer.md` — 顶部加「脚本层裁决已被本文取代」;

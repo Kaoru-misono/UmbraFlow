@@ -10,7 +10,7 @@ dependencies; unfinished product capabilities are tracked under
 UmbraFlow authorizes background actions from visual evidence. Platform-independent modules own
 recognition and authorization, while Windows code owns target capture and input delivery. They are
 combined only under `entry/`, so recognition policy does not depend on HWND and controller does not
-need to understand pages or recognizers.
+need to understand pages or elements.
 
 ```text
 core
@@ -27,8 +27,14 @@ controller (Windows) -> core, domain
 script               -> core, domain
 entry/cli            -> task (+ engine, controller)
 entry/authoring      -> entry/workbench + entry/cli (+ image)
-entry/workbench      -> annotation + engine + controller + image
+entry/workbench      -> annotation (+ image)
 ```
+
+> Corrected 2026-07-31: `entry/workbench` also read `engine` and `controller`
+> while it was a GUI. `b57b67b` archived that shell; what remains is the
+> authoring backend library, and it links `annotation` publicly and `image`
+> privately. The engine still reaches the authoring flow, but through
+> `entry/cli`, because `umbra-authoring match` runs a real `RecognitionRuntime`.
 
 An arrow points from a dependent toward its dependency. `vision` and `image` are peers and do not
 depend on one another. `modules/task` and `modules/trace` are not drawn here and have no page of
@@ -39,33 +45,41 @@ their own yet; see `README.md` for the scope those two pages are still owed.
 | `core` | `Result`, checked arithmetic, strong types, monotonic time, UTF-8, contract checks | Game, image, page, or platform policy |
 | `domain` | Frame identity, coordinate spaces, target generations, detections, observation leases, error classification | Recognition algorithms and input delivery |
 | `vision` | Gray8 conversion and resource-bounded SAD matching | PNG, page rules, and product thresholds |
-| `image` | PNG encoding/decoding, pixel-layout conversion, and rectangular crops | Recognizers and action authorization |
+| `image` | PNG encoding/decoding, pixel-layout conversion, and rectangular crops | Elements and action authorization |
 | `annotation` | Annotation model, page recognition, evidence, authorization, and deterministic compilation | Window capture and input delivery |
 | `engine` | Published-artifact loading, same-frame decisions, port orchestration, and trace events | Win32, target selection, and the Luau host |
 | `controller` | Window discovery, target continuity, WGC, DPI, and strict-background input | Page recognition and action selection |
 | `script` | The Luau substrate: VM, sandbox, quotas, instruction and time budgets, interrupt cancellation, and the two-environment split | Task policy — waiting, retry, steps, and interrupts, which live in the Luau framework under `modules/task/runtime/` |
 
 `controller` is the only reusable module restricted to Windows. The real adapters used by
-`umbra-workbench` and `umbra-flow run` are also Windows-only, but platform code remains under
+`umbra-flow run` are also Windows-only, but platform code remains under
 `entry/`; it does not flow back into domain, vision, image, annotation, or engine. Linux and macOS
 can therefore still build the platform-independent modules, and CI can test the runtime flow with
 fake ports.
 
-## The four binaries, five entry points
+## The three binaries, four entry points
 
-`umbra-flow` is one binary with two subcommands; the other three each have one.
+`umbra-flow` is one binary with two subcommands; the other two each have one.
 
 | Entry point | Purpose | Current status |
 | --- | --- | --- |
-| `umbra-workbench` | Edit annotation projects, capture source images, preview, compile, and publish | A1 annotation tool |
-| `umbra-authoring` | Do the same authoring work from a command line, plus measure frames | Development tool (2026-07-30) |
+| `umbra-authoring` | Author annotation projects from a command line, plus measure frames | The only authoring tool (2026-07-30) |
 | `umbra-flow run` | Load a published project and run the Luau task named by `--task NAME` | P0 single-task runner |
 | `umbra-flow drive` | Load the same project and execute operator JSON-line commands from `--queue` | P0 operator front-end (2026-07-30) |
-| `m0-demo` | Verify WGC capture and strict-background input | Frozen; no longer carries product features |
+| `umbra-input-agent` | Serve an annotation session's command queue against a raw window | The annotation front-end; left `m0-demo` on 2026-07-31 |
+| `m0-demo` | Verify WGC capture and strict-background input | Frozen; the fixed loop and the `capture` diagnostic, nothing else |
+
+> Corrected 2026-07-31: a fifth entry point, the `umbra-workbench` GUI, stood at
+> the top of this table as "A1 annotation tool". `b57b67b` archived it; git
+> history holds the shell. Its backend is still linked, now by `umbra-authoring`,
+> so the authoring capabilities described further down did not go with it — but
+> three affordances that existed only in the GUI did, and they are tracked in
+> [the capability plan](../../plans/2026-07-31-annotation-model-capabilities.md)
+> §四之二.1. Two of them have since landed as `umbra-authoring page reference`.
 
 These paths must not be mixed:
 
-- Workbench and `umbra-authoring` can generate recognition assets, but neither has any input
+- `umbra-authoring` can generate recognition assets, but it has no input
   capability.
 - `umbra-flow` reads only the generated runtime manifest and templates, not the full authoring
   screenshots.
@@ -75,16 +89,38 @@ These paths must not be mixed:
   to the same private primitives the trusted Luau framework binds to, and inherits the same
   refusals. It is a sibling consumer, not a hole into Luau — no chunk, no source, no string that
   becomes code.
+- **`trace::FrontEnd` has a third value, and it is not a third consumer of that surface**
+  (2026-07-31). `annotation` is `umbra-input-agent`: an authoring session driving a raw window
+  to measure it, with no project, no generation and no capability surface. It is named in the same
+  enum because "who drove this target" is one question with one set of answers, and an annotation
+  session's clicks and captures were otherwise unattributable after the fact. It writes no
+  `umbraflow-trace/v2` line — every line of that schema carries a `runId` and a `generationId`, and
+  it has neither — so it stamps its own results file with the same value under the same spelling.
 - `m0-demo` does not use the annotation authorization stack and cannot serve as shared
   implementation for engine or CLI.
 
 `umbra-authoring` is a **development tool and writes nothing directly**: every change goes through
 `annotation::AuthoringDocument`, because annotation output is click-authorization evidence and that
 validation must not be bypassed. Its subcommands are `project init|show|save`, `page
-create|add-anchor|add-target`, `match` (verify a recognizer against a held-out screenshot), and
-`frames stability|probe|census` (the vision measurement primitives). One JSON document goes to
-stdout per invocation, success or failure. The `match` subcommand is the point: annotate, verify,
-iterate, with no human in the loop.
+create|add|reference`, `match ROOT ELEMENT --frame PNG [--page PAGE]` (verify an element against a
+held-out screenshot), and `frames stability|probe|census` (the vision measurement primitives). One
+JSON document goes to stdout per invocation, success or failure. The `match` subcommand is the
+point: annotate, verify, iterate, with no human in the loop.
+
+> Corrected 2026-07-31: the verb list read `page create|add-anchor|add-target`.
+> The three drawing verbs collapsed into one — `page add ROOT PAGE NAME
+> --capability C... <draw>`, where `C` is `identify[:required|:forbidden]`,
+> `interact`, or `read`, given once per capability — because a capability is now
+> a set rather than a choice, so the element that both names its page and can be
+> clicked is one element matched once per cycle. `--shared` retired with the
+> `bool shared` field. `page reference ROOT PAGE ELEMENT [--capability C...]
+> [--search-roi x,y,w,h]` is new: it puts an element the project already holds
+> onto a second page, which is the verb that had no CLI form at all. Its
+> `--capability` takes the same `C` vocabulary and says what THIS page exercises
+> on the borrowed element, so a second page can take an existing mark into its
+> own signature as `identify:required` or `identify:forbidden`; omitting the flag
+> inherits interact and read, never identify. Deciding artifact:
+> [the capability plan](../../plans/2026-07-31-annotation-model-capabilities.md).
 
 A failure document answers with `kind` and `response`, both in the **wire spelling** every other
 JSON surface uses — `automationErrorWireName` and `failureResponseWireName`, so
@@ -96,10 +132,18 @@ kind.
 
 ## From an authoring project to runtime
 
-Workbench maintains two document forms:
+The authoring tool maintains two document forms:
 
 - `AuthoringDocument` stores the complete editable state and can be reopened for further changes.
-- `RuntimeManifest` retains only what runtime recognition and authorization require.
+  Its schema is `umbraflow-authoring/v4`.
+- `RuntimeManifest` retains only what runtime recognition and authorization require. Its schema is
+  `umbraflow-annotations/v3`.
+
+> Corrected 2026-07-31: both schema ids were bumped in one atomic change when the
+> three-way annotation type became a capability set, and neither old id has a
+> read path — an old schema string fails with the ordinary unsupported-schema
+> error. See
+> [the capability plan](../../plans/2026-07-31-annotation-model-capabilities.md) §三.
 
 A typical directory looks like this:
 
@@ -113,7 +157,7 @@ assets/templates/<content-hash>.png
 
 `compileAuthoringDocument` crops templates from source images, canonically encodes the PNGs,
 computes each `ContentHash` over the encoded bytes, and then creates the runtime manifest.
-Workbench publishes content-addressed assets first and replaces
+The authoring tool publishes content-addressed assets first and replaces
 `generated/annotations.runtime.toml` last. Runtime trusts only assets referenced by that manifest;
 it does not scan directories and guess which files to load.
 
@@ -134,8 +178,17 @@ The composition root for the Windows product path is `entry/cli/run-windows.cpp`
 4. `WgcCaptureSession::capture` returns a `Frame` with pixels, capture time, coordinate transform,
    and identity.
 5. `EngineSession::observe` creates an `Observation`.
-   `EngineSession::resolvePage(observation)` and `EngineSession::findAction(observation, id)` always
+   `EngineSession::resolvePage(observation)` and
+   `EngineSession::findAction(observation, pageId, elementId)` always
    use the frame held by that same observation; they do not recapture implicitly.
+
+   > Corrected 2026-07-31: `findAction` took `(observation, id)`. It now names a
+   > page, because the per-page facts moved onto the reference row — a refined
+   > search region and a pinned appearance both belong to one page's use of an
+   > element, and a page that does not exercise `interact` on it has no action
+   > there to locate. It still authorizes nothing; the page selects a reference
+   > row rather than granting one. The id type is `annotation::ElementId`; it was
+   > `RecognizerId` until the same change.
 6. Annotation resolves the page to `ResolvedPage`, `UnknownPage`, or `AmbiguousPages`. Only one
    uniquely resolved page with complete recognition evidence can continue.
 7. `authorizeCoordinateAction` checks page permission, action detection, observation lease,
@@ -227,6 +280,7 @@ because a delivered keystroke changes the screen exactly as a click does.
 | Editing, preview, and publication in the annotation tool | [`entry-workbench.md`](entry-workbench.md) |
 | Colour keys, the template mask, and the masked matcher | [`module-annotation.md`](module-annotation.md), [`module-vision-image.md`](module-vision-image.md) |
 | Product CLI, the operator `drive` protocol, and Windows composition | [`entry-cli.md`](entry-cli.md) |
+| Serving an annotation session's queue against a raw window | [`entry-input-agent.md`](entry-input-agent.md) |
 | Frozen on-hardware acceptance path | [`entry-m0-demo.md`](entry-m0-demo.md) |
 
 ## Verification scope

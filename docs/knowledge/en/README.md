@@ -14,31 +14,47 @@ responsibilities, key entry points, and tests. Module dependencies are governed 
 4. [`module-vision-image.md`](module-vision-image.md) — Gray8/SAD recognition, PNG, pixel layouts,
    and template assets.
 5. [`module-annotation.md`](module-annotation.md) — Authoring documents, runtime manifests, page
-   resolution, and action authorization.
+   resolution, and action authorization. **DIRTY since 2026-07-31** — the annotation model became
+   the capability model; read its banner first.
 6. [`module-engine.md`](module-engine.md) — Published-artifact loading, same-frame decisions, port
    orchestration, action execution, and tracing.
 7. [`module-script.md`](module-script.md) — The Luau substrate: sandbox, budgets, interrupt
    cancellation, and the framework/project environment split.
 8. [`module-controller.md`](module-controller.md) — WGC, target continuity, DPI, and
    strict-background input.
-9. [`entry-workbench.md`](entry-workbench.md) — GUI editing, capture, preview, compilation, and
-   publication.
+9. [`entry-workbench.md`](entry-workbench.md) — the annotation authoring backend: editing,
+   preview/falsification, compilation, and publication. **DIRTY since 2026-07-31** — the GUI it
+   was written about was archived and the annotation model changed; read its banner first.
 10. [`entry-cli.md`](entry-cli.md) — Argument parsing, offline loading, Windows adapters, and exit
     codes.
-11. [`entry-m0-demo.md`](entry-m0-demo.md) — The frozen on-hardware acceptance program and its
+11. [`entry-input-agent.md`](entry-input-agent.md) — `umbra-input-agent`, the annotation front-end:
+    the queue protocol, the cursor, path confinement, and the drive/annotation split.
+12. [`entry-m0-demo.md`](entry-m0-demo.md) — The frozen on-hardware acceptance program and its
     boundary with product code.
 
-## Two pages still missing (2026-07-29)
+## Pages still missing (2026-07-29; a third was added 2026-07-31)
 
 `modules/task` and `modules/trace` have no page of their own, and since stage 3 of 2026-07-29 moved
 task policy wholesale into those two layers, the engine and CLI pages have been explaining things
 that are not theirs.
 
+> **A third page is owed (2026-07-31, `b57b67b` + `f768e6c`)**: **`entry-authoring.md`**. This
+> section was headed "Two pages still missing" when the `umbra-workbench` GUI was the authoring
+> surface and `entry-workbench.md` documented it. The GUI is archived and `umbra-authoring` is now
+> the only way to author a project, but no page covers it — `entry-cli.md` is about `umbra-flow`'s
+> `run`/`drive` and names `umbra-authoring` once in passing, and `entry-workbench.md` describes only
+> the backend library the CLI links, from behind a DIRTY banner. Scope: the `project` / `page` /
+> `element` / `match` / `check` verb surface (`entry/authoring/command.hpp`,
+> `command-runner.cpp`); why every write still goes through `AuthoringDocument`; and where the
+> falsification matrix (`runModelCheck` in `entry/workbench/preview.*`, run synchronously) is still
+> owed a CLI verb per
+> [the capability plan](../../plans/2026-07-31-annotation-model-capabilities.md) §四之二.1.
+
 > **Timing updated (2026-07-29, `1fb41a7`)**: this used to say "write them once stage 3d has
 > landed". **Stage 3 is now complete in full** (3d `4030ffd` semantic events plus the validation
 > state machine; 3e/3f `1fb41a7` the framework unit tests and veto 6), so that condition is met.
 > Write them **now, rather than waiting for stage 4's on-hardware run**: finishing stage 3 is what
-> made these two layers' surface stable — all twelve primitives present, `umbraflow-trace/v1`'s
+> made these two layers' surface stable — all twelve primitives present, `umbraflow-trace/v2`'s
 > event families fixed, the validation state machine landed in
 > `modules/trace/source/trace/stream-validator.{hpp,cpp}`. Stage 4 *uses* that surface to write the
 > first real daily and calibrate constants; it changes numbers, not shapes. Waiting for it only
@@ -66,12 +82,14 @@ The suggested scope:
   an open cycle and spending it, with no hit ordinal and no page requirement. It must **not** restate
   the sandbox, budgets, and dual environments that `module-script.md` already covers, nor the
   operator wire protocol that `entry-cli.md` covers.
-- **`module-trace.md`** — schema ownership of `umbraflow-trace/v1`; the event families (`run.*`,
+- **`module-trace.md`** — schema ownership of `umbraflow-trace/v2`; the event families (`run.*`,
   `engine.*` including `engine.key_delivered`, `task.native_call`, and the eight `framework.*`
   events from 3d on); field ordering and the rules for golden comparison; the documented non-golden
   field set; `ITraceSink`'s synchronous fallible contract and the failure-precedence rules; the
-  `frontEnd` stamp (`"task"` or `"operator"`), which is part of the stamp rather than of the event
-  and is also a protocol rule — the validator refuses `framework.*` on an operator stream; and the
+  `frontEnd` stamp (`"task"`, `"operator"` or `"annotation"`, the last of which reaches no trace line
+  because it has no run and no generation — see `entry-input-agent.md`), which is part of the stamp
+  rather than of the event and is also a protocol rule — the validator refuses `framework.*` on any
+  stream but the task one; `frontEndWireName` as the single spelling of that closed set; and the
   "audit log, not a replay log" positioning. **Since 3d it must also cover the validation state machine**: why
   `TraceStreamValidator` is owned by `TraceRecorder` (the recorder is the only path to a sink in the
   codebase, so it cannot be gone around), where the two failure kinds divide (Tier B

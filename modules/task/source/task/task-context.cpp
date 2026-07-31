@@ -89,11 +89,41 @@ namespace uf::task
 
     auto TaskContext::cycleFind(
         CycleTicket ticket,
-        annotation::RecognizerId recognizerId
+        annotation::ElementId elementId
     ) -> Result<std::optional<engine::ActionFound>>
     {
         UF_TRY(m_cycles.requireOpen(ticket));
-        return m_session.findAction(m_cycles.observation(), recognizerId);
+
+        // Locating an element is page-scoped: the reference row carries the
+        // search region this page refines and the appearance it pins, and a
+        // page that does not exercise interact on the element has no action
+        // there to find. So the cycle's own resolved page is what the search
+        // runs against -- the same page a click on the result would be
+        // authorized by, and one no script can substitute.
+        //
+        // A cycle that resolved none has nothing to search against. Refusing
+        // here rather than reporting an absence keeps "the search looked and
+        // found nothing" distinct from "the search could not run".
+        //
+        // The message names the missing STEP rather than a refused action,
+        // because that is what happened: nothing was attempted here. The kind
+        // says the same thing, which is why it is PageUnresolved and not
+        // ActionRejected -- the latter is reserved for a page that resolved and
+        // then did not authorise the element, which is a different repair.
+        auto const pageId = m_cycles.resolvedPageId();
+        if (!pageId)
+        {
+            return fail(
+                AutomationErrorKind::PageUnresolved,
+                "this observation cycle has not resolved a page, and finding an "
+                "element is page-scoped: the refined search region, the pinned "
+                "appearance and the interact authorisation all live on the "
+                "page's reference to the element, so a find has nothing to work "
+                "from until a page resolves. Resolve this cycle's page first, "
+                "then find"
+            );
+        }
+        return m_session.findAction(m_cycles.observation(), *pageId, elementId);
     }
 
     auto TaskContext::cycleClick(

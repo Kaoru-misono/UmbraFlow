@@ -2,15 +2,13 @@
 
 #include "detail/annotation-fields.hpp"
 #include "detail/canonical-toml.hpp"
+#include "resource.hpp"
 
 #include <core/error/contracts.hpp>
 #include <core/safety/checked-access.hpp>
 #include <core/types/integer.hpp>
-#include <core/utility/variant-match.hpp>
 
 #include <domain/error.hpp>
-
-#include <vision/frame-analysis.hpp>
 
 #include <algorithm>
 #include <array>
@@ -31,7 +29,8 @@ namespace uf::annotation
     {
         constexpr auto k_maximumAuthoringDocumentBytes = std::size_t{16} * 1024U * 1024U;
         constexpr auto k_maximumAuthoringResources     = std::size_t{4096};
-        constexpr auto k_maximumAuthoringPlacements    = std::size_t{4096} * 16U;
+        constexpr auto k_maximumAuthoringAppearances      = std::size_t{4096} * 8U;
+        constexpr auto k_maximumAuthoringReferences    = std::size_t{4096} * 16U;
 
         [[nodiscard]]
         auto invalidAuthoring(std::string message) -> std::unexpected<Error>
@@ -245,36 +244,16 @@ namespace uf::annotation
         [[nodiscard]]
         auto parsePage(
             detail::CanonicalTomlReader& reader
-        ) -> Result<PageSignature>
+        ) -> Result<PageSpec>
         {
             UF_TRY_VALUE(idText, reader.takeStringField("id"));
             UF_TRY_VALUE(id, detail::parseId<PageId>(idText));
             UF_TRY_VALUE(nameText, reader.takeStringField("name"));
             UF_TRY_VALUE(name, ResourceName::create(std::move(nameText)));
-            UF_TRY_VALUE(
-                requiredText,
-                reader.takeStringArrayField("required")
-            );
-            UF_TRY_VALUE(
-                required,
-                detail::parseIds<RecognizerId>(requiredText)
-            );
-            UF_TRY_VALUE(
-                forbiddenText,
-                reader.takeStringArrayField("forbidden")
-            );
-            UF_TRY_VALUE(
-                forbidden,
-                detail::parseIds<RecognizerId>(forbiddenText)
-            );
-            return PageSignature::create(
-                PageSpec{
-                    .id        = id,
-                    .name      = std::move(name),
-                    .required  = std::move(required),
-                    .forbidden = std::move(forbidden),
-                }
-            );
+            return PageSpec{
+                .id   = id,
+                .name = std::move(name),
+            };
         }
 
         [[nodiscard]]
@@ -375,148 +354,68 @@ namespace uf::annotation
             return id.value().toString();
         }
 
-        [[nodiscard]]
-        auto placementLess(
-            AuthoringPlacement const& left,
-            AuthoringPlacement const& right
-        ) noexcept -> bool
+        // An element as its own table row leaves it: the appearances that carry
+        // its templates arrive in later rows, and the click offset cannot
+        // become a TemplateOffset until one of them is known.
+        struct ParsedElement final
         {
-            if (left.pageId != right.pageId)
-            {
-                return left.pageId.value() < right.pageId.value();
-            }
-            return left.elementId.value() < right.elementId.value();
-        }
+            ElementId                id;
+            ResourceName             name;
+            PixelRect                searchRoi;
+            detail::CapabilityFields capabilities;
 
-        struct DerivedModel final
-        {
-            RecognitionCatalog                     catalog;
-            std::vector<AuthoringRecognizerSource> recognizerSources;
+            std::vector<Appearance> appearances{};
         };
 
-        // Builds the derived read model the compiler and UI still consume: each
-        // element becomes a RecognizerDefinition whose allowed_page_ids are
-        // inverted from the placements that reference it. This is the single
-        // inversion the design asks for; every catalog() reader downstream gets
-        // its page membership from here rather than joining placements itself.
-        //
-        // PERMANENT BRIDGE -- do not "clean this up". The placements-to-
-        // allowed_page_ids inversion and the derived catalog() read model are the
-        // load-bearing translation from the v2 authoring model to the FROZEN
-        // runtime manifest schema (umbraflow-annotations/v1), whose recognizer
-        // shape carries membership inverted on the recognizer. While that runtime
-        // contract stands, this inversion must stay exactly here; deleting it
-        // would either break the runtime manifest or scatter the join back across
-        // every consumer, which is the state this design set out to remove.
-        [[nodiscard]]
-        auto deriveModel(
-            ProjectId projectId,
-            ProjectFingerprint fingerprint,
-            std::span<Element const> elements,
-            std::span<AuthoringPlacement const> placements,
-            std::vector<PageSignature> pages
-        ) -> Result<DerivedModel>
+        struct ParsedAppearance final
         {
-            auto definitions       = std::vector<RecognizerDefinition>{};
-            auto recognizerSources = std::vector<AuthoringRecognizerSource>{};
-            definitions.reserve(elements.size());
-            recognizerSources.reserve(elements.size());
-            for (auto const& element : elements)
-            {
-                auto allowedPageIds = std::vector<PageId>{};
-                for (auto const& placement : placements)
-                {
-                    if (placement.elementId == element.id())
-                    {
-                        allowedPageIds.emplace_back(placement.pageId);
-                    }
-                }
+            ElementId  elementId;
+            Appearance appearance;
+        };
 
-                auto defaultClick = std::optional<TemplateOffset>{};
-                if (
-                    auto const* p_interactive = std::get_if<InteractiveElement>(
-                        &element.kind()
-                    )
-                )
-                {
-                    defaultClick = p_interactive->clickOffset;
-                }
-
-                UF_TRY_VALUE(
-                    definition,
-                    RecognizerDefinition::create(
-                        fingerprint,
-                        RecognizerSpec{
-                            .id             = element.id(),
-                            .name           = element.name(),
-                            .annotationType = element.annotationType(),
-                            .templateRect   = element.templateRect(),
-                            .searchRoi      = element.searchRoi(),
-                            .threshold      = element.threshold(),
-                            .defaultClick   = defaultClick,
-                            .allowedPageIds = std::move(allowedPageIds),
-                        }
-                    )
-                );
-                recognizerSources.emplace_back(
-                    AuthoringRecognizerSource{
-                        .recognizerId = element.id(),
-                        .sourceId     = element.sourceId(),
-                        .shared       = element.shared(),
-                    }
-                );
-                definitions.emplace_back(std::move(definition));
-            }
-
+        [[nodiscard]]
+        auto parseElement(
+            detail::CanonicalTomlReader& reader
+        ) -> Result<ParsedElement>
+        {
+            UF_TRY_VALUE(idText, reader.takeStringField("id"));
+            UF_TRY_VALUE(id, detail::parseId<ElementId>(idText));
+            UF_TRY_VALUE(nameText, reader.takeStringField("name"));
+            UF_TRY_VALUE(name, ResourceName::create(std::move(nameText)));
             UF_TRY_VALUE(
-                catalog,
-                RecognitionCatalog::create(
-                    std::move(projectId),
-                    fingerprint,
-                    std::move(definitions),
-                    std::move(pages)
-                )
+                searchRoi,
+                detail::parsePixelRectField(reader, "search_roi")
             );
-            return DerivedModel{
-                .catalog           = std::move(catalog),
-                .recognizerSources = std::move(recognizerSources),
+            UF_TRY_VALUE(capabilities, detail::parseCapabilityFields(reader));
+            return ParsedElement{
+                .id           = id,
+                .name         = std::move(name),
+                .searchRoi    = searchRoi,
+                .capabilities = capabilities,
             };
         }
 
         [[nodiscard]]
-        auto parseElement(
-            detail::CanonicalTomlReader& reader,
-            ProjectFingerprint fingerprint
-        ) -> Result<Element>
+        auto parseAppearance(
+            detail::CanonicalTomlReader& reader
+        ) -> Result<ParsedAppearance>
         {
-            UF_TRY_VALUE(idText, reader.takeStringField("id"));
-            UF_TRY_VALUE(id, detail::parseId<RecognizerId>(idText));
+            UF_TRY_VALUE(elementIdText, reader.takeStringField("element_id"));
+            UF_TRY_VALUE(elementId, detail::parseId<ElementId>(elementIdText));
             UF_TRY_VALUE(nameText, reader.takeStringField("name"));
             UF_TRY_VALUE(name, ResourceName::create(std::move(nameText)));
-            UF_TRY_VALUE(typeText, reader.takeStringField("type"));
-            auto const annotationType = detail::annotationTypeFromText(typeText);
-            if (!annotationType)
-            {
-                return invalidAuthoring(
-                    std::format("unknown authoring annotation type '{}'", typeText)
-                );
-            }
             UF_TRY_VALUE(sourceIdText, reader.takeStringField("source_id"));
             UF_TRY_VALUE(sourceId, detail::parseId<SourceId>(sourceIdText));
-            UF_TRY_VALUE(kindText, reader.takeStringField("recognizer_kind"));
+            UF_TRY_VALUE(kindText, reader.takeStringField("element_kind"));
             if (kindText != "gray_template")
             {
                 return invalidAuthoring(
-                    "authoring P0 recognizer kind must be gray_template"
+                    "authoring P0 element kind must be gray_template"
                 );
             }
             UF_TRY_VALUE(
                 templateRect,
                 detail::parsePixelRectField(reader, "template_rect")
-            );
-            UF_TRY_VALUE(
-                searchRoi,
-                detail::parsePixelRectField(reader, "search_roi")
             );
             UF_TRY_VALUE(
                 thresholdValue,
@@ -558,172 +457,133 @@ namespace uf::annotation
                 colourKey = key;
             }
 
-            auto clickOffset = std::optional<TemplateOffset>{};
-            UF_TRY_VALUE(hasDefaultClick, reader.nextIsField("default_click"));
-            if (hasDefaultClick)
-            {
-                UF_TRY_VALUE(
-                    values,
-                    reader.takeUnsigned32ArrayField("default_click")
-                );
-                if (values.size() != 2U)
-                {
-                    return invalidAuthoring(
-                        "authoring default_click must have two integers"
-                    );
-                }
-                UF_TRY_VALUE(
-                    offset,
-                    TemplateOffset::create(
-                        checkedAt(values, 0),
-                        checkedAt(values, 1),
-                        templateRect.width(),
-                        templateRect.height()
-                    )
-                );
-                clickOffset = offset;
-            }
-            if (
-                *annotationType != AnnotationType::ActionTarget
-                && clickOffset.has_value()
-            )
-            {
-                return invalidAuthoring(
-                    "only an interactive element may define a default click"
-                );
-            }
-
-            auto shared = false;
-            UF_TRY_VALUE(hasShared, reader.nextIsField("shared"));
-            if (hasShared)
-            {
-                UF_TRY_VALUE(parsed, reader.takeBoolField("shared"));
-                shared = parsed;
-            }
-
-            auto kind = ElementKind{AnchorElement{}};
-            switch (*annotationType)
-            {
-            case AnnotationType::PageAnchor:
-                kind = AnchorElement{};
-                break;
-            case AnnotationType::ActionTarget:
-                kind = InteractiveElement{.clickOffset = clickOffset};
-                break;
-            case AnnotationType::InfoRegion:
-                kind = InfoElement{};
-                break;
-            }
-
-            return Element::create(
-                fingerprint,
-                Element::Spec{
-                    .id           = id,
-                    .name         = std::move(name),
-                    .sourceId     = sourceId,
-                    .templateRect = templateRect,
-                    .searchRoi    = searchRoi,
-                    .threshold    = threshold,
-                    .colourKey    = colourKey,
-                    .kind         = std::move(kind),
-                    .shared       = shared,
-                }
+            UF_TRY_VALUE(
+                appearance,
+                Appearance::create(
+                    Appearance::Spec{
+                        .name         = std::move(name),
+                        .sourceId     = sourceId,
+                        .templateRect = templateRect,
+                        .threshold    = threshold,
+                        .colourKey    = colourKey,
+                    }
+                )
             );
+            return ParsedAppearance{
+                .elementId  = elementId,
+                .appearance = std::move(appearance),
+            };
         }
 
         [[nodiscard]]
-        auto parsePlacement(
+        auto parseReference(
             detail::CanonicalTomlReader& reader
-        ) -> Result<AuthoringPlacement>
+        ) -> Result<PageReference>
         {
             UF_TRY_VALUE(pageIdText, reader.takeStringField("page_id"));
             UF_TRY_VALUE(pageId, detail::parseId<PageId>(pageIdText));
             UF_TRY_VALUE(elementIdText, reader.takeStringField("element_id"));
-            UF_TRY_VALUE(elementId, detail::parseId<RecognizerId>(elementIdText));
-            UF_TRY_VALUE(
-                searchRoi,
-                detail::parsePixelRectField(reader, "search_roi")
-            );
-            return AuthoringPlacement{
-                .pageId    = pageId,
-                .elementId = elementId,
-                .searchRoi = searchRoi,
+            UF_TRY_VALUE(elementId, detail::parseId<ElementId>(elementIdText));
+            UF_TRY_VALUE(holdingName, reader.takeStringField("holding"));
+            auto const holding = detail::holdingFromText(holdingName);
+            if (!holding)
+            {
+                return invalidAuthoring(
+                    std::format("unknown page reference holding '{}'", holdingName)
+                );
+            }
+            UF_TRY_VALUE(exercised, detail::parseExercisedFields(reader));
+
+            auto searchRoi = std::optional<PixelRect>{};
+            UF_TRY_VALUE(hasSearchRoi, reader.nextIsField("search_roi"));
+            if (hasSearchRoi)
+            {
+                UF_TRY_VALUE(
+                    refined,
+                    detail::parsePixelRectField(reader, "search_roi")
+                );
+                searchRoi = refined;
+            }
+
+            auto appearance = std::optional<ResourceName>{};
+            UF_TRY_VALUE(hasAppearance, reader.nextIsField("appearance"));
+            if (hasAppearance)
+            {
+                UF_TRY_VALUE(appearanceText, reader.takeStringField("appearance"));
+                UF_TRY_VALUE(name, ResourceName::create(std::move(appearanceText)));
+                appearance = std::move(name);
+            }
+
+            return PageReference{
+                .pageId     = pageId,
+                .elementId  = elementId,
+                .holding    = *holding,
+                .exercised  = exercised,
+                .searchRoi  = searchRoi,
+                .appearance = std::move(appearance),
             };
         }
+
+        [[nodiscard]]
+        auto deriveCatalog(
+            ProjectId projectId,
+            ProjectFingerprint fingerprint,
+            std::span<Element const> elements,
+            std::vector<PageSpec> pages,
+            std::vector<PageReference> references
+        ) -> Result<RecognitionCatalog>
+        {
+            auto definitions = std::vector<CompiledElement>{};
+            definitions.reserve(elements.size());
+            for (auto const& element : elements)
+            {
+                auto appearances = std::vector<CompiledAppearance>{};
+                appearances.reserve(element.appearances().size());
+                for (auto const& appearance : element.appearances())
+                {
+                    appearances.emplace_back(runtimeAppearanceOf(appearance));
+                }
+                UF_TRY_VALUE(
+                    definition,
+                    CompiledElement::create(
+                        fingerprint,
+                        CompiledElementSpec{
+                            .id           = element.id(),
+                            .name         = element.name(),
+                            .capabilities = element.capabilities(),
+                            .searchRoi    = element.searchRoi(),
+                            .appearances  = std::move(appearances),
+                        }
+                    )
+                );
+                definitions.emplace_back(std::move(definition));
+            }
+
+            return RecognitionCatalog::create(
+                std::move(projectId),
+                fingerprint,
+                std::move(definitions),
+                std::move(pages),
+                std::move(references)
+            );
+        }
     }
 
-    auto ColourKey::create(
-        uint32 red,
-        uint32 green,
-        uint32 blue,
-        uint32 tolerance
-    ) -> Result<ColourKey>
+    auto runtimeAppearanceOf(Appearance const& appearance) -> CompiledAppearance
     {
-        if (
-            red > k_maximumChannel
-            || green > k_maximumChannel
-            || blue > k_maximumChannel
-        )
-        {
-            return invalidAuthoring(
-                "colour key channels must each be between 0 and 255"
-            );
-        }
-        if (tolerance > k_maximumTolerance)
-        {
-            return invalidAuthoring(
-                "colour key tolerance must be between 0 and 765"
-            );
-        }
-        return ColourKey{
-            static_cast<uint8>(red),
-            static_cast<uint8>(green),
-            static_cast<uint8>(blue),
-            tolerance
+        return CompiledAppearance{
+            .name         = appearance.name(),
+            .templateRect = appearance.templateRect(),
+            .threshold    = appearance.threshold(),
         };
-    }
-
-    // Delegated rather than duplicated. The ramp had two byte-identical copies
-    // for a while -- one here, one behind probeColour, which needs it to answer
-    // how many pixels a key selects. Two copies of one rule is exactly what
-    // drifts, and the drift would be silent: authoring would bake one mask and
-    // the probe would report another. annotation depends on vision, so the call
-    // goes this way and the rule lives once.
-    auto ColourKey::alphaFor(
-        uint8 red,
-        uint8 green,
-        uint8 blue
-    ) const noexcept -> uint8
-    {
-        return colourKeyAlpha(
-            Bgra8Pixel{.blue = blue, .green = green, .red = red, .alpha = 255},
-            m_red,
-            m_green,
-            m_blue,
-            m_tolerance
-        );
-    }
-
-    auto annotationTypeOfKind(ElementKind const& kind) noexcept -> AnnotationType
-    {
-        return matchVariant(
-            kind,
-            [](AnchorElement const&) { return AnnotationType::PageAnchor; },
-            [](InteractiveElement const&) { return AnnotationType::ActionTarget; },
-            [](InfoElement const&) { return AnnotationType::InfoRegion; }
-        );
     }
 
     Element::Element(Spec spec) noexcept
         : m_id{spec.id}
         , m_name{std::move(spec.name)}
-        , m_sourceId{spec.sourceId}
-        , m_templateRect{spec.templateRect}
+        , m_capabilities{spec.capabilities}
         , m_searchRoi{spec.searchRoi}
-        , m_threshold{spec.threshold}
-        , m_colourKey{spec.colourKey}
-        , m_kind{std::move(spec.kind)}
-        , m_shared{spec.shared}
+        , m_appearances{std::move(spec.appearances)}
     {
     }
 
@@ -732,76 +592,42 @@ namespace uf::annotation
         Spec const& spec
     ) -> Result<Element>
     {
-        auto const templateWithinProject = (
-            spec.templateRect.right() <= fingerprint.width()
-            && spec.templateRect.bottom() <= fingerprint.height()
-        );
-        auto const searchWithinProject = (
-            spec.searchRoi.right() <= fingerprint.width()
-            && spec.searchRoi.bottom() <= fingerprint.height()
-        );
-        if (!templateWithinProject || !searchWithinProject)
+        auto runtimeAppearances = std::vector<CompiledAppearance>{};
+        runtimeAppearances.reserve(spec.appearances.size());
+        for (auto const& appearance : spec.appearances)
         {
-            return invalidAuthoring(
-                "element template_rect and search_roi must fit the project resolution"
-            );
-        }
-        if (
-            spec.templateRect.width() > spec.searchRoi.width()
-            || spec.templateRect.height() > spec.searchRoi.height()
-        )
-        {
-            return invalidAuthoring(
-                "element template dimensions must fit inside search_roi"
-            );
+            runtimeAppearances.emplace_back(runtimeAppearanceOf(appearance));
         }
         UF_TRY(
-            spec.threshold.maximumSad(
-                spec.templateRect.width(),
-                spec.templateRect.height()
+            validateElementShape(
+                fingerprint,
+                spec.searchRoi,
+                runtimeAppearances,
+                spec.capabilities
             )
         );
-
-        // The click-inside-template rule that RecognizerDefinition enforces as a
-        // cross-field check lives here as a fact of the interactive kind: no
-        // other kind can carry a click to misplace.
-        if (
-            auto const* p_interactive = std::get_if<InteractiveElement>(&spec.kind)
-        )
-        {
-            if (
-                p_interactive->clickOffset.has_value()
-                && (
-                    p_interactive->clickOffset->x() >= spec.templateRect.width()
-                    || p_interactive->clickOffset->y() >= spec.templateRect.height()
-                )
-            )
-            {
-                return invalidAuthoring(
-                    "interactive click offset must be inside the element template"
-                );
-            }
-        }
 
         return Element{spec};
     }
 
-    auto Element::id() const -> RecognizerId { return m_id; }
+    auto Element::id() const -> ElementId { return m_id; }
     auto Element::name() const -> ResourceName { return m_name; }
-    auto Element::sourceId() const -> SourceId { return m_sourceId; }
-    auto Element::templateRect() const noexcept -> PixelRect { return m_templateRect; }
+    auto Element::capabilities() const noexcept -> ElementCapabilities const&
+    {
+        return m_capabilities;
+    }
     auto Element::searchRoi() const noexcept -> PixelRect { return m_searchRoi; }
-    auto Element::threshold() const noexcept -> SimilarityThreshold { return m_threshold; }
-    auto Element::annotationType() const noexcept -> AnnotationType
+    auto Element::appearances() const noexcept -> std::span<Appearance const>
     {
-        return annotationTypeOfKind(m_kind);
+        return m_appearances;
     }
-    auto Element::shared() const noexcept -> bool { return m_shared; }
-    auto Element::colourKey() const noexcept -> std::optional<ColourKey>
+    auto Element::findAppearance(
+        ResourceName const& name
+    ) const noexcept -> Appearance const*
     {
-        return m_colourKey;
+        auto const found = std::ranges::find(m_appearances, name, &Appearance::name);
+        return found == m_appearances.end() ? nullptr : &*found;
     }
-    auto Element::kind() const noexcept -> ElementKind const& { return m_kind; }
 
     AuthoringSource::AuthoringSource(AuthoringSourceSpec const& spec)
         : m_id{spec.id}
@@ -869,15 +695,11 @@ namespace uf::annotation
         RecognitionCatalog&& catalog,
         std::vector<AuthoringSource>&& sources,
         std::vector<Element>&& elements,
-        std::vector<AuthoringPlacement>&& placements,
-        std::vector<AuthoringRecognizerSource>&& recognizerSources,
         std::vector<RegressionCase>&& regressions
     ) noexcept
         : m_catalog{std::move(catalog)}
         , m_sources{std::move(sources)}
         , m_elements{std::move(elements)}
-        , m_placements{std::move(placements)}
-        , m_recognizerSources{std::move(recognizerSources)}
         , m_regressions{std::move(regressions)}
     {
     }
@@ -887,8 +709,8 @@ namespace uf::annotation
         ProjectFingerprint fingerprint,
         std::vector<AuthoringSource> sources,
         std::vector<Element> elements,
-        std::vector<PageSignature> pages,
-        std::vector<AuthoringPlacement> placements,
+        std::vector<PageSpec> pages,
+        std::vector<PageReference> references,
         std::vector<RegressionCase> regressions
     ) -> Result<AuthoringDocument>
     {
@@ -896,12 +718,12 @@ namespace uf::annotation
             sources.size() > k_maximumAuthoringResources
             || elements.size() > k_maximumAuthoringResources
             || pages.size() > k_maximumAuthoringResources
-            || placements.size() > k_maximumAuthoringPlacements
+            || references.size() > k_maximumAuthoringReferences
             || regressions.size() > k_maximumAuthoringResources
         )
         {
             return invalidAuthoring(
-                "authoring document exceeds a source, element, page, placement, or regression quota"
+                "authoring document exceeds a source, element, page, reference, or regression quota"
             );
         }
 
@@ -945,142 +767,27 @@ namespace uf::annotation
                 return element.id().value();
             }
         );
+        auto totalAppearances = std::size_t{0};
         for (auto const& element : elements)
         {
-            if (findSource(element.sourceId()) == nullptr)
+            totalAppearances += element.appearances().size();
+            for (auto const& appearance : element.appearances())
             {
-                return invalidAuthoring(
-                    "authoring element references an unknown source"
-                );
-            }
-        }
-
-        auto findElement = [&elements](RecognizerId id) noexcept -> Element const*
-        {
-            auto const found = std::ranges::find(elements, id, &Element::id);
-            return found == elements.end() ? nullptr : &*found;
-        };
-        auto findPage = [&pages](PageId id) noexcept -> PageSignature const*
-        {
-            auto const found = std::ranges::find(pages, id, &PageSignature::id);
-            return found == pages.end() ? nullptr : &*found;
-        };
-
-        std::ranges::sort(placements, placementLess);
-        for (auto index = std::size_t{0}; index < placements.size(); ++index)
-        {
-            auto const& placement = checkedAt(placements, index);
-            auto const* p_element = findElement(placement.elementId);
-            auto const* p_page    = findPage(placement.pageId);
-            if (p_element == nullptr)
-            {
-                return invalidAuthoring(
-                    "authoring placement references an unknown element"
-                );
-            }
-            if (p_page == nullptr)
-            {
-                return invalidAuthoring(
-                    "authoring placement references an unknown page"
-                );
-            }
-            if (
-                placement.searchRoi.right() > fingerprint.width()
-                || placement.searchRoi.bottom() > fingerprint.height()
-            )
-            {
-                return invalidAuthoring(
-                    "authoring placement search_roi must fit the project resolution"
-                );
-            }
-            if (
-                p_element->templateRect().width() > placement.searchRoi.width()
-                || p_element->templateRect().height() > placement.searchRoi.height()
-            )
-            {
-                return invalidAuthoring(
-                    "authoring placement search_roi is smaller than the element template"
-                );
-            }
-            if (
-                index != 0U
-                && checkedAt(placements, index - 1U).pageId == placement.pageId
-                && checkedAt(placements, index - 1U).elementId == placement.elementId
-            )
-            {
-                return invalidAuthoring(
-                    "authoring page places the same element twice"
-                );
-            }
-        }
-
-        // A placement authorizes something the runtime may act on or read; a page
-        // anchor is identity evidence and joins a page through its signature.
-        for (auto const& placement : placements)
-        {
-            auto const* p_element = findElement(placement.elementId);
-            UF_CHECK(p_element != nullptr);
-            if (p_element->annotationType() == AnnotationType::PageAnchor)
-            {
-                return invalidAuthoring(
-                    std::format(
-                        "\"{}\" is a page anchor and cannot be placed; anchors join a page through its signature",
-                        p_element->name().value()
-                    )
-                );
-            }
-        }
-
-        // An element in a page's signature is an identity mark; a placement is an
-        // interactive or info element the page carries. The same element cannot
-        // be both on one page.
-        for (auto const& placement : placements)
-        {
-            auto const* p_page = findPage(placement.pageId);
-            UF_CHECK(p_page != nullptr);
-            auto const inSignature = (
-                std::ranges::contains(p_page->required(), placement.elementId)
-                || std::ranges::contains(p_page->forbidden(), placement.elementId)
-            );
-            if (inSignature)
-            {
-                auto const* p_element = findElement(placement.elementId);
-                UF_CHECK(p_element != nullptr);
-                return invalidAuthoring(
-                    std::format(
-                        "\"{}\" is both a signature member and a placement on page \"{}\"",
-                        p_element->name().value(),
-                        p_page->name().value()
-                    )
-                );
-            }
-        }
-
-        // The closure rule that replaces the old "action target must authorize a
-        // page" field rule: an interactive element the runtime could click has to
-        // appear somewhere it can be clicked.
-        for (auto const& element : elements)
-        {
-            if (!std::holds_alternative<InteractiveElement>(element.kind()))
-            {
-                continue;
-            }
-            auto const placed = std::ranges::any_of(
-                placements,
-                [&element](AuthoringPlacement const& placement)
+                if (findSource(appearance.sourceId()) == nullptr)
                 {
-                    return placement.elementId == element.id();
+                    return invalidAuthoring(
+                        std::format(
+                            "appearance \"{}\" of \"{}\" references an unknown source",
+                            appearance.name().value(),
+                            element.name().value()
+                        )
+                    );
                 }
-            );
-            if (!placed)
-            {
-                return invalidAuthoring(
-                    std::format(
-                        "interactive element \"{}\" must be placed on at least one page",
-                        element.name().value()
-                    )
-                );
             }
+        }
+        if (totalAppearances > k_maximumAuthoringAppearances)
+        {
+            return invalidAuthoring("authoring document exceeds the appearance quota");
         }
 
         std::ranges::sort(
@@ -1109,17 +816,19 @@ namespace uf::annotation
             }
         }
 
+        // Every invariant that spans elements, pages, and references is the
+        // catalog's, so the derived read model and the compiled runtime
+        // manifest are held to one set of rules stated once.
         UF_TRY_VALUE(
-            derived,
-            deriveModel(
+            catalog,
+            deriveCatalog(
                 std::move(projectId),
                 fingerprint,
                 elements,
-                placements,
-                std::move(pages)
+                std::move(pages),
+                std::move(references)
             )
         );
-        auto const& catalog = derived.catalog;
         for (auto const& regression : regressions)
         {
             auto const* p_resolved = std::get_if<ResolvedRegression>(
@@ -1168,11 +877,9 @@ namespace uf::annotation
         }
 
         auto document = AuthoringDocument{
-            std::move(derived.catalog),
+            std::move(catalog),
             std::move(sources),
             std::move(elements),
-            std::move(placements),
-            std::move(derived.recognizerSources),
             std::move(regressions)
         };
         if (serializeAuthoringDocument(document).size() > k_maximumAuthoringDocumentBytes)
@@ -1196,15 +903,9 @@ namespace uf::annotation
     {
         return m_elements;
     }
-    auto AuthoringDocument::placements() const noexcept
-        -> std::span<AuthoringPlacement const>
+    auto AuthoringDocument::references() const noexcept -> std::span<PageReference const>
     {
-        return m_placements;
-    }
-    auto AuthoringDocument::recognizerSources() const noexcept
-        -> std::span<AuthoringRecognizerSource const>
-    {
-        return m_recognizerSources;
+        return m_catalog.references();
     }
     auto AuthoringDocument::regressions() const noexcept -> std::span<RegressionCase const>
     {
@@ -1218,12 +919,13 @@ namespace uf::annotation
         return found == m_sources.end() ? nullptr : &*found;
     }
     auto AuthoringDocument::findElement(
-        RecognizerId id
+        ElementId id
     ) const noexcept -> Element const*
     {
         auto const found = std::ranges::find(m_elements, id, &Element::id);
         return found == m_elements.end() ? nullptr : &*found;
     }
+
     auto serializeAuthoringDocument(
         AuthoringDocument const& document
     ) -> std::string
@@ -1283,106 +985,106 @@ namespace uf::annotation
             }
         }
 
-        // Elements no longer carry page membership; that is a page-side fact,
-        // serialized as flat [[placement]] tables below.
         for (auto const& element : document.elements())
         {
-            output += "\n[[annotation]]\n";
+            output += "\n[[element]]\n";
             detail::appendStringField(
                 output,
                 "id",
                 resourceIdText(element.id())
             );
             detail::appendStringField(output, "name", element.name().value());
-            detail::appendStringField(
-                output,
-                "type",
-                detail::annotationTypeText(element.annotationType())
-            );
-            detail::appendStringField(
-                output,
-                "source_id",
-                resourceIdText(element.sourceId())
-            );
-            detail::appendStringField(
-                output,
-                "recognizer_kind",
-                "gray_template"
-            );
-            detail::appendRectField(output, "template_rect", element.templateRect());
             detail::appendRectField(output, "search_roi", element.searchRoi());
-            output += "min_similarity_bp = ";
-            output += std::to_string(element.threshold().basisPoints());
-            output.push_back('\n');
-            // Written only when the author picked one, so a project with no
-            // colour key anywhere serializes exactly as it did before the field
-            // existed.
-            if (auto const key = element.colourKey())
+            detail::appendCapabilityFields(output, element.capabilities());
+        }
+
+        // Appearances are a flat table keyed back to their element, which keeps
+        // them inside the reader's one-field-per-line grammar, and they are
+        // written in declaration order because that order is the tie-break rule
+        // and reordering them would change which appearance wins a draw.
+        for (auto const& element : document.elements())
+        {
+            for (auto const& appearance : element.appearances())
             {
-                output += "colour_key = ";
-                auto const channels = std::array{
-                    static_cast<uint32>(key->red()),
-                    static_cast<uint32>(key->green()),
-                    static_cast<uint32>(key->blue()),
-                };
-                detail::appendUnsigned32Array(output, channels);
+                output += "\n[[appearance]]\n";
+                detail::appendStringField(
+                    output,
+                    "element_id",
+                    resourceIdText(element.id())
+                );
+                detail::appendStringField(output, "name", appearance.name().value());
+                detail::appendStringField(
+                    output,
+                    "source_id",
+                    resourceIdText(appearance.sourceId())
+                );
+                detail::appendStringField(
+                    output,
+                    "element_kind",
+                    "gray_template"
+                );
+                detail::appendRectField(
+                    output,
+                    "template_rect",
+                    appearance.templateRect()
+                );
+                output += "min_similarity_bp = ";
+                output += std::to_string(appearance.threshold().basisPoints());
                 output.push_back('\n');
-                output += "colour_key_tolerance = ";
-                output += std::to_string(key->tolerance());
-                output.push_back('\n');
-            }
-            if (
-                auto const* p_interactive = std::get_if<InteractiveElement>(
-                    &element.kind()
-                )
-            )
-            {
-                if (auto const click = p_interactive->clickOffset)
+                if (auto const key = appearance.colourKey())
                 {
-                    output += "default_click = ";
-                    auto const values = std::array{click->x(), click->y()};
-                    detail::appendUnsigned32Array(output, values);
+                    output += "colour_key = ";
+                    auto const channels = std::array{
+                        static_cast<uint32>(key->red()),
+                        static_cast<uint32>(key->green()),
+                        static_cast<uint32>(key->blue()),
+                    };
+                    detail::appendUnsigned32Array(output, channels);
+                    output.push_back('\n');
+                    output += "colour_key_tolerance = ";
+                    output += std::to_string(key->tolerance());
                     output.push_back('\n');
                 }
             }
-            // Written only when set, so a project that marks nothing reusable
-            // serializes exactly as it did before the field existed.
-            if (element.shared())
-            {
-                detail::appendBoolField(output, "shared", true);
-            }
         }
 
+        // A page carries only its identity. Its required and forbidden sets are
+        // derived from the references that exercise identify, so writing them
+        // here would put the same fact on disk twice.
         for (auto const& page : document.catalog().pages())
         {
             output += "\n[[page]]\n";
             detail::appendStringField(output, "id", resourceIdText(page.id()));
             detail::appendStringField(output, "name", page.name().value());
-            output += "required = ";
-            detail::appendIdArray(output, page.required());
-            output.push_back('\n');
-            output += "forbidden = ";
-            detail::appendIdArray(output, page.forbidden());
-            output.push_back('\n');
         }
 
-        // Placements are canonically ordered by page then element, mirroring the
-        // id sorts elsewhere. A flat table keeps them inside the reader's
-        // one-field-per-line grammar, which has no inline or nested tables.
-        for (auto const& placement : document.placements())
+        for (auto const& reference : document.references())
         {
-            output += "\n[[placement]]\n";
+            output += "\n[[reference]]\n";
             detail::appendStringField(
                 output,
                 "page_id",
-                resourceIdText(placement.pageId)
+                resourceIdText(reference.pageId)
             );
             detail::appendStringField(
                 output,
                 "element_id",
-                resourceIdText(placement.elementId)
+                resourceIdText(reference.elementId)
             );
-            detail::appendRectField(output, "search_roi", placement.searchRoi);
+            detail::appendStringField(
+                output,
+                "holding",
+                detail::holdingText(reference.holding)
+            );
+            detail::appendExercisedFields(output, reference.exercised);
+            if (auto const refined = reference.searchRoi)
+            {
+                detail::appendRectField(output, "search_roi", *refined);
+            }
+            if (auto const& pinned = reference.appearance)
+            {
+                detail::appendStringField(output, "appearance", pinned->value());
+            }
         }
 
         for (auto const& regression : document.regressions())
@@ -1480,12 +1182,13 @@ namespace uf::annotation
             )
         );
 
-        auto sources     = std::vector<AuthoringSource>{};
-        auto elements    = std::vector<Element>{};
-        auto pages       = std::vector<PageSignature>{};
-        auto placements  = std::vector<AuthoringPlacement>{};
-        auto regressions = std::vector<RegressionCase>{};
-        auto section     = uint8{0};
+        auto sources         = std::vector<AuthoringSource>{};
+        auto parsedElements  = std::vector<ParsedElement>{};
+        auto pages           = std::vector<PageSpec>{};
+        auto references      = std::vector<PageReference>{};
+        auto regressions     = std::vector<RegressionCase>{};
+        auto appearanceCount = std::size_t{0};
+        auto section         = uint8{0};
         while (!reader.eof())
         {
             UF_TRY(reader.expect(""));
@@ -1502,19 +1205,41 @@ namespace uf::annotation
                 UF_TRY_VALUE(source, parseSource(reader));
                 sources.emplace_back(std::move(source));
             }
-            else if (header == "[[annotation]]")
+            else if (header == "[[element]]")
             {
                 rank = 2;
-                if (elements.size() >= k_maximumAuthoringResources)
+                if (parsedElements.size() >= k_maximumAuthoringResources)
                 {
-                    return invalidAuthoring("authoring annotation quota exceeded");
+                    return invalidAuthoring("authoring element quota exceeded");
                 }
-                UF_TRY_VALUE(element, parseElement(reader, fingerprint));
-                elements.emplace_back(std::move(element));
+                UF_TRY_VALUE(element, parseElement(reader));
+                parsedElements.emplace_back(std::move(element));
+            }
+            else if (header == "[[appearance]]")
+            {
+                rank = 3;
+                if (appearanceCount >= k_maximumAuthoringAppearances)
+                {
+                    return invalidAuthoring("authoring appearance quota exceeded");
+                }
+                UF_TRY_VALUE(parsed, parseAppearance(reader));
+                auto const owner = std::ranges::find(
+                    parsedElements,
+                    parsed.elementId,
+                    &ParsedElement::id
+                );
+                if (owner == parsedElements.end())
+                {
+                    return invalidAuthoring(
+                        "authoring appearance references an unknown element"
+                    );
+                }
+                owner->appearances.emplace_back(std::move(parsed.appearance));
+                ++appearanceCount;
             }
             else if (header == "[[page]]")
             {
-                rank = 3;
+                rank = 4;
                 if (pages.size() >= k_maximumAuthoringResources)
                 {
                     return invalidAuthoring("authoring page quota exceeded");
@@ -1522,19 +1247,19 @@ namespace uf::annotation
                 UF_TRY_VALUE(page, parsePage(reader));
                 pages.emplace_back(std::move(page));
             }
-            else if (header == "[[placement]]")
+            else if (header == "[[reference]]")
             {
-                rank = 4;
-                if (placements.size() >= k_maximumAuthoringPlacements)
+                rank = 5;
+                if (references.size() >= k_maximumAuthoringReferences)
                 {
-                    return invalidAuthoring("authoring placement quota exceeded");
+                    return invalidAuthoring("authoring reference quota exceeded");
                 }
-                UF_TRY_VALUE(placement, parsePlacement(reader));
-                placements.emplace_back(placement);
+                UF_TRY_VALUE(reference, parseReference(reader));
+                references.emplace_back(std::move(reference));
             }
             else if (header == "[[regression]]")
             {
-                rank = 5;
+                rank = 6;
                 if (regressions.size() >= k_maximumAuthoringResources)
                 {
                     return invalidAuthoring("authoring regression quota exceeded");
@@ -1555,10 +1280,39 @@ namespace uf::annotation
             if (rank < section)
             {
                 return invalidAuthoring(
-                    "authoring source, annotation, page, placement, and regression tables are out of order"
+                    "authoring source, element, appearance, page, reference, and regression tables are out of order"
                 );
             }
             section = rank;
+        }
+
+        auto elements = std::vector<Element>{};
+        elements.reserve(parsedElements.size());
+        for (auto& parsed : parsedElements)
+        {
+            auto boundingTemplate = std::optional<PixelRect>{};
+            if (!parsed.appearances.empty())
+            {
+                boundingTemplate = parsed.appearances.front().templateRect();
+            }
+            UF_TRY_VALUE(
+                capabilities,
+                detail::toElementCapabilities(parsed.capabilities, boundingTemplate)
+            );
+            UF_TRY_VALUE(
+                element,
+                Element::create(
+                    fingerprint,
+                    Element::Spec{
+                        .id           = parsed.id,
+                        .name         = std::move(parsed.name),
+                        .capabilities = capabilities,
+                        .searchRoi    = parsed.searchRoi,
+                        .appearances  = std::move(parsed.appearances),
+                    }
+                )
+            );
+            elements.emplace_back(std::move(element));
         }
 
         UF_TRY_VALUE(
@@ -1569,7 +1323,7 @@ namespace uf::annotation
                 std::move(sources),
                 std::move(elements),
                 std::move(pages),
-                std::move(placements),
+                std::move(references),
                 std::move(regressions)
             )
         );

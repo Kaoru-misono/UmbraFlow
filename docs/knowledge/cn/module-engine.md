@@ -74,10 +74,17 @@ Windows 产品入口使用两个薄适配器：
 - `EngineSession::resolvePage(Observation const&)` 对传入 observation 持有的 frame
   调用自身 `RecognitionRuntime::evaluatePage`，返回由 `ResolvedPage`、
   `UnknownPage` 或 `AmbiguousPages` 组成的 `PageOutcome`。
-- `EngineSession::findAction(Observation const&, RecognizerId)` 对同一 frame 调用
+- `EngineSession::findAction(Observation const&, annotation::PageId, annotation::ElementId)`
+  对同一 frame 调用
   `evaluateActionTarget`。未命中是 `Result<std::optional<ActionFound>>` 的成功空值，
   对应 D4 Tier A，不是错误。
-- `ActionFound` 保存原始 `AnchorEvidence`、绑定 recognizer identity 的 `ActionDetection` 和确定性的 `PixelPoint`。点击点由 annotation 的 `resolveClickPixel` 决定；match rect 经 `pixelRectToFrameRect` 变成 authorization-ready `Detection`。
+
+  > 更正（2026-07-31）：页面参数是新增的。每页的事实搬到了 `annotation::PageReference` 上——
+  > 这一页细化的搜索区域、这一页钉死的形态——而不行使 `interact` 的页面在那里根本没有动作
+  > 可定位。它不授权任何东西：页面参数挑的是一行引用，不是发一张许可；定位到的 hit 仍然会在
+  > 投递时被拒，除非 `act` 解析出的页面引用了该元素并行使 `interact`。裁决出处：
+  > [能力模型计划](../../plans/2026-07-31-annotation-model-capabilities.md) §2.2。
+- `ActionFound` 保存原始 `AnchorEvidence`、绑定 element identity 的 `ActionDetection` 和确定性的 `PixelPoint`。点击点由 annotation 的 `resolveClickPixel` 决定；match rect 经 `pixelRectToFrameRect` 变成 authorization-ready `Detection`。
 - `EngineSession::act(Observation&&, ResolvedPage const&, ActionFound const&)` 消费 observation，成功返回记录被授权 `FrameId` 与 client-space 坐标的 `ActReceipt`。
 - `EngineSession::pressKey(Observation&&, KeyName)` 同样消费 observation，返回 `KeyReceipt`——
   `{ frameId, key }`，没有点，因为按键本来就没有点；这也正是它是一个独立回执、而不是一个带着
@@ -114,7 +121,7 @@ loadRuntimeProject
   -> (ctx.luau 的等待循环，每轮一次)
        EngineSession::observe
        -> EngineSession::resolvePage
-       -> EngineSession::findAction(observation, recognizerId)
+       -> EngineSession::findAction(observation, pageId, elementId)
        -> EngineSession::act
        -> IActionSink::click
 ```
@@ -138,7 +145,7 @@ loadRuntimeProject
 ### 追踪事件
 
 schema 由 `modules/trace/source/trace/event.hpp` 拥有，id 是
-`umbraflow-trace/v1`；engine 与 task 写同一条流。engine 发出的事件是：
+`umbraflow-trace/v2`；engine 与 task 写同一条流。engine 发出的事件是：
 
 - `engine.observed`、`engine.observation_invalidated`。
 - `engine.page_resolved`，outcome 为 `Resolved` / `Unknown` / `Ambiguous` /
@@ -164,19 +171,31 @@ trace 从第一条 `engine.observed` 开始，它已于 2026-07-29 随运行生�
 `trace::stripNonGoldenFields` 剥掉。engine 不拥有 sink：它借用 run 的 recorder，
 文件的打开、逐条写入与 flush 由 `modules/trace` 的 `FileTraceSink` 负责。
 
-**`frontEnd` 属于「盖章」而不属于事件本身**（2026-07-30，`ed38124`）。取值是 `"task"` 或
-`"operator"`，来自 `trace::FrontEnd`。它存在是因为能力面现在有两个同级消费者——task 所跑的
-受信任 Luau framework，和从进程外送命令的操作者——没有这条归属，读 trace 的人就回答不了
-「这件事是 task 做的还是操作者做的」，而这个问题对每一行都要问一次；于是一个 recorder 为整次
+**`frontEnd` 属于「盖章」而不属于事件本身**（2026-07-30，`ed38124`）。它来自
+`trace::FrontEnd`。它存在是因为同一级上不止一个东西在驱动目标——没有这条归属，读证据的人就
+回答不了「这件事是谁做的」，而这个问题对每一行都要问一次；于是一个 recorder 为整次
 run 持有一个值并盖到每一行上，没有任何发射方能忘掉它，也没有谁能冒领另一个前端的活。
 `TaskHost` 交给 recorder 的就是它闩住的那个值，所以一条流的归属与产生它的互斥是同一件事，
 而不是两件必须彼此吻合的事。
 
-它同时是一条协议规则而不只是标签：`TraceStreamValidator` 在 operator 流上**拒绝
-`framework.*` 事件**，报 `InternalInvariant`。那些事件描述的是受信任 Luau framework 自己的
-结构——哪个 step 开着、这是第几次重试、哪个 interrupt 命中了——而 operator 流上根本没有那个
-framework，所以这样一行只可能是宿主 bug 把 task 的结构安到了操作者头上。拒绝它，才使这个字段
-是权威而不是装饰。
+**这个枚举有三个值，其中只有两个会走到 `TaskHost`**（2026-07-31）。`"task"` 与 `"operator"`
+是能力面的两个消费者，闩使它们按 generation 互斥。`"annotation"` 就是 `umbra-input-agent`
+——标注会话为了「量」一个裸窗口而驱动它。它够不到任何项目，因此没有 generation 可闩、
+也没有能力面可消费，于是它**根本不写 `umbraflow-trace/v2` 的行**：该 schema 的每一行都带
+`runId` 与 `generationId`，而标注会话两者皆无。它盖章的是自己的 results 文件，用的是这个枚举的
+值和 `trace::frontEndWireName` 的拼写——这样将来它接进宿主时，读者已经认识的那条归属不会变。
+见 [`entry-input-agent.md`](entry-input-agent.md)。
+
+`trace::frontEndWireName` 之所以公开也是同一个理由：`task::TaskHost` 在拒绝第二个前端时要点名
+已经占住 generation 的那一个，input agent 要点名自己。一个闭集有两处拼写，正是「第三个值被报成
+第二个」的成因——`TaskHost::Generation::claimFrontEnd` 里原来那个三目表达式会一字不差地这么干。
+
+它同时是一条协议规则而不只是标签：`TraceStreamValidator` 在**除 task 之外的任何流**上**拒绝
+`framework.*` 事件**，报 `InternalInvariant`。规则写成「不是 `FrontEnd::Task` 就拒」而不是逐个
+点名其余的值，所以后加的前端由构造继承这条拒绝，而不是靠谁记得去列它。那些事件描述的是受信任
+Luau framework 自己的结构——哪个 step 开着、这是第几次重试、哪个 interrupt 命中了——而别的流上
+根本没有那个 framework，所以这样一行只可能是宿主 bug 把 task 的结构安到了别人头上。拒绝它，
+才使这个字段是权威而不是装饰。
 
 ## 必须保持的约束
 
@@ -187,8 +206,10 @@ framework，所以这样一行只可能是宿主 bug 把 task 的结构安到了
 - session 缺任一端口时，`EngineSession::create` 返回 `InvalidResource`。
 - live fingerprint 与 catalog fingerprint 不同，识别或授权拒绝。
 - page evidence、action detection 与 delivery 的 `CaptureSessionId`、
-  `TargetGeneration`、`FrameId` 必须相同；action recognizer 还必须属于 active
-  catalog、类型为 `ActionTarget` 且允许 resolved page。
+  `TargetGeneration`、`FrameId` 必须相同；action 元素还必须属于 active
+  catalog 且声明了 `interact`，并且 resolved page 上有一行引用它、且该引用行使 `interact`。
+  （更正 2026-07-31：此处原本写「类型为 `ActionTarget` 且允许 resolved page」——一个三值类型
+  加一份独立的 `allowed_page_ids` 列表。两者都已删除；引用本身就是授权。）
 - `ObservationLease::validate` 校验 session、generation、frame 和 expiration；
   任一不符返回 `StaleObservation`。
 - recognition budget、deadline 或 cancellation 产生明确 stop reason，而不是把

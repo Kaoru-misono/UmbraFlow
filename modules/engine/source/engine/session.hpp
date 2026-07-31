@@ -63,7 +63,7 @@ namespace uf::engine
     };
 
     // The result of a successful action-target search on one observation: the raw
-    // anchor evidence, the authorization-ready detection bound to its recognizer
+    // anchor evidence, the authorization-ready detection bound to its element
     // identity, and the single deterministic click pixel derived from the match.
     // None of its members has a default, so it is only ever built by findAction.
     class ActionFound final
@@ -215,10 +215,25 @@ namespace uf::engine
             Observation const& observation
         ) -> Result<annotation::PageOutcome>;
 
+        // Locates one element as `pageId` uses it, on the frame `observation`
+        // holds.
+        //
+        // The page is a parameter because the per-page facts moved onto the
+        // reference row: that row carries the search region this page refines
+        // and the appearance it pins, and a page that does not exercise
+        // interact on the element has no action here to locate at all. Passing
+        // a page the frame did not resolve therefore searches the wrong
+        // reference, which is why every caller passes the page ITS cycle
+        // resolved.
+        //
+        // It authorizes nothing. A located hit is still refused at delivery
+        // unless act()'s resolved page references the element for interaction,
+        // so this parameter selects a reference row rather than granting one.
         [[nodiscard]]
         auto findAction(
             Observation const& observation,
-            annotation::RecognizerId recognizerId
+            annotation::PageId pageId,
+            annotation::ElementId elementId
         ) -> Result<std::optional<ActionFound>>;
 
         [[nodiscard]]

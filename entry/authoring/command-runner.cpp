@@ -3,6 +3,7 @@
 #include "json-writer.hpp"
 
 #include <authoring-edit.hpp>
+#include <preview.hpp>
 #include <project-persistence.hpp>
 #include <source-ingestion.hpp>
 
@@ -61,8 +62,7 @@ namespace uf::authoring
         // accident has to collide on its id and be refused by
         // AuthoringDocument::create rather than quietly adding a twin the author
         // can no longer tell apart. sha256 over a kind tag, the project id and
-        // the name, truncated to the sixteen bytes a ResourceId carries -- the
-        // construction annotation::derivedRuntimeRecognizerId already uses.
+        // the name, truncated to the sixteen bytes a ResourceId carries.
         [[nodiscard]]
         auto derivedResourceId(
             std::string_view kind,
@@ -106,21 +106,58 @@ namespace uf::authoring
             return annotation::SourceId{annotation::ResourceId::fromBytes(zero)};
         }
 
+        // The three enumerations this tool answers with, each as one total
+        // mapping. A ternary would file a future enumerator with whichever
+        // branch it fell into; a switch over a scoped enum makes the compiler
+        // name the case that was forgotten.
         [[nodiscard]]
-        auto annotationTypeName(
-            annotation::AnnotationType type
-        ) -> std::string_view
+        auto readLayoutName(annotation::ReadLayout layout) -> std::string_view
         {
-            switch (type)
+            switch (layout)
             {
-            case annotation::AnnotationType::PageAnchor:
-                return "page_anchor";
-            case annotation::AnnotationType::ActionTarget:
-                return "action_target";
-            case annotation::AnnotationType::InfoRegion:
-                return "info_region";
+            case annotation::ReadLayout::SingleLine:
+                return "single_line";
+            case annotation::ReadLayout::Block:
+                return "block";
             }
-            UF_UNREACHABLE_MSG("unknown AnnotationType value");
+            UF_UNREACHABLE_MSG("unknown ReadLayout value");
+        }
+
+        [[nodiscard]]
+        auto charsetName(annotation::CharsetRestriction charset) -> std::string_view
+        {
+            switch (charset)
+            {
+            case annotation::CharsetRestriction::Digits:
+                return "digits";
+            }
+            UF_UNREACHABLE_MSG("unknown CharsetRestriction value");
+        }
+
+        [[nodiscard]]
+        auto signatureRoleName(annotation::SignatureRole role) -> std::string_view
+        {
+            switch (role)
+            {
+            case annotation::SignatureRole::Required:
+                return "required";
+            case annotation::SignatureRole::Forbidden:
+                return "forbidden";
+            }
+            UF_UNREACHABLE_MSG("unknown SignatureRole value");
+        }
+
+        [[nodiscard]]
+        auto holdingName(annotation::Holding holding) -> std::string_view
+        {
+            switch (holding)
+            {
+            case annotation::Holding::Owned:
+                return "owned";
+            case annotation::Holding::Referenced:
+                return "referenced";
+            }
+            UF_UNREACHABLE_MSG("unknown Holding value");
         }
 
         [[nodiscard]]
@@ -174,6 +211,146 @@ namespace uf::authoring
             return jsonObject(members);
         }
 
+        // Each capability as its own payload or null, rather than as a flat bag
+        // of fields. That keeps the structural fact the capability set was
+        // introduced for visible in the answer too: an element without read has
+        // nowhere to put OCR parameters, and one without interact has nowhere to
+        // put a click offset.
+        [[nodiscard]]
+        auto capabilitiesJson(
+            annotation::ElementCapabilities const& capabilities
+        ) -> std::string
+        {
+            auto interact = jsonNull();
+            if (auto const& declared = capabilities.interact())
+            {
+                auto offset = jsonNull();
+                if (auto const& click = declared->clickOffset)
+                {
+                    auto const point = std::array{
+                        JsonMember{.key = "x", .value = jsonUnsigned(click->x())},
+                        JsonMember{.key = "y", .value = jsonUnsigned(click->y())},
+                    };
+                    offset = jsonObject(point);
+                }
+                auto const inner = std::array{
+                    JsonMember{
+                        .key   = "click_offset",
+                        .value = std::move(offset),
+                    },
+                };
+                interact = jsonObject(inner);
+            }
+
+            auto read = jsonNull();
+            if (auto const& declared = capabilities.read())
+            {
+                auto const inner = std::array{
+                    JsonMember{
+                        .key   = "layout",
+                        .value = jsonString(readLayoutName(declared->layout)),
+                    },
+                    JsonMember{
+                        .key   = "charset",
+                        .value = declared->charset
+                            ? jsonString(charsetName(*declared->charset))
+                            : jsonNull(),
+                    },
+                };
+                read = jsonObject(inner);
+            }
+
+            auto const members = std::array{
+                JsonMember{
+                    .key   = "identify",
+                    .value = capabilities.hasIdentify()
+                        ? jsonObject({})
+                        : jsonNull(),
+                },
+                JsonMember{.key = "interact", .value = std::move(interact)},
+                JsonMember{.key = "read", .value = std::move(read)},
+            };
+            return jsonObject(members);
+        }
+
+        // The page side of the same three, with the one datum a page adds:
+        // whether its identify evidence points for the page or against it.
+        [[nodiscard]]
+        auto exercisedJson(
+            annotation::ExercisedCapabilities const& exercised
+        ) -> std::string
+        {
+            auto identify = jsonNull();
+            if (auto const& declared = exercised.identify())
+            {
+                auto const inner = std::array{
+                    JsonMember{
+                        .key   = "role",
+                        .value = jsonString(signatureRoleName(declared->role)),
+                    },
+                };
+                identify = jsonObject(inner);
+            }
+
+            auto const members = std::array{
+                JsonMember{.key = "identify", .value = std::move(identify)},
+                JsonMember{
+                    .key   = "interact",
+                    .value = exercised.hasInteract() ? jsonObject({}) : jsonNull(),
+                },
+                JsonMember{
+                    .key   = "read",
+                    .value = exercised.hasRead() ? jsonObject({}) : jsonNull(),
+                },
+            };
+            return jsonObject(members);
+        }
+
+        [[nodiscard]]
+        auto appearanceJson(annotation::Appearance const& appearance) -> std::string
+        {
+            auto const members = std::array{
+                JsonMember{
+                    .key   = "name",
+                    .value = jsonString(appearance.name().value()),
+                },
+                JsonMember{
+                    .key   = "source_id",
+                    .value = jsonString(appearance.sourceId().value().toString()),
+                },
+                JsonMember{
+                    .key   = "template_rect",
+                    .value = rectJson(appearance.templateRect()),
+                },
+                JsonMember{
+                    .key   = "min_similarity_bp",
+                    .value = jsonUnsigned(appearance.threshold().basisPoints()),
+                },
+                JsonMember{
+                    .key   = "colour_key",
+                    .value = colourKeyJson(appearance.colourKey()),
+                },
+            };
+            return jsonObject(members);
+        }
+
+        // An empty list is a legal and meaningful answer: it says this rectangle
+        // is located by the page being recognised rather than by pixels of its
+        // own, which is why nothing here invents a placeholder appearance.
+        [[nodiscard]]
+        auto appearancesJson(
+            std::span<annotation::Appearance const> appearances
+        ) -> std::string
+        {
+            auto encoded = std::vector<std::string>{};
+            encoded.reserve(appearances.size());
+            for (auto const& appearance : appearances)
+            {
+                encoded.emplace_back(appearanceJson(appearance));
+            }
+            return jsonArray(encoded);
+        }
+
         [[nodiscard]]
         auto elementJson(annotation::Element const& element) -> std::string
         {
@@ -187,30 +364,69 @@ namespace uf::authoring
                     .value = jsonString(element.name().value()),
                 },
                 JsonMember{
-                    .key   = "type",
-                    .value = jsonString(annotationTypeName(element.annotationType())),
-                },
-                JsonMember{
-                    .key   = "source_id",
-                    .value = jsonString(element.sourceId().value().toString()),
-                },
-                JsonMember{
-                    .key   = "template_rect",
-                    .value = rectJson(element.templateRect()),
+                    .key   = "capabilities",
+                    .value = capabilitiesJson(element.capabilities()),
                 },
                 JsonMember{
                     .key   = "search_roi",
                     .value = rectJson(element.searchRoi()),
                 },
                 JsonMember{
-                    .key   = "min_similarity_bp",
-                    .value = jsonUnsigned(element.threshold().basisPoints()),
+                    .key   = "appearances",
+                    .value = appearancesJson(element.appearances()),
+                },
+            };
+            return jsonObject(members);
+        }
+
+        // The runtime's view of one element: the same identity and capabilities,
+        // and appearances stripped of the two facts that stop at authoring --
+        // the screen a template was cut from, and the colour key that produced
+        // its mask, which the runtime reads off the template's alpha channel.
+        [[nodiscard]]
+        auto runtimeElementJson(
+            annotation::CompiledElement const& element
+        ) -> std::string
+        {
+            auto appearances = std::vector<std::string>{};
+            appearances.reserve(element.appearances().size());
+            for (auto const& appearance : element.appearances())
+            {
+                auto const entry = std::array{
+                    JsonMember{
+                        .key   = "name",
+                        .value = jsonString(appearance.name.value()),
+                    },
+                    JsonMember{
+                        .key   = "template_rect",
+                        .value = rectJson(appearance.templateRect),
+                    },
+                    JsonMember{
+                        .key   = "min_similarity_bp",
+                        .value = jsonUnsigned(appearance.threshold.basisPoints()),
+                    },
+                };
+                appearances.emplace_back(jsonObject(entry));
+            }
+
+            auto const members = std::array{
+                JsonMember{
+                    .key   = "id",
+                    .value = jsonString(element.id().value().toString()),
                 },
                 JsonMember{
-                    .key   = "colour_key",
-                    .value = colourKeyJson(element.colourKey()),
+                    .key   = "name",
+                    .value = jsonString(element.name().value()),
                 },
-                JsonMember{.key = "shared", .value = jsonBoolean(element.shared())},
+                JsonMember{
+                    .key   = "capabilities",
+                    .value = capabilitiesJson(element.capabilities()),
+                },
+                JsonMember{
+                    .key   = "search_roi",
+                    .value = rectJson(element.searchRoi()),
+                },
+                JsonMember{.key = "appearances", .value = jsonArray(appearances)},
             };
             return jsonObject(members);
         }
@@ -218,7 +434,7 @@ namespace uf::authoring
         [[nodiscard]]
         auto elementNameJson(
             annotation::AuthoringDocument const& document,
-            annotation::RecognizerId id
+            annotation::ElementId id
         ) -> std::string
         {
             auto const* p_element = document.findElement(id);
@@ -227,12 +443,53 @@ namespace uf::authoring
                 : jsonString(p_element->name().value());
         }
 
+        // One page's use of one element. `search_roi` and `appearance` are null
+        // when the page refines neither, because absent means "the element's
+        // own" rather than a value this could fill in.
+        [[nodiscard]]
+        auto referenceJson(
+            annotation::AuthoringDocument const& document,
+            annotation::PageReference const& reference
+        ) -> std::string
+        {
+            auto const members = std::array{
+                JsonMember{
+                    .key   = "element",
+                    .value = elementNameJson(document, reference.elementId),
+                },
+                JsonMember{
+                    .key   = "holding",
+                    .value = jsonString(holdingName(reference.holding)),
+                },
+                JsonMember{
+                    .key   = "exercised",
+                    .value = exercisedJson(reference.exercised),
+                },
+                JsonMember{
+                    .key   = "search_roi",
+                    .value = reference.searchRoi
+                        ? rectJson(*reference.searchRoi)
+                        : jsonNull(),
+                },
+                JsonMember{
+                    .key   = "appearance",
+                    .value = reference.appearance
+                        ? jsonString(reference.appearance->value())
+                        : jsonNull(),
+                },
+            };
+            return jsonObject(members);
+        }
+
         [[nodiscard]]
         auto pageJson(
             annotation::AuthoringDocument const& document,
             annotation::PageSignature const& page
         ) -> std::string
         {
+            // The signature is derived from the references below rather than
+            // authored beside them, so it is reported as what it is: the answer
+            // the model computed from the rows that follow.
             auto required = std::vector<std::string>{};
             for (auto const id : page.required())
             {
@@ -244,24 +501,13 @@ namespace uf::authoring
                 forbidden.emplace_back(elementNameJson(document, id));
             }
 
-            auto placements = std::vector<std::string>{};
-            for (auto const& placement : document.placements())
+            auto references = std::vector<std::string>{};
+            for (auto const& reference : document.references())
             {
-                if (placement.pageId != page.id())
+                if (reference.pageId == page.id())
                 {
-                    continue;
+                    references.emplace_back(referenceJson(document, reference));
                 }
-                auto const entry = std::array{
-                    JsonMember{
-                        .key   = "element",
-                        .value = elementNameJson(document, placement.elementId),
-                    },
-                    JsonMember{
-                        .key   = "search_roi",
-                        .value = rectJson(placement.searchRoi),
-                    },
-                };
-                placements.emplace_back(jsonObject(entry));
             }
 
             auto const members = std::array{
@@ -272,7 +518,7 @@ namespace uf::authoring
                 JsonMember{.key = "name", .value = jsonString(page.name().value())},
                 JsonMember{.key = "required", .value = jsonArray(required)},
                 JsonMember{.key = "forbidden", .value = jsonArray(forbidden)},
-                JsonMember{.key = "placements", .value = jsonArray(placements)},
+                JsonMember{.key = "references", .value = jsonArray(references)},
             };
             return jsonObject(members);
         }
@@ -504,25 +750,26 @@ namespace uf::authoring
             return found->id;
         }
 
-        // The CLI names an element; addPageMember and createPageFromSource mint
-        // their own placeholder names because their GUI caller has no name to
-        // give yet. Renaming in the draft rather than teaching them a name keeps
-        // the linkage they perform -- an anchor into a signature, a target into a
-        // placement -- as the one implementation of it. An unusable name is
-        // refused by ResourceName::create when the draft is built.
+        // The CLI names an element; createPageFromSource mints its own
+        // placeholder name because a canvas caller has none to give yet.
+        // Renaming in the draft rather than teaching it a name keeps the linkage
+        // it performs -- an element, a page, the reference deriving the
+        // signature and the regression case -- as the one implementation of it.
+        // An unusable name is refused by ResourceName::create when the draft is
+        // built.
         [[nodiscard]]
-        auto renameRecognizer(
+        auto renameElement(
             workbench::AuthoringDraft draft,
-            annotation::RecognizerId id,
+            annotation::ElementId id,
             std::string name
         ) -> Result<workbench::AuthoringDraft>
         {
             auto const found = std::ranges::find(
-                draft.recognizers,
+                draft.elements,
                 id,
-                &workbench::EditableRecognizer::id
+                &workbench::EditableElement::id
             );
-            if (found == draft.recognizers.end())
+            if (found == draft.elements.end())
             {
                 return invalid("the element just added is not part of the draft");
             }
@@ -550,38 +797,275 @@ namespace uf::authoring
             return draft;
         }
 
-        // The two things a role decides, each as one total mapping rather than a
-        // ternary. A ternary over three roles silently files the new one with
-        // whichever branch it falls into; a switch over a scoped enum makes the
-        // compiler name the case that was forgotten.
+        // The element half of what --capability said, and the page half. They
+        // are two types in the model on purpose -- what a page adds to identify
+        // has no meaning on an element, and the OCR parameters have none on a
+        // page -- so the one flag set is mapped across twice rather than stored
+        // once and reinterpreted.
         [[nodiscard]]
-        auto memberKindOf(ElementRole role) noexcept -> workbench::PageMemberKind
+        auto declaredCapabilitiesOf(
+            StatedCapabilities const& drawn
+        ) -> workbench::EditableCapabilities
         {
-            switch (role)
+            auto declared = workbench::EditableCapabilities{};
+            if (drawn.identify)
             {
-            case ElementRole::Anchor:
-                return workbench::PageMemberKind::Anchor;
-            case ElementRole::Target:
-                return workbench::PageMemberKind::ActionTarget;
-            case ElementRole::Info:
-                return workbench::PageMemberKind::InfoRegion;
+                declared.identify = annotation::Identify{};
             }
-            UF_UNREACHABLE();
+            if (drawn.interact)
+            {
+                declared.interact = workbench::EditableInteract{};
+            }
+            if (drawn.read)
+            {
+                declared.read = annotation::Read{};
+            }
+            return declared;
         }
 
         [[nodiscard]]
-        auto commandNameOf(ElementRole role) noexcept -> std::string_view
+        auto exercisedCapabilitiesOf(
+            StatedCapabilities const& drawn
+        ) -> workbench::EditableExercised
         {
-            switch (role)
+            auto exercised = workbench::EditableExercised{};
+            if (drawn.identify)
             {
-            case ElementRole::Anchor:
-                return "page add-anchor";
-            case ElementRole::Target:
-                return "page add-target";
-            case ElementRole::Info:
-                return "page add-info";
+                exercised.identify = annotation::ExercisedIdentify{
+                    .role = *drawn.identify,
+                };
             }
-            UF_UNREACHABLE();
+            if (drawn.interact)
+            {
+                exercised.interact = annotation::ExercisedInteract{};
+            }
+            if (drawn.read)
+            {
+                exercised.read = annotation::ExercisedRead{};
+            }
+            return exercised;
+        }
+
+        // A count against the total it was measured over. PixelRect::create
+        // refuses an empty rectangle, so the guard is for a zero that cannot
+        // arrive rather than one that does.
+        [[nodiscard]]
+        auto fractionOf(uint64 part, uint64 whole) noexcept -> float
+        {
+            if (whole == 0)
+            {
+                return 0.0F;
+            }
+            return static_cast<float>(
+                static_cast<double>(part) / static_cast<double>(whole)
+            );
+        }
+
+        // The two ends of one question about a colour key an author just drew:
+        // does the mask it produces select a FIGURE out of the rectangle? Below
+        // the floor there is not enough of one to locate anything. At or above
+        // the share limit the key took the rectangle's ground instead, and
+        // whatever the rectangle was drawn around is in the holes, where a
+        // masked comparison never looks.
+        //
+        // Neither number is a gate and neither may become one. `check` is the
+        // gate: it searches the element against the screens it must NOT match
+        // and answers from measurement, where these two answer only from shape.
+        //
+        // Under the floor, a match is the lowest score anywhere in the search
+        // region with an exact-match early exit (`vision/sad.cpp`), so a handful
+        // of saturated pixels never has to survive where the glyph was -- it
+        // only has to find SOME offset where all of them land on that colour,
+        // and a busy screen always offers one. Measured on this project: masks
+        // of 27, 30 and 35 pixels each scored zero on frames whose content had
+        // visibly changed.
+        //
+        // At or above half the rectangle, every selected pixel is within
+        // tolerance of one colour by construction, so a mask that large is a
+        // solid patch of that colour and any patch of it the same size matches.
+        // Measured on this project: an orange button fill at 68%, a white info
+        // disc at 63% and a disabled grey button at 75% all measure beautifully
+        // and distinguish nothing, while every element that survived cross-page
+        // falsification selects between 6.6% and 25.8% of its rectangle.
+        constexpr auto k_minimumMaskPixels  = uint64{50};
+        constexpr auto k_maximumMaskPercent = uint64{50};
+
+        // The mask the compiler is about to bake, measured on the frame it was
+        // drawn from. It goes through probeColour -- the function `frames probe`
+        // answers with -- rather than counting here, so the number this warning
+        // fires on and the number an author checks it against cannot become two
+        // different numbers.
+        //
+        // probeColour requires two frames because its two spread figures are
+        // across-frame measurements, and a drawing verb has exactly one frame.
+        // The same view is handed to it twice: selection reads frames[0], which
+        // ColourProbeReport documents, so the counts are exactly what the probe
+        // would report for this rectangle and key, and both spreads come back
+        // zero. That is the truth about one frame, and it is why the warning
+        // below is built on counts alone.
+        [[nodiscard]]
+        auto measureDrawnMask(
+            std::span<annotation::AuthoringSourceAsset const> assets,
+            annotation::SourceId sourceId,
+            PixelRect const& templateRect,
+            annotation::ColourKey const& key
+        ) -> Result<ColourProbeReport>
+        {
+            auto const found = std::ranges::find(
+                assets,
+                sourceId,
+                &annotation::AuthoringSourceAsset::id
+            );
+            if (found == assets.end())
+            {
+                return invalid(
+                    "the screen this rectangle was drawn on is not loaded"
+                );
+            }
+
+            UF_TRY_VALUE(
+                decoded,
+                image::decodePng(found->pngBytes, "authoring source")
+            );
+            UF_TRY_VALUE(bgra, image::rgba8ToBgra8(std::move(decoded.pixels)));
+
+            auto const width = checkedCast<std::size_t>(decoded.width);
+            UF_CHECK(width.has_value());
+            auto const stride = checkedMultiply(
+                width.value_or(std::size_t{0}),
+                bytesPerPixel(PixelFormat::Bgra8)
+            );
+            UF_CHECK(stride.has_value());
+
+            UF_TRY_VALUE(
+                view,
+                BgraImage::create(
+                    bgra,
+                    decoded.width,
+                    decoded.height,
+                    stride.value_or(std::size_t{0})
+                )
+            );
+
+            auto const frames = std::array{view, view};
+            return probeColour(
+                frames,
+                ColourProbeSpec{
+                    .rect      = templateRect,
+                    .keyRed    = key.red(),
+                    .keyGreen  = key.green(),
+                    .keyBlue   = key.blue(),
+                    .tolerance = key.tolerance(),
+                }
+            );
+        }
+
+        // Absent when the mask has a figure in it, which is the ordinary case
+        // and must stay the ordinary case: a warning an author sees on good work
+        // is one they stop reading. The floor is answered first because it is
+        // the more specific diagnosis -- a small rectangle can be under both.
+        [[nodiscard]]
+        auto maskWarning(
+            ColourProbeReport const& report
+        ) -> std::optional<std::string>
+        {
+            if (report.fullySelectedPixels < k_minimumMaskPixels)
+            {
+                return std::format(
+                    "this key selects {} of the rectangle's {} pixels, under "
+                    "the {} a mask needs to measure anything. A match is the "
+                    "lowest score anywhere in the search region, so a mask this "
+                    "small never has to survive where the glyph is -- it only "
+                    "has to find some offset where every selected pixel lands "
+                    "on that colour, and a busy screen always offers one. Widen "
+                    "the rectangle, loosen --tolerance, or key a different "
+                    "feature. This is a hint; `check` is what decides.",
+                    report.fullySelectedPixels,
+                    report.rectPixels,
+                    k_minimumMaskPixels
+                );
+            }
+            // Cross-multiplied rather than divided, so the comparison is exact
+            // at every rectangle size. Neither side can overflow: a rectangle is
+            // bounded by the largest decodable image.
+            auto const selectedHundredths = report.fullySelectedPixels * 100U;
+            auto const limitHundredths    = report.rectPixels * k_maximumMaskPercent;
+            if (selectedHundredths >= limitHundredths)
+            {
+                return std::format(
+                    "this key selects {} of the rectangle's {} pixels, {}% of "
+                    "it: at half the rectangle or more the key has taken the "
+                    "fill rather than the figure drawn on it. Every selected "
+                    "pixel is within tolerance of one colour, so a mask this "
+                    "large is a solid patch of that colour and any patch of it "
+                    "the same size matches, while the glyph-shaped holes carry "
+                    "no weight. Key the glyph instead. This is a hint; `check` "
+                    "is what decides.",
+                    report.fullySelectedPixels,
+                    report.rectPixels,
+                    report.fullySelectedPixels * 100U / report.rectPixels
+                );
+            }
+            return {};
+        }
+
+        // What the drawn key keeps, said at the moment it is drawn rather than
+        // at a match that fails much later or never fails at all. Null when the
+        // draw carries no key: an unkeyed template compares every pixel of the
+        // rectangle, so there is no mask, and "the key selected the wrong thing"
+        // is not a question that can be asked of it.
+        [[nodiscard]]
+        auto maskJson(
+            std::span<annotation::AuthoringSourceAsset const> assets,
+            annotation::SourceId sourceId,
+            ElementDraw const& draw
+        ) -> Result<std::string>
+        {
+            if (!draw.colourKey)
+            {
+                return jsonNull();
+            }
+
+            UF_TRY_VALUE(
+                report,
+                measureDrawnMask(
+                    assets,
+                    sourceId,
+                    draw.templateRect,
+                    *draw.colourKey
+                )
+            );
+            auto const warning = maskWarning(report);
+            auto warningValue  = jsonNull();
+            if (warning)
+            {
+                warningValue = jsonString(*warning);
+            }
+
+            // The two counts carry the names `frames probe` gives them, because
+            // they are the same two numbers from the same function and an author
+            // comparing the two documents must not have to translate.
+            auto const members = std::array{
+                JsonMember{
+                    .key   = "rect_pixels",
+                    .value = jsonUnsigned(report.rectPixels),
+                },
+                JsonMember{
+                    .key   = "fully_selected_pixels",
+                    .value = jsonUnsigned(report.fullySelectedPixels),
+                },
+                JsonMember{
+                    .key   = "selected_fraction",
+                    .value = jsonNumber(
+                        fractionOf(report.fullySelectedPixels, report.rectPixels)
+                    ),
+                },
+                JsonMember{
+                    .key   = "warning",
+                    .value = std::move(warningValue),
+                },
+            };
+            return jsonObject(members);
         }
 
         [[nodiscard]]
@@ -605,11 +1089,15 @@ namespace uf::authoring
             );
         }
 
+        // `mask` is an already-encoded value from maskJson, not a second thing
+        // to measure here: the measurement needs the source bytes, which the
+        // session owns and the saved document does not.
         [[nodiscard]]
         auto drawJson(
             annotation::AuthoringDocument const& document,
-            annotation::RecognizerId id,
-            bool ingested
+            annotation::ElementId id,
+            bool ingested,
+            std::string mask
         ) -> Result<std::string>
         {
             auto const* p_element = document.findElement(id);
@@ -623,13 +1111,14 @@ namespace uf::authoring
                     .key   = "source_ingested",
                     .value = jsonBoolean(ingested),
                 },
+                JsonMember{.key = "mask", .value = std::move(mask)},
             };
             return jsonObject(members);
         }
 
         // The frame a match runs against, built from a PNG exactly as the live
         // path builds one from a captured window: BGRA8, one packed row stride,
-        // and an identity transform, so the recognizer compares the same pixels
+        // and an identity transform, so the element compares the same pixels
         // it would compare on screen.
         [[nodiscard]]
         auto frameFromPng(
@@ -705,7 +1194,7 @@ namespace uf::authoring
                 annotation::searchStopKind(stop.reason),
                 std::format(
                     "recognition stopped on {}: {}",
-                    stop.recognizerId.value().toString(),
+                    stop.elementId.value().toString(),
                     annotation::searchStopDescription(stop.reason)
                 )
             );
@@ -714,71 +1203,214 @@ namespace uf::authoring
         struct MatchOutcome final
         {
             annotation::AnchorEvidence evidence;
-            uint64                     pixelComparisons{};
+
+            // The page a click target was located on. Absent for the anchor
+            // pass, which runs before any page is known -- that is what makes
+            // one search serve every page.
+            std::optional<annotation::PageId> pageId{};
+
+            uint64 pixelComparisons{};
         };
 
-        // A page anchor is only ever searched as part of resolving a page, so
-        // that is how it is measured here; an action target has its own single
-        // evaluation. An info region has neither -- evaluateActionTarget refuses
-        // anything that is not an action target, and page resolution does not
-        // look at info regions at all -- so it is refused with the reason.
+        // Which of the runtime's two entry points measures this element, or why
+        // neither of them measures anything.
+        enum class MatchPath : uint8
+        {
+            PageSignature,
+            ActionTarget,
+            NoPixels,
+            Unreachable,
+        };
+
+        // An element with no appearance is answered first, before either entry
+        // point: it declares no pixels, so nothing about it can be measured on a
+        // frame. Otherwise identify wins when an element declares both. The
+        // anchor pass is global and page-independent, so it is the measurement
+        // that needs no page argument at all, and a reference exercising
+        // identify may not refine the search region -- so an element that also
+        // interacts is searched over the same rectangle of the same region
+        // either way.
         [[nodiscard]]
-        auto matchRecognizer(
+        auto matchPathOf(
+            annotation::CompiledElement const& element
+        ) noexcept -> MatchPath
+        {
+            if (element.appearances().empty())
+            {
+                return MatchPath::NoPixels;
+            }
+            if (element.capabilities().hasIdentify())
+            {
+                return MatchPath::PageSignature;
+            }
+            if (element.capabilities().hasInteract())
+            {
+                return MatchPath::ActionTarget;
+            }
+            return MatchPath::Unreachable;
+        }
+
+        [[nodiscard]]
+        auto pageNameList(
+            annotation::RecognitionCatalog const& catalog,
+            std::span<annotation::PageId const> ids
+        ) -> std::string
+        {
+            auto listed = std::string{};
+            for (auto const id : ids)
+            {
+                if (!listed.empty())
+                {
+                    listed += ", ";
+                }
+                auto const* p_page = catalog.findPage(id);
+                listed += p_page == nullptr
+                    ? id.value().toString()
+                    : p_page->name().value();
+            }
+            return listed;
+        }
+
+        // Which page a click target is located on. It is a page-scoped question
+        // now: the refined search region and the pinned appearance both live on
+        // the page's reference, so there is no page-less entry point to fall
+        // back on. The references answer it when only one page clicks the
+        // element; nothing but --page can choose when several do.
+        [[nodiscard]]
+        auto interactPageOf(
+            annotation::RecognitionCatalog const& catalog,
+            annotation::CompiledElement const& element,
+            std::optional<std::string> const& requested
+        ) -> Result<annotation::PageId>
+        {
+            auto pages = std::vector<annotation::PageId>{};
+            for (auto const& reference : catalog.references())
+            {
+                if (
+                    reference.elementId == element.id()
+                    && reference.exercised.hasInteract()
+                    && !std::ranges::contains(pages, reference.pageId)
+                )
+                {
+                    pages.emplace_back(reference.pageId);
+                }
+            }
+
+            if (requested)
+            {
+                auto const named = std::ranges::find_if(
+                    catalog.pages(),
+                    [&requested](annotation::PageSignature const& page)
+                    {
+                        return page.name().value() == *requested;
+                    }
+                );
+                if (named == catalog.pages().end())
+                {
+                    return invalid(
+                        std::format(
+                            "no page named \"{}\" is part of this project",
+                            *requested
+                        )
+                    );
+                }
+                if (!std::ranges::contains(pages, named->id()))
+                {
+                    return invalid(
+                        std::format(
+                            "page \"{}\" does not click \"{}\"; the pages that "
+                            "do are: {}",
+                            *requested,
+                            element.name().value(),
+                            pageNameList(catalog, pages)
+                        )
+                    );
+                }
+                return named->id();
+            }
+
+            if (pages.empty())
+            {
+                return invalid(
+                    std::format(
+                        "no page clicks \"{}\", so there is no page to locate "
+                        "it on",
+                        element.name().value()
+                    )
+                );
+            }
+            if (pages.size() > 1U)
+            {
+                return invalid(
+                    std::format(
+                        "\"{}\" is clicked on more than one page, so --page has "
+                        "to name which: {}",
+                        element.name().value(),
+                        pageNameList(catalog, pages)
+                    )
+                );
+            }
+            return pages.front();
+        }
+
+        [[nodiscard]]
+        auto matchActionTarget(
             annotation::RecognitionRuntime const& runtime,
-            annotation::RecognizerDefinition const& recognizer,
+            annotation::CompiledElement const& element,
+            Frame const& frame,
+            annotation::RecognitionPolicy const& policy,
+            annotation::PageId pageId
+        ) -> Result<MatchOutcome>
+        {
+            UF_TRY_VALUE(
+                attempt,
+                runtime.evaluateActionTarget(
+                    frame,
+                    runtime.manifest().catalog().fingerprint(),
+                    pageId,
+                    element.id(),
+                    policy
+                )
+            );
+            if (
+                auto const* p_stop = std::get_if<annotation::PageRecognitionStop>(
+                    &attempt.result
+                )
+            )
+            {
+                return stopFailure(*p_stop);
+            }
+            auto const* p_evidence = std::get_if<annotation::AnchorEvidence>(
+                &attempt.result
+            );
+            UF_CHECK(p_evidence != nullptr);
+            return MatchOutcome{
+                .evidence         = *p_evidence,
+                .pageId           = pageId,
+                .pixelComparisons = attempt.completedPixelComparisons,
+            };
+        }
+
+        [[nodiscard]]
+        auto matchPageAnchor(
+            annotation::RecognitionRuntime const& runtime,
+            annotation::CompiledElement const& element,
             Frame const& frame,
             annotation::RecognitionPolicy const& policy
         ) -> Result<MatchOutcome>
         {
-            auto const fingerprint = runtime.manifest().catalog().fingerprint();
-            if (recognizer.annotationType() == annotation::AnnotationType::InfoRegion)
-            {
-                return invalid(
-                    std::format(
-                        "\"{}\" is an info_region, which the runtime evaluates "
-                        "only as part of a task reading a page",
-                        recognizer.name().value()
-                    )
-                );
-            }
-
-            if (recognizer.annotationType() == annotation::AnnotationType::ActionTarget)
-            {
-                UF_TRY_VALUE(
-                    attempt,
-                    runtime.evaluateActionTarget(
-                        frame,
-                        fingerprint,
-                        recognizer.id(),
-                        policy
-                    )
-                );
-                if (
-                    auto const* p_stop = std::get_if<annotation::PageRecognitionStop>(
-                        &attempt.result
-                    )
-                )
-                {
-                    return stopFailure(*p_stop);
-                }
-                auto const* p_evidence = std::get_if<annotation::AnchorEvidence>(
-                    &attempt.result
-                );
-                UF_CHECK(p_evidence != nullptr);
-                return MatchOutcome{
-                    .evidence         = *p_evidence,
-                    .pixelComparisons = attempt.completedPixelComparisons,
-                };
-            }
-
             UF_TRY_VALUE(
                 attempt,
-                runtime.evaluatePage(frame, fingerprint, policy)
+                runtime.evaluatePage(
+                    frame,
+                    runtime.manifest().catalog().fingerprint(),
+                    policy
+                )
             );
             auto const found = std::ranges::find(
                 attempt.completedAnchorEvidence,
-                recognizer.id(),
-                &annotation::AnchorEvidence::recognizerId
+                element.id(),
+                &annotation::AnchorEvidence::elementId
             );
             if (found == attempt.completedAnchorEvidence.end())
             {
@@ -795,7 +1427,7 @@ namespace uf::authoring
                 return invalid(
                     std::format(
                         "\"{}\" produced no evidence in this page evaluation",
-                        recognizer.name().value()
+                        element.name().value()
                     )
                 );
             }
@@ -803,6 +1435,80 @@ namespace uf::authoring
                 .evidence         = *found,
                 .pixelComparisons = attempt.completedPixelComparisons,
             };
+        }
+
+        // An element that identifies is only ever searched as part of resolving
+        // a page, so that is how it is measured; one that is clicked has its own
+        // single evaluation on the page that clicks it. An element that is only
+        // read has neither entry point -- reading happens inside a task that
+        // already resolved the page -- so it is refused with the reason. So is
+        // one that declares no appearance, whichever capabilities it has.
+        [[nodiscard]]
+        auto matchElement(
+            annotation::RecognitionRuntime const& runtime,
+            annotation::CompiledElement const& element,
+            Frame const& frame,
+            annotation::RecognitionPolicy const& policy,
+            std::optional<std::string> const& requestedPage
+        ) -> Result<MatchOutcome>
+        {
+            auto const& catalog = runtime.manifest().catalog();
+            switch (matchPathOf(element))
+            {
+            case MatchPath::NoPixels:
+                // The runtime would answer, and its answer would be a hit at
+                // the annotated rectangle -- on this frame and on every other,
+                // because nothing was compared. Reporting that as a match is
+                // the one reading of this verb an author must not be given: it
+                // is the only tool that tells a rectangle that is really there
+                // from one that merely used to be.
+                return invalid(
+                    std::format(
+                        "\"{}\" declares no appearance, so there is nothing to "
+                        "match: it is located by the page being recognised, and "
+                        "resolving that page is the whole of its evidence. Give "
+                        "it one with `element appearance` if these pixels are "
+                        "meant to be stable, or check the page instead",
+                        element.name().value()
+                    )
+                );
+            case MatchPath::PageSignature:
+                if (requestedPage)
+                {
+                    return invalid(
+                        std::format(
+                            "--page does not apply to \"{}\": it identifies a "
+                            "page, and the anchor pass runs before any page is "
+                            "known",
+                            element.name().value()
+                        )
+                    );
+                }
+                return matchPageAnchor(runtime, element, frame, policy);
+            case MatchPath::ActionTarget:
+            {
+                UF_TRY_VALUE(
+                    pageId,
+                    interactPageOf(catalog, element, requestedPage)
+                );
+                return matchActionTarget(
+                    runtime,
+                    element,
+                    frame,
+                    policy,
+                    pageId
+                );
+            }
+            case MatchPath::Unreachable:
+                return invalid(
+                    std::format(
+                        "\"{}\" is only read, which the runtime does inside a "
+                        "task that has already resolved the page",
+                        element.name().value()
+                    )
+                );
+            }
+            UF_UNREACHABLE_MSG("unknown MatchPath value");
         }
 
         [[nodiscard]]
@@ -865,43 +1571,16 @@ namespace uf::authoring
                 pages.emplace_back(pageJson(document, page));
             }
 
-            // The names `match` accepts. An element placed on several pages
-            // compiles into one runtime recognizer per page under a derived
-            // name, so the authored element list above is not the list of things
-            // that can be matched; this is.
+            // The names `match` accepts, read back out of the generated manifest
+            // rather than off the document above. One element compiles to one
+            // runtime element now, so the two lists share their names; what
+            // this still answers is whether the published manifest loads at all,
+            // and what the compiler made of each appearance.
             UF_TRY_VALUE(runtime, engine::loadRuntimeProject(command.root));
-            auto recognizers = std::vector<std::string>{};
-            for (auto const& recognizer : runtime.runtime.manifest().catalog().recognizers())
+            auto runtimeElements = std::vector<std::string>{};
+            for (auto const& element : runtime.runtime.manifest().catalog().elements())
             {
-                auto const entry = std::array{
-                    JsonMember{
-                        .key   = "id",
-                        .value = jsonString(recognizer.id().value().toString()),
-                    },
-                    JsonMember{
-                        .key   = "name",
-                        .value = jsonString(recognizer.name().value()),
-                    },
-                    JsonMember{
-                        .key   = "type",
-                        .value = jsonString(
-                            annotationTypeName(recognizer.annotationType())
-                        ),
-                    },
-                    JsonMember{
-                        .key   = "template_rect",
-                        .value = rectJson(recognizer.templateRect()),
-                    },
-                    JsonMember{
-                        .key   = "search_roi",
-                        .value = rectJson(recognizer.searchRoi()),
-                    },
-                    JsonMember{
-                        .key   = "min_similarity_bp",
-                        .value = jsonUnsigned(recognizer.threshold().basisPoints()),
-                    },
-                };
-                recognizers.emplace_back(jsonObject(entry));
+                runtimeElements.emplace_back(runtimeElementJson(element));
             }
 
             auto const members = std::array{
@@ -921,8 +1600,8 @@ namespace uf::authoring
                 JsonMember{.key = "elements", .value = jsonArray(elements)},
                 JsonMember{.key = "pages", .value = jsonArray(pages)},
                 JsonMember{
-                    .key   = "runtime_recognizers",
-                    .value = jsonArray(recognizers),
+                    .key   = "runtime_elements",
+                    .value = jsonArray(runtimeElements),
                 },
             };
             return successJson("project show", members);
@@ -989,7 +1668,7 @@ namespace uf::authoring
                     std::move(session.draft),
                     workbench::NewPageSpec{
                         .pageId                = annotation::PageId{pageId},
-                        .anchorId              = annotation::RecognizerId{anchorId},
+                        .anchorId              = annotation::ElementId{anchorId},
                         .regressionId          = annotation::RegressionId{regressionId},
                         .sourceId              = resolved.id,
                         .templateRect          = command.anchor.templateRect,
@@ -1008,9 +1687,9 @@ namespace uf::authoring
             );
             UF_TRY_VALUE(
                 namedAnchor,
-                renameRecognizer(
+                renameElement(
                     std::move(namedPage),
-                    annotation::RecognizerId{anchorId},
+                    annotation::ElementId{anchorId},
                     command.anchor.name
                 )
             );
@@ -1018,7 +1697,7 @@ namespace uf::authoring
                 keyed,
                 workbench::setElementColourKey(
                     std::move(namedAnchor),
-                    annotation::RecognizerId{anchorId},
+                    annotation::ElementId{anchorId},
                     command.anchor.colourKey
                 )
             );
@@ -1026,11 +1705,16 @@ namespace uf::authoring
             session.draft = std::move(keyed);
             UF_TRY_VALUE(document, commitSession(command.root, session));
             UF_TRY_VALUE(
+                mask,
+                maskJson(session.assets, resolved.id, command.anchor)
+            );
+            UF_TRY_VALUE(
                 drawn,
                 drawJson(
                     document,
-                    annotation::RecognizerId{anchorId},
-                    resolved.ingested
+                    annotation::ElementId{anchorId},
+                    resolved.ingested,
+                    std::move(mask)
                 )
             );
 
@@ -1057,7 +1741,7 @@ namespace uf::authoring
 
             UF_TRY_VALUE(pageId, findPageByName(session.draft, command.page));
             UF_TRY_VALUE(
-                elementId,
+                elementResourceId,
                 derivedResourceId(
                     "element",
                     session.draft.projectId.value(),
@@ -1069,86 +1753,465 @@ namespace uf::authoring
                 searchRoiOf(command.draw, session.draft.fingerprint)
             );
 
-            auto const recognizerId = annotation::RecognizerId{elementId};
-            UF_TRY_VALUE(
-                added,
-                workbench::addPageMember(
-                    std::move(session.draft),
-                    workbench::PageMemberSpec{
-                        .recognizerId          = recognizerId,
-                        .pageId                = pageId,
-                        .sourceId              = resolved.id,
-                        .templateRect          = command.draw.templateRect,
-                        .searchRoi             = searchRoi,
-                        .similarityBasisPoints = command.draw.threshold.basisPoints(),
-                        .kind                  = memberKindOf(command.role),
-                    }
-                )
+            // The element and the page's use of it, appended as one edit. It is
+            // written here rather than through workbench::addPageMember because
+            // that helper commits exactly one PageMemberKind, and the case this
+            // whole model exists for -- one patch of pixels that both names its
+            // page and can be clicked -- is not one of the three kinds. The
+            // helper's other work is already done above: this caller knows the
+            // name, minted the id, resolved the source and found the page.
+            //
+            // Holding is Owned with nothing to decide: a drawn rectangle belongs
+            // to the page it was drawn on, and borrowing is `page reference`.
+            auto const elementId  = annotation::ElementId{elementResourceId};
+            auto const appearance = workbench::EditableAppearance{
+                .name                  = std::string{workbench::k_defaultAppearanceName},
+                .sourceId              = resolved.id,
+                .templateRect          = command.draw.templateRect,
+                .similarityBasisPoints = command.draw.threshold.basisPoints(),
+                .colourKey             = command.draw.colourKey,
+            };
+            session.draft.elements.emplace_back(
+                workbench::EditableElement{
+                    .id           = elementId,
+                    .name         = command.draw.name,
+                    .capabilities = declaredCapabilitiesOf(command.capabilities),
+                    .searchRoi    = searchRoi,
+                    .appearances  = {appearance},
+                }
             );
-            UF_TRY_VALUE(
-                named,
-                renameRecognizer(
-                    std::move(added.draft),
-                    recognizerId,
-                    command.draw.name
-                )
-            );
-            UF_TRY_VALUE(
-                keyed,
-                workbench::setElementColourKey(
-                    std::move(named),
-                    recognizerId,
-                    command.draw.colourKey
-                )
+            session.draft.references.emplace_back(
+                workbench::EditableReference{
+                    .pageId    = pageId,
+                    .elementId = elementId,
+                    .holding   = annotation::Holding::Owned,
+                    .exercised = exercisedCapabilitiesOf(command.capabilities),
+                }
             );
 
-            // Applied only when asked, because setRegionShared refuses anything
-            // that is not an interactive region: calling it unconditionally
-            // would turn every --shared-less anchor into a failure.
-            auto drafted = std::move(keyed);
-            if (command.draw.shared)
-            {
-                UF_TRY_VALUE(
-                    marked,
-                    workbench::setRegionShared(std::move(drafted), recognizerId, true)
-                );
-                drafted = std::move(marked);
-            }
-
-            session.draft = std::move(drafted);
             UF_TRY_VALUE(document, commitSession(command.root, session));
-            UF_TRY_VALUE(drawn, drawJson(document, recognizerId, resolved.ingested));
+            UF_TRY_VALUE(
+                mask,
+                maskJson(session.assets, resolved.id, command.draw)
+            );
+            UF_TRY_VALUE(
+                drawn,
+                drawJson(
+                    document,
+                    elementId,
+                    resolved.ingested,
+                    std::move(mask)
+                )
+            );
 
             auto const members = std::array{
                 JsonMember{.key = "page", .value = jsonString(command.page)},
                 JsonMember{.key = "authored", .value = drawn},
             };
-            return successJson(commandNameOf(command.role), members);
+            return successJson("page add", members);
         }
 
         [[nodiscard]]
-        auto runMatchRecognizer(
-            MatchRecognizer const& command
+        auto runAddRegion(AddRegion const& command) -> Result<std::string>
+        {
+            UF_TRY_VALUE(session, openSession(command.root));
+            UF_TRY_VALUE(pageId, findPageByName(session.draft, command.page));
+            UF_TRY_VALUE(
+                elementResourceId,
+                derivedResourceId(
+                    "element",
+                    session.draft.projectId.value(),
+                    command.name
+                )
+            );
+
+            // No source is opened and no template is cut, which is the whole of
+            // the difference from runAddElement above. The rectangle becomes the
+            // ELEMENT's search region rather than a refinement on this page's
+            // reference, and the choice is forced twice over. A reference's
+            // region is optional and means "this page narrows the element's",
+            // so it needs an element region to narrow; leaving that at the whole
+            // screen would say this rectangle may be anywhere, and every page
+            // referencing it without its own refinement would locate it at the
+            // screen's centre. And there is no second page yet: `page add`
+            // draws an element AND its owning page's use of it in one edit, so
+            // what the author is describing here is the element.
+            auto const elementId = annotation::ElementId{elementResourceId};
+            session.draft.elements.emplace_back(
+                workbench::EditableElement{
+                    .id           = elementId,
+                    .name         = command.name,
+                    .capabilities = declaredCapabilitiesOf(command.capabilities),
+                    .searchRoi    = command.region,
+                    .appearances  = {},
+                }
+            );
+            session.draft.references.emplace_back(
+                workbench::EditableReference{
+                    .pageId    = pageId,
+                    .elementId = elementId,
+                    .holding   = annotation::Holding::Owned,
+                    .exercised = exercisedCapabilitiesOf(command.capabilities),
+                }
+            );
+
+            UF_TRY_VALUE(document, commitSession(command.root, session));
+            // The same two keys the drawing half answers with, because it is the
+            // same verb: a caller reads `authored.element.appearances` and finds it
+            // empty rather than reading a different document shape. Nothing was
+            // ingested and there is no mask, and both say so rather than being
+            // left out.
+            UF_TRY_VALUE(
+                drawn,
+                drawJson(document, elementId, false, jsonNull())
+            );
+
+            auto const members = std::array{
+                JsonMember{.key = "page", .value = jsonString(command.page)},
+                JsonMember{.key = "authored", .value = drawn},
+            };
+            return successJson("page add", members);
+        }
+
+        // The element named, and what it declares it can do, kept apart from the
+        // draft it was read out of: the draft is moved into the edit below, and
+        // a borrow into it would outlive the owner it names.
+        struct NamedElement final
+        {
+            annotation::ElementId           id;
+            workbench::EditableCapabilities capabilities{};
+        };
+
+        [[nodiscard]]
+        auto findElementByName(
+            workbench::AuthoringDraft const& draft,
+            std::string const& name
+        ) -> Result<NamedElement>
+        {
+            auto const found = std::ranges::find(
+                draft.elements,
+                name,
+                &workbench::EditableElement::name
+            );
+            if (found == draft.elements.end())
+            {
+                return invalid(
+                    std::format(
+                        "no element named \"{}\" is part of this project",
+                        name
+                    )
+                );
+            }
+            return NamedElement{
+                .id           = found->id,
+                .capabilities = found->capabilities,
+            };
+        }
+
+        // A second look at pixels the project already holds, appended to the
+        // element's ordered appearance list.
+        //
+        // Written here rather than as an edit-layer verb for the reason
+        // runAddElement gives: that layer draws ONE rectangle per element and
+        // every verb in it is built on that, while this is the verb that makes
+        // the number two. The rules it has to keep are the model's own --
+        // distinct names, and a template that fits the region every appearance
+        // of this element shares -- and both are enforced by
+        // validateElementShape when the draft is rebuilt below. The name is
+        // checked here as well, only so the refusal can name the element the
+        // author typed instead of reporting that some element has a duplicate.
+        [[nodiscard]]
+        auto runAddAppearance(AddAppearance const& command) -> Result<std::string>
+        {
+            UF_TRY_VALUE(opened, openSession(command.root));
+            UF_TRY_VALUE(
+                resolved,
+                resolveSource(std::move(opened), command.draw.source)
+            );
+            auto session = std::move(resolved.session);
+
+            auto const found = std::ranges::find(
+                session.draft.elements,
+                command.element,
+                &workbench::EditableElement::name
+            );
+            if (found == session.draft.elements.end())
+            {
+                return invalid(
+                    std::format(
+                        "no element named \"{}\" is part of this project",
+                        command.element
+                    )
+                );
+            }
+            if (
+                std::ranges::contains(
+                    found->appearances,
+                    command.draw.name,
+                    &workbench::EditableAppearance::name
+                )
+            )
+            {
+                return invalid(
+                    std::format(
+                        "\"{}\" already has an appearance named \"{}\"; an "
+                        "appearance name is how a page pins one and how a "
+                        "script reads which matched, so two cannot share it",
+                        command.element,
+                        command.draw.name
+                    )
+                );
+            }
+
+            auto const elementId = found->id;
+            found->appearances.emplace_back(
+                workbench::EditableAppearance{
+                    .name                  = command.draw.name,
+                    .sourceId              = resolved.id,
+                    .templateRect          = command.draw.templateRect,
+                    .similarityBasisPoints = command.draw.threshold.basisPoints(),
+                    .colourKey             = command.draw.colourKey,
+                }
+            );
+
+            UF_TRY_VALUE(document, commitSession(command.root, session));
+            UF_TRY_VALUE(
+                mask,
+                maskJson(session.assets, resolved.id, command.draw)
+            );
+            UF_TRY_VALUE(
+                drawn,
+                drawJson(
+                    document,
+                    elementId,
+                    resolved.ingested,
+                    std::move(mask)
+                )
+            );
+
+            auto const members = std::array{
+                JsonMember{
+                    .key   = "appearance",
+                    .value = jsonString(command.draw.name),
+                },
+                JsonMember{.key = "authored", .value = drawn},
+            };
+            return successJson("element appearance", members);
+        }
+
+        // One capability, as the element declares it and as a page asks for it.
+        // Three rows rather than three branches, so the set a refusal prints and
+        // the set it checks are the same list read twice.
+        struct ExercisedUse final
+        {
+            std::string_view name{};
+
+            bool requested{};
+            bool declared{};
+        };
+
+        [[nodiscard]]
+        auto exercisedUsesOf(
+            workbench::EditableCapabilities const& declared,
+            StatedCapabilities const& exercised
+        ) -> std::array<ExercisedUse, 3>
+        {
+            return std::array{
+                ExercisedUse{
+                    .name      = "identify",
+                    .requested = exercised.identify.has_value(),
+                    .declared  = declared.identify.has_value(),
+                },
+                ExercisedUse{
+                    .name      = "interact",
+                    .requested = exercised.interact,
+                    .declared  = declared.interact.has_value(),
+                },
+                ExercisedUse{
+                    .name      = "read",
+                    .requested = exercised.read,
+                    .declared  = declared.read.has_value(),
+                },
+            };
+        }
+
+        [[nodiscard]]
+        auto declaredCapabilityList(
+            std::span<ExercisedUse const> uses
+        ) -> std::string
+        {
+            auto listed = std::string{};
+            for (auto const& use : uses)
+            {
+                if (!use.declared)
+                {
+                    continue;
+                }
+                if (!listed.empty())
+                {
+                    listed += ", ";
+                }
+                listed += use.name;
+            }
+            return listed;
+        }
+
+        // Two levels, one direction: the element declares what it can do, and a
+        // page's reference declares what that page does with it. The edit layer
+        // refuses the same row, but from a draft it can only name the element.
+        // Naming the page, the use asked for, and what the element actually
+        // declares is the difference between an author correcting the command
+        // and an author guessing which half of it was wrong.
+        [[nodiscard]]
+        auto requireDeclaredCapabilities(
+            std::string const& page,
+            std::string const& element,
+            workbench::EditableCapabilities const& declared,
+            StatedCapabilities const& exercised
+        ) -> Status
+        {
+            auto const uses = exercisedUsesOf(declared, exercised);
+            for (auto const& use : uses)
+            {
+                if (!use.requested || use.declared)
+                {
+                    continue;
+                }
+                return fail(
+                    AutomationErrorKind::InvalidResource,
+                    std::format(
+                        "page \"{}\" would exercise {} on \"{}\", which declares "
+                        "{}; a page exercises only what the element declares",
+                        page,
+                        use.name,
+                        element,
+                        declaredCapabilityList(uses)
+                    )
+                );
+            }
+            return ok();
+        }
+
+        [[nodiscard]]
+        auto runReferenceElement(
+            ReferenceElement const& command
+        ) -> Result<std::string>
+        {
+            UF_TRY_VALUE(session, openSession(command.root));
+            UF_TRY_VALUE(pageId, findPageByName(session.draft, command.page));
+            UF_TRY_VALUE(
+                element,
+                findElementByName(session.draft, command.element)
+            );
+
+            // Absent means the page takes every use a placement carries on its
+            // own, which is what the edit layer reads a missing set as. Stating
+            // one is what makes identify reachable at all -- and the only place
+            // its role can be typed.
+            auto exercised = std::optional<workbench::EditableExercised>{};
+            if (command.exercised)
+            {
+                UF_TRY(
+                    requireDeclaredCapabilities(
+                        command.page,
+                        command.element,
+                        element.capabilities,
+                        *command.exercised
+                    )
+                );
+                exercised = exercisedCapabilitiesOf(*command.exercised);
+            }
+
+            // --search-roi travels as the optional it was typed as. Seeding it
+            // from the element would pin a copy of a rectangle a later
+            // correction moves, and it would leave every reference refining a
+            // region -- which is the one thing a reference that exercises
+            // identify may not do. --appearance travels the same way, and for the
+            // same reason: absent means "search every appearance", which is a
+            // different instruction from "search the first one".
+            UF_TRY_VALUE(
+                referenced,
+                workbench::referenceElementOnPage(
+                    std::move(session.draft),
+                    workbench::ReferenceElementSpec{
+                        .elementId  = element.id,
+                        .pageId     = pageId,
+                        .exercised  = exercised,
+                        .searchRoi  = command.searchRoi,
+                        .appearance = command.appearance,
+                    }
+                )
+            );
+
+            session.draft = std::move(referenced.draft);
+            UF_TRY_VALUE(document, commitSession(command.root, session));
+
+            auto const* p_reference = document.catalog().findReference(
+                pageId,
+                element.id
+            );
+            if (p_reference == nullptr)
+            {
+                return invalid("the reference just made is not in the document");
+            }
+
+            // How many pages this element now serves. It is the number the whole
+            // verb exists to raise above one, and the number an author has to
+            // know before correcting the element's pixels: one edit lands on
+            // every page counted here.
+            auto reached = std::vector<annotation::PageId>{};
+            for (auto const& reference : document.references())
+            {
+                if (
+                    reference.elementId == element.id
+                    && !std::ranges::contains(reached, reference.pageId)
+                )
+                {
+                    reached.emplace_back(reference.pageId);
+                }
+            }
+
+            auto const members = std::array{
+                JsonMember{.key = "page", .value = jsonString(command.page)},
+                JsonMember{
+                    .key   = "element",
+                    .value = jsonString(command.element),
+                },
+                JsonMember{
+                    .key   = "reference",
+                    .value = referenceJson(document, *p_reference),
+                },
+                JsonMember{
+                    .key   = "pages_referencing",
+                    .value = jsonUnsigned(reached.size()),
+                },
+            };
+            return successJson("page reference", members);
+        }
+
+        [[nodiscard]]
+        auto runMatchElement(
+            MatchElement const& command
         ) -> Result<std::string>
         {
             UF_TRY_VALUE(loaded, engine::loadRuntimeProject(command.root));
             auto const& catalog    = loaded.runtime.manifest().catalog();
-            auto const recognizers = catalog.recognizers();
+            auto const elements = catalog.elements();
 
             auto const found = std::ranges::find_if(
-                recognizers,
-                [&command](annotation::RecognizerDefinition const& recognizer)
+                elements,
+                [&command](annotation::CompiledElement const& element)
                 {
-                    return recognizer.name().value() == command.recognizer;
+                    return element.name().value() == command.element;
                 }
             );
-            if (found == recognizers.end())
+            if (found == elements.end())
             {
                 return invalid(
                     std::format(
-                        "no recognizer named \"{}\" in this project; "
-                        "project show lists every runtime recognizer",
-                        command.recognizer
+                        "no element named \"{}\" in this project; "
+                        "project show lists every runtime element",
+                        command.element
                     )
                 );
             }
@@ -1156,43 +2219,27 @@ namespace uf::authoring
             UF_TRY_VALUE(frame, frameFromPng(command.frame, catalog.fingerprint()));
             UF_TRY_VALUE(
                 outcome,
-                matchRecognizer(
+                matchElement(
                     loaded.runtime,
                     *found,
                     frame,
                     annotation::RecognitionPolicy{
                         .maximumPixelComparisons = command.budget,
-                    }
+                    },
+                    command.page
                 )
             );
 
             auto const& evidence = outcome.evidence;
-            auto const recognizerMembers = std::array{
-                JsonMember{
-                    .key   = "id",
-                    .value = jsonString(found->id().value().toString()),
-                },
-                JsonMember{
-                    .key   = "name",
-                    .value = jsonString(found->name().value()),
-                },
-                JsonMember{
-                    .key   = "type",
-                    .value = jsonString(annotationTypeName(found->annotationType())),
-                },
-                JsonMember{
-                    .key   = "template_rect",
-                    .value = rectJson(found->templateRect()),
-                },
-                JsonMember{
-                    .key   = "search_roi",
-                    .value = rectJson(found->searchRoi()),
-                },
-                JsonMember{
-                    .key   = "min_similarity_bp",
-                    .value = jsonUnsigned(found->threshold().basisPoints()),
-                },
-            };
+            auto pageName        = jsonNull();
+            if (outcome.pageId)
+            {
+                auto const* p_page = catalog.findPage(*outcome.pageId);
+                if (p_page != nullptr)
+                {
+                    pageName = jsonString(p_page->name().value());
+                }
+            }
 
             auto const members = std::array{
                 JsonMember{
@@ -1204,10 +2251,22 @@ namespace uf::authoring
                     .value = jsonString(command.frame.string()),
                 },
                 JsonMember{
-                    .key   = "recognizer",
-                    .value = jsonObject(recognizerMembers),
+                    .key   = "element",
+                    .value = runtimeElementJson(*found),
                 },
+                // Which page the target was located on, and null for the anchor
+                // pass, which runs before any page is known.
+                JsonMember{.key = "page", .value = std::move(pageName)},
                 JsonMember{.key = "hit", .value = jsonBoolean(evidence.hit())},
+                // Which appearance produced this evidence, so "why did it match"
+                // is answerable from the answer. Null only for an element that
+                // declares none and is located by its page.
+                JsonMember{
+                    .key   = "appearance",
+                    .value = evidence.appearanceName()
+                        ? jsonString(evidence.appearanceName()->value())
+                        : jsonNull(),
+                },
                 JsonMember{
                     .key   = "sad_score",
                     .value = evidence.sadScore()
@@ -1236,6 +2295,327 @@ namespace uf::authoring
                 },
             };
             return successJson("match", members);
+        }
+
+        // The five enumerations the falsification matrix answers with. Each is
+        // one total mapping for the same reason as the three above: a switch
+        // over a scoped enum makes the compiler name the case a new enumerator
+        // forgot.
+        [[nodiscard]]
+        auto screenOutcomeName(workbench::ScreenCheckOutcome outcome) -> std::string_view
+        {
+            switch (outcome)
+            {
+            case workbench::ScreenCheckOutcome::Correct:
+                return "correct";
+            case workbench::ScreenCheckOutcome::WrongPage:
+                return "wrong_page";
+            case workbench::ScreenCheckOutcome::Unknown:
+                return "unknown";
+            case workbench::ScreenCheckOutcome::Ambiguous:
+                return "ambiguous";
+            case workbench::ScreenCheckOutcome::Unclaimed:
+                return "unclaimed";
+            case workbench::ScreenCheckOutcome::Stopped:
+                return "stopped";
+            }
+            UF_UNREACHABLE_MSG("unknown ScreenCheckOutcome value");
+        }
+
+        [[nodiscard]]
+        auto cellSubjectName(workbench::ModelCellSubject subject) -> std::string_view
+        {
+            switch (subject)
+            {
+            case workbench::ModelCellSubject::Element:
+                return "element";
+            case workbench::ModelCellSubject::Appearance:
+                return "appearance";
+            }
+            UF_UNREACHABLE_MSG("unknown ModelCellSubject value");
+        }
+
+        [[nodiscard]]
+        auto cellOutcomeName(workbench::ModelCellOutcome outcome) -> std::string_view
+        {
+            switch (outcome)
+            {
+            case workbench::ModelCellOutcome::Hit:
+                return "hit";
+            case workbench::ModelCellOutcome::Miss:
+                return "miss";
+            case workbench::ModelCellOutcome::Stopped:
+                return "stopped";
+            case workbench::ModelCellOutcome::NotSearchedHere:
+                return "not_searched_here";
+            }
+            UF_UNREACHABLE_MSG("unknown ModelCellOutcome value");
+        }
+
+        // What the model states about a row's subject on a screen, named rather
+        // than reduced to "is a hit expected".
+        //
+        // The three are not two. A bool collapses Absent and Unclaimed into one
+        // false, and they are the opposite instruction to whoever reads the
+        // matrix: under Absent a hit is a defect to repair, under Unclaimed a
+        // hit is the same element genuinely being on an overlay screen its page
+        // does not name, and there is nothing to do. The distinction is not
+        // rare -- an element located by its page takes part in no signature, so
+        // every screen its own pages do not claim answers Unclaimed for it, and
+        // every one of those rows would otherwise read as a hit that was not
+        // expected.
+        [[nodiscard]]
+        auto cellExpectationName(
+            workbench::ModelCellExpectation expectation
+        ) -> std::string_view
+        {
+            switch (expectation)
+            {
+            case workbench::ModelCellExpectation::Match:
+                return "match";
+            case workbench::ModelCellExpectation::Absent:
+                return "absent";
+            case workbench::ModelCellExpectation::Unclaimed:
+                return "unclaimed";
+            }
+            UF_UNREACHABLE_MSG("unknown ModelCellExpectation value");
+        }
+
+        [[nodiscard]]
+        auto cellVerdictName(workbench::ModelCellColor colour) -> std::string_view
+        {
+            switch (colour)
+            {
+            case workbench::ModelCellColor::Expected:
+                return "expected";
+            case workbench::ModelCellColor::Thin:
+                return "thin";
+            case workbench::ModelCellColor::Misfire:
+                return "misfire";
+            case workbench::ModelCellColor::NotSearched:
+                return "not_searched";
+            }
+            UF_UNREACHABLE_MSG("unknown ModelCellColor value");
+        }
+
+        // A screen by the file an author can open. The id is the truncated
+        // content hash and says nothing to a reader; the installed path is what
+        // they took the screenshot as.
+        [[nodiscard]]
+        auto screenNameJson(
+            annotation::AuthoringDocument const& document,
+            annotation::SourceId id
+        ) -> std::string
+        {
+            auto const* p_source = document.findSource(id);
+            return p_source == nullptr
+                ? jsonString(id.value().toString())
+                : jsonString(p_source->relativePath());
+        }
+
+        [[nodiscard]]
+        auto pageNameJson(
+            annotation::AuthoringDocument const& document,
+            std::optional<annotation::PageId> id
+        ) -> std::string
+        {
+            if (!id.has_value())
+            {
+                return jsonNull();
+            }
+            auto const* p_page = document.catalog().findPage(*id);
+            return p_page == nullptr
+                ? jsonString(id->value().toString())
+                : jsonString(p_page->name().value());
+        }
+
+        [[nodiscard]]
+        auto screenCheckJson(
+            annotation::AuthoringDocument const& document,
+            workbench::ScreenCheck const& screen
+        ) -> std::string
+        {
+            auto const members = std::array{
+                JsonMember{
+                    .key   = "screen",
+                    .value = screenNameJson(document, screen.sourceId),
+                },
+                JsonMember{
+                    .key   = "expected_page",
+                    .value = pageNameJson(document, screen.expectedPageId),
+                },
+                JsonMember{
+                    .key   = "resolved_page",
+                    .value = pageNameJson(document, screen.resolvedPageId),
+                },
+                JsonMember{
+                    .key   = "outcome",
+                    .value = jsonString(screenOutcomeName(screen.outcome)),
+                },
+            };
+            return jsonObject(members);
+        }
+
+        // One measured cell. `verdict` is classifyModelCell's answer rather than
+        // something the caller recomputes: the rule that a hit off the diagonal
+        // is a misfire belongs to one place, and an agent reading this document
+        // must not be the second implementation of it.
+        [[nodiscard]]
+        auto cellJson(
+            annotation::AuthoringDocument const& document,
+            workbench::ModelCheckCell const& cell
+        ) -> std::string
+        {
+            auto const members = std::array{
+                JsonMember{
+                    .key   = "element",
+                    .value = elementNameJson(document, cell.elementId),
+                },
+                JsonMember{
+                    .key   = "screen",
+                    .value = screenNameJson(document, cell.screenId),
+                },
+                JsonMember{
+                    .key   = "subject",
+                    .value = jsonString(cellSubjectName(cell.subject)),
+                },
+                JsonMember{
+                    .key   = "appearance",
+                    .value = cell.appearance
+                        ? jsonString(cell.appearance->value())
+                        : jsonNull(),
+                },
+                JsonMember{
+                    .key   = "outcome",
+                    .value = jsonString(cellOutcomeName(cell.outcome)),
+                },
+                JsonMember{
+                    .key   = "expectation",
+                    .value = jsonString(cellExpectationName(cell.expectation)),
+                },
+                JsonMember{
+                    .key   = "verdict",
+                    .value = jsonString(
+                        cellVerdictName(workbench::classifyModelCell(cell))
+                    ),
+                },
+                JsonMember{
+                    .key   = "sad_score",
+                    .value = cell.sadScore
+                        ? jsonUnsigned(cell.sadScore.value_or(0))
+                        : jsonNull(),
+                },
+                JsonMember{
+                    .key   = "maximum_sad",
+                    .value = jsonUnsigned(cell.maximumSad),
+                },
+                JsonMember{
+                    .key   = "matched_rect",
+                    .value = cell.matchedRect
+                        ? rectJson(*cell.matchedRect)
+                        : jsonNull(),
+                },
+            };
+            return jsonObject(members);
+        }
+
+        [[nodiscard]]
+        auto findingJson(
+            annotation::AuthoringDocument const& document,
+            workbench::ModelFinding const& finding
+        ) -> std::string
+        {
+            auto const members = std::array{
+                JsonMember{
+                    .key   = "kind",
+                    .value = jsonString(workbench::modelFindingKindName(finding.kind)),
+                },
+                JsonMember{
+                    .key   = "element",
+                    .value = elementNameJson(document, finding.elementId),
+                },
+                JsonMember{
+                    .key   = "screen",
+                    .value = screenNameJson(document, finding.screenId),
+                },
+                JsonMember{
+                    .key   = "appearance",
+                    .value = finding.appearance
+                        ? jsonString(finding.appearance->value())
+                        : jsonNull(),
+                },
+                JsonMember{
+                    .key   = "rival",
+                    .value = finding.rival
+                        ? jsonString(finding.rival->value())
+                        : jsonNull(),
+                },
+            };
+            return jsonObject(members);
+        }
+
+        [[nodiscard]]
+        auto runCheckModel(CheckModel const& command) -> Result<std::string>
+        {
+            UF_TRY_VALUE(loaded, workbench::loadAuthoringProject(command.root));
+            UF_TRY_VALUE(
+                check,
+                workbench::runModelCheck(
+                    loaded.document,
+                    loaded.sources,
+                    // No live frame: a capture from the running target is not a
+                    // screen the model is authored on and contributes no column.
+                    {},
+                    annotation::RecognitionPolicy{
+                        .maximumPixelComparisons = command.budget,
+                    }
+                )
+            );
+            auto const findings = workbench::judgeModelCheck(check);
+
+            auto screens = std::vector<std::string>{};
+            screens.reserve(check.screens.size());
+            for (auto const& screen : check.screens)
+            {
+                screens.emplace_back(screenCheckJson(loaded.document, screen));
+            }
+
+            auto cells = std::vector<std::string>{};
+            cells.reserve(check.cells.size());
+            for (auto const& cell : check.cells)
+            {
+                cells.emplace_back(cellJson(loaded.document, cell));
+            }
+
+            auto reported = std::vector<std::string>{};
+            reported.reserve(findings.size());
+            for (auto const& finding : findings)
+            {
+                reported.emplace_back(findingJson(loaded.document, finding));
+            }
+
+            auto const members = std::array{
+                JsonMember{
+                    .key   = "root",
+                    .value = jsonString(command.root.string()),
+                },
+                // The verdict first, because it is the field a caller branches
+                // on. A model with findings still answers ok: the search ran and
+                // measured everything it was asked to, and the findings are its
+                // result rather than a failure to produce one.
+                JsonMember{
+                    .key   = "accepted",
+                    .value = jsonBoolean(findings.empty()),
+                },
+                JsonMember{
+                    .key   = "separation_factor",
+                    .value = jsonUnsigned(workbench::k_appearanceSeparationFactor),
+                },
+                JsonMember{.key = "screens", .value = jsonArray(screens)},
+                JsonMember{.key = "cells", .value = jsonArray(cells)},
+                JsonMember{.key = "findings", .value = jsonArray(reported)},
+            };
+            return successJson("check", members);
         }
 
         // One frame decoded into the BGRA8 plane the analysis primitives read.
@@ -1328,21 +2708,6 @@ namespace uf::authoring
             // question about the whole screen rather than about a rectangle the
             // author does not have yet. The first frame sets the extent.
             return PixelRect::create(0, 0, first.width(), first.height());
-        }
-
-        // A count against the total it was measured over. PixelRect::create
-        // refuses an empty rectangle, so the guard is for a zero that cannot
-        // arrive rather than one that does.
-        [[nodiscard]]
-        auto fractionOf(uint64 part, uint64 whole) noexcept -> float
-        {
-            if (whole == 0)
-            {
-                return 0.0F;
-            }
-            return static_cast<float>(
-                static_cast<double>(part) / static_cast<double>(whole)
-            );
         }
 
         [[nodiscard]]
@@ -1604,9 +2969,25 @@ namespace uf::authoring
                 {
                     return runAddElement(specific);
                 }
-                else if constexpr (std::same_as<Specific, MatchRecognizer>)
+                else if constexpr (std::same_as<Specific, AddRegion>)
                 {
-                    return runMatchRecognizer(specific);
+                    return runAddRegion(specific);
+                }
+                else if constexpr (std::same_as<Specific, AddAppearance>)
+                {
+                    return runAddAppearance(specific);
+                }
+                else if constexpr (std::same_as<Specific, ReferenceElement>)
+                {
+                    return runReferenceElement(specific);
+                }
+                else if constexpr (std::same_as<Specific, MatchElement>)
+                {
+                    return runMatchElement(specific);
+                }
+                else if constexpr (std::same_as<Specific, CheckModel>)
+                {
+                    return runCheckModel(specific);
                 }
                 else if constexpr (std::same_as<Specific, AnalyseFrameStability>)
                 {

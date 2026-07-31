@@ -142,6 +142,11 @@ frame-arrived callback 不捕获 `Impl` 或裸 `this`，只按值持有
 1. `waitForFrame` 等到 latest frame、item closed、callback failure 或 stall
    timeout。`StallTracker` 以 arrival time 而不是像素变化或消费时间判鲜度；一帧
    即使已在 slot 中，消费时超过 timeout 仍返回 `CaptureStalled`。
+   `StallTracker::check` 除时刻外还必须收一个 `TargetWindowState`：窗口被最小化
+   或已销毁时根本不合成任何帧，那就是 stall 的成因而不是无关事实。该状态由
+   `windows-capture.cpp` 的 `observeTargetWindow`（先 `IsWindow` 再 `IsIconic`）
+   给出，`stalledFrameFailure` 把它写成同时点名窗口状态与解决动作的消息。遮挡与
+   移出屏幕外故意不探测：DWM 对这两种情况仍在合成，因此都不可能是成因。
 2. `CaptureGeometryState::observeContentSize` 要求每帧 `ContentSize` 与创建时
    完全相同；D3D surface size 还要与已确认 size 相同。任何无效值或不匹配都会
    永久锁存 invalidated，此后即使尺寸恢复也必须重建 session。
@@ -169,8 +174,8 @@ accepting=false 后会关闭其 frame，不会重新填充 slot。
 `TargetGeneration` 和非空 `ClientSize` 固定为一个投递 capability。它不拥有
 窗口，也不自动跟随 `ResolvedTarget`；generation 或 session 改变时应创建新值。
 
-坐标动作的公开入口是 `movePointer`、`click`、`pointerDown`、`pointerUp` 和
-`longPress`。它们接受 `Point<ClientSpace>` 与 `ObservationLease`。
+坐标动作的公开入口是 `movePointer`、`click`、`pointerDown`、`pointerUp`、
+`longPress` 和 `scroll`。它们接受 `Point<ClientSpace>` 与 `ObservationLease`。
 `checkPointerPreconditions` 的实际拒绝顺序为：
 
 1. lease session 必须等于 `DeliveryTarget::sessionId()`；
@@ -186,6 +191,17 @@ up 失败，held 状态有意保留给调用者补偿。`longPress` 在 down 后
 调用者提供的 refresh callback 要求 HWND、session、generation 全部未变，才投递
 up；client geometry 变化本身不影响该 identity 比较。
 
+`scroll` 在该点投递一条 `WM_MOUSEWHEEL`，也是这里唯一 `lParam` 用**屏幕**坐标的入口：
+Win32 对滚轮消息的位置就是这么规定的，而 `WM_MOUSEMOVE` 和按键消息用的是 client 坐标。
+所以它先用 `ClientToScreen(hwnd, {0, 0})` 把 `ClientPixel` 平移成
+`controller_detail::ScreenPixel` 再构造消息。分成两个类型是刻意的——窗口落在主显示器
+左侧或上方时屏幕坐标会是负数，而 `ClientPixel` 在构造时就拒绝负值，两个空间因此不可能
+被混着传进消息构造函数。它同样跑完整的 `checkPointerPreconditions` 围栏，因为滚轮的位置
+正是目标用来判定「滚哪个控件」的依据。`WheelDelta` 以格（`WHEEL_DELTA` = 120）计数，
+正值表示远离操作者，拒绝 0，并且做了上界约束，保证原始 delta 仍放得进 `wParam` 的
+有符号 16 位高字。只做垂直方向：`WM_MOUSEHWHEEL` 是有意不做的，它会在从这里一直到
+线上协议的每一层都多出一个轴，而本项目没有需要横向滚动的地方。
+
 键盘入口 `keyPress`、`keyDown`、`keyUp`、`inputText` 与 `inputUnichar` 不接受
 `ObservationLease`，只比较 action generation。`KeyInput` 记录 virtual key 与
 extended-key 位；`inputText` 先严格解码 UTF-8，再按 UTF-16 code unit 发送
@@ -198,6 +214,19 @@ extended-key 位；`inputText` 先严格解码 UTF-8，再按 UTF-16 code unit �
 映射：`KeyInput::fromName` 与 `KeyInput::fromKeyName` 负责解析，而**有哪些名字存在是
 `modules/domain` 里 `KeyName` 的唯一定义**，`fromName` 走的是它而不是重写一遍判断，两边因此
 不会产生分歧。另外四个入口至今没有生产调用方。
+
+`fromKeyName` 解析三个族，每一族都是一条规则而不是一串比较：具名键走 `NamedKeyCode` 表，
+`"F1".."F12"` 走 `VK_F1 + n - 1`（这些码是连续的），单个字母或数字走它自己的 ASCII 码
+（`VK_A..VK_Z` 与 `VK_0..VK_9` 的定义正是如此）。具名表由一条 `static_assert` 与
+`domain::k_namedKeys` 配对：`domain` 收了却在这里没有虚拟键的名字会编译失败，而不是掉进
+单字符分支、在一个作者本来有权写的按键上触发 `UF_CHECK`。这条保证正是 `fromKeyName` 能保持
+`noexcept` 且全函数的原因。`"ENTER"` 是 `VK_RETURN` 且**不带** extended 位；带 extended 的
+小键盘 Enter 仍然是它自己的具名工厂 `KeyInput::numpadEnter()`。
+
+收下 `"SHIFT"` 有一个后果值得写明：`wheelSpec` 在滚轮的 `wParam` 里仍然只报左键，从不报
+`MK_SHIFT`。按住修饰键这件事现在可以表达了，但要到那个状态需要 `keyDown`，而它没有生产
+调用方，所以本项目投出的滚轮消息不可能缺一个本该带上的修饰位。等 `keyDown` 有了第一个
+调用方那天，再在那里推导它。
 
 `modules/controller/source/controller/detail/input-message.hpp` 将动作确定性编码为
 `PostSpec`：鼠标只使用 `WM_MOUSEMOVE`、`WM_LBUTTONDOWN`、`WM_LBUTTONUP`，
@@ -331,8 +360,9 @@ errors，没有 HWND 或 D3D resource 进入 engine。
 source ingestion。其 visible/non-iconic 和“第一个 title substring match”策略
 属于 workbench，不是 controller 的解析契约。
 
-`entry/m0-demo/` 直接使用 target、capture 和 input 接口，现已冻结为真机验收
-参考；产品路径由 engine/CLI 组合取代。低层 `AuditLog` 记录 Win32 message
+`entry/input-agent/` 与 `entry/m0-demo/` 直接使用 target、capture 和 input 接口。前者是标注前端
+（见 [`entry-input-agent.md`](entry-input-agent.md)）；后者已冻结为真机验收参考，
+其产品路径由 engine/CLI 组合取代。低层 `AuditLog` 记录 Win32 message
 attempt，engine `ITraceSink` 记录 observe/authorize/deliver 等产品事件，二者目的
 不同，不能互相替代。
 

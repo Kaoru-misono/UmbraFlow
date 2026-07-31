@@ -7,7 +7,8 @@
 #include <core/types/integer.hpp>
 #include <domain/space.hpp>
 
-#include <chrono>
+#include <target-setup.hpp>
+
 #include <filesystem>
 #include <optional>
 #include <span>
@@ -18,11 +19,6 @@ namespace uf::m0_demo
 {
     inline constexpr auto k_defaultCaptureFrames = uint32{1};
     inline constexpr auto k_defaultCaptureInterval = MonotonicInstant::Duration::zero();
-    inline constexpr auto k_defaultInputAgentIdleTimeout = (
-        std::chrono::duration_cast<MonotonicInstant::Duration>(
-            std::chrono::seconds{120}
-        )
-    );
 
     enum class Mode : uint8
     {
@@ -30,15 +26,9 @@ namespace uf::m0_demo
         Coexist,
     };
 
-    struct SelectorArgs final
-    {
-        std::optional<uint32>      process{};
-        std::optional<intptr>      windowHandle{};
-        std::optional<std::string> windowClass{};
-        std::optional<std::string> title{};
-
-        auto operator==(SelectorArgs const&) const -> bool = default;
-    };
+    // The selector this demo shares with the input agent, which owns it beside
+    // the buildSelector call that consumes it.
+    using SelectorArgs = input_agent::SelectorArgs;
 
     struct Args final
     {
@@ -77,17 +67,6 @@ namespace uf::m0_demo
         auto operator==(CaptureArgs const&) const -> bool = default;
     };
 
-    struct InputAgentArgs final
-    {
-        intptr                     windowHandle{};
-        std::filesystem::path      queue{};
-        std::filesystem::path      results{};
-        std::filesystem::path      outputDirectory{};
-        MonotonicInstant::Duration idleTimeout{};
-
-        auto operator==(InputAgentArgs const&) const -> bool = default;
-    };
-
     [[nodiscard]]
     auto parseArguments(std::span<std::string const> raw) -> Result<Args>;
 
@@ -96,12 +75,6 @@ namespace uf::m0_demo
         std::span<std::string const> raw
     ) -> Result<CaptureArgs>;
 
-    [[nodiscard]]
-    auto parseInputAgentArguments(
-        std::span<std::string const> raw
-    ) -> Result<InputAgentArgs>;
-
     [[nodiscard]] auto usageText() noexcept -> std::string_view;
     [[nodiscard]] auto captureUsageText() noexcept -> std::string_view;
-    [[nodiscard]] auto inputAgentUsageText() noexcept -> std::string_view;
 }

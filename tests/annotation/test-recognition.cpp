@@ -13,6 +13,7 @@
 
 #include <array>
 #include <optional>
+#include <string>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -26,15 +27,43 @@ namespace uf::annotation
         constexpr auto k_pageAId = "00000000-0000-0000-0000-000000000101";
         constexpr auto k_pageBId = "00000000-0000-0000-0000-000000000102";
 
+        [[nodiscard]]
+        auto singleAppearanceAnchor(
+            ElementId id,
+            std::string name,
+            PixelRect templateRect
+        ) -> CompiledElement
+        {
+            return test::element(
+                test::fingerprint(),
+                id,
+                std::move(name),
+                test::capabilities(Identify{}),
+                test::pixelRect(0, 0, 4, 4),
+                std::vector<CompiledAppearance>{
+                    test::compiledAppearance("only", templateRect),
+                }
+            );
+        }
+
+        // Every threshold and every rectangle in the evidence belongs to the
+        // appearance that produced it, so the appearance has to be named alongside the
+        // element it belongs to.
         auto anchorEvaluation(
-            RecognizerDefinition const& recognizer,
+            CompiledElement const& element,
             uint64 score
         ) -> AnchorEvaluation
         {
             auto const outcome = SadSearchOutcome{
                 std::optional<SadMatch>{SadMatch{0, 0, score}}
             };
-            auto result = AnchorEvaluation::fromSadOutcome(recognizer, outcome);
+            REQUIRE(element.appearances().size() == 1U);
+            auto result = AnchorEvaluation::fromSadOutcome(
+                element,
+                element.appearances().front(),
+                element.searchRoi(),
+                outcome
+            );
             REQUIRE(result.has_value());
             return *std::move(result);
         }
@@ -42,8 +71,8 @@ namespace uf::annotation
         struct ResolutionFixture final
         {
             RecognitionCatalog catalog;
-            RecognizerId anchorA{test::recognizerId(k_anchorAId)};
-            RecognizerId anchorB{test::recognizerId(k_anchorBId)};
+            ElementId anchorA{test::elementId(k_anchorAId)};
+            ElementId anchorB{test::elementId(k_anchorBId)};
             PageId pageA{test::pageId(k_pageAId)};
             PageId pageB{test::pageId(k_pageBId)};
         };
@@ -51,39 +80,52 @@ namespace uf::annotation
         auto resolutionFixture() -> ResolutionFixture
         {
             auto const projectFingerprint = test::fingerprint();
-            auto const anchorA = test::recognizerId(k_anchorAId);
-            auto const anchorB = test::recognizerId(k_anchorBId);
+            auto const anchorA = test::elementId(k_anchorAId);
+            auto const anchorB = test::elementId(k_anchorBId);
             auto const pageA = test::pageId(k_pageAId);
             auto const pageB = test::pageId(k_pageBId);
-            auto recognizers = std::vector<RecognizerDefinition>{};
-            recognizers.emplace_back(
-                test::recognizer(
-                    projectFingerprint,
+            auto elements = std::vector<CompiledElement>{};
+            elements.emplace_back(
+                singleAppearanceAnchor(anchorA, "anchor_a", test::pixelRect(0, 0, 1, 1))
+            );
+            elements.emplace_back(
+                singleAppearanceAnchor(anchorB, "anchor_b", test::pixelRect(0, 0, 1, 1))
+            );
+
+            // page_a requires A and forbids B; page_b requires A alone. The two
+            // signatures are derived from exactly these rows.
+            auto references = std::vector<PageReference>{};
+            references.emplace_back(
+                test::reference(
+                    pageA,
                     anchorA,
-                    "anchor_a",
-                    AnnotationType::PageAnchor,
-                    test::pixelRect(0, 0, 1, 1),
-                    test::pixelRect(0, 0, 4, 4)
+                    test::identifiesAs(SignatureRole::Required)
                 )
             );
-            recognizers.emplace_back(
-                test::recognizer(
-                    projectFingerprint,
+            references.emplace_back(
+                test::reference(
+                    pageA,
                     anchorB,
-                    "anchor_b",
-                    AnnotationType::PageAnchor,
-                    test::pixelRect(0, 0, 1, 1),
-                    test::pixelRect(0, 0, 4, 4)
+                    test::identifiesAs(SignatureRole::Forbidden)
                 )
             );
-            auto pages = std::vector<PageSignature>{};
-            pages.emplace_back(test::page(pageA, "page_a", {anchorA}, {anchorB}));
-            pages.emplace_back(test::page(pageB, "page_b", {anchorA}));
+            references.emplace_back(
+                test::reference(
+                    pageB,
+                    anchorA,
+                    test::identifiesAs(SignatureRole::Required),
+                    Holding::Referenced
+                )
+            );
             return ResolutionFixture{
                 .catalog = test::catalog(
                     projectFingerprint,
-                    std::move(recognizers),
-                    std::move(pages)
+                    std::move(elements),
+                    {
+                        test::page(pageA, "page_a"),
+                        test::page(pageB, "page_b"),
+                    },
+                    std::move(references)
                 ),
                 .anchorA = anchorA,
                 .anchorB = anchorB,
@@ -98,8 +140,8 @@ namespace uf::annotation
             uint64 anchorBScore
         ) -> Result<PageOutcome>
         {
-            auto const* p_anchorA = fixture.catalog.findRecognizer(fixture.anchorA);
-            auto const* p_anchorB = fixture.catalog.findRecognizer(fixture.anchorB);
+            auto const* p_anchorA = fixture.catalog.findElement(fixture.anchorA);
+            auto const* p_anchorB = fixture.catalog.findElement(fixture.anchorB);
             REQUIRE(p_anchorA != nullptr);
             REQUIRE(p_anchorB != nullptr);
             auto const evaluations = std::array{
@@ -116,14 +158,10 @@ namespace uf::annotation
 
     TEST_CASE("anchor evidence accepts the inclusive integer SAD boundary")
     {
-        auto const projectFingerprint = test::fingerprint();
-        auto const anchor = test::recognizer(
-            projectFingerprint,
-            test::recognizerId(k_anchorAId),
+        auto const anchor = singleAppearanceAnchor(
+            test::elementId(k_anchorAId),
             "anchor",
-            AnnotationType::PageAnchor,
-            test::pixelRect(0, 0, 2, 2),
-            test::pixelRect(0, 0, 4, 4)
+            test::pixelRect(0, 0, 2, 2)
         );
         struct BoundaryCase final
         {
@@ -146,6 +184,10 @@ namespace uf::annotation
             CHECK(p_evidence->hit() == testCase.hit);
             CHECK(p_evidence->sadScore() == testCase.score);
             REQUIRE(p_evidence->matchedRect().has_value());
+            // Which appearance answered is part of the evidence, or "why did
+            // this match" cannot be read back out of the stream.
+            REQUIRE(p_evidence->appearanceName().has_value());
+            CHECK(p_evidence->appearanceName()->value() == "only");
         }
     }
 
@@ -181,8 +223,9 @@ namespace uf::annotation
     TEST_CASE("a search that never finished is not classified as a decided miss")
     {
         auto const fixture = resolutionFixture();
-        auto const* p_anchor = fixture.catalog.findRecognizer(fixture.anchorA);
+        auto const* p_anchor = fixture.catalog.findElement(fixture.anchorA);
         REQUIRE(p_anchor != nullptr);
+        REQUIRE(p_anchor->appearances().size() == 1U);
         auto const identity = FrameIdentity{
             CaptureSessionId{7},
             TargetGeneration::fromValue(3),
@@ -231,6 +274,8 @@ namespace uf::annotation
             auto const sadOutcome = SadSearchOutcome{testCase.reason};
             auto const evaluation = AnchorEvaluation::fromSadOutcome(
                 *p_anchor,
+                p_anchor->appearances().front(),
+                p_anchor->searchRoi(),
                 sadOutcome
             );
             REQUIRE(evaluation.has_value());

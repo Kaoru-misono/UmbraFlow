@@ -1,8 +1,62 @@
 # annotation Module Architecture Knowledge
 
+> **DIRTY (2026-07-31)**: the annotation model became the capability model, and
+> this document describes the model it replaced. Trust the code and
+> [`docs/plans/2026-07-31-annotation-model-capabilities.md`](../../plans/2026-07-31-annotation-model-capabilities.md)
+> until resynced. This banner subsumes the 2026-07-26 one below, which is kept
+> as the record of the drift that had already accumulated.
+>
+> The specific claims below that are now **false**, so nobody has to guess which
+> half to trust:
+>
+> - **`AnnotationType` does not exist.** The three-way choice `PageAnchor` /
+>   `ActionTarget` / `InfoRegion` became the **set** `ElementCapabilities
+>   {identify, interact, read}`, each capability carrying its own payload
+>   (`Interact` holds the click offset, `Read` holds `ReadLayout` and an optional
+>   `CharsetRestriction`). Empty is rejected. `annotation/capabilities.hpp` is the
+>   new header. Sentences of the form "must be an `ActionTarget`" now read "must
+>   declare `interact`".
+> - **`allowedPageIds` / `allowed_page_ids` does not exist**, on either side.
+>   `PageReference` — one row per (page, element) — IS the authorization, and the
+>   validation bullets that check the list against existing pages are gone with
+>   it.
+> - **`PageSignature::create` is not public.** A signature is *derived* by
+>   `RecognitionCatalog::create` from the references whose `exercised` identify
+>   carries `SignatureRole::Required` or `Forbidden`; it is never authored, and
+>   `RecognitionCatalog` is its only friend.
+> - **`RecognizerId` is `ElementId`**, and on 2026-07-31 the word *recognizer*
+>   left the model altogether: the authored thing is `Element` and its compiled
+>   form is `CompiledElement`. *Recognition* survives only where it names the
+>   activity — `RecognitionCatalog`, `RecognitionRuntime`. See CONTEXT.md's
+>   "Annotation model" section.
+> - **The runtime schema is `umbraflow-annotations/v3`**, not `/v1`, and the
+>   authoring schema is `umbraflow-authoring/v4`, not `/v2`. No retired id has a
+>   read path.
+> - **`evaluateActionTarget` takes a `PageId`**:
+>   `(frame, liveFingerprint, pageId, elementId, policy)`. The per-page facts —
+>   a refined search region, a pinned appearance — live on the reference row.
+> - **An element carries an ordered list of `Appearance`s**, not one template.
+>   Each is `{name, sourceId, templateRect, threshold, colourKey?}`; declaration
+>   order decides ties and nothing else. An **empty** list is legal and means the
+>   rectangle is located by the page being recognised, which also makes the
+>   element ineligible for identity evidence. `RuntimeManifest::findAsset` is
+>   therefore keyed by `(elementId, appearanceName)`.
+> - **`derivedRuntimeRecognizerId` is gone.** The compiler emits exactly one
+>   `CompiledElement` per element, under the element's own id; templates still
+>   dedupe by (source, rectangle, colour key).
+> - **The "`InfoRegion` evaluation" open item is superseded**, not still open:
+>   `read` is a capability with authored OCR parameters, and the plan's §四之二.7
+>   specifies the `cycle_read` verb that consumes it.
+>
+> What below is still **true**: the colour key and template mask section, the
+> SAD/threshold/`maximumSad` integer rules, canonical TOML and byte-for-byte
+> round-tripping, content-addressed template compilation, frame identity and the
+> four-requisite authorization gate, and every determinism and resource-bound
+> constraint.
+
 > **DIRTY (2026-07-26)**: This document predates authoring schema v2
 > (Element+placement replacing per-page copies, the v1 read-path sunset,
-> per-placement runtime recognizer expansion in the compiler, and the
+> per-placement runtime element expansion in the compiler, and the
 > deriveModel permanent bridge). Trust the code and
 > `docs/plans/2026-07-26-page-centric-authoring.md` until resynced.
 >
@@ -19,7 +73,7 @@ processing flow, and constraints that must remain true.
 `annotation` converts authored annotations into recognition evidence that runtime can authorize. It
 owns six categories of responsibility:
 
-1. Define stable resource identities, project fingerprints, recognizers, and page signatures, and
+1. Define stable resource identities, project fingerprints, elements, and page signatures, and
    close their reference relationships at object construction time.
 2. Define the precise S0 schema of the GUI authoring document and the runtime manifest, along with
    the single canonical TOML byte form.
@@ -52,7 +106,7 @@ It deliberately does not own the following capabilities:
 - It is not responsible for the Luau VM, script AST, or opaque handle exposure; here it only
   validates that `ResourceName` is a directly accessible ASCII Luau member key and provides strongly
   typed resources that the host can wrap.
-- It does not make floating-point threshold decisions, color/HSV/OCR/composite recognizers,
+- It does not make floating-point threshold decisions, color/HSV/OCR/composite matchers,
   resolution scaling, page priority, or best-effort schema compatibility.
 - It does not guarantee that "a click will always succeed." It only proves that the annotation-side
   authorization conditions hold; engine must still re-verify the target instance before the sink
@@ -73,31 +127,31 @@ The shared resource vocabulary begins at
 
 - `ResourceId` holds a 16-byte UUID; `parse` accepts the fixed 36-character UUID shape, and
   `toString` emits the lowercase canonical form.
-- `RecognizerId`, `PageId`, `SourceId`, and `RegressionId` are distinct `StrongValue`s built on
+- `ElementId`, `PageId`, `SourceId`, and `RegressionId` are distinct `StrongValue`s built on
   `ResourceId`, preventing cross-category resource mix-ups.
 - `ProjectId` requires non-empty valid UTF-8; `ResourceName` requires a non-empty ASCII identifier
   that is not a Luau reserved word.
 - `ProjectFingerprint` is a non-zero `width`, `height`, `dpiX`, and `dpiY`. S0 fixes the
   AnnotationSpace as the integer `FrameSpace` at this base resolution.
 - `AnnotationType` currently has `PageAnchor`, `ActionTarget`, and `InfoRegion`. The S0 schema's
-  recognizer kind is still only `gray_template`.
+  element kind is still only `gray_template`.
 
-`RecognizerDefinition::create` is the validation entry point for a single recognizer. Given a
-`RecognizerSpec`, it validates that `templateRect` and `searchRoi` both lie within the project
+`CompiledElement::create` is the validation entry point for a single element. Given a
+`CompiledElementSpec`, it validates that `templateRect` and `searchRoi` both lie within the project
 bounds, that the template size fits inside the ROI, that the threshold is computable, that a click
 belongs only to an `ActionTarget` and falls inside the template, that a `PageAnchor` carries no page
 membership, and that an `ActionTarget` authorizes at least one page. It then sorts `allowedPageIds`
 by `PageId` and rejects duplicates.
 
 `PageSignature::create` accepts a `PageSpec`, requires that at least one of `required` and
-`forbidden` be non-empty, sorts each by `RecognizerId`, and rejects duplicates and intersections. The
+`forbidden` be non-empty, sorts each by `ElementId`, and rejects duplicates and intersections. The
 "non-empty" requirement matters here: an empty signature will not become an implicit fallback page.
 
 `RecognitionCatalog::create` then performs cross-resource closure validation:
 
-- recognizers and pages are both sorted by UUID;
+- elements and pages are both sorted by UUID;
 - IDs and names are unique within their respective categories, and are also globally unique across
-  pages and recognizers;
+  pages and elements;
 - a page signature may only reference existing `PageAnchor`s;
 - each `allowedPageIds` entry must point to an existing page;
 - no two pages may have exactly the same required/forbidden sets.
@@ -106,7 +160,7 @@ After successful construction, `RecognitionCatalog` also stores a deduplicated, 
 `pageAnchorOrder`. Both page recognition and `PageResolver` use it as the single anchor evaluation
 order, so the input container order does not leak into runtime results.
 
-`recognizers()`, `pages()`, and `pageAnchorOrder()` return read-only `std::span`s; `findRecognizer()`
+`elements()`, `pages()`, and `pageAnchorOrder()` return read-only `std::span`s; `findElement()`
 and `findPage()` return non-owning pointers. These views/pointers are all upper-bounded by the
 catalog's lifetime, and the declarations make the constraint explicit with `UF_LIFETIME_BOUND` or a
 comment.
@@ -120,16 +174,16 @@ comment.
   path, a `ProjectFingerprint`, and a `SourceProvenance`.
 - `WgcSourceProvenance`: a `TargetGeneration` and a canonical RFC 3339 `capturedAt`;
   `ImportedSourceProvenance` carries no fabricated WGC fields.
-- `AuthoringRecognizerSpec`: a validated `RecognizerDefinition` plus its `SourceId`.
+- `AuthoringElementSpec`: a validated `CompiledElement` plus its `SourceId`.
 - `RegressionCase`: stores `RegressionClassification` and `RegressionExpectation` independently;
   positive/negative/confusable does not silently alter the resolved/unknown/ambiguous expectation.
-- `AuthoringDocument`: owns the `RecognitionCatalog`, sources, recognizer-source relationships, and
+- `AuthoringDocument`: owns the `RecognitionCatalog`, sources, element-source relationships, and
   regressions.
 
-`AuthoringDocument::create` is the document-level validation gate. It sorts sources, recognizers, and
+`AuthoringDocument::create` is the document-level validation gate. It sorts sources, elements, and
 regressions by UUID, requires that every source fingerprint equal the project fingerprint, closes the
-annotation→source, regression→source, and resolved regression→page references, and guarantees that
-source, recognizer, page, and regression IDs are globally unique. Each category table holds at most
+element→source, regression→source, and resolved regression→page references, and guarantees that
+source, element, page, and regression IDs are globally unique. Each category table holds at most
 4096 entries, and the canonical serialization result is at most 16 MiB.
 
 Serialization and parsing live in `modules/annotation/source/annotation/authoring-document.cpp`. The
@@ -178,7 +232,7 @@ The compilation order is deterministic:
    `sha256` on the encoded PNG bytes.
 5. the generated path is fixed as `assets/templates/<hash>.png`; identical bytes with the same hash
    keep only one asset, while the same hash with different bytes is rejected.
-6. recognizers are re-associated with the generated hashes, and a `RuntimeManifest` is created and
+6. elements are re-associated with the generated hashes, and a `RuntimeManifest` is created and
    canonically serialized.
 
 The compiler uses checked arithmetic before allocation and processing. The current implementation
@@ -215,8 +269,8 @@ Three properties are load-bearing:
   re-saving an existing project moves nothing, and every template authored before keys existed keeps
   a fully opaque alpha.
 - **The derived catalog carries no colour key.** The key is authoring truth and the runtime reads
-  the mask off the template's alpha, so the compiler takes it from the element the recognizer was
-  derived from. Two elements that key the same rectangle of the same screen differently are two
+  the mask off the template's alpha, so the compiler takes it from the element the compiled element
+  was derived from. Two elements that key the same rectangle of the same screen differently are two
   template tasks, so the crop/hash deduplication keys on the colour key as well.
 
 `ContentHash` and the built-in SHA-256 are implemented in
@@ -225,13 +279,13 @@ Three properties are load-bearing:
 by 64 lowercase hexadecimal characters.
 
 `RuntimeManifest` lives in `modules/annotation/source/annotation/runtime-manifest.hpp`. It owns a
-`RecognitionCatalog` and, aligned by recognizer, a `RuntimeRecognizerAsset`: `templateHash`,
+`RecognitionCatalog` and, aligned by element, a `RuntimeElementAsset`: `templateHash`,
 `sourceHash`, and `templatePath`. The runtime schema is `umbraflow-annotations/v1`, which contains no
 source ID, capture time, target generation, or full screenshot.
 
-`RuntimeManifest::create` validates that each recognizer has exactly one asset and derives the
+`RuntimeManifest::create` validates that each element has exactly one asset and derives the
 template path from the hash as `assets/templates/<hash>.png`. `parseRuntimeManifest` uses the same
-canonical reader, requires recognizers to precede pages, at most 4096 entries per category, and at
+canonical reader, requires elements to precede pages, at most 4096 entries per category, and at
 most 16 MiB per document, and at the end rejects non-canonical input via
 `serializeRuntimeManifest(manifest) == input`.
 
@@ -252,14 +306,15 @@ of pixels is scored against a ceiling sized for the whole rectangle, and nothing
 mask under a threshold sized for 920 pixels hits every frame and measures nothing. An element that
 hits every state it is meant to distinguish is worse than no element, because it looks green. A
 colour-keyed template therefore needs a far tighter threshold than an opaque one — 9000 basis points
-gave three false-positive recognizers out of nine on the live game, and re-authoring at 9900 gave
-7/7 on an unseen frame and 0/7 on a UI-free one. There is no authoring-time check for either
-failure; `umbra-authoring frames probe` and its `fully_selected_pixels` are the only guard. See
-`docs/pitfalls/colour-key-annotation.md`.
+gave three false-positive elements out of nine on the live game, and re-authoring at 9900 gave
+7/7 on an unseen frame and 0/7 on a UI-free one. The model itself still refuses neither failure:
+`page create` and `page add` measure the mask they drew and *warn* under `authored.mask.warning`
+when it selects fewer than 50 pixels or at least half the rectangle, and `umbra-authoring check` is
+the gate that decides. See `docs/pitfalls/colour-key-annotation.md`.
 
-A key that selects *no* pixels is accepted at authoring time and aborts at match time with
-`InternalInvariant`, which reads as "the program is broken" when the truth is "this key matches
-nothing inside that rectangle".
+A key that selects *no* pixels is still accepted at authoring time — the warning is not a refusal —
+and aborts at match time with `InternalInvariant`, which reads as "the program is broken" when the
+truth is "this key matches nothing inside that rectangle".
 
 The equality hit is part of the contract. `AnchorEvaluation::fromSadOutcome` lives in
 `modules/annotation/source/annotation/recognition.cpp`; it checks that the matcher's returned
@@ -272,7 +327,7 @@ is determined solely by the integer `sadScore <= maximumSad`.
 
 - `create` accepts a `RuntimeManifest` and `EncodedRuntimeTemplate`s. It requires the received hash
   set to exactly equal the unique template set referenced by the manifest, recomputes each PNG's
-  SHA-256, decodes into owned Gray8 bytes, and checks the template size against the recognizer
+  SHA-256, decodes into owned Gray8 bytes, and checks the template size against the element
   geometry. It also extracts each template's **alpha channel as a mask plane**; the mask is left
   empty when every pixel is opaque, which selects the unmasked matcher and therefore the exact
   behaviour projects authored before masks had.
@@ -305,7 +360,7 @@ resolution. A mismatch returns `TargetCompatibilityUnverified`; S0 has no implic
 
 The page evidence types are in `modules/annotation/source/annotation/recognition.hpp`:
 
-- `AnchorEvidence` records the recognizer ID, hit, optional SAD score, `maximumSad`, optional matched
+- `AnchorEvidence` records the element ID, hit, optional SAD score, `maximumSad`, optional matched
   rect, and display confidence.
 - `PageEvaluation` stores a page's required/forbidden evidence and its candidate flag.
 - `PageResolutionEvidence` owns the project ID, `FrameIdentity`, all page evaluations, and the
@@ -329,8 +384,8 @@ a later conflicting page cannot be hidden by ordering.
 
 Action authorization is defined in `modules/annotation/source/annotation/authorization.hpp` and
 `modules/annotation/source/annotation/authorization.cpp`. `ActionDetection::create` does not trust the
-string label: it requires the recognizer to genuinely be an `ActionTarget` in the catalog, the label
-to equal that recognizer's name, and binds the `ProjectId`, `RecognizerId`, and an owned `Detection`
+string label: it requires the element to genuinely be an `ActionTarget` in the catalog, the label
+to equal that element's name, and binds the `ProjectId`, `ElementId`, and an owned `Detection`
 into a single value.
 
 `authorizeCoordinateAction` implements a four-condition gate and continues to perform closure
@@ -340,7 +395,7 @@ validation at each layer:
    fingerprint, otherwise `TargetCompatibilityUnverified`.
 2. **Same-project ResolvedPage condition**: both the page evidence and the action detection must
    belong to the active project, and the resolved page must still exist in the active catalog.
-3. **Same-frame ActionDetection condition**: the recognizer must still be an `ActionTarget` in the
+3. **Same-frame ActionDetection condition**: the element must still be an `ActionTarget` in the
    active catalog, its `allowedPageIds` must include the resolved page, and the
    session/generation/frame triples of the page evidence, detection, and delivery must be exactly
    identical.
@@ -407,7 +462,7 @@ The outbound runtime path enters engine:
   hash closure.
 - `modules/engine/source/engine/session.cpp` constructs a `RecognitionPolicy` from config and
   resolves the page and finds the action on the same `Observation` frame.
-- an action hit is converted into a domain `Detection`, then bound to the recognizer identity via
+- an action hit is converted into a domain `Detection`, then bound to the element identity via
   `ActionDetection::create`; `resolveClickPixel` produces the frame pixel, and
   `authorizeCoordinateAction` validates the four-condition gate at act time.
 - engine converts the pixel into `FrameSpace`/`ClientSpace`, re-verifies the target instance, and
@@ -426,7 +481,7 @@ continue.
 `tests/annotation` is a deterministic offline test surface; the fixed contract of each file is as
 follows:
 
-- `test-catalog.cpp`: UUID/name canonical form, basis-point boundaries, recognizer geometry/page
+- `test-catalog.cpp`: UUID/name canonical form, basis-point boundaries, element geometry/page
   membership, empty/duplicate/contradictory signatures, cross-resource closure, and duplicate
   signatures.
 - `test-authoring-document.cpp`: full byte-stable round trip of the authoring document, rejection of
@@ -448,7 +503,7 @@ follows:
   cancel, deadline, fingerprint/template closure, shared templates, action hit/miss/type checks,
   action stop, and `resolveClickPixel`.
 - `test-authorization.cpp`: the authorization gate composed of fingerprint, same-frame identity,
-  recognizer-label binding, allowed page, active catalog/project, and lease.
+  element-label binding, allowed page, active catalog/project, and lease.
 - `test-regression-runner.cpp`: resolved/unknown/ambiguous evidence, expectation mismatch, suite
   interruption, per-case budget, and source reuse.
 - `test-helpers.hpp` provides only strongly typed fixtures/builders, not a second set of production
@@ -469,9 +524,9 @@ The following seams come from the authoritative plan and are not currently imple
 `BaseToLiveTransform { uniformScale, offset, viewport }`. It should sit at the boundary where base
 annotation geometry enters live frame search/click geometry, and it should fully enter the trace; it
 must not modify the existing live `CoordinateTransform`'s Client↔Frame responsibility, nor scatter
-raw scale into the recognizer.
+raw scale into the element.
 
-**New recognizer kind.** `RecognizerDefinition` already centralizes type, geometry, threshold, and
+**New element kind.** `CompiledElement` already centralizes type, geometry, threshold, and
 page membership, and `RecognitionRuntime` further isolates the decoded template as an internal
 `GrayTemplate`. When adding color, OCR, or composite, the seam runs through the schema version/parser,
 catalog validation, compiler asset closure, runtime-owned kernel, and evidence; you cannot merely add

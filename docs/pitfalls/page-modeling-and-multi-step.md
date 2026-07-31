@@ -54,7 +54,7 @@ check a whole model without the GUI — both formulas are small and fixed:
 - threshold: `maxSad = (10000 - bp) * 255 * w * h / 10000`
   (`SimilarityThreshold::maximumSad`, `modules/annotation/.../catalog.cpp`)
 
-Slide each recognizer's template over every captured source within its
+Slide each element's template over every captured source within its
 `search_roi` and compare the minimum SAD against `maxSad`. An anchor must hit its
 own source and miss all the others. In the recorded run the cross-screen misses
 sat at 2.85x–4.15x the threshold, which settled the "do these two top-left
@@ -93,14 +93,14 @@ return task.define {
             -- The block receives the observation CYCLE that resolved the page,
             -- so the find and the click both read the same frame.
             ctx:wait_for_page(uf.pages.main, { timeout_ms = 30000 }, function(cycle)
-                local hit = cycle:find(uf.recognizers.battleCharacter)
+                local hit = cycle:find(uf.elements.battleCharacter)
                 if hit then cycle:click(hit) end
             end)
         end)
 
         ctx:step("open_closeup", function()
             ctx:wait_for_page(uf.pages.character, { timeout_ms = 30000 }, function(cycle)
-                local hit = cycle:find(uf.recognizers.meiling)
+                local hit = cycle:find(uf.elements.meiling)
                 if hit then cycle:click(hit) end
             end)
         end)
@@ -203,10 +203,26 @@ raise from a primitive.
 
 ## Re-pointing an action target at another page: authorize before withdrawing
 
+> **Historical since 2026-07-31.** Both halves of this entry are unreachable now.
+> The properties-panel checkboxes were archived with the workbench GUI
+> (`b57b67b`), and the invariant they tripped over — "an action target must
+> authorize at least one page" — no longer exists: `allowed_page_ids` was
+> deleted, and a page's `PageReference` to an element, exercising `interact`, IS
+> the authorization. Re-pointing is now adding one reference row and removing
+> another; there is no lower bound to widen past, and `retypeRecognizer` was
+> deleted along with the three-way type it rewrote. Deciding artifact:
+> [the capability plan](../plans/2026-07-31-annotation-model-capabilities.md)
+> §2.2 推论 3 and §四之二.1.
+>
+> **What still transfers:** the ordering rule itself — *for any invariant with a
+> lower bound, widen then narrow* — and the observation that a cross-field change
+> no ordering can express has to be one transaction. Both outlive the fields that
+> taught them.
+
 ### Symptom
 
 Unchecking an action target's current page in the properties panel is refused
-with `action_target recognizer must authorize at least one page`, and the
+with `action_target element must authorize at least one page`, and the
 checkbox snaps back.
 
 ### Root cause
@@ -270,7 +286,7 @@ explicitly.
 
 ### Regression check
 
-Every colour-keyed recognizer needs both halves: a positive frame it was not
+Every colour-keyed element needs both halves: a positive frame it was not
 authored against, and a frame that genuinely lacks the UI. The negative half is
 what catches this, and it has to be *genuinely* UI-free — a frame captured while
 the HUD was fading in still contains most of the glyph and will match, which

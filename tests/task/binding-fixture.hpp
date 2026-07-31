@@ -7,6 +7,7 @@
 #include <task/task-context.hpp>
 
 #include <annotation/resource.hpp>
+#include <annotation/capabilities.hpp>
 #include <annotation/content-hash.hpp>
 #include <annotation/recognition.hpp>
 #include <annotation/recognition-runtime.hpp>
@@ -68,7 +69,7 @@ namespace uf::task
     inline constexpr auto k_actionId = "00000000-0000-0000-0000-000000000013";
     inline constexpr auto k_pageId   = "00000000-0000-0000-0000-000000000111";
 
-    // The second page and its two recognizers, so a popup is a page in its own
+    // The second page and its two elements, so a popup is a page in its own
     // right and a target page exists for a wait to be waiting FOR.
     inline constexpr auto k_popupAnchorId = "00000000-0000-0000-0000-000000000012";
     inline constexpr auto k_closeDialogId = "00000000-0000-0000-0000-000000000014";
@@ -115,16 +116,47 @@ namespace uf::task
         anno::ProjectFingerprint fingerprint;
     };
 
-    // One page (page_a, required anchor grey 2) plus one action target
-    // (grey 5) authorized for that page. A grey [2,5,0] frame resolves page_a
-    // and the target hits at position 1; a grey [0,0,0] frame resolves nothing
-    // and the target misses.
+    // One element's only appearance. Every element in these fixtures has
+    // exactly one, so its name is fixed here rather than threaded through each
+    // call.
+    [[nodiscard]]
+    inline auto soleAppearance() -> anno::CompiledAppearance
+    {
+        return anno::test::compiledAppearance(
+            "default",
+            anno::test::pixelRect(0, 0, 1, 1),
+            anno::test::threshold(10'000)
+        );
+    }
+
+    [[nodiscard]]
+    inline auto soleAppearanceAsset(
+        anno::ContentHash const& templateHash,
+        anno::ContentHash const& sourceHash
+    ) -> std::vector<anno::RuntimeAppearanceAsset>
+    {
+        auto assets = std::vector<anno::RuntimeAppearanceAsset>{};
+        assets.emplace_back(
+            anno::RuntimeAppearanceAsset{
+                .appearanceName = anno::test::resourceName("default"),
+                .templateHash   = templateHash,
+                .sourceHash     = sourceHash,
+            }
+        );
+        return assets;
+    }
+
+    // One page (page_a, whose reference to the grey-2 anchor is required
+    // identity evidence) plus one action target (grey 5) the same page
+    // exercises interact on. A grey [2,5,0] frame resolves page_a and the
+    // target hits at position 1; a grey [0,0,0] frame resolves nothing and the
+    // target misses.
     [[nodiscard]]
     inline auto singlePageRuntime() -> RuntimeParts
     {
         auto const fingerprint = anno::test::fingerprint(3, 1, 96, 96);
-        auto const anchorA     = anno::test::recognizerId(k_anchorId);
-        auto const actionT     = anno::test::recognizerId(k_actionId);
+        auto const anchorA     = anno::test::elementId(k_anchorId);
+        auto const actionT     = anno::test::elementId(k_actionId);
         auto const pageA       = anno::test::pageId(k_pageId);
         auto anchorTemplate = encodedTemplate(k_targetAnchorGray);
         auto actionTemplate = encodedTemplate(k_targetActionGray);
@@ -136,38 +168,34 @@ namespace uf::task
             anno::test::projectId("personal.task_binding"),
             fingerprint,
             {
-                anno::RuntimeRecognizerSpec{
-                    .definition = anno::test::recognizer(
+                anno::RuntimeElementSpec{
+                    .definition = anno::test::element(
                         fingerprint,
                         anchorA,
                         "anchor_a",
-                        anno::AnnotationType::PageAnchor,
-                        anno::test::pixelRect(0, 0, 1, 1),
+                        anno::test::capabilities(anno::Identify{}),
                         anno::test::pixelRect(0, 0, 3, 1),
-                        {},
-                        std::nullopt,
-                        anno::test::threshold(10'000)
+                        {soleAppearance()}
                     ),
-                    .templateHash = anchorTemplate.hash,
-                    .sourceHash   = *sourceHash,
+                    .appearances = soleAppearanceAsset(anchorTemplate.hash, *sourceHash),
                 },
-                anno::RuntimeRecognizerSpec{
-                    .definition = anno::test::recognizer(
+                anno::RuntimeElementSpec{
+                    .definition = anno::test::element(
                         fingerprint,
                         actionT,
                         "action_target",
-                        anno::AnnotationType::ActionTarget,
-                        anno::test::pixelRect(0, 0, 1, 1),
+                        anno::test::capabilities(std::nullopt, anno::Interact{}),
                         anno::test::pixelRect(0, 0, 3, 1),
-                        {pageA},
-                        std::nullopt,
-                        anno::test::threshold(10'000)
+                        {soleAppearance()}
                     ),
-                    .templateHash = actionTemplate.hash,
-                    .sourceHash   = *sourceHash,
+                    .appearances = soleAppearanceAsset(actionTemplate.hash, *sourceHash),
                 },
             },
-            {anno::test::page(pageA, "page_a", {anchorA})}
+            {anno::test::page(pageA, "page_a")},
+            {
+                anno::test::reference(pageA, anchorA, anno::test::identifiesAs()),
+                anno::test::reference(pageA, actionT, anno::test::interacts()),
+            }
         );
         REQUIRE(manifest.has_value());
         auto templates = std::vector<anno::EncodedRuntimeTemplate>{};
@@ -192,10 +220,10 @@ namespace uf::task
     inline auto interruptRuntime() -> RuntimeParts
     {
         auto const fingerprint  = anno::test::fingerprint(3, 1, 96, 96);
-        auto const targetAnchor = anno::test::recognizerId(k_anchorId);
-        auto const targetAction = anno::test::recognizerId(k_actionId);
-        auto const popupAnchor  = anno::test::recognizerId(k_popupAnchorId);
-        auto const popupClose   = anno::test::recognizerId(k_closeDialogId);
+        auto const targetAnchor = anno::test::elementId(k_anchorId);
+        auto const targetAction = anno::test::elementId(k_actionId);
+        auto const popupAnchor  = anno::test::elementId(k_popupAnchorId);
+        auto const popupClose   = anno::test::elementId(k_closeDialogId);
         auto const targetPage   = anno::test::pageId(k_pageId);
         auto const popupPage    = anno::test::pageId(k_popupPageId);
 
@@ -208,45 +236,36 @@ namespace uf::task
         auto const sourceHash  = anno::sha256(sourceBytes);
         REQUIRE(sourceHash.has_value());
 
-        auto const anchorSpec = [&](anno::RecognizerId id,
+        auto const anchorSpec = [&](anno::ElementId id,
                                     std::string_view name,
                                     anno::ContentHash templateHash)
         {
-            return anno::RuntimeRecognizerSpec{
-                .definition = anno::test::recognizer(
+            return anno::RuntimeElementSpec{
+                .definition = anno::test::element(
                     fingerprint,
                     id,
                     std::string{name},
-                    anno::AnnotationType::PageAnchor,
-                    anno::test::pixelRect(0, 0, 1, 1),
+                    anno::test::capabilities(anno::Identify{}),
                     anno::test::pixelRect(0, 0, 3, 1),
-                    {},
-                    std::nullopt,
-                    anno::test::threshold(10'000)
+                    {soleAppearance()}
                 ),
-                .templateHash = templateHash,
-                .sourceHash   = *sourceHash,
+                .appearances = soleAppearanceAsset(templateHash, *sourceHash),
             };
         };
-        auto const actionSpec = [&](anno::RecognizerId id,
+        auto const actionSpec = [&](anno::ElementId id,
                                     std::string_view name,
-                                    anno::PageId page,
                                     anno::ContentHash templateHash)
         {
-            return anno::RuntimeRecognizerSpec{
-                .definition = anno::test::recognizer(
+            return anno::RuntimeElementSpec{
+                .definition = anno::test::element(
                     fingerprint,
                     id,
                     std::string{name},
-                    anno::AnnotationType::ActionTarget,
-                    anno::test::pixelRect(0, 0, 1, 1),
+                    anno::test::capabilities(std::nullopt, anno::Interact{}),
                     anno::test::pixelRect(0, 0, 3, 1),
-                    {page},
-                    std::nullopt,
-                    anno::test::threshold(10'000)
+                    {soleAppearance()}
                 ),
-                .templateHash = templateHash,
-                .sourceHash   = *sourceHash,
+                .appearances = soleAppearanceAsset(templateHash, *sourceHash),
             };
         };
 
@@ -255,23 +274,31 @@ namespace uf::task
             fingerprint,
             {
                 anchorSpec(targetAnchor, "anchor_a", targetAnchorTemplate.hash),
-                actionSpec(
-                    targetAction,
-                    "action_target",
-                    targetPage,
-                    targetActionTemplate.hash
-                ),
+                actionSpec(targetAction, "action_target", targetActionTemplate.hash),
                 anchorSpec(popupAnchor, "anchor_popup", popupAnchorTemplate.hash),
-                actionSpec(
-                    popupClose,
-                    "close_dialog",
-                    popupPage,
-                    popupCloseTemplate.hash
-                ),
+                actionSpec(popupClose, "close_dialog", popupCloseTemplate.hash),
             },
             {
-                anno::test::page(targetPage, "page_a", {targetAnchor}),
-                anno::test::page(popupPage, "popup", {popupAnchor}),
+                anno::test::page(targetPage, "page_a"),
+                anno::test::page(popupPage, "popup"),
+            },
+            {
+                anno::test::reference(
+                    targetPage,
+                    targetAnchor,
+                    anno::test::identifiesAs()
+                ),
+                anno::test::reference(
+                    targetPage,
+                    targetAction,
+                    anno::test::interacts()
+                ),
+                anno::test::reference(
+                    popupPage,
+                    popupAnchor,
+                    anno::test::identifiesAs()
+                ),
+                anno::test::reference(popupPage, popupClose, anno::test::interacts()),
             }
         );
         REQUIRE(manifest.has_value());
@@ -340,6 +367,22 @@ namespace uf::task
         return std::vector<std::byte>{
             asByte(k_targetAnchorGray),
             asByte(k_targetActionGray),
+            asByte(0),
+        };
+    }
+
+    // A frame that resolves page_a while the action target is nowhere on it.
+    //
+    // It is what a find that COMPLETES and matches nothing needs now: locating
+    // an element runs against the page's reference to it, so a frame that
+    // resolves no page refuses the search instead of missing, and "the search
+    // looked and found nothing" can only be observed on a page that resolved.
+    [[nodiscard]]
+    inline auto resolvedTargetlessPixels() -> std::vector<std::byte>
+    {
+        return std::vector<std::byte>{
+            asByte(k_targetAnchorGray),
+            asByte(0),
             asByte(0),
         };
     }
@@ -648,7 +691,7 @@ namespace uf::task
     // The run's recorder, a constructed EngineSession over it, the surface
     // built from its own catalog, and a non-owning observer of the click sink.
     // The surface is captured before the runtime moves into the session, so
-    // both name the same recognizer and page identities.
+    // both name the same element and page identities.
     //
     // The recorder is declared first and held through a unique_ptr: the
     // session borrows it (see engine/session.hpp), so it must outlive the

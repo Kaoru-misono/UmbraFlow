@@ -18,13 +18,13 @@ namespace uf::task
     // the ffi boundary and are reached only through validateScriptResources.
     struct ScriptResourceReport final
     {
-        std::vector<std::string> recognizers{};
+        std::vector<std::string> elements{};
         std::vector<std::string> pages{};
     };
 
     // Proves, before any Luau VM is created, that `source` (compiled under chunk
     // name `chunkName`) reaches the uf namespace only through the canonical
-    // literal spellings -- uf.recognizers.<name>, uf.pages.<name> and
+    // literal spellings -- uf.elements.<name>, uf.pages.<name> and
     // uf.errors.<kind> direct member access -- and that every named resource
     // resolves against `surface`. This is the S0 resource closure
     // (annotation-design 4): every reference is enumerated and closed here, so a
@@ -37,8 +37,8 @@ namespace uf::task
     // kinds are host vocabulary fixed for the binary, not project resources.
     //
     // Every other contact with the uf global is rejected: a namespace or handle
-    // alias (local r = uf, local r = uf.recognizers), a computed index
-    // (uf.recognizers[name]), dynamic traversal (pairs(uf)), passing/returning
+    // alias (local r = uf, local r = uf.elements), a computed index
+    // (uf.elements[name]), dynamic traversal (pairs(uf)), passing/returning
     // it, and a method call (uf:anything(...)) -- the root carries data alone
     // now that the capability surface is private to the framework, so there is
     // no verb form to approve. A syntax error is likewise rejected. Every

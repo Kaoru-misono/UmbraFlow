@@ -1,5 +1,80 @@
 # entry/workbench 架构知识
 
+> **DIRTY（2026-07-31）：本文写的那个二进制已经不存在了，它描述的模型也已被替换。**
+> 以实际代码、
+> [`docs/plans/2026-07-31-annotation-model-capabilities.md`](../../plans/2026-07-31-annotation-model-capabilities.md)
+> 和 [`entry-cli.md`](entry-cli.md) 为准，待重新同步。本条 banner 覆盖下面那条
+> 2026-07-26 的；后者保留，作为此前已经积累的漂移记录。
+>
+> **2026-07-31 落了两件互相独立的改动。**
+>
+> *其一：GUI 被归档*（`b57b67b`，计划 §四之二.1）。从代码树里消失的有：
+> `entry/workbench/app/`（`main.cpp`、`panels.*`）、Dear ImGui + Direct3D 11 外壳
+> （`windows-gui-shell.*`、`windows-texture-cache.*`）、文件对话框、一次性 WGC 抓帧源
+> （`windows-capture-source.*`）、imgui submodule，以及那个启动该可执行文件的 ASan
+> smoke fixture。没有 `umbra-workbench` 这个二进制，也没有 `--smoke` 开关。下文每一处
+> 面板、停靠、画布、快捷键、纹理和鼠标交互写的都是已归档的代码；它们留在 git 历史里。
+>
+> *`entry/workbench` 下留下来的是标注后端*，编译成静态库
+> `${PROJECT_NAME}_workbench_support`，由 `umbra-authoring` 链接：编辑层
+> （`authoring-edit.*`、`edit-page.*`、`page-view.*`）、证伪矩阵（`preview.*`）、
+> 项目持久化（`project-persistence.*`，底下是
+> `platform/windows-file-publication.*`）和源图导入（`source-ingestion.*`）。
+> 这就是全部。下文讲编辑/校验/发布流程、以及「`AuthoringDocument` 是唯一写入路径」
+> 的那些段落在概念上仍然成立——把「workbench 做 X」读成「标注后端做 X，由 CLI 驱动」
+> 即可。有一处纠缠值得留着：`project-persistence` 会调到
+> `windows-file-publication`，那是每一次 `umbra-authoring` 保存背后的原子写，
+> 所以那个文件不算 GUI，也就没有跟着走。
+>
+> > **更正（2026-07-31，`f768e6c`，外加同一个工作树里对 `model-check-job` 的删除）。**
+> > 上面这份清单原本还把 `authoring-actions.*`、`project-tree.*`、`panel-state.*`、
+> > `model-check-job.*`、`model-check-view.*` 列为幸存者。它们已经没了。`f768e6c`
+> > 归档了剩下的面板层——`workbench-app`（`AppState`、`CanvasView`、
+> > `mintResourceId`）、`panel-state`（`PanelUiState`、`ToolbarCommand`、
+> > `PendingEdit`、`InlineRename`、`ColourKeyMemo`、`PendingDelete`）、
+> > `authoring-actions`、`canvas-math`（`CanvasPoint`、`ScreenPixelRect`、
+> > `RectGripKind`）、`model-check-view`、`project-tree`（`ScreenBucket`）——连同
+> > 它们的测试；其中 `mintResourceId` 与 `searchRoiForDrawnTemplate` 被救进
+> > `edit-page`，`findEditableElement` 被救进 `authoring-edit`。
+> > `model-check-job` 随后也删了：`ModelCheckJob` 的存在只是为了把 `runModelCheck`
+> > 挪出 GUI 线程，GUI 归档之后 `umbra-authoring check` 是同步跑矩阵的，于是它唯一
+> > 剩下的消费者是它自己的测试。`preview.*` 里的 `runModelCheck`、`ModelCheck`、
+> > `ModelCheckCell`、`classifyModelCell`、`ElementMargin` 一字未动。
+> >
+> > 因此本 banner 记的那处纠缠**已经解除**：`EditPage` 的签名里不再出现 `AppState`
+> > 或 `PanelUiState`。它现在按值收一份 `AuthoringDraft` 外加一个由调用方命名的不透明
+> > `baseRevision`，`commit() &&` 移出 `Committed{draft, baseRevision}`，
+> > `commitSelecting` 已删除，陈旧基线的拒绝搬进了
+> > `applyCommittedPage(AuthoringEditHistory&, EditPage::Committed const&)`。
+> > 裁决依据：[能力模型计划](../../plans/2026-07-31-annotation-model-capabilities.md)
+> > §四之二。
+> >
+> > 这条更正把 banner 的覆盖面**扩大**而不是收窄。下文**每一处**提到 `AppState`、
+> > `PanelUiState`、`CanvasView`、canvas math、project tree 或面板的段落写的都是已删
+> > 代码——包括《编辑状态与修改入口》《ResourceId 铸造》（那个函数现在在 `edit-page`
+> > 里）《所有权与生命周期》，以及《未来扩展》——后者提出的 `modules/authoring` 接缝
+> > 整个是按 `AppState` 定义的。《测试》一节两头都错：它说七个 synthetic 文件，而
+> > `tests/CMakeLists.txt` 现在注册五个；它列的七个里有三个
+> > （`test-workbench-app`、`test-canvas-math`、`test-model-check-job`）已不存在；
+> > 而 `test-edit-page.cpp`（19 个用例，现在是编辑层的主要覆盖）根本没被列进去。
+> > 仍然可读的是：《源图导入》《保存、重开与发布顺序》《有界 Preview》《挑颜色键》。
+>
+> *现在的标注入口是 `umbra-authoring`，不是本文这个二进制。* 它是标注项目的唯一途径
+> （见 `docs/ARCHITECTURE.md`；[`00-overview.md`](00-overview.md) 的入口表自
+> 2026-07-30 起就写着「目前唯一的标注工具」）。知识库还没有它的页面——
+> [`entry-cli.md`](entry-cli.md) 讲的是 `umbra-flow` 的 `run`/`drive`，只顺带提过一次
+> `umbra-authoring`——所以重新同步时欠一份 `entry-authoring.md`，见
+> [`README.md`](README.md)。
+>
+> *其二：标注模型变了。* `AnnotationType`、`ElementKind`、`AnchorElement` /
+> `InteractiveElement` / `InfoElement`、`bool shared`、`allowed_page_ids`、
+> `retypeRecognizer`、公开的 `PageSignature::create` 以及 `derivedRuntimeRecognizerId`
+> 全部消失；`RecognizerId` 改名 `ElementId`。逐条清单见
+> [`module-annotation.md`](module-annotation.md) 的 banner。具体到本文：构造链不再经过
+> `PageSignature::create`（签名由 `RecognitionCatalog::create` 从行使 `identify` 的页面
+> 引用派生），而「selected element 若为 `ActionTarget`」现在读作「选中的元素若声明了
+> `interact`」——并且 `evaluateActionTarget` 还多收一个页面参数。
+
 > **DIRTY（2026-07-26）**：本文尚未反映 page-centric 重构（EditPage/PageView
 > 句柄层、authoring schema v2 的 Element+placement 模型、v1 路径退役、按
 > placement 展开的运行时清单生成）。以实际代码与
@@ -17,7 +92,7 @@ Workbench 拥有从“取得一张完整源图”到“发布可供 runtime 消�
 - 从 PNG 或 WGC frame 构造带 provenance 的 canonical source；
 - 保存 source selection、canvas view 和即时 Preview 等 session state；
 - 把控件产生的修改统一变成完整、可验证的 `AuthoringDocument` 版本，并提供 undo/redo；
-- 展示和编辑 recognizer、page、regression、`template_rect`、`search_roi`、threshold 和 click offset；
+- 展示和编辑 element、page、regression、`template_rect`、`search_roi`、threshold 和 click offset；
 - 用当前内存 source 编译 template assets 和 runtime manifest；
 - 用生产侧同一个 `RecognitionRuntime` 对选中 source 做有界 Preview；
 - 按内容寻址资产优先、runtime manifest 最后的顺序发布项目。
@@ -54,21 +129,21 @@ shell 每帧同步调用 `drawWorkbench`。只有 `dispatch`/`main` 会把错误
 ### 编辑状态与修改入口
 
 `entry/workbench/authoring-edit.hpp` 定义供界面编辑的中间数据：
-`AuthoringDraft` 聚合 `EditableSource`、`EditableRecognizer`、`EditablePage` 和
+`AuthoringDraft` 聚合 `EditableSource`、`EditableElement`、`EditablePage` 和
 `EditableRegression`。控件可以暂时写入普通字符串、整数和 vector，但这些值不能
 直接持久化。
 
 `makeAuthoringDraft` 把规范化的 `annotation::AuthoringDocument` 展开成上述中间数据；
 `buildAuthoringDocument` 再依次调用 `AuthoringSource::create`、
 `ResourceName::create`、`SimilarityThreshold::create`、`TemplateOffset::create`、
-`RecognizerDefinition::create`、`PageSignature::create`，最后调用
+`CompiledElement::create`、`PageSignature::create`，最后调用
 `AuthoringDocument::create`。
 这条重建路径解释了为何 GUI 不做“先改半个对象、以后再校验”：一次 edit 要么得到完整有效的 document，要么原版本不动。
 
 `AuthoringEditHistory::apply` 先完成重建，再比较新旧 document 的规范序列化结果。
 相同 draft 返回 `false`，不写入历史；发生变化时，把当前 document 移入 undo、清空
 redo，并把 undo 限制为 `k_maximumAuthoringUndoEntries == 100`。
-`undo`/`redo` 移动完整 document value，所以跨 recognizer/page 的引用始终作为同一版本恢复。
+`undo`/`redo` 移动完整 document value，所以跨 element/page 的引用始终作为同一版本恢复。
 
 `entry/workbench/workbench-app.hpp` 的 `AppState` 是窗口背后的
 ImGui-free session aggregate：
@@ -92,7 +167,7 @@ Preview。dirty flag 则保守：undo 回已保存内容仍可能保持 dirty，
 `entry/workbench/workbench-app.cpp` 的 `mintResourceId` 用 `std::random_device` 填满 16 bytes，再设置 UUID version 4 nibble 和 RFC 4122 variant bits，最后调用 `modules/annotation/source/annotation/resource.hpp` 的 `ResourceId::fromBytes`。
 `fromBytes` 本身按契约不验证 version/variant，因此 authoring caller 负责设置 convention。
 
-`SourceId`、`RecognizerId`、`PageId` 等是 `ResourceId` 上的 distinct strong types；panel 在新增 source、recognizer 或 page 时先 mint，再包成对应 ID。随机性只决定新资源 identity，不进入 runtime matching。
+`SourceId`、`ElementId`、`PageId` 等是 `ResourceId` 上的 distinct strong types；panel 在新增 source、element 或 page 时先 mint，再包成对应 ID。随机性只决定新资源 identity，不进入 runtime matching。
 ID 一旦进入 document，canonical compiler 以它作为稳定 ordering/reference key。
 
 ### 导入源图
@@ -173,13 +248,13 @@ source fingerprint。返回的 `LoadedAuthoringProject` 保留原 PNG bytes，�
 4. 调用 `annotation::RecognitionRuntime::create`；
 5. 把 selected PNG decode 成 project-fingerprint-sized BGRA `Frame`；
 6. 调用 `RecognitionRuntime::evaluatePage`；
-7. selected recognizer 若为 `ActionTarget`，再调用
+7. selected element 若为 `ActionTarget`，再调用
    `evaluateActionTarget`。
 
 panel 构造的 `RecognitionPolicy` 同时给出 comparison budget 和 deadline；
 API 还支持 `std::stop_token`。`PreviewResult` 保留 completed
 `PreviewAnchorRow`、Resolved/Unknown/Ambiguous、resolved page ID，以及
-`PreviewStop` 中的 recognizer ID 和 `SadSearchStopReason`。stop 不会被压成
+`PreviewStop` 中的 element ID 和 `SadSearchStopReason`。stop 不会被压成
 `hit=false`。Preview frame 的 synthetic frame/session/generation identity 只为
 满足真实 recognition API；结果不进入 document、history 或 action delivery。
 

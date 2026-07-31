@@ -3,9 +3,8 @@
 #include "authoring-edit.hpp"
 
 #include <annotation/authoring-document.hpp>
+#include <annotation/catalog.hpp>
 #include <annotation/resource.hpp>
-
-#include <core/types/integer.hpp>
 
 #include <domain/space.hpp>
 
@@ -15,62 +14,61 @@
 
 namespace uf::workbench
 {
-    // A per-frame value snapshot of one page: the object the panels iterate to
-    // draw it. Authored data and ids only -- no margins, no verdicts, no live
-    // scores. Those stay owned once by the last model check and are merged at
-    // draw time through the existing id-keyed lookups, so a completed check does
-    // not force a view rebuild and no second owner of "the score for X" exists.
+    // A value snapshot of one page: the object a caller iterates to present it.
+    // Authored data and ids only -- no margins, no verdicts, no live scores.
+    // Those stay owned once by the last model check and are joined by id where
+    // they are needed, so a completed check does not force a view rebuild and no
+    // second owner of "the score for X" exists.
     struct PageView final
     {
-        // The page-local key for a member of a page. In this phase it is the
-        // recognizer id: the v1 model has no element identity, and a region
-        // shared onto page P is its own recognizer there, so keying a member by
-        // recognizer is what makes an edit to "this page's copy" unambiguous.
-        // The name carries the role rather than the current representation:
-        // phase 3 rebases it onto the placement key (an element on this page)
-        // without changing this API.
-        using MemberId = annotation::RecognizerId;
+        // The page-local key for a member of a page: the element id, which is
+        // what an authoring edit addresses and what one reference per (page,
+        // element) makes unambiguous.
+        using MemberId = annotation::ElementId;
 
-        // One anchor's authored data, for drawing a page's signature. Ids and
-        // authored values only: margins and live scores are owned by the last
-        // model check and merged in by the panels at draw time, never embedded
-        // here.
-        struct AnchorRow final
+        // One element's authored data as it sits on one page. Ids and authored
+        // values only: margins and live scores are owned by the last model check
+        // and joined in by the caller that wants them, never embedded here.
+        //
+        // One row type covers every capability, because a capability set means
+        // one element can be several of them at once -- the same patch of pixels
+        // naming its page and being clickable is the case the whole model change
+        // exists for -- so an element appears in every group its reference
+        // exercises, as the same row.
+        struct MemberRow final
         {
             MemberId    id;
             std::string name{};
-            PixelRect   templateRect;
-            PixelRect   searchRoi;
-            bool        shared{};
-        };
 
-        // One placeable element's authored data as it sits on a page. The search
-        // ROI is this page's own: under v2 it is the placement's per-page region.
-        // Both interactive and info elements use this row; an info element carries
-        // no click offset.
-        struct RegionRow final
-        {
-            MemberId                              id;
-            std::string                           name{};
-            PixelRect                             templateRect;
-            PixelRect                             searchRoiOnThisPage;
+            // The sole appearance's rectangle. Absent for an element located by
+            // the page rather than by pixels of its own, which is a legal state
+            // and the one a readable cell is in.
+            std::optional<PixelRect> templateRect{};
+
+            // The region searched for it here: this page's refinement when it
+            // made one, the element's own otherwise.
+            PixelRect searchRoiOnThisPage;
+
             std::optional<EditableTemplateOffset> clickOffset{};
-            bool                                  shared{};
+
+            // Whether these pixels are this page's own or borrowed from the page
+            // that owns them. This is the editing guard rail the old reuse flag
+            // could only approximate: it says where the element's home is, so an
+            // edit that would move it everywhere can be named as such.
+            annotation::Holding holding{annotation::Holding::Owned};
         };
 
         annotation::PageId                  id;
         std::string                         name{};
         std::optional<annotation::SourceId> claimedScreen{};
 
-        std::vector<AnchorRow> identifiedBy{};
-        std::vector<AnchorRow> mustNotShow{};
-        std::vector<RegionRow> regions{};
-
-        // Info elements placed on this page. Kept apart from interactive regions
-        // so the pages panel can label them, but drawn the same way -- so nothing
-        // placeable is ever invisible, which is what left a retyped Info region
-        // reachable only through undo.
-        std::vector<RegionRow> infos{};
+        // The four ways a page's reference exercises an element: as evidence for
+        // the page, as evidence against it, as something to click, as something
+        // to read. One element can occupy several of these at once.
+        std::vector<MemberRow> identifiedBy{};
+        std::vector<MemberRow> mustNotShow{};
+        std::vector<MemberRow> regions{};
+        std::vector<MemberRow> infos{};
 
         // Builds the snapshot for one page of a draft. A page absent from the
         // draft yields nothing, because there is no authored data to draw.
@@ -80,8 +78,8 @@ namespace uf::workbench
             annotation::PageId id
         ) -> std::optional<PageView>;
 
-        // Builds a snapshot per page, in the draft's page order, so the pages
-        // panel draws every page reflectively from one pass.
+        // Builds a snapshot per page, in the draft's page order, so a caller
+        // covers every page reflectively from one pass.
         [[nodiscard]]
         static auto all(AuthoringDraft const& draft) -> std::vector<PageView>;
     };

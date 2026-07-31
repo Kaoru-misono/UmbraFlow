@@ -38,7 +38,6 @@ namespace uf::m0_demo
     };
 
     [[nodiscard]] auto serializeLine(LogLine const& line) -> std::string;
-    [[nodiscard]] auto formatAutomationError(Error const& error) -> std::string;
 
     class IJsonlSink
     {

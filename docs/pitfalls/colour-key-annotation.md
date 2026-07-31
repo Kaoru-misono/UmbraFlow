@@ -11,8 +11,14 @@ output over the frames named.
 
 ### Symptom
 
-`page create` / `page add-anchor` / `page add-target` returns `{"ok":true,...}`
+`page create` / `page add` returns `{"ok":true,...}`
 and `project save` succeeds. Every later `match` of that element fails with:
+
+(Corrected 2026-07-31: the drawing verbs were `page add-anchor` / `page
+add-target` / `page add-info` when this was recorded; they collapsed into
+`page add ROOT PAGE NAME --capability C... <draw>` with the capability model.
+The failure is unchanged — `page create` and `page add` are still the two verbs
+that draw pixels, and neither checks the key.)
 
 ```
 InternalInvariant: template mask excludes every pixel of its template | at sad.cpp:325
@@ -47,8 +53,16 @@ giving 0.274 over 211 pixels.
 ### Regression check
 
 Before saving, run `umbra-authoring frames probe` with the same rectangle and key
-and read `fully_selected_pixels`. Zero means this failure. There is no code-level
-guard yet: authoring-time rejection does not exist, so the probe is the only check.
+and read `fully_selected_pixels`. Zero means this failure.
+
+> **2026-07-31: the drawing verbs now say it themselves.** `page create` and
+> `page add` measure the mask they just drew and report it under
+> `authored.mask`, in the same two counts `frames probe` uses and out of the same
+> `probeColour` call, so the two documents cannot disagree. Zero selected pixels
+> lands under the floor below and comes back with a `warning`. It is a hint and
+> not a refusal — the element is still authored and `ok` stays true — so the
+> probe remains worth running, and this failure is now visible at the moment it
+> is made rather than at a match much later.
 
 ## A mask with too few selected pixels passes everything and measures nothing
 
@@ -66,16 +80,40 @@ reading "開始 1" to showing a card thumbnail.
 
 ### Root cause
 
-The acceptance threshold is derived from the template's **total** pixel count and
-knows nothing about the mask. `SimilarityThreshold::maximumSad` at
-`modules/annotation/source/annotation/catalog.cpp:300` computes from
-`templateWidth * templateHeight`, and `catalog.cpp:410` calls it with
-`spec.templateRect.width()` and `.height()`. The colour key never enters the
-calculation.
+> **Corrected 2026-07-31.** The original entry blamed the threshold formula for
+> ignoring the mask. It does not, because the *score* is rescaled to match it.
+> The measurements below are unchanged and still reproduce; only the mechanism
+> was wrong, and aiming a fix at the threshold would miss.
 
-So a 27-pixel mask is scored against a threshold sized for 920 pixels:
-`920 * 255 * 0.01 = 2346` at 9900 bp. Twenty-seven pixels of white glyph cannot
-accumulate enough difference to exceed that no matter what the frame holds.
+The threshold is derived from the template's total pixel count —
+`SimilarityThreshold::maximumSad` (`catalog.cpp:300`) computes from
+`templateWidth * templateHeight` — but the score handed to it is normalized onto
+that same scale. `normalizedScore` (`modules/vision/source/vision/sad.cpp:47-62`)
+returns `weightedSum * templatePixels / totalWeight`, and `sad.cpp:392` is where
+the reported score goes through it.
+
+Work the constants through and the template size cancels on both sides. The live
+decision is:
+
+> **accept iff the weighted mean grey error over the *selected* pixels is at most
+> `255 * (1 - t)`** — at 9900 bp, a mean error of 2.55 grey levels.
+
+So the threshold *is* mask-relative, and 27 white pixels over changed content
+would exceed it easily. That is not what happened.
+
+**What actually happened is the search, not the threshold.** The match is the
+argmin over the whole search ROI (`sad.cpp:351-403`), with an exact-match early
+exit the moment any candidate position scores zero (`sad.cpp:394-400`). Twenty-
+seven saturated-white pixels do not have to survive where the glyph *was* — they
+only have to find *some* offset inside the ROI where all 27 land on white. On a
+card thumbnail there are many such offsets, the search finds one, scores 0, and
+returns immediately.
+
+The driver is therefore **mask size against ROI size**, not the threshold. A tiny
+mask of a saturated colour is a template that asks "is there a patch of white
+anywhere in this region", and the answer on a busy screen is always yes.
+`docs/pitfalls/page-modeling-and-multi-step.md:246-254` states the same mechanism
+for a keyed menu glyph.
 
 The same shape appears in milder forms. On a `116x112` end-turn button, the 100
 selected pixels were the button's outer ring, identical whether the button showed
@@ -84,16 +122,71 @@ the action was available. An `80x80` unkeyed template over that same icon, added
 specifically to tell the two states apart, scored 7534-11322 on one state and
 9698 on the other against a 16320 threshold, hitting both.
 
+### The same failure at the other extreme, and why the count alone is the wrong test
+
+> Added 2026-07-31, measured on `session-0731-round2\frames` with
+> `umbra-authoring frames probe`.
+
+A key that takes almost the whole rectangle fails for the same reason a tiny one
+does, and it passes any pixel floor with room to spare. The masked comparison
+only reads the *values* of the selected pixels, and a colour key selects pixels
+within tolerance of one colour by construction — so a mask that covers most of
+the rectangle is a solid patch of that colour, any patch of it the same size
+matches, and the glyph-shaped holes carry no weight at all.
+
+The `繼續進行` button, one rectangle `1268,795,315,58`, three keys:
+
+| key | fully selected | share | verdict |
+|---|---|---|---|
+| the button's orange fill `250,131,50` tol 40 | 12421 of 18270 | **68.0%** | flat: no structure |
+| **the white glyph `255,255,255` tol 12** | **154** | 0.8% | glyph-shaped, works |
+| the white glyph, rect narrowed to the text | 30 | 0.2% | under the floor |
+
+Selection reads the first frame given, so the middle row measures 179 rather than
+154 on a different capture of the same screen. Neither number changes the verdict,
+and that is the point: the two failure modes bracket the answer. The rectangle has
+to stay wide enough to hold enough glyph pixels, and the key has to pick the glyph
+rather than the fill. Two more of the same disease, both proposed as anchors and both
+rejected: the map/node info icon `1512,124,44,44` keyed white takes 1250 of 1936
+pixels (64.6%) and is one white disc, and the `確認` button in its disabled state
+is 75% uniform grey.
+
+Against those, every element in `chaos-super` that survived cross-page
+falsification selects between **6.6% and 25.8%** of its rectangle — 89, 136, 152,
+198, 227, 240, 251, 316, 339, 367, 386, 439, 638 and 707 pixels. A discriminating
+mask is a *figure* carved out of the rectangle: big enough to constrain a search,
+and small enough that what got selected is the figure rather than the ground.
+
 ### Fix
 
-Check `fully_selected_pixels` from `frames probe` and treat anything under
-roughly 50 as measuring nothing. Widen the rectangle, loosen the tolerance, or
-pick a different feature.
+Check `fully_selected_pixels` from `frames probe` against **both** ends. Under
+roughly 50 it measures nothing; at half the rectangle or more it distinguishes
+nothing. Widen the rectangle, loosen the tolerance, key the glyph instead of the
+fill, or pick a different feature.
+
+> **2026-07-31: landed as a warning on the drawing verbs, not as a refusal.**
+> `page create` and `page add` measure the mask and attach
+> `authored.mask.warning` when the count is under 50 or the share is at or above
+> half. Deciding artifact: `maskWarning` in
+> `entry/authoring/command-runner.cpp`, and the case
+> `the drawing verbs warn about a mask that cannot measure anything` in
+> `tests/authoring/test-authoring-cli.cpp`, whose third subcase exists to keep
+> the warning off the good masks above.
+>
+> [The capability plan](../plans/2026-07-31-annotation-model-capabilities.md)
+> §2.3 P0 originally wanted this floor as a construction-time refusal in
+> `Appearance::create`. That was **demoted to a warning** (see the plan's
+> "两条实现期裁决" B), for two reasons this section is the evidence for: a
+> appearance carries a `sourceId` and no pixels, so that layer cannot count
+> anything; and a pixel count is the wrong measure on its own, since it waves the
+> 68% orange fill straight through. **The gate stays the falsification matrix**,
+> `umbra-authoring check` — that measures whether the element hits a screen it
+> must not, where these two numbers only guess from shape.
 
 The general rule this taught, which is the part worth carrying: **an element that
 hits every state it is meant to distinguish is worse than no element, because it
 looks green.** This is the same discipline as the repository's falsification rule
-for tests — a recognizer counts only once it has been shown to miss the state it
+for tests — an element counts only once it has been shown to miss the state it
 is supposed to reject.
 
 ### Regression check
@@ -106,7 +199,7 @@ hits both is to be deleted, not tuned.
 
 ### Symptom
 
-A page's recognizers all pass on every frame available, then the page stops
+A page's elements all pass on every frame available, then the page stops
 resolving entirely when the same screen is reached at a different location in the
 game.
 

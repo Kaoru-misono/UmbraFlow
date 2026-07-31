@@ -1,11 +1,15 @@
 #include "authoring-edit.hpp"
 
+#include <annotation/capabilities.hpp>
+#include <annotation/resource.hpp>
+
 #include <core/error/contracts.hpp>
 #include <core/safety/checked-access.hpp>
 
 #include <domain/error.hpp>
 
 #include <algorithm>
+#include <array>
 #include <cstddef>
 #include <expected>
 #include <format>
@@ -31,6 +35,386 @@ namespace uf::workbench
                 )
             );
         }
+
+        [[nodiscard]]
+        auto missingElement(annotation::ElementId id) -> std::unexpected<Error>
+        {
+            return fail(
+                AutomationErrorKind::InvalidResource,
+                std::format(
+                    "element {} is not part of this draft",
+                    id.value().toString()
+                )
+            );
+        }
+
+        [[nodiscard]]
+        auto missingPage(annotation::PageId id) -> std::unexpected<Error>
+        {
+            return fail(
+                AutomationErrorKind::InvalidResource,
+                std::format(
+                    "page {} is not part of this draft",
+                    id.value().toString()
+                )
+            );
+        }
+
+        // The mutable half of primaryAppearance, kept here because only the edit
+        // transactions in this file write an appearance.
+        [[nodiscard]]
+        auto primaryAppearanceOf(
+            EditableElement& element
+        ) noexcept -> EditableAppearance*
+        {
+            return element.appearances.empty()
+                ? nullptr
+                : &element.appearances.front();
+        }
+
+        [[nodiscard]]
+        auto findReferenceIn(
+            AuthoringDraft& draft,
+            annotation::PageId pageId,
+            annotation::ElementId elementId
+        ) noexcept -> EditableReference*
+        {
+            auto const found = std::ranges::find_if(
+                draft.references,
+                [pageId, elementId](EditableReference const& reference)
+                {
+                    return reference.pageId == pageId
+                        && reference.elementId == elementId;
+                }
+            );
+            return found == draft.references.end() ? nullptr : &*found;
+        }
+
+        // Why a page cannot exercise a capability its element does not
+        // declare, one sentence each so the refusal says what the element
+        // would have to become rather than only that it is not that.
+        constexpr auto k_undeclaredIdentify = std::string_view{
+            "is not an identifying mark, so no page's signature can be built "
+            "out of it"
+        };
+        constexpr auto k_undeclaredInteract = std::string_view{
+            "receives no action, so no page can authorise a click on it"
+        };
+        constexpr auto k_undeclaredRead = std::string_view{
+            "holds no readable text, so no page can read it"
+        };
+
+        // Every rule one reference row has to satisfy, stated once so the verb
+        // that mints a row and the verb that edits one cannot drift apart. The
+        // catalog checks the same rules over the built document; refusing here
+        // is what lets the message name the element the author typed.
+        [[nodiscard]]
+        auto validateReference(
+            EditableElement const& element,
+            EditableExercised const& exercised,
+            std::optional<PixelRect> const& searchRoi
+        ) -> Status
+        {
+            if (
+                !exercised.identify.has_value()
+                && !exercised.interact.has_value()
+                && !exercised.read.has_value()
+            )
+            {
+                return fail(
+                    AutomationErrorKind::InvalidResource,
+                    std::format(
+                        "that page would reference \"{}\" and use it for "
+                        "nothing",
+                        element.name
+                    )
+                );
+            }
+
+            // Two levels, one direction: the element declares what it can do,
+            // the reference declares what this page does with it. Checked one
+            // capability at a time rather than as a set difference, so the
+            // refusal can say which use is missing and why.
+            struct RequestedUse final
+            {
+                bool             requested{};
+                bool             declared{};
+                std::string_view undeclared{};
+            };
+
+            auto const uses = std::array{
+                RequestedUse{
+                    .requested  = exercised.identify.has_value(),
+                    .declared   = element.capabilities.identify.has_value(),
+                    .undeclared = k_undeclaredIdentify,
+                },
+                RequestedUse{
+                    .requested  = exercised.interact.has_value(),
+                    .declared   = element.capabilities.interact.has_value(),
+                    .undeclared = k_undeclaredInteract,
+                },
+                RequestedUse{
+                    .requested  = exercised.read.has_value(),
+                    .declared   = element.capabilities.read.has_value(),
+                    .undeclared = k_undeclaredRead,
+                },
+            };
+            for (auto const& use : uses)
+            {
+                if (use.requested && !use.declared)
+                {
+                    return fail(
+                        AutomationErrorKind::InvalidResource,
+                        std::format("\"{}\" {}", element.name, use.undeclared)
+                    );
+                }
+            }
+
+            // Refused by name rather than made unrepresentable, because the row
+            // this writes is flat: annotation::PageReference carries both
+            // fields and the catalog refuses the pair, so a spec shaped to
+            // forbid it would be a third shape of one fact and would still have
+            // to be flattened here. Silently dropping either half is the one
+            // outcome ruled out -- both are measurements the author made.
+            if (exercised.identify.has_value() && searchRoi.has_value())
+            {
+                return fail(
+                    AutomationErrorKind::InvalidResource,
+                    std::format(
+                        "that page identifies by \"{}\" and so may not refine "
+                        "its search region: the anchor pass reads the "
+                        "element's own, before any page is known",
+                        element.name
+                    )
+                );
+            }
+            return ok();
+        }
+
+        // The set one new reference carries: what the caller asked for, or --
+        // when they asked for nothing -- every use a placement carries on its
+        // own. Identify is not one of those. Its page-side payload is the role,
+        // and the element has no answer to which way its evidence points, so
+        // there is nothing to inherit and a page enters a signature only by
+        // asking. That is also what stops a page borrowing a mark for its
+        // signature from being handed permission to click it.
+        [[nodiscard]]
+        auto resolveExercise(
+            EditableElement const& element,
+            std::optional<EditableExercised> const& requested
+        ) -> Result<EditableExercised>
+        {
+            if (requested.has_value())
+            {
+                return *requested;
+            }
+
+            auto inherited = EditableExercised{};
+            if (element.capabilities.interact.has_value())
+            {
+                inherited.interact = annotation::ExercisedInteract{};
+            }
+            if (element.capabilities.read.has_value())
+            {
+                inherited.read = annotation::ExercisedRead{};
+            }
+            if (
+                !inherited.interact.has_value()
+                && !inherited.read.has_value()
+            )
+            {
+                return fail(
+                    AutomationErrorKind::InvalidResource,
+                    std::format(
+                        "\"{}\" only identifies a page, which it joins through "
+                        "that page's signature rather than by being placed on "
+                        "it",
+                        element.name
+                    )
+                );
+            }
+            return inherited;
+        }
+
+        // One element's declared appearances, for a refusal that has to say
+        // what could have been pinned instead. Empty means the element is
+        // located by its page and has no appearance to pin at all, which is
+        // said in those words rather than as an empty list.
+        [[nodiscard]]
+        auto appearanceNameList(EditableElement const& element) -> std::string
+        {
+            if (element.appearances.empty())
+            {
+                return "none, it is located by its page";
+            }
+            auto listed = std::string{};
+            for (auto const& appearance : element.appearances)
+            {
+                if (!listed.empty())
+                {
+                    listed += ", ";
+                }
+                listed += appearance.name;
+            }
+            return listed;
+        }
+
+        // How many of a page's references put it in a signature. A page with
+        // none can recognise no screen, so this is what every withdrawal has to
+        // leave positive.
+        [[nodiscard]]
+        auto identifyReferenceCount(
+            AuthoringDraft const& draft,
+            annotation::PageId pageId
+        ) noexcept -> std::size_t
+        {
+            return static_cast<std::size_t>(
+                std::ranges::count_if(
+                    draft.references,
+                    [pageId](EditableReference const& reference)
+                    {
+                        return reference.pageId == pageId
+                            && reference.exercised.identify.has_value();
+                    }
+                )
+            );
+        }
+
+        // How many pages exercise interact on one element. The document closure
+        // rule requires this to stay positive for every element that declares
+        // interact: something the runtime could be asked to click has to be
+        // reachable somewhere it can be clicked.
+        [[nodiscard]]
+        auto interactReferenceCount(
+            AuthoringDraft const& draft,
+            annotation::ElementId elementId
+        ) noexcept -> std::size_t
+        {
+            return static_cast<std::size_t>(
+                std::ranges::count_if(
+                    draft.references,
+                    [elementId](EditableReference const& reference)
+                    {
+                        return reference.elementId == elementId
+                            && reference.exercised.interact.has_value();
+                    }
+                )
+            );
+        }
+
+        [[nodiscard]]
+        auto toEditableAppearance(annotation::Appearance const& appearance) -> EditableAppearance
+        {
+            return EditableAppearance{
+                .name                  = appearance.name().value(),
+                .sourceId              = appearance.sourceId(),
+                .templateRect          = appearance.templateRect(),
+                .similarityBasisPoints = appearance.threshold().basisPoints(),
+                .colourKey             = appearance.colourKey(),
+            };
+        }
+
+        [[nodiscard]]
+        auto toEditableCapabilities(
+            annotation::ElementCapabilities const& capabilities
+        ) -> EditableCapabilities
+        {
+            auto interact = std::optional<EditableInteract>{};
+            if (auto const& declared = capabilities.interact())
+            {
+                auto click = std::optional<EditableTemplateOffset>{};
+                if (auto const offset = declared->clickOffset)
+                {
+                    click = EditableTemplateOffset{
+                        .x = offset->x(),
+                        .y = offset->y(),
+                    };
+                }
+                interact = EditableInteract{.clickOffset = click};
+            }
+            return EditableCapabilities{
+                .identify = capabilities.identify(),
+                .interact = interact,
+                .read     = capabilities.read(),
+            };
+        }
+
+        [[nodiscard]]
+        auto toEditableExercised(
+            annotation::ExercisedCapabilities const& exercised
+        ) -> EditableExercised
+        {
+            return EditableExercised{
+                .identify = exercised.identify(),
+                .interact = exercised.interact(),
+                .read     = exercised.read(),
+            };
+        }
+
+        [[nodiscard]]
+        auto buildCapabilities(
+            EditableElement const& element
+        ) -> Result<annotation::ElementCapabilities>
+        {
+            auto interact = std::optional<annotation::Interact>{};
+            if (auto const& declared = element.capabilities.interact)
+            {
+                auto clickOffset = std::optional<annotation::TemplateOffset>{};
+                if (auto const click = declared->clickOffset)
+                {
+                    auto const* p_appearance = primaryAppearance(element);
+                    if (p_appearance == nullptr)
+                    {
+                        return fail(
+                            AutomationErrorKind::InvalidResource,
+                            std::format(
+                                "\"{}\" carries a default click but declares no "
+                                "appearance to measure it from",
+                                element.name
+                            )
+                        );
+                    }
+                    UF_TRY_VALUE(
+                        offset,
+                        annotation::TemplateOffset::create(
+                            click->x,
+                            click->y,
+                            p_appearance->templateRect.width(),
+                            p_appearance->templateRect.height()
+                        )
+                    );
+                    clickOffset = offset;
+                }
+                interact = annotation::Interact{.clickOffset = clickOffset};
+            }
+            return annotation::ElementCapabilities::create(
+                element.capabilities.identify,
+                interact,
+                element.capabilities.read
+            );
+        }
+    }
+
+    auto primaryAppearance(
+        EditableElement const& element
+    ) noexcept -> EditableAppearance const*
+    {
+        return element.appearances.empty()
+            ? nullptr
+            : &element.appearances.front();
+    }
+
+    auto findEditableElement(
+        AuthoringDraft& draft,
+        annotation::ElementId id
+    ) noexcept -> EditableElement*
+    {
+        auto const found = std::ranges::find(
+            draft.elements,
+            id,
+            &EditableElement::id
+        );
+        return found == draft.elements.end() ? nullptr : &*found;
     }
 
     auto makeAuthoringDraft(
@@ -51,54 +435,48 @@ namespace uf::workbench
             );
         }
 
-        // v2 native: elements and placements map straight across, one to one, with
-        // no inversion. Element search regions stay on the element; page
-        // membership stays on the placements below.
-        auto recognizers = std::vector<EditableRecognizer>{};
-        recognizers.reserve(document.elements().size());
+        // Elements and references map straight across, one to one, with no
+        // inversion: the capability set, the appearances, and every page-side
+        // fact are the same values on both sides.
+        auto elements = std::vector<EditableElement>{};
+        elements.reserve(document.elements().size());
         for (auto const& element : document.elements())
         {
-            auto defaultClick = std::optional<EditableTemplateOffset>{};
-            if (
-                auto const* p_interactive = std::get_if<annotation::InteractiveElement>(
-                    &element.kind()
-                )
-            )
+            auto appearances = std::vector<EditableAppearance>{};
+            appearances.reserve(element.appearances().size());
+            for (auto const& appearance : element.appearances())
             {
-                if (auto const offset = p_interactive->clickOffset)
-                {
-                    defaultClick = EditableTemplateOffset{
-                        .x = offset->x(),
-                        .y = offset->y(),
-                    };
-                }
+                appearances.emplace_back(toEditableAppearance(appearance));
             }
 
-            recognizers.emplace_back(
-                EditableRecognizer{
-                    .id                    = element.id(),
-                    .name                  = element.name().value(),
-                    .annotationType        = element.annotationType(),
-                    .sourceId              = element.sourceId(),
-                    .templateRect          = element.templateRect(),
-                    .searchRoi             = element.searchRoi(),
-                    .similarityBasisPoints = element.threshold().basisPoints(),
-                    .defaultClick          = defaultClick,
-                    .colourKey             = element.colourKey(),
-                    .shared                = element.shared(),
+            elements.emplace_back(
+                EditableElement{
+                    .id           = element.id(),
+                    .name         = element.name().value(),
+                    .capabilities = toEditableCapabilities(element.capabilities()),
+                    .searchRoi    = element.searchRoi(),
+                    .appearances  = std::move(appearances),
                 }
             );
         }
 
-        auto placements = std::vector<EditablePlacement>{};
-        placements.reserve(document.placements().size());
-        for (auto const& placement : document.placements())
+        auto references = std::vector<EditableReference>{};
+        references.reserve(document.references().size());
+        for (auto const& reference : document.references())
         {
-            placements.emplace_back(
-                EditablePlacement{
-                    .pageId    = placement.pageId,
-                    .elementId = placement.elementId,
-                    .searchRoi = placement.searchRoi,
+            auto appearance = std::optional<std::string>{};
+            if (auto const& pinned = reference.appearance)
+            {
+                appearance = pinned->value();
+            }
+            references.emplace_back(
+                EditableReference{
+                    .pageId     = reference.pageId,
+                    .elementId  = reference.elementId,
+                    .holding    = reference.holding,
+                    .exercised  = toEditableExercised(reference.exercised),
+                    .searchRoi  = reference.searchRoi,
+                    .appearance = std::move(appearance),
                 }
             );
         }
@@ -109,10 +487,8 @@ namespace uf::workbench
         {
             pages.emplace_back(
                 EditablePage{
-                    .id        = page.id(),
-                    .name      = page.name().value(),
-                    .required  = {page.required().begin(), page.required().end()},
-                    .forbidden = {page.forbidden().begin(), page.forbidden().end()},
+                    .id   = page.id(),
+                    .name = page.name().value(),
                 }
             );
         }
@@ -135,8 +511,8 @@ namespace uf::workbench
             .projectId   = document.catalog().projectId(),
             .fingerprint = document.catalog().fingerprint(),
             .sources     = std::move(sources),
-            .recognizers = std::move(recognizers),
-            .placements  = std::move(placements),
+            .elements    = std::move(elements),
+            .references  = std::move(references),
             .pages       = std::move(pages),
             .regressions = std::move(regressions),
         };
@@ -164,51 +540,43 @@ namespace uf::workbench
             sources.emplace_back(std::move(validated));
         }
 
-        // v2 native: elements and placements map straight across with no
-        // inversion. A placement that references an anchor, or an interactive
-        // element with none, is rejected by the document's own closure checks.
         auto elements = std::vector<annotation::Element>{};
-        elements.reserve(draft.recognizers.size());
-        for (auto const& recognizer : draft.recognizers)
+        elements.reserve(draft.elements.size());
+        for (auto const& editable : draft.elements)
         {
             UF_TRY_VALUE(
                 name,
-                annotation::ResourceName::create(recognizer.name)
+                annotation::ResourceName::create(editable.name)
             );
-            UF_TRY_VALUE(
-                threshold,
-                annotation::SimilarityThreshold::create(
-                    recognizer.similarityBasisPoints
-                )
-            );
+            UF_TRY_VALUE(capabilities, buildCapabilities(editable));
 
-            auto clickOffset = std::optional<annotation::TemplateOffset>{};
-            if (recognizer.defaultClick)
+            auto appearances = std::vector<annotation::Appearance>{};
+            appearances.reserve(editable.appearances.size());
+            for (auto const& appearance : editable.appearances)
             {
                 UF_TRY_VALUE(
-                    offset,
-                    annotation::TemplateOffset::create(
-                        recognizer.defaultClick->x,
-                        recognizer.defaultClick->y,
-                        recognizer.templateRect.width(),
-                        recognizer.templateRect.height()
+                    appearanceName,
+                    annotation::ResourceName::create(appearance.name)
+                );
+                UF_TRY_VALUE(
+                    threshold,
+                    annotation::SimilarityThreshold::create(
+                        appearance.similarityBasisPoints
                     )
                 );
-                clickOffset = offset;
-            }
-
-            auto kind = annotation::ElementKind{annotation::AnchorElement{}};
-            switch (recognizer.annotationType)
-            {
-            case annotation::AnnotationType::PageAnchor:
-                kind = annotation::AnchorElement{};
-                break;
-            case annotation::AnnotationType::ActionTarget:
-                kind = annotation::InteractiveElement{.clickOffset = clickOffset};
-                break;
-            case annotation::AnnotationType::InfoRegion:
-                kind = annotation::InfoElement{};
-                break;
+                UF_TRY_VALUE(
+                    validated,
+                    annotation::Appearance::create(
+                        annotation::Appearance::Spec{
+                            .name         = std::move(appearanceName),
+                            .sourceId     = appearance.sourceId,
+                            .templateRect = appearance.templateRect,
+                            .threshold    = threshold,
+                            .colourKey    = appearance.colourKey,
+                        }
+                    )
+                );
+                appearances.emplace_back(std::move(validated));
             }
 
             UF_TRY_VALUE(
@@ -216,51 +584,63 @@ namespace uf::workbench
                 annotation::Element::create(
                     draft.fingerprint,
                     annotation::Element::Spec{
-                        .id           = recognizer.id,
+                        .id           = editable.id,
                         .name         = std::move(name),
-                        .sourceId     = recognizer.sourceId,
-                        .templateRect = recognizer.templateRect,
-                        .searchRoi    = recognizer.searchRoi,
-                        .threshold    = threshold,
-                        .colourKey    = recognizer.colourKey,
-                        .kind         = std::move(kind),
-                        .shared       = recognizer.shared,
+                        .capabilities = std::move(capabilities),
+                        .searchRoi    = editable.searchRoi,
+                        .appearances  = std::move(appearances),
                     }
                 )
             );
             elements.emplace_back(std::move(element));
         }
 
-        auto placements = std::vector<annotation::AuthoringPlacement>{};
-        placements.reserve(draft.placements.size());
-        for (auto const& placement : draft.placements)
+        auto references = std::vector<annotation::PageReference>{};
+        references.reserve(draft.references.size());
+        for (auto const& reference : draft.references)
         {
-            placements.emplace_back(
-                annotation::AuthoringPlacement{
-                    .pageId    = placement.pageId,
-                    .elementId = placement.elementId,
-                    .searchRoi = placement.searchRoi,
+            UF_TRY_VALUE(
+                exercised,
+                annotation::ExercisedCapabilities::create(
+                    reference.exercised.identify,
+                    reference.exercised.interact,
+                    reference.exercised.read
+                )
+            );
+
+            auto pinned = std::optional<annotation::ResourceName>{};
+            if (auto const& appearance = reference.appearance)
+            {
+                UF_TRY_VALUE(
+                    validated,
+                    annotation::ResourceName::create(*appearance)
+                );
+                pinned = std::move(validated);
+            }
+
+            references.emplace_back(
+                annotation::PageReference{
+                    .pageId     = reference.pageId,
+                    .elementId  = reference.elementId,
+                    .holding    = reference.holding,
+                    .exercised  = std::move(exercised),
+                    .searchRoi  = reference.searchRoi,
+                    .appearance = std::move(pinned),
                 }
             );
         }
 
-        auto pages = std::vector<annotation::PageSignature>{};
+        auto pages = std::vector<annotation::PageSpec>{};
         pages.reserve(draft.pages.size());
         for (auto const& page : draft.pages)
         {
             UF_TRY_VALUE(name, annotation::ResourceName::create(page.name));
-            UF_TRY_VALUE(
-                validated,
-                annotation::PageSignature::create(
-                    annotation::PageSpec{
-                        .id        = page.id,
-                        .name      = std::move(name),
-                        .required  = page.required,
-                        .forbidden = page.forbidden,
-                    }
-                )
+            pages.emplace_back(
+                annotation::PageSpec{
+                    .id   = page.id,
+                    .name = std::move(name),
+                }
             );
-            pages.emplace_back(std::move(validated));
         }
 
         auto regressions = std::vector<annotation::RegressionCase>{};
@@ -283,7 +663,7 @@ namespace uf::workbench
             std::move(sources),
             std::move(elements),
             std::move(pages),
-            std::move(placements),
+            std::move(references),
             std::move(regressions)
         );
     }
@@ -296,9 +676,9 @@ namespace uf::workbench
         auto const taken = [&draft](std::string_view candidate)
         {
             return std::ranges::contains(
-                       draft.recognizers,
+                       draft.elements,
                        candidate,
-                       &EditableRecognizer::name
+                       &EditableElement::name
                    )
                 || std::ranges::contains(
                        draft.pages,
@@ -307,7 +687,7 @@ namespace uf::workbench
                    );
         };
 
-        auto const limit = draft.recognizers.size() + draft.pages.size() + 1U;
+        auto const limit = draft.elements.size() + draft.pages.size() + 1U;
         auto candidate   = std::string{};
         for (auto index = std::size_t{1}; index <= limit; ++index)
         {
@@ -337,32 +717,52 @@ namespace uf::workbench
         }
 
         auto anchorName = freshAuthoringName(draft, "anchor");
-        draft.recognizers.emplace_back(
-            EditableRecognizer{
-                .id                    = spec.anchorId,
-                .name                  = anchorName,
-                .annotationType        = annotation::AnnotationType::PageAnchor,
-                .sourceId              = spec.sourceId,
-                .templateRect          = spec.templateRect,
-                .searchRoi             = spec.searchRoi,
-                .similarityBasisPoints = spec.similarityBasisPoints,
-                .defaultClick          = {},
+        draft.elements.emplace_back(
+            EditableElement{
+                .id   = spec.anchorId,
+                .name = anchorName,
+                .capabilities = EditableCapabilities{
+                    .identify = annotation::Identify{},
+                },
+                .searchRoi = spec.searchRoi,
+                .appearances  = {
+                    EditableAppearance{
+                        .name                  = std::string{k_defaultAppearanceName},
+                        .sourceId              = spec.sourceId,
+                        .templateRect          = spec.templateRect,
+                        .similarityBasisPoints = spec.similarityBasisPoints,
+                    },
+                },
             }
         );
 
         auto pageName = freshAuthoringName(draft, "page");
         draft.pages.emplace_back(
             EditablePage{
-                .id        = spec.pageId,
-                .name      = pageName,
-                .required  = {spec.anchorId},
-                .forbidden = {},
+                .id   = spec.pageId,
+                .name = pageName,
+            }
+        );
+
+        // The reference is what derives the page's signature. Without it the
+        // page names nothing and the rebuild refuses it, which is why the two
+        // cannot be authored one at a time.
+        draft.references.emplace_back(
+            EditableReference{
+                .pageId    = spec.pageId,
+                .elementId = spec.anchorId,
+                .holding   = annotation::Holding::Owned,
+                .exercised = EditableExercised{
+                    .identify = annotation::ExercisedIdentify{
+                        .role = annotation::SignatureRole::Required,
+                    },
+                },
             }
         );
 
         // The case is what states "this screen is that page". Nothing else in the
-        // document records it: an anchor names the page it identifies, but the
-        // image the anchor happens to be drawn on is not the same claim.
+        // document records it: an appearance names the screen it was cut from,
+        // but that is not the same claim.
         draft.regressions.emplace_back(
             EditableRegression{
                 .id             = spec.regressionId,
@@ -377,6 +777,55 @@ namespace uf::workbench
             .pageName   = std::move(pageName),
             .anchorName = std::move(anchorName),
         };
+    }
+
+    namespace
+    {
+        struct MemberShape final
+        {
+            EditableCapabilities declared;
+            EditableExercised    exercised;
+            std::string_view     stem;
+        };
+
+        [[nodiscard]]
+        auto memberShapeOf(PageMemberKind kind) -> MemberShape
+        {
+            switch (kind)
+            {
+            case PageMemberKind::Anchor:
+                return MemberShape{
+                    .declared = EditableCapabilities{
+                        .identify = annotation::Identify{},
+                    },
+                    .exercised = EditableExercised{
+                        .identify = annotation::ExercisedIdentify{
+                            .role = annotation::SignatureRole::Required,
+                        },
+                    },
+                    .stem = "anchor",
+                };
+            case PageMemberKind::ActionTarget:
+                return MemberShape{
+                    .declared = EditableCapabilities{
+                        .interact = EditableInteract{},
+                    },
+                    .exercised = EditableExercised{
+                        .interact = annotation::ExercisedInteract{},
+                    },
+                    .stem = "region",
+                };
+            case PageMemberKind::InfoRegion:
+                return MemberShape{
+                    .declared  = EditableCapabilities{.read = annotation::Read{}},
+                    .exercised = EditableExercised{
+                        .read = annotation::ExercisedRead{},
+                    },
+                    .stem = "info",
+                };
+            }
+            UF_UNREACHABLE_MSG("unknown PageMemberKind value");
+        }
     }
 
     auto addPageMember(
@@ -394,79 +843,41 @@ namespace uf::workbench
         {
             return missingSource(spec.sourceId);
         }
-
-        auto const page = std::ranges::find(
-            draft.pages,
-            spec.pageId,
-            &EditablePage::id
-        );
-        if (page == draft.pages.end())
+        if (!std::ranges::contains(draft.pages, spec.pageId, &EditablePage::id))
         {
-            return fail(
-                AutomationErrorKind::InvalidResource,
-                std::format(
-                    "page {} is not part of this draft",
-                    spec.pageId.value().toString()
-                )
-            );
+            return missingPage(spec.pageId);
         }
 
-        auto const isAnchor = spec.kind == PageMemberKind::Anchor;
-        auto const type     = [kind = spec.kind]
-        {
-            switch (kind)
-            {
-            case PageMemberKind::Anchor:
-                return annotation::AnnotationType::PageAnchor;
-            case PageMemberKind::ActionTarget:
-                return annotation::AnnotationType::ActionTarget;
-            case PageMemberKind::InfoRegion:
-                return annotation::AnnotationType::InfoRegion;
-            }
-            UF_UNREACHABLE_MSG("unknown PageMemberKind value");
-        }();
-        auto const stem = [kind = spec.kind]() -> std::string_view
-        {
-            switch (kind)
-            {
-            case PageMemberKind::Anchor:
-                return "anchor";
-            case PageMemberKind::ActionTarget:
-                return "region";
-            case PageMemberKind::InfoRegion:
-                return "info";
-            }
-            UF_UNREACHABLE_MSG("unknown PageMemberKind value");
-        }();
-        auto name = freshAuthoringName(draft, stem);
-        draft.recognizers.emplace_back(
-            EditableRecognizer{
-                .id                    = spec.recognizerId,
-                .name                  = name,
-                .annotationType        = type,
-                .sourceId              = spec.sourceId,
-                .templateRect          = spec.templateRect,
-                .searchRoi             = spec.searchRoi,
-                .similarityBasisPoints = spec.similarityBasisPoints,
-                .defaultClick          = {},
+        auto shape = memberShapeOf(spec.kind);
+        auto name  = freshAuthoringName(draft, shape.stem);
+        draft.elements.emplace_back(
+            EditableElement{
+                .id           = spec.elementId,
+                .name         = name,
+                .capabilities = std::move(shape.declared),
+                .searchRoi    = spec.searchRoi,
+                .appearances     = {
+                    EditableAppearance{
+                        .name                  = std::string{k_defaultAppearanceName},
+                        .sourceId              = spec.sourceId,
+                        .templateRect          = spec.templateRect,
+                        .similarityBasisPoints = spec.similarityBasisPoints,
+                    },
+                },
             }
         );
-        // An anchor joins the page's signature; an interactive or info element
-        // joins it through a placement carrying this page's own search region.
-        if (isAnchor)
-        {
-            page->required.emplace_back(spec.recognizerId);
-        }
-        else
-        {
-            draft.placements.emplace_back(
-                EditablePlacement{
-                    .pageId    = spec.pageId,
-                    .elementId = spec.recognizerId,
-                    .searchRoi = spec.searchRoi,
-                }
-            );
-        }
+        // One edge, whatever the capability: the page's use of the element IS
+        // both its membership and, for identify, its half of the signature. The
+        // reference inherits the element's search region rather than pinning a
+        // copy of it, which is what "absent means the element's own" is for.
+        draft.references.emplace_back(
+            EditableReference{
+                .pageId    = spec.pageId,
+                .elementId = spec.elementId,
+                .holding   = annotation::Holding::Owned,
+                .exercised = std::move(shape.exercised),
+            }
+        );
 
         return AddedPageMember{
             .draft = std::move(draft),
@@ -474,83 +885,78 @@ namespace uf::workbench
         };
     }
 
-    auto pagesPlacedOn(
+    auto pagesReferencing(
         AuthoringDraft const& draft,
-        annotation::RecognizerId id
+        annotation::ElementId id
     ) -> std::vector<annotation::PageId>
     {
         auto pages = std::vector<annotation::PageId>{};
-        for (auto const& placement : draft.placements)
+        for (auto const& reference : draft.references)
         {
             if (
-                placement.elementId == id
-                && !std::ranges::contains(pages, placement.pageId)
+                reference.elementId == id
+                && !std::ranges::contains(pages, reference.pageId)
             )
             {
-                pages.emplace_back(placement.pageId);
+                pages.emplace_back(reference.pageId);
             }
         }
         return pages;
     }
 
-    auto removePlacementFromPage(
+    auto removeReferenceFromPage(
         AuthoringDraft draft,
-        annotation::RecognizerId id,
+        annotation::ElementId id,
         annotation::PageId pageId
     ) -> Result<AuthoringDraft>
     {
-        auto const target = std::ranges::find(
-            draft.recognizers,
-            id,
-            &EditableRecognizer::id
-        );
-        if (target == draft.recognizers.end())
+        auto const* p_target = findEditableElement(draft, id);
+        if (p_target == nullptr)
         {
-            return fail(
-                AutomationErrorKind::InvalidResource,
-                std::format(
-                    "recognizer {} is not part of this draft",
-                    id.value().toString()
-                )
-            );
+            return missingElement(id);
         }
-        if (target->annotationType == annotation::AnnotationType::PageAnchor)
-        {
-            return fail(
-                AutomationErrorKind::InvalidResource,
-                std::format(
-                    "\"{}\" identifies its page through a signature; delete it "
-                    "or change its role instead of removing a placement",
-                    target->name
-                )
-            );
-        }
-
-        auto const pages = pagesPlacedOn(draft, id);
-        if (!std::ranges::contains(pages, pageId))
+        auto const* p_reference = findReferenceIn(draft, pageId, id);
+        if (p_reference == nullptr)
         {
             return draft;
         }
+
         if (
-            target->annotationType == annotation::AnnotationType::ActionTarget
-            && pages.size() <= 1U
+            p_reference->exercised.identify.has_value()
+            && identifyReferenceCount(draft, pageId) <= 1U
         )
         {
             return fail(
                 AutomationErrorKind::InvalidResource,
                 std::format(
-                    "\"{}\" is only on this page; an interactive region must stay "
-                    "on at least one, so delete it instead of removing it here",
-                    target->name
+                    "\"{}\" is the only thing identifying this page; give the "
+                    "page another identifying mark before withdrawing it",
+                    p_target->name
+                )
+            );
+        }
+        if (
+            p_target->capabilities.interact.has_value()
+            && p_reference->exercised.interact.has_value()
+            && interactReferenceCount(draft, id) <= 1U
+        )
+        {
+            return fail(
+                AutomationErrorKind::InvalidResource,
+                std::format(
+                    "\"{}\" is clickable only on this page; something clickable "
+                    "must stay reachable somewhere, so delete it instead of "
+                    "removing it here",
+                    p_target->name
                 )
             );
         }
 
         std::erase_if(
-            draft.placements,
-            [id, pageId](EditablePlacement const& placement)
+            draft.references,
+            [id, pageId](EditableReference const& reference)
             {
-                return placement.elementId == id && placement.pageId == pageId;
+                return reference.elementId == id && reference.pageId == pageId;
             }
         );
         return draft;
@@ -562,19 +968,13 @@ namespace uf::workbench
     ) -> Result<DuplicatedElement>
     {
         auto const origin = std::ranges::find(
-            draft.recognizers,
+            draft.elements,
             spec.sourceElementId,
-            &EditableRecognizer::id
+            &EditableElement::id
         );
-        if (origin == draft.recognizers.end())
+        if (origin == draft.elements.end())
         {
-            return fail(
-                AutomationErrorKind::InvalidResource,
-                std::format(
-                    "recognizer {} is not part of this draft",
-                    spec.sourceElementId.value().toString()
-                )
-            );
+            return missingElement(spec.sourceElementId);
         }
 
         // Derived before the copy is inserted so the new name is measured
@@ -584,29 +984,25 @@ namespace uf::workbench
         copy.id   = spec.newElementId;
         copy.name = name;
 
-        // Mirror the original's placements onto the copy, each retargeted to the
-        // new id and keeping its own per-page search region. Collected before the
-        // recognizer is appended so a reallocation cannot invalidate the read.
-        auto placements = std::vector<EditablePlacement>{};
-        for (auto const& placement : draft.placements)
+        // Mirror the original's references onto the copy, each retargeted to the
+        // new id and keeping its own refinements. Collected before the element
+        // is appended so a reallocation cannot invalidate the read.
+        auto references = std::vector<EditableReference>{};
+        for (auto const& reference : draft.references)
         {
-            if (placement.elementId == spec.sourceElementId)
+            if (reference.elementId == spec.sourceElementId)
             {
-                placements.emplace_back(
-                    EditablePlacement{
-                        .pageId    = placement.pageId,
-                        .elementId = spec.newElementId,
-                        .searchRoi = placement.searchRoi,
-                    }
-                );
+                auto mirrored      = reference;
+                mirrored.elementId = spec.newElementId;
+                references.emplace_back(std::move(mirrored));
             }
         }
 
-        draft.recognizers.emplace_back(std::move(copy));
-        draft.placements.insert(
-            draft.placements.end(),
-            placements.begin(),
-            placements.end()
+        draft.elements.emplace_back(std::move(copy));
+        draft.references.insert(
+            draft.references.end(),
+            references.begin(),
+            references.end()
         );
 
         return DuplicatedElement{
@@ -615,181 +1011,182 @@ namespace uf::workbench
         };
     }
 
-    auto setRegionShared(
-        AuthoringDraft draft,
-        annotation::RecognizerId id,
-        bool shared
-    ) -> Result<AuthoringDraft>
-    {
-        auto const target = std::ranges::find(
-            draft.recognizers,
-            id,
-            &EditableRecognizer::id
-        );
-        if (target == draft.recognizers.end())
-        {
-            return fail(
-                AutomationErrorKind::InvalidResource,
-                std::format(
-                    "recognizer {} is not part of this draft",
-                    id.value().toString()
-                )
-            );
-        }
-        if (target->annotationType != annotation::AnnotationType::ActionTarget)
-        {
-            return fail(
-                AutomationErrorKind::InvalidResource,
-                std::format(
-                    "\"{}\" is not an interactive region; only those are reused "
-                    "across pages",
-                    target->name
-                )
-            );
-        }
-
-        // v2: the mark is pure intent and never touches page membership, so a
-        // region placed on several pages can be unmarked freely -- there are no
-        // copies to keep linked, only one element placed N times.
-        target->shared = shared;
-        return draft;
-    }
-
     auto setElementColourKey(
         AuthoringDraft draft,
-        annotation::RecognizerId id,
+        annotation::ElementId id,
         std::optional<annotation::ColourKey> colourKey
     ) -> Result<AuthoringDraft>
     {
-        auto const target = std::ranges::find(
-            draft.recognizers,
-            id,
-            &EditableRecognizer::id
-        );
-        if (target == draft.recognizers.end())
+        auto* p_target = findEditableElement(draft, id);
+        if (p_target == nullptr)
         {
-            return fail(
-                AutomationErrorKind::InvalidResource,
-                std::format(
-                    "recognizer {} is not part of this draft",
-                    id.value().toString()
-                )
-            );
+            return missingElement(id);
         }
 
-        // An element is drawn once and placed on N pages, so its mask, like its
-        // template rectangle, is one fact that every placement sees.
-        target->colourKey = colourKey;
+        // An element is drawn once and referenced by N pages, so its mask, like
+        // the rectangle it masks, is one fact every page sees.
+        for (auto& appearance : p_target->appearances)
+        {
+            appearance.colourKey = colourKey;
+        }
         return draft;
     }
 
-    auto shareRegionOnPage(
+    auto referenceElementOnPage(
         AuthoringDraft draft,
-        SharedRegionSpec const& spec
-    ) -> Result<SharedRegionPlacement>
+        ReferenceElementSpec const& spec
+    ) -> Result<ReferencedElement>
     {
-        auto const origin = std::ranges::find(
-            draft.recognizers,
-            spec.elementId,
-            &EditableRecognizer::id
-        );
-        if (origin == draft.recognizers.end())
+        auto const* p_origin = findEditableElement(draft, spec.elementId);
+        if (p_origin == nullptr)
         {
-            return fail(
-                AutomationErrorKind::InvalidResource,
-                std::format(
-                    "recognizer {} is not part of this draft",
-                    spec.elementId.value().toString()
-                )
-            );
-        }
-        if (origin->annotationType != annotation::AnnotationType::ActionTarget)
-        {
-            return fail(
-                AutomationErrorKind::InvalidResource,
-                std::format(
-                    "\"{}\" is not an interactive region; only those are shared "
-                    "across pages",
-                    origin->name
-                )
-            );
+            return missingElement(spec.elementId);
         }
         if (
             !std::ranges::contains(draft.pages, spec.pageId, &EditablePage::id)
         )
         {
-            return fail(
-                AutomationErrorKind::InvalidResource,
-                std::format(
-                    "page {} is not part of this draft",
-                    spec.pageId.value().toString()
-                )
-            );
+            return missingPage(spec.pageId);
         }
-
-        auto const alreadyThere = std::ranges::any_of(
-            draft.placements,
-            [&spec](EditablePlacement const& placement)
-            {
-                return placement.elementId == spec.elementId
-                    && placement.pageId == spec.pageId;
-            }
-        );
-        if (alreadyThere)
+        if (findReferenceIn(draft, spec.pageId, spec.elementId) != nullptr)
         {
             return fail(
                 AutomationErrorKind::InvalidResource,
-                std::format(
-                    "\"{}\" is already on that page",
-                    origin->name
-                )
+                std::format("\"{}\" is already on that page", p_origin->name)
             );
         }
 
-        // One element, placed again. No recognizer copy is minted -- a later
-        // template edit touches this element once and every placement sees it.
-        // Reaching a second page is what being shared means, so the element is
-        // marked whether or not the author ticked the box first.
-        origin->shared = true;
-        auto name      = origin->name;
-        draft.placements.emplace_back(
-            EditablePlacement{
-                .pageId    = spec.pageId,
-                .elementId = spec.elementId,
-                .searchRoi = spec.searchRoi,
+        UF_TRY_VALUE(exercised, resolveExercise(*p_origin, spec.exercised));
+        UF_TRY(validateReference(*p_origin, exercised, spec.searchRoi));
+
+        // A pin names one of the element's own appearances, so it is refused
+        // here where the element's list can be printed. The catalog refuses it
+        // again over the built document -- that is what makes it a rule rather
+        // than a courtesy -- but from there it can only say the name is not
+        // declared, never which names are.
+        if (spec.appearance.has_value())
+        {
+            if (
+                !std::ranges::contains(
+                    p_origin->appearances,
+                    *spec.appearance,
+                    &EditableAppearance::name
+                )
+            )
+            {
+                return fail(
+                    AutomationErrorKind::InvalidResource,
+                    std::format(
+                        "\"{}\" has no appearance named \"{}\"; it declares: {}",
+                        p_origin->name,
+                        *spec.appearance,
+                        appearanceNameList(*p_origin)
+                    )
+                );
+            }
+        }
+
+        // One element, referenced again. No copy is minted -- a later appearance
+        // edit touches this element once and every page sees it. The holding is
+        // Referenced because this page is borrowing pixels whose home is
+        // elsewhere, which is the fact the old reuse flag could only guess at.
+        auto name = p_origin->name;
+        draft.references.emplace_back(
+            EditableReference{
+                .pageId     = spec.pageId,
+                .elementId  = spec.elementId,
+                .holding    = annotation::Holding::Referenced,
+                .exercised  = std::move(exercised),
+                .searchRoi  = spec.searchRoi,
+                .appearance = spec.appearance,
             }
         );
 
-        return SharedRegionPlacement{
+        return ReferencedElement{
             .draft = std::move(draft),
             .name  = std::move(name),
         };
     }
 
+    auto setReferenceIdentifyRole(
+        AuthoringDraft draft,
+        annotation::ElementId id,
+        annotation::PageId pageId,
+        annotation::SignatureRole role
+    ) -> Result<AuthoringDraft>
+    {
+        auto const evidence = annotation::ExercisedIdentify{.role = role};
+
+        auto* p_reference = findReferenceIn(draft, pageId, id);
+        if (p_reference == nullptr)
+        {
+            UF_TRY_VALUE(
+                referenced,
+                referenceElementOnPage(
+                    std::move(draft),
+                    ReferenceElementSpec{
+                        .elementId = id,
+                        .pageId    = pageId,
+                        .exercised = EditableExercised{.identify = evidence},
+                    }
+                )
+            );
+            return std::move(referenced.draft);
+        }
+
+        auto const* p_element = findEditableElement(draft, id);
+        if (p_element == nullptr)
+        {
+            return missingElement(id);
+        }
+
+        // The row this page already has, pointed the new way, judged before it
+        // is installed. Building the candidate and validating it is what keeps
+        // this from being a second copy of the rules: the refusal a new row
+        // would get is the refusal this one gets, refined region included.
+        auto updated     = p_reference->exercised;
+        updated.identify = evidence;
+        UF_TRY(validateReference(*p_element, updated, p_reference->searchRoi));
+
+        p_reference->exercised = std::move(updated);
+        return draft;
+    }
+
     auto setElementTemplateRect(
         AuthoringDraft draft,
-        annotation::RecognizerId id,
+        annotation::ElementId id,
         PixelRect templateRect
-    ) -> Result<RetemplatedRegion>
+    ) -> Result<RetemplatedElement>
     {
-        auto const target = std::ranges::find(
-            draft.recognizers,
-            id,
-            &EditableRecognizer::id
-        );
-        if (target == draft.recognizers.end())
+        auto* p_target = findEditableElement(draft, id);
+        if (p_target == nullptr)
+        {
+            return missingElement(id);
+        }
+        if (p_target->appearances.empty())
         {
             return fail(
                 AutomationErrorKind::InvalidResource,
                 std::format(
-                    "recognizer {} is not part of this draft",
-                    id.value().toString()
+                    "\"{}\" is located by its page and has no appearance to move",
+                    p_target->name
+                )
+            );
+        }
+        if (p_target->appearances.size() > 1U)
+        {
+            return fail(
+                AutomationErrorKind::InvalidResource,
+                std::format(
+                    "\"{}\" has several appearances, and this editor draws one "
+                    "rectangle, so it cannot say which to move",
+                    p_target->name
                 )
             );
         }
         if (
-            templateRect.width() > target->searchRoi.width()
-            || templateRect.height() > target->searchRoi.height()
+            templateRect.width() > p_target->searchRoi.width()
+            || templateRect.height() > p_target->searchRoi.height()
         )
         {
             return fail(
@@ -797,24 +1194,29 @@ namespace uf::workbench
                 std::format(
                     "the new template does not fit the range \"{}\" searches; "
                     "widen that range first",
-                    target->name
+                    p_target->name
                 )
             );
         }
 
-        // Every placement of this element keeps its own per-page search region,
-        // so the moved template must still fit each one.
-        auto placedOn = std::size_t{0};
-        for (auto const& placement : draft.placements)
+        // A reference may refine the region searched on its page, so the moved
+        // template must still fit each refinement.
+        auto referencingPages = std::size_t{0};
+        for (auto const& reference : draft.references)
         {
-            if (placement.elementId != id)
+            if (reference.elementId != id)
             {
                 continue;
             }
-            ++placedOn;
+            ++referencingPages;
+            auto const refined = reference.searchRoi;
+            if (!refined.has_value())
+            {
+                continue;
+            }
             if (
-                templateRect.width() > placement.searchRoi.width()
-                || templateRect.height() > placement.searchRoi.height()
+                templateRect.width() > refined->width()
+                || templateRect.height() > refined->height()
             )
             {
                 return fail(
@@ -822,16 +1224,18 @@ namespace uf::workbench
                     std::format(
                         "the new template does not fit the range \"{}\" searches "
                         "on one of its pages; widen that range first",
-                        target->name
+                        p_target->name
                     )
                 );
             }
         }
 
-        target->templateRect = templateRect;
-        return RetemplatedRegion{
-            .draft           = std::move(draft),
-            .otherPlacements = placedOn,
+        auto* p_appearance = primaryAppearanceOf(*p_target);
+        UF_CHECK(p_appearance != nullptr);
+        p_appearance->templateRect = templateRect;
+        return RetemplatedElement{
+            .draft            = std::move(draft),
+            .referencingPages = referencingPages,
         };
     }
 
@@ -854,13 +1258,7 @@ namespace uf::workbench
             !std::ranges::contains(draft.pages, spec.pageId, &EditablePage::id)
         )
         {
-            return fail(
-                AutomationErrorKind::InvalidResource,
-                std::format(
-                    "page {} is not part of this draft",
-                    spec.pageId.value().toString()
-                )
-            );
+            return missingPage(spec.pageId);
         }
 
         auto const expectation = annotation::RegressionExpectation{
@@ -950,205 +1348,32 @@ namespace uf::workbench
         return draft;
     }
 
-    auto retypeRecognizer(
+    auto deleteElement(
         AuthoringDraft draft,
-        annotation::RecognizerId id,
-        annotation::AnnotationType type
-    ) -> Result<RetypedRecognizer>
-    {
-        auto const target = std::ranges::find(
-            draft.recognizers,
-            id,
-            &EditableRecognizer::id
-        );
-        if (target == draft.recognizers.end())
-        {
-            return fail(
-                AutomationErrorKind::InvalidResource,
-                std::format(
-                    "recognizer {} is not part of this draft",
-                    id.value().toString()
-                )
-            );
-        }
-        if (target->annotationType == type)
-        {
-            return RetypedRecognizer{.draft = std::move(draft)};
-        }
-
-        // Only a page anchor may fill a required or forbidden role, so leaving
-        // the page anchor type withdraws this recognizer from every signature. A
-        // signature naming nothing else cannot survive that withdrawal, and the
-        // author has to resolve which anchor takes over.
-        auto withdrawnRoles = std::size_t{0};
-        auto anchoredPages  = std::vector<annotation::PageId>{};
-        if (target->annotationType == annotation::AnnotationType::PageAnchor)
-        {
-            for (auto const& page : draft.pages)
-            {
-                auto const named = (
-                    std::ranges::contains(page.required, id)
-                    || std::ranges::contains(page.forbidden, id)
-                );
-                auto const alone = (
-                    page.required.size() + page.forbidden.size() == 1U
-                );
-                if (named && alone)
-                {
-                    return fail(
-                        AutomationErrorKind::InvalidResource,
-                        std::format(
-                            "\"{}\" is the only recognizer page \"{}\" names; "
-                            "give that page another page anchor before changing "
-                            "this recognizer's type",
-                            target->name,
-                            page.name
-                        )
-                    );
-                }
-                // Remembered before the withdrawal: a page this recognizer was
-                // required on is where it demonstrably appears, which is a far
-                // better authorization to offer than an arbitrary page. A page
-                // it was forbidden on is the opposite and is never offered.
-                if (std::ranges::contains(page.required, id))
-                {
-                    anchoredPages.emplace_back(page.id);
-                }
-            }
-            for (auto& page : draft.pages)
-            {
-                auto const before = page.required.size() + page.forbidden.size();
-                std::erase(page.required, id);
-                std::erase(page.forbidden, id);
-                withdrawnRoles += (
-                    before - (page.required.size() + page.forbidden.size())
-                );
-            }
-        }
-
-        auto const wasAnchor = (
-            target->annotationType == annotation::AnnotationType::PageAnchor
-        );
-        auto authorizedPage        = std::optional<annotation::PageId>{};
-        auto clearedAuthorizations = std::size_t{0};
-        auto clearedClick          = false;
-        if (type == annotation::AnnotationType::ActionTarget)
-        {
-            // The closure rule: an interactive element must be placed on at least
-            // one page. An element already placed (an info region keeps its
-            // placements across the change) needs nothing; otherwise it is placed
-            // on the page it is already on -- a page it anchored, or the project's
-            // first page when it was an anchor with only a forbidden role.
-            auto const alreadyPlaced = std::ranges::any_of(
-                draft.placements,
-                [id](EditablePlacement const& placement)
-                {
-                    return placement.elementId == id;
-                }
-            );
-            if (!alreadyPlaced)
-            {
-                auto candidate = std::optional<annotation::PageId>{};
-                if (!anchoredPages.empty())
-                {
-                    candidate = anchoredPages.front();
-                }
-                else if (wasAnchor && !draft.pages.empty())
-                {
-                    candidate = draft.pages.front().id;
-                }
-                if (!candidate.has_value())
-                {
-                    return fail(
-                        AutomationErrorKind::InvalidResource,
-                        std::format(
-                            "\"{}\" is on no page; an interactive region must be "
-                            "placed on at least one, so add it to a page before "
-                            "making it interactive",
-                            target->name
-                        )
-                    );
-                }
-                draft.placements.emplace_back(
-                    EditablePlacement{
-                        .pageId    = *candidate,
-                        .elementId = id,
-                        .searchRoi = target->searchRoi,
-                    }
-                );
-                authorizedPage = candidate;
-            }
-        }
-        else
-        {
-            // Only an interactive element may carry a default click.
-            clearedClick = target->defaultClick.has_value();
-            target->defaultClick.reset();
-            if (type == annotation::AnnotationType::PageAnchor)
-            {
-                // An anchor joins a page through its signature and cannot be
-                // placed, so every placement of it is withdrawn. An info region
-                // is placeable, so its placements are kept.
-                auto const before = draft.placements.size();
-                std::erase_if(
-                    draft.placements,
-                    [id](EditablePlacement const& placement)
-                    {
-                        return placement.elementId == id;
-                    }
-                );
-                clearedAuthorizations = before - draft.placements.size();
-            }
-        }
-        target->annotationType = type;
-
-        return RetypedRecognizer{
-            .draft                 = std::move(draft),
-            .authorizedPage        = authorizedPage,
-            .withdrawnRoles        = withdrawnRoles,
-            .clearedAuthorizations = clearedAuthorizations,
-            .clearedClick          = clearedClick,
-        };
-    }
-
-    auto deleteRecognizer(
-        AuthoringDraft draft,
-        annotation::RecognizerId id
+        annotation::ElementId id
     ) -> Result<DeletedEntity>
     {
-        auto const target = std::ranges::find(
-            draft.recognizers,
-            id,
-            &EditableRecognizer::id
-        );
-        if (target == draft.recognizers.end())
+        auto const* p_target = findEditableElement(draft, id);
+        if (p_target == nullptr)
         {
-            return fail(
-                AutomationErrorKind::InvalidResource,
-                std::format(
-                    "recognizer {} is not part of this draft",
-                    id.value().toString()
-                )
-            );
+            return missingElement(id);
         }
 
         for (auto const& page : draft.pages)
         {
-            auto const named = (
-                std::ranges::contains(page.required, id)
-                || std::ranges::contains(page.forbidden, id)
+            auto const* p_reference = findReferenceIn(draft, page.id, id);
+            auto const identifies = (
+                p_reference != nullptr
+                && p_reference->exercised.identify.has_value()
             );
-            auto const alone = (
-                page.required.size() + page.forbidden.size() == 1U
-            );
-            if (named && alone)
+            if (identifies && identifyReferenceCount(draft, page.id) <= 1U)
             {
                 return fail(
                     AutomationErrorKind::InvalidResource,
                     std::format(
-                        "\"{}\" is the only recognizer page \"{}\" names; "
-                        "delete that page first, or give it another page anchor",
-                        target->name,
+                        "\"{}\" is the only thing identifying page \"{}\"; "
+                        "delete that page first, or give it another mark",
+                        p_target->name,
                         page.name
                     )
                 );
@@ -1156,25 +1381,32 @@ namespace uf::workbench
         }
 
         auto withdrawnRoles = std::size_t{0};
-        for (auto& page : draft.pages)
+        for (auto const& reference : draft.references)
         {
-            auto const before = page.required.size() + page.forbidden.size();
-            std::erase(page.required, id);
-            std::erase(page.forbidden, id);
-            withdrawnRoles += (
-                before - (page.required.size() + page.forbidden.size())
-            );
-        }
-        // The element's own placements go with it: they name a page for a
-        // recognizer that no longer exists.
-        std::erase_if(
-            draft.placements,
-            [id](EditablePlacement const& placement)
+            if (
+                reference.elementId == id
+                && reference.exercised.identify.has_value()
+            )
             {
-                return placement.elementId == id;
+                ++withdrawnRoles;
+            }
+        }
+        // Every page-side use of the element goes with it: a reference to an
+        // element that no longer exists is not something the model can hold.
+        std::erase_if(
+            draft.references,
+            [id](EditableReference const& reference)
+            {
+                return reference.elementId == id;
             }
         );
-        draft.recognizers.erase(target);
+        std::erase_if(
+            draft.elements,
+            [id](EditableElement const& element)
+            {
+                return element.id == id;
+            }
+        );
 
         return DeletedEntity{
             .draft          = std::move(draft),
@@ -1194,68 +1426,46 @@ namespace uf::workbench
         );
         if (target == draft.pages.end())
         {
-            return fail(
-                AutomationErrorKind::InvalidResource,
-                std::format(
-                    "page {} is not part of this draft",
-                    id.value().toString()
-                )
-            );
+            return missingPage(id);
         }
 
-        // An interactive element placed only on this page would be left placed
-        // nowhere, which the closure rule forbids; that is a choice between
-        // deleting it and re-placing it that only the author can make. An info
-        // region may be left unplaced, so its placement does not block deletion.
-        for (auto const& recognizer : draft.recognizers)
+        // An element declaring interact that this page is the only one to
+        // exercise would be left unreachable, which the closure rule forbids;
+        // that is a choice between deleting it and re-pointing it that only the
+        // author can make. An element that is only read may be left unreferenced.
+        for (auto const& element : draft.elements)
         {
-            if (
-                recognizer.annotationType
-                != annotation::AnnotationType::ActionTarget
-            )
+            if (!element.capabilities.interact.has_value())
             {
                 continue;
             }
-            auto const onThisPage = std::ranges::any_of(
-                draft.placements,
-                [&recognizer, id](EditablePlacement const& placement)
-                {
-                    return placement.elementId == recognizer.id
-                        && placement.pageId == id;
-                }
+            auto const* p_here = findReferenceIn(draft, id, element.id);
+            auto const onThisPage = (
+                p_here != nullptr && p_here->exercised.interact.has_value()
             );
-            auto const onOtherPage = std::ranges::any_of(
-                draft.placements,
-                [&recognizer, id](EditablePlacement const& placement)
-                {
-                    return placement.elementId == recognizer.id
-                        && placement.pageId != id;
-                }
-            );
-            if (onThisPage && !onOtherPage)
+            if (
+                onThisPage
+                && interactReferenceCount(draft, element.id) <= 1U
+            )
             {
                 return fail(
                     AutomationErrorKind::InvalidResource,
                     std::format(
-                        "page \"{}\" is the only page interactive region \"{}\" is "
-                        "placed on; place it elsewhere or delete it first",
+                        "page \"{}\" is the only page \"{}\" can be clicked on; "
+                        "place it elsewhere or delete it first",
                         target->name,
-                        recognizer.name
+                        element.name
                     )
                 );
             }
         }
 
-        auto const placementsBefore = draft.placements.size();
-        std::erase_if(
-            draft.placements,
-            [id](EditablePlacement const& placement)
+        auto const withdrawnReferences = std::erase_if(
+            draft.references,
+            [id](EditableReference const& reference)
             {
-                return placement.pageId == id;
+                return reference.pageId == id;
             }
-        );
-        auto const clearedAuthorizations = (
-            placementsBefore - draft.placements.size()
         );
 
         // A case expecting this page to resolve cannot be reclassified into
@@ -1275,9 +1485,9 @@ namespace uf::workbench
         draft.pages.erase(target);
 
         return DeletedEntity{
-            .draft                 = std::move(draft),
-            .clearedAuthorizations = clearedAuthorizations,
-            .removedRegressions    = removedRegressions,
+            .draft               = std::move(draft),
+            .withdrawnReferences = withdrawnReferences,
+            .removedRegressions  = removedRegressions,
         };
     }
 
@@ -1293,42 +1503,40 @@ namespace uf::workbench
         );
         if (target == draft.sources.end())
         {
-            return fail(
-                AutomationErrorKind::InvalidResource,
-                std::format(
-                    "source {} is not part of this draft",
-                    id.value().toString()
+            return missingSource(id);
+        }
+
+        auto authored = std::size_t{0};
+        for (auto const& element : draft.elements)
+        {
+            authored += static_cast<std::size_t>(
+                std::ranges::count(
+                    element.appearances,
+                    id,
+                    &EditableAppearance::sourceId
                 )
             );
         }
-
-        auto const authored = std::ranges::count(
-            draft.recognizers,
-            id,
-            &EditableRecognizer::sourceId
-        );
-        if (authored > 0)
+        if (authored > 0U)
         {
             return fail(
                 AutomationErrorKind::InvalidResource,
                 std::format(
-                    "{} recognizer{} authored on this source; delete {} first",
+                    "{} appearance{} cut from this source; delete {} first",
                     authored,
-                    authored == 1 ? " is" : "s are",
-                    authored == 1 ? "it" : "them"
+                    authored == 1U ? " is" : "s are",
+                    authored == 1U ? "it" : "them"
                 )
             );
         }
 
-        auto const before = draft.regressions.size();
-        std::erase_if(
+        auto const removedRegressions = std::erase_if(
             draft.regressions,
             [id](EditableRegression const& regression) -> bool
             {
                 return regression.sourceId == id;
             }
         );
-        auto const removedRegressions = before - draft.regressions.size();
         draft.sources.erase(target);
 
         return DeletedEntity{

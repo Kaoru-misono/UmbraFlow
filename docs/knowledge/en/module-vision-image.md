@@ -55,7 +55,7 @@ They deliberately do not own the following policies:
 - No atomic publishing of an authoring project. `writeRgbaPng` is a file function that directly
   performs open/truncate/write/flush/close; the commit point and rollback discipline live in
   `entry/workbench/project-persistence.cpp`.
-- No scaling, resampling, color recognizer, OCR, composite recognizer, or multi-scale search.
+- No scaling, resampling, color matcher, OCR, composite matcher, or multi-scale search.
 - No implementation of strict-background input. The contribution of these modules to that product
   contract is: invalid images are rejected and incomplete searches are preserved as a stop, so the
   upper layers have no basis to turn incomplete evidence into a background input.
@@ -395,11 +395,12 @@ structured errors — no stb types or platform handles.
 
 `modules/engine` does not depend on `image` or `vision` directly; it obtains recognition results
 through its public dependency on `annotation` and serializes `SadSearchStopReason` in
-`modules/engine/source/engine/trace.cpp`. This lets the engine see the recognizer evidence and stop
+`modules/engine/source/engine/trace.cpp`. This lets the engine see the element evidence and stop
 vocabulary but not the codec or the matcher's internal storage.
 
 `entry/m0-demo` is a frozen real-hardware acceptance reference and still uses both modules directly:
-load/convert template, crop/convert frame, bounded SAD, and capture PNG output. Its direct calls
+load/convert template, crop/convert frame, and bounded SAD. Capture PNG output moved to
+`entry/input-agent`, which owns the writer both programs call. Its direct calls
 should not be treated as an extension point for new product policy; the current product path is
 annotation + engine.
 
@@ -482,7 +483,7 @@ protects content identity.
 
 `docs/plans/2026-07-22-annotation-design.md` §7 locks P0 to only a bounded deterministic
 `gray_template`. Color, HSV, OCR, composite, parameterized ROI, and multi-scale are not hidden modes
-of the current kernel. If the authoritative plan permits a new recognizer, it should add a parallel,
+of the current kernel. If the authoritative plan permits a new matcher, it should add a parallel,
 equally bounded kernel/result contract and synchronize the annotation schema, asset closure,
 evidence, Preview/Runtime, and trace; new semantics must not be stuffed into `matchTemplateSad` while
 still reusing the old stop/score meaning.

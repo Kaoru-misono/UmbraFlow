@@ -4,7 +4,6 @@
 
 #include <doctest/doctest.h>
 
-#include <array>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -40,44 +39,79 @@ namespace uf::annotation
         auto runtimeManifest(std::string project = "personal.test") -> RuntimeManifest
         {
             auto const fingerprint = test::fingerprint(8, 6, 96, 96);
-            auto const anchorId = test::recognizerId(k_anchorId);
-            auto const actionId = test::recognizerId(k_actionId);
+            auto const anchorId = test::elementId(k_anchorId);
+            auto const actionId = test::elementId(k_actionId);
             auto const pageId = test::pageId(k_pageId);
             auto const click = TemplateOffset::create(1, 0, 2, 1);
             REQUIRE(click.has_value());
 
+            auto elements = std::vector<RuntimeElementSpec>{};
+            elements.emplace_back(
+                RuntimeElementSpec{
+                    .definition = test::element(
+                        fingerprint,
+                        actionId,
+                        "daily_button",
+                        test::capabilities(
+                            std::nullopt,
+                            Interact{.clickOffset = *click}
+                        ),
+                        test::pixelRect(3, 2, 4, 3),
+                        std::vector<CompiledAppearance>{
+                            test::compiledAppearance(
+                                "only",
+                                test::pixelRect(4, 3, 2, 1)
+                            ),
+                        }
+                    ),
+                    .appearances = std::vector<RuntimeAppearanceAsset>{
+                        RuntimeAppearanceAsset{
+                            .appearanceName = test::resourceName("only"),
+                            .templateHash   = contentHash(k_actionHash),
+                            .sourceHash     = contentHash(k_sourceHash),
+                        },
+                    },
+                }
+            );
+            elements.emplace_back(
+                RuntimeElementSpec{
+                    .definition = test::element(
+                        fingerprint,
+                        anchorId,
+                        "home_marker",
+                        test::capabilities(Identify{}),
+                        test::pixelRect(0, 0, 3, 3),
+                        std::vector<CompiledAppearance>{
+                            test::compiledAppearance(
+                                "only",
+                                test::pixelRect(1, 1, 1, 1)
+                            ),
+                        }
+                    ),
+                    .appearances = std::vector<RuntimeAppearanceAsset>{
+                        RuntimeAppearanceAsset{
+                            .appearanceName = test::resourceName("only"),
+                            .templateHash   = contentHash(k_anchorHash),
+                            .sourceHash     = contentHash(k_sourceHash),
+                        },
+                    },
+                }
+            );
+
+            auto references = std::vector<PageReference>{};
+            references.emplace_back(
+                test::reference(pageId, anchorId, test::identifiesAs())
+            );
+            references.emplace_back(
+                test::reference(pageId, actionId, test::interacts())
+            );
+
             auto result = RuntimeManifest::create(
                 test::projectId(std::move(project)),
                 fingerprint,
-                {
-                    RuntimeRecognizerSpec{
-                        .definition = test::recognizer(
-                            fingerprint,
-                            actionId,
-                            "daily_button",
-                            AnnotationType::ActionTarget,
-                            test::pixelRect(4, 3, 2, 1),
-                            test::pixelRect(3, 2, 4, 3),
-                            {pageId},
-                            *click
-                        ),
-                        .templateHash = contentHash(k_actionHash),
-                        .sourceHash   = contentHash(k_sourceHash),
-                    },
-                    RuntimeRecognizerSpec{
-                        .definition = test::recognizer(
-                            fingerprint,
-                            anchorId,
-                            "home_marker",
-                            AnnotationType::PageAnchor,
-                            test::pixelRect(1, 1, 1, 1),
-                            test::pixelRect(0, 0, 3, 3)
-                        ),
-                        .templateHash = contentHash(k_anchorHash),
-                        .sourceHash   = contentHash(k_sourceHash),
-                    },
-                },
-                {test::page(pageId, "home", {anchorId})}
+                std::move(elements),
+                {test::page(pageId, "home")},
+                std::move(references)
             );
             REQUIRE(result.has_value());
             return *std::move(result);
@@ -100,55 +134,88 @@ namespace uf::annotation
     TEST_CASE("annotation runtime manifest compilation is byte-stable and runtime-only")
     {
         auto const encoded = serializeRuntimeManifest(runtimeManifest());
+        // Four tables, in one order. An element row carries only what is true of
+        // the element everywhere -- its region and the set of things it can be
+        // used for -- because a rectangle now serves several uses at once and
+        // none of them owns the row. The pixels moved out to one appearance row per
+        // appearance, keyed back by element_id, so the rows stay one field per
+        // line. And a page row carries only its identity: what a page requires
+        // and forbids is derived from the reference rows below it, which are
+        // also what authorises a click, so no fact is written twice.
         auto const expected = std::string{
-            "schema = \"umbraflow-annotations/v1\"\n"
+            "schema = \"umbraflow-annotations/v3\"\n"
             "project_id = \"personal.test\"\n"
             "base_resolution = [8, 6]\n"
             "base_dpi = [96, 96]\n"
             "\n"
-            "[[recognizer]]\n"
+            "[[element]]\n"
             "id = \"00000000-0000-0000-0000-000000000001\"\n"
             "name = \"home_marker\"\n"
-            "annotation_type = \"page_anchor\"\n"
+            "search_roi = [0, 0, 3, 3]\n"
+            "capabilities = [\"identify\"]\n"
+            "\n"
+            "[[element]]\n"
+            "id = \"00000000-0000-0000-0000-000000000002\"\n"
+            "name = \"daily_button\"\n"
+            "search_roi = [3, 2, 4, 3]\n"
+            "capabilities = [\"interact\"]\n"
+            "default_click = [1, 0]\n"
+            "\n"
+            "[[appearance]]\n"
+            "element_id = \"00000000-0000-0000-0000-000000000001\"\n"
+            "name = \"only\"\n"
             "kind = \"gray_template\"\n"
             "template = \"assets/templates/1111111111111111111111111111111111111111111111111111111111111111.png\"\n"
             "template_hash = \"sha256:1111111111111111111111111111111111111111111111111111111111111111\"\n"
             "source_hash = \"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"\n"
             "template_rect = [1, 1, 1, 1]\n"
-            "search_roi = [0, 0, 3, 3]\n"
             "min_similarity_bp = 9000\n"
             "\n"
-            "[[recognizer]]\n"
-            "id = \"00000000-0000-0000-0000-000000000002\"\n"
-            "name = \"daily_button\"\n"
-            "annotation_type = \"action_target\"\n"
+            "[[appearance]]\n"
+            "element_id = \"00000000-0000-0000-0000-000000000002\"\n"
+            "name = \"only\"\n"
             "kind = \"gray_template\"\n"
             "template = \"assets/templates/2222222222222222222222222222222222222222222222222222222222222222.png\"\n"
             "template_hash = \"sha256:2222222222222222222222222222222222222222222222222222222222222222\"\n"
             "source_hash = \"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"\n"
             "template_rect = [4, 3, 2, 1]\n"
-            "search_roi = [3, 2, 4, 3]\n"
             "min_similarity_bp = 9000\n"
-            "default_click = [1, 0]\n"
-            "allowed_page_ids = [\"00000000-0000-0000-0000-000000000101\"]\n"
             "\n"
             "[[page]]\n"
             "id = \"00000000-0000-0000-0000-000000000101\"\n"
             "name = \"home\"\n"
-            "required = [\"00000000-0000-0000-0000-000000000001\"]\n"
-            "forbidden = []\n"
+            "\n"
+            "[[reference]]\n"
+            "page_id = \"00000000-0000-0000-0000-000000000101\"\n"
+            "element_id = \"00000000-0000-0000-0000-000000000001\"\n"
+            "holding = \"owned\"\n"
+            "exercised = [\"identify\"]\n"
+            "signature_role = \"required\"\n"
+            "\n"
+            "[[reference]]\n"
+            "page_id = \"00000000-0000-0000-0000-000000000101\"\n"
+            "element_id = \"00000000-0000-0000-0000-000000000002\"\n"
+            "holding = \"owned\"\n"
+            "exercised = [\"interact\"]\n"
         };
         CHECK(encoded == expected);
         CHECK(encoded.find("source_id") == std::string::npos);
         CHECK(encoded.find("captured_at") == std::string::npos);
         CHECK(encoded.find("target_generation") == std::string::npos);
+        // The colour key that produced a mask is authoring truth: the runtime
+        // reads the mask off the compiled template's alpha channel instead.
+        CHECK(encoded.find("colour_key") == std::string::npos);
 
         auto const parsed = parseRuntimeManifest(encoded);
         REQUIRE(parsed.has_value());
         CHECK(serializeRuntimeManifest(*parsed) == encoded);
-        CHECK(parsed->catalog().recognizers().size() == 2U);
+        CHECK(parsed->catalog().elements().size() == 2U);
         CHECK(parsed->catalog().pages().size() == 1U);
-        auto const* p_asset = parsed->findAsset(test::recognizerId(k_anchorId));
+        CHECK(parsed->catalog().references().size() == 2U);
+        auto const* p_asset = parsed->findAsset(
+            test::elementId(k_anchorId),
+            test::resourceName("only")
+        );
         REQUIRE(p_asset != nullptr);
         CHECK(p_asset->templateHash == contentHash(k_anchorHash));
     }
@@ -160,7 +227,7 @@ namespace uf::annotation
         );
         CHECK(
             encoded.starts_with(
-                "schema = \"umbraflow-annotations/v1\"\n"
+                "schema = \"umbraflow-annotations/v3\"\n"
                 "project_id = \"personal.\\\"quoted\\\"\\\\line\\nnext\"\n"
             )
         );
@@ -172,17 +239,33 @@ namespace uf::annotation
         );
     }
 
+    TEST_CASE("annotation runtime manifest reader refuses the schema it retired")
+    {
+        // Named separately from the drift table below, and asserted on the
+        // message rather than only the kind. The canonical round-trip check at
+        // the end of the parser would refuse these same bytes for its own
+        // reason, so without the message this case would stay green with the
+        // schema comparison deleted.
+        auto const canonical = serializeRuntimeManifest(runtimeManifest());
+        auto const retired   = replaceOnce(
+            canonical,
+            "umbraflow-annotations/v3",
+            "umbraflow-annotations/v2"
+        );
+        auto const rejected = parseRuntimeManifest(retired);
+        REQUIRE_FALSE(rejected.has_value());
+        test::requireErrorKind(
+            rejected.error(),
+            AutomationErrorKind::InvalidResource
+        );
+        CHECK(rejected.error().message().contains("unsupported"));
+        CHECK(rejected.error().message().contains("schema"));
+    }
+
     TEST_CASE("annotation runtime manifest reader rejects non-canonical or drifting input")
     {
         auto const canonical = serializeRuntimeManifest(runtimeManifest());
         auto invalid = std::vector<std::string>{};
-        invalid.emplace_back(
-            replaceOnce(
-                canonical,
-                "umbraflow-annotations/v1",
-                "umbraflow-annotations/v2"
-            )
-        );
         invalid.emplace_back(
             replaceOnce(canonical, "min_similarity_bp = 9000", "min_similarity_bp = 09000")
         );
@@ -195,6 +278,19 @@ namespace uf::annotation
         );
         invalid.emplace_back(
             replaceOnce(canonical, "kind = \"gray_template\"", "kind = \"color\"")
+        );
+        invalid.emplace_back(
+            replaceOnce(canonical, "capabilities = [\"identify\"]", "capabilities = [\"guess\"]")
+        );
+        invalid.emplace_back(
+            replaceOnce(canonical, "holding = \"owned\"", "holding = \"borrowed\"")
+        );
+        invalid.emplace_back(
+            replaceOnce(
+                canonical,
+                "signature_role = \"required\"",
+                "signature_role = \"maybe\""
+            )
         );
         invalid.emplace_back(
             replaceOnce(canonical, "\n[[page]]", "\nunknown = 1\n\n[[page]]")

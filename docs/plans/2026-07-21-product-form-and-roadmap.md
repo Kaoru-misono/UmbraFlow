@@ -131,11 +131,11 @@ fail-closed 严格门防止误点,但从第一天保留统一坐标变换接缝;
   S0 之后 A/B 薄片只共享已锁定的 S0 契约 + 识别核,彼此不再硬阻塞,可自由穿插。
 - **退出标准**:
   1. 开发者只通过可视化标注系统,不手改配置,即可从目标窗口截图或导入图片,完成框选、属性编辑、撤销/重做、
-     保存和 Preview/Test;新 recognizer/page 立即能被 Luau 只读句柄引用。
+     保存和 Preview/Test;新 element/page 立即能被 Luau 只读句柄引用。
   2. 卡厄斯梦境关键页面都有 page signature 及正例/负例/易混淆截图;固定回归集中预期页面全部命中,
      未知与歧义样本全部 fail-closed,修改模板/阈值后能立即重跑并看到差异。
   3. 整套每日无人值守跑完;全程后台不抢焦点;Ctrl-C 500ms 内干净停(含未释放输入补 Up);
-     10–20 分钟一轮稳定完成;失败时 trace 能定位到截图、page/recognizer、confidence 与动作租约。
+     10–20 分钟一轮稳定完成;失败时 trace 能定位到截图、page/element、confidence 与动作租约。
   4. 为当前游戏版本/分辨率留下 WGC + PostMessage 兼容性记录;遮挡场景必须通过,最小化若不产新帧则明确
      `CaptureStalled`/不支持,任何失败都不得降级到前台或全局输入。
 - **依赖开发者输入**:~~第一条日常任务是什么、目标游戏~~ **已定:卡厄斯梦境 / 完成整套每日任务 / 等结算界面判定战斗**;
@@ -176,8 +176,18 @@ fail-closed 严格门防止误点,但从第一天保留统一坐标变换接缝;
    P1 另建显式 Base→Live viewport transform。
 3. **page signature 语义**:required/forbidden 全局求唯一解;Unknown/Ambiguous 无动作能力;
    无优先级、阈值覆盖或启发式消歧。
-4. **P0 authoring UI 技术栈**:Dear ImGui + D3D11,复用 WGC 与唯一有界灰度 SAD 内核;
+4. ~~**P0 authoring UI 技术栈**:Dear ImGui + D3D11~~——**已撤销(2026-07-31)**,
+   复用 WGC 与唯一有界灰度 SAD 内核这一条仍然成立;
    运行时浮层仍保持 `WS_EX_NOACTIVATE`/`WDA_EXCLUDEFROMCAPTURE` 纪律。
+
+   > **更正(2026-07-31)。** P0 的标注 UI 不再是 GUI:`b57b67b` 归档了 Dear ImGui + D3D11
+   > 外壳,唯一的标注入口是命令行工具 `umbra-authoring`,它链接同一套标注后端。第 1 条里
+   > 「完整 GUI authoring document」应读作「完整 authoring document」——**确定性生成独立
+   > runtime manifest 与切分模板这条性质没有变**,变的只是谁在编辑它。第 3 条的
+   > required/forbidden 语义也没变,只是这两个角色现在挂在页面**引用**上而不是元素上。
+   > 裁决见
+   > [`2026-07-31-annotation-model-capabilities.md`](2026-07-31-annotation-model-capabilities.md)
+   > §四之二.1;P2 的托盘 App 仍然是 GUI,本条不预判它的技术栈。
 
 ## 四、待定 / 待开发者输入
 

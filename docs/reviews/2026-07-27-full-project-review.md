@@ -1,5 +1,15 @@
 # Full-project architecture and abstraction review — 2026-07-27
 
+> **Vocabulary redirect (2026-07-31).** This document is a dated record and is not
+> rewritten. Read `recognizer` / `RecognizerId` / `uf.recognizers` / `recognizerId`
+> below as **element** / `ElementId` / `uf.elements` / `elementId`,
+> `RecognizerDefinition` and `RecognizerVariant` as `CompiledElement` and
+> `CompiledAppearance`, and `Variant` / `variant` as `Appearance` / `appearance`.
+> `RecognitionCatalog` and `RecognitionRuntime` keep their names -- they name the
+> activity. The schema ids moved with the rename: `umbraflow-authoring/v4`,
+> `umbraflow-annotations/v3`, `umbraflow-trace/v2`. Canonical vocabulary:
+> `CONTEXT.md` "Annotation model".
+
 > Status: **Implementation follow-up complete (2026-07-28)**. The original
 > review was report-only. The 2026-07-28 follow-up re-verified each actionable
 > claim against the rebased tree before implementation; corrections are

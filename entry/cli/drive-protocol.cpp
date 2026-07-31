@@ -64,7 +64,7 @@ namespace uf::cli
         struct ParsedFields final
         {
             std::optional<std::string> operation{};
-            std::optional<std::string> recognizer{};
+            std::optional<std::string> element{};
             std::optional<std::string> page{};
             std::optional<std::string> key{};
             std::optional<uint64>      cycle{};
@@ -357,10 +357,10 @@ namespace uf::cli
                     UF_TRY_VALUE(value, parseString());
                     return setOnce(fields.operation, std::move(value), field);
                 }
-                if (field == "recognizer")
+                if (field == "element")
                 {
                     UF_TRY_VALUE(value, parseString());
-                    return setOnce(fields.recognizer, std::move(value), field);
+                    return setOnce(fields.element, std::move(value), field);
                 }
                 if (field == "page")
                 {
@@ -567,7 +567,7 @@ namespace uf::cli
         // command would let an operator believe a pause it asked for happened.
         struct FieldUse final
         {
-            bool recognizer{false};
+            bool element{false};
             bool page{false};
             bool key{false};
             bool cycle{false};
@@ -596,7 +596,7 @@ namespace uf::cli
                 );
             };
 
-            if (fields.recognizer && !allowed.recognizer) { return refuse("recognizer"); }
+            if (fields.element && !allowed.element) { return refuse("element"); }
             if (fields.page && !allowed.page) { return refuse("page"); }
             if (fields.key && !allowed.key) { return refuse("key"); }
             if (fields.cycle && !allowed.cycle) { return refuse("cycle"); }
@@ -651,18 +651,18 @@ namespace uf::cli
                 UF_TRY(
                     rejectUnusedFields(
                         fields,
-                        FieldUse{.recognizer = true, .cycle = true},
+                        FieldUse{.element = true, .cycle = true},
                         operation
                     )
                 );
                 UF_TRY_VALUE(cycle, requireId(fields.cycle, "cycle", operation));
                 UF_TRY_VALUE(
-                    recognizer,
-                    requireName(fields.recognizer, "recognizer", operation)
+                    element,
+                    requireName(fields.element, "element", operation)
                 );
                 return DriveCycleFindCommand{
-                    .cycle      = cycle,
-                    .recognizer = std::move(recognizer),
+                    .cycle   = cycle,
+                    .element = std::move(element),
                 };
             }
             if (operation == "cycle_click")
@@ -770,7 +770,7 @@ namespace uf::cli
                     rejectUnusedFields(
                         fields,
                         FieldUse{
-                            .recognizer    = true,
+                            .element       = true,
                             .pollMillis    = true,
                             .timeoutMillis = true,
                         },
@@ -778,8 +778,8 @@ namespace uf::cli
                     )
                 );
                 UF_TRY_VALUE(
-                    recognizer,
-                    requireName(fields.recognizer, "recognizer", operation)
+                    element,
+                    requireName(fields.element, "element", operation)
                 );
                 UF_TRY_VALUE(
                     timeout,
@@ -790,7 +790,7 @@ namespace uf::cli
                     requirePolicyMillis(fields.pollMillis, "poll_ms", operation)
                 );
                 return DriveFindClickCommand{
-                    .recognizer   = std::move(recognizer),
+                    .element      = std::move(element),
                     .timeout      = timeout,
                     .pollInterval = pollInterval,
                 };

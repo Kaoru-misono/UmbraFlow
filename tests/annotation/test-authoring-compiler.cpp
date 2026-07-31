@@ -3,6 +3,7 @@
 #include <annotation/authoring-compiler.hpp>
 #include <annotation/authoring-document.hpp>
 #include <annotation/content-hash.hpp>
+#include <annotation/resource.hpp>
 
 #include <core/numeric/checked-arithmetic.hpp>
 #include <core/safety/checked-access.hpp>
@@ -17,6 +18,7 @@
 #include <array>
 #include <cstddef>
 #include <format>
+#include <optional>
 #include <span>
 #include <string>
 #include <string_view>
@@ -92,6 +94,66 @@ namespace uf::annotation
             return *std::move(encoded);
         }
 
+        // One appearance named "only", which is what every element here has.
+        // Several appearances of one element are the annotation-model test's
+        // subject; this file is about what compilation does with the pixels.
+        [[nodiscard]]
+        auto singleAppearance(
+            SourceId sourceId,
+            PixelRect templateRect
+        ) -> std::vector<Appearance>
+        {
+            auto appearances = std::vector<Appearance>{};
+            appearances.emplace_back(
+                test::appearance("only", sourceId, templateRect)
+            );
+            return appearances;
+        }
+
+        [[nodiscard]]
+        auto identifyingElement(
+            ProjectFingerprint fingerprint,
+            ElementId id,
+            std::string name,
+            SourceId sourceId,
+            PixelRect templateRect,
+            PixelRect searchRoi
+        ) -> Element
+        {
+            return test::element(
+                fingerprint,
+                id,
+                std::move(name),
+                test::capabilities(Identify{}),
+                searchRoi,
+                singleAppearance(sourceId, templateRect)
+            );
+        }
+
+        [[nodiscard]]
+        auto interactiveElement(
+            ProjectFingerprint fingerprint,
+            ElementId id,
+            std::string name,
+            SourceId sourceId,
+            PixelRect templateRect,
+            PixelRect searchRoi,
+            std::optional<TemplateOffset> clickOffset = std::nullopt
+        ) -> Element
+        {
+            return test::element(
+                fingerprint,
+                id,
+                std::move(name),
+                test::capabilities(
+                    std::nullopt,
+                    Interact{.clickOffset = clickOffset}
+                ),
+                searchRoi,
+                singleAppearance(sourceId, templateRect)
+            );
+        }
+
         [[nodiscard]]
         auto compilerFixture() -> CompilerFixture
         {
@@ -109,14 +171,14 @@ namespace uf::annotation
                 }
             );
             REQUIRE(source.has_value());
-            auto const anchorId = test::recognizerId(k_anchorId);
-            auto const actionId = test::recognizerId(k_actionId);
+            auto const anchorId = test::elementId(k_anchorId);
+            auto const actionId = test::elementId(k_actionId);
             auto const pageId   = test::pageId(k_pageId);
             auto const click    = TemplateOffset::create(1, 1, 2, 2);
             REQUIRE(click.has_value());
             auto elements = std::vector<Element>{};
             elements.emplace_back(
-                test::anchorElement(
+                identifyingElement(
                     fingerprint,
                     anchorId,
                     "home_marker",
@@ -126,7 +188,7 @@ namespace uf::annotation
                 )
             );
             elements.emplace_back(
-                test::interactiveElement(
+                interactiveElement(
                     fingerprint,
                     actionId,
                     "daily_button",
@@ -136,13 +198,20 @@ namespace uf::annotation
                     *click
                 )
             );
+            auto references = std::vector<PageReference>{};
+            references.emplace_back(
+                test::reference(pageId, anchorId, test::identifiesAs())
+            );
+            references.emplace_back(
+                test::reference(pageId, actionId, test::interacts())
+            );
             auto document = AuthoringDocument::create(
                 test::projectId(),
                 fingerprint,
                 {*source},
                 std::move(elements),
-                {test::page(pageId, "home", {anchorId})},
-                {test::placement(pageId, actionId, test::pixelRect(0, 0, 3, 2))},
+                {test::page(pageId, "home")},
+                std::move(references),
                 {}
             );
             REQUIRE(document.has_value());
@@ -177,24 +246,24 @@ namespace uf::annotation
             );
             REQUIRE(source.has_value());
 
-            auto elements      = std::vector<Element>{};
-            auto recognizerIds = std::vector<RecognizerId>{};
+            auto elements   = std::vector<Element>{};
+            auto elementIds = std::vector<ElementId>{};
             elements.reserve(templateRects.size());
-            recognizerIds.reserve(templateRects.size());
+            elementIds.reserve(templateRects.size());
             auto const searchRoi = test::pixelRect(0, 0, 8192, 8192);
             for (auto index = std::size_t{0}; index < templateRects.size(); ++index)
             {
-                auto const recognizerId = test::recognizerId(
+                auto const elementId = test::elementId(
                     std::format(
                         "00000000-0000-0000-0000-{:012x}",
                         index + 0x300U
                     )
                 );
-                recognizerIds.emplace_back(recognizerId);
+                elementIds.emplace_back(elementId);
                 elements.emplace_back(
-                    test::anchorElement(
+                    identifyingElement(
                         fingerprint,
-                        recognizerId,
+                        elementId,
                         std::format("work_item_{}", index),
                         sourceId,
                         checkedAt(templateRects, index),
@@ -203,19 +272,21 @@ namespace uf::annotation
                 );
             }
 
+            auto references = std::vector<PageReference>{};
+            references.emplace_back(
+                test::reference(
+                    test::pageId(k_pageId),
+                    elementIds.front(),
+                    test::identifiesAs()
+                )
+            );
             auto document = AuthoringDocument::create(
                 test::projectId(),
                 fingerprint,
                 {*source},
                 std::move(elements),
-                {
-                    test::page(
-                        test::pageId(k_pageId),
-                        "workload",
-                        {recognizerIds.front()}
-                    )
-                },
-                {},
+                {test::page(test::pageId(k_pageId), "workload")},
+                std::move(references),
                 {}
             );
             REQUIRE(document.has_value());
@@ -276,20 +347,23 @@ namespace uf::annotation
             auto const searchRoi = test::pixelRect(0, 0, 8192, 8192);
             for (auto index = std::size_t{0}; index < templateRects.size(); ++index)
             {
-                auto const recognizerId = test::recognizerId(
+                auto const elementId = test::elementId(
                     std::format(
                         "00000000-0000-0000-0000-{:012x}",
                         index + 0x500U
                     )
                 );
                 elements.emplace_back(
-                    test::infoElement(
+                    test::element(
                         fingerprint,
-                        recognizerId,
+                        elementId,
                         std::format("boundary_item_{}", index),
-                        sourceIds.front(),
-                        checkedAt(templateRects, index),
-                        searchRoi
+                        test::capabilities(std::nullopt, std::nullopt, Read{}),
+                        searchRoi,
+                        singleAppearance(
+                            sourceIds.front(),
+                            checkedAt(templateRects, index)
+                        )
                     )
                 );
             }
@@ -342,7 +416,7 @@ namespace uf::annotation
 
         auto const parsed = parseRuntimeManifest(first->runtimeManifestToml);
         REQUIRE(parsed.has_value());
-        CHECK(parsed->catalog().recognizers().size() == 2U);
+        CHECK(parsed->catalog().elements().size() == 2U);
         CHECK(parsed->catalog().pages().size() == 1U);
         for (auto const& asset : parsed->assets())
         {
@@ -359,10 +433,10 @@ namespace uf::annotation
 
         auto authoringToml = serializeAuthoringDocument(fixture.document);
 
-        auto const annotationPosition = authoringToml.find("\n[[annotation]]");
-        REQUIRE(annotationPosition != std::string::npos);
+        auto const elementPosition = authoringToml.find("\n[[element]]");
+        REQUIRE(elementPosition != std::string::npos);
         authoringToml.insert(
-            annotationPosition,
+            elementPosition,
             std::format(
                 "\n[[source]]\n"
                 "id = \"{}\"\n"
@@ -376,11 +450,19 @@ namespace uf::annotation
                 secondHash->toString()
             )
         );
-        auto const actionPosition = authoringToml.find("name = \"daily_button\"");
-        REQUIRE(actionPosition != std::string::npos);
+        // The source an appearance was cut from is a fact of the appearance row, so
+        // the edit has to land in the button's appearance rather than in whichever
+        // one happens to come first.
+        auto const actionAppearancePosition = authoringToml.find(
+            std::format(
+                "\n[[appearance]]\nelement_id = \"{}\"\n",
+                k_actionId
+            )
+        );
+        REQUIRE(actionAppearancePosition != std::string::npos);
         auto const relationshipPosition = authoringToml.find(
             std::string{"source_id = \""} + k_sourceId + '"',
-            actionPosition
+            actionAppearancePosition
         );
         REQUIRE(relationshipPosition != std::string::npos);
         authoringToml.replace(
@@ -404,10 +486,12 @@ namespace uf::annotation
         REQUIRE(compiled.has_value());
 
         auto const* p_anchor = compiled->runtimeManifest.findAsset(
-            test::recognizerId(k_anchorId)
+            test::elementId(k_anchorId),
+            test::resourceName("only")
         );
         auto const* p_action = compiled->runtimeManifest.findAsset(
-            test::recognizerId(k_actionId)
+            test::elementId(k_actionId),
+            test::resourceName("only")
         );
         REQUIRE(p_anchor != nullptr);
         REQUIRE(p_action != nullptr);
@@ -564,14 +648,14 @@ namespace uf::annotation
             }
         );
         REQUIRE(replacementSource.has_value());
-        auto const anchorId = test::recognizerId(k_anchorId);
+        auto const anchorId = test::elementId(k_anchorId);
         auto const pageId   = test::pageId(k_pageId);
         auto replacementDocument = AuthoringDocument::create(
             test::projectId(),
             fingerprint,
             {*replacementSource},
             {
-                test::anchorElement(
+                identifyingElement(
                     fingerprint,
                     anchorId,
                     "home_marker",
@@ -580,8 +664,8 @@ namespace uf::annotation
                     test::pixelRect(0, 0, 3, 2)
                 ),
             },
-            {test::page(pageId, "home", {anchorId})},
-            {},
+            {test::page(pageId, "home")},
+            {test::reference(pageId, anchorId, test::identifiesAs())},
             {}
         );
         REQUIRE(replacementDocument.has_value());
@@ -597,30 +681,48 @@ namespace uf::annotation
         );
     }
 
-    TEST_CASE("annotation authoring compilation inverts a placement into the runtime manifest")
+    TEST_CASE("annotation authoring compilation emits a byte-stable runtime manifest")
     {
-        // Golden manifest. The placements-to-allowed_page_ids inversion is the
-        // property that outlives the v1 authoring schema: a native v2 model with
-        // one interactive element placed on one page must compile to the frozen
-        // runtime manifest (umbraflow-annotations/v1) whose action target carries
-        // that page inverted back onto the recognizer. The template hashes are
-        // stable for the fixed source PNG, so the whole manifest is checked byte
-        // for byte -- a drift in the inversion changes these bytes.
+        // Golden manifest. The template hashes are the SHA-256 of the generated
+        // PNGs, and they carry over unchanged from the previous model's golden
+        // because the source image and both crops are the same bytes as before:
+        // what the schema bump moved is the shape of the document, not the
+        // pixels. That is what makes them evidence here rather than an echo of
+        // whatever the writer happened to emit.
+        //
+        // The property the old golden pinned -- a placement inverted into an
+        // allowed-page list on the element -- has no bytes to check any more,
+        // because the reference rows below ARE the authorisation and reach the
+        // runtime unchanged. What is checked instead is that an element keeps
+        // its own id through compilation and carries one appearance row per
+        // appearance.
         auto const fixture  = compilerFixture();
         auto const assets   = std::span{&fixture.sourceAsset, std::size_t{1}};
         auto const compiled = compileAuthoringDocument(fixture.document, assets);
         REQUIRE(compiled.has_value());
 
         auto const expected = std::string{
-            "schema = \"umbraflow-annotations/v1\"\n"
+            "schema = \"umbraflow-annotations/v3\"\n"
             "project_id = \"personal.test\"\n"
             "base_resolution = [3, 2]\n"
             "base_dpi = [96, 96]\n"
             "\n"
-            "[[recognizer]]\n"
+            "[[element]]\n"
             "id = \"00000000-0000-0000-0000-000000000001\"\n"
             "name = \"home_marker\"\n"
-            "annotation_type = \"page_anchor\"\n"
+            "search_roi = [0, 0, 3, 2]\n"
+            "capabilities = [\"identify\"]\n"
+            "\n"
+            "[[element]]\n"
+            "id = \"00000000-0000-0000-0000-000000000002\"\n"
+            "name = \"daily_button\"\n"
+            "search_roi = [0, 0, 3, 2]\n"
+            "capabilities = [\"interact\"]\n"
+            "default_click = [1, 1]\n"
+            "\n"
+            "[[appearance]]\n"
+            "element_id = \"00000000-0000-0000-0000-000000000001\"\n"
+            "name = \"only\"\n"
             "kind = \"gray_template\"\n"
             "template = \"assets/templates/"
             "552f203b92a92ab65529bd1e19a1b5e1dea3e5716d36332c80ab7a249eb7da45.png\"\n"
@@ -629,13 +731,11 @@ namespace uf::annotation
             "source_hash = \"sha256:"
             "cb6852a70d7af028e037d78d5bb0e55c7ea05a8c9054ce0b0f45fa8a31b0a2c2\"\n"
             "template_rect = [0, 0, 1, 1]\n"
-            "search_roi = [0, 0, 3, 2]\n"
             "min_similarity_bp = 9000\n"
             "\n"
-            "[[recognizer]]\n"
-            "id = \"00000000-0000-0000-0000-000000000002\"\n"
-            "name = \"daily_button\"\n"
-            "annotation_type = \"action_target\"\n"
+            "[[appearance]]\n"
+            "element_id = \"00000000-0000-0000-0000-000000000002\"\n"
+            "name = \"only\"\n"
             "kind = \"gray_template\"\n"
             "template = \"assets/templates/"
             "65b3b7b8b17a5cb75f26ee782594839c22dac166f28b02ef171d59d43ab69d90.png\"\n"
@@ -644,28 +744,37 @@ namespace uf::annotation
             "source_hash = \"sha256:"
             "cb6852a70d7af028e037d78d5bb0e55c7ea05a8c9054ce0b0f45fa8a31b0a2c2\"\n"
             "template_rect = [1, 0, 2, 2]\n"
-            "search_roi = [0, 0, 3, 2]\n"
             "min_similarity_bp = 9000\n"
-            "default_click = [1, 1]\n"
-            "allowed_page_ids = [\"00000000-0000-0000-0000-000000000101\"]\n"
             "\n"
             "[[page]]\n"
             "id = \"00000000-0000-0000-0000-000000000101\"\n"
             "name = \"home\"\n"
-            "required = [\"00000000-0000-0000-0000-000000000001\"]\n"
-            "forbidden = []\n"
+            "\n"
+            "[[reference]]\n"
+            "page_id = \"00000000-0000-0000-0000-000000000101\"\n"
+            "element_id = \"00000000-0000-0000-0000-000000000001\"\n"
+            "holding = \"owned\"\n"
+            "exercised = [\"identify\"]\n"
+            "signature_role = \"required\"\n"
+            "\n"
+            "[[reference]]\n"
+            "page_id = \"00000000-0000-0000-0000-000000000101\"\n"
+            "element_id = \"00000000-0000-0000-0000-000000000002\"\n"
+            "holding = \"owned\"\n"
+            "exercised = [\"interact\"]\n"
         };
         CHECK(compiled->runtimeManifestToml == expected);
     }
 
-    TEST_CASE("annotation authoring compilation expands per-page placement ROIs")
+    TEST_CASE("annotation authoring compilation carries each page's refined region")
     {
-        // One interactive element placed on two pages with DIFFERENT search
-        // rectangles. The v1 copy model gave each page its own recognizer and ROI;
-        // the v2 single-element model must reproduce that at generation time --
-        // one runtime recognizer per placement, each with its own ROI and its own
-        // single allowed page -- or every page would ship the element's one shared
-        // range and lose its detection range.
+        // One interactive element referenced by two pages with DIFFERENT search
+        // rectangles. It compiles to ONE compiled element under its own id --
+        // the id its scripts and its authorisation use -- and the per-page
+        // rectangle rides on the reference rows, which reach the runtime
+        // unchanged. The rule this replaces minted a derived id per page
+        // instead, which left the element's own id with no compiled element at
+        // all as soon as a second page referenced it.
         constexpr auto k_anchorTwoId = "00000000-0000-0000-0000-000000000003";
         constexpr auto k_pageTwoId   = "00000000-0000-0000-0000-000000000102";
 
@@ -684,19 +793,17 @@ namespace uf::annotation
         );
         REQUIRE(source.has_value());
 
-        auto const anchorOneId = test::recognizerId(k_anchorId);
-        auto const anchorTwoId = test::recognizerId(k_anchorTwoId);
-        auto const actionId    = test::recognizerId(k_actionId);
+        auto const anchorOneId = test::elementId(k_anchorId);
+        auto const anchorTwoId = test::elementId(k_anchorTwoId);
+        auto const actionId    = test::elementId(k_actionId);
         auto const pageOneId   = test::pageId(k_pageId);
         auto const pageTwoId   = test::pageId(k_pageTwoId);
         auto const roiOne      = test::pixelRect(0, 0, 3, 2);
         auto const roiTwo      = test::pixelRect(1, 0, 2, 2);
 
-        // A distinct template crop for the action, so the single shared template
-        // asset the two per-page recognizers point at is visible in the count.
         auto elements = std::vector<Element>{};
         elements.emplace_back(
-            test::anchorElement(
+            identifyingElement(
                 fingerprint,
                 anchorOneId,
                 "home_marker",
@@ -706,7 +813,7 @@ namespace uf::annotation
             )
         );
         elements.emplace_back(
-            test::anchorElement(
+            identifyingElement(
                 fingerprint,
                 anchorTwoId,
                 "second_marker",
@@ -716,7 +823,7 @@ namespace uf::annotation
             )
         );
         elements.emplace_back(
-            test::interactiveElement(
+            interactiveElement(
                 fingerprint,
                 actionId,
                 "daily_button",
@@ -726,19 +833,42 @@ namespace uf::annotation
             )
         );
 
+        auto references = std::vector<PageReference>{};
+        references.emplace_back(
+            test::reference(pageOneId, anchorOneId, test::identifiesAs())
+        );
+        references.emplace_back(
+            test::reference(pageTwoId, anchorTwoId, test::identifiesAs())
+        );
+        references.emplace_back(
+            test::reference(
+                pageOneId,
+                actionId,
+                test::interacts(),
+                Holding::Owned,
+                roiOne
+            )
+        );
+        references.emplace_back(
+            test::reference(
+                pageTwoId,
+                actionId,
+                test::interacts(),
+                Holding::Referenced,
+                roiTwo
+            )
+        );
+
         auto document = AuthoringDocument::create(
             test::projectId(),
             fingerprint,
             {*source},
             std::move(elements),
             {
-                test::page(pageOneId, "home", {anchorOneId}),
-                test::page(pageTwoId, "second", {anchorTwoId}),
+                test::page(pageOneId, "home"),
+                test::page(pageTwoId, "second"),
             },
-            {
-                test::placement(pageOneId, actionId, roiOne),
-                test::placement(pageTwoId, actionId, roiTwo),
-            },
+            std::move(references),
             {}
         );
         REQUIRE(document.has_value());
@@ -752,56 +882,35 @@ namespace uf::annotation
         auto const second = compileAuthoringDocument(*document, assets);
         REQUIRE(first.has_value());
         REQUIRE(second.has_value());
-        // Derived ids and names are stable across compiles of the same document.
         CHECK(first->runtimeManifestToml == second->runtimeManifestToml);
 
-        auto const& recognizers = first->runtimeManifest.catalog().recognizers();
-        // Two anchors plus one recognizer per placement of the shared element.
-        CHECK(recognizers.size() == 4U);
+        auto const& catalog = first->runtimeManifest.catalog();
+        // Two anchors and the one button, not one element per placement.
+        CHECK(catalog.elements().size() == 3U);
+        auto const* p_action = catalog.findElement(actionId);
+        REQUIRE(p_action != nullptr);
+        CHECK(p_action->name().value() == "daily_button");
 
-        auto const actionOn = [&recognizers](PageId page)
-            -> RecognizerDefinition const*
-        {
-            for (auto const& recognizer : recognizers)
-            {
-                if (
-                    recognizer.annotationType() == AnnotationType::ActionTarget
-                    && recognizer.allowedPageIds().size() == 1U
-                    && recognizer.allowedPageIds().front() == page
-                )
-                {
-                    return &recognizer;
-                }
-            }
-            return nullptr;
-        };
-        auto const* p_one = actionOn(pageOneId);
-        auto const* p_two = actionOn(pageTwoId);
+        // Each page ships its own detection range on its own reference row.
+        auto const* p_one = catalog.findReference(pageOneId, actionId);
+        auto const* p_two = catalog.findReference(pageTwoId, actionId);
         REQUIRE(p_one != nullptr);
         REQUIRE(p_two != nullptr);
+        REQUIRE(p_one->searchRoi.has_value());
+        REQUIRE(p_two->searchRoi.has_value());
+        CHECK(*p_one->searchRoi == roiOne);
+        CHECK(*p_two->searchRoi == roiTwo);
+        CHECK(p_one->holding == Holding::Owned);
+        CHECK(p_two->holding == Holding::Referenced);
 
-        // Each page ships its own detection range against a single allowed page.
-        CHECK(p_one->searchRoi() == roiOne);
-        CHECK(p_two->searchRoi() == roiTwo);
-        CHECK(p_one->id() != p_two->id());
-        CHECK(p_one->name().value() != p_two->name().value());
-        CHECK(p_one->name().value().starts_with("daily_button"));
-        CHECK(p_two->name().value().starts_with("daily_button"));
-
-        // The two per-page recognizers share one template asset: the crop dedupes
-        // by content hash, so N placements of one element cost one template.
+        // Two pages, one element, one template: the crop dedupes by content
+        // hash and the anchors share theirs, so three elements cost two assets.
         CHECK(first->templateAssets.size() == 2U);
-        auto const* p_oneAsset = first->runtimeManifest.findAsset(p_one->id());
-        auto const* p_twoAsset = first->runtimeManifest.findAsset(p_two->id());
-        REQUIRE(p_oneAsset != nullptr);
-        REQUIRE(p_twoAsset != nullptr);
-        CHECK(p_oneAsset->templateHash == p_twoAsset->templateHash);
-
-        // The public seam is the same mapping the compiler used: each per-page
-        // recognizer's id is derivedRuntimeRecognizerId(element, page). Every
-        // consumer of the manifest resolves an element id back to a runtime
-        // recognizer through this, so it must agree with what was emitted.
-        CHECK(p_one->id() == derivedRuntimeRecognizerId(actionId, pageOneId));
-        CHECK(p_two->id() == derivedRuntimeRecognizerId(actionId, pageTwoId));
+        auto const* p_actionAsset = first->runtimeManifest.findAsset(
+            actionId,
+            test::resourceName("only")
+        );
+        REQUIRE(p_actionAsset != nullptr);
+        CHECK(first->runtimeManifest.assets().size() == 3U);
     }
 }

@@ -101,12 +101,12 @@ namespace uf::cli
         );
 
         auto const found = parseDriveCommand(
-            R"({"op":"cycle_find","cycle":3,"recognizer":"end_turn"})"
+            R"({"op":"cycle_find","cycle":3,"element":"end_turn"})"
         );
         REQUIRE(found.has_value());
         CHECK(
             std::get<DriveCycleFindCommand>(*found)
-            == DriveCycleFindCommand{.cycle = 3, .recognizer = "end_turn"}
+            == DriveCycleFindCommand{.cycle = 3, .element = "end_turn"}
         );
 
         auto const clicked = parseDriveCommand(
@@ -161,12 +161,20 @@ namespace uf::cli
         );
         CHECK(functionKey.has_value());
 
-        // Lower case, an unknown key and a key with no cycle are all refused: a
-        // keystroke posts real input, so a name that is nearly right must not be
-        // guessed at.
-        for (auto const line : std::array<std::string_view, 3>{
+        // The named family, admitted since 2026-07-31 and reaching this protocol
+        // through the same single definition the other two families do.
+        auto const namedKey = parseDriveCommand(
+            R"({"op":"key","cycle":4,"key":"ENTER"})"
+        );
+        CHECK(namedKey.has_value());
+
+        // Lower case, an unobserved key and a key with no cycle are all refused:
+        // a keystroke posts real input, so a name that is nearly right must not
+        // be guessed at.
+        for (auto const line : std::array<std::string_view, 4>{
             R"({"op":"key","cycle":4,"key":"e"})",
-            R"({"op":"key","cycle":4,"key":"ENTER"})",
+            R"({"op":"key","cycle":4,"key":"enter"})",
+            R"({"op":"key","cycle":4,"key":"TAB"})",
             R"({"op":"key","key":"E"})",
         })
         {
@@ -201,8 +209,8 @@ namespace uf::cli
             R"({"op":"wait_page","page":"battle","timeout_ms":30000})",
             // find_click: the same, for its own three.
             R"({"op":"find_click","timeout_ms":5000,"poll_ms":250})",
-            R"({"op":"find_click","recognizer":"end_turn","poll_ms":250})",
-            R"({"op":"find_click","recognizer":"end_turn","timeout_ms":5000})",
+            R"({"op":"find_click","element":"end_turn","poll_ms":250})",
+            R"({"op":"find_click","element":"end_turn","timeout_ms":5000})",
         })
         {
             CAPTURE(line);
@@ -215,13 +223,13 @@ namespace uf::cli
         }
 
         auto const findClick = parseDriveCommand(
-            R"({"op":"find_click","recognizer":"end_turn","timeout_ms":5000,"poll_ms":250})"
+            R"({"op":"find_click","element":"end_turn","timeout_ms":5000,"poll_ms":250})"
         );
         REQUIRE(findClick.has_value());
         CHECK(
             std::get<DriveFindClickCommand>(*findClick)
             == DriveFindClickCommand{
-                .recognizer   = "end_turn",
+                .element   = "end_turn",
                 .timeout      = millis(5'000),
                 .pollInterval = millis(250),
             }

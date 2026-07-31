@@ -70,7 +70,7 @@ This directory deliberately does not own the following responsibilities:
   `runProduct` binds a target and calls `TaskHost::startTask`; what happens inside the run is the
   project's task script.
 - It does not translate resource names. A script names its resources directly as
-  `uf.pages.NAME` and `uf.recognizers.NAME` (the root was renamed from `umbra` to `uf` on
+  `uf.pages.NAME` and `uf.elements.NAME` (the root was renamed from `umbra` to `uf` on
   2026-07-29, `2f4af93`), and `task::validateScriptResources` in
   `modules/task/source/task/script-validator.hpp` closes every such reference against the
   capability surface before a VM exists. `entry/cli/name-resolution.{hpp,cpp}` existed only to
@@ -134,7 +134,7 @@ replaces `--task` is the pair of IPC files:
   **for `drive`**.
 - `--idle-timeout S` defaults to 120 s and ends a session whose command queue has gone quiet, so an
   operator who walks away, or a driving process that died, does not leave a session holding a
-  capture device and a bound target indefinitely. The figure matches the m0-demo input agent's own
+  capture device and a bound target indefinitely. The figure matches `umbra-input-agent`'s own
   idle timeout, which is the protocol this one follows.
 
 There are deliberately **no timeout, poll-interval or retry defaults on `DriveArgs`**. Those are
@@ -163,7 +163,7 @@ page wait.
 the loop. Commands arrive as **JSON lines appended to `--queue`**, and **one JSON result line per
 command is appended to `--results` and flushed immediately**, so an operator that reads the file
 sees a command's answer before the next command is executed. `k_maxDriveCommandBytes` caps one line
-at 64 KiB, matching the m0-demo input agent's ceiling; a command is a handful of scalars, so
+at 64 KiB, matching `umbra-input-agent`'s ceiling; a command is a handful of scalars, so
 anything near it is a malformed line rather than a large one.
 
 **Three refusals on the IPC paths, checked by `validateDriveIpcPaths` before the desktop is touched
@@ -171,7 +171,7 @@ at all.** The queue must already exist, because a session that created it would 
 appending to it. The two paths must be distinct, because a session reading its own results would
 re-execute them. And **the results path must not already exist**, so a stale results file from an
 earlier session can never be mistaken for this one's and nothing is silently appended to or
-clobbered. That last guard is the m0-demo input agent's, carried over deliberately — it caught two
+clobbered. That last guard is `umbra-input-agent`'s, carried over deliberately — it caught two
 real operator mistakes.
 
 **The queue is read by byte offset.** `QueueReader` keeps the session's own offset into the file, so
@@ -211,7 +211,7 @@ guarantee layer sits below Luau — the cycle ledger, the four-requisite click a
 fingerprint check and the trace are all C++ behind `TaskContext` — so an operator gets exactly the
 primitives and exactly the refusals a task gets. There is no chunk, no source and no string that
 becomes code, and the sandbox's closed eval routes stay closed. An operator may name only what a
-task may name: the session holds a copy of the same `CapabilitySurface` the `uf.recognizers` and
+task may name: the session holds a copy of the same `CapabilitySurface` the `uf.elements` and
 `uf.pages` tables are built from. `raise`, `emit` and `random` are deliberately absent — an operator
 has no framework structure of its own to record, and admitting `emit` would put a second author on
 the `framework.*` events the trace stream validator now refuses outright on an operator stream.
@@ -450,7 +450,7 @@ because the two adapters implement engine ports. What crosses the boundary is:
 
 `task` and `engine` never see the HWND, the console handler, file-selection syntax, the title
 substring, or the queue and results files. In the reverse direction, the CLI never interprets
-recognizer evidence, page outcomes, or authorization rules, and no longer drives any `EngineSession`
+element evidence, page outcomes, or authorization rules, and no longer drives any `EngineSession`
 verb: it calls `loadProject` and then either `startTask` or `startOperatorSession`, and reads the
 report.
 
@@ -507,7 +507,7 @@ whichever arrives first.
 `tests/task/test-task-host.cpp` covers the run lifecycle that used to live here. It publishes a real
 annotation project into a temporary directory and drives `TaskHost` end to end against fake ports,
 then reads the trace file back: the acceptance case asserts the whole ordered
-`umbraflow-trace/v1` bracket from `run.started` through the engine and `task.native_call` events to
+`umbraflow-trace/v2` bracket from `run.started` through the engine and `task.native_call` events to
 `run.finished`, under one sequence and one run and generation identity. It also pins that two runs
 of the same task draw different seeds and that the reported seed is the one `run.started` recorded,
 that a failed run is reported rather than failing the call, that a missing task fails before any
@@ -564,8 +564,8 @@ composition itself, and lists the following seams:
   `ctx:wait_for_page`). The conclusion for the CLI is unchanged: it still does not belong in window
   discovery or argument parsing.
 - P0-C: if on-hardware UIPI verification requires a separate elevated process, the plan requires
-  copying the protocol semantics of the m0-demo input-agent into the runner adapter layer, rather
-  than linking the already-frozen m0-demo.
+  copying the protocol semantics of `umbra-input-agent` into the runner adapter layer, rather
+  than linking `entry/input-agent` (see [`entry-input-agent.md`](entry-input-agent.md)).
 
 The `drive` front-end does not change that authority; it is a second consumer of the same
 `TaskHost` surface, which is why it needed no new host verb beyond `startOperatorSession`. Anything

@@ -1,5 +1,43 @@
 # Workbench UI redesign
 
+> **词汇重定向(2026-07-31)。** 本文是有日期的记录,不改写。下文的
+> `recognizer` / `RecognizerId` / `uf.recognizers` / `recognizerId` 一律读作
+> **element** / `ElementId` / `uf.elements` / `elementId`;`RecognizerDefinition`
+> 与 `RecognizerVariant` 读作 `CompiledElement` 与 `CompiledAppearance`;
+> `Variant` / `variant` 读作 `Appearance` / `appearance`。`RecognitionCatalog` 与
+> `RecognitionRuntime` 名字不变——它们指的是「识别」这个动作。schema id 随改名一起动了:
+> `umbraflow-authoring/v4`、`umbraflow-annotations/v3`、`umbraflow-trace/v2`。
+> 权威词汇见 `CONTEXT.md` 的「Annotation model」一节。
+
+> **Superseded 2026-07-31: the GUI this plan redesigns no longer exists.**
+> `b57b67b` archived the Dear ImGui + D3D11 shell — panels, window shell,
+> texture cache, file dialog, one-shot capture source, and the imgui submodule.
+> The deciding artifact is
+> [`2026-07-31-annotation-model-capabilities.md`](2026-07-31-annotation-model-capabilities.md)
+> §四之二.1, which retires the GUI and converts three GUI-only affordances into
+> preconditions on the CLI: `placeExisting`/`shareRegionOnPage` (landed as
+> `umbra-authoring page reference`), `setSearchRoi` per page (landed as
+> `page reference --search-roi`), and the falsification matrix
+> (`ModelCellCell` / `classifyModelCell`, still in `entry/workbench/preview.*`
+> and still owed a CLI verb).
+>
+> Kept as history: the failure modes in "Why" are real observations about
+> authoring, and the model-check reasoning informs the CLI matrix work. Nothing
+> in the layout, docking, or panel sections is actionable.
+>
+> > **Extended 2026-07-31 (`f768e6c`).** `b57b67b` took the ImGui shell; the
+> > *backend* units this plan's landed-stage records name went next. Deleted with
+> > their tests: `workbench-app` (`AppState`, `AppState::Selection` — decision 3
+> > in full), `panel-state` (`PanelUiState`, `ToolbarCommand`, `LogEvent` and the
+> > bounded event history — decision 8's reporting seam), `authoring-actions`,
+> > `canvas-math` (decision 9's geometry), `project-tree` (decision 2's screen
+> > buckets), and `model-check-view`. `model-check-job` followed in the same
+> > working tree. Every "Files:" list below therefore names paths that no longer
+> > exist; they record what the stage touched at the time, not where to look.
+> > What survives from this plan is `edit-page.*` / `page-view.*` (re-expressed:
+> > `EditPage` now holds an `AuthoringDraft` by value and `commitSelecting` is
+> > gone) and the falsification matrix in `preview.*`.
+
 Status: reviewed (dual review 2026-07-27: Claude Opus "approve with changes",
 Codex "rework"; both verdicts adjudicated below). Supersedes the five-window
 layout. Builds on docs/plans/2026-07-26-page-centric-authoring.md.
@@ -334,10 +372,33 @@ and tests `test-preview.cpp`, `test-model-check-view.cpp`.
   (never the derived per-page recognizer id) so the existing element-keyed
   lookups reach it. Each cell carries a `ModelCellOutcome` — `Hit` / `Miss`
   (measured, with `sadScore` and `maximumSad`), `Stopped` (with the
-  `SadSearchStopReason` for the tooltip), or `NotSearchedHere` — plus
-  `expectedHit`, whether the screen's recorded page authors the element. The
-  margins and the screen verdicts are untouched; the two current tables and
-  `findMargin` / `findScreenCheck` keep working unchanged.
+  `SadSearchStopReason` for the tooltip), or `NotSearchedHere` — plus the
+  ground truth the outcome is read against. The margins and the screen verdicts
+  are untouched; the two current tables and `findMargin` / `findScreenCheck`
+  keep working unchanged.
+
+  **Superseded 2026-07-31.** That ground truth was a `bool expectedHit`, "the
+  screen's recorded page references the element", and both halves of it were
+  wrong. It ignored the reference's `SignatureRole`, so a page that FORBIDS a
+  mark expected it to hit — a correctly absent mark read as a hole, and the
+  broken case the role exists to catch read as expected and vanished. And it
+  assumed pages occupy disjoint screens, so every element of an overlay page
+  (a card-detail screen is the battle screen with a card selected) reported a
+  misfire for being genuinely on screen. It is now a three-state
+  `ModelCellExpectation` — `Match` / `Absent` / `Unclaimed` — derived from what
+  the model actually states: the recorded page's own reference including its
+  role, and failing that, the duty another page's signature leaves resting on
+  the mark when every OTHER clause of that signature holds on the screen. A
+  signature is a conjunction, so a page kept off a foreign screen by its
+  forbidden clause demands nothing of its other members there. `expectedHit` is
+  gone: it survived one day as a `TODO(cpp-debt)` mirror for the authoring CLI's
+  `expected_hit` field, and both were removed when `check` began answering with
+  the three states by name (`"expectation": "match" | "absent" | "unclaimed"`).
+  A bool cannot separate them, and the difference is the reader's instruction:
+  under `absent` a hit is a defect to repair, under `unclaimed` it is the same
+  element genuinely on a screen no page's identity rests on. An element located
+  by its page — one declaring no appearance — takes part in no signature, so it
+  produces `unclaimed` on every screen its own pages do not claim.
 - **NotSearchedHere is explicit.** A multi-placed element on a screen whose page
   does not place it is a distinct cell state, not an empty hole. Anchors and
   single-placement elements are searched on every screen, so they never take it.

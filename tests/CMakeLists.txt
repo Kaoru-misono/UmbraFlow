@@ -68,9 +68,12 @@ cpp_add_test(
 cpp_add_test(
     NAME test-annotation
     SOURCES
+        annotation/test-annotation-model.cpp
+        annotation/test-appearance.cpp
         annotation/test-authoring-compiler.cpp
         annotation/test-authoring-document.cpp
         annotation/test-authorization.cpp
+        annotation/test-capabilities.cpp
         annotation/test-catalog.cpp
         annotation/test-colour-key-join.cpp
         annotation/test-content-hash.cpp
@@ -179,6 +182,21 @@ if(TARGET ${PROJECT_NAME}_controller)
     )
 endif()
 
+if(TARGET ${PROJECT_NAME}_input_agent_support)
+    cpp_add_test(
+        NAME test-input-agent
+        SOURCES
+            input-agent/test-agent.cpp
+            input-agent/test-annotation.cpp
+            input-agent/test-args.cpp
+            input-agent/test-error-text.cpp
+            input-agent/test-loop.cpp
+            input-agent/test-target-setup.cpp
+        LIBS
+            ${PROJECT_NAME}_input_agent_support
+    )
+endif()
+
 if(TARGET ${PROJECT_NAME}_m0_demo_support)
     cpp_add_test(
         NAME test-m0-demo
@@ -186,7 +204,6 @@ if(TARGET ${PROJECT_NAME}_m0_demo_support)
             m0-demo/test-args.cpp
             m0-demo/test-capture-mode.cpp
             m0-demo/test-guard.cpp
-            m0-demo/test-input-agent.cpp
             m0-demo/test-log-jsonl.cpp
             m0-demo/test-pacing.cpp
             m0-demo/test-pipeline.cpp
@@ -200,63 +217,20 @@ if(TARGET ${PROJECT_NAME}_workbench_support)
     cpp_add_test(
         NAME test-workbench
         SOURCES
-            workbench/asan-smoke-fixture.cpp
-            workbench/test-authoring-actions.cpp
             workbench/test-authoring-edit.cpp
-            workbench/test-canvas-math.cpp
             workbench/test-edit-page.cpp
-            workbench/test-model-check-job.cpp
-            workbench/test-model-check-view.cpp
-            workbench/test-panel-state.cpp
             workbench/test-preview.cpp
             workbench/test-project-persistence.cpp
-            workbench/test-project-tree.cpp
             workbench/test-source-ingestion.cpp
-            workbench/test-workbench-app.cpp
         LIBS
             ${PROJECT_NAME}_workbench_support
             ${PROJECT_NAME}_image
     )
 
-    # AddressSanitizer smoke: run the real umbra-workbench GUI with --smoke N over
-    # a generated project so the whole panel draw path is exercised under ASan.
-    # The prescription lives in docs/pitfalls/workbench-authoring-ui.md. The smoke
-    # target only exists where the GUI executable does (it needs the controller
-    # for WGC capture ingestion). The fixture is generated fresh into the build
-    # tree by a skipped doctest case in test-workbench, so a clean checkout needs
-    # no committed binary assets. Its own label keeps it off the CI set; a CI job
-    # that configures/builds the x64-asan preset and runs `ctest -L AsanSmoke` is
-    # still pending (Actions billing is currently blocked).
-    set(ASAN_SMOKE_FIXTURE_ROOT "${CMAKE_CURRENT_BINARY_DIR}/asan-smoke-project")
-    target_compile_definitions(test-workbench PRIVATE
-        UF_ASAN_SMOKE_FIXTURE_ROOT="${ASAN_SMOKE_FIXTURE_ROOT}"
-    )
-
-    if(WIN32 AND TARGET ${PROJECT_NAME}_workbench)
-        add_test(
-            NAME asan-smoke-fixture
-            COMMAND test-workbench
-                --test-case=workbench\ emits\ the\ AddressSanitizer\ smoke\ fixture
-                --no-skip
-        )
-        set_tests_properties(asan-smoke-fixture PROPERTIES
-            FIXTURES_SETUP ASAN_SMOKE_PROJECT
-            LABELS "AsanSmoke"
-            TIMEOUT 60
-        )
-
-        add_test(
-            NAME workbench-asan-smoke
-            COMMAND $<TARGET_FILE:${PROJECT_NAME}_workbench>
-                "${ASAN_SMOKE_FIXTURE_ROOT}"
-                --smoke 180
-        )
-        set_tests_properties(workbench-asan-smoke PROPERTIES
-            FIXTURES_REQUIRED ASAN_SMOKE_PROJECT
-            LABELS "AsanSmoke"
-            TIMEOUT 120
-        )
-    endif()
+    # The AddressSanitizer smoke test drove the archived umbra-workbench GUI over
+    # a generated project to exercise the panel draw path. Both the GUI and the
+    # fixture generator went with it; git history holds them, and
+    # docs/pitfalls/workbench-authoring-ui.md keeps the prescription.
 
     # The authoring CLI drives the same persistence and edit layer, so its test
     # is registered beside the workbench's and reaches across to the colour-key

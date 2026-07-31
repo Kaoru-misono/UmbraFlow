@@ -1,5 +1,62 @@
 # Page-centric authoring: domain model v2 and the editing layer
 
+> **Vocabulary redirect (2026-07-31).** This document is a dated record and is not
+> rewritten. Read `recognizer` / `RecognizerId` / `uf.recognizers` / `recognizerId`
+> below as **element** / `ElementId` / `uf.elements` / `elementId`,
+> `RecognizerDefinition` and `RecognizerVariant` as `CompiledElement` and
+> `CompiledAppearance`, and `Variant` / `variant` as `Appearance` / `appearance`.
+> `RecognitionCatalog` and `RecognitionRuntime` keep their names -- they name the
+> activity. The schema ids moved with the rename: `umbraflow-authoring/v4`,
+> `umbraflow-annotations/v3`, `umbraflow-trace/v2`. Canonical vocabulary:
+> `CONTEXT.md` "Annotation model".
+
+> **Redirect (2026-07-31).** This plan landed, and the model it produced has
+> since been changed by
+> [`2026-07-31-annotation-model-capabilities.md`](2026-07-31-annotation-model-capabilities.md).
+> Read the rulings below as history, with three specific reversals:
+>
+> 1. §2 item 5 ruled that the authoring-only `shared` flag **stays what it is
+>    today**, carried on the element. That is **reversed**: the flag is deleted
+>    and replaced by `Holding{Owned, Referenced}` on the page reference. The
+>    capability plan §2.2 owns the reasoning (a flag written once by
+>    `shareRegionOnPage` could contradict the placements with nothing noticing).
+> 2. §2 item 3's "one element, N placements" is exactly right and survives; the
+>    row is now called `PageReference` and carries `holding` and `exercised`
+>    besides `{pageId, elementId, searchRoi}`.
+> 3. The **runtime** contract this plan promised would stay frozen throughout
+>    (`k_runtimeManifestSchema`, `annotations.runtime.toml`,
+>    `RecognitionRuntime`) was un-frozen on 2026-07-31. Both schemas were bumped
+>    in one atomic change: `umbraflow-authoring/v2` → `/v3` and
+>    `umbraflow-annotations/v1` → `/v2`. The `PERMANENT BRIDGE` comment this plan
+>    left in `authoring-document.cpp` went with it.
+>
+> One more mechanism this plan introduced is gone:
+> `derivedRuntimeRecognizerId(elementId, pageId)` and the per-placement expansion
+> around it. The compiler now emits exactly **one** recognizer per element under
+> the element's own id, because a page's refinements are read from the reference
+> row at match time instead of being baked into a separate recognizer per page.
+>
+> The GUI this plan's editing layer was built for was archived in `b57b67b`;
+> the editing layer itself remains and is driven by `umbra-authoring`.
+>
+> > **Signatures updated 2026-07-31 (`f768e6c`).** The `EditPage` / `PageView`
+> > sketch below is no longer the shape of the code. `f768e6c` archived the rest
+> > of the panel layer — `workbench-app` (`AppState`), `panel-state`
+> > (`PanelUiState`), `authoring-actions`, `canvas-math`, `project-tree`,
+> > `model-check-view` — with their tests, so the types those signatures name are
+> > gone. `EditPage::open` / `createFrom` no longer take an `AppState const&`;
+> > `EditPage` takes an `AuthoringDraft` **by value** plus an opaque
+> > `baseRevision`, `commit() &&` moves out a `Committed{draft, baseRevision}`
+> > (no `PanelUiState&`, no description string), `commitSelecting` is **deleted**
+> > because the ids it returned already come back from
+> > `placeAnchor`/`placeRegion`/`placeInfo`/`placeDrawn`, and the stale-base
+> > refusal this plan gave to `applyPendingEdit` now lives in
+> > `applyCommittedPage(AuthoringEditHistory&, EditPage::Committed const&)`. The
+> > migration note about `test-authoring-actions.cpp` moving "unchanged" is moot:
+> > that suite was deleted, and `test-edit-page.cpp` (19 cases) carries the
+> > coverage. Deciding artifact:
+> > [the capability plan](2026-07-31-annotation-model-capabilities.md) §四之二.
+
 Status: proposed; amended 2026-07-26 after adversarial review. Supersedes
 one clause of the redesign agreed in the 2026-07-25 session notes: that
 agreement said "no schema, runtime, or S0 contract change is planned"; the
@@ -207,7 +264,7 @@ public:
 };
 ```
 
-`MemberId` is the page-local key. In phase 1 it **is** `RecognizerId` —
+`MemberId` is the page-local key. In phase 1 it **is** `ElementId` —
 the v1 model has no element identity, and a shared region on page P is
 its own recognizer there, so keying by recognizer is what makes
 `setSearchRoi` unambiguous over v1. In phase 3 it becomes the placement
@@ -319,7 +376,7 @@ Introduce `EditPage`, the two handles, and `PageView`, implemented on the
 current storage (the `allowed_page_ids` joins move inside `EditPage` and
 die nowhere else). `AuthoringEditHistory` gains the revision counter and
 `applyEdit` the stale-base refusal. Panels are rewritten to draw views
-and call handles. `MemberId` is `RecognizerId` in this phase, so
+and call handles. `MemberId` is `ElementId` in this phase, so
 `setSearchRoi` writes that page-member's own ROI — already per-page
 correct under the copy model; there is no ROI gap to document. Existing
 `authoring-actions` functions become the implementation guts or fold in;

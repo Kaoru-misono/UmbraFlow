@@ -13,6 +13,7 @@
 #include <compare>
 #include <cstddef>
 #include <functional>
+#include <limits>
 #include <map>
 #include <optional>
 #include <set>
@@ -60,6 +61,48 @@ namespace uf
         [[nodiscard]] constexpr auto y() const noexcept -> int32 { return m_y; }
     };
 
+    // WM_MOUSEWHEEL counts in WHEEL_DELTA units, of which 120 are one detent:
+    // the step a physical wheel clicks through and the step every Windows target
+    // divides by. Callers name detents, so the raw unit appears only here and at
+    // the message boundary.
+    inline constexpr auto k_wheelUnitsPerNotch = int32{120};
+
+    // wParam carries the raw delta in a signed 16-bit high word, so a notch
+    // count is deliverable only while its raw form still fits there.
+    inline constexpr auto k_maxWheelNotches = int32{
+        std::numeric_limits<int16>::max() / k_wheelUnitsPerNotch
+    };
+
+    class WheelDelta final
+    {
+        int16 m_notches;
+
+        constexpr explicit WheelDelta(int16 notches) noexcept
+            : m_notches{notches}
+        {
+        }
+
+    public:
+        auto operator<=>(WheelDelta const&) const = default;
+
+        // Positive scrolls away from the operator and negative toward them,
+        // which is the sign every Windows target already reads. Zero is refused:
+        // a wheel message that moves nothing is a mistyped command rather than a
+        // no-op worth posting.
+        [[nodiscard]]
+        static auto create(int32 notches) -> Result<WheelDelta>;
+
+        [[nodiscard]]
+        constexpr auto notches() const noexcept -> int32 { return m_notches; }
+
+        // create bounds the notch count, so this product always fits the word
+        // wParam encodes it in.
+        [[nodiscard]] constexpr auto rawUnits() const noexcept -> int16
+        {
+            return static_cast<int16>(m_notches * k_wheelUnitsPerNotch);
+        }
+    };
+
     class KeyInput final
     {
         uint16 m_virtualKey;
@@ -81,8 +124,8 @@ namespace uf
             return KeyInput{0x000DU, true};
         }
 
-        // Resolves a key hint as a target's own UI prints it ("E", "1", "F3")
-        // to a virtual key. Which names exist is domain::KeyName's single
+        // Resolves a key hint as a target's own UI prints it ("E", "1", "F3",
+        // "ENTER") to a virtual key. Which names exist is domain::KeyName's single
         // definition, which this routes through rather than repeating, so the
         // accepted set cannot drift between the name a project may write and the
         // name this can resolve.
@@ -312,6 +355,23 @@ namespace uf
         HeldInputs& held,
         AuditLog& audit,
         std::move_only_function<Result<DeliveryTarget>()> refreshTarget
+    ) -> Status;
+
+    // Posts one WM_MOUSEWHEEL at a point the target hit-tests to decide which
+    // control scrolls. That position is why the same pointer preconditions a
+    // click carries apply here: a wheel aimed from an expired or foreign
+    // observation reaches a control the caller never saw.
+    //
+    // Vertical only. WM_MOUSEHWHEEL would need its own axis in every layer down
+    // to the wire, and nothing in this project scrolls sideways.
+    [[nodiscard]]
+    auto scroll(
+        DeliveryTarget const& target,
+        ObservationLease lease,
+        Point<ClientSpace> point,
+        WheelDelta delta,
+        HeldInputs const& held,
+        AuditLog& audit
     ) -> Status;
 
     [[nodiscard]]

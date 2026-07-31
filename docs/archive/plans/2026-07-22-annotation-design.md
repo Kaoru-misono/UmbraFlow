@@ -1,5 +1,16 @@
 # P0-A Visual Annotation System & Data Model — S0 Locked Design
 
+> **Vocabulary redirect (2026-07-31).** This document is a dated record and is not
+> rewritten. Read `recognizer` / `RecognizerId` / `uf.recognizers` / `recognizerId`
+> below as **element** / `ElementId` / `uf.elements` / `elementId`,
+> `RecognizerDefinition` and `RecognizerVariant` as `CompiledElement` and
+> `CompiledAppearance`, and `Variant` / `variant` as `Appearance` / `appearance`.
+> `RecognitionCatalog` and `RecognitionRuntime` keep their names -- they name the
+> activity. The schema ids moved with the rename: `umbraflow-authoring/v4`,
+> `umbraflow-annotations/v3`, `umbraflow-trace/v2`. Canonical vocabulary:
+> `CONTEXT.md` "Annotation model". The authoring document's `[[annotation]]`
+> table is now `[[element]]` in the same v4 bump.
+
 > Status: **S0 LOCKED — developer-approved 2026-07-23**.
 >
 > This document is the authority for the shared S0 annotation contract and the
@@ -18,6 +29,40 @@
 > from code, and read-only opaque Luau handles. Unknown, Ambiguous, stopped
 > recognition, stale observations, and incompatible geometry must produce
 > exactly zero Controller input deliveries.
+
+> **Amended 2026-07-31 (developer-approved, same day).** The *data model* clauses
+> below are superseded by
+> [`2026-07-31-annotation-model-capabilities.md`](2026-07-31-annotation-model-capabilities.md).
+> Read this document for the load-bearing constraints above — determinism,
+> complete trace evidence, strict background, zero game-specific branches, and
+> the four-requisite authorization, all of which still hold — and read the
+> capability plan for the shape of the model. What changed:
+>
+> - the three-way annotation type (`PageAnchor` / `ActionTarget` / `InfoRegion`)
+>   became the capability **set** `{identify, interact, read}`, each capability
+>   carrying its own payload;
+> - `allowed_page_ids` is gone: a page's reference to an element, exercising
+>   `interact`, IS the authorization;
+> - the authoring-only `shared` flag is gone, replaced by `Holding{Owned,
+>   Referenced}` on the page reference;
+> - an element gained an ordered list of named **variants** (appearances), and an
+>   empty list is legal and means "located by the page, not by its own pixels";
+> - `RecognizerId` is now `ElementId`, and *recognizer* now names only the
+>   compiler's output;
+> - both schema ids were bumped in one atomic change, with no read path for the
+>   old ones: `umbraflow-authoring/v3` and `umbraflow-annotations/v2`. This
+>   supersedes §1.2's "exact schema identifier" clause a second time (the first
+>   was the 2026-07-26 page-centric amendment, which un-froze the authoring
+>   schema; 2026-07-31 un-freezes the runtime manifest schema too);
+> - the P0-A **workbench GUI** this document specifies was archived in `b57b67b`.
+>   The authoring backend it named — the editing layer, the falsification matrix,
+>   persistence, ingestion — remains and is driven by the `umbra-authoring` CLI.
+>   Every "GUI-owned" and "the workbench shows" clause below should be read as
+>   "the authoring tool", and the GUI-only affordances it assumed are tracked as
+>   preconditions in the capability plan §四之二.1.
+>
+> Nothing here is deleted; the clauses stay as the record of the contract the
+> capability model replaced.
 
 ## 0. Grounding facts from the ported code
 

@@ -44,7 +44,7 @@
   `image` 只保证编码 bytes；`annotation` 决定这些 bytes 的身份含义。
 - 不原子发布 authoring project。`writeRgbaPng` 是直接 open/truncate/write/flush/close 的文件函数；
   commit point 和回滚纪律在 `entry/workbench/project-persistence.cpp`。
-- 不做缩放、resampling、颜色 recognizer、OCR、composite recognizer 或多尺度搜索。
+- 不做缩放、resampling、颜色匹配器、OCR、composite 匹配器或多尺度搜索。
 - 不实现 strict-background input。这里对该产品契约的贡献是：无效图像被拒绝，未完成搜索保留为 stop，
   从而上层没有条件把不完整证据变成一次后台输入。
 
@@ -327,10 +327,10 @@ access；`domain` 提供 `PixelRect`、`PixelFormat`、`Frame` 与 `validateBuff
 
 `modules/engine` 不直接依赖 `image` 或 `vision`；它经公开依赖 `annotation` 获得 recognition result，
 并在 `modules/engine/source/engine/trace.cpp` 序列化 `SadSearchStopReason`。这使 engine 看到
-recognizer evidence 和 stop vocabulary，却看不到 codec 或 matcher 内部 storage。
+element evidence 和 stop vocabulary，却看不到 codec 或 matcher 内部 storage。
 
-`entry/m0-demo` 是冻结的真机验收参考，仍直接使用两模块：load/convert template、crop/convert frame、
-bounded SAD，以及 capture PNG 输出。它的直接调用不应被当作新产品策略的扩展点；当前产品路径是
+`entry/m0-demo` 是冻结的真机验收参考，仍直接使用两模块：load/convert template、crop/convert frame
+与 bounded SAD。capture PNG 输出搬去了 `entry/input-agent`，两个程序调用的写出器由它拥有。它的直接调用不应被当作新产品策略的扩展点；当前产品路径是
 annotation + engine。
 
 controller 只生产带 `PixelFormat`、stride 与 owning `FrameBuffer` 的 `Frame`。它无需链接任一模块；
@@ -397,7 +397,7 @@ authoring compiler determinism。前者保护控制语义，后者保护内容�
 
 `docs/plans/2026-07-22-annotation-design.md` §7 锁定 P0 只有 bounded deterministic
 `gray_template`。颜色、HSV、OCR、composite、parameterized ROI 和 multi-scale 都不是当前 kernel 的
-隐藏模式。若权威计划允许新 recognizer，它应新增并列、同样有界的 kernel/result contract，并同步
+隐藏模式。若权威计划允许新匹配器，它应新增并列、同样有界的 kernel/result contract，并同步
 annotation schema、asset closure、evidence、Preview/Runtime 与 trace；不能把新语义塞进
 `matchTemplateSad` 后仍沿用旧 stop/score 含义。
 

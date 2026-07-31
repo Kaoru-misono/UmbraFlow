@@ -1,5 +1,14 @@
 # 完成标注系统 + 产品最终架构（modules/engine）
 
+> **词汇重定向(2026-07-31)。** 本文是有日期的记录,不改写。下文的
+> `recognizer` / `RecognizerId` / `uf.recognizers` / `recognizerId` 一律读作
+> **element** / `ElementId` / `uf.elements` / `elementId`;`RecognizerDefinition`
+> 与 `RecognizerVariant` 读作 `CompiledElement` 与 `CompiledAppearance`;
+> `Variant` / `variant` 读作 `Appearance` / `appearance`。`RecognitionCatalog` 与
+> `RecognitionRuntime` 名字不变——它们指的是「识别」这个动作。schema id 随改名一起动了:
+> `umbraflow-authoring/v4`、`umbraflow-annotations/v3`、`umbraflow-trace/v2`。
+> 权威词汇见 `CONTEXT.md` 的「Annotation model」一节。
+
 > 状态(2026-07-24):Phase 1–4 已实现并提交(engine 模块、`umbra-flow run` 组合根、
 > ImGui workbench A1、全部双路对抗评审修复);Phase 3 真机冒烟与 Phase 5 真机端到端
 > **等开发者执行**,步骤见 docs/TODO.md §1.5。合成帧 fail-closed 全谱已进 CI;
@@ -98,7 +107,7 @@ controller (Windows)        -> core, domain                    (不变)
   - `EngineSession::observe() -> Result<Observation>`:capture → 持有帧 + 租约;
     `EngineSession::resolvePage(Observation const&)`
     (有界 `evaluatePage` → `PageOutcome`)、
-    `EngineSession::findAction(Observation const&, RecognizerId)`
+    `EngineSession::findAction(Observation const&, ElementId)`
     (action_target 评估,缺席=Tier A 返回空)
     ——同一帧多查询只抓一次帧
   - `EngineSession::act(...)`:`ResolvedPage` + `ActionDetection` + `ObservationLease`
@@ -164,6 +173,15 @@ wait hook→D6/P1 `bot:on`;engine 操作面(capture/find/click/wait)→B2 Luau 1
 
 ## Phase 4 — A1 最小 workbench GUI
 
+> **已归档(2026-07-31)。** 本阶段完成过,产物随后被弃用:`b57b67b` 移除了 Dear ImGui
+> submodule、D3D11+Win32 backend、`panels.cpp` 与 `umbra-workbench` 可执行文件。留下的是
+> 下面第 10 条列出的**后端**能力——`loadAuthoringProject`、`saveAndGenerateAuthoringProject`、
+> `AuthoringEditHistory`、`ResourceId::fromBytes`、Preview——它们现在由
+> `umbra-authoring` 驱动。属性面板那一行的「类型」也已过时:三选一的类型变成能力集合,
+> required/forbidden 挂到页面引用侧。裁决见
+> [`2026-07-31-annotation-model-capabilities.md`](2026-07-31-annotation-model-capabilities.md)
+> §四之二.1。本节其余文字保留为它曾经存在过的记录。
+
 9. **[已批准]** vendor Dear ImGui docking 分支最新 release tag(submodule,
    方式同 Luau),置于 `entry/workbench/external/imgui`;
    D3D11+Win32 backend 封装在 `entry/workbench/platform/`。
@@ -222,8 +240,9 @@ m0-demo 退役。
   验收时的 `鍗″巹` mojibake 是我把 `卡厄` 先按 GBK 重解释再传入所致,工具忠实搜了错字符串。
   无需改动。
 - **提权模型**:Phase 3 以整体提权单进程跑真机;若 UIPI 实测仍拦
-  (游戏窗口完整性更高),再把 m0-demo 的 input-agent 协议语义复制进 runner
-  适配层。届时是复制不是链接。**2026-07-25 实测**:WGC 绑定(`SetPropW`)确实被 UIPI 拦
+  (游戏窗口完整性更高),再把 `umbra-input-agent` 的协议语义复制进 runner
+  适配层。届时是复制不是链接。(2026-07-31:该协议已从 `entry/m0-demo` 搬到
+  `entry/input-agent`,并有自己的二进制。)**2026-07-25 实测**:WGC 绑定(`SetPropW`)确实被 UIPI 拦
   (Win32 error 5),capture 侧需与目标同完整性级别提权;而 `PostMessage` 投递不提权也过——
   两者完整性要求不同。
 - **project.toml** 读取(项目级 fingerprint 权威)推后:P0 fingerprint 以

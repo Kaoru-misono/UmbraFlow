@@ -3,6 +3,7 @@
 #include "platform/windows-controller.hpp"
 
 #include <core/error/contracts.hpp>
+#include <core/numeric/checked-cast.hpp>
 #include <core/types/integer.hpp>
 #include <domain/error.hpp>
 #include <domain/key.hpp>
@@ -32,6 +33,20 @@ namespace uf::controller_detail
                 return static_cast<intptr>(bits);
             }
         }
+
+        // Every mouse message packs its point the same way, y in the high word
+        // and x in the low one. Which space those coordinates are in is the
+        // caller's contract, not this packing's: the button messages pass client
+        // coordinates and WM_MOUSEWHEEL passes screen coordinates. Both pixel
+        // types bound their coordinates to a signed 16-bit value, so the
+        // conversion below reproduces exactly the word GET_X_LPARAM reads back.
+        [[nodiscard]]
+        constexpr auto packPointBits(int32 x, int32 y) noexcept -> uint32
+        {
+            auto const low  = static_cast<uint32>(static_cast<uint16>(x));
+            auto const high = static_cast<uint32>(static_cast<uint16>(y));
+            return (high << 16U) | low;
+        }
     }
 }
 
@@ -42,6 +57,70 @@ namespace uf
         // VK_F1..VK_F12 are consecutive, so the printed number indexes them.
         constexpr auto k_virtualKeyF1 = uint16{0x0070U};
         constexpr auto k_functionKeyCount = uint32{12U};
+
+        struct NamedKeyCode final
+        {
+            std::string_view name{};
+            uint16           virtualKey{};
+        };
+
+        // The virtual key each name in domain::k_namedKeys resolves to. A table
+        // rather than an arithmetic rule, because these keys share no consecutive
+        // range the way VK_F1..VK_F12 do; a table rather than a comparison chain,
+        // because the set is closed and a chain would accept a new member without
+        // a branch and say nothing about it.
+        constexpr auto k_namedKeyCodes = std::array{
+            NamedKeyCode{.name = "ENTER", .virtualKey = 0x000DU},
+            NamedKeyCode{.name = "ESC", .virtualKey = 0x001BU},
+            NamedKeyCode{.name = "CAPS", .virtualKey = 0x0014U},
+            NamedKeyCode{.name = "SHIFT", .virtualKey = 0x0010U},
+        };
+
+        [[nodiscard]]
+        constexpr auto everyNamedKeyIsMapped() noexcept -> bool
+        {
+            if (k_namedKeyCodes.size() != k_namedKeys.size())
+            {
+                return false;
+            }
+            return std::ranges::all_of(
+                k_namedKeys,
+                [](std::string_view name)
+                {
+                    return std::ranges::contains(
+                        k_namedKeyCodes,
+                        name,
+                        &NamedKeyCode::name
+                    );
+                }
+            );
+        }
+
+        // fromKeyName is total, and this is what keeps it so. A name the domain
+        // set admits with no entry above would fall through to the
+        // single-character branch and trip its UF_CHECK at run time on a
+        // keystroke the author was entitled to write.
+        static_assert(
+            everyNamedKeyIsMapped(),
+            "every key name domain::KeyName admits must be mapped here"
+        );
+
+        [[nodiscard]]
+        constexpr auto namedKeyVirtualKey(
+            std::string_view name
+        ) noexcept -> std::optional<uint16>
+        {
+            auto const found = std::ranges::find(
+                k_namedKeyCodes,
+                name,
+                &NamedKeyCode::name
+            );
+            if (found == k_namedKeyCodes.end())
+            {
+                return std::nullopt;
+            }
+            return found->virtualKey;
+        }
 
         [[nodiscard]]
         constexpr auto functionKeyNumber(
@@ -123,6 +202,30 @@ namespace uf
         return ClientPixel{narrowedX, narrowedY};
     }
 
+    auto WheelDelta::create(int32 notches) -> Result<WheelDelta>
+    {
+        if (notches == 0)
+        {
+            return fail(
+                AutomationErrorKind::ActionRejected,
+                "wheel delta must be a non-zero number of notches"
+            );
+        }
+        if (notches < -k_maxWheelNotches || notches > k_maxWheelNotches)
+        {
+            return fail(
+                AutomationErrorKind::ActionRejected,
+                std::format(
+                    "wheel delta of {} notches is outside the deliverable range -{}..={}",
+                    notches,
+                    k_maxWheelNotches,
+                    k_maxWheelNotches
+                )
+            );
+        }
+        return WheelDelta{static_cast<int16>(notches)};
+    }
+
     KeyInput::KeyInput(uint16 virtualKey) noexcept
         : m_virtualKey{virtualKey}
         , m_extended{controller_detail::isExtendedKey(virtualKey)}
@@ -138,6 +241,10 @@ namespace uf
     auto KeyInput::fromKeyName(KeyName name) noexcept -> KeyInput
     {
         auto const text = name.value();
+        if (auto const virtualKey = namedKeyVirtualKey(text))
+        {
+            return KeyInput{*virtualKey};
+        }
         if (auto const number = functionKeyNumber(text))
         {
             return KeyInput{
@@ -145,10 +252,10 @@ namespace uf
             };
         }
 
-        // KeyName admits only a function key or exactly one uppercase letter or
-        // digit, so this branch has one byte to read. VK_A..VK_Z and VK_0..VK_9
-        // are defined as the ASCII codes of the uppercase letter and of the
-        // digit, so the character is the key code.
+        // KeyName admits only a named key, a function key, or exactly one
+        // uppercase letter or digit, so this branch has one byte to read.
+        // VK_A..VK_Z and VK_0..VK_9 are defined as the ASCII codes of the
+        // uppercase letter and of the digit, so the character is the key code.
         UF_CHECK(text.size() == 1U);
         return KeyInput{static_cast<uint16>(text.front())};
     }
@@ -178,13 +285,35 @@ namespace uf::controller_detail
 
     auto pointerLParamBits(ClientPixel pixel) noexcept -> uint32
     {
-        auto const low = static_cast<uint32>(
-            static_cast<uint16>(pixel.x())
+        return packPointBits(pixel.x(), pixel.y());
+    }
+
+    auto ScreenPixel::create(int64 x, int64 y) -> Result<ScreenPixel>
+    {
+        auto const narrowedX = checkedCast<int16>(x);
+        auto const narrowedY = checkedCast<int16>(y);
+        if (!narrowedX || !narrowedY)
+        {
+            return fail(
+                AutomationErrorKind::ActionRejected,
+                std::format(
+                    "screen point ({}, {}) cannot be encoded as signed-16-bit mouse coordinates",
+                    x,
+                    y
+                )
+            );
+        }
+        return ScreenPixel{*narrowedX, *narrowedY};
+    }
+
+    auto screenPixelFor(ClientOrigin origin, ClientPixel pixel) -> Result<ScreenPixel>
+    {
+        // Widened before adding: two separately encodable coordinates need not
+        // sum to an encodable one.
+        return ScreenPixel::create(
+            static_cast<int64>(origin.x) + static_cast<int64>(pixel.x()),
+            static_cast<int64>(origin.y) + static_cast<int64>(pixel.y())
         );
-        auto const high = static_cast<uint32>(
-            static_cast<uint16>(pixel.y())
-        );
-        return (high << 16U) | low;
     }
 
     auto isExtendedKey(uint16 virtualKey) noexcept -> bool
@@ -254,6 +383,34 @@ namespace uf::controller_detail
         };
     }
 
+    auto wheelSpec(
+        ScreenPixel pixel,
+        WheelDelta delta,
+        bool leftButtonHeld
+    ) noexcept -> PostSpec
+    {
+        // wParam carries the signed raw delta in its high word and the button
+        // and modifier state in its low word. Only the left button is reported
+        // there, and that is now a stated gap rather than a consequence of the
+        // key set: KeyName admits "SHIFT", so a held modifier has become
+        // expressible. Reaching that state still needs keyDown, which has no
+        // caller, so no wheel this project posts can be missing an MK_SHIFT it
+        // should carry. Derive one here the day keyDown acquires a caller,
+        // rather than from state nothing can currently produce.
+        auto const rawDelta = static_cast<uintptr>(
+            static_cast<uint16>(delta.rawUnits())
+        );
+        auto const buttons = leftButtonHeld ? k_leftButtonMask : uintptr{};
+        return PostSpec{
+            .message = k_wmMouseWheel,
+            .wParam  = (rawDelta << 16U) | buttons,
+            // Screen coordinates. Every other pointer message on this path packs
+            // client coordinates, and posting those here would aim the wheel at
+            // whatever sits that far from the desktop origin instead.
+            .lParam  = lParamFromBits(packPointBits(pixel.x(), pixel.y())),
+        };
+    }
+
     auto charSpec(uint16 codeUnit) noexcept -> PostSpec
     {
         return PostSpec{
@@ -275,6 +432,11 @@ namespace uf::controller_detail
     auto scanCodeFor(uint16 virtualKey) noexcept -> uint8
     {
         return controller_platform::scanCodeFor(virtualKey);
+    }
+
+    auto clientOriginOnScreen(WindowHandle windowHandle) -> Result<ClientOrigin>
+    {
+        return controller_platform::clientOriginOnScreen(windowHandle);
     }
 
     auto deliver(

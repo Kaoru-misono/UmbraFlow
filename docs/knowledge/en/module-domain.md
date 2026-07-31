@@ -25,7 +25,8 @@ It owns six groups of contracts:
 - `modules/domain/source/domain/error.hpp`, `error.cpp`, `time.hpp`, and `time.cpp` define
   automation error classification, recovery scope, and safe arithmetic over monotonic time.
 - `modules/domain/source/domain/key.hpp` and `key.cpp` define `KeyName`, the single definition of
-  which key names exist (2026-07-30, `ed38124`).
+  which key names exist (2026-07-30, `ed38124`), widened with the named family `"ENTER"`, `"ESC"`,
+  `"CAPS"`, `"SHIFT"` on 2026-07-31.
 
 `domain` deliberately does not own the following responsibilities:
 
@@ -39,7 +40,7 @@ It owns six groups of contracts:
 - It does not interpret whether a detection label can trigger an action. `Detection` is merely
   geometric evidence bearing same-frame identity; only `ActionDetection` and
   `authorizeCoordinateAction` in `modules/annotation/source/annotation/authorization.cpp` bind the
-  catalog, recognizer, page, and live fingerprint.
+  catalog, element, page, and live fingerprint.
 - It does not perform template matching, cropping, PNG codec work, trace, or retries. Those policies
   belong respectively to `vision`, `image`, `engine`, or the caller.
 - It does not implement strict-background. Background delivery is implemented at the `PostMessageW`
@@ -207,7 +208,7 @@ produce time, nor a serializable wall clock.
 
 `Detection` is an immutable value carrier: it holds `CaptureSessionId`, `TargetGeneration`, `FrameId`,
 `Label`, `Rect<FrameSpace>`, and `confidence`. The constructor does not validate the rect or the
-confidence; a trustworthy action must additionally pass annotation's recognizer/page authorization
+confidence; a trustworthy action must additionally pass annotation's element/page authorization
 and cannot rely on the label alone.
 
 `Label::create` guarantees the string is valid UTF-8 but allows the empty string; `value()` returns a
@@ -239,19 +240,40 @@ credential a *coordinate* action needs. See `module-engine.md`.
 ### `KeyName`
 
 `KeyName` in `modules/domain/source/domain/key.hpp` is **the single definition of which key names
-exist**. The accepted set is `"A".."Z"`, `"0".."9"` and `"F1".."F12"` in uppercase — 48 names over 48
-distinct virtual keys, with **no aliases**, because a typo must not resolve to a neighbouring key.
+exist**. The accepted set has three families: `"A".."Z"`, `"0".."9"`, `"F1".."F12"`, and the named
+keys in `k_namedKeys` — `"ENTER"`, `"ESC"`, `"CAPS"`, `"SHIFT"`. That is 52 names over 52 distinct
+virtual keys, with **no aliases**, because a typo must not resolve to a neighbouring key.
 `KeyName::create` is the only way to make one and fails `ActionRejected` for anything outside that
 set: a name nobody can resolve is a rejected action, not a missing resource.
 `controller::KeyInput::fromName` routes through `create` rather than repeating the test, so the two
 cannot come to disagree about which names a project may write.
+
+**The named family arrived on 2026-07-31 because without it the target's core loop was
+unreachable.** Its battle UI prints its own contract — ENTER plays the selected card, ESC cancels the
+selection, CAPS shows the card's information — and `SHIFT` is the lock toggle printed in the same
+view. With only letters, digits and function keys a run could select a card and never play one, and
+no mouse path substitutes: clicking the target of a selected card cancels the selection instead of
+committing it. Every member is an affordance a target was observed publishing; `TAB` is deliberately
+absent because nothing observed offers it, and an unobserved name is a guess this set does not make.
+
+**Names are case-sensitive and the set stays closed.** `"enter"` is refused. The bytes are the value
+that travels, so folding case would either put a second spelling of one key into traces and into this
+type's own byte comparison, or hand an author back a name they did not write. Closure is what lets
+`controller::KeyInput::fromKeyName` be `noexcept` and lets a refusal print the whole vocabulary; the
+set grows by naming an observed affordance, never by admitting a virtual-key code or a free-form
+escape hatch. The refusal reads `key name must be "A"-"Z", "0"-"9", "F1"-"F12", or one of "ENTER",
+"ESC", "CAPS", "SHIFT", spelled in uppercase throughout, got "enter"`, rendered from `k_namedKeys`
+so it cannot fall behind the set, and stating the case rule for the whole vocabulary rather than
+leaving `uppercase` in front of `"A"-"Z"` where it read as a rule about letters.
 
 It lives in `domain` rather than in `controller` so a keystroke can cross the engine's action port
 without that port naming a virtual key, which is a Windows fact. A name is platform-neutral — the
 target prints `E` whatever the host is — so the value that travels is the name, and the adapter at
 the delivery edge is what resolves it. It stores bytes rather than a code, because the name is what
 reaches a trace line and what an author reads back, and it is trivially copyable and comparable, so
-it travels by value everywhere. `k_maxKeyNameBytes` is 3, the length of `"F12"`.
+it travels by value everywhere. `k_maxKeyNameBytes` is 5, the length of `"ENTER"` and `"SHIFT"`; a
+`static_assert` in `key.cpp` fails the build if a named key ever outgrows it, because `create` copies
+into that storage without re-checking the length.
 
 The set is deliberately closed and deliberately small. Both front-ends and the port read this one
 definition, which is what makes "the key the target's own UI prints" a single fact rather than three
@@ -264,8 +286,19 @@ outward. The exhaustive switch of `failureResponse(AutomationErrorKind)` current
 
 - `Cancelled` → `Cancelled`;
 - `CaptureStalled`, `StaleObservation`, `RecognitionIncomplete` → `Retry`;
-- `ActionRejected` → `StepFailed`;
+- `PageUnresolved`, `ActionRejected` → `StepFailed`;
 - all other kinds → `Abort`.
+
+`PageUnresolved` and `ActionRejected` share an unwind scope but are deliberately two kinds, because
+they call for opposite repairs. `PageUnresolved` means a page-scoped verb ran on an observation cycle
+that has resolved no page — the script skipped `cycle:page()`, or called on after it returned nil —
+and nothing was attempted: a find only locates, and a click refused there never reached the
+authorization that could have rejected it. `ActionRejected` means a page DID resolve and does not
+authorise the element, which is a modelling fault to fix in the annotation project. Under one kind a
+script could not tell "fix my ordering" from "fix my annotations". Its response is `StepFailed`
+rather than `Retry` even though a later frame may well resolve the page this one did not: the page is
+resolved onto a cycle, so repeating the same call against the same cycle can never succeed, and
+reaching a page means observing again — the step starting over, not this operation being retried.
 
 `RecognitionIncomplete` is deliberately not named for a failed recognition. A recognition that
 completes and matches nothing is not an error at all — it is `UnknownPage`, or a nil hit, and it
@@ -351,7 +384,7 @@ The typical data flow is as follows:
    `ObservationLease` from the frame.
 5. `annotation::RecognitionRuntime`/`vision` produce integer `PixelRect` evidence on the frame
    pixels; engine creates a same-frame `Detection` via `pixelRectToFrameRect`.
-6. annotation binds the detection to the `action_target` recognizer and proves that the page,
+6. annotation binds the detection to the `action_target` element and proves that the page,
    project, fingerprint, identity triple, and lease are consistent.
 7. engine converts the integer click pixel into a `Point<ClientSpace>` via `pixelPointToFramePoint`
    and the frame's `frameToClient`.
@@ -417,7 +450,7 @@ Cross-module tests pin "how domain values actually land":
 - `tests/controller/test-audit-log.cpp` pins the strict-background forbidden API set and the
   delivery audit.
 - `tests/annotation/test-authorization.cpp` pins same-frame page/detection/lease/fingerprint,
-  recognizer identity, and allowed-page authorization.
+  element identity, and allowed-page authorization.
 - `tests/engine/test-session.cpp` pins the observe-to-click data flow, verbatim lease forwarding,
   post-action invalidation, moved-from/foreign observation rejection, delivery-edge target
   revalidation, and that a trace failure cannot make an action replayable.

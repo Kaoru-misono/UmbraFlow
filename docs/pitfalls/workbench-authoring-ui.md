@@ -1,5 +1,50 @@
 # Workbench authoring UI
 
+> **HISTORICAL (2026-07-31): every prescription in this file is unreachable.**
+> The `umbra-workbench` GUI was archived in `b57b67b` — `entry/workbench/app/`
+> (`main.cpp`, `panels.*`), the Dear ImGui + D3D11 shell, the file dialog, the
+> capture source, the imgui submodule, and `tests/workbench/asan-smoke-fixture.cpp`
+> with them. There is no `umbra-workbench.exe`, no `--smoke` flag, and no
+> `AsanSmoke` CTest label (the `x64-asan` preset in `CMakePresets.json` outlived
+> the tests that used it). `retypeRecognizer`, `addDefaultElement`, and
+> `setSelectedElementId` were deleted. The catalog rules the second entry
+> deadlocks over are gone too: `AnnotationType` is a capability set, and
+> `allowed_page_ids` no longer exists — a page's `PageReference` exercising
+> `interact` IS the authorization. Deciding artifact:
+> [the capability plan](../plans/2026-07-31-annotation-model-capabilities.md)
+> §四之二.1 (GUI retirement) and §2.2 (the model). Nothing is deleted here; the
+> entries stay because the general rules they distilled outlive the panels.
+>
+> **What still transfers, and to what:**
+>
+> - *Do not commit while holding a borrow into the document.* The rule is about
+>   `AuthoringEditHistory::apply` swapping the whole document out from under every
+>   live borrow, and the editing layer that does this (`authoring-edit.*`,
+>   `edit-page.*`) is still linked, now by `umbra-authoring`. The CLI's shape
+>   makes the bug hard to hit — one command, one edit, no frame that draws while
+>   holding spans — but the rule is a property of the edit layer, not of ImGui.
+>
+>   > **Mechanism updated 2026-07-31 (`f768e6c`).** The *Fix* section below
+>   > prescribes parking a `PendingEdit` on `PanelUiState` and letting
+>   > `drawWorkbench` apply it. Both are deleted. The surviving layer answers the
+>   > same rule by construction rather than by ordering: `EditPage` now owns an
+>   > `AuthoringDraft` **by value** — it borrows no history for the length of an
+>   > edit — and `commit() &&` moves out a `Committed{draft, baseRevision}` that
+>   > `applyCommittedPage(AuthoringEditHistory&, EditPage::Committed const&)`
+>   > refuses if the base revision has moved. Read the *Fix* as history and this
+>   > as the current shape; the rule it distils is unchanged.
+> - *Cross-field domain invariants can deadlock per-field editing.* The specific
+>   deadlock is gone with `allowed_page_ids`, but the shape recurs anywhere a
+>   single-field editor meets a multi-field invariant. `ElementCapabilities` and
+>   `ExercisedCapabilities` both reject the empty set, which is exactly a lower
+>   bound of the kind that produced the original deadlock.
+> - *A fixed default name collides on the second create*, and *names are unique
+>   across elements and pages together*, not within a kind. Still true of
+>   `RecognitionCatalog::create`; the CLI takes an explicit name and so cannot hit
+>   the default-name form.
+> - *An entity with no list panel is unreachable after creation* has no CLI
+>   analogue — `project show` enumerates everything — and is kept as history only.
+
 Failure knowledge for the `umbra-workbench` panels — the immediate-mode layer
 between the author and the authoring document. Recorded on 2026-07-25 during the
 first full manual GUI acceptance, which is what surfaced all of it; none of these
@@ -20,7 +65,7 @@ storage and happen to still look right.
 `drawPropertiesPanel` opened with
 
 ```cpp
-auto const* definition = state.document().catalog().findRecognizer(*recognizerId);
+auto const* definition = state.document().catalog().findElement(*elementId);
 ```
 
 and then used `definition` for the whole panel: the type combo, the threshold
@@ -65,7 +110,7 @@ under the `AsanSmoke` label (registered in `tests/CMakeLists.txt`, kept off the
 
 - `asan-smoke-fixture` — a skipped doctest case in `test-workbench`
   (`tests/workbench/asan-smoke-fixture.cpp`) generates a valid one-source,
-  one-recognizer, one-page project into the build tree
+  one-element, one-page project into the build tree
   (`build/x64-asan/tests/asan-smoke-project`). It is generated rather than
   committed because the loader verifies each source PNG's SHA-256 and decoded
   dimensions, so the fixture cannot be hand-authored, and a committed binary
@@ -104,11 +149,11 @@ can create the GUI window the smoke opens). Add it once billing is restored.
 Two rejections alternating forever, with no ordering that clears both:
 
 ```
-edit rejected: action_target recognizer must authorize at least one page
+edit rejected: action_target element must authorize at least one page
 edit rejected: page_anchor membership must be expressed by page signatures
 ```
 
-Changing a recognizer's type to `ActionTarget` is refused because it authorizes
+Changing an element's type to `ActionTarget` is refused because it authorizes
 no page; authorizing a page first is refused because a page anchor may not hold
 authorizations. The workbench could not author an action target at all.
 
@@ -134,8 +179,8 @@ Make the change a transaction. `retypeRecognizer`
 (`entry/workbench/authoring-edit.cpp`) rewrites the type and every dependent
 field in one draft, and refuses only where no repair exists: becoming an action
 target in a project with no page, or leaving the page-anchor type while being the
-only recognizer some page names. Where it must invent state — an action target
-needs one authorized page — it prefers the page the recognizer already anchored
+only element some page names. Where it must invent state — an action target
+needs one authorized page — it prefers the page the element already anchored
 over an arbitrary one and reports what it did on the status line, because a
 permission the author did not ask for must never be silent. The reverse
 direction is lossy (the click offset cannot survive), so that is reported too.
@@ -155,50 +200,50 @@ than growing a second transaction helper.
 
 ### Symptom
 
-`New Recognizer` (or `New Page`) fails with
-`edit rejected: recognizer names must be unique` the second time it is pressed,
+`New Element` (or `New Page`) fails with
+`edit rejected: element names must be unique` the second time it is pressed,
 unless the author renamed the first one in between.
 
 ### Root cause
 
-`addDefaultRecognizer` named every new recognizer `"recognizer"` and
+`addDefaultElement` named every new element `"element"` and
 `addDefaultPage` named every page `"page"`. Resource names are unique **across**
-recognizers and pages, not just within a kind
-(`RecognitionCatalog::create` compares page names against recognizer names).
+elements and pages, not just within a kind
+(`RecognitionCatalog::create` compares page names against element names).
 
 ### Fix
 
-Take the first free `<stem>_N`, checked against recognizer **and** page names.
+Take the first free `<stem>_N`, checked against element **and** page names.
 
 ### Regression check
 
-Press New Recognizer twice without renaming; both succeed as `recognizer_1` and
-`recognizer_2`.
+Press New Element twice without renaming; both succeed as `element_1` and
+`element_2`.
 
 ## An entity with no list panel is unreachable after creation
 
 ### Symptom
 
-Only the just-created recognizer can be edited. Creating a second one makes the
-first permanently unreachable, and once the selected recognizer stops being a
+Only the just-created element can be edited. Creating a second one makes the
+first permanently unreachable, and once the selected element stops being a
 page anchor, `New Page` — which requires a selected page anchor — can never
 succeed again.
 
 ### Root cause
 
-`setSelectedRecognizerId` had exactly one call site: immediately after
-`New Recognizer`. There was no recognizer list. Pages were worse: visible only
-inside the properties panel of whichever recognizer happened to be selected, and
+`setSelectedElementId` had exactly one call site: immediately after
+`New Element`. There was no element list. Pages were worse: visible only
+inside the properties panel of whichever element happened to be selected, and
 not deletable at all.
 
 ### Fix
 
-A Recognizers panel and a Pages panel, alongside the existing Sources list.
-Selecting a recognizer also selects the source it was authored against —
+A Elements panel and a Pages panel, alongside the existing Sources list.
+Selecting an element also selects the source it was authored against —
 otherwise its rectangles are drawn over whatever image the canvas happens to be
 showing, which is a second latent defect the list would have exposed.
 
 ### Regression check
 
-Manual: create two recognizers, select the first, confirm the properties panel
-follows and the canvas switches to that recognizer's source.
+Manual: create two elements, select the first, confirm the properties panel
+follows and the canvas switches to that element's source.

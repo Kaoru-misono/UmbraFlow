@@ -1,6 +1,7 @@
 #include "source-ingestion.hpp"
 
 #include <annotation/content-hash.hpp>
+#include <annotation/resource.hpp>
 
 #include <core/error/result.hpp>
 #include <core/types/integer.hpp>

@@ -7,6 +7,7 @@
 #include <args.hpp>
 
 #include <annotation/authoring-document.hpp>
+#include <annotation/capabilities.hpp>
 #include <annotation/resource.hpp>
 
 #include <core/error/result.hpp>
@@ -65,14 +66,26 @@ namespace uf::authoring
         std::optional<annotation::ColourKey> colourKey{};
 
         annotation::SimilarityThreshold threshold;
+    };
 
-        // Whether these pixels are meant to be reused on other pages. It is a
-        // statement of intent rather than a placement -- a global control like a
-        // menu button is drawn once and then placed wherever it appears -- and
-        // intent has to be stored because no other field implies it before that
-        // second page exists. Only an interactive region can carry it; an anchor
-        // is evidence for one page's identity by definition.
-        bool shared{};
+    // What --capability collected, on whichever verb collected it: what a drawn
+    // rectangle may be used for, or what one page exercises on an element it
+    // borrows. Three fields rather than a list of tokens, so "identify twice"
+    // and "a signature role without identify" are both unrepresentable here
+    // instead of being rejected later.
+    //
+    // The role rides on identify because that is where the model keeps it: an
+    // element declares that it CAN identify, and the page's reference declares
+    // whether it is evidence FOR that page or AGAINST it. No element-side field
+    // could hold the answer, since one mark is required by one page and
+    // forbidden by another. Interact and read have no such page-side datum,
+    // which is exactly why they are plain flags.
+    struct StatedCapabilities final
+    {
+        std::optional<annotation::SignatureRole> identify{};
+
+        bool interact{};
+        bool read{};
     };
 
     struct InitProject final
@@ -94,9 +107,9 @@ namespace uf::authoring
     };
 
     // A page and the first anchor that identifies it, which the annotation model
-    // requires to be authored together: PageSignature::create refuses a page
-    // whose signature names no recognizer, so an empty page has no
-    // representation to create and then fill in.
+    // requires to be authored together: RecognitionCatalog::create refuses a page
+    // no reference exercises identify on, so an empty page has no representation
+    // to create and then fill in.
     struct CreatePage final
     {
         std::filesystem::path root{};
@@ -105,37 +118,147 @@ namespace uf::authoring
         ElementDraw anchor;
     };
 
-    // Which link a new element takes to its page. An anchor is identity evidence
-    // and joins the page's signature; a target is something a task may click
-    // there and is authorized on the page through a placement. The annotation
-    // model ties the link to the type, so this is not a flag the CLI could
-    // apply afterwards.
-    enum class ElementRole : uint8
-    {
-        Anchor,
-        Target,
-
-        // A region the runtime READS rather than clicks: a level, a count, a
-        // timer. Its rectangle says where to look; what is inside it is text
-        // that changes, which is exactly what a template cannot carry and why
-        // this is a third role rather than a target nobody clicks.
-        Info,
-    };
-
+    // One element drawn onto a page, with everything that page does with it
+    // committed in the same edit. One capability set serves as both halves:
+    // pixels are drawn where they are used, so at the moment of drawing what
+    // the element declares and what the page exercises are the same set. The
+    // two only ever differ once a SECOND page borrows the element, which is
+    // ReferenceElement below.
+    //
+    // This is what `page add` parses to when the capability set includes
+    // identify. Identify is the only capability that needs pixels of its own --
+    // it IS the claim that these pixels say which page is on screen -- so it is
+    // the only one that mints an appearance. AddRegion below is the other half.
     struct AddElement final
     {
         std::filesystem::path root{};
         std::string           page{};
 
-        ElementRole role{ElementRole::Anchor};
+        StatedCapabilities capabilities{};
+        ElementDraw        draw;
+    };
+
+    // One rectangle added to a page with no appearance of its own: what
+    // `page add` parses to when the capability set does not include identify.
+    //
+    // Interact and read say WHERE, not WHAT. A hand of cards is a place a click
+    // may land and its pixels are different every turn; a level counter is read
+    // precisely because its content is not known in advance. Cutting a template
+    // for either states a stability neither has, and the model already has the
+    // representation for saying so: an element declaring no appearance is located
+    // by the page being recognised, and its rectangle is where it was annotated.
+    //
+    // Separate from AddElement rather than an AddElement with its pixel fields
+    // emptied, because there is no source, no threshold and no colour key here
+    // -- and a shape that can hold them would let a caller supply one that is
+    // then silently dropped.
+    struct AddRegion final
+    {
+        std::filesystem::path root{};
+        std::string           page{};
+        std::string           name{};
+
+        StatedCapabilities capabilities{};
+
+        // The element's own search region, which for an element with no pixels
+        // is the whole of its geometry: what evaluateActionTarget answers with
+        // and what a click is derived from.
+        PixelRect region;
+    };
+
+    // A second appearance of an element the project already holds.
+    //
+    // The back arrow is white on one screen and dark on another, at the same
+    // rectangle: one element, two appearances, and the page that uses it says
+    // which applies. Drawing it twice instead would make two elements, two ids
+    // and two searches a cycle for one control, and would leave the script
+    // choosing between them -- the judgment that belongs to the host.
+    //
+    // It draws with the same <draw> options page add uses, minus the two that
+    // are not an appearance's to state: --capability belongs to the element, and
+    // --search-roi is the element's one region that every appearance of it is
+    // searched in.
+    struct AddAppearance final
+    {
+        std::filesystem::path root{};
+        std::string           element{};
+
+        // `draw.name` is the appearance's name, not the element's. Names are why
+        // Appearance carries one at all: a script reads which appearance matched to
+        // learn which state the target is in.
         ElementDraw draw;
     };
 
-    struct MatchRecognizer final
+    // Puts an element the project already holds onto a second page. This is the
+    // only way Holding::Referenced is produced: everything drawn is Owned by the
+    // page it was drawn on, so borrowing is what a second page does instead of
+    // redrawing the same pixels under a second id and a second search per cycle.
+    //
+    // The two optionals below are this page's refinements of a shared element,
+    // never edits to the element itself. That is the asymmetry the whole verb
+    // rests on: one element, and each page saying what it does with it.
+    struct ReferenceElement final
     {
         std::filesystem::path root{};
-        std::string           recognizer{};
+        std::string           page{};
+        std::string           element{};
+
+        // What THIS page exercises. Absent means every use a placement carries
+        // on its own -- interact and read, whichever the element declares --
+        // which is what borrowing a control asks for when the author says
+        // nothing. Identify is never among those: whether a mark is evidence
+        // FOR this page or AGAINST it is a question the element has no answer
+        // to, so a page joins a signature only by asking in so many words.
+        std::optional<StatedCapabilities> exercised{};
+
+        // Absent means this page searches the element's own region, which is
+        // what an absent per-page refinement means in the document too. It is
+        // left absent rather than seeded from the element, so a later
+        // correction to the element's region reaches this page as well.
+        std::optional<PixelRect> searchRoi{};
+
+        // Which appearance this page expects, when the page is what decides.
+        // Absent means every appearance is searched and the best margin wins,
+        // which is the answer for a form the runtime state decides rather than
+        // the page -- a speed button reading 1x, 2x or 3x.
+        //
+        // It is text here because only the loaded document knows which names the
+        // element declares.
+        std::optional<std::string> appearance{};
+    };
+
+    struct MatchElement final
+    {
+        std::filesystem::path root{};
+        std::string           element{};
         std::filesystem::path frame{};
+
+        // Which page to locate a click target on. Locating one is page-scoped
+        // now -- the refined search region and the pinned appearance both live
+        // on the page's reference -- so it is answered from the references when
+        // exactly one page exercises interact, and asked for when several do.
+        std::optional<std::string> page{};
+
+        uint64 budget{cli::k_defaultPixelComparisonBudget};
+    };
+
+    // The falsification matrix over a whole project: every declared appearance
+    // measured against every screen the project holds, and every element
+    // measured as the runtime folds it.
+    //
+    // This is the check an author cannot perform by eye and the one the
+    // multi-appearance model is only sound with. A template always matches the
+    // image it was cut from, so the only evidence that it identifies one screen
+    // rather than another is what it does on the others -- and once several
+    // appearances are folded into one answer, an appearance that matches
+    // everywhere is invisible behind one that matches correctly.
+    //
+    // It takes no frame. A capture from the running target contributes no
+    // column: a frame taken to measure against is not a screen the model is
+    // authored on, and the matrix is a statement about the authored ones.
+    struct CheckModel final
+    {
+        std::filesystem::path root{};
 
         uint64 budget{cli::k_defaultPixelComparisonBudget};
     };
@@ -196,7 +319,11 @@ namespace uf::authoring
         SaveProject,
         CreatePage,
         AddElement,
-        MatchRecognizer,
+        AddRegion,
+        AddAppearance,
+        ReferenceElement,
+        MatchElement,
+        CheckModel,
         AnalyseFrameStability,
         ProbeFrameColour,
         CensusFrameColours

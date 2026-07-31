@@ -16,13 +16,13 @@ namespace uf::annotation
     // construction when those sinks are passed by value.
     class ActionDetection final
     {
-        ProjectId    m_projectId;
-        RecognizerId m_recognizerId;
-        Detection    m_detection;
+        ProjectId m_projectId;
+        ElementId m_elementId;
+        Detection m_detection;
 
         ActionDetection(
             ProjectId&& projectId,
-            RecognizerId recognizerId,
+            ElementId elementId,
             Detection&& detection
         ) noexcept;
 
@@ -30,14 +30,14 @@ namespace uf::annotation
         [[nodiscard]]
         static auto create(
             RecognitionCatalog const& catalog,
-            RecognizerId recognizerId,
+            ElementId elementId,
             Detection detection
         ) -> Result<ActionDetection>;
 
         [[nodiscard]]
         auto projectId() const noexcept UF_LIFETIME_BOUND -> ProjectId const&;
 
-        [[nodiscard]] auto recognizerId() const -> RecognizerId;
+        [[nodiscard]] auto elementId() const -> ElementId;
 
         [[nodiscard]]
         auto detection() const noexcept UF_LIFETIME_BOUND -> Detection const&;

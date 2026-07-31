@@ -89,7 +89,7 @@ namespace uf::task
         // the wait loop now lives; a host-side fallback would be a value nothing
         // reads.
 
-        // Where this run's umbraflow-trace/v1 stream is written. One run writes
+        // Where this run's umbraflow-trace/v2 stream is written. One run writes
         // one file; the host opens it only after the task has loaded and
         // validated, so a misspelled task name leaves no evidence file behind.
         std::filesystem::path tracePath{};

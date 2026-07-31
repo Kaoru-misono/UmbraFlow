@@ -127,35 +127,6 @@ namespace uf::m0_demo
         );
     }
 
-    TEST_CASE("m0 target revalidation requires an unchanged identity")
-    {
-        CHECK(
-            requireUnchangedTarget(
-                RevalidateOutcome::Unchanged
-            ).has_value()
-        );
-
-        for (auto const outcome : std::array{
-            RevalidateOutcome::GenerationBumped,
-            RevalidateOutcome::InstanceUnconfirmed,
-        })
-        {
-            auto const result = requireUnchangedTarget(outcome);
-            REQUIRE_FALSE(result.has_value());
-            test_m0_demo::requireErrorKind(
-                result.error(),
-                AutomationErrorKind::StaleObservation
-            );
-        }
-
-        auto const lost = requireUnchangedTarget(RevalidateOutcome::Lost);
-        REQUIRE_FALSE(lost.has_value());
-        test_m0_demo::requireErrorKind(
-            lost.error(),
-            AutomationErrorKind::ControllerDisconnected
-        );
-    }
-
     TEST_CASE("m0 transition frames cannot predate click completion")
     {
         auto const before = MonotonicInstant::now();
@@ -240,25 +211,6 @@ namespace uf::m0_demo
         CHECK(result.error().message().find("--home-roi") != std::string_view::npos);
         CHECK(result.error().message().find("101x40") != std::string_view::npos);
         CHECK(result.error().message().find("100x40") != std::string_view::npos);
-    }
-
-    TEST_CASE("m0 empty client area is target unavailable")
-    {
-        auto const emptySizes = std::array{
-            ClientSize{0, 480},
-            ClientSize{640, 0},
-            ClientSize{0, 0},
-        };
-        for (auto const size : emptySizes)
-        {
-            auto const result = ensureClientAreaUsable(size);
-            REQUIRE_FALSE(result.has_value());
-            test_m0_demo::requireErrorKind(
-                result.error(),
-                AutomationErrorKind::TargetUnavailable
-            );
-        }
-        CHECK(ensureClientAreaUsable(ClientSize{640, 480}).has_value());
     }
 
     TEST_CASE("m0 run summary passes only when complete and clean")

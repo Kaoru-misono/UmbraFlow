@@ -1,5 +1,7 @@
 #include "authoring-compiler.hpp"
 
+#include "resource.hpp"
+
 #include <core/numeric/checked-arithmetic.hpp>
 #include <core/safety/checked-access.hpp>
 #include <core/types/integer.hpp>
@@ -10,7 +12,6 @@
 #include <image/png.hpp>
 
 #include <algorithm>
-#include <array>
 #include <cstddef>
 #include <format>
 #include <map>
@@ -21,7 +22,6 @@
 #include <string>
 #include <tuple>
 #include <utility>
-#include <variant>
 #include <vector>
 
 namespace uf::annotation
@@ -31,13 +31,6 @@ namespace uf::annotation
         constexpr auto k_rgbaBytesPerPixel            = std::size_t{4};
         constexpr auto k_maximumCompiledTemplateBytes = std::size_t{512} * 1024U * 1024U;
         constexpr auto k_maximumCompilationPixelWork  = std::size_t{256} * 1024U * 1024U;
-
-        struct RecognizerWork final
-        {
-            SourceId                 sourceId;
-            std::optional<ColourKey> colourKey{};
-            std::size_t              recognizerIndex{};
-        };
 
         // The colour key is part of the identity of a template, not a property
         // of one: the same rectangle of the same screen masked two different
@@ -115,10 +108,21 @@ namespace uf::annotation
         }
 
         [[nodiscard]]
+        auto taskKeyOf(
+            Appearance const& appearance
+        ) -> TemplateTaskKey
+        {
+            return TemplateTaskKey{
+                .sourceId     = appearance.sourceId(),
+                .templateRect = appearance.templateRect(),
+                .colourKey    = appearance.colourKey(),
+            };
+        }
+
+        [[nodiscard]]
         auto prepareTemplateTasks(
             std::span<AuthoringSource const> sources,
-            std::span<RecognizerDefinition const> recognizers,
-            std::span<RecognizerWork const> recognizerWork
+            std::span<Element const> elements
         ) -> Result<TemplateTaskPlan>
         {
             auto templateTasks        = TemplateTaskPlan{};
@@ -153,70 +157,46 @@ namespace uf::annotation
                 compilationPixelWork = *nextPixelWork;
             }
 
-            for (auto const& work : recognizerWork)
+            for (auto const& element : elements)
             {
-                auto const templateRect = checkedAt(
-                    recognizers,
-                    work.recognizerIndex
-                ).templateRect();
-                auto const insertion = templateTasks.emplace(
-                    TemplateTaskKey{
-                        .sourceId     = work.sourceId,
-                        .templateRect = templateRect,
-                        .colourKey    = work.colourKey,
+                for (auto const& appearance : element.appearances())
+                {
+                    auto const insertion = templateTasks.emplace(taskKeyOf(appearance));
+                    if (!insertion.second)
+                    {
+                        continue;
                     }
-                );
-                if (!insertion.second)
-                {
-                    continue;
-                }
 
-                auto const taskPixels = checkedMultiply(
-                    static_cast<std::size_t>(templateRect.width()),
-                    static_cast<std::size_t>(templateRect.height())
-                );
-                if (!taskPixels)
-                {
-                    return invalidCompilation(
-                        "authoring template pixel-work calculation overflowed addressable memory"
+                    auto const templateRect = appearance.templateRect();
+                    auto const taskPixels   = checkedMultiply(
+                        static_cast<std::size_t>(templateRect.width()),
+                        static_cast<std::size_t>(templateRect.height())
                     );
-                }
+                    if (!taskPixels)
+                    {
+                        return invalidCompilation(
+                            "authoring template pixel-work calculation overflowed addressable memory"
+                        );
+                    }
 
-                auto const nextPixelWork = checkedAdd(
-                    compilationPixelWork,
-                    *taskPixels
-                );
-                if (
-                    !nextPixelWork
-                    || *nextPixelWork > k_maximumCompilationPixelWork
-                )
-                {
-                    return invalidCompilation(
-                        "authoring compilation exceeds the 256 Mi-pixel work quota"
+                    auto const nextPixelWork = checkedAdd(
+                        compilationPixelWork,
+                        *taskPixels
                     );
+                    if (
+                        !nextPixelWork
+                        || *nextPixelWork > k_maximumCompilationPixelWork
+                    )
+                    {
+                        return invalidCompilation(
+                            "authoring compilation exceeds the 256 Mi-pixel work quota"
+                        );
+                    }
+                    compilationPixelWork = *nextPixelWork;
                 }
-                compilationPixelWork = *nextPixelWork;
             }
 
             return templateTasks;
-        }
-
-        // The name for one per-placement runtime recognizer: the element name and
-        // the page name joined by an underscore. Both are already valid ASCII
-        // Luau member keys, so their underscore-joined form is one too, and the
-        // join can never spell a reserved word (each carries an underscore). The
-        // page name is unique among pages, so the pair reads as "which element,
-        // on which page"; any residual clash across elements fails loudly in the
-        // catalog's name-uniqueness guard.
-        [[nodiscard]]
-        auto derivedRecognizerName(
-            ResourceName const& elementName,
-            ResourceName const& pageName
-        ) -> Result<ResourceName>
-        {
-            return ResourceName::create(
-                std::format("{}_{}", elementName.value(), pageName.value())
-            );
         }
 
         // The template PNG's alpha channel IS the mask the matcher weights by,
@@ -315,43 +295,6 @@ namespace uf::annotation
         }
     }
 
-    auto derivedRuntimeRecognizerId(
-        RecognizerId elementId,
-        PageId pageId
-    ) -> RecognizerId
-    {
-        auto seed             = std::vector<std::byte>{};
-        auto const elementHex = elementId.value().toString();
-        auto const pageHex    = pageId.value().toString();
-        seed.reserve(elementHex.size() + pageHex.size());
-        for (auto const character : elementHex)
-        {
-            seed.emplace_back(static_cast<std::byte>(character));
-        }
-        for (auto const character : pageHex)
-        {
-            seed.emplace_back(static_cast<std::byte>(character));
-        }
-        // sha256 over an in-memory buffer cannot fail; the Result models a
-        // streaming source, which this is not.
-        auto const digest = sha256(seed);
-        UF_CHECK_MSG(
-            digest.has_value(),
-            "hashing a derived recognizer id seed must not fail"
-        );
-        auto const digestBytes = digest->bytes();
-        auto truncated         = std::array<std::byte, 16>{};
-        for (auto index = std::size_t{0}; index < truncated.size(); ++index)
-        {
-            checkedAt(truncated, index) = static_cast<std::byte>(
-                checkedAt(digestBytes, index)
-            );
-        }
-        return RecognizerId{
-            ResourceId::fromBytes(std::span<std::byte const, 16>{truncated})
-        };
-    }
-
     auto compileAuthoringDocument(
         AuthoringDocument const& document,
         std::span<AuthoringSourceAsset const> sourceAssets
@@ -392,58 +335,10 @@ namespace uf::annotation
             }
         }
 
-        auto const recognizers       = document.catalog().recognizers();
-        auto const recognizerSources = document.recognizerSources();
-        UF_CHECK_MSG(
-            recognizers.size() == recognizerSources.size(),
-            "authoring recognizer source closure is inconsistent"
-        );
-        auto recognizerWork = std::vector<RecognizerWork>{};
-        recognizerWork.reserve(recognizers.size());
-        for (auto index = std::size_t{0}; index < recognizers.size(); ++index)
-        {
-            auto const& recognizer   = checkedAt(recognizers, index);
-            auto const& relationship = checkedAt(recognizerSources, index);
-            UF_CHECK_MSG(
-                relationship.recognizerId == recognizer.id(),
-                "authoring recognizer source order is inconsistent"
-            );
-            // The derived catalog carries no colour key -- it is authoring
-            // truth, and the runtime reads the mask off the template's alpha --
-            // so the key comes from the element the recognizer was derived from.
-            auto const* p_element = document.findElement(recognizer.id());
-            UF_CHECK_MSG(
-                p_element != nullptr,
-                "authoring recognizer has no element to derive from"
-            );
-            recognizerWork.emplace_back(
-                RecognizerWork{
-                    .sourceId        = relationship.sourceId,
-                    .colourKey       = p_element->colourKey(),
-                    .recognizerIndex = index,
-                }
-            );
-        }
-        std::ranges::sort(
-            recognizerWork,
-            [](RecognizerWork const& left, RecognizerWork const& right) noexcept
-            {
-                if (left.sourceId != right.sourceId)
-                {
-                    return left.sourceId.value() < right.sourceId.value();
-                }
-                return left.recognizerIndex < right.recognizerIndex;
-            }
-        );
-        UF_TRY_VALUE(
-            templateTasks,
-            prepareTemplateTasks(sources, recognizers, recognizerWork)
-        );
+        auto const elements = document.elements();
+        UF_TRY_VALUE(templateTasks, prepareTemplateTasks(sources, elements));
 
-        auto runtimeRecognizers = std::vector<RuntimeRecognizerSpec>{};
-        auto templateAssets     = std::vector<TemplateAsset>{};
-        runtimeRecognizers.reserve(document.catalog().recognizers().size());
-        templateAssets.reserve(document.catalog().recognizers().size());
+        auto templateAssets        = std::vector<TemplateAsset>{};
         auto compiledTemplateBytes = std::size_t{0};
         auto taskIterator          = templateTasks.begin();
         auto generatedTaskHashes   = GeneratedTemplateHashes{};
@@ -596,147 +491,61 @@ namespace uf::annotation
         }
         UF_CHECK_MSG(
             taskIterator == templateTasks.end(),
-            "authoring recognizer source closure references an unknown source"
+            "authoring appearance source closure references an unknown source"
         );
-        // Per-page search ROIs reach the runtime here, at generation time. The
-        // derived catalog() stays one-recognizer-per-element -- it is the UI's
-        // read model, and expanding it there would surface synthetic per-page
-        // recognizers as phantom rows -- so the expansion lives in the compiler,
-        // built from the v2 truth (elements + placements). An element placed on N
-        // pages becomes N runtime recognizers, each carrying that page's own ROI
-        // and allowed page. Templates still dedupe by (source, template rect), so
-        // the N recognizers of one element share a single template asset.
-        auto const elements   = document.elements();
-        auto const placements = document.placements();
+
+        // One compiled element per authored element, under the element's own
+        // id. Templates still dedupe by (source, rectangle, colour key), so two
+        // elements cutting the same pixels share one asset.
+        auto runtimeElements = std::vector<RuntimeElementSpec>{};
+        runtimeElements.reserve(elements.size());
         for (auto const& element : elements)
         {
-            auto const generated = generatedTaskHashes.find(
-                TemplateTaskKey{
-                    .sourceId     = element.sourceId(),
-                    .templateRect = element.templateRect(),
-                    .colourKey    = element.colourKey(),
-                }
-            );
-            UF_CHECK_MSG(
-                generated != generatedTaskHashes.end(),
-                "authoring recognizer template task was not generated"
-            );
-            auto const* p_source = document.findSource(element.sourceId());
-            UF_CHECK_MSG(
-                p_source != nullptr,
-                "authoring recognizer source closure references an unknown source"
-            );
-            auto const templateHash = generated->second;
-            auto const sourceHash   = p_source->contentHash();
+            auto appearances = std::vector<CompiledAppearance>{};
+            auto assets      = std::vector<RuntimeAppearanceAsset>{};
+            appearances.reserve(element.appearances().size());
+            assets.reserve(element.appearances().size());
+            for (auto const& appearance : element.appearances())
+            {
+                auto const generated = generatedTaskHashes.find(taskKeyOf(appearance));
+                UF_CHECK_MSG(
+                    generated != generatedTaskHashes.end(),
+                    "authoring appearance template task was not generated"
+                );
+                auto const* p_source = document.findSource(appearance.sourceId());
+                UF_CHECK_MSG(
+                    p_source != nullptr,
+                    "authoring appearance source closure references an unknown source"
+                );
+                appearances.emplace_back(runtimeAppearanceOf(appearance));
+                assets.emplace_back(
+                    RuntimeAppearanceAsset{
+                        .appearanceName  = appearance.name(),
+                        .templateHash = generated->second,
+                        .sourceHash   = p_source->contentHash(),
+                    }
+                );
+            }
 
-            auto defaultClick = std::optional<TemplateOffset>{};
-            if (
-                auto const* p_interactive = std::get_if<InteractiveElement>(
-                    &element.kind()
+            UF_TRY_VALUE(
+                definition,
+                CompiledElement::create(
+                    document.catalog().fingerprint(),
+                    CompiledElementSpec{
+                        .id           = element.id(),
+                        .name         = element.name(),
+                        .capabilities = element.capabilities(),
+                        .searchRoi    = element.searchRoi(),
+                        .appearances  = std::move(appearances),
+                    }
                 )
-            )
-            {
-                defaultClick = p_interactive->clickOffset;
-            }
-
-            // The placements naming this element, in canonical order: placements()
-            // is sorted by page then element, so filtering by element preserves
-            // that order.
-            auto elementPlacements = std::vector<AuthoringPlacement>{};
-            for (auto const& placement : placements)
-            {
-                if (placement.elementId == element.id())
-                {
-                    elementPlacements.emplace_back(placement);
+            );
+            runtimeElements.emplace_back(
+                RuntimeElementSpec{
+                    .definition  = std::move(definition),
+                    .appearances = std::move(assets),
                 }
-            }
-
-            auto buildSpec =
-                [&](
-                    RecognizerId id,
-                    ResourceName name,
-                    PixelRect searchRoi,
-                    std::vector<PageId> allowedPageIds
-                ) -> Result<RuntimeRecognizerSpec>
-            {
-                UF_TRY_VALUE(
-                    definition,
-                    RecognizerDefinition::create(
-                        document.catalog().fingerprint(),
-                        RecognizerSpec{
-                            .id             = id,
-                            .name           = std::move(name),
-                            .annotationType = element.annotationType(),
-                            .templateRect   = element.templateRect(),
-                            .searchRoi      = searchRoi,
-                            .threshold      = element.threshold(),
-                            .defaultClick   = defaultClick,
-                            .allowedPageIds = std::move(allowedPageIds),
-                        }
-                    )
-                );
-                return RuntimeRecognizerSpec{
-                    .definition   = std::move(definition),
-                    .templateHash = templateHash,
-                    .sourceHash   = sourceHash,
-                };
-            };
-
-            if (elementPlacements.size() <= 1U)
-            {
-                // Anchor, unplaced element, or a single placement -- one runtime
-                // recognizer keeping the element's own id and name, exactly as the
-                // derived catalog carries it today. A single placement contributes
-                // its ROI and page; for migrated data that ROI equals the
-                // element's own, so the manifest is byte-identical to before.
-                auto searchRoi      = element.searchRoi();
-                auto allowedPageIds = std::vector<PageId>{};
-                if (!elementPlacements.empty())
-                {
-                    searchRoi = elementPlacements.front().searchRoi;
-                    allowedPageIds.emplace_back(elementPlacements.front().pageId);
-                }
-                UF_TRY_VALUE(
-                    spec,
-                    buildSpec(
-                        element.id(),
-                        element.name(),
-                        searchRoi,
-                        std::move(allowedPageIds)
-                    )
-                );
-                runtimeRecognizers.emplace_back(std::move(spec));
-            }
-            else
-            {
-                // N placements -> N runtime recognizers, one per page, each with
-                // its own search ROI. Deterministic ids and names keep the
-                // manifest stable across compiles of the same document.
-                for (auto const& placement : elementPlacements)
-                {
-                    auto const* p_page = document.catalog().findPage(
-                        placement.pageId
-                    );
-                    UF_CHECK_MSG(
-                        p_page != nullptr,
-                        "authoring placement references an unknown page"
-                    );
-                    UF_TRY_VALUE(
-                        name,
-                        derivedRecognizerName(element.name(), p_page->name())
-                    );
-                    UF_TRY_VALUE(
-                        spec,
-                        buildSpec(
-                            derivedRuntimeRecognizerId(element.id(), placement.pageId),
-                            std::move(name),
-                            placement.searchRoi,
-                            std::vector<PageId>{placement.pageId}
-                        )
-                    );
-                    runtimeRecognizers.emplace_back(std::move(spec));
-                }
-            }
+            );
         }
         std::ranges::sort(
             templateAssets,
@@ -744,17 +553,30 @@ namespace uf::annotation
             &TemplateAsset::relativePath
         );
 
-        auto pages = std::vector<PageSignature>{
-            document.catalog().pages().begin(),
-            document.catalog().pages().end()
+        auto pages = std::vector<PageSpec>{};
+        pages.reserve(document.catalog().pages().size());
+        for (auto const& page : document.catalog().pages())
+        {
+            pages.emplace_back(
+                PageSpec{
+                    .id   = page.id(),
+                    .name = page.name(),
+                }
+            );
+        }
+        auto references = std::vector<PageReference>{
+            document.references().begin(),
+            document.references().end()
         };
+
         UF_TRY_VALUE_CONTEXT(
             runtimeManifest,
             RuntimeManifest::create(
                 document.catalog().projectId(),
                 document.catalog().fingerprint(),
-                std::move(runtimeRecognizers),
-                std::move(pages)
+                std::move(runtimeElements),
+                std::move(pages),
+                std::move(references)
             ),
             "compiling the annotation runtime manifest"
         );

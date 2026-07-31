@@ -11,6 +11,7 @@
 #include <annotation/authoring-document.hpp>
 #include <annotation/content-hash.hpp>
 #include <annotation/recognition-runtime.hpp>
+#include <annotation/resource.hpp>
 
 #include <core/numeric/checked-arithmetic.hpp>
 #include <core/numeric/checked-cast.hpp>
@@ -75,28 +76,28 @@ namespace uf::annotation
         [[nodiscard]]
         auto anchorOver(
             ProjectFingerprint fingerprint,
-            RecognizerId id,
+            ElementId id,
             std::string name,
             SourceId sourceId,
             std::optional<ColourKey> colourKey
         ) -> Element
         {
-            auto result = Element::create(
+            return test::element(
                 fingerprint,
-                Element::Spec{
-                    .id           = id,
-                    .name         = test::resourceName(std::move(name)),
-                    .sourceId     = sourceId,
-                    .templateRect = wholeCrop(),
-                    .searchRoi    = wholeCrop(),
-                    .threshold    = test::threshold(),
-                    .colourKey    = colourKey,
-                    .kind         = AnchorElement{},
-                    .shared       = false,
+                id,
+                std::move(name),
+                test::capabilities(Identify{}),
+                wholeCrop(),
+                std::vector<Appearance>{
+                    test::appearance(
+                        "only",
+                        sourceId,
+                        wholeCrop(),
+                        test::threshold(),
+                        colourKey
+                    ),
                 }
             );
-            REQUIRE(result.has_value());
-            return *std::move(result);
         }
 
         struct AuthoredProject final
@@ -132,8 +133,8 @@ namespace uf::annotation
             );
             REQUIRE(source.has_value());
 
-            auto const keyedId   = test::recognizerId(k_keyedId);
-            auto const unkeyedId = test::recognizerId(k_unkeyedId);
+            auto const keyedId   = test::elementId(k_keyedId);
+            auto const unkeyedId = test::elementId(k_unkeyedId);
             auto elements        = std::vector<Element>{};
             elements.emplace_back(
                 anchorOver(
@@ -154,16 +155,31 @@ namespace uf::annotation
                 )
             );
 
+            auto references = std::vector<PageReference>{};
+            references.emplace_back(
+                test::reference(
+                    test::pageId(k_keyedPageId),
+                    keyedId,
+                    test::identifiesAs()
+                )
+            );
+            references.emplace_back(
+                test::reference(
+                    test::pageId(k_unkeyedPageId),
+                    unkeyedId,
+                    test::identifiesAs()
+                )
+            );
             auto document = AuthoringDocument::create(
                 test::projectId("personal.colour_key_join"),
                 fingerprint,
                 {*source},
                 std::move(elements),
                 {
-                    test::page(test::pageId(k_keyedPageId), "keyed", {keyedId}),
-                    test::page(test::pageId(k_unkeyedPageId), "unkeyed", {unkeyedId}),
+                    test::page(test::pageId(k_keyedPageId), "keyed"),
+                    test::page(test::pageId(k_unkeyedPageId), "unkeyed"),
                 },
-                {},
+                std::move(references),
                 {}
             );
             REQUIRE(document.has_value());
@@ -279,10 +295,12 @@ namespace uf::annotation
             REQUIRE(compiled.has_value());
 
             auto const* p_keyed = compiled->runtimeManifest.findAsset(
-                test::recognizerId(k_keyedId)
+                test::elementId(k_keyedId),
+                test::resourceName("only")
             );
             auto const* p_unkeyed = compiled->runtimeManifest.findAsset(
-                test::recognizerId(k_unkeyedId)
+                test::elementId(k_unkeyedId),
+                test::resourceName("only")
             );
             REQUIRE(p_keyed != nullptr);
             REQUIRE(p_unkeyed != nullptr);
@@ -333,13 +351,13 @@ namespace uf::annotation
         [[nodiscard]]
         auto evidenceFor(
             std::span<AnchorEvidence const> evidence,
-            RecognizerId id
+            ElementId id
         ) -> AnchorEvidence
         {
             auto const found = std::ranges::find(
                 evidence,
                 id,
-                &AnchorEvidence::recognizerId
+                &AnchorEvidence::elementId
             );
             REQUIRE(found != evidence.end());
             return *found;
@@ -363,17 +381,17 @@ namespace uf::annotation
         auto const outcome = compileAndMatch();
 
         // A keyed and an unkeyed template of the same rectangle are two assets,
-        // and each recognizer points at its own.
+        // and each element points at its own.
         CHECK(outcome.templateAssetCount == 2);
         CHECK(outcome.templateHashesDiffer);
 
         auto const keyed = evidenceFor(
             outcome.evidence,
-            test::recognizerId(k_keyedId)
+            test::elementId(k_keyedId)
         );
         auto const unkeyed = evidenceFor(
             outcome.evidence,
-            test::recognizerId(k_unkeyedId)
+            test::elementId(k_unkeyedId)
         );
 
         // The whole point: the artwork under the glyphs changed completely, and

@@ -183,7 +183,7 @@ namespace uf::task
             CHECK_FALSE(context.hasOpenCycle());
 
             // A Tier B raise from a primitive INSIDE the block: a find handed
-            // something that is not a recognizer.
+            // something that is not an element.
             constexpr std::string_view tierB = R"lua(
                 local ok, err = ctx:try(function()
                     ctx:cycle(function(cycle) cycle:find(nil) end)
@@ -278,7 +278,7 @@ namespace uf::task
                                 uf.pages.page_a,
                                 { timeout_ms = 60000, poll_ms = 0 },
                                 function(home)
-                                    local hit = home:find(uf.recognizers.action_target)
+                                    local hit = home:find(uf.elements.action_target)
                                     if hit == nil then return end
                                     home:click(hit)
                                     ran = 1
@@ -365,7 +365,7 @@ namespace uf::task
                     max_hits = 3,
                     handle = function(ctx, cycle)
                         handled += 1
-                        local close = cycle:find(uf.recognizers.close_dialog)
+                        local close = cycle:find(uf.elements.close_dialog)
                         if close ~= nil then
                             cycle:click(close)
                         end
@@ -379,7 +379,7 @@ namespace uf::task
                             uf.pages.page_a,
                             { timeout_ms = 60000, poll_ms = 0 },
                             function(home)
-                                local hit = home:find(uf.recognizers.action_target)
+                                local hit = home:find(uf.elements.action_target)
                                 if hit ~= nil then
                                     home:click(hit)
                                     clicked += 1

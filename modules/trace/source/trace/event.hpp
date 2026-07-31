@@ -33,7 +33,13 @@ namespace uf::trace
     // handed, which is what still names the frame when a host-side guard fails the
     // verb before the engine ever sees it. The version is emitted first on every
     // line so a downstream consumer can reject a line it does not understand.
-    inline constexpr auto k_traceSchema = std::string_view{"umbraflow-trace/v1"};
+    //
+    // Bumped from v1 on 2026-07-31 when the annotated thing stopped being spelled
+    // `recognizer` on this wire: `recognizerId` is now `elementId` and the
+    // resources line's `recognizers` array is now `elements`. Renaming a field is
+    // a wire change whatever the field means, so v1 readers are turned away by
+    // the version rather than handed a line missing the key they look for.
+    inline constexpr auto k_traceSchema = std::string_view{"umbraflow-trace/v2"};
 
     // The single JSON member holding every field that may legitimately differ
     // between two runs of the same task at the same seed. It exists so the wall
@@ -78,20 +84,21 @@ namespace uf::trace
     // written by nothing.
     // Which front-end drove the run this line belongs to.
     //
-    // It exists because the capability surface has two consumers at the same
-    // level -- the trusted Luau framework a task runs on, and an operator sending
-    // commands from outside -- and without the attribution no reader of a trace
-    // can answer "did the task do this, or did the operator". That question is
-    // asked of every line, so the answer is part of the STAMP rather than of the
-    // event: TraceRecorder carries one value for the whole run and writes it onto
-    // every line, so no emitter can forget it and none can claim the other
-    // front-end's work.
+    // It exists because more than one thing drives a target at the same level --
+    // the trusted Luau framework a task runs on, an operator sending commands
+    // from outside, and an annotation session measuring the screen -- and without
+    // the attribution no reader of the evidence can answer "which of them did
+    // this". That question is asked of every line, so the answer is part of the
+    // STAMP rather than of the event: TraceRecorder carries one value for the
+    // whole run and writes it onto every line, so no emitter can forget it and
+    // none can claim another front-end's work.
     //
-    // It is also what makes the two mutually exclusive rather than merely
-    // documented. TaskHost latches one of these per generation the first time a
-    // front-end drives it and refuses the other, and the latched value is what it
-    // hands the recorder -- so a stream's attribution and the exclusion that
-    // produced it are the same fact and cannot disagree.
+    // For the two that reach the capability surface it is also what makes them
+    // mutually exclusive rather than merely documented. TaskHost latches one of
+    // these per generation the first time a front-end drives it and refuses the
+    // other, and the latched value is what it hands the recorder -- so a stream's
+    // attribution and the exclusion that produced it are the same fact and cannot
+    // disagree.
     enum class FrontEnd : uint8
     {
         // A project task running on the trusted Luau framework, driven by
@@ -101,7 +108,28 @@ namespace uf::trace
         // An operator sending commands from outside the process, driven by
         // `umbra-flow drive`.
         Operator,
+
+        // An authoring session driving a target in order to measure it: the
+        // m0-demo input agent serving a command queue while an author reads the
+        // frames it answers with.
+        //
+        // It reaches no project, so it has no generation for TaskHost to latch
+        // and no capability surface to consume; what it shares with the other two
+        // is exactly the question this enum answers, which is who drove the
+        // target. Until it joins the host it stamps its own answer stream rather
+        // than a trace line, and the value it stamps is this one -- so the day it
+        // does join, the attribution a reader already knows does not change.
+        Annotation,
     };
+
+    // The wire spelling of one front-end, and the only place any of the three is
+    // spelled. It is public rather than private to the serializer because a
+    // front-end has to be named outside a trace line as well: task::TaskHost
+    // names the one that already holds a generation when it refuses the other,
+    // and the m0-demo input agent stamps its own. Two spellings of one closed set
+    // is how a third value comes to be reported as the second.
+    [[nodiscard]]
+    auto frontEndWireName(FrontEnd frontEnd) noexcept -> std::string_view;
 
     enum class TraceEventKind : uint8
     {
@@ -201,11 +229,11 @@ namespace uf::trace
             // omitting `candidate` would assert a page was ruled out.
             struct Score final
             {
-                annotation::PageId                      pageId;
-                bool                                    candidate;
-                std::optional<annotation::RecognizerId> worstAnchor{};
-                std::optional<uint64>                   worstAnchorSad{};
-                std::optional<uint64>                   worstAnchorMaximumSad{};
+                annotation::PageId                   pageId;
+                bool                                 candidate;
+                std::optional<annotation::ElementId> worstAnchor{};
+                std::optional<uint64>                worstAnchorSad{};
+                std::optional<uint64>                worstAnchorMaximumSad{};
             };
 
             PageResolution                    outcome;
@@ -251,7 +279,7 @@ namespace uf::trace
         // the wire.
         struct Resources final
         {
-            std::vector<std::string> recognizers{};
+            std::vector<std::string> elements{};
             std::vector<std::string> pages{};
         };
 
@@ -263,8 +291,8 @@ namespace uf::trace
         // reached, so its task.native_call is the only line the failure produces
         // and nothing else would say which cycle the script tried to use.
         // cycle_open mints its own ordinal rather than receiving one, so it
-        // carries none. The recognizer a find was handed travels on
-        // TraceEvent::recognizerId.
+        // carries none. The element a find was handed travels on
+        // TraceEvent::elementId.
         struct NativeCall final
         {
             std::string       verb{};
@@ -334,16 +362,16 @@ namespace uf::trace
         std::optional<NativeCall> nativeCall{};
         std::optional<Framework>  framework{};
 
-        // Fields that cut across the groups above: the recognizer a page stop, an
+        // Fields that cut across the groups above: the element a page stop, an
         // action search or an authorization refusal names; why a recognition
         // search stopped early; how the run ended; and the failure detail any
         // event may carry.
-        std::optional<annotation::RecognizerId> recognizerId{};
-        std::optional<SadSearchStopReason>      stopReason{};
-        std::optional<RunOutcome>               runOutcome{};
-        std::optional<AutomationErrorKind>      errorKind{};
-        std::optional<std::string>              message{};
-        std::optional<Point<ClientSpace>>       clickClient{};
+        std::optional<annotation::ElementId> elementId{};
+        std::optional<SadSearchStopReason>   stopReason{};
+        std::optional<RunOutcome>            runOutcome{};
+        std::optional<AutomationErrorKind>   errorKind{};
+        std::optional<std::string>           message{};
+        std::optional<Point<ClientSpace>>    clickClient{};
 
         // The key one engine.key_delivered posted, as the target's UI prints it.
         // It is the whole content of that event: a keystroke names no coordinate,

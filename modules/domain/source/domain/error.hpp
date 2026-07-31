@@ -31,6 +31,15 @@ namespace uf
         // which of the two it got.
         RecognitionIncomplete,
         StaleObservation,
+        // A page-scoped operation ran on an observation cycle that has resolved
+        // no page. It is deliberately NOT ActionRejected, because nothing was
+        // attempted and nothing was judged: locating an element only looks, and
+        // a click refused here never reached the authorization it would have
+        // been refused by. Under one kind a script could not tell "I skipped a
+        // step" -- fix the script's ordering -- from "this page really does not
+        // authorise this element" -- fix the annotation -- and those two want
+        // opposite responses from whoever reads the failure.
+        PageUnresolved,
         ActionRejected,
         ControllerDisconnected,
         InternalInvariant,
@@ -122,6 +131,7 @@ UF_REFLECT_ENUM(
     uf::AutomationErrorKind::CaptureStalled,
     uf::AutomationErrorKind::RecognitionIncomplete,
     uf::AutomationErrorKind::StaleObservation,
+    uf::AutomationErrorKind::PageUnresolved,
     uf::AutomationErrorKind::ActionRejected,
     uf::AutomationErrorKind::ControllerDisconnected,
     uf::AutomationErrorKind::InternalInvariant,

@@ -13,13 +13,13 @@
 - `modules/domain/source/domain/frame.hpp` 与 `frame.cpp` 定义带身份、捕获时间、像素所有权和坐标变换的 `Frame`。
 - `modules/domain/source/domain/detection.hpp` 与 `detection.cpp` 定义同帧 `Detection` 以及动作时效凭证 `ObservationLease`。
 - `modules/domain/source/domain/error.hpp`、`error.cpp`、`time.hpp` 和 `time.cpp` 定义自动化错误分类、恢复范围以及单调时间上的安全运算。
-- `modules/domain/source/domain/key.hpp` 与 `key.cpp` 定义 `KeyName`，即「有哪些键名存在」的唯一定义（2026-07-30，`ed38124`）。
+- `modules/domain/source/domain/key.hpp` 与 `key.cpp` 定义 `KeyName`，即「有哪些键名存在」的唯一定义（2026-07-30，`ed38124`）；2026-07-31 加入具名键族 `"ENTER"`、`"ESC"`、`"CAPS"`、`"SHIFT"`。
 
 `domain` 不负责以下工作：
 
 - 不产生 `CaptureSessionId` 或 `FrameId`。`CaptureSessionId` 由组合根提供，当前 CLI 在 `entry/cli/run-windows.cpp` 构造；`FrameId` 的逐捕获分配由 `modules/controller/source/controller/detail/capture-wgc.hpp` 的 `FrameIdCounter` 完成。
 - 不判断何时目标窗口已换代。`modules/controller/source/controller/target.cpp` 的 `ResolvedTarget` 根据进程实例、窗口句柄、client size 和连续性推进 `TargetGeneration`。
-- 不解释检测标签是否能触发动作。`Detection` 只是带同帧身份的几何证据；`modules/annotation/source/annotation/authorization.cpp` 的 `ActionDetection` 和 `authorizeCoordinateAction` 才绑定 catalog、recognizer、page 与 live fingerprint。
+- 不解释检测标签是否能触发动作。`Detection` 只是带同帧身份的几何证据；`modules/annotation/source/annotation/authorization.cpp` 的 `ActionDetection` 和 `authorizeCoordinateAction` 才绑定 catalog、element、page 与 live fingerprint。
 - 不执行模板匹配、裁图、PNG 编解码、trace 或重试。相应策略分别属于 `vision`、`image`、`engine` 或调用者。
 - 不实现 strict-background。后台投递由 `modules/controller/source/controller/platform/windows-input.cpp` 的 `PostMessageW` 边界实现；禁止前台化和全局注入的 API 名单位于 `modules/controller/source/controller/input.hpp`。
 - 不给任意 `Point`、`Rect` 或 `Detection` 构造器附加隐式校验。需要安全保证的边界必须显式调用 `create`、`ensure...` 或授权函数，不能把“类型存在”误当成“值已验证”。
@@ -120,7 +120,7 @@ Windows capture 在 `modules/controller/source/controller/platform/windows-captu
 
 ### `Detection` 与 `ObservationLease`
 
-`Detection` 是不可变值载体：保存 `CaptureSessionId`、`TargetGeneration`、`FrameId`、`Label`、`Rect<FrameSpace>` 和 `confidence`。构造器不校验 rect 或 confidence；可信动作还必须经过 annotation 的 recognizer/page 授权，不能只凭 label。
+`Detection` 是不可变值载体：保存 `CaptureSessionId`、`TargetGeneration`、`FrameId`、`Label`、`Rect<FrameSpace>` 和 `confidence`。构造器不校验 rect 或 confidence；可信动作还必须经过 annotation 的 element/page 授权，不能只凭 label。
 
 `Label::create` 保证字符串是合法 UTF-8，但允许空字符串；`value()` 返回受 owner
 生命周期约束的 const reference。根据
@@ -139,9 +139,13 @@ Windows capture 在 `modules/controller/source/controller/platform/windows-captu
 
 ### `KeyName`
 
-`modules/domain/source/domain/key.hpp` 的 `KeyName` 是**「有哪些键名存在」的唯一定义**。被接受的集合是大写的 `"A".."Z"`、`"0".."9"` 与 `"F1".."F12"`——48 个名字对应 48 个互不相同的虚拟键，**没有别名**，因为一个拼错的名字绝不能解析成旁边那个键。`KeyName::create` 是造出它的唯一途径，集合之外的名字一律以 `ActionRejected` 失败：没人能解析的名字是被拒绝的动作，而不是缺失的资源。`controller::KeyInput::fromName` 走的是 `create` 而不是重写一遍判断，于是两边不会对「项目可以写哪些名字」产生分歧。
+`modules/domain/source/domain/key.hpp` 的 `KeyName` 是**「有哪些键名存在」的唯一定义**。被接受的集合有三族：`"A".."Z"`、`"0".."9"`、`"F1".."F12"`，以及 `k_namedKeys` 里的具名键 `"ENTER"`、`"ESC"`、`"CAPS"`、`"SHIFT"`——52 个名字对应 52 个互不相同的虚拟键，**没有别名**，因为一个拼错的名字绝不能解析成旁边那个键。`KeyName::create` 是造出它的唯一途径，集合之外的名字一律以 `ActionRejected` 失败：没人能解析的名字是被拒绝的动作，而不是缺失的资源。`controller::KeyInput::fromName` 走的是 `create` 而不是重写一遍判断，于是两边不会对「项目可以写哪些名字」产生分歧。
 
-它住在 `domain` 而不是 `controller`，是为了让按键能穿过 engine 的动作端口而不必让那个端口提到虚拟键——虚拟键是 Windows 的事实。名字是平台中立的：无论宿主是什么，目标印在界面上的都是 `E`，所以一路传下去的值就是名字，把它解析成虚拟键的是投递边缘的适配器。它按字节存而不是存一个码，因为落到 trace 行上、以及作者读回来的都是这个名字；类型可平凡复制、可比较，因此处处按值传。`k_maxKeyNameBytes` 是 3，即 `"F12"` 的长度。
+**具名键族是 2026-07-31 加进来的，因为没有它，目标最核心的那圈循环根本走不通。** 战斗界面自己把契约印在屏幕上：ENTER 使用卡牌、ESC 取消选择、CAPS 确认卡牌资讯，而 `SHIFT` 是同一屏右上角的锁定开关。只有字母、数字和功能键时，一次运行可以选中一张牌却永远打不出去；鼠标也不是替代路径——选中卡牌后点击目标敌人不是出牌，而是取消选择。每一个成员都是在目标上观察到的、印出来的可用操作；`TAB` 有意不收，因为没有任何观察到的界面提供它，而没观察到的名字是这个集合不做的猜测。
+
+**名字区分大小写，集合保持封闭。** `"enter"` 会被拒绝。传下去的值就是这串字节，折叠大小写要么把同一个键的第二种拼法放进 trace 和这个类型自己的逐字节比较里，要么把作者没写过的名字还给他。封闭正是 `controller::KeyInput::fromKeyName` 能是 `noexcept`、拒绝信息能把整套词汇印出来的前提；这个集合只通过「命名一个观察到的可用操作」增长，绝不通过接受虚拟键码或任何自由格式的逃生口增长。拒绝信息是 `key name must be "A"-"Z", "0"-"9", "F1"-"F12", or one of "ENTER", "ESC", "CAPS", "SHIFT", spelled in uppercase throughout, got "enter"`，由 `k_namedKeys` 渲染而来，因此不会落后于集合本身；大小写规则也从只贴在 `"A"-"Z"` 前面（那样读起来像一条只管字母的规则）改成对整套词汇成立。
+
+它住在 `domain` 而不是 `controller`，是为了让按键能穿过 engine 的动作端口而不必让那个端口提到虚拟键——虚拟键是 Windows 的事实。名字是平台中立的：无论宿主是什么，目标印在界面上的都是 `E`，所以一路传下去的值就是名字，把它解析成虚拟键的是投递边缘的适配器。它按字节存而不是存一个码，因为落到 trace 行上、以及作者读回来的都是这个名字；类型可平凡复制、可比较，因此处处按值传。`k_maxKeyNameBytes` 是 5，即 `"ENTER"` 与 `"SHIFT"` 的长度；`key.cpp` 里有一条 `static_assert`，具名键一旦超出这个长度就编译失败，因为 `create` 往这块存储里拷贝时不再复查长度。
 
 这个集合有意封闭且有意小。两个前端和端口读的都是这一份定义，这才使「目标自己的 UI 印出来的那个键」是一个事实，而不是三张必须互相吻合的表。
 
@@ -151,8 +155,10 @@ Windows capture 在 `modules/controller/source/controller/platform/windows-captu
 
 - `Cancelled` → `Cancelled`；
 - `CaptureStalled`、`StaleObservation`、`RecognitionIncomplete` → `Retry`；
-- `ActionRejected` → `StepFailed`；
+- `PageUnresolved`、`ActionRejected` → `StepFailed`；
 - 其余 kind → `Abort`。
+
+`PageUnresolved` 与 `ActionRejected` 展开范围相同，却有意是两个 kind，因为它们要求的修法相反。`PageUnresolved` 表示一个页面相关的动词跑在了**还没有解析出页面**的观察周期上——脚本漏了 `cycle:page()`，或者在它返回 nil 之后仍然继续——而且**什么都没有被尝试**：find 只是定位，在那里被拒的 click 根本没有走到那条能拒绝它的授权检查。`ActionRejected` 表示页面**确实**解析出来了，而它不授权这个元素，那是标注项目里的建模问题。合用一个 kind，脚本就分不出「改我的调用顺序」和「改我的标注」。它的 response 是 `StepFailed` 而不是 `Retry`，即使换一帧很可能就能解析出这一帧没解析出的页面：页面是解析到**周期上**的，所以拿同一个周期重复同一次调用永远不会成功，而要拿到页面就得重新观察——那是这一步从头再来，不是这次操作被重试。
 
 `RecognitionIncomplete` 有意不叫“识别失败”。识别跑完却没匹配上根本不是错误——那是 `UnknownPage` 或空命中，不带任何 error kind。这个 kind 只表示比较预算在搜索结束前就耗尽了，调用方对屏幕一无所知。所以它的响应是 `Retry` 而不是 `StepFailed`：调用方必须在自己的预算内重新观察，而不能当成“该页已被排除”去分支；又因为比较次数取决于帧自身的像素，这一帧耗尽的搜索在后一帧可能跑完。
 
@@ -187,7 +193,7 @@ Windows capture 在 `modules/controller/source/controller/platform/windows-captu
 3. `Frame::create` 验证 buffer geometry、transform 尺寸和 immutable pixel owner。
 4. `engine::EngineSession::observe` 先 revalidate target，再 capture，并从 frame 创建 `ObservationLease`。
 5. `annotation::RecognitionRuntime`/`vision` 在 frame 像素上产生整数 `PixelRect` 证据；engine 通过 `pixelRectToFrameRect` 创建同帧 `Detection`。
-6. annotation 把 detection 绑定到 `action_target` recognizer，并证明 page、project、fingerprint、三元身份和 lease 一致。
+6. annotation 把 detection 绑定到 `action_target` element，并证明 page、project、fingerprint、三元身份和 lease 一致。
 7. engine 把整数 click pixel 经 `pixelPointToFramePoint` 和 frame 的 `frameToClient` 转成 `Point<ClientSpace>`。
 8. `engine::IActionSink::click` 把 client point 与原 lease 一并交给 Controller；Controller 重检目标 generation、session、年龄、窗口存活与 client bounds，再由 `PostMessageW` 后台投递。
 9. 成功后 engine 使 `Observation` 失效，下一动作必须重新 observe。
@@ -223,7 +229,7 @@ Windows capture 在 `modules/controller/source/controller/platform/windows-captu
 - `tests/controller/test-target.cpp` 固定何种窗口身份变化恰好推进一次 `TargetGeneration`。
 - `tests/controller/test-input-revalidation.cpp` 固定 session/generation/age fencing、client bounds 和 signed-16-bit message 坐标限制；它也反映当前没有 current `FrameId` 入参。
 - `tests/controller/test-audit-log.cpp` 固定 strict-background forbidden API 集合与投递 audit。
-- `tests/annotation/test-authorization.cpp` 固定 same-frame page/detection/lease/fingerprint、recognizer identity 和 allowed-page 授权。
+- `tests/annotation/test-authorization.cpp` 固定 same-frame page/detection/lease/fingerprint、element identity 和 allowed-page 授权。
 - `tests/engine/test-session.cpp` 固定 observe-to-click 数据流、lease 原样传递、动作后失效、moved-from/foreign observation 拒绝、delivery-edge target revalidation，以及 trace 失败不能使动作可重放。
 
 这些测试大多使用合成 frame 和显式 `MonotonicInstant`，避免真实窗口、墙钟抖动或 GPU 时序进入 domain 的确定性回归面。

@@ -1,4 +1,5 @@
 #include "../annotation/test-helpers.hpp"
+#include "authoring-fixture.hpp"
 #include "colour-key-fixture.hpp"
 
 #include <authoring-edit.hpp>
@@ -6,6 +7,7 @@
 #include <annotation/authoring-compiler.hpp>
 #include <annotation/authoring-document.hpp>
 #include <annotation/content-hash.hpp>
+#include <annotation/resource.hpp>
 
 #include <core/types/integer.hpp>
 
@@ -41,8 +43,8 @@ namespace uf::workbench
         {
             auto const fingerprint = annotation::test::fingerprint(8, 8, 96, 96);
             auto const sourceId    = annotation::test::sourceId(k_sourceId);
-            auto const anchorId    = annotation::test::recognizerId(k_anchorId);
-            auto const actionId    = annotation::test::recognizerId(k_actionId);
+            auto const anchorId    = annotation::test::elementId(k_anchorId);
+            auto const actionId    = annotation::test::elementId(k_actionId);
             auto const pageId      = annotation::test::pageId(k_pageId);
             auto const sourceHash = annotation::sha256(
                 std::span<std::byte const>{}
@@ -68,7 +70,7 @@ namespace uf::workbench
                 fingerprint,
                 {*source},
                 {
-                    annotation::test::anchorElement(
+                    test::markElement(
                         fingerprint,
                         anchorId,
                         "home_marker",
@@ -76,7 +78,7 @@ namespace uf::workbench
                         annotation::test::pixelRect(0, 0, 2, 2),
                         annotation::test::pixelRect(0, 0, 4, 4)
                     ),
-                    annotation::test::interactiveElement(
+                    test::clickableElement(
                         fingerprint,
                         actionId,
                         "daily_button",
@@ -86,12 +88,17 @@ namespace uf::workbench
                         *click
                     ),
                 },
-                {annotation::test::page(pageId, "home", {anchorId})},
+                {annotation::test::page(pageId, "home")},
                 {
-                    annotation::test::placement(
+                    annotation::test::reference(
+                        pageId,
+                        anchorId,
+                        annotation::test::identifiesAs()
+                    ),
+                    annotation::test::reference(
                         pageId,
                         actionId,
-                        annotation::test::pixelRect(3, 3, 4, 4)
+                        annotation::test::interacts()
                     ),
                 },
                 {
@@ -118,12 +125,12 @@ namespace uf::workbench
         // expectation, and a non-empty forbidden set. Without these a draft
         // round-trip that silently dropped the field would still compare equal.
         [[nodiscard]]
-        auto variantDocument() -> annotation::AuthoringDocument
+        auto appearanceDocument() -> annotation::AuthoringDocument
         {
             auto const fingerprint = annotation::test::fingerprint(8, 8, 96, 96);
             auto const sourceId    = annotation::test::sourceId(k_sourceId);
-            auto const anchorId    = annotation::test::recognizerId(k_anchorId);
-            auto const awayId      = annotation::test::recognizerId(k_awayId);
+            auto const anchorId    = annotation::test::elementId(k_anchorId);
+            auto const awayId      = annotation::test::elementId(k_awayId);
             auto const pageId      = annotation::test::pageId(k_pageId);
             auto const sourceHash = annotation::sha256(
                 std::span<std::byte const>{}
@@ -150,7 +157,7 @@ namespace uf::workbench
                 fingerprint,
                 {*source},
                 {
-                    annotation::test::anchorElement(
+                    test::markElement(
                         fingerprint,
                         anchorId,
                         "home_marker",
@@ -158,7 +165,7 @@ namespace uf::workbench
                         annotation::test::pixelRect(0, 0, 2, 2),
                         annotation::test::pixelRect(0, 0, 4, 4)
                     ),
-                    annotation::test::anchorElement(
+                    test::markElement(
                         fingerprint,
                         awayId,
                         "away_marker",
@@ -167,15 +174,21 @@ namespace uf::workbench
                         annotation::test::pixelRect(3, 3, 4, 4)
                     ),
                 },
+                {annotation::test::page(pageId, "home")},
                 {
-                    annotation::test::page(
+                    annotation::test::reference(
                         pageId,
-                        "home",
-                        {anchorId},
-                        {awayId}
+                        anchorId,
+                        annotation::test::identifiesAs()
+                    ),
+                    annotation::test::reference(
+                        pageId,
+                        awayId,
+                        annotation::test::identifiesAs(
+                            annotation::SignatureRole::Forbidden
+                        )
                     ),
                 },
-                {},
                 {
                     annotation::RegressionCase{
                         annotation::RegressionSpec{
@@ -194,7 +207,7 @@ namespace uf::workbench
         }
 
         // Two pages whose anchors differ, so a conversion that must pick a page
-        // to authorize can be observed picking the recognizer's own page rather
+        // to authorize can be observed picking the element's own page rather
         // than the first one. "battle" survives losing its required anchor
         // because it still forbids one.
         [[nodiscard]]
@@ -202,8 +215,8 @@ namespace uf::workbench
         {
             auto const fingerprint = annotation::test::fingerprint(8, 8, 96, 96);
             auto const sourceId    = annotation::test::sourceId(k_sourceId);
-            auto const anchorId    = annotation::test::recognizerId(k_anchorId);
-            auto const awayId      = annotation::test::recognizerId(k_awayId);
+            auto const anchorId    = annotation::test::elementId(k_anchorId);
+            auto const awayId      = annotation::test::elementId(k_awayId);
             auto const homeId      = annotation::test::pageId(k_pageId);
             auto const battleId    = annotation::test::pageId(k_secondPageId);
             auto const sourceHash  = annotation::sha256(
@@ -225,7 +238,7 @@ namespace uf::workbench
                 fingerprint,
                 {*source},
                 {
-                    annotation::test::anchorElement(
+                    test::markElement(
                         fingerprint,
                         anchorId,
                         "home_marker",
@@ -233,7 +246,7 @@ namespace uf::workbench
                         annotation::test::pixelRect(0, 0, 2, 2),
                         annotation::test::pixelRect(0, 0, 4, 4)
                     ),
-                    annotation::test::anchorElement(
+                    test::markElement(
                         fingerprint,
                         awayId,
                         "battle_marker",
@@ -243,15 +256,29 @@ namespace uf::workbench
                     ),
                 },
                 {
-                    annotation::test::page(homeId, "home", {anchorId}),
-                    annotation::test::page(
+                    annotation::test::page(homeId, "home"),
+                    annotation::test::page(battleId, "battle"),
+                },
+                {
+                    annotation::test::reference(
+                        homeId,
+                        anchorId,
+                        annotation::test::identifiesAs()
+                    ),
+                    annotation::test::reference(
                         battleId,
-                        "battle",
-                        {awayId},
-                        {anchorId}
+                        awayId,
+                        annotation::test::identifiesAs()
+                    ),
+                    annotation::test::reference(
+                        battleId,
+                        anchorId,
+                        annotation::test::identifiesAs(
+                            annotation::SignatureRole::Forbidden
+                        ),
+                        annotation::Holding::Referenced
                     ),
                 },
-                {},
                 {}
             );
             REQUIRE(created.has_value());
@@ -259,55 +286,68 @@ namespace uf::workbench
         }
 
         [[nodiscard]]
-        auto recognizerName(
+        auto elementName(
             AuthoringEditHistory const& history,
             std::size_t index
         ) -> std::string
         {
-            return history.draft().recognizers.at(index).name;
+            return history.draft().elements.at(index).name;
         }
 
-        // Reads a recognizer out of a draft by identity rather than by position,
-        // so a test states which recognizer it means instead of depending on the
+        // Reads an element out of a draft by identity rather than by position,
+        // so a test states which element it means instead of depending on the
         // catalog's ordering.
         [[nodiscard]]
-        auto recognizerIn(
+        auto elementIn(
             AuthoringDraft const& draft,
-            annotation::RecognizerId id
-        ) -> EditableRecognizer
+            annotation::ElementId id
+        ) -> EditableElement
         {
             auto const found = std::ranges::find(
-                draft.recognizers,
+                draft.elements,
                 id,
-                &EditableRecognizer::id
+                &EditableElement::id
             );
-            REQUIRE(found != draft.recognizers.end());
+            REQUIRE(found != draft.elements.end());
             return *found;
         }
 
+        // Which way one page's reference to one element points, when it points
+        // at all. The signature is derived from the references now, so this is
+        // how a test reads back what used to be two vectors on the page.
         [[nodiscard]]
-        auto pageIn(
+        auto signatureRoleIn(
             AuthoringDraft const& draft,
-            annotation::PageId id
-        ) -> EditablePage
+            annotation::PageId pageId,
+            annotation::ElementId elementId
+        ) -> std::optional<annotation::SignatureRole>
         {
-            auto const found = std::ranges::find(
-                draft.pages,
-                id,
-                &EditablePage::id
+            auto const found = std::ranges::find_if(
+                draft.references,
+                [pageId, elementId](EditableReference const& reference)
+                {
+                    return reference.pageId == pageId
+                        && reference.elementId == elementId;
+                }
             );
-            REQUIRE(found != draft.pages.end());
-            return *found;
+            if (
+                found == draft.references.end()
+                || !found->exercised.identify.has_value()
+            )
+            {
+                return std::nullopt;
+            }
+            return found->exercised.identify->role;
         }
     }
 
-    TEST_CASE("a fresh name avoids recognizer and page names alike")
+    TEST_CASE("a fresh name avoids element and page names alike")
     {
-        // The catalog compares a page name against recognizer names too, so a
+        // The catalog compares a page name against element names too, so a
         // fresh name checked against one kind still collides.
         auto draft = makeAuthoringDraft(document());
         draft.pages.at(0).name       = "thing_1";
-        draft.recognizers.at(0).name = "thing_2";
+        draft.elements.at(0).name = "thing_2";
 
         CHECK(freshAuthoringName(draft, "thing") == "thing_3");
         CHECK(freshAuthoringName(draft, "other") == "other_1");
@@ -319,7 +359,7 @@ namespace uf::workbench
         // rejected, and an anchor joins a page only through a signature.
         auto const sourceId  = annotation::test::sourceId(k_sourceId);
         auto const pageId    = annotation::test::pageId(k_secondPageId);
-        auto const anchorId  = annotation::test::recognizerId(k_awayId);
+        auto const anchorId  = annotation::test::elementId(k_awayId);
         auto const rect      = annotation::test::pixelRect(0, 0, 2, 2);
         auto const roi       = annotation::test::pixelRect(0, 0, 4, 4);
 
@@ -339,14 +379,17 @@ namespace uf::workbench
         );
         REQUIRE(created.has_value());
 
-        auto const anchor = recognizerIn(created->draft, anchorId);
-        CHECK(anchor.annotationType == annotation::AnnotationType::PageAnchor);
-        CHECK(anchor.sourceId == sourceId);
-        // An anchor joins a page through its signature, never a placement.
-        CHECK(pagesPlacedOn(created->draft, anchorId).empty());
+        auto const anchor = elementIn(created->draft, anchorId);
+        CHECK(anchor.capabilities.identify.has_value());
+        REQUIRE(anchor.appearances.size() == 1U);
+        CHECK(anchor.appearances.front().sourceId == sourceId);
 
-        auto const page = pageIn(created->draft, pageId);
-        CHECK(std::ranges::contains(page.required, anchorId));
+        // The page's signature is derived from the reference, which is why the
+        // page and the reference cannot be authored one at a time.
+        CHECK(
+            signatureRoleIn(created->draft, pageId, anchorId)
+            == annotation::SignatureRole::Required
+        );
 
         // The regression case is the only statement that this screen is that
         // page; the anchor's source is a different claim.
@@ -373,7 +416,7 @@ namespace uf::workbench
             makeAuthoringDraft(document()),
             NewPageSpec{
                 .pageId   = annotation::test::pageId(k_secondPageId),
-                .anchorId = annotation::test::recognizerId(k_awayId),
+                .anchorId = annotation::test::elementId(k_awayId),
                 .regressionId = annotation::test::regressionId(
                     "00000000-0000-0000-0000-000000000302"
                 ),
@@ -392,12 +435,12 @@ namespace uf::workbench
     {
         auto const sourceId = annotation::test::sourceId(k_sourceId);
         auto const pageId   = annotation::test::pageId(k_pageId);
-        auto const newId    = annotation::test::recognizerId(k_awayId);
+        auto const newId    = annotation::test::elementId(k_awayId);
 
         auto const spec = [&](PageMemberKind kind)
         {
             return PageMemberSpec{
-                .recognizerId = newId,
+                .elementId    = newId,
                 .pageId       = pageId,
                 .sourceId     = sourceId,
                 .templateRect = annotation::test::pixelRect(0, 0, 2, 2),
@@ -407,7 +450,7 @@ namespace uf::workbench
             };
         };
 
-        SUBCASE("an anchor enters the page signature and authorizes nothing")
+        SUBCASE("a mark enters the page signature and authorizes nothing")
         {
             auto const added = addPageMember(
                 makeAuthoringDraft(document()),
@@ -415,17 +458,11 @@ namespace uf::workbench
             );
             REQUIRE(added.has_value());
 
-            auto const recognizer = recognizerIn(added->draft, newId);
+            auto const element = elementIn(added->draft, newId);
+            CHECK(element.capabilities.identify.has_value());
             CHECK(
-                recognizer.annotationType
-                == annotation::AnnotationType::PageAnchor
-            );
-            CHECK(pagesPlacedOn(added->draft, newId).empty());
-            CHECK(
-                std::ranges::contains(
-                    pageIn(added->draft, pageId).required,
-                    newId
-                )
+                signatureRoleIn(added->draft, pageId, newId)
+                == annotation::SignatureRole::Required
             );
             CHECK(buildAuthoringDocument(added->draft).has_value());
         }
@@ -438,18 +475,12 @@ namespace uf::workbench
             );
             REQUIRE(added.has_value());
 
-            auto const recognizer = recognizerIn(added->draft, newId);
+            auto const element = elementIn(added->draft, newId);
+            CHECK(element.capabilities.interact.has_value());
             CHECK(
-                recognizer.annotationType
-                == annotation::AnnotationType::ActionTarget
+                std::ranges::contains(pagesReferencing(added->draft, newId), pageId)
             );
-            CHECK(std::ranges::contains(pagesPlacedOn(added->draft, newId), pageId));
-            CHECK_FALSE(
-                std::ranges::contains(
-                    pageIn(added->draft, pageId).required,
-                    newId
-                )
-            );
+            CHECK_FALSE(signatureRoleIn(added->draft, pageId, newId).has_value());
             CHECK(buildAuthoringDocument(added->draft).has_value());
         }
 
@@ -461,29 +492,23 @@ namespace uf::workbench
             );
             REQUIRE(added.has_value());
 
-            auto const recognizer = recognizerIn(added->draft, newId);
+            auto const element = elementIn(added->draft, newId);
+            CHECK(element.capabilities.read.has_value());
             CHECK(
-                recognizer.annotationType
-                == annotation::AnnotationType::InfoRegion
+                std::ranges::contains(pagesReferencing(added->draft, newId), pageId)
             );
-            CHECK(std::ranges::contains(pagesPlacedOn(added->draft, newId), pageId));
-            CHECK_FALSE(
-                std::ranges::contains(
-                    pageIn(added->draft, pageId).required,
-                    newId
-                )
-            );
+            CHECK_FALSE(signatureRoleIn(added->draft, pageId, newId).has_value());
             CHECK(buildAuthoringDocument(added->draft).has_value());
         }
     }
 
     TEST_CASE("duplicating an element mints a distinct, valid copy")
     {
-        auto const actionId = annotation::test::recognizerId(k_actionId);
-        auto const newId    = annotation::test::recognizerId(k_awayId);
+        auto const actionId = annotation::test::elementId(k_actionId);
+        auto const newId    = annotation::test::elementId(k_awayId);
         auto const pageId   = annotation::test::pageId(k_pageId);
 
-        auto const original = recognizerIn(makeAuthoringDraft(document()), actionId);
+        auto const original = elementIn(makeAuthoringDraft(document()), actionId);
 
         auto const duplicated = duplicateElement(
             makeAuthoringDraft(document()),
@@ -495,35 +520,50 @@ namespace uf::workbench
         REQUIRE(duplicated.has_value());
 
         // A genuinely new element: a fresh id and a distinct, unique name.
-        auto const copy = recognizerIn(duplicated->draft, newId);
+        auto const copy = elementIn(duplicated->draft, newId);
         CHECK(copy.id == newId);
         CHECK(copy.name != original.name);
         CHECK(copy.name == duplicated->name);
-        CHECK(copy.annotationType == original.annotationType);
-        CHECK(copy.templateRect == original.templateRect);
-        CHECK(copy.similarityBasisPoints == original.similarityBasisPoints);
-        CHECK(copy.defaultClick.has_value() == original.defaultClick.has_value());
-        if (copy.defaultClick.has_value() && original.defaultClick.has_value())
-        {
-            CHECK(copy.defaultClick->x == original.defaultClick->x);
-            CHECK(copy.defaultClick->y == original.defaultClick->y);
-        }
+        CHECK(
+            copy.capabilities.interact.has_value()
+            == original.capabilities.interact.has_value()
+        );
+        REQUIRE(copy.appearances.size() == original.appearances.size());
+        REQUIRE(copy.appearances.size() == 1U);
+        CHECK(
+            copy.appearances.front().templateRect
+            == original.appearances.front().templateRect
+        );
+        CHECK(
+            copy.appearances.front().similarityBasisPoints
+            == original.appearances.front().similarityBasisPoints
+        );
+        REQUIRE(copy.capabilities.interact.has_value());
+        REQUIRE(original.capabilities.interact.has_value());
+        auto const copyClick     = copy.capabilities.interact->clickOffset;
+        auto const originalClick = original.capabilities.interact->clickOffset;
+        REQUIRE(copyClick.has_value());
+        REQUIRE(originalClick.has_value());
+        CHECK(copyClick->x == originalClick->x);
+        CHECK(copyClick->y == originalClick->y);
 
-        // The copy inherits the original's placements, so the interactive element
-        // stays valid (it must be placed on at least one page), and the original
-        // is untouched.
-        CHECK(std::ranges::contains(pagesPlacedOn(duplicated->draft, newId), pageId));
-        CHECK(recognizerIn(duplicated->draft, actionId).name == original.name);
+        // The copy inherits the original's references, so the clickable element
+        // stays valid (something clickable must be reachable somewhere), and the
+        // original is untouched.
+        CHECK(
+            std::ranges::contains(pagesReferencing(duplicated->draft, newId), pageId)
+        );
+        CHECK(elementIn(duplicated->draft, actionId).name == original.name);
         CHECK(buildAuthoringDocument(duplicated->draft).has_value());
     }
 
     TEST_CASE("an applied duplicate is removed by one undo")
     {
-        auto const actionId = annotation::test::recognizerId(k_actionId);
-        auto const newId    = annotation::test::recognizerId(k_awayId);
+        auto const actionId = annotation::test::elementId(k_actionId);
+        auto const newId    = annotation::test::elementId(k_awayId);
 
         auto history = AuthoringEditHistory{document()};
-        auto const before = history.document().catalog().recognizers().size();
+        auto const before = history.document().catalog().elements().size();
 
         auto const duplicated = duplicateElement(
             history.draft(),
@@ -537,10 +577,10 @@ namespace uf::workbench
         auto const applied = history.apply(duplicated->draft);
         REQUIRE(applied.has_value());
         CHECK(*applied);
-        CHECK(history.document().catalog().recognizers().size() == before + 1U);
+        CHECK(history.document().catalog().elements().size() == before + 1U);
 
         REQUIRE(history.undo());
-        CHECK(history.document().catalog().recognizers().size() == before);
+        CHECK(history.document().catalog().elements().size() == before);
     }
 
     TEST_CASE("duplicating an element outside the draft is refused")
@@ -548,203 +588,629 @@ namespace uf::workbench
         auto const duplicated = duplicateElement(
             makeAuthoringDraft(document()),
             DuplicateElementSpec{
-                .sourceElementId = annotation::test::recognizerId(k_sharedId),
-                .newElementId    = annotation::test::recognizerId(k_awayId),
+                .sourceElementId = annotation::test::elementId(k_sharedId),
+                .newElementId    = annotation::test::elementId(k_awayId),
             }
         );
         CHECK_FALSE(duplicated.has_value());
     }
 
-    TEST_CASE("sharing a region places the same element with a range of its own")
+    TEST_CASE("a second page borrows the same element with a range of its own")
     {
-        auto const actionId = annotation::test::recognizerId(k_actionId);
+        auto const actionId = annotation::test::elementId(k_actionId);
+        auto const homeId   = annotation::test::pageId(k_pageId);
         auto const pageId   = annotation::test::pageId(k_secondPageId);
         auto const roi      = annotation::test::pixelRect(2, 2, 6, 6);
 
         auto draft = makeAuthoringDraft(twoPageDocument());
-        // twoPageDocument has no action target, so give it the one being shared,
-        // placed on the home page.
-        draft.recognizers.emplace_back(
-            EditableRecognizer{
-                .id             = actionId,
-                .name           = "back",
-                .annotationType = annotation::AnnotationType::ActionTarget,
-                .sourceId       = annotation::test::sourceId(k_sourceId),
-                .templateRect   = annotation::test::pixelRect(4, 4, 2, 2),
-                .searchRoi      = annotation::test::pixelRect(3, 3, 4, 4),
-                .similarityBasisPoints = 9'000U,
-                .defaultClick   = {},
+        // twoPageDocument has nothing clickable, so give it the element being
+        // borrowed, owned by the home page.
+        draft.elements.emplace_back(
+            EditableElement{
+                .id   = actionId,
+                .name = "back",
+                .capabilities = EditableCapabilities{
+                    .interact = EditableInteract{},
+                },
+                .searchRoi = annotation::test::pixelRect(3, 3, 4, 4),
+                .appearances  = {
+                    EditableAppearance{
+                        .name         = "default",
+                        .sourceId     = annotation::test::sourceId(k_sourceId),
+                        .templateRect = annotation::test::pixelRect(4, 4, 2, 2),
+                        .similarityBasisPoints = 9'000U,
+                    },
+                },
             }
         );
-        draft.placements.emplace_back(
-            EditablePlacement{
-                .pageId    = annotation::test::pageId(k_pageId),
+        draft.references.emplace_back(
+            EditableReference{
+                .pageId    = homeId,
                 .elementId = actionId,
-                .searchRoi = annotation::test::pixelRect(3, 3, 4, 4),
+                .holding   = annotation::Holding::Owned,
+                .exercised = EditableExercised{
+                    .interact = annotation::ExercisedInteract{},
+                },
             }
         );
 
-        auto const shared = shareRegionOnPage(
+        auto const referenced = referenceElementOnPage(
             std::move(draft),
-            SharedRegionSpec{
+            ReferenceElementSpec{
                 .elementId = actionId,
                 .pageId    = pageId,
                 .searchRoi = roi,
             }
         );
-        REQUIRE(shared.has_value());
+        REQUIRE(referenced.has_value());
 
-        // No copy is minted: the same element gains a second placement carrying
-        // its own search region.
-        CHECK(pagesPlacedOn(shared->draft, actionId).size() == 2U);
-        auto const placed = std::ranges::find_if(
-            shared->draft.placements,
-            [&](EditablePlacement const& placement)
+        // No copy is minted: the same element gains a second reference carrying
+        // its own search region, and that reference is a borrow rather than a
+        // second claim of ownership -- which the old flag could not say.
+        CHECK(pagesReferencing(referenced->draft, actionId).size() == 2U);
+        auto const borrowed = std::ranges::find_if(
+            referenced->draft.references,
+            [&](EditableReference const& reference)
             {
-                return placement.elementId == actionId
-                    && placement.pageId == pageId;
+                return reference.elementId == actionId
+                    && reference.pageId == pageId;
             }
         );
-        REQUIRE(placed != shared->draft.placements.end());
-        CHECK(placed->searchRoi == roi);
-        CHECK(recognizerIn(shared->draft, actionId).shared);
-        CHECK(buildAuthoringDocument(shared->draft).has_value());
+        REQUIRE(borrowed != referenced->draft.references.end());
+        CHECK(borrowed->searchRoi == roi);
+        CHECK(borrowed->holding == annotation::Holding::Referenced);
+        CHECK(buildAuthoringDocument(referenced->draft).has_value());
 
-        auto removed = removePlacementFromPage(
-            std::move(shared->draft),
+        auto removed = removeReferenceFromPage(
+            std::move(referenced->draft),
             actionId,
             pageId
         );
         REQUIRE(removed.has_value());
-        auto const remaining = pagesPlacedOn(*removed, actionId);
+        auto const remaining = pagesReferencing(*removed, actionId);
         REQUIRE(remaining.size() == 1U);
-        CHECK(remaining.front() == annotation::test::pageId(k_pageId));
+        CHECK(remaining.front() == homeId);
         CHECK(buildAuthoringDocument(*removed).has_value());
     }
 
-    TEST_CASE("placement withdrawal preserves page and interactive closure rules")
+    TEST_CASE("a second page may not claim to own an element as well")
     {
-        auto const actionId = annotation::test::recognizerId(k_actionId);
+        // Owned is the author saying these pixels are one page's own, and two
+        // pages claiming it is the contradiction the reuse flag could hold
+        // without anything noticing. Building the draft is where it is caught.
+        auto const actionId = annotation::test::elementId(k_actionId);
+
+        auto draft = makeAuthoringDraft(document());
+        draft.pages.emplace_back(
+            EditablePage{
+                .id   = annotation::test::pageId(k_secondPageId),
+                .name = "battle",
+            }
+        );
+        draft.references.emplace_back(
+            EditableReference{
+                .pageId    = annotation::test::pageId(k_secondPageId),
+                .elementId = annotation::test::elementId(k_anchorId),
+                .holding   = annotation::Holding::Referenced,
+                .exercised = EditableExercised{
+                    .identify = annotation::ExercisedIdentify{
+                        .role = annotation::SignatureRole::Forbidden,
+                    },
+                },
+            }
+        );
+        draft.references.emplace_back(
+            EditableReference{
+                .pageId    = annotation::test::pageId(k_secondPageId),
+                .elementId = actionId,
+                .holding   = annotation::Holding::Owned,
+                .exercised = EditableExercised{
+                    .interact = annotation::ExercisedInteract{},
+                },
+            }
+        );
+        CHECK_FALSE(buildAuthoringDocument(draft).has_value());
+
+        // The control: the same draft with the second page borrowing instead of
+        // owning is accepted, so the refusal is about the second owner and not
+        // about the second reference.
+        draft.references.back().holding = annotation::Holding::Referenced;
+        CHECK(buildAuthoringDocument(draft).has_value());
+    }
+
+    TEST_CASE("reference withdrawal preserves page and interactive closure rules")
+    {
+        auto const actionId = annotation::test::elementId(k_actionId);
         auto const pageId   = annotation::test::pageId(k_pageId);
 
-        auto const lastPlacement = removePlacementFromPage(
+        auto const lastInteract = removeReferenceFromPage(
             makeAuthoringDraft(document()),
             actionId,
             pageId
         );
-        CHECK_FALSE(lastPlacement.has_value());
+        CHECK_FALSE(lastInteract.has_value());
 
-        auto const anchor = removePlacementFromPage(
+        auto const onlyMark = removeReferenceFromPage(
             makeAuthoringDraft(document()),
-            annotation::test::recognizerId(k_anchorId),
+            annotation::test::elementId(k_anchorId),
             pageId
         );
-        CHECK_FALSE(anchor.has_value());
+        CHECK_FALSE(onlyMark.has_value());
     }
 
-    TEST_CASE("sharing a region onto a page that already has it is refused")
+    TEST_CASE("referencing an element on a page that already has it is refused")
     {
-        auto const actionId = annotation::test::recognizerId(k_actionId);
+        auto const actionId = annotation::test::elementId(k_actionId);
         auto const pageId   = annotation::test::pageId(k_pageId);
 
-        auto const shared = shareRegionOnPage(
+        auto const referenced = referenceElementOnPage(
             makeAuthoringDraft(document()),
-            SharedRegionSpec{
+            ReferenceElementSpec{
                 .elementId = actionId,
                 .pageId    = pageId,
                 .searchRoi = annotation::test::pixelRect(0, 0, 8, 8),
             }
         );
-        CHECK_FALSE(shared.has_value());
+        CHECK_FALSE(referenced.has_value());
     }
 
-    TEST_CASE("sharing a page anchor is refused")
+    TEST_CASE("referencing an element that only identifies is refused")
     {
-        auto const shared = shareRegionOnPage(
+        // Pixels that can only be evidence join a page through its signature,
+        // which is a different verb.
+        auto const referenced = referenceElementOnPage(
             makeAuthoringDraft(document()),
-            SharedRegionSpec{
-                .elementId = annotation::test::recognizerId(k_anchorId),
+            ReferenceElementSpec{
+                .elementId = annotation::test::elementId(k_anchorId),
                 .pageId    = annotation::test::pageId(k_pageId),
                 .searchRoi = annotation::test::pixelRect(0, 0, 8, 8),
             }
         );
-        CHECK_FALSE(shared.has_value());
+        CHECK_FALSE(referenced.has_value());
     }
 
-    TEST_CASE("marking a region reusable survives a document round trip")
+    TEST_CASE("one mark required by one page and forbidden by another stays one element")
     {
-        // The mark is intent, stated before any second page exists, so it has to
-        // be stored: nothing else in the document distinguishes a region the
-        // author means to reuse from one they do not.
-        auto const actionId = annotation::test::recognizerId(k_actionId);
+        // The case the capability model exists for. Before a page could
+        // reference an existing element for identify, "page A requires this
+        // mark, page B forbids the same pixels" had exactly one route: draw a
+        // second rectangle over the first. Two ids, two templates, two searches
+        // a cycle -- the duplication this model deletes.
+        auto const markId   = annotation::test::elementId(k_anchorId);
+        auto const homeId   = annotation::test::pageId(k_pageId);
+        auto const battleId = annotation::test::pageId(k_secondPageId);
+        auto const onBattle = [markId, battleId](
+                                  EditableReference const& reference
+                              )
+        {
+            return reference.pageId == battleId && reference.elementId == markId;
+        };
 
-        auto const marked = setRegionShared(
-            makeAuthoringDraft(document()),
-            actionId,
-            true
+        // twoPageDocument already holds the relationship, so withdraw it and
+        // let the function under test be what puts it back.
+        auto draft = makeAuthoringDraft(twoPageDocument());
+        std::erase_if(draft.references, onBattle);
+        auto const elements = draft.elements.size();
+
+        auto const referenced = referenceElementOnPage(
+            std::move(draft),
+            ReferenceElementSpec{
+                .elementId = markId,
+                .pageId    = battleId,
+                .exercised = EditableExercised{
+                    .identify = annotation::ExercisedIdentify{
+                        .role = annotation::SignatureRole::Forbidden,
+                    },
+                },
+            }
         );
-        REQUIRE(marked.has_value());
-        CHECK(recognizerIn(*marked, actionId).shared);
+        REQUIRE(referenced.has_value());
 
-        auto const rebuilt = buildAuthoringDocument(*marked);
-        REQUIRE(rebuilt.has_value());
-        CHECK(recognizerIn(makeAuthoringDraft(*rebuilt), actionId).shared);
-    }
+        // The assertion the whole verb is for: no second element over the same
+        // pixels. One patch, one id, two pages pointing opposite ways at it.
+        CHECK(referenced->draft.elements.size() == elements);
+        CHECK(pagesReferencing(referenced->draft, markId).size() == 2U);
 
-    TEST_CASE("only an interactive region can be marked reusable")
-    {
-        // A mark identifies a page through its signature, where reuse means
-        // something else entirely.
-        auto const marked = setRegionShared(
-            makeAuthoringDraft(document()),
-            annotation::test::recognizerId(k_anchorId),
-            true
+        auto const forbidding = std::ranges::find_if(
+            referenced->draft.references,
+            onBattle
         );
-        CHECK_FALSE(marked.has_value());
+        REQUIRE(forbidding != referenced->draft.references.end());
+        CHECK(forbidding->holding == annotation::Holding::Referenced);
+        REQUIRE(forbidding->exercised.identify.has_value());
+        CHECK(
+            forbidding->exercised.identify->role
+            == annotation::SignatureRole::Forbidden
+        );
+        // The anchor pass reads the element's own region, so the reference
+        // refines none -- the one combination the catalog refuses outright.
+        CHECK_FALSE(forbidding->searchRoi.has_value());
+
+        auto const built = buildAuthoringDocument(referenced->draft);
+        REQUIRE(built.has_value());
+        CHECK(built->elements().size() == elements);
+
+        auto const* p_home = built->catalog().findPage(homeId);
+        REQUIRE(p_home != nullptr);
+        CHECK(std::ranges::contains(p_home->required(), markId));
+        auto const* p_battle = built->catalog().findPage(battleId);
+        REQUIRE(p_battle != nullptr);
+        CHECK(std::ranges::contains(p_battle->forbidden(), markId));
+
+        // Asking twice is refused by name rather than writing a second
+        // reference the catalog would then reject as a duplicate.
+        auto const again = referenceElementOnPage(
+            referenced->draft,
+            ReferenceElementSpec{
+                .elementId = markId,
+                .pageId    = battleId,
+                .exercised = EditableExercised{
+                    .identify = annotation::ExercisedIdentify{},
+                },
+            }
+        );
+        CHECK_FALSE(again.has_value());
     }
 
-    TEST_CASE("unmarking a region placed on several pages is now allowed")
+    TEST_CASE("one element, two pages, one of them also identified by it")
     {
-        // Under v2 the shared mark is pure intent and groups nothing, so it can
-        // be taken off freely -- there are no copies to leave orphaned, only one
-        // element placed on N pages.
-        auto const actionId = annotation::test::recognizerId(k_actionId);
+        // Section 2.4 of the capability plan, which the editing layer could
+        // state in neither of its two halves before: one verb minted interact
+        // and read and refused identify, the other minted identify alone and
+        // refused a page that already referenced the element.
+        //
+        //   Page "home"   -> { interact }
+        //   Page "battle" -> { interact, identify }
+        //
+        // The element has to declare both, because a reference may only
+        // exercise what the element declares -- the plan's own block omits
+        // identify from the element, and no page could exercise it then.
+        auto const backId   = annotation::test::elementId(k_actionId);
+        auto const homeId   = annotation::test::pageId(k_pageId);
+        auto const battleId = annotation::test::pageId(k_secondPageId);
+
+        auto draft = makeAuthoringDraft(twoPageDocument());
+        draft.elements.emplace_back(
+            EditableElement{
+                .id   = backId,
+                .name = "back",
+                .capabilities = EditableCapabilities{
+                    .identify = annotation::Identify{},
+                    .interact = EditableInteract{},
+                },
+                .searchRoi = annotation::test::pixelRect(3, 3, 4, 4),
+                .appearances  = {
+                    EditableAppearance{
+                        .name         = "on_dark",
+                        .sourceId     = annotation::test::sourceId(k_sourceId),
+                        .templateRect = annotation::test::pixelRect(4, 4, 2, 2),
+                        .similarityBasisPoints = 9'000U,
+                    },
+                },
+            }
+        );
+        draft.references.emplace_back(
+            EditableReference{
+                .pageId    = homeId,
+                .elementId = backId,
+                .holding   = annotation::Holding::Owned,
+                .exercised = EditableExercised{
+                    .interact = annotation::ExercisedInteract{},
+                },
+            }
+        );
+        auto const elements = draft.elements.size();
+
+        auto const referenced = referenceElementOnPage(
+            std::move(draft),
+            ReferenceElementSpec{
+                .elementId = backId,
+                .pageId    = battleId,
+                .exercised = EditableExercised{
+                    .identify = annotation::ExercisedIdentify{
+                        .role = annotation::SignatureRole::Required,
+                    },
+                    .interact = annotation::ExercisedInteract{},
+                },
+            }
+        );
+        REQUIRE(referenced.has_value());
+
+        auto const borrowed = std::ranges::find_if(
+            referenced->draft.references,
+            [backId, battleId](EditableReference const& reference)
+            {
+                return reference.pageId == battleId
+                    && reference.elementId == backId;
+            }
+        );
+        REQUIRE(borrowed != referenced->draft.references.end());
+
+        // One row carrying both uses. Two rows over one element are not a
+        // second way to say this: the catalog refuses a page that references
+        // the same element twice.
+        CHECK(borrowed->exercised.identify.has_value());
+        CHECK(borrowed->exercised.interact.has_value());
+        CHECK(borrowed->holding == annotation::Holding::Referenced);
+        CHECK_FALSE(borrowed->searchRoi.has_value());
+
+        auto const built = buildAuthoringDocument(referenced->draft);
+        REQUIRE(built.has_value());
+
+        // Same pixels, same id, two uses. The signature derives from the
+        // reference that exercises identify, so battle is identified by the
+        // back button and home -- which only clicks it -- is not.
+        CHECK(built->elements().size() == elements);
+        auto const* p_battle = built->catalog().findPage(battleId);
+        REQUIRE(p_battle != nullptr);
+        CHECK(std::ranges::contains(p_battle->required(), backId));
+        auto const* p_home = built->catalog().findPage(homeId);
+        REQUIRE(p_home != nullptr);
+        CHECK_FALSE(std::ranges::contains(p_home->required(), backId));
+        CHECK_FALSE(std::ranges::contains(p_home->forbidden(), backId));
+    }
+
+    TEST_CASE("a reference exercises what was asked for and inherits what was not")
+    {
+        // Two halves of one rule. Asking for identify on an element that also
+        // declares interact grants no click: exercising interact IS the
+        // authorisation, and a page taking up a mark as evidence did not ask
+        // for it. Asking for nothing inherits the element's placement uses --
+        // and its search region, which is the default a caller gets by not
+        // naming one rather than a case they opt into.
+        auto const backId   = annotation::test::elementId(k_actionId);
+        auto const homeId   = annotation::test::pageId(k_pageId);
+        auto const battleId = annotation::test::pageId(k_secondPageId);
+        auto const onBattle = [backId, battleId](
+                                  EditableReference const& reference
+                              )
+        {
+            return reference.pageId == battleId
+                && reference.elementId == backId;
+        };
+
+        auto draft = makeAuthoringDraft(twoPageDocument());
+        draft.elements.emplace_back(
+            EditableElement{
+                .id   = backId,
+                .name = "back",
+                .capabilities = EditableCapabilities{
+                    .identify = annotation::Identify{},
+                    .interact = EditableInteract{},
+                },
+                .searchRoi = annotation::test::pixelRect(3, 3, 4, 4),
+                .appearances  = {
+                    EditableAppearance{
+                        .name         = "on_dark",
+                        .sourceId     = annotation::test::sourceId(k_sourceId),
+                        .templateRect = annotation::test::pixelRect(4, 4, 2, 2),
+                        .similarityBasisPoints = 9'000U,
+                    },
+                },
+            }
+        );
+        draft.references.emplace_back(
+            EditableReference{
+                .pageId    = homeId,
+                .elementId = backId,
+                .holding   = annotation::Holding::Owned,
+                .exercised = EditableExercised{
+                    .interact = annotation::ExercisedInteract{},
+                },
+            }
+        );
+
+        auto const evidenceOnly = referenceElementOnPage(
+            draft,
+            ReferenceElementSpec{
+                .elementId = backId,
+                .pageId    = battleId,
+                .exercised = EditableExercised{
+                    .identify = annotation::ExercisedIdentify{},
+                },
+            }
+        );
+        REQUIRE(evidenceOnly.has_value());
+        auto const signing = std::ranges::find_if(
+            evidenceOnly->draft.references,
+            onBattle
+        );
+        REQUIRE(signing != evidenceOnly->draft.references.end());
+        CHECK_FALSE(signing->exercised.interact.has_value());
+
+        auto const placed = referenceElementOnPage(
+            std::move(draft),
+            ReferenceElementSpec{
+                .elementId = backId,
+                .pageId    = battleId,
+            }
+        );
+        REQUIRE(placed.has_value());
+        auto const inheriting = std::ranges::find_if(
+            placed->draft.references,
+            onBattle
+        );
+        REQUIRE(inheriting != placed->draft.references.end());
+        CHECK(inheriting->exercised.interact.has_value());
+        CHECK_FALSE(inheriting->exercised.identify.has_value());
+        CHECK_FALSE(inheriting->searchRoi.has_value());
+    }
+
+    TEST_CASE("a reference may not exercise identify and refine a region at once")
+    {
+        // The anchor pass reads the element-level region, before any page is
+        // known, so a per-page refinement on a signature member would search
+        // the same pixels a second time in the same cycle. The spec can hold
+        // the pair because the row it writes does; the refusal names the
+        // element, ahead of the catalog stating the same rule in its own terms.
+        auto const markId   = annotation::test::elementId(k_anchorId);
+        auto const battleId = annotation::test::pageId(k_secondPageId);
+        auto const onBattle = [markId, battleId](
+                                  EditableReference const& reference
+                              )
+        {
+            return reference.pageId == battleId && reference.elementId == markId;
+        };
+
+        auto draft = makeAuthoringDraft(twoPageDocument());
+        std::erase_if(draft.references, onBattle);
+
+        auto const refused = referenceElementOnPage(
+            draft,
+            ReferenceElementSpec{
+                .elementId = markId,
+                .pageId    = battleId,
+                .exercised = EditableExercised{
+                    .identify = annotation::ExercisedIdentify{},
+                },
+                .searchRoi = annotation::test::pixelRect(0, 0, 4, 4),
+            }
+        );
+        CHECK_FALSE(refused.has_value());
+
+        // The control: the same request without the refinement is taken, so
+        // the refusal is about the pair rather than about either half.
+        auto const accepted = referenceElementOnPage(
+            std::move(draft),
+            ReferenceElementSpec{
+                .elementId = markId,
+                .pageId    = battleId,
+                .exercised = EditableExercised{
+                    .identify = annotation::ExercisedIdentify{},
+                },
+            }
+        );
+        CHECK(accepted.has_value());
+    }
+
+    TEST_CASE("a page may not identify by an element that declares no identify")
+    {
+        // Pixels that cannot be evidence cannot enter a signature. Refusing it
+        // here rather than letting the catalog's subset rule catch it is what
+        // lets the message name the element the author typed.
+        auto const battleId = annotation::test::pageId(k_secondPageId);
 
         auto draft = makeAuthoringDraft(document());
-        draft.placements.emplace_back(
-            EditablePlacement{
-                .pageId    = annotation::test::pageId(k_secondPageId),
-                .elementId = actionId,
-                .searchRoi = annotation::test::pixelRect(3, 3, 4, 4),
-            }
-        );
         draft.pages.emplace_back(
             EditablePage{
-                .id        = annotation::test::pageId(k_secondPageId),
-                .name      = "battle",
-                .required  = {},
-                .forbidden = {annotation::test::recognizerId(k_anchorId)},
+                .id   = battleId,
+                .name = "battle",
             }
         );
-        REQUIRE(pagesPlacedOn(draft, actionId).size() == 2U);
 
-        auto const unmarked = setRegionShared(std::move(draft), actionId, false);
-        REQUIRE(unmarked.has_value());
-        CHECK_FALSE(recognizerIn(*unmarked, actionId).shared);
+        auto const referenced = referenceElementOnPage(
+            std::move(draft),
+            ReferenceElementSpec{
+                .elementId = annotation::test::elementId(k_actionId),
+                .pageId    = battleId,
+                .exercised = EditableExercised{
+                    .identify = annotation::ExercisedIdentify{},
+                },
+            }
+        );
+        CHECK_FALSE(referenced.has_value());
     }
 
-    TEST_CASE("moving an element's template moves it on every page it is placed")
+    TEST_CASE("pointing a page's evidence at a mark borrows it and keeps its region")
+    {
+        // The role verb reaches the same rules through the same function.
+        // Minting yields Referenced, because a page taking up a mark whose
+        // home is elsewhere is borrowing it -- claiming to own it is the
+        // contradiction the catalog refuses once a second page does the same.
+        auto const markId   = annotation::test::elementId(k_anchorId);
+        auto const actionId = annotation::test::elementId(k_actionId);
+        auto const battleId = annotation::test::pageId(k_secondPageId);
+        auto const onBattle = [markId, battleId](
+                                  EditableReference const& reference
+                              )
+        {
+            return reference.pageId == battleId && reference.elementId == markId;
+        };
+
+        auto draft = makeAuthoringDraft(twoPageDocument());
+        std::erase_if(draft.references, onBattle);
+
+        auto const pointed = setReferenceIdentifyRole(
+            draft,
+            markId,
+            battleId,
+            annotation::SignatureRole::Forbidden
+        );
+        REQUIRE(pointed.has_value());
+        auto const minted = std::ranges::find_if(pointed->references, onBattle);
+        REQUIRE(minted != pointed->references.end());
+        CHECK(minted->holding == annotation::Holding::Referenced);
+        CHECK(buildAuthoringDocument(*pointed).has_value());
+
+        // A page whose reference already refines a region is refused rather
+        // than having the refinement quietly dropped to make room: both are
+        // measurements the author made, and which one goes is theirs to say.
+        auto const homeId = annotation::test::pageId(k_pageId);
+        auto refining     = makeAuthoringDraft(document());
+        for (auto& element : refining.elements)
+        {
+            if (element.id == actionId)
+            {
+                element.capabilities.identify = annotation::Identify{};
+            }
+        }
+        auto const clickable = std::ranges::find_if(
+            refining.references,
+            [actionId](EditableReference const& reference)
+            {
+                return reference.elementId == actionId;
+            }
+        );
+        REQUIRE(clickable != refining.references.end());
+        clickable->searchRoi = annotation::test::pixelRect(3, 3, 4, 4);
+
+        auto const refused = setReferenceIdentifyRole(
+            refining,
+            actionId,
+            homeId,
+            annotation::SignatureRole::Required
+        );
+        CHECK_FALSE(refused.has_value());
+
+        // The control: the same page, the same element, once the refinement is
+        // withdrawn -- so the refusal is about the region and not about the
+        // reference already existing.
+        clickable->searchRoi.reset();
+        auto const accepted = setReferenceIdentifyRole(
+            std::move(refining),
+            actionId,
+            homeId,
+            annotation::SignatureRole::Required
+        );
+        REQUIRE(accepted.has_value());
+        auto const promoted = std::ranges::find_if(
+            accepted->references,
+            [actionId](EditableReference const& reference)
+            {
+                return reference.elementId == actionId;
+            }
+        );
+        REQUIRE(promoted != accepted->references.end());
+        CHECK(promoted->exercised.identify.has_value());
+        CHECK(promoted->exercised.interact.has_value());
+    }
+
+    TEST_CASE("moving an element's appearance moves it on every page that has it")
     {
         // Drawing the element once is only worth anything if correcting it
-        // corrects it everywhere; under v2 that is one element and two placements.
-        auto const actionId = annotation::test::recognizerId(k_actionId);
+        // corrects it everywhere: one element, one appearance, two references.
+        auto const actionId = annotation::test::elementId(k_actionId);
         auto const moved    = annotation::test::pixelRect(3, 3, 2, 2);
 
         auto draft = makeAuthoringDraft(document());
-        draft.placements.emplace_back(
-            EditablePlacement{
+        draft.references.emplace_back(
+            EditableReference{
                 .pageId    = annotation::test::pageId(k_secondPageId),
                 .elementId = actionId,
+                .holding   = annotation::Holding::Referenced,
+                .exercised = EditableExercised{
+                    .interact = annotation::ExercisedInteract{},
+                },
                 .searchRoi = annotation::test::pixelRect(0, 0, 8, 8),
             }
         );
@@ -755,23 +1221,33 @@ namespace uf::workbench
             moved
         );
         REQUIRE(retemplated.has_value());
-        CHECK(retemplated->otherPlacements == 2U);
-        CHECK(recognizerIn(retemplated->draft, actionId).templateRect == moved);
-        // Both placements still reference the one, corrected element.
-        CHECK(pagesPlacedOn(retemplated->draft, actionId).size() == 2U);
+        CHECK(retemplated->referencingPages == 2U);
+        auto const changed = elementIn(retemplated->draft, actionId);
+        REQUIRE(changed.appearances.size() == 1U);
+        CHECK(changed.appearances.front().templateRect == moved);
+        // Both references still name the one, corrected element.
+        CHECK(pagesReferencing(retemplated->draft, actionId).size() == 2U);
     }
 
-    TEST_CASE("a template that outgrows a placement's range is refused")
+    TEST_CASE("a template that outgrows a reference's range is refused")
     {
         // Widening a range the author drew would enlarge both the search cost and
-        // the surface for a false match, so the author is told to fix it.
-        auto const actionId = annotation::test::recognizerId(k_actionId);
+        // the surface for a false match, so the author is told to fix it. The
+        // moved template still fits the element's own range, so the refusal can
+        // only come from the reference's narrower one.
+        auto const actionId = annotation::test::elementId(k_actionId);
+        auto const outgrown = annotation::test::pixelRect(0, 0, 4, 4);
 
         auto draft = makeAuthoringDraft(document());
-        draft.placements.emplace_back(
-            EditablePlacement{
+        REQUIRE(elementIn(draft, actionId).searchRoi.width() == 4U);
+        draft.references.emplace_back(
+            EditableReference{
                 .pageId    = annotation::test::pageId(k_secondPageId),
                 .elementId = actionId,
+                .holding   = annotation::Holding::Referenced,
+                .exercised = EditableExercised{
+                    .interact = annotation::ExercisedInteract{},
+                },
                 .searchRoi = annotation::test::pixelRect(4, 4, 3, 3),
             }
         );
@@ -779,9 +1255,19 @@ namespace uf::workbench
         auto const retemplated = setElementTemplateRect(
             std::move(draft),
             actionId,
-            annotation::test::pixelRect(0, 0, 5, 5)
+            outgrown
         );
         CHECK_FALSE(retemplated.has_value());
+
+        // The control: without the narrower reference the same move is accepted,
+        // so the refusal is about that range and not about the template.
+        CHECK(
+            setElementTemplateRect(
+                makeAuthoringDraft(document()),
+                actionId,
+                outgrown
+            ).has_value()
+        );
     }
 
     TEST_CASE("recording a screen rewrites its case rather than adding a second")
@@ -938,7 +1424,7 @@ namespace uf::workbench
         auto const added = addPageMember(
             makeAuthoringDraft(document()),
             PageMemberSpec{
-                .recognizerId = annotation::test::recognizerId(k_awayId),
+                .elementId    = annotation::test::elementId(k_awayId),
                 .pageId       = annotation::test::pageId(k_secondPageId),
                 .sourceId     = annotation::test::sourceId(k_sourceId),
                 .templateRect = annotation::test::pixelRect(0, 0, 2, 2),
@@ -950,240 +1436,90 @@ namespace uf::workbench
         CHECK_FALSE(added.has_value());
     }
 
-    TEST_CASE("becoming an action target authorizes a page in the same edit")
+    TEST_CASE("deleting an element withdraws it from the pages that name it")
     {
-        // A page anchor cannot authorize a page and an action target must, so
-        // neither half of this change can be committed on its own.
-        auto const awayId = annotation::test::recognizerId(k_awayId);
-        auto const pageId = annotation::test::pageId(k_pageId);
-
-        auto const retyped = retypeRecognizer(
-            makeAuthoringDraft(variantDocument()),
-            awayId,
-            annotation::AnnotationType::ActionTarget
-        );
-        REQUIRE(retyped.has_value());
-        REQUIRE(retyped->authorizedPage.has_value());
-        CHECK(*retyped->authorizedPage == pageId);
-
-        auto const changed = recognizerIn(retyped->draft, awayId);
-        CHECK(changed.annotationType == annotation::AnnotationType::ActionTarget);
-        auto const placed = pagesPlacedOn(retyped->draft, awayId);
-        REQUIRE(placed.size() == 1U);
-        CHECK(placed.front() == pageId);
-
-        // Only a page anchor may hold a signature role, so the recognizer is
-        // withdrawn from the page it was forbidden on.
-        auto const page = pageIn(retyped->draft, pageId);
-        CHECK(page.forbidden.empty());
-        CHECK(page.required.size() == 1U);
-        CHECK(retyped->withdrawnRoles == 1U);
-        CHECK(retyped->clearedAuthorizations == 0U);
-        CHECK_FALSE(retyped->clearedClick);
-
-        CHECK(buildAuthoringDocument(retyped->draft).has_value());
-    }
-
-    TEST_CASE("an action target is authorized on the page it anchored")
-    {
-        // The recognizer anchors the second page, so authorizing the first would
-        // be arbitrary: it is known to appear on its own page and nowhere else.
-        auto const awayId   = annotation::test::recognizerId(k_awayId);
-        auto const homeId   = annotation::test::pageId(k_pageId);
+        auto const awayId   = annotation::test::elementId(k_awayId);
         auto const battleId = annotation::test::pageId(k_secondPageId);
 
-        auto const draft = makeAuthoringDraft(twoPageDocument());
-        REQUIRE(draft.pages.front().id == homeId);
-
-        auto const retyped = retypeRecognizer(
-            draft,
-            awayId,
-            annotation::AnnotationType::ActionTarget
-        );
-        REQUIRE(retyped.has_value());
-        REQUIRE(retyped->authorizedPage.has_value());
-        CHECK(*retyped->authorizedPage == battleId);
-
-        auto const placed = pagesPlacedOn(retyped->draft, awayId);
-        REQUIRE(placed.size() == 1U);
-        CHECK(placed.front() == battleId);
-
-        CHECK(buildAuthoringDocument(retyped->draft).has_value());
-    }
-
-    TEST_CASE("becoming a page anchor drops the click and the authorizations")
-    {
-        auto const actionId = annotation::test::recognizerId(k_actionId);
-
-        auto const retyped = retypeRecognizer(
-            makeAuthoringDraft(document()),
-            actionId,
-            annotation::AnnotationType::PageAnchor
-        );
-        REQUIRE(retyped.has_value());
-        CHECK_FALSE(retyped->authorizedPage.has_value());
-
-        auto const changed = recognizerIn(retyped->draft, actionId);
-        CHECK(changed.annotationType == annotation::AnnotationType::PageAnchor);
-        CHECK(pagesPlacedOn(retyped->draft, actionId).empty());
-        CHECK_FALSE(changed.defaultClick.has_value());
-
-        // The conversion is lossy in both fields, so both are reported.
-        CHECK(retyped->clearedAuthorizations == 1U);
-        CHECK(retyped->clearedClick);
-        CHECK(retyped->withdrawnRoles == 0U);
-
-        CHECK(buildAuthoringDocument(retyped->draft).has_value());
-    }
-
-    TEST_CASE("becoming an info region keeps the authorizations without the click")
-    {
-        auto const actionId = annotation::test::recognizerId(k_actionId);
-        auto const pageId   = annotation::test::pageId(k_pageId);
-
-        auto const retyped = retypeRecognizer(
-            makeAuthoringDraft(document()),
-            actionId,
-            annotation::AnnotationType::InfoRegion
-        );
-        REQUIRE(retyped.has_value());
-        CHECK_FALSE(retyped->authorizedPage.has_value());
-
-        auto const changed = recognizerIn(retyped->draft, actionId);
-        CHECK(changed.annotationType == annotation::AnnotationType::InfoRegion);
-        auto const placed = pagesPlacedOn(retyped->draft, actionId);
-        REQUIRE(placed.size() == 1U);
-        CHECK(placed.front() == pageId);
-        CHECK_FALSE(changed.defaultClick.has_value());
-        CHECK(retyped->clearedAuthorizations == 0U);
-        CHECK(retyped->clearedClick);
-
-        CHECK(buildAuthoringDocument(retyped->draft).has_value());
-    }
-
-    TEST_CASE("retyping the only recognizer a page names is refused")
-    {
-        // Withdrawing the anchor would leave the page naming nothing, which no
-        // repair inside this recognizer can fix.
-        auto const anchorId = annotation::test::recognizerId(k_anchorId);
-
-        auto const retyped = retypeRecognizer(
-            makeAuthoringDraft(document()),
-            anchorId,
-            annotation::AnnotationType::ActionTarget
-        );
-        REQUIRE_FALSE(retyped.has_value());
-    }
-
-    TEST_CASE("becoming an action target with no page to authorize is refused")
-    {
-        auto const anchorId = annotation::test::recognizerId(k_anchorId);
-
-        // A freshly captured project: recognizers but no page yet.
-        auto draft = makeAuthoringDraft(document());
-        draft.pages.clear();
-        draft.placements.clear();
-
-        auto const retyped = retypeRecognizer(
-            std::move(draft),
-            anchorId,
-            annotation::AnnotationType::ActionTarget
-        );
-        REQUIRE_FALSE(retyped.has_value());
-    }
-
-    TEST_CASE("retyping to the type already held changes nothing")
-    {
-        auto const anchorId = annotation::test::recognizerId(k_anchorId);
-        auto const original = document();
-
-        auto const retyped = retypeRecognizer(
-            makeAuthoringDraft(original),
-            anchorId,
-            annotation::AnnotationType::PageAnchor
-        );
-        REQUIRE(retyped.has_value());
-        CHECK_FALSE(retyped->authorizedPage.has_value());
-
-        auto const rebuilt = buildAuthoringDocument(retyped->draft);
-        REQUIRE(rebuilt.has_value());
-        CHECK(
-            annotation::serializeAuthoringDocument(*rebuilt)
-            == annotation::serializeAuthoringDocument(original)
-        );
-    }
-
-    TEST_CASE("deleting a recognizer withdraws it from the pages that name it")
-    {
-        auto const awayId   = annotation::test::recognizerId(k_awayId);
-        auto const battleId = annotation::test::pageId(k_secondPageId);
-
-        auto const deleted = deleteRecognizer(
+        auto const deleted = deleteElement(
             makeAuthoringDraft(twoPageDocument()),
             awayId
         );
         REQUIRE(deleted.has_value());
         CHECK(deleted->withdrawnRoles == 1U);
-        CHECK(deleted->draft.recognizers.size() == 1U);
-        CHECK(pageIn(deleted->draft, battleId).required.empty());
+        CHECK(deleted->draft.elements.size() == 1U);
+        CHECK_FALSE(signatureRoleIn(deleted->draft, battleId, awayId).has_value());
 
         CHECK(buildAuthoringDocument(deleted->draft).has_value());
     }
 
-    TEST_CASE("deleting the only recognizer a page names is refused")
+    TEST_CASE("deleting the only mark a page identifies by is refused")
     {
         // The page would be left identifying no screen, and only the author can
-        // say whether the page goes too or another anchor takes over.
-        auto const anchorId = annotation::test::recognizerId(k_anchorId);
+        // say whether the page goes too or another mark takes over.
+        auto const anchorId = annotation::test::elementId(k_anchorId);
 
-        auto const deleted = deleteRecognizer(
+        auto const deleted = deleteElement(
             makeAuthoringDraft(document()),
             anchorId
         );
         REQUIRE_FALSE(deleted.has_value());
     }
 
-    TEST_CASE("deleting a page clears it from the recognizers that authorize it")
+    TEST_CASE("deleting a page withdraws every reference it made")
     {
-        // The action target authorizes the page and one other, so the deletion
-        // leaves it authorized somewhere and may proceed.
-        auto const actionId = annotation::test::recognizerId(k_actionId);
+        // The clickable element is exercised by this page and one other, so the
+        // deletion leaves it reachable somewhere and may proceed.
+        auto const actionId = annotation::test::elementId(k_actionId);
         auto const homeId   = annotation::test::pageId(k_pageId);
         auto const battleId = annotation::test::pageId(k_secondPageId);
 
         auto widened = makeAuthoringDraft(document());
-        // Place the action target on the second page too, so deleting the first
-        // leaves it placed and may proceed.
-        widened.placements.emplace_back(
-            EditablePlacement{
-                .pageId    = battleId,
-                .elementId = actionId,
-                .searchRoi = annotation::test::pixelRect(3, 3, 4, 4),
+        widened.pages.emplace_back(
+            EditablePage{
+                .id   = battleId,
+                .name = "battle",
             }
         );
         // Two pages may not carry the same signature, so the second page forbids
-        // the anchor the first requires.
-        widened.pages.emplace_back(
-            EditablePage{
-                .id        = battleId,
-                .name      = "battle",
-                .required  = {},
-                .forbidden = {annotation::test::recognizerId(k_anchorId)},
+        // the mark the first requires.
+        widened.references.emplace_back(
+            EditableReference{
+                .pageId    = battleId,
+                .elementId = annotation::test::elementId(k_anchorId),
+                .holding   = annotation::Holding::Referenced,
+                .exercised = EditableExercised{
+                    .identify = annotation::ExercisedIdentify{
+                        .role = annotation::SignatureRole::Forbidden,
+                    },
+                },
+            }
+        );
+        widened.references.emplace_back(
+            EditableReference{
+                .pageId    = battleId,
+                .elementId = actionId,
+                .holding   = annotation::Holding::Referenced,
+                .exercised = EditableExercised{
+                    .interact = annotation::ExercisedInteract{},
+                },
             }
         );
         // The document's regression expects the page under test to resolve, which
-        // is refused on its own; this case is about the placements.
+        // is refused on its own; this case is about the references.
         REQUIRE(widened.regressions.size() == 1U);
         widened.regressions.at(0).expectation = annotation::UnknownRegression{};
 
         auto const deleted = deletePage(std::move(widened), homeId);
         REQUIRE(deleted.has_value());
-        CHECK(deleted->clearedAuthorizations == 1U);
+        // Both of the home page's references went with it: the mark's and the
+        // clickable element's.
+        CHECK(deleted->withdrawnReferences == 2U);
         CHECK(deleted->draft.pages.size() == 1U);
-        CHECK(pagesPlacedOn(deleted->draft, actionId).size() == 1U);
+        CHECK(pagesReferencing(deleted->draft, actionId).size() == 1U);
     }
 
-    TEST_CASE("deleting an action target's only authorized page is refused")
+    TEST_CASE("deleting the only page an element can be clicked on is refused")
     {
         auto const pageId = annotation::test::pageId(k_pageId);
 
@@ -1199,12 +1535,25 @@ namespace uf::workbench
         // undeletable.
         auto const pageId = annotation::test::pageId(k_pageId);
 
+        auto const actionId = annotation::test::elementId(k_actionId);
+
         auto draft = makeAuthoringDraft(document());
-        draft.placements.clear();
-        for (auto& recognizer : draft.recognizers)
-        {
-            recognizer.annotationType = annotation::AnnotationType::PageAnchor;
-        }
+        // The clickable element would be left unreachable, which is refused on
+        // its own; this case is about the regression, so it goes first.
+        std::erase_if(
+            draft.elements,
+            [actionId](EditableElement const& element)
+            {
+                return element.id == actionId;
+            }
+        );
+        std::erase_if(
+            draft.references,
+            [actionId](EditableReference const& reference)
+            {
+                return reference.elementId == actionId;
+            }
+        );
         REQUIRE(draft.regressions.size() == 1U);
         draft.regressions.at(0).expectation = annotation::ResolvedRegression{
             .pageId = pageId,
@@ -1222,8 +1571,8 @@ namespace uf::workbench
         auto const sourceId = annotation::test::sourceId(k_sourceId);
 
         auto draft = makeAuthoringDraft(document());
-        draft.recognizers.clear();
-        draft.placements.clear();
+        draft.elements.clear();
+        draft.references.clear();
         draft.pages.clear();
         REQUIRE(draft.regressions.size() == 1U);
 
@@ -1236,10 +1585,10 @@ namespace uf::workbench
         CHECK(buildAuthoringDocument(deleted->draft).has_value());
     }
 
-    TEST_CASE("deleting a source still carrying recognizers is refused")
+    TEST_CASE("deleting a source still carrying appearances is refused")
     {
-        // A recognizer's rectangles are only meaningful against the image they
-        // were drawn on, so the source cannot leave without them.
+        // An appearance is only meaningful against the image it was cut from, so
+        // the source cannot leave without it.
         auto const sourceId = annotation::test::sourceId(k_sourceId);
 
         auto const deleted = deleteSource(
@@ -1249,23 +1598,11 @@ namespace uf::workbench
         REQUIRE_FALSE(deleted.has_value());
     }
 
-    TEST_CASE("retyping a recognizer the draft does not hold is refused")
-    {
-        auto const strangerId = annotation::test::recognizerId(k_awayId);
-
-        auto const retyped = retypeRecognizer(
-            makeAuthoringDraft(document()),
-            strangerId,
-            annotation::AnnotationType::InfoRegion
-        );
-        REQUIRE_FALSE(retyped.has_value());
-    }
-
     TEST_CASE("authoring draft preserves the complete canonical document")
     {
         auto const documents = std::vector<annotation::AuthoringDocument>{
             document(),
-            variantDocument(),
+            appearanceDocument(),
         };
         for (auto const& original : documents)
         {
@@ -1285,17 +1622,17 @@ namespace uf::workbench
         auto history = AuthoringEditHistory{document()};
         auto renamed = history.draft();
 
-        renamed.recognizers.at(0).name = "renamed_marker";
+        renamed.elements.at(0).name = "renamed_marker";
 
         auto const applied = history.apply(renamed);
         REQUIRE(applied.has_value());
         CHECK(*applied);
-        CHECK(recognizerName(history, 0) == "renamed_marker");
+        CHECK(elementName(history, 0) == "renamed_marker");
         CHECK(history.canUndo());
         CHECK_FALSE(history.canRedo());
 
         CHECK(history.undo());
-        CHECK(recognizerName(history, 0) == "home_marker");
+        CHECK(elementName(history, 0) == "home_marker");
         CHECK_FALSE(history.canUndo());
         CHECK(history.canRedo());
         CHECK(
@@ -1304,7 +1641,7 @@ namespace uf::workbench
         );
 
         CHECK(history.redo());
-        CHECK(recognizerName(history, 0) == "renamed_marker");
+        CHECK(elementName(history, 0) == "renamed_marker");
         CHECK(history.canUndo());
         CHECK_FALSE(history.canRedo());
     }
@@ -1318,13 +1655,13 @@ namespace uf::workbench
         auto const loaded = history.position();
 
         auto first = history.draft();
-        first.recognizers.at(0).name = "first_name";
+        first.elements.at(0).name = "first_name";
         REQUIRE(history.apply(first).has_value());
         auto const afterFirst = history.position();
         CHECK(afterFirst != loaded);
 
         auto second = history.draft();
-        second.recognizers.at(0).name = "second_name";
+        second.elements.at(0).name = "second_name";
         REQUIRE(history.apply(second).has_value());
         CHECK(history.position() != afterFirst);
 
@@ -1340,7 +1677,7 @@ namespace uf::workbench
         // A fresh edit past a restored position mints a new identity rather than
         // reusing the abandoned redo one, so it never collides with a saved state.
         auto branch = history.draft();
-        branch.recognizers.at(0).name = "branch_name";
+        branch.elements.at(0).name = "branch_name";
         REQUIRE(history.apply(branch).has_value());
         CHECK(history.position() != loaded);
         CHECK(history.position() != afterFirst);
@@ -1351,22 +1688,22 @@ namespace uf::workbench
         auto history = AuthoringEditHistory{document()};
         auto renamed = history.draft();
 
-        renamed.recognizers.at(0).name = "renamed_marker";
+        renamed.elements.at(0).name = "renamed_marker";
         REQUIRE(history.apply(renamed).has_value());
         REQUIRE(history.undo());
         REQUIRE(history.canRedo());
 
         auto invalid = history.draft();
 
-        invalid.recognizers.at(0).name.clear();
+        invalid.elements.at(0).name.clear();
 
         auto const applied = history.apply(invalid);
         REQUIRE_FALSE(applied.has_value());
-        CHECK(recognizerName(history, 0) == "home_marker");
+        CHECK(elementName(history, 0) == "home_marker");
         CHECK_FALSE(history.canUndo());
         CHECK(history.canRedo());
         CHECK(history.redo());
-        CHECK(recognizerName(history, 0) == "renamed_marker");
+        CHECK(elementName(history, 0) == "renamed_marker");
     }
 
     TEST_CASE("authoring history ignores identical edits and clears abandoned redo")
@@ -1380,7 +1717,7 @@ namespace uf::workbench
 
         auto first = history.draft();
 
-        first.recognizers.at(0).name = "first_name";
+        first.elements.at(0).name = "first_name";
         REQUIRE(history.apply(first).has_value());
         REQUIRE(history.undo());
         CHECK(history.canRedo());
@@ -1393,9 +1730,9 @@ namespace uf::workbench
 
         auto branch = history.draft();
 
-        branch.recognizers.at(0).name = "branch_name";
+        branch.elements.at(0).name = "branch_name";
         REQUIRE(history.apply(branch).has_value());
-        CHECK(recognizerName(history, 0) == "branch_name");
+        CHECK(elementName(history, 0) == "branch_name");
         CHECK_FALSE(history.canRedo());
     }
 
@@ -1406,22 +1743,22 @@ namespace uf::workbench
 
         auto first = history.draft();
 
-        first.recognizers.at(0).name = "first_name";
+        first.elements.at(0).name = "first_name";
         REQUIRE(history.apply(first).has_value());
 
         auto second = history.draft();
 
-        second.recognizers.at(0).name = "second_name";
+        second.elements.at(0).name = "second_name";
         REQUIRE(history.apply(second).has_value());
 
         REQUIRE(history.undo());
         REQUIRE(history.undo());
-        CHECK(recognizerName(history, 0) == "home_marker");
+        CHECK(elementName(history, 0) == "home_marker");
 
         CHECK(history.redo());
-        CHECK(recognizerName(history, 0) == "first_name");
+        CHECK(elementName(history, 0) == "first_name");
         CHECK(history.redo());
-        CHECK(recognizerName(history, 0) == "second_name");
+        CHECK(elementName(history, 0) == "second_name");
         CHECK_FALSE(history.redo());
     }
 
@@ -1436,7 +1773,7 @@ namespace uf::workbench
         {
             auto next = history.draft();
 
-            next.recognizers.at(0).name = "marker_" + std::to_string(index);
+            next.elements.at(0).name = "marker_" + std::to_string(index);
 
             auto const applied = history.apply(next);
             REQUIRE(applied.has_value());
@@ -1452,7 +1789,7 @@ namespace uf::workbench
             REQUIRE(history.undo());
         }
         CHECK_FALSE(history.undo());
-        CHECK(recognizerName(history, 0) == "marker_0");
+        CHECK(elementName(history, 0) == "marker_0");
     }
 
     namespace
@@ -1493,7 +1830,7 @@ namespace uf::workbench
                 96
             );
             auto const sourceId = annotation::test::sourceId(k_menuSourceId);
-            auto const anchorId = annotation::test::recognizerId(k_menuAnchorId);
+            auto const anchorId = annotation::test::elementId(k_menuAnchorId);
             auto const pageId   = annotation::test::pageId(k_menuPageId);
 
             auto const hash = annotation::sha256(
@@ -1516,28 +1853,38 @@ namespace uf::workbench
                 colour_key_fixture::k_width,
                 colour_key_fixture::k_height
             );
-            auto element = annotation::Element::create(
-                fingerprint,
-                annotation::Element::Spec{
-                    .id           = anchorId,
-                    .name         = annotation::test::resourceName("menu_entry"),
-                    .sourceId     = sourceId,
-                    .templateRect = wholeCrop,
-                    .searchRoi    = wholeCrop,
-                    .threshold    = annotation::test::threshold(),
-                    .colourKey    = colourKey,
-                    .kind         = annotation::AnchorElement{},
-                }
+            auto appearances = std::vector<annotation::Appearance>{};
+            appearances.emplace_back(
+                annotation::test::appearance(
+                    "default",
+                    sourceId,
+                    wholeCrop,
+                    annotation::test::threshold(),
+                    colourKey
+                )
             );
-            REQUIRE(element.has_value());
+            auto element = annotation::test::element(
+                fingerprint,
+                anchorId,
+                "menu_entry",
+                annotation::test::capabilities(annotation::Identify{}),
+                wholeCrop,
+                std::move(appearances)
+            );
 
             auto created = annotation::AuthoringDocument::create(
                 annotation::test::projectId(),
                 fingerprint,
                 {*source},
-                {*element},
-                {annotation::test::page(pageId, "menu", {anchorId})},
-                {},
+                {std::move(element)},
+                {annotation::test::page(pageId, "menu")},
+                {
+                    annotation::test::reference(
+                        pageId,
+                        anchorId,
+                        annotation::test::identifiesAs()
+                    ),
+                },
                 {}
             );
             REQUIRE(created.has_value());
@@ -1633,14 +1980,15 @@ namespace uf::workbench
         REQUIRE(parsed.has_value());
         CHECK(annotation::serializeAuthoringDocument(*parsed) == text);
         REQUIRE(parsed->elements().size() == 1U);
-        CHECK(parsed->elements().front().colourKey() == key);
+        REQUIRE(parsed->elements().front().appearances().size() == 1U);
+        CHECK(parsed->elements().front().appearances().front().colourKey() == key);
 
-        // The draft the GUI edits through has to carry the key across both
-        // conversions, or every edit made in the workbench would silently drop
-        // it.
+        // The draft the editing layer works through has to carry the key across
+        // both conversions, or every edit made here would silently drop it.
         auto const draft = makeAuthoringDraft(*parsed);
-        REQUIRE(draft.recognizers.size() == 1U);
-        CHECK(draft.recognizers.at(0).colourKey == key);
+        REQUIRE(draft.elements.size() == 1U);
+        REQUIRE(draft.elements.at(0).appearances.size() == 1U);
+        CHECK(draft.elements.at(0).appearances.at(0).colourKey == key);
         auto const rebuilt = buildAuthoringDocument(draft);
         REQUIRE(rebuilt.has_value());
         CHECK(annotation::serializeAuthoringDocument(*rebuilt) == text);
@@ -1659,7 +2007,10 @@ namespace uf::workbench
         REQUIRE(parsed.has_value());
         CHECK(annotation::serializeAuthoringDocument(*parsed) == text);
         REQUIRE(parsed->elements().size() == 1U);
-        CHECK_FALSE(parsed->elements().front().colourKey().has_value());
+        REQUIRE(parsed->elements().front().appearances().size() == 1U);
+        CHECK_FALSE(
+            parsed->elements().front().appearances().front().colourKey().has_value()
+        );
 
         // The control for the case above: the same document with a key does emit
         // those bytes, so "no colour_key in the text" is a fact about the absent
@@ -1822,7 +2173,7 @@ namespace uf::workbench
     TEST_CASE("a colour key change undoes and redoes like any other edit")
     {
         auto history        = AuthoringEditHistory{document()};
-        auto const anchorId = annotation::test::recognizerId(k_anchorId);
+        auto const anchorId = annotation::test::elementId(k_anchorId);
         auto const key      = annotation::ColourKey::create(200, 40, 40, 9);
         REQUIRE(key.has_value());
 
@@ -1830,7 +2181,8 @@ namespace uf::workbench
         {
             auto const* element = history.document().findElement(anchorId);
             REQUIRE(element != nullptr);
-            return element->colourKey();
+            REQUIRE(element->appearances().size() == 1U);
+            return element->appearances().front().colourKey();
         };
         REQUIRE_FALSE(storedKey().has_value());
 

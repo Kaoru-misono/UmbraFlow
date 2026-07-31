@@ -3,6 +3,7 @@
 #include "authoring-edit.hpp"
 
 #include <annotation/authoring-document.hpp>
+#include <annotation/capabilities.hpp>
 #include <annotation/resource.hpp>
 
 #include <algorithm>
@@ -15,27 +16,30 @@ namespace uf::workbench
     namespace
     {
         [[nodiscard]]
-        auto anchorRow(EditableRecognizer const& recognizer) -> PageView::AnchorRow
+        auto memberRow(
+            EditableElement const& element,
+            EditableReference const& reference
+        ) -> PageView::MemberRow
         {
-            return PageView::AnchorRow{
-                .id           = recognizer.id,
-                .name         = recognizer.name,
-                .templateRect = recognizer.templateRect,
-                .searchRoi    = recognizer.searchRoi,
-                .shared       = recognizer.shared,
-            };
-        }
-
-        [[nodiscard]]
-        auto regionRow(EditableRecognizer const& recognizer) -> PageView::RegionRow
-        {
-            return PageView::RegionRow{
-                .id                  = recognizer.id,
-                .name                = recognizer.name,
-                .templateRect        = recognizer.templateRect,
-                .searchRoiOnThisPage = recognizer.searchRoi,
-                .clickOffset         = recognizer.defaultClick,
-                .shared              = recognizer.shared,
+            auto templateRect = std::optional<PixelRect>{};
+            if (auto const* p_appearance = primaryAppearance(element))
+            {
+                templateRect = p_appearance->templateRect;
+            }
+            auto clickOffset = std::optional<EditableTemplateOffset>{};
+            if (auto const& interact = element.capabilities.interact)
+            {
+                clickOffset = interact->clickOffset;
+            }
+            return PageView::MemberRow{
+                .id           = element.id,
+                .name         = element.name,
+                .templateRect = templateRect,
+                .searchRoiOnThisPage = reference.searchRoi.value_or(
+                    element.searchRoi
+                ),
+                .clickOffset = clickOffset,
+                .holding     = reference.holding,
             };
         }
 
@@ -77,88 +81,55 @@ namespace uf::workbench
             return std::nullopt;
         }
 
-        auto const rowFor = [&draft](annotation::RecognizerId member)
-            -> std::optional<PageView::AnchorRow>
-        {
-            auto const found = std::ranges::find(
-                draft.recognizers,
-                member,
-                &EditableRecognizer::id
-            );
-            if (found == draft.recognizers.end())
-            {
-                return std::nullopt;
-            }
-            return anchorRow(*found);
-        };
-
-        auto identifiedBy = std::vector<PageView::AnchorRow>{};
-        identifiedBy.reserve(page->required.size());
-        for (auto const& member : page->required)
-        {
-            if (auto row = rowFor(member))
-            {
-                identifiedBy.emplace_back(*std::move(row));
-            }
-        }
-
-        auto mustNotShow = std::vector<PageView::AnchorRow>{};
-        mustNotShow.reserve(page->forbidden.size());
-        for (auto const& member : page->forbidden)
-        {
-            if (auto row = rowFor(member))
-            {
-                mustNotShow.emplace_back(*std::move(row));
-            }
-        }
-
-        // Both interactive and info elements join a page through a placement,
-        // which carries this page's own search region. Iterating recognizers
-        // keeps the rows in a stable order and pulls the per-page ROI from the
-        // matching placement.
-        auto regions = std::vector<PageView::RegionRow>{};
-        auto infos   = std::vector<PageView::RegionRow>{};
-        for (auto const& recognizer : draft.recognizers)
-        {
-            auto const placement = std::ranges::find_if(
-                draft.placements,
-                [&recognizer, id](EditablePlacement const& candidate)
-                {
-                    return candidate.pageId == id
-                        && candidate.elementId == recognizer.id;
-                }
-            );
-            if (placement == draft.placements.end())
-            {
-                continue;
-            }
-            auto row = regionRow(recognizer);
-            row.searchRoiOnThisPage = placement->searchRoi;
-            if (
-                recognizer.annotationType
-                == annotation::AnnotationType::ActionTarget
-            )
-            {
-                regions.emplace_back(std::move(row));
-            }
-            else if (
-                recognizer.annotationType
-                == annotation::AnnotationType::InfoRegion
-            )
-            {
-                infos.emplace_back(std::move(row));
-            }
-        }
-
-        return PageView{
+        auto view = PageView{
             .id            = page->id,
             .name          = page->name,
             .claimedScreen = claimedScreenFor(draft, id),
-            .identifiedBy  = std::move(identifiedBy),
-            .mustNotShow   = std::move(mustNotShow),
-            .regions       = std::move(regions),
-            .infos         = std::move(infos),
         };
+
+        // One pass over the page's references. A reference exercising several
+        // capabilities puts the same row in several groups, which is the whole
+        // point of a set: nothing an element does on this page is invisible, and
+        // that is what once left a retyped region reachable only through undo.
+        for (auto const& reference : draft.references)
+        {
+            if (reference.pageId != id)
+            {
+                continue;
+            }
+            auto const element = std::ranges::find(
+                draft.elements,
+                reference.elementId,
+                &EditableElement::id
+            );
+            if (element == draft.elements.end())
+            {
+                continue;
+            }
+
+            auto const row = memberRow(*element, reference);
+            if (auto const& identify = reference.exercised.identify)
+            {
+                switch (identify->role)
+                {
+                case annotation::SignatureRole::Required:
+                    view.identifiedBy.emplace_back(row);
+                    break;
+                case annotation::SignatureRole::Forbidden:
+                    view.mustNotShow.emplace_back(row);
+                    break;
+                }
+            }
+            if (reference.exercised.interact.has_value())
+            {
+                view.regions.emplace_back(row);
+            }
+            if (reference.exercised.read.has_value())
+            {
+                view.infos.emplace_back(row);
+            }
+        }
+        return view;
     }
 
     auto PageView::all(AuthoringDraft const& draft) -> std::vector<PageView>
