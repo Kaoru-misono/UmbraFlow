@@ -10,6 +10,7 @@
 #include <annotation/recognition-runtime.hpp>
 #include <annotation/resource.hpp>
 
+#include <core/numeric/checked-cast.hpp>
 #include <core/time/monotonic-time.hpp>
 #include <core/types/integer.hpp>
 
@@ -22,11 +23,13 @@
 #include <doctest/doctest.h>
 
 #include <algorithm>
+#include <array>
 #include <cstddef>
 #include <limits>
 #include <optional>
 #include <span>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -1123,6 +1126,8 @@ namespace uf::workbench
 
     namespace
     {
+        // The element's own row: the fold across every appearance, which is what
+        // the runtime answers with.
         [[nodiscard]]
         auto findCell(
             ModelCheck const& check,
@@ -1134,7 +1139,32 @@ namespace uf::workbench
                 check.cells,
                 [&](ModelCheckCell const& cell)
                 {
-                    return cell.elementId == element && cell.screenId == screen;
+                    return cell.subject == ModelCellSubject::Element
+                        && cell.elementId == element
+                        && cell.screenId == screen;
+                }
+            );
+            return found == check.cells.end() ? nullptr : &*found;
+        }
+
+        // One appearance's own row, searched alone.
+        [[nodiscard]]
+        auto findAppearanceCell(
+            ModelCheck const& check,
+            annotation::ElementId element,
+            annotation::SourceId screen,
+            std::string_view appearance
+        ) -> ModelCheckCell const*
+        {
+            auto const found = std::ranges::find_if(
+                check.cells,
+                [&](ModelCheckCell const& cell)
+                {
+                    return cell.subject == ModelCellSubject::Appearance
+                        && cell.elementId == element
+                        && cell.screenId == screen
+                        && cell.appearance.has_value()
+                        && cell.appearance->value() == appearance;
                 }
             );
             return found == check.cells.end() ? nullptr : &*found;
@@ -1303,6 +1333,753 @@ namespace uf::workbench
         REQUIRE(p_cell != nullptr);
         CHECK(p_cell->outcome == ModelCellOutcome::Stopped);
         CHECK(classifyModelCell(*p_cell) == ModelCellColor::Thin);
+    }
+
+    namespace
+    {
+        constexpr auto k_backId     = "00000000-0000-0000-0000-000000000418";
+        constexpr auto k_noneSource = "00000000-0000-0000-0000-000000000404";
+
+        // A screen as one row of opaque grey pixels. Grey because the matcher's
+        // luma weights sum to 256, so a pixel written R=G=B=v converts to grey
+        // exactly v and every SAD below can be worked out by hand from the
+        // numbers in the fixture.
+        [[nodiscard]]
+        auto greyRow(std::vector<uint8> const& values) -> std::vector<std::byte>
+        {
+            auto rgba = std::vector<std::byte>{};
+            rgba.reserve(values.size() * 4U);
+            for (auto const value : values)
+            {
+                rgba.emplace_back(asByte(value));
+                rgba.emplace_back(asByte(value));
+                rgba.emplace_back(asByte(value));
+                rgba.emplace_back(asByte(255));
+            }
+            return rgba;
+        }
+
+        [[nodiscard]]
+        auto encodedGreyRow(
+            std::vector<uint8> const& values
+        ) -> std::vector<std::byte>
+        {
+            auto const width = checkedCast<uint32>(values.size());
+            REQUIRE(width.has_value());
+            auto encoded = image::encodeRgbaPng(
+                "appearance-source.png",
+                *width,
+                1,
+                greyRow(values)
+            );
+            REQUIRE(encoded.has_value());
+            return *std::move(encoded);
+        }
+
+        [[nodiscard]]
+        auto colourKey(uint8 grey, uint32 tolerance) -> annotation::ColourKey
+        {
+            auto const key = annotation::ColourKey::create(
+                grey,
+                grey,
+                grey,
+                tolerance
+            );
+            REQUIRE(key.has_value());
+            return *key;
+        }
+
+        struct AppearanceFixture final
+        {
+            annotation::AuthoringDocument                 document;
+            std::vector<annotation::AuthoringSourceAsset> assets{};
+
+            annotation::SourceId darkSource{annotation::test::sourceId(k_sourceId)};
+            annotation::SourceId lightSource{
+                annotation::test::sourceId(k_otherSourceId)
+            };
+            annotation::SourceId noneSource{annotation::test::sourceId(k_noneSource)};
+
+            annotation::ElementId backId{annotation::test::elementId(k_backId)};
+        };
+
+        // The plan's own example, in eight pixels: one element "back" wearing a
+        // different appearance on each of two screens, plus a third screen that
+        // has no such button and belongs to nobody.
+        //
+        // The appearance list is a parameter because every red proof below is
+        // the same three screens with a differently authored set of appearances
+        // -- an over-broad one, a nearly-empty mask -- and rebuilding the pages,
+        // marks and regressions around each would hide what actually differs.
+        //
+        // dark  = 10 20 30 40 50 60 70 80
+        // light = 200 210 220 10 240 250 190 180
+        // none  = 100 x8
+        //
+        // The lone 10 on the light screen is load-bearing: it is the patch of
+        // "saturated" colour a tiny mask can find anywhere, and without it the
+        // pathological appearance would fail for want of anything to latch onto
+        // rather than for the reason the pitfall records.
+        [[nodiscard]]
+        auto appearanceFixture(
+            std::vector<annotation::Variant> backAppearances
+        ) -> AppearanceFixture
+        {
+            auto const fingerprint = annotation::test::fingerprint(8, 1, 96, 96);
+
+            auto darkPng  = encodedGreyRow({10, 20, 30, 40, 50, 60, 70, 80});
+            auto lightPng = encodedGreyRow({200, 210, 220, 10, 240, 250, 190, 180});
+            auto nonePng  = encodedGreyRow({100, 100, 100, 100, 100, 100, 100, 100});
+
+            auto const darkSource  = annotation::test::sourceId(k_sourceId);
+            auto const lightSource = annotation::test::sourceId(k_otherSourceId);
+            auto const noneSource  = annotation::test::sourceId(k_noneSource);
+            auto const backId      = annotation::test::elementId(k_backId);
+            auto const darkMarkId  = annotation::test::elementId(k_darkMarkId);
+            auto const lightMarkId = annotation::test::elementId(k_lightMarkId);
+            auto const darkPageId  = annotation::test::pageId(k_darkPageId);
+            auto const lightPageId = annotation::test::pageId(k_lightPageId);
+
+            auto document = annotation::AuthoringDocument::create(
+                annotation::test::projectId(),
+                fingerprint,
+                {
+                    sourceFrom(darkSource, fingerprint, darkPng),
+                    sourceFrom(lightSource, fingerprint, lightPng),
+                    sourceFrom(noneSource, fingerprint, nonePng),
+                },
+                {
+                    // Column 4 reads 50 / 240 / 100 across the three screens, so
+                    // one pinned pixel there identifies each claimed screen and
+                    // misses the other two by more than seven thresholds.
+                    test::markElement(
+                        fingerprint,
+                        darkMarkId,
+                        "dark_mark",
+                        darkSource,
+                        annotation::test::pixelRect(4, 0, 1, 1),
+                        annotation::test::pixelRect(4, 0, 1, 1)
+                    ),
+                    test::markElement(
+                        fingerprint,
+                        lightMarkId,
+                        "light_mark",
+                        lightSource,
+                        annotation::test::pixelRect(4, 0, 1, 1),
+                        annotation::test::pixelRect(4, 0, 1, 1)
+                    ),
+                    annotation::test::element(
+                        fingerprint,
+                        backId,
+                        "back",
+                        annotation::test::capabilities(
+                            std::nullopt,
+                            annotation::Interact{}
+                        ),
+                        annotation::test::pixelRect(0, 0, 8, 1),
+                        std::move(backAppearances)
+                    ),
+                },
+                {
+                    annotation::test::page(darkPageId, "dark"),
+                    annotation::test::page(lightPageId, "light"),
+                },
+                {
+                    annotation::test::reference(
+                        darkPageId,
+                        darkMarkId,
+                        annotation::test::identifiesAs()
+                    ),
+                    annotation::test::reference(
+                        lightPageId,
+                        lightMarkId,
+                        annotation::test::identifiesAs()
+                    ),
+                    annotation::test::reference(
+                        darkPageId,
+                        backId,
+                        annotation::test::interacts()
+                    ),
+                    annotation::test::reference(
+                        lightPageId,
+                        backId,
+                        annotation::test::interacts(),
+                        annotation::Holding::Referenced
+                    ),
+                },
+                {
+                    annotation::RegressionCase{
+                        annotation::RegressionSpec{
+                            .id       = annotation::test::regressionId(k_darkRegId),
+                            .sourceId = darkSource,
+                            .classification =
+                                annotation::RegressionClassification::Positive,
+                            .expectation = annotation::ResolvedRegression{
+                                .pageId = darkPageId,
+                            },
+                        }
+                    },
+                    annotation::RegressionCase{
+                        annotation::RegressionSpec{
+                            .id       = annotation::test::regressionId(k_lightRegId),
+                            .sourceId = lightSource,
+                            .classification =
+                                annotation::RegressionClassification::Positive,
+                            .expectation = annotation::ResolvedRegression{
+                                .pageId = lightPageId,
+                            },
+                        }
+                    },
+                }
+            );
+            REQUIRE(document.has_value());
+
+            return AppearanceFixture{
+                .document = *std::move(document),
+                .assets   = {
+                    annotation::AuthoringSourceAsset{
+                        .id       = darkSource,
+                        .pngBytes = std::move(darkPng),
+                    },
+                    annotation::AuthoringSourceAsset{
+                        .id       = lightSource,
+                        .pngBytes = std::move(lightPng),
+                    },
+                    annotation::AuthoringSourceAsset{
+                        .id       = noneSource,
+                        .pngBytes = std::move(nonePng),
+                    },
+                },
+            };
+        }
+
+        // The healthy pair: each appearance cut from the screen it serves, two
+        // pixels wide, at a threshold that leaves a SAD ceiling of 51.
+        [[nodiscard]]
+        auto healthyAppearances() -> std::vector<annotation::Variant>
+        {
+            auto appearances = std::vector<annotation::Variant>{};
+            appearances.emplace_back(
+                annotation::test::variant(
+                    "on_dark",
+                    annotation::test::sourceId(k_sourceId),
+                    annotation::test::pixelRect(0, 0, 2, 1)
+                )
+            );
+            appearances.emplace_back(
+                annotation::test::variant(
+                    "on_light",
+                    annotation::test::sourceId(k_otherSourceId),
+                    annotation::test::pixelRect(0, 0, 2, 1)
+                )
+            );
+            return appearances;
+        }
+
+        [[nodiscard]]
+        auto healthyCheck(AppearanceFixture const& fixture) -> ModelCheck
+        {
+            auto check = runModelCheck(
+                fixture.document,
+                fixture.assets,
+                {},
+                continuingPolicy(10'000)
+            );
+            REQUIRE(check.has_value());
+            return *std::move(check);
+        }
+    }
+
+    TEST_CASE("every appearance is measured on every screen, diagonal and not")
+    {
+        // P1. The natural authoring habit is to try the dark appearance on the
+        // dark screen and stop, which never asks the question that matters. Four
+        // measurements exist here, and the two off-diagonal ones are the only
+        // evidence that either appearance discriminates at all.
+        auto const fixture = appearanceFixture(healthyAppearances());
+        auto const check   = healthyCheck(fixture);
+
+        struct Expectation final
+        {
+            annotation::SourceId screen;
+            std::string_view     appearance;
+            bool                 owns{};
+        };
+        auto const expectations = std::array{
+            Expectation{
+                .screen     = fixture.darkSource,
+                .appearance = "on_dark",
+                .owns       = true,
+            },
+            Expectation{
+                .screen     = fixture.darkSource,
+                .appearance = "on_light",
+                .owns       = false,
+            },
+            Expectation{
+                .screen     = fixture.lightSource,
+                .appearance = "on_dark",
+                .owns       = false,
+            },
+            Expectation{
+                .screen     = fixture.lightSource,
+                .appearance = "on_light",
+                .owns       = true,
+            },
+            Expectation{
+                .screen     = fixture.noneSource,
+                .appearance = "on_dark",
+                .owns       = false,
+            },
+            Expectation{
+                .screen     = fixture.noneSource,
+                .appearance = "on_light",
+                .owns       = false,
+            },
+        };
+
+        for (auto const& expectation : expectations)
+        {
+            CAPTURE(expectation.appearance);
+            auto const* p_cell = findAppearanceCell(
+                check,
+                fixture.backId,
+                expectation.screen,
+                expectation.appearance
+            );
+            REQUIRE(p_cell != nullptr);
+            CHECK(p_cell->expectedHit == expectation.owns);
+            CHECK(
+                (p_cell->outcome == ModelCellOutcome::Hit) == expectation.owns
+            );
+            CHECK(p_cell->sadScore.has_value());
+            CHECK(classifyModelCell(*p_cell) == ModelCellColor::Expected);
+        }
+    }
+
+    TEST_CASE("the folded element misses a screen no appearance of it owns")
+    {
+        // P2. Implied by P1, and asserted separately anyway: the fold is its own
+        // code, and a fold that answered "hit" whenever any appearance scored
+        // would pass every appearance row above and still be broken here.
+        auto const fixture = appearanceFixture(healthyAppearances());
+        auto const check   = healthyCheck(fixture);
+
+        auto const* p_folded = findCell(check, fixture.backId, fixture.noneSource);
+        REQUIRE(p_folded != nullptr);
+        CHECK(p_folded->outcome == ModelCellOutcome::Miss);
+        CHECK_FALSE(p_folded->expectedHit);
+        CHECK(classifyModelCell(*p_folded) == ModelCellColor::Expected);
+
+        CHECK(judgeModelCheck(check).empty());
+    }
+
+    TEST_CASE("the fold answers with the appearance the screen belongs to")
+    {
+        // P3. Identity AND rectangle, because the click is derived from the
+        // rectangle: an element that reports the right appearance at another
+        // appearance's box has already moved the click, and nothing downstream
+        // can tell.
+        auto const fixture = appearanceFixture(healthyAppearances());
+        auto const check   = healthyCheck(fixture);
+
+        auto const owned = std::array{
+            std::pair{fixture.darkSource, std::string_view{"on_dark"}},
+            std::pair{fixture.lightSource, std::string_view{"on_light"}},
+        };
+        for (auto const& [screen, appearance] : owned)
+        {
+            CAPTURE(appearance);
+            auto const* p_folded = findCell(check, fixture.backId, screen);
+            REQUIRE(p_folded != nullptr);
+            CHECK(p_folded->outcome == ModelCellOutcome::Hit);
+            REQUIRE(p_folded->appearance.has_value());
+            CHECK(p_folded->appearance->value() == appearance);
+
+            auto const* p_own = findAppearanceCell(
+                check,
+                fixture.backId,
+                screen,
+                appearance
+            );
+            REQUIRE(p_own != nullptr);
+            CHECK(p_folded->matchedRect == p_own->matchedRect);
+        }
+    }
+
+    TEST_CASE("a nearly-empty mask misfires on a screen it does not own")
+    {
+        // R1. The pitfall's 27-of-920 white mask, in miniature: a four-pixel
+        // template whose colour key keeps exactly one saturated pixel. It does
+        // not have to survive where the glyph was -- it only has to find some
+        // offset in the region where that one pixel lands on its own colour, and
+        // the light screen has one at column three.
+        //
+        // Delete the off-diagonal from the grid and this cannot fail: the cell
+        // it reads does not exist.
+        auto appearances = std::vector<annotation::Variant>{};
+        appearances.emplace_back(
+            annotation::test::variant(
+                "on_dark_tiny",
+                annotation::test::sourceId(k_sourceId),
+                annotation::test::pixelRect(0, 0, 4, 1),
+                annotation::test::threshold(),
+                colourKey(10, 0)
+            )
+        );
+        appearances.emplace_back(
+            annotation::test::variant(
+                "on_light",
+                annotation::test::sourceId(k_otherSourceId),
+                annotation::test::pixelRect(0, 0, 2, 1)
+            )
+        );
+
+        auto const fixture = appearanceFixture(std::move(appearances));
+        auto const check   = healthyCheck(fixture);
+
+        // On its own screen it looks perfect, which is the whole trap.
+        auto const* p_own = findAppearanceCell(
+            check,
+            fixture.backId,
+            fixture.darkSource,
+            "on_dark_tiny"
+        );
+        REQUIRE(p_own != nullptr);
+        CHECK(p_own->outcome == ModelCellOutcome::Hit);
+        CHECK(classifyModelCell(*p_own) == ModelCellColor::Expected);
+
+        auto const* p_foreign = findAppearanceCell(
+            check,
+            fixture.backId,
+            fixture.lightSource,
+            "on_dark_tiny"
+        );
+        REQUIRE(p_foreign != nullptr);
+        CHECK(p_foreign->outcome == ModelCellOutcome::Hit);
+        CHECK_FALSE(p_foreign->expectedHit);
+        CHECK(classifyModelCell(*p_foreign) == ModelCellColor::Misfire);
+
+        auto const findings = judgeModelCheck(check);
+        auto const misfire  = std::ranges::find_if(
+            findings,
+            [&](ModelFinding const& finding)
+            {
+                return finding.kind == ModelFindingKind::WrongOutcome
+                    && finding.screenId == fixture.lightSource
+                    && finding.appearance.has_value()
+                    && finding.appearance->value() == "on_dark_tiny";
+            }
+        );
+        CHECK(misfire != findings.end());
+    }
+
+    TEST_CASE("an over-broad appearance declared first does not answer for a narrow one")
+    {
+        // R2. "wide" is declared FIRST and passes its own loose threshold on the
+        // light screen; "narrow" is declared second and matches there exactly.
+        // Under first-past-the-threshold the fold answers "wide", at wide's own
+        // rectangle three columns away -- and resolveClickPixel would take the
+        // click there. Declaration order settles ties and nothing else, so the
+        // answer has to be "narrow" at column zero.
+        auto appearances = std::vector<annotation::Variant>{};
+        appearances.emplace_back(
+            annotation::test::variant(
+                "wide",
+                annotation::test::sourceId(k_sourceId),
+                annotation::test::pixelRect(0, 0, 4, 1),
+                annotation::test::threshold(2'000)
+            )
+        );
+        appearances.emplace_back(
+            annotation::test::variant(
+                "narrow",
+                annotation::test::sourceId(k_otherSourceId),
+                annotation::test::pixelRect(0, 0, 2, 1)
+            )
+        );
+
+        auto const fixture = appearanceFixture(std::move(appearances));
+        auto const check   = healthyCheck(fixture);
+
+        // The premise: the early appearance really does pass the threshold here,
+        // so "first past the threshold" has something to answer with.
+        auto const* p_wide = findAppearanceCell(
+            check,
+            fixture.backId,
+            fixture.lightSource,
+            "wide"
+        );
+        REQUIRE(p_wide != nullptr);
+        REQUIRE(p_wide->outcome == ModelCellOutcome::Hit);
+        REQUIRE(p_wide->matchedRect.has_value());
+        CHECK(*p_wide->matchedRect == annotation::test::pixelRect(3, 0, 4, 1));
+
+        auto const* p_folded = findCell(check, fixture.backId, fixture.lightSource);
+        REQUIRE(p_folded != nullptr);
+        REQUIRE(p_folded->appearance.has_value());
+        CHECK(p_folded->appearance->value() == "narrow");
+        REQUIRE(p_folded->matchedRect.has_value());
+        CHECK(*p_folded->matchedRect == annotation::test::pixelRect(0, 0, 2, 1));
+
+        // And the over-broad appearance is still reported for what it is.
+        auto const findings = judgeModelCheck(check);
+        CHECK_FALSE(findings.empty());
+    }
+
+    namespace
+    {
+        constexpr auto k_closeSource = "00000000-0000-0000-0000-000000000405";
+        constexpr auto k_closeMarkId = "00000000-0000-0000-0000-00000000041b";
+        constexpr auto k_closePageId = "00000000-0000-0000-0000-000000000426";
+        constexpr auto k_closeRegId  = "00000000-0000-0000-0000-000000000435";
+
+        struct ThinSeparationFixture final
+        {
+            annotation::AuthoringDocument                 document;
+            std::vector<annotation::AuthoringSourceAsset> assets{};
+
+            annotation::SourceId  closeSource{annotation::test::sourceId(k_closeSource)};
+            annotation::ElementId backId{annotation::test::elementId(k_backId)};
+        };
+
+        // A third page whose screen neither appearance was cut from, so its
+        // reference pins the one that applies. That is the case the separation
+        // rule exists for: the pinned appearance wins there on merit rather than
+        // by scoring zero, and the question becomes by how much.
+        //
+        // close = 20 30 40 50 60 170 180 90
+        //
+        // "on_dark" (10 20) scores 20 against the 51 ceiling; "on_light"
+        // (200 210) scores 60 against the same ceiling. Both outcomes are right
+        // -- one hit, one miss -- and the lead is 3x, under the factor of four
+        // the repository has measured healthy marks delivering.
+        [[nodiscard]]
+        auto thinSeparationFixture() -> ThinSeparationFixture
+        {
+            auto const fingerprint = annotation::test::fingerprint(8, 1, 96, 96);
+
+            auto darkPng  = encodedGreyRow({10, 20, 30, 40, 50, 60, 70, 80});
+            auto lightPng = encodedGreyRow({200, 210, 220, 230, 240, 250, 190, 180});
+            auto closePng = encodedGreyRow({20, 30, 40, 50, 60, 170, 180, 90});
+
+            auto const darkSource  = annotation::test::sourceId(k_sourceId);
+            auto const lightSource = annotation::test::sourceId(k_otherSourceId);
+            auto const closeSource = annotation::test::sourceId(k_closeSource);
+            auto const backId      = annotation::test::elementId(k_backId);
+            auto const darkMarkId  = annotation::test::elementId(k_darkMarkId);
+            auto const lightMarkId = annotation::test::elementId(k_lightMarkId);
+            auto const closeMarkId = annotation::test::elementId(k_closeMarkId);
+            auto const darkPageId  = annotation::test::pageId(k_darkPageId);
+            auto const lightPageId = annotation::test::pageId(k_lightPageId);
+            auto const closePageId = annotation::test::pageId(k_closePageId);
+
+            auto appearances = std::vector<annotation::Variant>{};
+            appearances.emplace_back(
+                annotation::test::variant(
+                    "on_dark",
+                    darkSource,
+                    annotation::test::pixelRect(0, 0, 2, 1)
+                )
+            );
+            appearances.emplace_back(
+                annotation::test::variant(
+                    "on_light",
+                    lightSource,
+                    annotation::test::pixelRect(0, 0, 2, 1)
+                )
+            );
+
+            auto document = annotation::AuthoringDocument::create(
+                annotation::test::projectId(),
+                fingerprint,
+                {
+                    sourceFrom(darkSource, fingerprint, darkPng),
+                    sourceFrom(lightSource, fingerprint, lightPng),
+                    sourceFrom(closeSource, fingerprint, closePng),
+                },
+                {
+                    test::markElement(
+                        fingerprint,
+                        darkMarkId,
+                        "dark_mark",
+                        darkSource,
+                        annotation::test::pixelRect(6, 0, 1, 1),
+                        annotation::test::pixelRect(6, 0, 1, 1)
+                    ),
+                    test::markElement(
+                        fingerprint,
+                        lightMarkId,
+                        "light_mark",
+                        lightSource,
+                        annotation::test::pixelRect(0, 0, 1, 1),
+                        annotation::test::pixelRect(0, 0, 1, 1)
+                    ),
+                    test::markElement(
+                        fingerprint,
+                        closeMarkId,
+                        "close_mark",
+                        closeSource,
+                        annotation::test::pixelRect(5, 0, 1, 1),
+                        annotation::test::pixelRect(5, 0, 1, 1)
+                    ),
+                    annotation::test::element(
+                        fingerprint,
+                        backId,
+                        "back",
+                        annotation::test::capabilities(
+                            std::nullopt,
+                            annotation::Interact{}
+                        ),
+                        annotation::test::pixelRect(0, 0, 8, 1),
+                        std::move(appearances)
+                    ),
+                },
+                {
+                    annotation::test::page(darkPageId, "dark"),
+                    annotation::test::page(lightPageId, "light"),
+                    annotation::test::page(closePageId, "close"),
+                },
+                {
+                    annotation::test::reference(
+                        darkPageId,
+                        darkMarkId,
+                        annotation::test::identifiesAs()
+                    ),
+                    annotation::test::reference(
+                        lightPageId,
+                        lightMarkId,
+                        annotation::test::identifiesAs()
+                    ),
+                    annotation::test::reference(
+                        closePageId,
+                        closeMarkId,
+                        annotation::test::identifiesAs()
+                    ),
+                    annotation::test::reference(
+                        darkPageId,
+                        backId,
+                        annotation::test::interacts()
+                    ),
+                    annotation::test::reference(
+                        lightPageId,
+                        backId,
+                        annotation::test::interacts(),
+                        annotation::Holding::Referenced
+                    ),
+                    annotation::test::reference(
+                        closePageId,
+                        backId,
+                        annotation::test::interacts(),
+                        annotation::Holding::Referenced,
+                        std::nullopt,
+                        annotation::test::resourceName("on_dark")
+                    ),
+                },
+                {
+                    annotation::RegressionCase{
+                        annotation::RegressionSpec{
+                            .id       = annotation::test::regressionId(k_darkRegId),
+                            .sourceId = darkSource,
+                            .classification =
+                                annotation::RegressionClassification::Positive,
+                            .expectation = annotation::ResolvedRegression{
+                                .pageId = darkPageId,
+                            },
+                        }
+                    },
+                    annotation::RegressionCase{
+                        annotation::RegressionSpec{
+                            .id       = annotation::test::regressionId(k_lightRegId),
+                            .sourceId = lightSource,
+                            .classification =
+                                annotation::RegressionClassification::Positive,
+                            .expectation = annotation::ResolvedRegression{
+                                .pageId = lightPageId,
+                            },
+                        }
+                    },
+                    annotation::RegressionCase{
+                        annotation::RegressionSpec{
+                            .id       = annotation::test::regressionId(k_closeRegId),
+                            .sourceId = closeSource,
+                            .classification =
+                                annotation::RegressionClassification::Positive,
+                            .expectation = annotation::ResolvedRegression{
+                                .pageId = closePageId,
+                            },
+                        }
+                    },
+                }
+            );
+            REQUIRE(document.has_value());
+
+            return ThinSeparationFixture{
+                .document = *std::move(document),
+                .assets   = {
+                    annotation::AuthoringSourceAsset{
+                        .id       = darkSource,
+                        .pngBytes = std::move(darkPng),
+                    },
+                    annotation::AuthoringSourceAsset{
+                        .id       = lightSource,
+                        .pngBytes = std::move(lightPng),
+                    },
+                    annotation::AuthoringSourceAsset{
+                        .id       = closeSource,
+                        .pngBytes = std::move(closePng),
+                    },
+                },
+            };
+        }
+    }
+
+    TEST_CASE("the owning appearance has to lead its rivals by the separation factor")
+    {
+        // R3. Every outcome in this model is correct -- the pinned appearance
+        // hits its screen and the other one misses it -- so nothing P1, P2 or P3
+        // asks can fail. What is wrong is the size of the lead: 3x, where the
+        // repository's own healthy marks measured 2.85x to 4.15x. At a factor of
+        // one this check degenerates into "the right appearance won", which P3
+        // already asserts, and the model below is accepted.
+        auto const fixture = thinSeparationFixture();
+
+        auto const check = runModelCheck(
+            fixture.document,
+            fixture.assets,
+            {},
+            continuingPolicy(10'000)
+        );
+        REQUIRE(check.has_value());
+
+        auto const* p_owner = findAppearanceCell(
+            *check,
+            fixture.backId,
+            fixture.closeSource,
+            "on_dark"
+        );
+        REQUIRE(p_owner != nullptr);
+        CHECK(p_owner->outcome == ModelCellOutcome::Hit);
+        CHECK(p_owner->expectedHit);
+
+        auto const* p_rival = findAppearanceCell(
+            *check,
+            fixture.backId,
+            fixture.closeSource,
+            "on_light"
+        );
+        REQUIRE(p_rival != nullptr);
+        CHECK(p_rival->outcome == ModelCellOutcome::Miss);
+        CHECK_FALSE(p_rival->expectedHit);
+
+        auto const findings = judgeModelCheck(*check);
+        REQUIRE(findings.size() == 1U);
+        CHECK(findings.front().kind == ModelFindingKind::ThinSeparation);
+        CHECK(findings.front().screenId == fixture.closeSource);
+        REQUIRE(findings.front().appearance.has_value());
+        CHECK(findings.front().appearance->value() == "on_dark");
+        REQUIRE(findings.front().rival.has_value());
+        CHECK(findings.front().rival->value() == "on_light");
     }
 
     TEST_CASE("runPreview rejects a source that is absent from the project")

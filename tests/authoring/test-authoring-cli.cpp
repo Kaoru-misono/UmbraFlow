@@ -8,6 +8,7 @@
 #include <command-runner.hpp>
 #include <command.hpp>
 
+#include <preview.hpp>
 #include <project-persistence.hpp>
 #include <run.hpp>
 
@@ -460,6 +461,84 @@ namespace uf::authoring
             );
 
             return KeyedFixture{.blueFrame = blue, .purpleFrame = purple};
+        }
+
+        // Two pages whose anchors are the SAME rectangle of two captures of one
+        // screen, one keyed to the white menu text and one not.
+        //
+        // The key is what makes them confusable, and deliberately so: keying on
+        // the text drops the artwork under it, which is exactly what lets that
+        // template match the other capture too. So "menu" is identified by a
+        // mark that is present on the sortie screen as well -- a real defect, of
+        // the kind an author cannot see by looking at either screen.
+        [[nodiscard]]
+        auto authorConfusableProject(TemporaryProject const& project) -> KeyedFixture
+        {
+            auto const blue   = project.path() / "menu-over-blue.png";
+            auto const purple = project.path() / "menu-over-purple.png";
+            writePng(blue, fixture::k_menuOverBlueArtwork);
+            writePng(purple, fixture::k_menuOverPurpleArtwork);
+
+            auto const whiteText = std::format(
+                "{},{},{}",
+                fixture::k_textRed,
+                fixture::k_textGreen,
+                fixture::k_textBlue
+            );
+
+            requireOk(
+                run(
+                    "project",
+                    "init",
+                    project.text(),
+                    "--project-id",
+                    "personal.confusable_cli",
+                    "--resolution",
+                    std::format("{}x{}", fixture::k_width, fixture::k_height)
+                )
+            );
+            requireOk(
+                run(
+                    "page",
+                    "create",
+                    project.text(),
+                    "menu",
+                    "keyed_menu",
+                    "--source",
+                    blue.string(),
+                    "--rect",
+                    wholeCropRect(),
+                    "--key",
+                    whiteText,
+                    "--tolerance",
+                    std::format("{}", k_tolerance)
+                )
+            );
+            requireOk(
+                run(
+                    "page",
+                    "create",
+                    project.text(),
+                    "sortie",
+                    "sortie_mark",
+                    "--source",
+                    purple.string(),
+                    "--rect",
+                    wholeCropRect()
+                )
+            );
+
+            return KeyedFixture{.blueFrame = blue, .purpleFrame = purple};
+        }
+
+        // The findings array on its own, so an element named in a cell above it
+        // cannot answer for one the verdict never reported.
+        [[nodiscard]]
+        auto findingsJson(std::string const& json) -> std::string
+        {
+            auto const at = json.find("\"findings\":[");
+            REQUIRE(at != std::string::npos);
+            return json.substr(at);
         }
 
         // The extent a project needs to hold both search regions the budget
@@ -1732,5 +1811,58 @@ namespace uf::authoring
                 )
             );
         }
+    }
+
+    TEST_CASE("check answers with the whole matrix and accepts a model that holds")
+    {
+        auto const project = TemporaryProject{"check-accepts"};
+        static_cast<void>(authorTwoPageProject(project));
+
+        auto const outcome = run("check", project.text());
+        requireOk(outcome);
+
+        CHECK(outcome.json.find("\"command\":\"check\"") != std::string::npos);
+        CHECK(outcome.json.find("\"accepted\":true") != std::string::npos);
+        CHECK(outcome.json.find("\"findings\":[]") != std::string::npos);
+
+        // Three elements over two screens, measured on and off the screen each
+        // belongs to. The off-diagonal cells are half the grid and the only half
+        // that carries information.
+        CHECK(occurrences(outcome.json, "\"subject\":\"element\"") == 6U);
+        CHECK(occurrences(outcome.json, "\"expected_hit\":false") == 3U);
+
+        // The factor the separation rule was applied at travels with the answer,
+        // so a stored result stays interpretable after the constant moves.
+        CHECK(
+            unsignedField(outcome.json, "separation_factor")
+            == workbench::k_appearanceSeparationFactor
+        );
+
+        // Every screen resolved to the page recorded for it, which is the other
+        // half of what the matrix measures.
+        CHECK(occurrences(outcome.json, "\"outcome\":\"correct\"") == 2U);
+    }
+
+    TEST_CASE("check refuses a model whose mark matches a screen it does not belong to")
+    {
+        // The keyed mark drops the artwork under the menu text, so it matches
+        // the OTHER capture of that screen too -- and the page it identifies is
+        // therefore not identified. Nothing about either screen looks wrong on
+        // its own; only searching the mark where it does not belong says so.
+        auto const project = TemporaryProject{"check-refuses"};
+        static_cast<void>(authorConfusableProject(project));
+
+        auto const outcome = run("check", project.text());
+        requireOk(outcome);
+
+        CHECK(outcome.json.find("\"accepted\":false") != std::string::npos);
+
+        auto const findings = findingsJson(outcome.json);
+        CHECK(
+            findings.find("\"kind\":\"wrong_outcome\",\"element\":\"keyed_menu\"")
+            != std::string::npos
+        );
+        // The sound mark is not accused of anything.
+        CHECK(findings.find("\"sortie_mark\"") == std::string::npos);
     }
 }

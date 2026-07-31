@@ -3,6 +3,7 @@
 #include "json-writer.hpp"
 
 #include <authoring-edit.hpp>
+#include <preview.hpp>
 #include <project-persistence.hpp>
 #include <source-ingestion.hpp>
 
@@ -1756,6 +1757,298 @@ namespace uf::authoring
             return successJson("match", members);
         }
 
+        // The four enumerations the falsification matrix answers with. Each is
+        // one total mapping for the same reason as the three above: a switch
+        // over a scoped enum makes the compiler name the case a new enumerator
+        // forgot.
+        [[nodiscard]]
+        auto screenOutcomeName(workbench::ScreenCheckOutcome outcome) -> std::string_view
+        {
+            switch (outcome)
+            {
+            case workbench::ScreenCheckOutcome::Correct:
+                return "correct";
+            case workbench::ScreenCheckOutcome::WrongPage:
+                return "wrong_page";
+            case workbench::ScreenCheckOutcome::Unknown:
+                return "unknown";
+            case workbench::ScreenCheckOutcome::Ambiguous:
+                return "ambiguous";
+            case workbench::ScreenCheckOutcome::Unclaimed:
+                return "unclaimed";
+            case workbench::ScreenCheckOutcome::Stopped:
+                return "stopped";
+            }
+            UF_UNREACHABLE_MSG("unknown ScreenCheckOutcome value");
+        }
+
+        [[nodiscard]]
+        auto cellSubjectName(workbench::ModelCellSubject subject) -> std::string_view
+        {
+            switch (subject)
+            {
+            case workbench::ModelCellSubject::Element:
+                return "element";
+            case workbench::ModelCellSubject::Appearance:
+                return "appearance";
+            }
+            UF_UNREACHABLE_MSG("unknown ModelCellSubject value");
+        }
+
+        [[nodiscard]]
+        auto cellOutcomeName(workbench::ModelCellOutcome outcome) -> std::string_view
+        {
+            switch (outcome)
+            {
+            case workbench::ModelCellOutcome::Hit:
+                return "hit";
+            case workbench::ModelCellOutcome::Miss:
+                return "miss";
+            case workbench::ModelCellOutcome::Stopped:
+                return "stopped";
+            case workbench::ModelCellOutcome::NotSearchedHere:
+                return "not_searched_here";
+            }
+            UF_UNREACHABLE_MSG("unknown ModelCellOutcome value");
+        }
+
+        [[nodiscard]]
+        auto cellVerdictName(workbench::ModelCellColor colour) -> std::string_view
+        {
+            switch (colour)
+            {
+            case workbench::ModelCellColor::Expected:
+                return "expected";
+            case workbench::ModelCellColor::Thin:
+                return "thin";
+            case workbench::ModelCellColor::Misfire:
+                return "misfire";
+            case workbench::ModelCellColor::NotSearched:
+                return "not_searched";
+            }
+            UF_UNREACHABLE_MSG("unknown ModelCellColor value");
+        }
+
+        // A screen by the file an author can open. The id is the truncated
+        // content hash and says nothing to a reader; the installed path is what
+        // they took the screenshot as.
+        [[nodiscard]]
+        auto screenNameJson(
+            annotation::AuthoringDocument const& document,
+            annotation::SourceId id
+        ) -> std::string
+        {
+            auto const* p_source = document.findSource(id);
+            return p_source == nullptr
+                ? jsonString(id.value().toString())
+                : jsonString(p_source->relativePath());
+        }
+
+        [[nodiscard]]
+        auto pageNameJson(
+            annotation::AuthoringDocument const& document,
+            std::optional<annotation::PageId> id
+        ) -> std::string
+        {
+            if (!id.has_value())
+            {
+                return jsonNull();
+            }
+            auto const* p_page = document.catalog().findPage(*id);
+            return p_page == nullptr
+                ? jsonString(id->value().toString())
+                : jsonString(p_page->name().value());
+        }
+
+        [[nodiscard]]
+        auto screenCheckJson(
+            annotation::AuthoringDocument const& document,
+            workbench::ScreenCheck const& screen
+        ) -> std::string
+        {
+            auto const members = std::array{
+                JsonMember{
+                    .key   = "screen",
+                    .value = screenNameJson(document, screen.sourceId),
+                },
+                JsonMember{
+                    .key   = "expected_page",
+                    .value = pageNameJson(document, screen.expectedPageId),
+                },
+                JsonMember{
+                    .key   = "resolved_page",
+                    .value = pageNameJson(document, screen.resolvedPageId),
+                },
+                JsonMember{
+                    .key   = "outcome",
+                    .value = jsonString(screenOutcomeName(screen.outcome)),
+                },
+            };
+            return jsonObject(members);
+        }
+
+        // One measured cell. `verdict` is classifyModelCell's answer rather than
+        // something the caller recomputes: the rule that a hit off the diagonal
+        // is a misfire belongs to one place, and an agent reading this document
+        // must not be the second implementation of it.
+        [[nodiscard]]
+        auto cellJson(
+            annotation::AuthoringDocument const& document,
+            workbench::ModelCheckCell const& cell
+        ) -> std::string
+        {
+            auto const members = std::array{
+                JsonMember{
+                    .key   = "element",
+                    .value = elementNameJson(document, cell.elementId),
+                },
+                JsonMember{
+                    .key   = "screen",
+                    .value = screenNameJson(document, cell.screenId),
+                },
+                JsonMember{
+                    .key   = "subject",
+                    .value = jsonString(cellSubjectName(cell.subject)),
+                },
+                JsonMember{
+                    .key   = "appearance",
+                    .value = cell.appearance
+                        ? jsonString(cell.appearance->value())
+                        : jsonNull(),
+                },
+                JsonMember{
+                    .key   = "outcome",
+                    .value = jsonString(cellOutcomeName(cell.outcome)),
+                },
+                JsonMember{
+                    .key   = "expected_hit",
+                    .value = jsonBoolean(cell.expectedHit),
+                },
+                JsonMember{
+                    .key   = "verdict",
+                    .value = jsonString(
+                        cellVerdictName(workbench::classifyModelCell(cell))
+                    ),
+                },
+                JsonMember{
+                    .key   = "sad_score",
+                    .value = cell.sadScore
+                        ? jsonUnsigned(cell.sadScore.value_or(0))
+                        : jsonNull(),
+                },
+                JsonMember{
+                    .key   = "maximum_sad",
+                    .value = jsonUnsigned(cell.maximumSad),
+                },
+                JsonMember{
+                    .key   = "matched_rect",
+                    .value = cell.matchedRect
+                        ? rectJson(*cell.matchedRect)
+                        : jsonNull(),
+                },
+            };
+            return jsonObject(members);
+        }
+
+        [[nodiscard]]
+        auto findingJson(
+            annotation::AuthoringDocument const& document,
+            workbench::ModelFinding const& finding
+        ) -> std::string
+        {
+            auto const members = std::array{
+                JsonMember{
+                    .key   = "kind",
+                    .value = jsonString(workbench::modelFindingKindName(finding.kind)),
+                },
+                JsonMember{
+                    .key   = "element",
+                    .value = elementNameJson(document, finding.elementId),
+                },
+                JsonMember{
+                    .key   = "screen",
+                    .value = screenNameJson(document, finding.screenId),
+                },
+                JsonMember{
+                    .key   = "appearance",
+                    .value = finding.appearance
+                        ? jsonString(finding.appearance->value())
+                        : jsonNull(),
+                },
+                JsonMember{
+                    .key   = "rival",
+                    .value = finding.rival
+                        ? jsonString(finding.rival->value())
+                        : jsonNull(),
+                },
+            };
+            return jsonObject(members);
+        }
+
+        [[nodiscard]]
+        auto runCheckModel(CheckModel const& command) -> Result<std::string>
+        {
+            UF_TRY_VALUE(loaded, workbench::loadAuthoringProject(command.root));
+            UF_TRY_VALUE(
+                check,
+                workbench::runModelCheck(
+                    loaded.document,
+                    loaded.sources,
+                    // No live frame: a capture from the running target is not a
+                    // screen the model is authored on and contributes no column.
+                    {},
+                    annotation::RecognitionPolicy{
+                        .maximumPixelComparisons = command.budget,
+                    }
+                )
+            );
+            auto const findings = workbench::judgeModelCheck(check);
+
+            auto screens = std::vector<std::string>{};
+            screens.reserve(check.screens.size());
+            for (auto const& screen : check.screens)
+            {
+                screens.emplace_back(screenCheckJson(loaded.document, screen));
+            }
+
+            auto cells = std::vector<std::string>{};
+            cells.reserve(check.cells.size());
+            for (auto const& cell : check.cells)
+            {
+                cells.emplace_back(cellJson(loaded.document, cell));
+            }
+
+            auto reported = std::vector<std::string>{};
+            reported.reserve(findings.size());
+            for (auto const& finding : findings)
+            {
+                reported.emplace_back(findingJson(loaded.document, finding));
+            }
+
+            auto const members = std::array{
+                JsonMember{
+                    .key   = "root",
+                    .value = jsonString(command.root.string()),
+                },
+                // The verdict first, because it is the field a caller branches
+                // on. A model with findings still answers ok: the search ran and
+                // measured everything it was asked to, and the findings are its
+                // result rather than a failure to produce one.
+                JsonMember{
+                    .key   = "accepted",
+                    .value = jsonBoolean(findings.empty()),
+                },
+                JsonMember{
+                    .key   = "separation_factor",
+                    .value = jsonUnsigned(workbench::k_appearanceSeparationFactor),
+                },
+                JsonMember{.key = "screens", .value = jsonArray(screens)},
+                JsonMember{.key = "cells", .value = jsonArray(cells)},
+                JsonMember{.key = "findings", .value = jsonArray(reported)},
+            };
+            return successJson("check", members);
+        }
+
         // One frame decoded into the BGRA8 plane the analysis primitives read.
         // The plane is owned here because BgraImage is a view: every view below
         // borrows the plane of the DecodedFrame it was built from, so the
@@ -2129,6 +2422,10 @@ namespace uf::authoring
                 else if constexpr (std::same_as<Specific, MatchRecognizer>)
                 {
                     return runMatchRecognizer(specific);
+                }
+                else if constexpr (std::same_as<Specific, CheckModel>)
+                {
+                    return runCheckModel(specific);
                 }
                 else if constexpr (std::same_as<Specific, AnalyseFrameStability>)
                 {

@@ -40,6 +40,10 @@ namespace uf::workbench
     {
         annotation::ElementId recognizerId;
 
+        // Which appearance produced this evidence. Absent only for an element
+        // that declares none and is located by the page being recognised.
+        std::optional<annotation::ResourceName> appearance{};
+
         bool                     hit{};
         std::optional<uint64>    sadScore{};
         uint64                   maximumSad{};
@@ -271,28 +275,70 @@ namespace uf::workbench
         NotSearchedHere,
     };
 
-    // One (element, screen) observation in the marks-x-screens grid, filed under
-    // the element id, the one name a signature, an authorisation, a trace line,
-    // and the UI's own lookups all resolve. Derived from the same per-screen
-    // evaluation the margins fold in, with no second search.
+    // What one row of the grid searched.
+    //
+    // An element with several appearances collapses, once folded, into a single
+    // Hit or Miss per screen -- and that single answer cannot say whether each
+    // appearance discriminates or whether one of them matches everywhere and
+    // carries the rest. Both questions have to be asked, so the grid holds both
+    // rows and the property each one supports is different.
+    enum class ModelCellSubject : uint8
+    {
+        // Every declared appearance searched and folded into one answer. This
+        // is what the runtime does, and therefore what a page signature and a
+        // click actually read.
+        Element,
+        // One declared appearance searched alone, which no runtime path does.
+        // It exists to ask whether that appearance discriminates by itself,
+        // including on the screens another appearance owns -- where a hit is
+        // invisible once folded with a correct one.
+        Appearance,
+    };
+
+    // One (element, appearance, screen) observation in the falsification grid,
+    // filed under the element id, the one name a signature, an authorisation, a
+    // trace line, and the UI's own lookups all resolve. Derived from the same
+    // per-screen evaluation the margins fold in, with no second search of the
+    // folded element.
+    //
+    // An element declaring one appearance gets no Appearance rows: the folded
+    // row IS that appearance's row, and searching it again would double the
+    // cost of every project authored so far to restate a measurement already
+    // present.
     struct ModelCheckCell final
     {
         annotation::ElementId elementId;
         annotation::SourceId  screenId;
-        ModelCellOutcome      outcome{};
+        ModelCellSubject      subject{};
+
+        // Which appearance this row's evidence names: the one searched on an
+        // Appearance row, the one the fold settled on an Element row. Absent
+        // for an element that declares none and is located by its page, and for
+        // a row nothing measured.
+        std::optional<annotation::ResourceName> appearance{};
+
+        ModelCellOutcome outcome{};
 
         // The measured score and the threshold it was read against, present for
-        // Hit and Miss. maximumSad is the same per-element budget the margins
-        // report against, so a cell's percentage is comparable across screens.
+        // Hit and Miss. maximumSad belongs to the appearance that produced the
+        // score, never to the element, so two rows of one element are comparable
+        // only through the cross product judgeModelCheck uses.
         std::optional<uint64> sadScore{};
         uint64                maximumSad{};
 
-        // Whether the element is authored to match on this screen: the page
-        // recorded for the screen references it, whatever capability that
-        // reference exercises. This is the ground truth the colour is read
-        // against -- a hit where this is false is a misfire, a miss where it is
-        // true is a hole. Left false for a cell that was not searched or was
-        // stopped.
+        // Where the search landed. On an Element row this is the fold's verdict,
+        // and it is the rectangle resolveClickPixel derives the click from -- so
+        // a fold that answers with the right appearance and the wrong rectangle
+        // has still moved the click.
+        std::optional<PixelRect> matchedRect{};
+
+        // Whether this row's subject is authored to match on this screen. For an
+        // Element row: the page recorded for the screen references it, whatever
+        // capability that reference exercises. For an Appearance row: that, AND
+        // this appearance is the one the model names for this screen. This is
+        // the ground truth the colour is read against -- a hit where this is
+        // false is a misfire, a miss where it is true is a hole. Left false for
+        // a cell that was not searched or was stopped.
         bool expectedHit{};
 
         // Why a Stopped cell stopped -- the budget or the deadline -- for the
@@ -350,13 +396,83 @@ namespace uf::workbench
         std::vector<RecognizerMargin>  margins{};
         std::optional<LiveScreenCheck> live{};
 
-        // One cell per (element, screen) over the captured screens, filed under
-        // the element id. The full grid the margins fold away: the margins keep
-        // each mark's own score and nearest-other margin, while these preserve
-        // every per-screen outcome the run measured. The live frame contributes
-        // no cell -- it is not a project screen and has no column.
+        // One cell per (element, screen), plus one per (element, appearance,
+        // screen) for every element declaring more than one appearance, over the
+        // captured screens. The full grid the margins fold away: the margins
+        // keep each mark's own score and nearest-other margin, while these
+        // preserve every per-screen outcome the run measured. The live frame
+        // contributes no cell -- it is not a project screen and has no column.
         std::vector<ModelCheckCell> cells{};
     };
+
+    // How far the appearance a screen belongs to must beat every other
+    // appearance of the same element there.
+    //
+    // Two appearances of one element are not comparable by raw score --
+    // maximumSad is a function of each one's own template size and threshold --
+    // so the factor is applied to the exact integer cross product and never to a
+    // ratio. A margin narrower than this is a model that happens to be right on
+    // the stills it was authored against: the repository's own measured
+    // cross-screen misses sat at 2.85x to 4.15x the threshold
+    // (docs/pitfalls/page-modeling-and-multi-step.md), so four is inside what a
+    // healthy mark has already been observed to deliver and outside what drift
+    // can close in a frame. It is deliberately a constant rather than a flag:
+    // tuned per project it would slide to one, and at one this check degenerates
+    // into "the right appearance won", which P3 already asserts.
+    inline constexpr auto k_appearanceSeparationFactor = uint64{4};
+
+    // What one falsification failure is. Three kinds, because three things can
+    // be wrong and each needs a different repair.
+    enum class ModelFindingKind : uint8
+    {
+        // A measured outcome contradicting the model: a match where the row's
+        // subject does not belong, or none where it does. An appearance that
+        // matches a screen another appearance owns lands here, and it is the
+        // failure the appearance rows exist to expose.
+        WrongOutcome,
+        // The element matched a screen one of its appearances owns, but the fold
+        // answered with a different appearance -- or with the right one and a
+        // rectangle that is not where that appearance matched. Either way the
+        // click moves, and nothing downstream can tell.
+        WrongAppearance,
+        // The owning appearance beat a rival by less than
+        // k_appearanceSeparationFactor, so which one answers is a frame of drift
+        // away from changing. Both outcomes are still correct here; that is what
+        // makes it worth reporting rather than waiting for.
+        ThinSeparation,
+    };
+
+    struct ModelFinding final
+    {
+        annotation::ElementId elementId;
+        annotation::SourceId  screenId;
+        ModelFindingKind      kind{};
+
+        // The appearance the finding is about: the one that misfired, the one
+        // the fold wrongly answered with, or the one whose lead was thin. Absent
+        // when the finding is about an element with no appearance to name.
+        std::optional<annotation::ResourceName> appearance{};
+
+        // The appearance that came too close, on ThinSeparation only.
+        std::optional<annotation::ResourceName> rival{};
+    };
+
+    // The enumerator's name, for a JSON answer and a label.
+    [[nodiscard]]
+    auto modelFindingKindName(ModelFindingKind kind) noexcept -> char const*;
+
+    // Everything the measured grid says is wrong with the model. Empty is the
+    // verdict "accepted": every appearance matched exactly the screens it is
+    // authored for, the fold answered with the right one and the right
+    // rectangle, and every owner led its rivals by the required factor.
+    //
+    // Pure over the grid, so it needs no document, no runtime, and no pixels --
+    // which is what lets a test hold a whole matrix and mutate one property.
+    // A search the policy stopped is not a failure: it is a measurement that did
+    // not happen, and reporting it as a defect would let a short budget condemn
+    // a sound model.
+    [[nodiscard]]
+    auto judgeModelCheck(ModelCheck const& check) -> std::vector<ModelFinding>;
 
     // Evaluates every recognizer against every captured screen, once, and reports
     // both what each screen resolved to and how much room each recognizer has.

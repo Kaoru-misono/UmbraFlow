@@ -162,6 +162,27 @@ namespace uf::authoring
         uint64 budget{cli::k_defaultPixelComparisonBudget};
     };
 
+    // The falsification matrix over a whole project: every declared appearance
+    // measured against every screen the project holds, and every element
+    // measured as the runtime folds it.
+    //
+    // This is the check an author cannot perform by eye and the one the
+    // multi-appearance model is only sound with. A template always matches the
+    // image it was cut from, so the only evidence that it identifies one screen
+    // rather than another is what it does on the others -- and once several
+    // appearances are folded into one answer, an appearance that matches
+    // everywhere is invisible behind one that matches correctly.
+    //
+    // It takes no frame. A capture from the running target contributes no
+    // column: a frame taken to measure against is not a screen the model is
+    // authored on, and the matrix is a statement about the authored ones.
+    struct CheckModel final
+    {
+        std::filesystem::path root{};
+
+        uint64 budget{cli::k_defaultPixelComparisonBudget};
+    };
+
     // The three questions `frames` answers about a set of screenshots, before
     // any of them is a project. Nothing below reads or writes a project root:
     // these measure the pixels an author would otherwise measure by hand, and
@@ -220,6 +241,7 @@ namespace uf::authoring
         AddElement,
         ReferenceElement,
         MatchRecognizer,
+        CheckModel,
         AnalyseFrameStability,
         ProbeFrameColour,
         CensusFrameColours

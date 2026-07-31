@@ -15,6 +15,7 @@
 #include <cstddef>
 #include <format>
 #include <functional>
+#include <optional>
 #include <ranges>
 #include <span>
 #include <string>
@@ -732,6 +733,79 @@ namespace uf::annotation
                         *p_recognizer,
                         searchRoi,
                         p_reference->variant,
+                        policy.maximumPixelComparisons,
+                        poll
+                    )
+                );
+                if (
+                    auto const* p_stop = std::get_if<SadSearchStopReason>(
+                        &attempt.result
+                    )
+                )
+                {
+                    return ActionTargetAttempt{
+                        .result = PageRecognitionStop{
+                            .recognizerId = p_recognizer->id(),
+                            .reason       = *p_stop,
+                        },
+                        .completedPixelComparisons = attempt.completedPixelComparisons,
+                    };
+                }
+                return ActionTargetAttempt{
+                    .result                    = std::get<AnchorEvidence>(std::move(attempt.result)),
+                    .completedPixelComparisons = attempt.completedPixelComparisons,
+                };
+            }
+        );
+    }
+
+    auto RecognitionRuntime::evaluateAppearance(
+        Frame const& frame,
+        ProjectFingerprint liveFingerprint,
+        ElementId elementId,
+        ResourceName const& appearance,
+        PixelRect searchRoi,
+        RecognitionPolicy const& policy
+    ) const -> Result<ActionTargetAttempt>
+    {
+        UF_TRY(ensureCompatibleFrame(frame, liveFingerprint));
+
+        auto const* p_recognizer = m_manifest.catalog().findRecognizer(elementId);
+        if (p_recognizer == nullptr)
+        {
+            return invalidRuntime(
+                std::format(
+                    "element {} is not present in the runtime catalog",
+                    elementId.value().toString()
+                )
+            );
+        }
+        if (p_recognizer->findVariant(appearance) == nullptr)
+        {
+            return invalidRuntime(
+                std::format(
+                    "element {} declares no appearance \"{}\"",
+                    elementId.value().toString(),
+                    appearance.value()
+                )
+            );
+        }
+
+        auto const pinned = std::optional<ResourceName>{appearance};
+        auto const poll   = makeSadSearchPoll(policy);
+        return withGrayFrame(
+            frame,
+            [this, p_recognizer, searchRoi, &pinned, &policy, &poll](
+                GrayImage const& grayFrame
+            ) -> Result<ActionTargetAttempt>
+            {
+                UF_TRY_VALUE(
+                    attempt,
+                    matchElement(
+                        grayFrame,
+                        *p_recognizer,
+                        searchRoi,
+                        pinned,
                         policy.maximumPixelComparisons,
                         poll
                     )

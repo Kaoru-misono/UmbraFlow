@@ -734,6 +734,43 @@ namespace uf::authoring
             };
         }
 
+        [[nodiscard]]
+        auto parseCheckCommand(
+            std::span<std::string const> raw
+        ) -> Result<AuthoringCommand>
+        {
+            UF_TRY_VALUE(root, positional(raw, 0, "root"));
+
+            auto budget = cli::k_defaultPixelComparisonBudget;
+
+            auto index = std::size_t{1};
+            while (index < raw.size())
+            {
+                auto const& flag = raw[index];
+                if (index + 1U >= raw.size())
+                {
+                    return invalid(std::format("missing value for {}", flag));
+                }
+                auto const& value = raw[index + 1U];
+
+                if (flag == "--budget")
+                {
+                    UF_TRY_VALUE(parsed, parseUnsigned(value, flag));
+                    budget = parsed;
+                }
+                else
+                {
+                    return invalid(std::format("unknown argument \"{}\"", flag));
+                }
+                index += 2U;
+            }
+
+            return CheckModel{
+                .root   = std::filesystem::path{root},
+                .budget = budget,
+            };
+        }
+
         // The PNG paths a frames subcommand opens with. They are positional and
         // variable in number, so they end at the first flag rather than at a
         // fixed index. How many are needed is each subcommand's own question --
@@ -1000,7 +1037,7 @@ namespace uf::authoring
         std::span<std::string const> raw
     ) -> Result<AuthoringCommand>
     {
-        UF_TRY_VALUE(group, positional(raw, 0, "project|page|match|frames"));
+        UF_TRY_VALUE(group, positional(raw, 0, "project|page|match|check|frames"));
         auto const rest = raw.subspan(1U);
 
         if (group == "project")
@@ -1014,6 +1051,10 @@ namespace uf::authoring
         if (group == "match")
         {
             return parseMatchCommand(rest);
+        }
+        if (group == "check")
+        {
+            return parseCheckCommand(rest);
         }
         if (group == "frames")
         {
@@ -1037,6 +1078,7 @@ namespace uf::authoring
             "[--search-roi x,y,w,h]\n"
             "  umbra-authoring match ROOT RECOGNIZER --frame PNG [--page PAGE]\n"
             "                                        [--budget N]\n"
+            "  umbra-authoring check ROOT [--budget N]\n"
             "  umbra-authoring frames stability PNG PNG... [--rect x,y,w,h]\n"
             "                                   [--gray-tolerance N] [--gap N]\n"
             "  umbra-authoring frames probe     PNG PNG... --rect x,y,w,h\n"
@@ -1131,6 +1173,18 @@ namespace uf::authoring
             "reference. It is only needed when more than one page clicks the\n"
             "element, and it is refused for an element that identifies: the anchor\n"
             "pass runs before any page is known.\n"
+            "\n"
+            "check is the falsification matrix. It searches every declared\n"
+            "appearance against every screen the project holds, on and off the\n"
+            "screens it belongs to, and it searches each element once more the\n"
+            "way the runtime does -- every appearance folded into one answer.\n"
+            "The off-diagonal cells are the point: a template always matches the\n"
+            "image it was cut from, so the only evidence it identifies one screen\n"
+            "rather than another is what it does on the others, and an appearance\n"
+            "that matches everywhere disappears behind a sibling that matches\n"
+            "correctly. \"findings\" is what is wrong and \"accepted\" is whether\n"
+            "it is empty; a failing model still answers ok, because the findings\n"
+            "ARE the answer and an error document would throw them away.\n"
             "\n"
             "One JSON document is written to stdout per invocation, success or\n"
             "failure; a failure adds one rendered line to stderr.\n";

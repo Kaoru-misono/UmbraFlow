@@ -44,6 +44,7 @@ namespace uf::workbench
         {
             return PreviewAnchorRow{
                 .recognizerId = evidence.recognizerId(),
+                .appearance   = evidence.variantName(),
                 .hit          = evidence.hit(),
                 .sadScore     = evidence.sadScore(),
                 .maximumSad   = evidence.maximumSad(),
@@ -491,6 +492,85 @@ namespace uf::workbench
             return document.catalog().findReference(pageId, elementId) != nullptr;
         }
 
+        // Which appearance the model names for one screen -- the ground truth
+        // the (appearance, screen) cells are read against.
+        //
+        // Three answers, in this order, and the order is the model's own. A page
+        // that pins an appearance on its reference has stated it outright, and
+        // that is what pinning is for. An element declaring exactly one
+        // appearance wears it wherever it is used: there is nothing to choose
+        // between, which is what keeps a borrowed single-appearance element --
+        // cut from one screen, used on another -- off the off-diagonal. Failing
+        // both, the appearance cut from this very screen is the answer, because
+        // the screen an appearance was measured on is the only per-screen fact
+        // the model carries about it.
+        //
+        // None of the three can answer for a screen that no appearance was cut
+        // from and no reference pins, and returning nothing there is deliberate:
+        // the model genuinely does not say which appearance should match, so
+        // whichever one does is unearned. That is a defect to report, not a case
+        // to wave through, and the repair is one line of pinning.
+        [[nodiscard]]
+        auto appearanceForScreen(
+            annotation::Element const& element,
+            annotation::PageReference const* p_reference,
+            annotation::SourceId screenId
+        ) -> std::optional<annotation::ResourceName>
+        {
+            if (p_reference != nullptr && p_reference->variant.has_value())
+            {
+                return p_reference->variant;
+            }
+            auto const appearances = element.variants();
+            if (appearances.size() == 1U)
+            {
+                return appearances.front().name();
+            }
+            auto const cutHere = std::ranges::find(
+                appearances,
+                screenId,
+                &annotation::Variant::sourceId
+            );
+            if (cutHere == appearances.end())
+            {
+                return std::nullopt;
+            }
+            return cutHere->name();
+        }
+
+        // Whether one appearance is the one this screen is authored to be
+        // matched by. Both halves have to hold: the element belongs to the page
+        // recorded for the screen, and this appearance is the one the model
+        // names there.
+        [[nodiscard]]
+        auto appearanceOwnsScreen(
+            annotation::AuthoringDocument const& document,
+            annotation::ElementId elementId,
+            annotation::ResourceName const& appearance,
+            std::optional<annotation::PageId> expectedPage,
+            annotation::SourceId screenId
+        ) -> bool
+        {
+            if (
+                !expectedPage.has_value()
+                || !elementBelongsToPage(document, elementId, *expectedPage)
+            )
+            {
+                return false;
+            }
+            auto const* p_element = document.findElement(elementId);
+            if (p_element == nullptr)
+            {
+                return false;
+            }
+            auto const named = appearanceForScreen(
+                *p_element,
+                document.catalog().findReference(*expectedPage, elementId),
+                screenId
+            );
+            return named.has_value() && *named == appearance;
+        }
+
         // One action search on one screen: the element to evaluate, paired with
         // the page whose reference supplies the region it is searched in. The
         // page is not the screen's -- see interactPageFor -- so the same element
@@ -609,6 +689,184 @@ namespace uf::workbench
             return evaluation;
         }
 
+        // One appearance to search alone on one screen, in the same region the
+        // folded search of its element uses. The region travels with the search
+        // because the two folded paths derive it differently -- the anchor pass
+        // reads the element's own, the action path the reference's refinement --
+        // and a per-appearance score is only comparable with the folded one when
+        // both searched the same pixels.
+        struct AppearanceSearch final
+        {
+            annotation::ElementId    elementId;
+            annotation::ResourceName appearance;
+
+            PixelRect searchRoi;
+        };
+
+        // Every appearance that needs a row of its own, for one screen.
+        //
+        // Only elements declaring two or more appearances get them. With one,
+        // the folded row IS that appearance's row -- searching it again would
+        // double the cost of every project authored so far to restate a
+        // measurement already in the grid.
+        //
+        // Anchors are searched in the element's own region, which is the region
+        // the anchor pass uses and the only one an identify reference is allowed
+        // to have. An action element takes the region its own action search was
+        // given, which is the reference's refinement when it has one.
+        [[nodiscard]]
+        auto appearanceSearchesOn(
+            annotation::AuthoringDocument const& document,
+            std::span<annotation::ElementId const> anchorIds,
+            std::span<ActionSearch const> actionSearches
+        ) -> std::vector<AppearanceSearch>
+        {
+            auto searches = std::vector<AppearanceSearch>{};
+
+            auto const append = [&document, &searches](
+                annotation::ElementId elementId,
+                std::optional<PixelRect> refinedRoi
+            )
+            {
+                auto const* p_element = document.findElement(elementId);
+                if (p_element == nullptr || p_element->variants().size() < 2U)
+                {
+                    return;
+                }
+                for (auto const& appearance : p_element->variants())
+                {
+                    searches.emplace_back(
+                        AppearanceSearch{
+                            .elementId  = elementId,
+                            .appearance = appearance.name(),
+                            .searchRoi  = refinedRoi.value_or(p_element->searchRoi()),
+                        }
+                    );
+                }
+            };
+
+            for (auto const& anchorId : anchorIds)
+            {
+                append(anchorId, std::nullopt);
+            }
+            for (auto const& search : actionSearches)
+            {
+                auto const* p_reference = document.catalog().findReference(
+                    search.pageId,
+                    search.elementId
+                );
+                append(
+                    search.elementId,
+                    p_reference == nullptr
+                        ? std::optional<PixelRect>{}
+                        : p_reference->searchRoi
+                );
+            }
+            return searches;
+        }
+
+        // The (appearance, screen) rows for one screen, each from a search of
+        // that appearance alone.
+        //
+        // This is the one place the check searches something the runtime never
+        // searches, and the reason is the off-diagonal: an appearance that
+        // matches a screen a SIBLING appearance owns is folded away into a
+        // correct-looking element hit, and no folded measurement can recover it.
+        [[nodiscard]]
+        auto appearanceCellsOn(
+            annotation::AuthoringDocument const& document,
+            annotation::RecognitionRuntime& runtime,
+            Frame const& frame,
+            annotation::SourceId screenId,
+            std::optional<annotation::PageId> expectedPage,
+            std::span<AppearanceSearch const> searches,
+            annotation::RecognitionPolicy const& policy
+        ) -> Result<std::vector<ModelCheckCell>>
+        {
+            auto const fingerprint = document.catalog().fingerprint();
+
+            auto cells = std::vector<ModelCheckCell>{};
+            cells.reserve(searches.size());
+            for (auto const& search : searches)
+            {
+                UF_TRY_VALUE(
+                    attempt,
+                    runtime.evaluateAppearance(
+                        frame,
+                        fingerprint,
+                        search.elementId,
+                        search.appearance,
+                        search.searchRoi,
+                        policy
+                    )
+                );
+
+                auto cell = ModelCheckCell{
+                    .elementId  = search.elementId,
+                    .screenId   = screenId,
+                    .subject    = ModelCellSubject::Appearance,
+                    .appearance = search.appearance,
+                };
+                if (
+                    auto const* p_stop = std::get_if<annotation::PageRecognitionStop>(
+                        &attempt.result
+                    )
+                )
+                {
+                    cell.outcome    = ModelCellOutcome::Stopped;
+                    cell.stopReason = p_stop->reason;
+                    cells.emplace_back(std::move(cell));
+                    continue;
+                }
+
+                auto const& evidence = std::get<annotation::AnchorEvidence>(
+                    attempt.result
+                );
+                cell.outcome = evidence.hit()
+                    ? ModelCellOutcome::Hit
+                    : ModelCellOutcome::Miss;
+                cell.sadScore    = evidence.sadScore();
+                cell.maximumSad  = evidence.maximumSad();
+                cell.matchedRect = evidence.matchedRect();
+                cell.expectedHit = appearanceOwnsScreen(
+                    document,
+                    search.elementId,
+                    search.appearance,
+                    expectedPage,
+                    screenId
+                );
+                cells.emplace_back(std::move(cell));
+            }
+            return cells;
+        }
+
+        // One element's own row on one screen, from the folded evidence the
+        // margins already read. The fold's appearance and its rectangle ride
+        // along because they are the whole of what "the right appearance
+        // answered, in the right place" is read from, and no other row carries
+        // them: the click is derived from that rectangle, so a fold naming the
+        // right appearance over the wrong rectangle has still moved it.
+        [[nodiscard]]
+        auto foldedCell(
+            annotation::ElementId elementId,
+            annotation::SourceId screenId,
+            PreviewAnchorRow const& row,
+            bool expectedHit
+        ) -> ModelCheckCell
+        {
+            return ModelCheckCell{
+                .elementId   = elementId,
+                .screenId    = screenId,
+                .subject     = ModelCellSubject::Element,
+                .appearance  = row.appearance,
+                .outcome     = row.hit ? ModelCellOutcome::Hit : ModelCellOutcome::Miss,
+                .sadScore    = row.sadScore,
+                .maximumSad  = row.maximumSad,
+                .matchedRect = row.matchedRect,
+                .expectedHit = expectedHit,
+            };
+        }
+
         // The grid cells for one screen, derived from the evaluation the margins
         // already fold in -- the page anchor rows (and any page stop) and the
         // action rows (and any action stop) -- so no element is searched twice.
@@ -650,16 +908,7 @@ namespace uf::workbench
                 if (row != preview.anchorRows.end())
                 {
                     cells.emplace_back(
-                        ModelCheckCell{
-                            .elementId = anchorId,
-                            .screenId  = screenId,
-                            .outcome     = row->hit
-                                ? ModelCellOutcome::Hit
-                                : ModelCellOutcome::Miss,
-                            .sadScore    = row->sadScore,
-                            .maximumSad  = row->maximumSad,
-                            .expectedHit = belongs(anchorId),
-                        }
+                        foldedCell(anchorId, screenId, *row, belongs(anchorId))
                     );
                     continue;
                 }
@@ -670,6 +919,7 @@ namespace uf::workbench
                     ModelCheckCell{
                         .elementId = anchorId,
                         .screenId  = screenId,
+                        .subject   = ModelCellSubject::Element,
                         .outcome     = preview.pageStop.has_value()
                             ? ModelCellOutcome::Stopped
                             : ModelCellOutcome::NotSearchedHere,
@@ -698,6 +948,7 @@ namespace uf::workbench
                         ModelCheckCell{
                             .elementId = actionId,
                             .screenId  = screenId,
+                            .subject   = ModelCellSubject::Element,
                             .outcome   = ModelCellOutcome::NotSearchedHere,
                         }
                     );
@@ -711,16 +962,7 @@ namespace uf::workbench
                 if (row != actionEval.rows.end())
                 {
                     cells.emplace_back(
-                        ModelCheckCell{
-                            .elementId = actionId,
-                            .screenId  = screenId,
-                            .outcome     = row->hit
-                                ? ModelCellOutcome::Hit
-                                : ModelCellOutcome::Miss,
-                            .sadScore    = row->sadScore,
-                            .maximumSad  = row->maximumSad,
-                            .expectedHit = belongs(actionId),
-                        }
+                        foldedCell(actionId, screenId, *row, belongs(actionId))
                     );
                     continue;
                 }
@@ -733,6 +975,7 @@ namespace uf::workbench
                     ModelCheckCell{
                         .elementId   = actionId,
                         .screenId    = screenId,
+                        .subject     = ModelCellSubject::Element,
                         .outcome     = ModelCellOutcome::Stopped,
                         .expectedHit = belongs(actionId),
                         .stopReason  = stop != actionEval.stops.end()
@@ -850,6 +1093,157 @@ namespace uf::workbench
             }
         }
         return ModelCellColor::Expected;
+    }
+
+    auto modelFindingKindName(ModelFindingKind kind) noexcept -> char const*
+    {
+        switch (kind)
+        {
+        case ModelFindingKind::WrongOutcome:
+            return "wrong_outcome";
+        case ModelFindingKind::WrongAppearance:
+            return "wrong_appearance";
+        case ModelFindingKind::ThinSeparation:
+            return "thin_separation";
+        }
+        return "?";
+    }
+
+    auto judgeModelCheck(ModelCheck const& check) -> std::vector<ModelFinding>
+    {
+        auto const foldedRow = [&check](
+            annotation::ElementId elementId,
+            annotation::SourceId screenId
+        ) -> ModelCheckCell const*
+        {
+            auto const found = std::ranges::find_if(
+                check.cells,
+                [elementId, screenId](ModelCheckCell const& cell)
+                {
+                    return cell.subject == ModelCellSubject::Element
+                        && cell.elementId == elementId
+                        && cell.screenId == screenId;
+                }
+            );
+            return found == check.cells.end() ? nullptr : &*found;
+        };
+
+        auto findings = std::vector<ModelFinding>{};
+
+        // Completeness and set rejection are one sweep, because they are one
+        // question asked of two kinds of row. classifyModelCell already reads a
+        // measured outcome against what the row's subject is authored to do and
+        // reports Misfire in both directions, so the appearance rows give
+        // "each appearance matches exactly its own screens" -- off-diagonal
+        // included -- and the element rows give "the folded set misses every
+        // screen it should reject" on the fold's own answer, where a fold bug
+        // would show and the appearance rows could not see it.
+        for (auto const& cell : check.cells)
+        {
+            if (classifyModelCell(cell) != ModelCellColor::Misfire)
+            {
+                continue;
+            }
+            findings.emplace_back(
+                ModelFinding{
+                    .elementId  = cell.elementId,
+                    .screenId   = cell.screenId,
+                    .kind       = ModelFindingKind::WrongOutcome,
+                    .appearance = cell.appearance,
+                }
+            );
+        }
+
+        for (auto const& owner : check.cells)
+        {
+            if (
+                owner.subject != ModelCellSubject::Appearance
+                || !owner.expectedHit
+                || owner.outcome != ModelCellOutcome::Hit
+                || !owner.appearance.has_value()
+            )
+            {
+                continue;
+            }
+
+            // Attribution. The element matched, so the only remaining question
+            // is whether it matched AS the appearance this screen belongs to,
+            // at that appearance's own rectangle. First-past-the-threshold is
+            // what breaks this, and it breaks it silently: the click is derived
+            // from the rectangle the fold reports.
+            auto const* p_folded = foldedRow(owner.elementId, owner.screenId);
+            if (
+                p_folded != nullptr
+                && p_folded->outcome == ModelCellOutcome::Hit
+                && (
+                    p_folded->appearance != owner.appearance
+                    || p_folded->matchedRect != owner.matchedRect
+                )
+            )
+            {
+                findings.emplace_back(
+                    ModelFinding{
+                        .elementId = owner.elementId,
+                        .screenId  = owner.screenId,
+                        .kind      = ModelFindingKind::WrongAppearance,
+                        .appearance = p_folded->appearance,
+                    }
+                );
+            }
+
+            // Separation. Both outcomes can be right here and the model still
+            // be one frame from picking the other appearance, so the owner has
+            // to lead by a factor rather than merely lead. The comparison is the
+            // exact integer cross product because the two scores are read
+            // against different ceilings; a product too large to represent
+            // saturates, which reports the separation it implies rather than
+            // wrapping to its opposite.
+            for (auto const& rival : check.cells)
+            {
+                if (
+                    rival.subject != ModelCellSubject::Appearance
+                    || rival.elementId != owner.elementId
+                    || rival.screenId != owner.screenId
+                    || rival.appearance == owner.appearance
+                    || !rival.sadScore.has_value()
+                    || !owner.sadScore.has_value()
+                )
+                {
+                    continue;
+                }
+
+                auto const saturated = std::numeric_limits<uint64>::max();
+                auto const ownerSide = checkedMultiply(
+                    *owner.sadScore,
+                    rival.maximumSad
+                ).and_then(
+                    [](uint64 product)
+                    {
+                        return checkedMultiply(
+                            product,
+                            k_appearanceSeparationFactor
+                        );
+                    }
+                ).value_or(saturated);
+                auto const rivalSide = checkedMultiply(
+                    *rival.sadScore,
+                    owner.maximumSad
+                ).value_or(saturated);
+                if (ownerSide > rivalSide)
+                {
+                    findings.emplace_back(
+                        ModelFinding{
+                            .elementId  = owner.elementId,
+                            .screenId   = owner.screenId,
+                            .kind       = ModelFindingKind::ThinSeparation,
+                            .appearance = owner.appearance,
+                            .rival      = rival.appearance,
+                        }
+                    );
+                }
+            }
+        }
+        return findings;
     }
 
     auto runPreview(
@@ -1258,6 +1652,33 @@ namespace uf::workbench
                 check.cells.end(),
                 std::make_move_iterator(screenCells.begin()),
                 std::make_move_iterator(screenCells.end())
+            );
+
+            // The one extra pass: each appearance of a multi-appearance element
+            // searched alone. The folded rows above cannot answer for these,
+            // because folding is exactly what hides an appearance that matches
+            // where a sibling belongs.
+            auto const appearanceSearches = appearanceSearchesOn(
+                document,
+                anchorIds,
+                actionSearches
+            );
+            UF_TRY_VALUE(
+                appearanceCells,
+                appearanceCellsOn(
+                    document,
+                    runtime,
+                    frame,
+                    asset.id,
+                    expected,
+                    appearanceSearches,
+                    screenPolicy
+                )
+            );
+            check.cells.insert(
+                check.cells.end(),
+                std::make_move_iterator(appearanceCells.begin()),
+                std::make_move_iterator(appearanceCells.end())
             );
         }
 

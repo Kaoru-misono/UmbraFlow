@@ -177,6 +177,32 @@ namespace uf::annotation
             ProjectFingerprint liveFingerprint,
             RecognitionPolicy const& policy
         ) const -> Result<PageOutcome>;
+
+        // One declared appearance of one element, searched alone in one region.
+        //
+        // No product path does this: the anchor pass and the action path both
+        // fold across the appearances, which is the whole point of the fold.
+        // The falsification matrix needs the opposite -- one appearance
+        // measured on a screen NO page claims -- because an appearance that
+        // matches where it does not belong is invisible once folded with one
+        // that matches where it does. Neither page-scoped entry point can
+        // reach that cell, so it is exposed here rather than reimplemented at
+        // the authoring edge, where it would drift from what the runtime does.
+        //
+        // The region is the caller's because the two page paths derive it
+        // differently -- the anchor pass reads the element's, the action path
+        // the reference's refinement -- and a per-appearance measurement is
+        // only comparable with the folded one when both searched the same
+        // pixels.
+        [[nodiscard]]
+        auto evaluateAppearance(
+            Frame const& frame,
+            ProjectFingerprint liveFingerprint,
+            ElementId elementId,
+            ResourceName const& appearance,
+            PixelRect searchRoi,
+            RecognitionPolicy const& policy
+        ) const -> Result<ActionTargetAttempt>;
     };
 
     // Derives the single deterministic click pixel for an interactive element
