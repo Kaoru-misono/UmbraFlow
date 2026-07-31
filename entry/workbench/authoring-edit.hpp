@@ -345,6 +345,22 @@ namespace uf::workbench
         // pinning a copy of the element's rectangle here would go stale the
         // moment the element's own moved.
         std::optional<PixelRect> searchRoi{};
+
+        // Which appearance this page expects, for the case where the PAGE
+        // decides it: a back arrow drawn white on one screen and dark on
+        // another is one element with two appearances, and the page is what
+        // knows which applies. The page then searches once instead of once per
+        // appearance, and cannot answer with the wrong one.
+        //
+        // Absent means every appearance is searched and the best normalized
+        // margin wins, which is the answer when the runtime state decides
+        // instead -- a speed button reading 1x, 2x or 3x, where which one
+        // matched is itself the information.
+        //
+        // It binds the page-scoped searches only. The anchor pass runs before
+        // any page is known, so identify folds across every appearance whatever
+        // a reference pins.
+        std::optional<std::string> variant{};
     };
 
     struct ReferencedElement final
@@ -373,8 +389,9 @@ namespace uf::workbench
     // already references it, when the requested set is empty or exercises
     // something the element does not declare, when nothing is asked for and the
     // element only identifies (such an element joins a page through its
-    // signature, not by being placed on it), and when the request exercises
-    // identify and refines a search region at once.
+    // signature, not by being placed on it), when the request exercises
+    // identify and refines a search region at once, and when it pins an
+    // appearance the element does not declare.
     [[nodiscard]]
     auto referenceElementOnPage(
         AuthoringDraft draft,

@@ -1212,29 +1212,38 @@ namespace uf::authoring
             uint64 pixelComparisons{};
         };
 
-        // Which of the runtime's two entry points measures this element.
+        // Which of the runtime's two entry points measures this element, or why
+        // neither of them measures anything.
         enum class MatchPath : uint8
         {
             PageSignature,
             ActionTarget,
+            NoPixels,
             Unreachable,
         };
 
-        // Identify wins when an element declares both. The anchor pass is global
-        // and page-independent, so it is the measurement that needs no page
-        // argument at all, and a reference exercising identify may not refine
-        // the search region -- so an element that also interacts is searched
-        // over the same rectangle of the same region either way.
+        // An element with no appearance is answered first, before either entry
+        // point: it declares no pixels, so nothing about it can be measured on a
+        // frame. Otherwise identify wins when an element declares both. The
+        // anchor pass is global and page-independent, so it is the measurement
+        // that needs no page argument at all, and a reference exercising
+        // identify may not refine the search region -- so an element that also
+        // interacts is searched over the same rectangle of the same region
+        // either way.
         [[nodiscard]]
         auto matchPathOf(
-            annotation::ElementCapabilities const& capabilities
+            annotation::RecognizerDefinition const& recognizer
         ) noexcept -> MatchPath
         {
-            if (capabilities.hasIdentify())
+            if (recognizer.variants().empty())
+            {
+                return MatchPath::NoPixels;
+            }
+            if (recognizer.capabilities().hasIdentify())
             {
                 return MatchPath::PageSignature;
             }
-            if (capabilities.hasInteract())
+            if (recognizer.capabilities().hasInteract())
             {
                 return MatchPath::ActionTarget;
             }
@@ -1432,7 +1441,8 @@ namespace uf::authoring
         // a page, so that is how it is measured; one that is clicked has its own
         // single evaluation on the page that clicks it. An element that is only
         // read has neither entry point -- reading happens inside a task that
-        // already resolved the page -- so it is refused with the reason.
+        // already resolved the page -- so it is refused with the reason. So is
+        // one that declares no appearance, whichever capabilities it has.
         [[nodiscard]]
         auto matchRecognizer(
             annotation::RecognitionRuntime const& runtime,
@@ -1443,8 +1453,25 @@ namespace uf::authoring
         ) -> Result<MatchOutcome>
         {
             auto const& catalog = runtime.manifest().catalog();
-            switch (matchPathOf(recognizer.capabilities()))
+            switch (matchPathOf(recognizer))
             {
+            case MatchPath::NoPixels:
+                // The runtime would answer, and its answer would be a hit at
+                // the annotated rectangle -- on this frame and on every other,
+                // because nothing was compared. Reporting that as a match is
+                // the one reading of this verb an author must not be given: it
+                // is the only tool that tells a rectangle that is really there
+                // from one that merely used to be.
+                return invalid(
+                    std::format(
+                        "\"{}\" declares no appearance, so there is nothing to "
+                        "match: it is located by the page being recognised, and "
+                        "resolving that page is the whole of its evidence. Give "
+                        "it one with `element appearance` if these pixels are "
+                        "meant to be stable, or check the page instead",
+                        recognizer.name().value()
+                    )
+                );
             case MatchPath::PageSignature:
                 if (requestedPage)
                 {
@@ -1784,6 +1811,68 @@ namespace uf::authoring
             return successJson("page add", members);
         }
 
+        [[nodiscard]]
+        auto runAddRegion(AddRegion const& command) -> Result<std::string>
+        {
+            UF_TRY_VALUE(session, openSession(command.root));
+            UF_TRY_VALUE(pageId, findPageByName(session.draft, command.page));
+            UF_TRY_VALUE(
+                elementResourceId,
+                derivedResourceId(
+                    "element",
+                    session.draft.projectId.value(),
+                    command.name
+                )
+            );
+
+            // No source is opened and no template is cut, which is the whole of
+            // the difference from runAddElement above. The rectangle becomes the
+            // ELEMENT's search region rather than a refinement on this page's
+            // reference, and the choice is forced twice over. A reference's
+            // region is optional and means "this page narrows the element's",
+            // so it needs an element region to narrow; leaving that at the whole
+            // screen would say this rectangle may be anywhere, and every page
+            // referencing it without its own refinement would locate it at the
+            // screen's centre. And there is no second page yet: `page add`
+            // draws an element AND its owning page's use of it in one edit, so
+            // what the author is describing here is the element.
+            auto const elementId = annotation::ElementId{elementResourceId};
+            session.draft.recognizers.emplace_back(
+                workbench::EditableRecognizer{
+                    .id           = elementId,
+                    .name         = command.name,
+                    .capabilities = declaredCapabilitiesOf(command.capabilities),
+                    .searchRoi    = command.region,
+                    .variants     = {},
+                }
+            );
+            session.draft.references.emplace_back(
+                workbench::EditableReference{
+                    .pageId    = pageId,
+                    .elementId = elementId,
+                    .holding   = annotation::Holding::Owned,
+                    .exercised = exercisedCapabilitiesOf(command.capabilities),
+                }
+            );
+
+            UF_TRY_VALUE(document, commitSession(command.root, session));
+            // The same two keys the drawing half answers with, because it is the
+            // same verb: a caller reads `authored.element.variants` and finds it
+            // empty rather than reading a different document shape. Nothing was
+            // ingested and there is no mask, and both say so rather than being
+            // left out.
+            UF_TRY_VALUE(
+                drawn,
+                drawJson(document, elementId, false, jsonNull())
+            );
+
+            auto const members = std::array{
+                JsonMember{.key = "page", .value = jsonString(command.page)},
+                JsonMember{.key = "authored", .value = drawn},
+            };
+            return successJson("page add", members);
+        }
+
         // The element named, and what it declares it can do, kept apart from the
         // draft it was read out of: the draft is moved into the edit below, and
         // a borrow into it would outlive the owner it names.
@@ -1817,6 +1906,97 @@ namespace uf::authoring
                 .id           = found->id,
                 .capabilities = found->capabilities,
             };
+        }
+
+        // A second look at pixels the project already holds, appended to the
+        // element's ordered appearance list.
+        //
+        // Written here rather than as an edit-layer verb for the reason
+        // runAddElement gives: that layer draws ONE rectangle per element and
+        // every verb in it is built on that, while this is the verb that makes
+        // the number two. The rules it has to keep are the model's own --
+        // distinct names, and a template that fits the region every appearance
+        // of this element shares -- and both are enforced by
+        // validateElementShape when the draft is rebuilt below. The name is
+        // checked here as well, only so the refusal can name the element the
+        // author typed instead of reporting that some element has a duplicate.
+        [[nodiscard]]
+        auto runAddAppearance(AddAppearance const& command) -> Result<std::string>
+        {
+            UF_TRY_VALUE(opened, openSession(command.root));
+            UF_TRY_VALUE(
+                resolved,
+                resolveSource(std::move(opened), command.draw.source)
+            );
+            auto session = std::move(resolved.session);
+
+            auto const found = std::ranges::find(
+                session.draft.recognizers,
+                command.element,
+                &workbench::EditableRecognizer::name
+            );
+            if (found == session.draft.recognizers.end())
+            {
+                return invalid(
+                    std::format(
+                        "no element named \"{}\" is part of this project",
+                        command.element
+                    )
+                );
+            }
+            if (
+                std::ranges::contains(
+                    found->variants,
+                    command.draw.name,
+                    &workbench::EditableVariant::name
+                )
+            )
+            {
+                return invalid(
+                    std::format(
+                        "\"{}\" already has an appearance named \"{}\"; an "
+                        "appearance name is how a page pins one and how a "
+                        "script reads which matched, so two cannot share it",
+                        command.element,
+                        command.draw.name
+                    )
+                );
+            }
+
+            auto const elementId = found->id;
+            found->variants.emplace_back(
+                workbench::EditableVariant{
+                    .name                  = command.draw.name,
+                    .sourceId              = resolved.id,
+                    .templateRect          = command.draw.templateRect,
+                    .similarityBasisPoints = command.draw.threshold.basisPoints(),
+                    .colourKey             = command.draw.colourKey,
+                }
+            );
+
+            UF_TRY_VALUE(document, commitSession(command.root, session));
+            UF_TRY_VALUE(
+                mask,
+                maskJson(session.assets, resolved.id, command.draw)
+            );
+            UF_TRY_VALUE(
+                drawn,
+                drawJson(
+                    document,
+                    elementId,
+                    resolved.ingested,
+                    std::move(mask)
+                )
+            );
+
+            auto const members = std::array{
+                JsonMember{
+                    .key   = "appearance",
+                    .value = jsonString(command.draw.name),
+                },
+                JsonMember{.key = "authored", .value = drawn},
+            };
+            return successJson("element appearance", members);
         }
 
         // One capability, as the element declares it and as a page asks for it.
@@ -1946,7 +2126,9 @@ namespace uf::authoring
             // from the element would pin a copy of a rectangle a later
             // correction moves, and it would leave every reference refining a
             // region -- which is the one thing a reference that exercises
-            // identify may not do.
+            // identify may not do. --variant travels the same way, and for the
+            // same reason: absent means "search every appearance", which is a
+            // different instruction from "search the first one".
             UF_TRY_VALUE(
                 referenced,
                 workbench::referenceElementOnPage(
@@ -1956,6 +2138,7 @@ namespace uf::authoring
                         .pageId    = pageId,
                         .exercised = exercised,
                         .searchRoi = command.searchRoi,
+                        .variant   = command.variant,
                     }
                 )
             );
@@ -2114,7 +2297,7 @@ namespace uf::authoring
             return successJson("match", members);
         }
 
-        // The four enumerations the falsification matrix answers with. Each is
+        // The five enumerations the falsification matrix answers with. Each is
         // one total mapping for the same reason as the three above: a switch
         // over a scoped enum makes the compiler name the case a new enumerator
         // forgot.
@@ -2167,6 +2350,35 @@ namespace uf::authoring
                 return "not_searched_here";
             }
             UF_UNREACHABLE_MSG("unknown ModelCellOutcome value");
+        }
+
+        // What the model states about a row's subject on a screen, named rather
+        // than reduced to "is a hit expected".
+        //
+        // The three are not two. A bool collapses Absent and Unclaimed into one
+        // false, and they are the opposite instruction to whoever reads the
+        // matrix: under Absent a hit is a defect to repair, under Unclaimed a
+        // hit is the same element genuinely being on an overlay screen its page
+        // does not name, and there is nothing to do. The distinction is not
+        // rare -- an element located by its page takes part in no signature, so
+        // every screen its own pages do not claim answers Unclaimed for it, and
+        // every one of those rows would otherwise read as a hit that was not
+        // expected.
+        [[nodiscard]]
+        auto cellExpectationName(
+            workbench::ModelCellExpectation expectation
+        ) -> std::string_view
+        {
+            switch (expectation)
+            {
+            case workbench::ModelCellExpectation::Match:
+                return "match";
+            case workbench::ModelCellExpectation::Absent:
+                return "absent";
+            case workbench::ModelCellExpectation::Unclaimed:
+                return "unclaimed";
+            }
+            UF_UNREACHABLE_MSG("unknown ModelCellExpectation value");
         }
 
         [[nodiscard]]
@@ -2278,8 +2490,8 @@ namespace uf::authoring
                     .value = jsonString(cellOutcomeName(cell.outcome)),
                 },
                 JsonMember{
-                    .key   = "expected_hit",
-                    .value = jsonBoolean(cell.expectedHit),
+                    .key   = "expectation",
+                    .value = jsonString(cellExpectationName(cell.expectation)),
                 },
                 JsonMember{
                     .key   = "verdict",
@@ -2756,6 +2968,14 @@ namespace uf::authoring
                 else if constexpr (std::same_as<Specific, AddElement>)
                 {
                     return runAddElement(specific);
+                }
+                else if constexpr (std::same_as<Specific, AddRegion>)
+                {
+                    return runAddRegion(specific);
+                }
+                else if constexpr (std::same_as<Specific, AddAppearance>)
+                {
+                    return runAddAppearance(specific);
                 }
                 else if constexpr (std::same_as<Specific, ReferenceElement>)
                 {

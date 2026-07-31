@@ -236,6 +236,29 @@ namespace uf::workbench
             return inherited;
         }
 
+        // One element's declared appearances, for a refusal that has to say
+        // what could have been pinned instead. Empty means the element is
+        // located by its page and has no appearance to pin at all, which is
+        // said in those words rather than as an empty list.
+        [[nodiscard]]
+        auto appearanceNameList(EditableRecognizer const& element) -> std::string
+        {
+            if (element.variants.empty())
+            {
+                return "none, it is located by its page";
+            }
+            auto listed = std::string{};
+            for (auto const& variant : element.variants)
+            {
+                if (!listed.empty())
+                {
+                    listed += ", ";
+                }
+                listed += variant.name;
+            }
+            return listed;
+        }
+
         // How many of a page's references put it in a signature. A page with
         // none can recognise no screen, so this is what every withdrawal has to
         // leave positive.
@@ -1036,6 +1059,33 @@ namespace uf::workbench
         UF_TRY_VALUE(exercised, resolveExercise(*p_origin, spec.exercised));
         UF_TRY(validateReference(*p_origin, exercised, spec.searchRoi));
 
+        // A pin names one of the element's own appearances, so it is refused
+        // here where the element's list can be printed. The catalog refuses it
+        // again over the built document -- that is what makes it a rule rather
+        // than a courtesy -- but from there it can only say the name is not
+        // declared, never which names are.
+        if (spec.variant.has_value())
+        {
+            if (
+                !std::ranges::contains(
+                    p_origin->variants,
+                    *spec.variant,
+                    &EditableVariant::name
+                )
+            )
+            {
+                return fail(
+                    AutomationErrorKind::InvalidResource,
+                    std::format(
+                        "\"{}\" has no appearance named \"{}\"; it declares: {}",
+                        p_origin->name,
+                        *spec.variant,
+                        appearanceNameList(*p_origin)
+                    )
+                );
+            }
+        }
+
         // One element, referenced again. No copy is minted -- a later appearance
         // edit touches this element once and every page sees it. The holding is
         // Referenced because this page is borrowing pixels whose home is
@@ -1048,6 +1098,7 @@ namespace uf::workbench
                 .holding   = annotation::Holding::Referenced,
                 .exercised = std::move(exercised),
                 .searchRoi = spec.searchRoi,
+                .variant   = spec.variant,
             }
         );
 

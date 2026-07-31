@@ -332,6 +332,11 @@ namespace uf::authoring
         // Every flag a subcommand that draws a rectangle accepts, collected as
         // written. --key and --tolerance build one ColourKey between them, so
         // neither can become a domain value until the whole line has been read.
+        //
+        // The two numeric flags keep their defaults out of this record and in
+        // buildElementDraw, so "not typed" stays distinguishable from "typed at
+        // the default". A verb that mints no template has to be able to refuse a
+        // threshold rather than apply it to nothing.
         struct DrawOptions final
         {
             std::optional<std::string> source{};
@@ -339,8 +344,8 @@ namespace uf::authoring
             std::optional<std::string> searchRoi{};
             std::optional<std::string> key{};
 
-            uint32 tolerance{k_defaultColourTolerance};
-            uint32 similarityBasisPoints{k_defaultSimilarityBasisPoints};
+            std::optional<uint32> tolerance{};
+            std::optional<uint32> similarityBasisPoints{};
 
             StatedCapabilities capabilities{};
         };
@@ -435,7 +440,7 @@ namespace uf::authoring
                         red,
                         green,
                         blue,
-                        options.tolerance
+                        options.tolerance.value_or(k_defaultColourTolerance)
                     )
                 );
                 colourKey = created;
@@ -444,7 +449,9 @@ namespace uf::authoring
             UF_TRY_VALUE(
                 threshold,
                 annotation::SimilarityThreshold::create(
-                    options.similarityBasisPoints
+                    options.similarityBasisPoints.value_or(
+                        k_defaultSimilarityBasisPoints
+                    )
                 )
             );
 
@@ -456,6 +463,143 @@ namespace uf::authoring
                 .colourKey    = colourKey,
                 .threshold    = threshold,
             };
+        }
+
+        // The <draw> flags that describe a template, listed as the author typed
+        // them. Every one of the five says something about pixels a matcher will
+        // compare, so a verb that mints no template names all of them at once
+        // rather than accepting one and dropping it where nobody looks.
+        [[nodiscard]]
+        auto templateFlagsGiven(DrawOptions const& options) -> std::string
+        {
+            struct Typed final
+            {
+                std::string_view name{};
+                bool             given{};
+            };
+
+            auto const flags = std::array{
+                Typed{.name = "--source", .given = options.source.has_value()},
+                Typed{
+                    .name  = "--search-roi",
+                    .given = options.searchRoi.has_value(),
+                },
+                Typed{.name = "--key", .given = options.key.has_value()},
+                Typed{
+                    .name  = "--tolerance",
+                    .given = options.tolerance.has_value(),
+                },
+                Typed{
+                    .name  = "--min-similarity-bp",
+                    .given = options.similarityBasisPoints.has_value(),
+                },
+            };
+
+            auto listed = std::string{};
+            for (auto const& flag : flags)
+            {
+                if (!flag.given)
+                {
+                    continue;
+                }
+                if (!listed.empty())
+                {
+                    listed += ", ";
+                }
+                listed += flag.name;
+            }
+            return listed;
+        }
+
+        // One rectangle with no appearance of its own, which is what page add
+        // authors when nothing about the capability set asks for pixels.
+        [[nodiscard]]
+        auto buildAddRegion(
+            std::string const& root,
+            std::string const& page,
+            std::string name,
+            DrawOptions const& options
+        ) -> Result<AuthoringCommand>
+        {
+            auto const described = templateFlagsGiven(options);
+            if (!described.empty())
+            {
+                return invalid(
+                    std::format(
+                        "{} describe pixels to compare, and this element has "
+                        "none: page add mints an appearance only for "
+                        "--capability identify, because identify is the one "
+                        "capability whose evidence IS the pixels. interact and "
+                        "read say WHERE a rectangle is, so the page that is "
+                        "recognised locates it and --rect is the whole of it",
+                        described
+                    )
+                );
+            }
+
+            UF_TRY_VALUE(rectText, require(options.rect, "--rect"));
+            UF_TRY_VALUE(region, parseRect(rectText, "--rect"));
+            return AddRegion{
+                .root         = std::filesystem::path{root},
+                .page         = page,
+                .name         = std::move(name),
+                .capabilities = options.capabilities,
+                .region       = region,
+            };
+        }
+
+        // `element appearance` draws with the same options page add draws with,
+        // minus the two that are not an appearance's to state. Sharing the
+        // parser rather than the flag names is the point: an author who has
+        // drawn one rectangle can draw a second look at it without learning a
+        // second vocabulary.
+        [[nodiscard]]
+        auto parseAddAppearance(
+            std::span<std::string const> raw
+        ) -> Result<AuthoringCommand>
+        {
+            UF_TRY_VALUE(root, positional(raw, 0, "root"));
+            UF_TRY_VALUE(element, positional(raw, 1, "element"));
+            UF_TRY_VALUE(name, positional(raw, 2, "appearance"));
+            UF_TRY_VALUE(options, parseDrawOptions(raw.subspan(3U)));
+
+            if (declaresAnyCapability(options.capabilities))
+            {
+                return invalid(
+                    "element appearance takes no --capability: what an element "
+                    "may be used for was settled when it was drawn, and a "
+                    "second look at the same pixels does not change it"
+                );
+            }
+            if (options.searchRoi)
+            {
+                return invalid(
+                    "element appearance takes no --search-roi: the search "
+                    "region belongs to the element and every appearance of it "
+                    "is searched in that one region, so this template has to "
+                    "fit the region already drawn"
+                );
+            }
+
+            UF_TRY_VALUE(draw, buildElementDraw(std::move(name), options));
+            return AddAppearance{
+                .root    = std::filesystem::path{root},
+                .element = std::move(element),
+                .draw    = std::move(draw),
+            };
+        }
+
+        [[nodiscard]]
+        auto parseElementCommand(
+            std::span<std::string const> raw
+        ) -> Result<AuthoringCommand>
+        {
+            UF_TRY_VALUE(verb, positional(raw, 0, "appearance"));
+            if (verb == "appearance")
+            {
+                return parseAddAppearance(raw.subspan(1U));
+            }
+            return invalid(std::format("unknown element verb \"{}\"", verb));
         }
 
         [[nodiscard]]
@@ -586,6 +730,7 @@ namespace uf::authoring
             UF_TRY_VALUE(element, positional(raw, 0, "element"));
 
             auto searchRoi = std::optional<std::string>{};
+            auto variant   = std::optional<std::string>{};
             auto stated    = StatedCapabilities{};
             auto index     = std::size_t{1};
             while (index < raw.size())
@@ -600,6 +745,10 @@ namespace uf::authoring
                 if (flag == "--search-roi")
                 {
                     searchRoi = value;
+                }
+                else if (flag == "--variant")
+                {
+                    variant = value;
                 }
                 else if (flag == "--capability")
                 {
@@ -627,6 +776,29 @@ namespace uf::authoring
                 );
             }
 
+            // A pin binds the page-scoped searches -- the click path reads it
+            // off this row. The anchor pass runs before any page is known, so it
+            // folds across every appearance whatever a reference says; a page
+            // that exercises identify and nothing else therefore has no path a
+            // pin could bind, and accepting one would be accepting a flag that
+            // does nothing. A page that identifies AND clicks keeps it, because
+            // the click half is exactly what it binds.
+            if (
+                stated.identify
+                && !stated.interact
+                && !stated.read
+                && variant
+            )
+            {
+                return invalid(
+                    "--capability identify alone and --variant cannot be "
+                    "combined: the anchor pass runs before any page is known, "
+                    "so it folds across every appearance whatever this page "
+                    "pins, and there is no other search on this page for the "
+                    "pin to bind"
+                );
+            }
+
             auto refined = std::optional<PixelRect>{};
             if (searchRoi)
             {
@@ -651,6 +823,7 @@ namespace uf::authoring
                 .element   = std::move(element),
                 .exercised = exercised,
                 .searchRoi = refined,
+                .variant   = std::move(variant),
             };
         }
 
@@ -698,6 +871,15 @@ namespace uf::authoring
                     "(identify[:required|:forbidden], interact, read); an "
                     "element nothing can reach is not a thing the model holds"
                 );
+            }
+
+            // The rule the whole verb turns on: pixels are minted only when a
+            // capability needs pixels, and identify is the only one that does.
+            // A page's first mark identifies it by definition, so create is
+            // always the drawing half.
+            if (!isCreate && !options.capabilities.identify)
+            {
+                return buildAddRegion(root, page, std::move(name), options);
             }
 
             UF_TRY_VALUE(draw, buildElementDraw(std::move(name), options));
@@ -1076,7 +1258,10 @@ namespace uf::authoring
         std::span<std::string const> raw
     ) -> Result<AuthoringCommand>
     {
-        UF_TRY_VALUE(group, positional(raw, 0, "project|page|match|check|frames"));
+        UF_TRY_VALUE(
+            group,
+            positional(raw, 0, "project|page|element|match|check|frames")
+        );
         auto const rest = raw.subspan(1U);
 
         if (group == "project")
@@ -1086,6 +1271,10 @@ namespace uf::authoring
         if (group == "page")
         {
             return parsePageCommand(rest);
+        }
+        if (group == "element")
+        {
+            return parseElementCommand(rest);
         }
         if (group == "match")
         {
@@ -1115,7 +1304,9 @@ namespace uf::authoring
             "--capability C... <draw>\n"
             "  umbra-authoring page reference ROOT PAGE ELEMENT "
             "[--capability C...]\n"
-            "                                 [--search-roi x,y,w,h]\n"
+            "                                 [--search-roi x,y,w,h] "
+            "[--variant NAME]\n"
+            "  umbra-authoring element appearance ROOT ELEMENT NAME <draw>\n"
             "  umbra-authoring match ROOT ELEMENT --frame PNG [--page PAGE]\n"
             "                                     [--budget N]\n"
             "  umbra-authoring check ROOT [--budget N]\n"
@@ -1154,6 +1345,14 @@ namespace uf::authoring
             "create\n"
             "                          takes none, because a page's first mark\n"
             "                          identifies it by definition\n"
+            "                          Only identify mints an appearance. Give\n"
+            "                          page add interact or read alone and the\n"
+            "                          element gets none: --rect is then its "
+            "whole\n"
+            "                          geometry, the page that is recognised "
+            "locates\n"
+            "                          it, and every other <draw> option is "
+            "refused\n"
             "  --source HASH-OR-PATH   Screen the rectangle was measured on:\n"
             "                          a 64-hex source content hash the project\n"
             "                          already holds, or a PNG path to ingest\n"
@@ -1228,18 +1427,42 @@ namespace uf::authoring
             "are how a second page takes an existing mark into its own signature,\n"
             "and one mark may be required by one page and forbidden by another.\n"
             "\n"
-            "--capability and --search-roi refine THIS page's use of the element;\n"
-            "neither edits the element, which stays one rectangle every page sees.\n"
-            "Without --search-roi the page searches the element's own region and\n"
-            "keeps following it when a later correction moves it. It cannot be\n"
-            "combined with --capability identify: the anchor pass reads the\n"
-            "element's own region, before any page is known.\n"
+            "--capability, --search-roi and --variant refine THIS page's use of\n"
+            "the element; none of them edits the element, which stays one\n"
+            "rectangle and one set of appearances every page sees. Without\n"
+            "--search-roi the page searches the element's own region and keeps\n"
+            "following it when a later correction moves it. It cannot be combined\n"
+            "with --capability identify: the anchor pass reads the element's own\n"
+            "region, before any page is known.\n"
+            "\n"
+            "--variant NAME pins which appearance this page expects, for the case\n"
+            "where the PAGE decides it -- a back arrow drawn white on one screen\n"
+            "and dark on another. The page then searches once instead of once per\n"
+            "appearance, and cannot answer with the wrong one. Leave it off when\n"
+            "the runtime state decides instead (a speed button reading 1x, 2x or\n"
+            "3x): every appearance is then searched and the script reads which\n"
+            "one matched. It is refused for a page that exercises identify and\n"
+            "nothing else, because the anchor pass runs before any page is known\n"
+            "and folds across every appearance whatever a reference pins.\n"
+            "\n"
+            "element appearance adds a SECOND look at one element's pixels: same\n"
+            "id, same region, same capabilities, one more entry in its ordered\n"
+            "appearance list. It is what the back arrow above needs, and drawing\n"
+            "the element twice is what it replaces -- two ids, two templates, two\n"
+            "searches a cycle and a script left choosing between them. An element\n"
+            "with no appearance may be given one, which turns a rectangle located\n"
+            "by its page into one a find re-verifies. It takes the same <draw>\n"
+            "options minus --capability (settled when the element was drawn) and\n"
+            "--search-roi (the region is the element's, and every appearance of it\n"
+            "is searched in that one region).\n"
             "\n"
             "match --page names the page a click target is located on, because a\n"
             "refined search region and a pinned appearance both belong to a page's\n"
             "reference. It is only needed when more than one page clicks the\n"
             "element, and it is refused for an element that identifies: the anchor\n"
-            "pass runs before any page is known.\n"
+            "pass runs before any page is known. match itself is refused for an\n"
+            "element with no appearance: there is nothing to compare, so the\n"
+            "answer would be a hit on every frame ever handed to it.\n"
             "\n"
             "check is the falsification matrix. It searches every declared\n"
             "appearance against every screen the project holds, on and off the\n"

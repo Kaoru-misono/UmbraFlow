@@ -124,6 +124,11 @@ namespace uf::authoring
     // the element declares and what the page exercises are the same set. The
     // two only ever differ once a SECOND page borrows the element, which is
     // ReferenceElement below.
+    //
+    // This is what `page add` parses to when the capability set includes
+    // identify. Identify is the only capability that needs pixels of its own --
+    // it IS the claim that these pixels say which page is on screen -- so it is
+    // the only one that mints an appearance. AddRegion below is the other half.
     struct AddElement final
     {
         std::filesystem::path root{};
@@ -131,6 +136,57 @@ namespace uf::authoring
 
         StatedCapabilities capabilities{};
         ElementDraw        draw;
+    };
+
+    // One rectangle added to a page with no appearance of its own: what
+    // `page add` parses to when the capability set does not include identify.
+    //
+    // Interact and read say WHERE, not WHAT. A hand of cards is a place a click
+    // may land and its pixels are different every turn; a level counter is read
+    // precisely because its content is not known in advance. Cutting a template
+    // for either states a stability neither has, and the model already has the
+    // representation for saying so: an element declaring no variant is located
+    // by the page being recognised, and its rectangle is where it was annotated.
+    //
+    // Separate from AddElement rather than an AddElement with its pixel fields
+    // emptied, because there is no source, no threshold and no colour key here
+    // -- and a shape that can hold them would let a caller supply one that is
+    // then silently dropped.
+    struct AddRegion final
+    {
+        std::filesystem::path root{};
+        std::string           page{};
+        std::string           name{};
+
+        StatedCapabilities capabilities{};
+
+        // The element's own search region, which for an element with no pixels
+        // is the whole of its geometry: what evaluateActionTarget answers with
+        // and what a click is derived from.
+        PixelRect region;
+    };
+
+    // A second appearance of an element the project already holds.
+    //
+    // The back arrow is white on one screen and dark on another, at the same
+    // rectangle: one element, two appearances, and the page that uses it says
+    // which applies. Drawing it twice instead would make two elements, two ids
+    // and two searches a cycle for one control, and would leave the script
+    // choosing between them -- the judgment that belongs to the host.
+    //
+    // It draws with the same <draw> options page add uses, minus the two that
+    // are not an appearance's to state: --capability belongs to the element, and
+    // --search-roi is the element's one region that every appearance of it is
+    // searched in.
+    struct AddAppearance final
+    {
+        std::filesystem::path root{};
+        std::string           element{};
+
+        // `draw.name` is the appearance's name, not the element's. Names are why
+        // Variant carries one at all: a script reads which appearance matched to
+        // learn which state the target is in.
+        ElementDraw draw;
     };
 
     // Puts an element the project already holds onto a second page. This is the
@@ -160,6 +216,15 @@ namespace uf::authoring
         // left absent rather than seeded from the element, so a later
         // correction to the element's region reaches this page as well.
         std::optional<PixelRect> searchRoi{};
+
+        // Which appearance this page expects, when the page is what decides.
+        // Absent means every appearance is searched and the best margin wins,
+        // which is the answer for a form the runtime state decides rather than
+        // the page -- a speed button reading 1x, 2x or 3x.
+        //
+        // It is text here because only the loaded document knows which names the
+        // element declares.
+        std::optional<std::string> variant{};
     };
 
     struct MatchRecognizer final
@@ -254,6 +319,8 @@ namespace uf::authoring
         SaveProject,
         CreatePage,
         AddElement,
+        AddRegion,
+        AddAppearance,
         ReferenceElement,
         MatchRecognizer,
         CheckModel,

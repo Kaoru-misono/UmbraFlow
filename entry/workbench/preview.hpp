@@ -371,13 +371,6 @@ namespace uf::workbench
         // Match is a hole, and against Unclaimed neither is wrong.
         ModelCellExpectation expectation{ModelCellExpectation::Unclaimed};
 
-        // TODO(cpp-debt): restates `expectation == Match`, so that the authoring
-        // CLI's `expected_hit` field keeps compiling while entry/authoring is
-        // owned by a concurrent change -- ceiling: one expression in
-        // entry/authoring/command-runner.cpp, upgrade: call expectsHit on
-        // `expectation` there and delete this member.
-        bool expectedHit{};
-
         // Why a Stopped cell stopped -- the budget or the deadline -- for the
         // tooltip. Empty for every other outcome.
         std::optional<SadSearchStopReason> stopReason{};

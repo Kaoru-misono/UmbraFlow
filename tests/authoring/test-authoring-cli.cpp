@@ -461,12 +461,27 @@ namespace uf::authoring
                     "menu_button",
                     "--capability",
                     "interact",
+                    "--rect",
+                    "0,0,60,30"
+                )
+            );
+            // A clickable control in two steps, which is what a clickable
+            // control with stable pixels now costs. The first draws no
+            // template: interact says WHERE a click may land, so --rect is the
+            // element's region and nothing about the pixels inside it is
+            // claimed. The second says they ARE stable and cuts one, inside
+            // that same region.
+            requireOk(
+                run(
+                    "element",
+                    "appearance",
+                    project.text(),
+                    "menu_button",
+                    "default",
                     "--source",
                     blue.string(),
                     "--rect",
-                    "10,4,20,12",
-                    "--search-roi",
-                    "0,0,60,30"
+                    "10,4,20,12"
                 )
             );
 
@@ -541,6 +556,75 @@ namespace uf::authoring
             return KeyedFixture{.blueFrame = blue, .purpleFrame = purple};
         }
 
+        // The developer's own measured case, in miniature: one control at one
+        // rectangle whose pixels are one thing on one screen and another on the
+        // next. Two elements bound by a naming convention is what it replaces,
+        // and what made the host's judgment the script author's problem.
+        //
+        // The pin is a parameter because the only test worth writing here pins
+        // the WRONG appearance: pinning the right one and watching it match
+        // proves nothing a search that ignored the pin would not also pass.
+        [[nodiscard]]
+        auto authorPinnedProject(
+            TemporaryProject const& project,
+            std::string_view pin
+        ) -> KeyedFixture
+        {
+            auto const frames = authorTwoPageProject(project);
+
+            requireOk(
+                run(
+                    "page",
+                    "add",
+                    project.text(),
+                    "menu",
+                    "back",
+                    "--capability",
+                    "interact",
+                    "--rect",
+                    wholeCropRect()
+                )
+            );
+            requireOk(
+                run(
+                    "element",
+                    "appearance",
+                    project.text(),
+                    "back",
+                    "on_blue",
+                    "--source",
+                    frames.blueFrame.string(),
+                    "--rect",
+                    wholeCropRect()
+                )
+            );
+            requireOk(
+                run(
+                    "element",
+                    "appearance",
+                    project.text(),
+                    "back",
+                    "on_purple",
+                    "--source",
+                    frames.purpleFrame.string(),
+                    "--rect",
+                    wholeCropRect()
+                )
+            );
+            requireOk(
+                run(
+                    "page",
+                    "reference",
+                    project.text(),
+                    "sortie",
+                    "back",
+                    "--variant",
+                    std::string{pin}
+                )
+            );
+            return frames;
+        }
+
         // The findings array on its own, so an element named in a cell above it
         // cannot answer for one the verdict never reported.
         [[nodiscard]]
@@ -549,6 +633,47 @@ namespace uf::authoring
             auto const at = json.find("\"findings\":[");
             REQUIRE(at != std::string::npos);
             return json.substr(at);
+        }
+
+        // The grid cells one element contributed, cut out of the check document,
+        // so a field read out of one row cannot be answered by another element's.
+        // Brace-counted rather than cut at the first "}", because a cell's last
+        // member is a nested rectangle.
+        [[nodiscard]]
+        auto cellsForElement(
+            std::string const& json,
+            std::string_view element
+        ) -> std::vector<std::string>
+        {
+            auto const marker = std::format("{{\"element\":\"{}\",", element);
+
+            auto rows = std::vector<std::string>{};
+            auto at   = json.find(marker);
+            while (at != std::string::npos)
+            {
+                auto depth = std::size_t{0};
+                auto end   = at;
+                while (end < json.size())
+                {
+                    if (json[end] == '{')
+                    {
+                        ++depth;
+                    }
+                    else if (json[end] == '}')
+                    {
+                        --depth;
+                        if (depth == 0U)
+                        {
+                            break;
+                        }
+                    }
+                    ++end;
+                }
+                REQUIRE(end < json.size());
+                rows.emplace_back(json.substr(at, end - at + 1U));
+                at = json.find(marker, end);
+            }
+            return rows;
         }
 
         // The extent a project needs to hold both search regions the budget
@@ -697,12 +822,25 @@ namespace uf::authoring
                 "menu_button",
                 "--capability",
                 "interact",
+                "--rect",
+                "0,0,60,30"
+            )
+        );
+        // The appearance carries every pixel fact, which is the round trip
+        // being asserted: the second drawing verb has to write a key, a
+        // threshold and a template rectangle that come back unchanged, exactly
+        // as the first one does.
+        requireOk(
+            run(
+                "element",
+                "appearance",
+                project.text(),
+                "menu_button",
+                "default",
                 "--source",
                 frames.blueFrame.string(),
                 "--rect",
                 "10,4,20,12",
-                "--search-roi",
-                "0,0,60,30",
                 "--key",
                 "249,249,249",
                 "--tolerance",
@@ -1395,8 +1533,6 @@ namespace uf::authoring
                 "level_readout",
                 "--capability",
                 "read",
-                "--source",
-                frames.blueFrame.string(),
                 "--rect",
                 "70,20,25,12"
             )
@@ -1422,9 +1558,40 @@ namespace uf::authoring
         CHECK(p_reference->exercised.hasRead());
         CHECK_FALSE(p_reference->exercised.hasInteract());
 
-        // Neither runtime entry point reaches it: the anchor pass does not look
-        // at it and there is no click to locate, so match says so instead of
-        // answering with a measurement it never made.
+        // A readout carries no template at all, which is the model's own rule:
+        // sortie_level's value IS what is read, so a template of it would
+        // require the level not to change in order to read the level.
+        CHECK(p_readout->variants().empty());
+
+        // Nothing to compare, so match refuses rather than answering with a
+        // measurement it never made.
+        auto const unmeasurable = run(
+            "match",
+            project.text(),
+            "level_readout",
+            "--frame",
+            frames.blueFrame.string()
+        );
+        CHECK_FALSE(unmeasurable.ok);
+        CHECK(unmeasurable.message.contains("declares no appearance"));
+
+        // Give it one -- the model allows it, and it is what turns a rectangle
+        // located by its page into one a find re-verifies -- and match refuses
+        // for the other reason: reading happens inside a task that has already
+        // resolved the page, so neither runtime entry point reaches it.
+        requireOk(
+            run(
+                "element",
+                "appearance",
+                project.text(),
+                "level_readout",
+                "default",
+                "--source",
+                frames.blueFrame.string(),
+                "--rect",
+                "70,20,25,12"
+            )
+        );
         auto const matched = run(
             "match",
             project.text(),
@@ -1521,14 +1688,17 @@ namespace uf::authoring
         {
             // Twenty white pixels of one glyph's edge, measured on this crop.
             // It is stable, it is well keyed, and it locates nothing.
+            // Drawn as a second appearance, because that verb draws too and a
+            // key is exactly as easy to get wrong there. "Add one more template
+            // until something matches" is the cheapest wrong move the
+            // multi-appearance model makes available, so the warning has to
+            // reach it.
             auto const tiny = run(
-                "page",
-                "add",
+                "element",
+                "appearance",
                 project.text(),
-                "menu",
+                "glyph",
                 "tiny",
-                "--capability",
-                "interact",
                 "--source",
                 frames.blueFrame.string(),
                 "--rect",
@@ -1553,7 +1723,9 @@ namespace uf::authoring
             // what it drew.
             auto const loaded = workbench::loadAuthoringProject(project.path());
             REQUIRE(loaded.has_value());
-            CHECK(elementNamed(loaded->document, "tiny") != nullptr);
+            auto const* p_glyph = elementNamed(loaded->document, "glyph");
+            REQUIRE(p_glyph != nullptr);
+            CHECK(p_glyph->findVariant(*annotation::ResourceName::create("tiny")) != nullptr);
         }
 
         SUBCASE("a key that takes most of the rectangle warns")
@@ -1569,7 +1741,7 @@ namespace uf::authoring
                 "menu",
                 "fill",
                 "--capability",
-                "interact",
+                "identify",
                 "--source",
                 frames.blueFrame.string(),
                 "--rect",
@@ -1606,7 +1778,7 @@ namespace uf::authoring
                 "menu",
                 "plain",
                 "--capability",
-                "interact",
+                "identify",
                 "--source",
                 frames.blueFrame.string(),
                 "--rect",
@@ -2253,7 +2425,18 @@ namespace uf::authoring
         // belongs to. The off-diagonal cells are half the grid and the only half
         // that carries information.
         CHECK(occurrences(outcome.json, "\"subject\":\"element\"") == 6U);
-        CHECK(occurrences(outcome.json, "\"expected_hit\":false") == 3U);
+
+        // The three statements the model can make, counted apart. Each mark is
+        // required by its own page and stands in the way of the other's on the
+        // other screen, so two cells read absent; menu_button takes part in no
+        // signature, so nothing is claimed of it on the screen its page does
+        // not own. That last cell is why this is not a bool: under absent a hit
+        // is a defect to repair, under unclaimed a hit is the control genuinely
+        // being on a screen no page's identity rests on, and there is nothing
+        // to do. Collapsed to "expected_hit":false the two read alike.
+        CHECK(occurrences(outcome.json, "\"expectation\":\"match\"") == 3U);
+        CHECK(occurrences(outcome.json, "\"expectation\":\"absent\"") == 2U);
+        CHECK(occurrences(outcome.json, "\"expectation\":\"unclaimed\"") == 1U);
 
         // The factor the separation rule was applied at travels with the answer,
         // so a stored result stays interpretable after the constant moves.
@@ -2288,5 +2471,350 @@ namespace uf::authoring
         );
         // The sound mark is not accused of anything.
         CHECK(findings.find("\"sortie_mark\"") == std::string::npos);
+    }
+
+    // The rectangle a battle screen's hand of cards occupies is a place a click
+    // may land, and its contents are five different card faces one turn later.
+    // Cutting a template of it states a stability it does not have, and pays for
+    // the claim on every screen the falsification matrix searches. The model has
+    // always been able to say so -- an element declaring no appearance is located
+    // by the page being recognised -- and this is the command line reaching it.
+    TEST_CASE("page add mints an appearance only where a capability needs pixels")
+    {
+        auto const project = TemporaryProject{"pixel-less"};
+        auto const frames  = authorTwoPageProject(project);
+
+        auto const drawn = run(
+            "page",
+            "add",
+            project.text(),
+            "menu",
+            "hand_area",
+            "--capability",
+            "interact",
+            "--rect",
+            "0,20,60,20"
+        );
+        requireOk(drawn);
+
+        // Nothing was cut and nothing was ingested, and the answer says both
+        // rather than leaving them out: an agent reading this document finds
+        // the same keys the drawing half answers with.
+        CHECK(drawn.json.contains("\"variants\":[]"));
+        CHECK(drawn.json.contains("\"mask\":null"));
+        CHECK(drawn.json.contains("\"source_ingested\":false"));
+
+        auto const loaded = workbench::loadAuthoringProject(project.path());
+        REQUIRE(loaded.has_value());
+        auto const& document = loaded->document;
+
+        auto const* p_area = elementNamed(document, "hand_area");
+        REQUIRE(p_area != nullptr);
+        CHECK(p_area->variants().empty());
+
+        // The rectangle landed on the ELEMENT's region rather than on this
+        // page's reference. A reference's region is optional and means "this
+        // page narrows the element's", so it needs one to narrow; leaving the
+        // element's at the whole screen would say these pixels may be anywhere,
+        // and any page referencing it without a refinement of its own would
+        // locate it at the screen's centre.
+        CHECK(p_area->searchRoi() == *PixelRect::create(0, 20, 60, 20));
+
+        auto const* p_menu = pageNamed(document, "menu");
+        REQUIRE(p_menu != nullptr);
+        auto const* p_reference = document.catalog().findReference(
+            p_menu->id(),
+            p_area->id()
+        );
+        REQUIRE(p_reference != nullptr);
+        CHECK_FALSE(p_reference->searchRoi.has_value());
+        CHECK(p_reference->exercised.hasInteract());
+
+        SUBCASE("every flag that describes a template is refused, and named")
+        {
+            auto const refused = run(
+                "page",
+                "add",
+                project.text(),
+                "menu",
+                "another_area",
+                "--capability",
+                "interact",
+                "--source",
+                frames.blueFrame.string(),
+                "--rect",
+                "0,0,20,20",
+                "--min-similarity-bp",
+                "8500"
+            );
+            CHECK_FALSE(refused.ok);
+            CHECK(refused.message.contains("--source"));
+            CHECK(refused.message.contains("--min-similarity-bp"));
+            CHECK(refused.message.contains("--rect is the whole of it"));
+
+            // Refused rather than accepted and dropped, so nothing was written.
+            auto const after = workbench::loadAuthoringProject(project.path());
+            REQUIRE(after.has_value());
+            CHECK(elementNamed(after->document, "another_area") == nullptr);
+        }
+
+        SUBCASE("match refuses it, because there is nothing to compare")
+        {
+            auto const matched = run(
+                "match",
+                project.text(),
+                "hand_area",
+                "--frame",
+                frames.blueFrame.string(),
+                "--page",
+                "menu"
+            );
+            CHECK_FALSE(matched.ok);
+            CHECK(matched.message.contains("declares no appearance"));
+            CHECK(matched.message.contains("nothing to match"));
+        }
+
+        SUBCASE("check measures nothing about it, and says nothing about it")
+        {
+            auto const outcome = run("check", project.text());
+            requireOk(outcome);
+            CHECK(outcome.json.contains("\"accepted\":true"));
+            CHECK(outcome.json.contains("\"findings\":[]"));
+
+            // One row per screen, and every one of them empty of measurement:
+            // no appearance answered and no score was taken. A template minted
+            // here would put a name and a number in both, and would be searched
+            // against every screen in the project to say something no capability
+            // asked for.
+            auto const rows = cellsForElement(outcome.json, "hand_area");
+            CHECK(rows.size() == 2U);
+            for (auto const& row : rows)
+            {
+                CHECK(row.contains("\"appearance\":null"));
+                CHECK(row.contains("\"sad_score\":null"));
+            }
+        }
+    }
+
+    TEST_CASE("a page pins the appearance it expects, and the pin is what is searched")
+    {
+        SUBCASE("the appearance this page pins is the one that answers")
+        {
+            auto const project = TemporaryProject{"pin-right"};
+            auto const frames  = authorPinnedProject(project, "on_purple");
+
+            auto const located = run(
+                "match",
+                project.text(),
+                "back",
+                "--frame",
+                frames.purpleFrame.string(),
+                "--page",
+                "sortie"
+            );
+            requireOk(located);
+            CHECK(located.json.contains("\"hit\":true"));
+            CHECK(located.json.contains("\"variant\":\"on_purple\""));
+            CHECK(unsignedField(located.json, "sad_score") < 1'000);
+        }
+
+        SUBCASE("pinning the other one makes the same frame miss")
+        {
+            // The falsification. Same element, same frame, same command; only
+            // the pin differs, and the answer flips. A pin the search ignored
+            // would fold across both appearances, find the one cut from this
+            // very screen, and report a hit here as well -- which is what a
+            // test that only ever pinned the right one could never see.
+            auto const project = TemporaryProject{"pin-wrong"};
+            auto const frames  = authorPinnedProject(project, "on_blue");
+
+            auto const located = run(
+                "match",
+                project.text(),
+                "back",
+                "--frame",
+                frames.purpleFrame.string(),
+                "--page",
+                "sortie"
+            );
+            requireOk(located);
+            CHECK(located.json.contains("\"hit\":false"));
+            CHECK(located.json.contains("\"variant\":\"on_blue\""));
+            CHECK(unsignedField(located.json, "sad_score") > 200'000);
+        }
+
+        SUBCASE("the page that owns the element still folds across both")
+        {
+            // Stated rather than left to be discovered: `page add` mints the
+            // owning page's reference in the same edit that draws the element,
+            // and `page reference` refuses a page that already has one, so the
+            // owning page has no way to pin. It folds, which is correct but
+            // costs a search per appearance.
+            auto const project = TemporaryProject{"pin-owner"};
+            auto const frames  = authorPinnedProject(project, "on_purple");
+
+            auto const refused = run(
+                "page",
+                "reference",
+                project.text(),
+                "menu",
+                "back",
+                "--variant",
+                "on_blue"
+            );
+            CHECK_FALSE(refused.ok);
+            CHECK(refused.message.contains("already on that page"));
+
+            auto const folded = run(
+                "match",
+                project.text(),
+                "back",
+                "--frame",
+                frames.blueFrame.string(),
+                "--page",
+                "menu"
+            );
+            requireOk(folded);
+            CHECK(folded.json.contains("\"hit\":true"));
+            CHECK(folded.json.contains("\"variant\":\"on_blue\""));
+        }
+    }
+
+    TEST_CASE("the appearance verbs refuse what is not theirs to state")
+    {
+        auto const project = TemporaryProject{"appearance-refusals"};
+        auto const frames  = authorTwoPageProject(project);
+
+        SUBCASE("an element the project does not hold")
+        {
+            auto const refused = run(
+                "element",
+                "appearance",
+                project.text(),
+                "nothing_here",
+                "second",
+                "--source",
+                frames.blueFrame.string(),
+                "--rect",
+                "10,4,20,12"
+            );
+            CHECK_FALSE(refused.ok);
+            CHECK(refused.message.contains("no element named \"nothing_here\""));
+        }
+
+        SUBCASE("a name the element already uses")
+        {
+            auto const refused = run(
+                "element",
+                "appearance",
+                project.text(),
+                "menu_button",
+                "default",
+                "--source",
+                frames.purpleFrame.string(),
+                "--rect",
+                "10,4,20,12"
+            );
+            CHECK_FALSE(refused.ok);
+            CHECK(refused.message.contains("already has an appearance named"));
+        }
+
+        SUBCASE("a capability, which belongs to the element")
+        {
+            auto const refused = run(
+                "element",
+                "appearance",
+                project.text(),
+                "menu_button",
+                "second",
+                "--capability",
+                "read",
+                "--source",
+                frames.blueFrame.string(),
+                "--rect",
+                "10,4,20,12"
+            );
+            CHECK_FALSE(refused.ok);
+            CHECK(refused.message.contains("takes no --capability"));
+        }
+
+        SUBCASE("a search region, which every appearance of the element shares")
+        {
+            auto const refused = run(
+                "element",
+                "appearance",
+                project.text(),
+                "menu_button",
+                "second",
+                "--source",
+                frames.blueFrame.string(),
+                "--rect",
+                "10,4,20,12",
+                "--search-roi",
+                "0,0,100,40"
+            );
+            CHECK_FALSE(refused.ok);
+            CHECK(refused.message.contains("takes no --search-roi"));
+        }
+
+        SUBCASE("a template the region the element was drawn in cannot hold")
+        {
+            // menu_button's region is 60x30, and a template is only ever
+            // searched inside it, so a 100x40 one could never be found. The
+            // region is the element's and this verb cannot widen it, so the
+            // refusal is the model's own -- an appearance is a second look at
+            // the same patch of pixels, not a second place to look.
+            auto const refused = run(
+                "element",
+                "appearance",
+                project.text(),
+                "menu_button",
+                "too_large",
+                "--source",
+                frames.blueFrame.string(),
+                "--rect",
+                wholeCropRect()
+            );
+            CHECK_FALSE(refused.ok);
+            CHECK(refused.message.contains("must fit inside the element search_roi"));
+        }
+
+        SUBCASE("a pin naming an appearance the element does not declare")
+        {
+            auto const refused = run(
+                "page",
+                "reference",
+                project.text(),
+                "sortie",
+                "menu_button",
+                "--variant",
+                "on_purple"
+            );
+            CHECK_FALSE(refused.ok);
+            CHECK(refused.message.contains("has no appearance named \"on_purple\""));
+            // And what it could have been, so the correction is one edit rather
+            // than one edit plus a look at the document.
+            CHECK(refused.message.contains("it declares: default"));
+        }
+
+        SUBCASE("a pin on a page that only takes the mark into its signature")
+        {
+            // The anchor pass runs before any page is known and folds across
+            // every appearance whatever a reference says, so a page exercising
+            // identify and nothing else has no search for a pin to bind.
+            auto const refused = run(
+                "page",
+                "reference",
+                project.text(),
+                "sortie",
+                "menu_mark",
+                "--capability",
+                "identify:required",
+                "--variant",
+                "default"
+            );
+            CHECK_FALSE(refused.ok);
+            CHECK(refused.message.contains("no other search on this page"));
+        }
     }
 }

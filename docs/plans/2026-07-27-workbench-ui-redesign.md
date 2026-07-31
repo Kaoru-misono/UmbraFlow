@@ -381,9 +381,15 @@ and tests `test-preview.cpp`, `test-model-check-view.cpp`.
   role, and failing that, the duty another page's signature leaves resting on
   the mark when every OTHER clause of that signature holds on the screen. A
   signature is a conjunction, so a page kept off a foreign screen by its
-  forbidden clause demands nothing of its other members there. `expectedHit`
-  survives only as a mirror of `expectation == Match` for the authoring CLI's
-  `expected_hit` field, marked `TODO(cpp-debt)`.
+  forbidden clause demands nothing of its other members there. `expectedHit` is
+  gone: it survived one day as a `TODO(cpp-debt)` mirror for the authoring CLI's
+  `expected_hit` field, and both were removed when `check` began answering with
+  the three states by name (`"expectation": "match" | "absent" | "unclaimed"`).
+  A bool cannot separate them, and the difference is the reader's instruction:
+  under `absent` a hit is a defect to repair, under `unclaimed` it is the same
+  element genuinely on a screen no page's identity rests on. An element located
+  by its page — one declaring no appearance — takes part in no signature, so it
+  produces `unclaimed` on every screen its own pages do not claim.
 - **NotSearchedHere is explicit.** A multi-placed element on a screen whose page
   does not place it is a distinct cell state, not an empty hole. Anchors and
   single-placement elements are searched on every screen, so they never take it.

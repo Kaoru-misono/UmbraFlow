@@ -180,10 +180,13 @@
 >   就拒绝,消息点名这两个标志。
 > - **§四之二.1 的 GUI 弃用已执行**(`b57b67b`)。`entry/workbench/app/`、ImGui + D3D11
 >   外壳、文件对话框、一次性抓帧源、imgui submodule 与 ASan smoke fixture 都已归档;
->   `entry/workbench` 剩下的是 `umbra-authoring` 链接的标注后端。三个前置条件里,
->   `placeExisting`(经 `page reference`)与按页 `searchRoi` 已补上;**证伪矩阵仍然只有
->   `entry/workbench/preview.*` 里的 `ModelCheckCell` / `classifyModelCell`,没有 CLI 动词,
->   也还没有 variant 维度**——§2.3 的 P1–P4 与 R1–R4 一条都还没落地。
+>   `entry/workbench` 剩下的是 `umbra-authoring` 链接的标注后端。三个前置条件**都已补上**:
+>   `placeExisting`(经 `page reference`)、按页 `searchRoi`,以及证伪矩阵的 CLI 动词
+>   `umbra-authoring check`(`41e0816`)——它带了 variant 维度(`ModelCellSubject::Element`
+>   与 `::Appearance` 两种行),P1–P4 与 R1–R4 落在 `entry/workbench/preview.*` 与
+>   `tests/workbench/test-preview.cpp`。判据后来又收窄过一次(`d489979`):页面签名是合取,
+>   所以离对角格的期望是**整条签名**的性质,不是逐个成员读出来的,`ModelCellExpectation`
+>   因此是三态而不是 bool。
 > - **裁决记录第 1 条的后半句从未落地,而且照字面落地会自相矛盾——需要开发者裁决。**
 >   原话是「`Owned` 是作者声明『这个元素只属于这一页』,工具据此在别处引用时拒绝」,
 >   `catalog.hpp:98-100` 的注释也照抄了这句(「the editing tools refuse to reference them
@@ -193,9 +196,46 @@
 >   `catalog.cpp:826-850` 的**唯一所有者**:同一个元素最多有一行 `Owned`,第二行必须是
 >   `Referenced`。两种读法要选一个:要么把 `Owned` 读成「家在这一页」(现状,注释要改),
 >   要么给作者一个显式的「独占」声明(新字段或新标志,`page add` 上加),不能两者都不选。
-> - **仍未开始:** §三 第 4 步之后的 variant 作者入口(CLI 没有画 variant 的动词)、
->   第 5 步的 `read` 动词与 OCR 接线(`cycle_read` 尚不存在)、§2.3 更正里点名要先修的
->   `pitfalls/colour-key-annotation.md` 机制段(已于 2026-07-31 修正)。
+> - ~~**仍未开始:** §三 第 4 步之后的 variant 作者入口~~ —— **已落地(2026-07-31)**,
+>   连同 §四之二.2 的「空 variant 列表」一起,因为两者是同一个问题的两半:
+>   **像素只在某个能力需要像素时才被切出来**。
+>
+>   - **`page add` 的能力集合里没有 `identify` 时不切模板。** `--rect` 成为**元素自己的
+>     `searchRoi`**,元素的 variant 列表为空,`--source` / `--search-roi` / `--key` /
+>     `--tolerance` / `--min-similarity-bp` 一律**拒绝并点名**——它们描述的是要比较的
+>     像素,而这里没有。放在元素侧而不是引用侧,是因为引用侧的 `searchRoi` 是**可选
+>     细化**、语义是「这一页收窄元素的那一份」,所以必须先有一份可收窄的;把元素的留成
+>     整屏等于声明「这块像素可以在任何地方」,而任何没有自己细化的引用都会把它定位到
+>     屏幕中心。何况 `page add` 是在一次编辑里同时写元素和**拥有它的那一页**的引用,
+>     此刻作者描述的就是元素本身。
+>   - **`element appearance ROOT ELEMENT NAME <draw>`** 给已有元素追加一个**具名**形态,
+>     用的是 `page add` 那套 `<draw>` 选项,只去掉两个不属于形态的:`--capability`
+>     (元素画出来时就定了)与 `--search-roi`(区域是元素的,每个形态都在这一个区域里搜)。
+>     没有形态的元素也可以被补上一个——那正是 §四之二.6 缓解措施 (2)「给槽位加一个可
+>     匹配的小特征」的入口。
+>   - **`page reference --variant NAME`** 钉死这一页期望的形态。只对**页面作用域**的搜索
+>     生效,所以「只行使 identify」的引用给 `--variant` 会被拒(锚点扫描跑在页面确定之前,
+>     无论钉什么都跨形态折叠)。
+>   - **`match` 拒绝没有形态的元素**:运行时会答「命中」,而且在**任何**一帧上都答命中,
+>     因为什么都没比较过。
+>   - **一个后果要认账:只行使 interact / read 的元素不能在一条命令里带模板了。** 想给
+>     点击目标一份可复验的像素,是两步:`page add ... --capability interact --rect <区域>`
+>     再 `element appearance ... --rect <模板>`。这比原来多一条命令,但它把「这块像素稳不
+>     稳定」这个判断从工具手里还给了作者——而那正是 `battle_hand_area` 被切出 940x250
+>     模板的由来。
+>   - **一个缺口,留给后续裁决:拥有元素的那一页钉不了形态。** `page add` 在画元素的同一次
+>     编辑里就写了拥有页的引用,而 `page reference` 拒绝已有引用的页面,所以第二个形态出现
+>     之后,拥有页只能跨形态折叠(结果正确,但每周期多搜一次)。补法二选一:一个
+>     `page pin ROOT PAGE ELEMENT NAME` 动词,或让 `page reference --variant` 能更新已有的
+>     那一行。测试 `the page that owns the element still folds across both` 把这个现状钉住了。
+> - **`check` 的 JSON 从 `expected_hit`(bool)改成 `expectation`(`match` /
+>   `absent` / `unclaimed`)。** 三态是 `ModelCellExpectation` 本来就有的,而 bool 把
+>   `absent`(这一页说这个标记**不该**在)和 `unclaimed`(没有任何页面的身份依赖它)压成同一个
+>   `false`,两者对读矩阵的人是相反的指令。没有形态的元素恰好大量产生 `unclaimed` 行,
+>   所以这一改是本次的直接后果。同一次改动删掉了 `ModelCheckCell::expectedHit` 这个
+>   `TODO(cpp-debt)` 镜像字段。
+> - **仍未开始:** 第 5 步的 `read` 动词与 OCR 接线(`cycle_read` 尚不存在)、§2.3 更正里
+>   点名要先修的 `pitfalls/colour-key-annotation.md` 机制段(已于 2026-07-31 修正)。
 > - ~~**§2.2 那条留给开发者的裁决仍然开着**~~ —— **已关闭(2026-07-31)**,裁决见
 >   「两条实现期裁决」A,两件配套工作也已落地:`view:find` 仍然不自动解析,
 >   「先解析页面再 find」写进了脚本约定,诊断换成了新的错误种类

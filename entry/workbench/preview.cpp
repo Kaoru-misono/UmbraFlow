@@ -993,7 +993,6 @@ namespace uf::workbench
                         anchorRows
                     )
                 );
-                cell.expectedHit = expectsHit(cell.expectation);
                 cells.emplace_back(std::move(cell));
             }
             return cells;
@@ -1023,7 +1022,6 @@ namespace uf::workbench
                 .maximumSad  = row.maximumSad,
                 .matchedRect = row.matchedRect,
                 .expectation = expectation,
-                .expectedHit = expectsHit(expectation),
             };
         }
 
@@ -1089,7 +1087,6 @@ namespace uf::workbench
                             ? ModelCellOutcome::Stopped
                             : ModelCellOutcome::NotSearchedHere,
                         .expectation = expectation,
-                        .expectedHit = expectsHit(expectation),
                         .stopReason  = preview.pageStop.has_value()
                             ? std::optional<SadSearchStopReason>{
                                 preview.pageStop->reason
@@ -1145,7 +1142,6 @@ namespace uf::workbench
                         .subject     = ModelCellSubject::Element,
                         .outcome     = ModelCellOutcome::Stopped,
                         .expectation = expectation,
-                        .expectedHit = expectsHit(expectation),
                         .stopReason  = stop != actionEval.stops.end()
                             ? std::optional<SadSearchStopReason>{stop->reason}
                             : std::nullopt,

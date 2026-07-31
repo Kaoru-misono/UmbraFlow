@@ -1185,7 +1185,6 @@ namespace uf::workbench
                 .sadScore    = std::optional<uint64>{score},
                 .maximumSad  = maximumSad,
                 .expectation = expectation,
-                .expectedHit = expectsHit(expectation),
             };
         }
     }
