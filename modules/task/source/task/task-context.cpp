@@ -89,7 +89,7 @@ namespace uf::task
 
     auto TaskContext::cycleFind(
         CycleTicket ticket,
-        annotation::ElementId recognizerId
+        annotation::ElementId elementId
     ) -> Result<std::optional<engine::ActionFound>>
     {
         UF_TRY(m_cycles.requireOpen(ticket));
@@ -114,7 +114,7 @@ namespace uf::task
                 "first"
             );
         }
-        return m_session.findAction(m_cycles.observation(), *pageId, recognizerId);
+        return m_session.findAction(m_cycles.observation(), *pageId, elementId);
     }
 
     auto TaskContext::cycleClick(

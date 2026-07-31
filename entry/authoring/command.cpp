@@ -688,7 +688,11 @@ namespace uf::authoring
         ) -> Result<AuthoringCommand>
         {
             UF_TRY_VALUE(root, positional(raw, 0, "root"));
-            UF_TRY_VALUE(recognizer, positional(raw, 1, "recognizer"));
+            // The two nouns meet here. An author names the element they drew, so
+            // that is what a missing argument has to ask for and what the usage
+            // text prints. The name then resolves against the compiled catalog's
+            // recognizers, which is why the field it fills keeps the other noun.
+            UF_TRY_VALUE(recognizer, positional(raw, 1, "element"));
 
             auto frame  = std::optional<std::string>{};
             auto page   = std::optional<std::string>{};
@@ -1076,8 +1080,8 @@ namespace uf::authoring
             "--capability C... <draw>\n"
             "  umbra-authoring page reference ROOT PAGE ELEMENT "
             "[--search-roi x,y,w,h]\n"
-            "  umbra-authoring match ROOT RECOGNIZER --frame PNG [--page PAGE]\n"
-            "                                        [--budget N]\n"
+            "  umbra-authoring match ROOT ELEMENT --frame PNG [--page PAGE]\n"
+            "                                     [--budget N]\n"
             "  umbra-authoring check ROOT [--budget N]\n"
             "  umbra-authoring frames stability PNG PNG... [--rect x,y,w,h]\n"
             "                                   [--gray-tolerance N] [--gap N]\n"

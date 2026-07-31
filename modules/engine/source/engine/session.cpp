@@ -405,7 +405,7 @@ namespace uf::engine
     auto EngineSession::findAction(
         Observation const& observation,
         annotation::PageId pageId,
-        annotation::ElementId recognizerId
+        annotation::ElementId elementId
     ) -> Result<std::optional<ActionFound>>
     {
         if (observation.m_sessionIdentity != m_identity)
@@ -429,7 +429,7 @@ namespace uf::engine
             frame,
             m_config.liveFingerprint,
             pageId,
-            recognizerId,
+            elementId,
             makeRecognitionPolicy()
         );
         // As with resolvePage, every exit writes one engine.action_found event
@@ -440,7 +440,7 @@ namespace uf::engine
             event.action       = trace::TraceEvent::Action{
                 .outcome = trace::ActionSearch::Failed,
             };
-            event.recognizerId = recognizerId;
+            event.recognizerId = elementId;
             event.errorKind    = automationErrorKind(attempt.error());
             event.message      = std::string{attempt.error().message()};
             UF_TRY(emit(event));
@@ -478,12 +478,12 @@ namespace uf::engine
                 .sadScore   = evidence.sadScore(),
                 .maximumSad = evidence.maximumSad(),
             };
-            event.recognizerId = recognizerId;
+            event.recognizerId = elementId;
             UF_TRY(emit(event));
             return std::optional<ActionFound>{std::nullopt};
         }
 
-        auto const* p_recognizer = catalog().findRecognizer(recognizerId);
+        auto const* p_recognizer = catalog().findRecognizer(elementId);
         // evaluateActionTarget has already proven that this page references the
         // element and exercises interact on it, so its definition is
         // necessarily present here.
@@ -510,7 +510,7 @@ namespace uf::engine
             actionDetection,
             annotation::ActionDetection::create(
                 catalog(),
-                recognizerId,
+                elementId,
                 std::move(detection)
             )
         );
@@ -522,7 +522,7 @@ namespace uf::engine
             .maximumSad  = evidence.maximumSad(),
             .matchedRect = *matchedRect,
         };
-        event.recognizerId = recognizerId;
+        event.recognizerId = elementId;
         UF_TRY(emit(event));
 
         return std::optional<ActionFound>{

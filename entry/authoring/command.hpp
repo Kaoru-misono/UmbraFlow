@@ -106,9 +106,9 @@ namespace uf::authoring
     };
 
     // A page and the first anchor that identifies it, which the annotation model
-    // requires to be authored together: PageSignature::create refuses a page
-    // whose signature names no recognizer, so an empty page has no
-    // representation to create and then fill in.
+    // requires to be authored together: RecognitionCatalog::create refuses a page
+    // no reference exercises identify on, so an empty page has no representation
+    // to create and then fill in.
     struct CreatePage final
     {
         std::filesystem::path root{};

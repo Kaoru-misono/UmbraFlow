@@ -16,8 +16,8 @@ namespace uf::task
 {
     class TaskContext;
 
-    // One action target the catalog exposes to scripts under
-    // uf.recognizers.<name>. It pairs the recognizer's validated Luau member-key
+    // One interactive element the catalog exposes to scripts under
+    // uf.recognizers.<name>. It pairs the element's validated Luau member-key
     // name with its stable identity; the name becomes the table key and the id
     // is baked opaquely into the userdata handle. A plain value type, freely
     // copyable, so the installer can own its own snapshot.
@@ -70,17 +70,21 @@ namespace uf::task
         ) noexcept;
 
     public:
-        // Enumerates the catalog's action-target recognizers and its pages,
-        // checks each exposed name is unique within its table, and captures the
-        // {name, id} pairs. A duplicate name fails InvalidResource rather than
-        // silently overwriting a handle (annotation-design 3.4). Names are
-        // already valid direct Luau member keys by annotation::ResourceName's
-        // construction invariant, so the surface never observes an illegal key.
+        // Enumerates the elements this catalog says can be interacted with and
+        // its pages, checks each exposed name is unique within its table, and
+        // captures the {name, id} pairs. A duplicate name fails InvalidResource
+        // rather than silently overwriting a handle (annotation-design 3.4).
+        // Names are already valid direct Luau member keys by
+        // annotation::ResourceName's construction invariant, so the surface
+        // never observes an illegal key.
         //
-        // Page anchors never enter uf.recognizers: scripts reference anchors
-        // only through pages, and frame:find authorizes action targets alone. An
-        // info_region recognizer has no script verb in this wave, so it is not
-        // exposed either; it joins uf.recognizers when its read verb lands.
+        // Interact is what earns a handle, and the test is that capability
+        // rather than the absence of the other two. An element that only
+        // identifies is reached through its page instead of being named on its
+        // own, and one that only reads has no script verb in this wave -- it
+        // joins uf.recognizers when its read verb lands. An element that both
+        // names its page AND can be clicked is exposed here exactly once, which
+        // is what asking for the capability buys.
         [[nodiscard]]
         static auto create(
             annotation::RecognitionCatalog const& catalog
@@ -158,13 +162,14 @@ namespace uf::task
         [[nodiscard]]
         auto pageCount() const noexcept -> std::size_t;
 
-        // The action-target recognizer handles this surface exposes under
-        // uf.recognizers, in catalog order. These are exactly the names a
+        // The handles this surface exposes under uf.recognizers, one per
+        // interactive element, in catalog order. These are exactly the names a
         // uf.recognizers.<name> literal may resolve against, so the pre-VM
         // script validator (script-validator.hpp) checks every reference here
-        // rather than against the wider catalog, which also holds page anchors
-        // that never become findable handles. The returned span borrows this
-        // surface's storage and stays valid only while the surface is alive.
+        // rather than against the wider catalog, which also holds elements that
+        // cannot be interacted with and so never become findable handles. The
+        // returned span borrows this surface's storage and stays valid only
+        // while the surface is alive.
         [[nodiscard]]
         auto recognizers() const noexcept UF_LIFETIME_BOUND
             -> std::span<RecognizerHandleSpec const>;

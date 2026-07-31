@@ -1482,7 +1482,7 @@ namespace uf::authoring
 
             UF_TRY_VALUE(pageId, findPageByName(session.draft, command.page));
             UF_TRY_VALUE(
-                elementId,
+                elementResourceId,
                 derivedResourceId(
                     "element",
                     session.draft.projectId.value(),
@@ -1504,8 +1504,8 @@ namespace uf::authoring
             //
             // Holding is Owned with nothing to decide: a drawn rectangle belongs
             // to the page it was drawn on, and borrowing is `page reference`.
-            auto const recognizerId = annotation::ElementId{elementId};
-            auto const appearance   = workbench::EditableVariant{
+            auto const elementId  = annotation::ElementId{elementResourceId};
+            auto const appearance = workbench::EditableVariant{
                 .name                  = std::string{workbench::k_defaultVariantName},
                 .sourceId              = resolved.id,
                 .templateRect          = command.draw.templateRect,
@@ -1514,7 +1514,7 @@ namespace uf::authoring
             };
             session.draft.recognizers.emplace_back(
                 workbench::EditableRecognizer{
-                    .id           = recognizerId,
+                    .id           = elementId,
                     .name         = command.draw.name,
                     .capabilities = declaredCapabilitiesOf(command.capabilities),
                     .searchRoi    = searchRoi,
@@ -1524,14 +1524,14 @@ namespace uf::authoring
             session.draft.references.emplace_back(
                 workbench::EditableReference{
                     .pageId    = pageId,
-                    .elementId = recognizerId,
+                    .elementId = elementId,
                     .holding   = annotation::Holding::Owned,
                     .exercised = exercisedCapabilitiesOf(command.capabilities),
                 }
             );
 
             UF_TRY_VALUE(document, commitSession(command.root, session));
-            UF_TRY_VALUE(drawn, drawJson(document, recognizerId, resolved.ingested));
+            UF_TRY_VALUE(drawn, drawJson(document, elementId, resolved.ingested));
 
             auto const members = std::array{
                 JsonMember{.key = "page", .value = jsonString(command.page)},

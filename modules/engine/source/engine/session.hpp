@@ -233,7 +233,7 @@ namespace uf::engine
         auto findAction(
             Observation const& observation,
             annotation::PageId pageId,
-            annotation::ElementId recognizerId
+            annotation::ElementId elementId
         ) -> Result<std::optional<ActionFound>>;
 
         [[nodiscard]]

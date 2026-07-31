@@ -164,7 +164,7 @@ namespace uf::task
         [[nodiscard]]
         auto cycleFind(
             CycleTicket ticket,
-            annotation::ElementId recognizerId
+            annotation::ElementId elementId
         ) -> Result<std::optional<engine::ActionFound>>;
 
         // Spends the cycle `ticket` names and delivers the click.
@@ -198,7 +198,7 @@ namespace uf::task
         // the whole of what it requires. There is no hit ordinal, because there is
         // no hit: a keystroke names no screen position, so nothing has to have been
         // found on this frame. There is no page requirement either -- an annotation
-        // project declares which recognizers a page authorizes, and it declares
+        // project declares which elements a page authorizes, and it declares
         // nothing at all about keys, so a resolved page here would be evidence with
         // nothing to check it against.
         //
