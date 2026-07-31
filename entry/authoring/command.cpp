@@ -248,9 +248,9 @@ namespace uf::authoring
         // put -- cannot be typed at all.
         [[nodiscard]]
         auto withCapability(
-            DrawnCapabilities const& collected,
+            StatedCapabilities const& collected,
             std::string_view token
-        ) -> Result<DrawnCapabilities>
+        ) -> Result<StatedCapabilities>
         {
             auto const cut     = token.find(':');
             auto const named   = token.substr(0U, cut);
@@ -319,7 +319,7 @@ namespace uf::authoring
 
         [[nodiscard]]
         auto declaresAnyCapability(
-            DrawnCapabilities const& capabilities
+            StatedCapabilities const& capabilities
         ) noexcept -> bool
         {
             return (
@@ -342,7 +342,7 @@ namespace uf::authoring
             uint32 tolerance{k_defaultColourTolerance};
             uint32 similarityBasisPoints{k_defaultSimilarityBasisPoints};
 
-            DrawnCapabilities capabilities{};
+            StatedCapabilities capabilities{};
         };
 
         [[nodiscard]]
@@ -572,7 +572,10 @@ namespace uf::authoring
         }
 
         // `page reference` names an element instead of drawing one, so it reads
-        // its own short argument list rather than the <draw> options.
+        // its own short argument list rather than the <draw> options. It shares
+        // --capability with them, and deliberately the same parser: an author
+        // spells a capability one way across this tool, and the page side is
+        // where the identify role was always going to be typed.
         [[nodiscard]]
         auto parseReferenceElement(
             std::string const& root,
@@ -583,6 +586,7 @@ namespace uf::authoring
             UF_TRY_VALUE(element, positional(raw, 0, "element"));
 
             auto searchRoi = std::optional<std::string>{};
+            auto stated    = StatedCapabilities{};
             auto index     = std::size_t{1};
             while (index < raw.size())
             {
@@ -597,11 +601,30 @@ namespace uf::authoring
                 {
                     searchRoi = value;
                 }
+                else if (flag == "--capability")
+                {
+                    UF_TRY_VALUE(applied, withCapability(stated, value));
+                    stated = applied;
+                }
                 else
                 {
                     return invalid(std::format("unknown argument \"{}\"", flag));
                 }
                 index += 2U;
+            }
+
+            // Two flags the author typed on one line that the model cannot
+            // hold together. Refused here rather than after the project is
+            // opened, because both are on the command line and neither can be
+            // dropped for them: each is a measurement they made.
+            if (stated.identify && searchRoi)
+            {
+                return invalid(
+                    "--capability identify and --search-roi cannot be combined: "
+                    "the anchor pass reads the element's own search region "
+                    "before any page is known, so refining it here would search "
+                    "the same pixels twice a cycle"
+                );
             }
 
             auto refined = std::optional<PixelRect>{};
@@ -611,10 +634,22 @@ namespace uf::authoring
                 refined = parsed;
             }
 
+            // Absent and empty are different answers, so the flag being unused
+            // is carried as absence rather than as a set with nothing in it:
+            // the edit layer reads absence as "every use a placement carries on
+            // its own" and an empty set as a page using the element for
+            // nothing.
+            auto exercised = std::optional<StatedCapabilities>{};
+            if (declaresAnyCapability(stated))
+            {
+                exercised = stated;
+            }
+
             return ReferenceElement{
                 .root      = std::filesystem::path{root},
                 .page      = page,
                 .element   = std::move(element),
+                .exercised = exercised,
                 .searchRoi = refined,
             };
         }
@@ -1079,7 +1114,8 @@ namespace uf::authoring
             "  umbra-authoring page add       ROOT PAGE NAME "
             "--capability C... <draw>\n"
             "  umbra-authoring page reference ROOT PAGE ELEMENT "
-            "[--search-roi x,y,w,h]\n"
+            "[--capability C...]\n"
+            "                                 [--search-roi x,y,w,h]\n"
             "  umbra-authoring match ROOT ELEMENT --frame PNG [--page PAGE]\n"
             "                                     [--budget N]\n"
             "  umbra-authoring check ROOT [--budget N]\n"
@@ -1166,11 +1202,29 @@ namespace uf::authoring
             "page: one element, two pages, one search and one template to correct.\n"
             "It is the only verb that produces a borrowed element -- everything\n"
             "drawn is owned by the page it was drawn on -- so redrawing a menu\n"
-            "button per page is the thing it exists to replace. The element has to\n"
-            "declare interact or read: one that only identifies joins a page\n"
-            "through that page's signature instead. --search-roi narrows the\n"
-            "search on THIS page only; without it the page uses the element's own\n"
-            "region.\n"
+            "button per page is the thing it exists to replace.\n"
+            "\n"
+            "Its --capability says what THIS page exercises on the element, out of\n"
+            "the same vocabulary page add takes, and a page may exercise only what\n"
+            "the element declares. Without the flag the page takes every use a\n"
+            "placement carries on its own -- interact and read, whichever the\n"
+            "element declares -- and an element that only identifies is refused,\n"
+            "because it joins a page through that page's signature rather than by\n"
+            "being placed on it. identify is never inherited either, since which\n"
+            "way the evidence points is a question the element has no answer to:\n"
+            "  --capability identify:required   this page is on screen only when\n"
+            "                                   the mark is\n"
+            "  --capability identify:forbidden  this page is on screen only when\n"
+            "                                   the mark is NOT\n"
+            "are how a second page takes an existing mark into its own signature,\n"
+            "and one mark may be required by one page and forbidden by another.\n"
+            "\n"
+            "--capability and --search-roi refine THIS page's use of the element;\n"
+            "neither edits the element, which stays one rectangle every page sees.\n"
+            "Without --search-roi the page searches the element's own region and\n"
+            "keeps following it when a later correction moves it. It cannot be\n"
+            "combined with --capability identify: the anchor pass reads the\n"
+            "element's own region, before any page is known.\n"
             "\n"
             "match --page names the page a click target is located on, because a\n"
             "refined search region and a pinned appearance both belong to a page's\n"

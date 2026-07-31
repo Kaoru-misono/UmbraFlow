@@ -804,7 +804,7 @@ namespace uf::authoring
         // once and reinterpreted.
         [[nodiscard]]
         auto declaredCapabilitiesOf(
-            DrawnCapabilities const& drawn
+            StatedCapabilities const& drawn
         ) -> workbench::EditableCapabilities
         {
             auto declared = workbench::EditableCapabilities{};
@@ -825,7 +825,7 @@ namespace uf::authoring
 
         [[nodiscard]]
         auto exercisedCapabilitiesOf(
-            DrawnCapabilities const& drawn
+            StatedCapabilities const& drawn
         ) -> workbench::EditableExercised
         {
             auto exercised = workbench::EditableExercised{};
@@ -1540,13 +1540,13 @@ namespace uf::authoring
             return successJson("page add", members);
         }
 
-        // The element named, and what this page will do with it, kept apart from
-        // the draft it was read out of: the draft is moved into the edit below,
-        // and a borrow into it would outlive the owner it names.
+        // The element named, and what it declares it can do, kept apart from the
+        // draft it was read out of: the draft is moved into the edit below, and
+        // a borrow into it would outlive the owner it names.
         struct NamedElement final
         {
-            annotation::ElementId id;
-            PixelRect             searchRoi;
+            annotation::ElementId           id;
+            workbench::EditableCapabilities capabilities{};
         };
 
         [[nodiscard]]
@@ -1570,9 +1570,102 @@ namespace uf::authoring
                 );
             }
             return NamedElement{
-                .id        = found->id,
-                .searchRoi = found->searchRoi,
+                .id           = found->id,
+                .capabilities = found->capabilities,
             };
+        }
+
+        // One capability, as the element declares it and as a page asks for it.
+        // Three rows rather than three branches, so the set a refusal prints and
+        // the set it checks are the same list read twice.
+        struct ExercisedUse final
+        {
+            std::string_view name{};
+
+            bool requested{};
+            bool declared{};
+        };
+
+        [[nodiscard]]
+        auto exercisedUsesOf(
+            workbench::EditableCapabilities const& declared,
+            StatedCapabilities const& exercised
+        ) -> std::array<ExercisedUse, 3>
+        {
+            return std::array{
+                ExercisedUse{
+                    .name      = "identify",
+                    .requested = exercised.identify.has_value(),
+                    .declared  = declared.identify.has_value(),
+                },
+                ExercisedUse{
+                    .name      = "interact",
+                    .requested = exercised.interact,
+                    .declared  = declared.interact.has_value(),
+                },
+                ExercisedUse{
+                    .name      = "read",
+                    .requested = exercised.read,
+                    .declared  = declared.read.has_value(),
+                },
+            };
+        }
+
+        [[nodiscard]]
+        auto declaredCapabilityList(
+            std::span<ExercisedUse const> uses
+        ) -> std::string
+        {
+            auto listed = std::string{};
+            for (auto const& use : uses)
+            {
+                if (!use.declared)
+                {
+                    continue;
+                }
+                if (!listed.empty())
+                {
+                    listed += ", ";
+                }
+                listed += use.name;
+            }
+            return listed;
+        }
+
+        // Two levels, one direction: the element declares what it can do, and a
+        // page's reference declares what that page does with it. The edit layer
+        // refuses the same row, but from a draft it can only name the element.
+        // Naming the page, the use asked for, and what the element actually
+        // declares is the difference between an author correcting the command
+        // and an author guessing which half of it was wrong.
+        [[nodiscard]]
+        auto requireDeclaredCapabilities(
+            std::string const& page,
+            std::string const& element,
+            workbench::EditableCapabilities const& declared,
+            StatedCapabilities const& exercised
+        ) -> Status
+        {
+            auto const uses = exercisedUsesOf(declared, exercised);
+            for (auto const& use : uses)
+            {
+                if (!use.requested || use.declared)
+                {
+                    continue;
+                }
+                return fail(
+                    AutomationErrorKind::InvalidResource,
+                    std::format(
+                        "page \"{}\" would exercise {} on \"{}\", which declares "
+                        "{}; a page exercises only what the element declares",
+                        page,
+                        use.name,
+                        element,
+                        declaredCapabilityList(uses)
+                    )
+                );
+            }
+            return ok();
         }
 
         [[nodiscard]]
@@ -1587,10 +1680,29 @@ namespace uf::authoring
                 findElementByName(session.draft, command.element)
             );
 
-            // Seeded from the element's own region when --search-roi is absent,
-            // which is what "this page did not refine it" means. Narrowing it is
-            // a measurement the author makes; widening it here would enlarge
-            // both the search cost and the surface for a false match.
+            // Absent means the page takes every use a placement carries on its
+            // own, which is what the edit layer reads a missing set as. Stating
+            // one is what makes identify reachable at all -- and the only place
+            // its role can be typed.
+            auto exercised = std::optional<workbench::EditableExercised>{};
+            if (command.exercised)
+            {
+                UF_TRY(
+                    requireDeclaredCapabilities(
+                        command.page,
+                        command.element,
+                        element.capabilities,
+                        *command.exercised
+                    )
+                );
+                exercised = exercisedCapabilitiesOf(*command.exercised);
+            }
+
+            // --search-roi travels as the optional it was typed as. Seeding it
+            // from the element would pin a copy of a rectangle a later
+            // correction moves, and it would leave every reference refining a
+            // region -- which is the one thing a reference that exercises
+            // identify may not do.
             UF_TRY_VALUE(
                 referenced,
                 workbench::referenceElementOnPage(
@@ -1598,7 +1710,8 @@ namespace uf::authoring
                     workbench::ReferenceElementSpec{
                         .elementId = element.id,
                         .pageId    = pageId,
-                        .searchRoi = command.searchRoi.value_or(element.searchRoi),
+                        .exercised = exercised,
+                        .searchRoi = command.searchRoi,
                     }
                 )
             );

@@ -981,10 +981,243 @@ namespace uf::authoring
         CHECK(located.json.contains("\"page\":\"menu\""));
     }
 
+    TEST_CASE("authoring CLI lets a second page say how it exercises a borrowed element")
+    {
+        auto const project = TemporaryProject{"reference-capabilities"};
+        auto const frames  = authorTwoPageProject(project);
+
+        // One drawn rectangle that names the page it was drawn on and can be
+        // clicked there.
+        requireOk(
+            run(
+                "page",
+                "add",
+                project.text(),
+                "menu",
+                "shared_mark",
+                "--capability",
+                "identify",
+                "--capability",
+                "interact",
+                "--source",
+                frames.blueFrame.string(),
+                "--rect",
+                "40,4,30,12"
+            )
+        );
+
+        // The second page takes it into its own signature as evidence FOR
+        // itself, and asks to click it as well.
+        auto const required = run(
+            "page",
+            "reference",
+            project.text(),
+            "sortie",
+            "shared_mark",
+            "--capability",
+            "identify:required",
+            "--capability",
+            "interact"
+        );
+        requireOk(required);
+        CHECK(required.json.contains("\"holding\":\"referenced\""));
+        CHECK(required.json.contains("\"identify\":{\"role\":\"required\"}"));
+
+        // And a mark the menu page owns is evidence AGAINST sortie, because
+        // sortie says so. One element, two pages, opposite roles: the sentence
+        // a role carried on the element could not say.
+        auto const forbidden = run(
+            "page",
+            "reference",
+            project.text(),
+            "sortie",
+            "menu_mark",
+            "--capability",
+            "identify:forbidden"
+        );
+        requireOk(forbidden);
+        CHECK(forbidden.json.contains("\"identify\":{\"role\":\"forbidden\"}"));
+
+        auto const loaded = workbench::loadAuthoringProject(project.path());
+        REQUIRE(loaded.has_value());
+        auto const& document = loaded->document;
+
+        auto const* p_shared   = elementNamed(document, "shared_mark");
+        auto const* p_menuMark = elementNamed(document, "menu_mark");
+        auto const* p_menu     = pageNamed(document, "menu");
+        auto const* p_sortie   = pageNamed(document, "sortie");
+        REQUIRE(p_shared != nullptr);
+        REQUIRE(p_menuMark != nullptr);
+        REQUIRE(p_menu != nullptr);
+        REQUIRE(p_sortie != nullptr);
+
+        // The two roles reach one page's signature pointing opposite ways. A
+        // CLI that read the role but dropped the suffix would put both in the
+        // required vector and fail here.
+        CHECK(std::ranges::contains(p_sortie->required(), p_shared->id()));
+        CHECK(std::ranges::contains(p_sortie->forbidden(), p_menuMark->id()));
+        CHECK_FALSE(std::ranges::contains(p_sortie->required(), p_menuMark->id()));
+
+        // And menu_mark still identifies its own page positively, so the role
+        // belongs to the reference rather than to the element.
+        CHECK(std::ranges::contains(p_menu->required(), p_menuMark->id()));
+
+        // No copy was minted for either borrowing: four elements, the same four
+        // the two pages were authored with plus shared_mark.
+        CHECK(document.elements().size() == 4U);
+
+        auto const* p_borrowed = document.catalog().findReference(
+            p_sortie->id(),
+            p_shared->id()
+        );
+        REQUIRE(p_borrowed != nullptr);
+        CHECK(p_borrowed->holding == annotation::Holding::Referenced);
+        CHECK(p_borrowed->exercised.hasIdentify());
+        CHECK(p_borrowed->exercised.hasInteract());
+        CHECK_FALSE(p_borrowed->exercised.hasRead());
+
+        // Nothing narrowed the search here, so the page refines nothing and
+        // keeps following the element's own region when a later correction
+        // moves it. A CLI that seeded a copy of that rectangle onto the
+        // reference would pass every check above and fail here -- and would
+        // make identify unreachable altogether, since a reference that
+        // identifies may refine no region at all.
+        CHECK_FALSE(p_borrowed->searchRoi.has_value());
+    }
+
     TEST_CASE("authoring CLI refuses references and capability sets the model cannot hold")
     {
         auto const project = TemporaryProject{"refusals"};
         auto const frames  = authorTwoPageProject(project);
+
+        SUBCASE("a page may exercise only what the element declares")
+        {
+            auto const undeclared = run(
+                "page",
+                "reference",
+                project.text(),
+                "sortie",
+                "menu_button",
+                "--capability",
+                "identify:required"
+            );
+            CHECK_FALSE(undeclared.ok);
+            CHECK(std::to_underlying(undeclared.exitCode) != 0);
+            // Which page, which use, which element, and what that element
+            // actually declares. "Invalid" would leave an author guessing which
+            // of the four to change.
+            CHECK(
+                undeclared.message.contains(
+                    "page \"sortie\" would exercise identify on \"menu_button\", "
+                    "which declares interact; a page exercises only what the "
+                    "element declares"
+                )
+            );
+
+            // The control on the same element and the same page: the use it
+            // does declare is taken, so the refusal is about the capability
+            // rather than about the pair.
+            requireOk(
+                run(
+                    "page",
+                    "reference",
+                    project.text(),
+                    "sortie",
+                    "menu_button",
+                    "--capability",
+                    "interact"
+                )
+            );
+        }
+
+        SUBCASE("a signature role the vocabulary does not have, on the reference verb")
+        {
+            auto const sideways = run(
+                "page",
+                "reference",
+                project.text(),
+                "sortie",
+                "menu_mark",
+                "--capability",
+                "identify:sideways"
+            );
+            CHECK_FALSE(sideways.ok);
+            CHECK(
+                sideways.message.contains(
+                    "--capability identify takes :required or :forbidden"
+                )
+            );
+        }
+
+        SUBCASE("identify and a refined search region cannot be asked for together")
+        {
+            auto const both = run(
+                "page",
+                "reference",
+                project.text(),
+                "sortie",
+                "menu_mark",
+                "--capability",
+                "identify:forbidden",
+                "--search-roi",
+                "0,0,40,20"
+            );
+            CHECK_FALSE(both.ok);
+            CHECK(
+                both.message.contains(
+                    "--capability identify and --search-roi cannot be combined"
+                )
+            );
+
+            // The control: the same reference without the region is taken, so
+            // the refusal names the combination rather than either half.
+            requireOk(
+                run(
+                    "page",
+                    "reference",
+                    project.text(),
+                    "sortie",
+                    "menu_mark",
+                    "--capability",
+                    "identify:forbidden"
+                )
+            );
+        }
+
+        SUBCASE("an element or a page the project does not hold")
+        {
+            auto const noElement = run(
+                "page",
+                "reference",
+                project.text(),
+                "sortie",
+                "ghost_mark",
+                "--capability",
+                "interact"
+            );
+            CHECK_FALSE(noElement.ok);
+            CHECK(
+                noElement.message.contains(
+                    "no element named \"ghost_mark\" is part of this project"
+                )
+            );
+
+            auto const noPage = run(
+                "page",
+                "reference",
+                project.text(),
+                "ghost_page",
+                "menu_button",
+                "--capability",
+                "interact"
+            );
+            CHECK_FALSE(noPage.ok);
+            CHECK(
+                noPage.message.contains(
+                    "no page named \"ghost_page\" is part of this project"
+                )
+            );
+        }
 
         SUBCASE("an element that only identifies is not placed, it is signed")
         {

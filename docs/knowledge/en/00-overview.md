@@ -105,9 +105,13 @@ point: annotate, verify, iterate, with no human in the loop.
 > `interact`, or `read`, given once per capability — because a capability is now
 > a set rather than a choice, so the element that both names its page and can be
 > clicked is one element matched once per cycle. `--shared` retired with the
-> `bool shared` field. `page reference ROOT PAGE ELEMENT [--search-roi x,y,w,h]`
-> is new: it puts an element the project already holds onto a second page, which
-> is the verb that had no CLI form at all. Deciding artifact:
+> `bool shared` field. `page reference ROOT PAGE ELEMENT [--capability C...]
+> [--search-roi x,y,w,h]` is new: it puts an element the project already holds
+> onto a second page, which is the verb that had no CLI form at all. Its
+> `--capability` takes the same `C` vocabulary and says what THIS page exercises
+> on the borrowed element, so a second page can take an existing mark into its
+> own signature as `identify:required` or `identify:forbidden`; omitting the flag
+> inherits interact and read, never identify. Deciding artifact:
 > [the capability plan](../../plans/2026-07-31-annotation-model-capabilities.md).
 
 A failure document answers with `kind` and `response`, both in the **wire spelling** every other

@@ -93,8 +93,11 @@ entry/workbench      -> annotation（外加 image）
 > 动词收敛成一个——`page add ROOT PAGE NAME --capability C... <draw>`，`C` 是
 > `identify[:required|:forbidden]`、`interact` 或 `read`，每个能力给一次——因为能力现在是
 > 集合而不是三选一，于是「既认页又可点」的元素是一个元素、一个周期只匹配一次。`--shared`
-> 随 `bool shared` 字段一起退掉。`page reference ROOT PAGE ELEMENT [--search-roi x,y,w,h]`
-> 是新增的：把项目已经持有的元素放到第二个页面，这个动词此前在 CLI 上根本不存在。裁决出处：
+> 随 `bool shared` 字段一起退掉。`page reference ROOT PAGE ELEMENT [--capability C...]
+> [--search-roi x,y,w,h]` 是新增的：把项目已经持有的元素放到第二个页面，这个动词此前在
+> CLI 上根本不存在。它的 `--capability` 用同一套 `C` 词汇，说的是**这一页**行使被借元素的
+> 哪几种能力，于是第二个页面可以用 `identify:required` 或 `identify:forbidden` 把已有的
+> 标记收进自己的签名；不给这个标志则继承 interact 与 read，identify 永远不继承。裁决出处：
 > [能力模型计划](../../plans/2026-07-31-annotation-model-capabilities.md)。
 
 失败文档用 `kind` 与 `response` 作答，两者都采用其他每一个 JSON 表面所用的**wire 拼写**

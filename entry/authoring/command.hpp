@@ -68,10 +68,11 @@ namespace uf::authoring
         annotation::SimilarityThreshold threshold;
     };
 
-    // What one drawn rectangle may be used for, as --capability collected it.
-    // Three fields rather than a list of tokens, so "identify twice" and "a
-    // signature role without identify" are both unrepresentable here instead of
-    // being rejected later.
+    // What --capability collected, on whichever verb collected it: what a drawn
+    // rectangle may be used for, or what one page exercises on an element it
+    // borrows. Three fields rather than a list of tokens, so "identify twice"
+    // and "a signature role without identify" are both unrepresentable here
+    // instead of being rejected later.
     //
     // The role rides on identify because that is where the model keeps it: an
     // element declares that it CAN identify, and the page's reference declares
@@ -79,7 +80,7 @@ namespace uf::authoring
     // could hold the answer, since one mark is required by one page and
     // forbidden by another. Interact and read have no such page-side datum,
     // which is exactly why they are plain flags.
-    struct DrawnCapabilities final
+    struct StatedCapabilities final
     {
         std::optional<annotation::SignatureRole> identify{};
 
@@ -128,22 +129,36 @@ namespace uf::authoring
         std::filesystem::path root{};
         std::string           page{};
 
-        DrawnCapabilities capabilities{};
-        ElementDraw       draw;
+        StatedCapabilities capabilities{};
+        ElementDraw        draw;
     };
 
     // Puts an element the project already holds onto a second page. This is the
     // only way Holding::Referenced is produced: everything drawn is Owned by the
     // page it was drawn on, so borrowing is what a second page does instead of
     // redrawing the same pixels under a second id and a second search per cycle.
+    //
+    // The two optionals below are this page's refinements of a shared element,
+    // never edits to the element itself. That is the asymmetry the whole verb
+    // rests on: one element, and each page saying what it does with it.
     struct ReferenceElement final
     {
         std::filesystem::path root{};
         std::string           page{};
         std::string           element{};
 
+        // What THIS page exercises. Absent means every use a placement carries
+        // on its own -- interact and read, whichever the element declares --
+        // which is what borrowing a control asks for when the author says
+        // nothing. Identify is never among those: whether a mark is evidence
+        // FOR this page or AGAINST it is a question the element has no answer
+        // to, so a page joins a signature only by asking in so many words.
+        std::optional<StatedCapabilities> exercised{};
+
         // Absent means this page searches the element's own region, which is
-        // what an absent per-page refinement means in the document too.
+        // what an absent per-page refinement means in the document too. It is
+        // left absent rather than seeded from the element, so a later
+        // correction to the element's region reaches this page as well.
         std::optional<PixelRect> searchRoi{};
     };
 
