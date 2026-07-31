@@ -769,6 +769,109 @@ namespace uf::workbench
         CHECK_FALSE(referenced.has_value());
     }
 
+    TEST_CASE("one mark required by one page and forbidden by another stays one element")
+    {
+        // The case the capability model exists for. Before a page could
+        // reference an existing element for identify, "page A requires this
+        // mark, page B forbids the same pixels" had exactly one route: draw a
+        // second rectangle over the first. Two ids, two templates, two searches
+        // a cycle -- the duplication this model deletes.
+        auto const markId   = annotation::test::elementId(k_anchorId);
+        auto const homeId   = annotation::test::pageId(k_pageId);
+        auto const battleId = annotation::test::pageId(k_secondPageId);
+        auto const onBattle = [markId, battleId](
+                                  EditableReference const& reference
+                              )
+        {
+            return reference.pageId == battleId && reference.elementId == markId;
+        };
+
+        // twoPageDocument already holds the relationship, so withdraw it and
+        // let the function under test be what puts it back.
+        auto draft = makeAuthoringDraft(twoPageDocument());
+        std::erase_if(draft.references, onBattle);
+        auto const elements = draft.recognizers.size();
+
+        auto const referenced = referenceElementForIdentify(
+            std::move(draft),
+            IdentifyReferenceSpec{
+                .elementId = markId,
+                .pageId    = battleId,
+                .role      = annotation::SignatureRole::Forbidden,
+            }
+        );
+        REQUIRE(referenced.has_value());
+
+        // The assertion the whole verb is for: no second element over the same
+        // pixels. One patch, one id, two pages pointing opposite ways at it.
+        CHECK(referenced->draft.recognizers.size() == elements);
+        CHECK(pagesReferencing(referenced->draft, markId).size() == 2U);
+
+        auto const forbidding = std::ranges::find_if(
+            referenced->draft.references,
+            onBattle
+        );
+        REQUIRE(forbidding != referenced->draft.references.end());
+        CHECK(forbidding->holding == annotation::Holding::Referenced);
+        REQUIRE(forbidding->exercised.identify.has_value());
+        CHECK(
+            forbidding->exercised.identify->role
+            == annotation::SignatureRole::Forbidden
+        );
+        // The anchor pass reads the element's own region, so the reference
+        // refines none -- the one combination the catalog refuses outright.
+        CHECK_FALSE(forbidding->searchRoi.has_value());
+        // Borrowing a mark for a signature authorises no click on it.
+        CHECK_FALSE(forbidding->exercised.interact.has_value());
+
+        auto const built = buildAuthoringDocument(referenced->draft);
+        REQUIRE(built.has_value());
+        CHECK(built->elements().size() == elements);
+
+        auto const* p_home = built->catalog().findPage(homeId);
+        REQUIRE(p_home != nullptr);
+        CHECK(std::ranges::contains(p_home->required(), markId));
+        auto const* p_battle = built->catalog().findPage(battleId);
+        REQUIRE(p_battle != nullptr);
+        CHECK(std::ranges::contains(p_battle->forbidden(), markId));
+
+        // Asking twice is refused by name rather than writing a second
+        // reference the catalog would then reject as a duplicate.
+        auto const again = referenceElementForIdentify(
+            referenced->draft,
+            IdentifyReferenceSpec{
+                .elementId = markId,
+                .pageId    = battleId,
+            }
+        );
+        CHECK_FALSE(again.has_value());
+    }
+
+    TEST_CASE("a page may not identify by an element that declares no identify")
+    {
+        // Pixels that cannot be evidence cannot enter a signature. Refusing it
+        // here rather than letting the catalog's subset rule catch it is what
+        // lets the message name the element the author typed.
+        auto const battleId = annotation::test::pageId(k_secondPageId);
+
+        auto draft = makeAuthoringDraft(document());
+        draft.pages.emplace_back(
+            EditablePage{
+                .id   = battleId,
+                .name = "battle",
+            }
+        );
+
+        auto const referenced = referenceElementForIdentify(
+            std::move(draft),
+            IdentifyReferenceSpec{
+                .elementId = annotation::test::elementId(k_actionId),
+                .pageId    = battleId,
+            }
+        );
+        CHECK_FALSE(referenced.has_value());
+    }
+
     TEST_CASE("moving an element's appearance moves it on every page that has it")
     {
         // Drawing the element once is only worth anything if correcting it

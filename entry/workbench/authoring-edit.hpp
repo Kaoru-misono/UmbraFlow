@@ -343,6 +343,46 @@ namespace uf::workbench
         ReferenceElementSpec const& spec
     ) -> Result<ReferencedElement>;
 
+    // Which side a page takes on one existing mark. There is deliberately no
+    // search region here: a reference exercising identify may not refine one,
+    // and a spec without the field cannot state what the catalog would reject.
+    //
+    // The role is stated rather than left to `{}` for the reason
+    // ExercisedIdentify states it: both enumerators are ordinary authored
+    // choices, and putting a mark in a signature normally means it as evidence
+    // for the page.
+    struct IdentifyReferenceSpec final
+    {
+        annotation::ElementId     elementId;
+        annotation::PageId        pageId;
+        annotation::SignatureRole role{annotation::SignatureRole::Required};
+    };
+
+    // Puts one existing element into a second page's signature: a new reference
+    // to the SAME element, exercising identify and pointing whichever way the
+    // role says. This is what makes "page A requires this mark, page B forbids
+    // the same pixels" one element rather than two rectangles over one patch --
+    // two ids, two templates, two searches a cycle -- which is the duplication
+    // the capability model exists to delete.
+    //
+    // The reference refines no search region and has nowhere to put one. The
+    // anchor pass reads the element-level region, so narrowing it per page
+    // would search the same pixels a second time in the same cycle, which is
+    // exactly the cost merging capabilities removes.
+    //
+    // Identify is all this page exercises, even when the element also declares
+    // interact or read. Exercising interact IS the authorisation to click here,
+    // and a page borrowing a mark for its signature did not ask for that.
+    //
+    // Fails when the element or the page is not in the draft, when the element
+    // declares no identify (pixels that cannot be evidence cannot enter a
+    // signature), or when that page already references it.
+    [[nodiscard]]
+    auto referenceElementForIdentify(
+        AuthoringDraft draft,
+        IdentifyReferenceSpec const& spec
+    ) -> Result<ReferencedElement>;
+
     struct RetemplatedElement final
     {
         AuthoringDraft draft;

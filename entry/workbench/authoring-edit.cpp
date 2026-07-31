@@ -932,6 +932,66 @@ namespace uf::workbench
         };
     }
 
+    auto referenceElementForIdentify(
+        AuthoringDraft draft,
+        IdentifyReferenceSpec const& spec
+    ) -> Result<ReferencedElement>
+    {
+        auto const* p_origin = findRecognizerIn(draft, spec.elementId);
+        if (p_origin == nullptr)
+        {
+            return missingElement(spec.elementId);
+        }
+        if (!p_origin->capabilities.identify.has_value())
+        {
+            return fail(
+                AutomationErrorKind::InvalidResource,
+                std::format(
+                    "\"{}\" is not an identifying mark, so no page's signature "
+                    "can be built out of it",
+                    p_origin->name
+                )
+            );
+        }
+        if (
+            !std::ranges::contains(draft.pages, spec.pageId, &EditablePage::id)
+        )
+        {
+            return missingPage(spec.pageId);
+        }
+        if (findReferenceIn(draft, spec.pageId, spec.elementId) != nullptr)
+        {
+            return fail(
+                AutomationErrorKind::InvalidResource,
+                std::format("\"{}\" is already on that page", p_origin->name)
+            );
+        }
+
+        // One element, referenced again as evidence. Identify is the whole of
+        // what this page exercises: the element may also be clickable, but
+        // exercising interact IS the authorisation to click it here, and
+        // borrowing a mark for a signature asks for no such thing. No search
+        // region is written either -- the anchor pass reads the element's own.
+        auto name = p_origin->name;
+        draft.references.emplace_back(
+            EditableReference{
+                .pageId    = spec.pageId,
+                .elementId = spec.elementId,
+                .holding   = annotation::Holding::Referenced,
+                .exercised = EditableExercised{
+                    .identify = annotation::ExercisedIdentify{
+                        .role = spec.role,
+                    },
+                },
+            }
+        );
+
+        return ReferencedElement{
+            .draft = std::move(draft),
+            .name  = std::move(name),
+        };
+    }
+
     auto setElementTemplateRect(
         AuthoringDraft draft,
         annotation::ElementId id,
