@@ -147,6 +147,32 @@ namespace uf
             return std::bit_cast<HWND>(handle.value());
         }
 
+        // The two window states the compositor can be silent because of. Neither
+        // is otherwise reported on the stall path, so a stall that one of them
+        // explains reaches the operator as an unexplained capture fault, which
+        // cost real time on 2026-07-31. Occlusion and an off-screen position are
+        // deliberately not probed: DWM keeps composing for both, so neither can
+        // be the cause and naming them would mislead.
+        [[nodiscard]]
+        auto observeTargetWindow(
+            HWND window
+        ) noexcept -> controller_detail::TargetWindowState
+        {
+            // SAFETY: IsWindow accepts a stale or null opaque token and only reports
+            // whether the value currently names a live window; it retains no caller state.
+            if (window == nullptr || IsWindow(window) == FALSE)
+            {
+                return controller_detail::TargetWindowState::Destroyed;
+            }
+            // SAFETY: IsIconic only inspects the opaque window token and retains no
+            // caller-owned state.
+            if (IsIconic(window) != FALSE)
+            {
+                return controller_detail::TargetWindowState::Minimized;
+            }
+            return controller_detail::TargetWindowState::Composing;
+        }
+
         struct D3d11Objects final
         {
             D3d11DeviceComPtr  device{};
@@ -1030,14 +1056,13 @@ namespace uf
                 );
             }
 
-            UF_TRY(m_stall.check(MonotonicInstant::now()));
-            return fail(
-                AutomationErrorKind::CaptureStalled,
-                std::format(
-                    "no new frame within {} monotonic clock ticks",
-                    timeout.count()
-                )
-            );
+            // Observed once, at the moment the wait came back empty, and shared by
+            // both fuses below: the fuse that blows depends only on whether the
+            // caller's budget or the session's own stall timeout expired first,
+            // and the window state that explains the silence is the same either way.
+            auto const targetState = observeTargetWindow(m_windowMarker.window());
+            UF_TRY(m_stall.check(MonotonicInstant::now(), targetState));
+            return controller_detail::stalledFrameFailure(timeout, targetState);
         }
 
         [[nodiscard]]
@@ -1641,7 +1666,12 @@ namespace uf
             );
 
             m_stall.onFrameArrived(arrival.arrivedAt);
-            UF_TRY(m_stall.check(MonotonicInstant::now()));
+            UF_TRY(
+                m_stall.check(
+                    MonotonicInstant::now(),
+                    observeTargetWindow(m_windowMarker.window())
+                )
+            );
 
             UF_TRY_VALUE(
                 contentSize,

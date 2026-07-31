@@ -142,6 +142,11 @@ frame-arrived callback 不捕获 `Impl` 或裸 `this`，只按值持有
 1. `waitForFrame` 等到 latest frame、item closed、callback failure 或 stall
    timeout。`StallTracker` 以 arrival time 而不是像素变化或消费时间判鲜度；一帧
    即使已在 slot 中，消费时超过 timeout 仍返回 `CaptureStalled`。
+   `StallTracker::check` 除时刻外还必须收一个 `TargetWindowState`：窗口被最小化
+   或已销毁时根本不合成任何帧，那就是 stall 的成因而不是无关事实。该状态由
+   `windows-capture.cpp` 的 `observeTargetWindow`（先 `IsWindow` 再 `IsIconic`）
+   给出，`stalledFrameFailure` 把它写成同时点名窗口状态与解决动作的消息。遮挡与
+   移出屏幕外故意不探测：DWM 对这两种情况仍在合成，因此都不可能是成因。
 2. `CaptureGeometryState::observeContentSize` 要求每帧 `ContentSize` 与创建时
    完全相同；D3D surface size 还要与已确认 size 相同。任何无效值或不匹配都会
    永久锁存 invalidated，此后即使尺寸恢复也必须重建 session。

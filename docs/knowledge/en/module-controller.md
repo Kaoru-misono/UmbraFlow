@@ -152,7 +152,12 @@ failures are also published to the same wait predicate.
 1. `waitForFrame` waits for the latest frame, item closed, callback failure, or a stall timeout.
    `StallTracker` judges freshness by arrival time rather than by pixel change or consumption time;
    even if a frame is already in the slot, if the timeout is exceeded at consumption time it still
-   returns `CaptureStalled`.
+   returns `CaptureStalled`. `StallTracker::check` requires a `TargetWindowState` alongside the
+   instant, because a minimized or destroyed window composites nothing and is therefore the *cause*
+   of the stall rather than an unrelated fact. `observeTargetWindow` (in `windows-capture.cpp`,
+   `IsWindow` then `IsIconic`) supplies it, and `stalledFrameFailure` turns it into a message that
+   names the window state and the action that clears it. Occlusion and an off-screen position are
+   deliberately not probed: DWM keeps composing for both, so neither can be the cause.
 2. `CaptureGeometryState::observeContentSize` requires every frame's `ContentSize` to be exactly the
    same as at creation, and the D3D surface size must also equal the confirmed size. Any invalid value
    or mismatch permanently latches invalidated, after which the session must be rebuilt even if the

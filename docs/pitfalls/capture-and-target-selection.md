@@ -70,6 +70,72 @@ restore a window owned by an elevated (High-integrity) game via `ShowWindow`
 Real-machine: with the game minimized, capture/run reports the "no visible
 window" error; restoring it lets the same command resolve the target.
 
+## `CaptureStalled` used to name the symptom and withhold "the window is minimized"
+
+### Symptom
+
+During a live annotation session on 2026-07-31, every capture and every click
+against the game window failed with nothing but:
+
+```
+CaptureStalled: no new frame arrived
+```
+
+The operator spent real time suspecting the capture backend, the frame lease,
+and the target handle in turn. The actual cause was that the game window had
+been **minimized** — `IsIconic(hwnd)` was true.
+
+### Root cause
+
+Two things, and only the second is a code fault.
+
+A minimized window composites nothing, so a stall is its *expected consequence*,
+not a fault at all. This differs from the discovery-side symptom above: there,
+minimization is caught before a session exists and reported as "no visible
+window title contains X". Here the session was created while the window was up
+and the window was minimized afterwards, so discovery's filter never runs again
+and the only thing that fires is the stall fuse.
+
+The code fault: `StallTracker::check` composed its message from the timeout
+alone. The one fact that explains the stall — a fact one Win32 call away, and
+one the operator can act on in a second — was never queried, so the message
+named the symptom and withheld the cause. Note that the adjacent `itemClosed`
+path already explains itself ("capture item was closed; rebuild the session"),
+which is why a *destroyed* window usually reads better than a minimized one did.
+
+### Fix
+
+`StallTracker::check` now requires a `TargetWindowState` (`Composing`,
+`Minimized`, `Destroyed`) beside the instant, so a stall cannot be reported
+without an observation of the window. `observeTargetWindow` in
+`windows-capture.cpp` supplies it from `IsWindow` then `IsIconic`, and
+`stalledFrameFailure` (`modules/controller/source/controller/capture-stall.cpp`)
+turns it into a message that names the state *and* the action:
+
+> no new frame arrived within 1000 monotonic clock ticks: the target window is
+> minimized, and a minimized window composites no frames at all, so a stall is
+> the expected result rather than a capture fault. Restore the window from the
+> taskbar and run again; a target running elevated has to be restored from an
+> elevated context
+
+The `Composing` message says the window state does *not* explain the stall,
+rather than hinting at minimization when nothing was observed — a message that
+cries "minimized" at every stall teaches the operator to ignore it.
+
+Occlusion and an off-screen position are deliberately **not** probed. DWM keeps
+composing for both, so neither can cause a stall, and reporting them would send
+the next investigation in the wrong direction.
+
+### Regression check
+
+`ctest -L CI` (`test-controller`): the message tests are falsifiable — collapsing
+the three explanations to one turns the minimized and destroyed cases red, and
+making `StallTracker::check` ignore its `TargetWindowState` argument turns "the
+tracker reports the window state it was given" red. The Win32 probe itself is
+not covered: inverting `IsIconic(window) != FALSE` leaves all 95 controller
+tests green, so that one predicate needs a real-machine check — minimize the
+game mid-run and confirm the stall message says so.
+
 ## WGC capture bind needs the same integrity level as the target
 
 ### Symptom
