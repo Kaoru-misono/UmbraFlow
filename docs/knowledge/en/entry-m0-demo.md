@@ -41,7 +41,11 @@ It deliberately does not own the following product responsibilities.
 - It does not read `project.toml`, `annotations.toml`, or
   `generated/annotations.runtime.toml`.
 - It does not create or call annotation's `RecognitionRuntime`, and it does not understand
-  recognizer IDs, `annotation_type`, page signatures, `ResolvedPage`, or `allowed_page_ids`.
+  element IDs, capability sets, page signatures, `ResolvedPage`, or page references. (Corrected
+  2026-07-31: this listed `annotation_type` and `allowed_page_ids`, both removed by
+  [the capability plan](../../plans/2026-07-31-annotation-model-capabilities.md). The point of the
+  bullet is unchanged and stronger — m0-demo understands none of the annotation model, whatever
+  shape it takes.)
 - It does not perform "page-evidence-authorized actions." As soon as a template passes the SAD
   threshold, `clickWhenPresent` clicks the center of the matched rectangle.
 - It does not provide Luau tasks, a long-lived Engine lifecycle, a generic popup sweep,

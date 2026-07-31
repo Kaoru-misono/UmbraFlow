@@ -1,5 +1,42 @@
 # annotation 模块架构知识
 
+> **DIRTY（2026-07-31）**：标注模型已经变成能力模型，本文描述的是被它取代的那一版。
+> 以实际代码与
+> [`docs/plans/2026-07-31-annotation-model-capabilities.md`](../../plans/2026-07-31-annotation-model-capabilities.md)
+> 为准，待重新同步。本条 banner 覆盖下面那条 2026-07-26 的；后者保留，作为此前已经积累的
+> 漂移记录。
+>
+> 下面这些说法现在是**错的**，列清楚，免得读者去猜该信哪一半：
+>
+> - **`AnnotationType` 不存在了。** 三选一的 `PageAnchor` / `ActionTarget` /
+>   `InfoRegion` 变成**集合** `ElementCapabilities {identify, interact, read}`，每个能力
+>   带自己的配套数据（`Interact` 带 click offset，`Read` 带 `ReadLayout` 与可选的
+>   `CharsetRestriction`）。三个都空会被拒绝。新头文件是 `annotation/capabilities.hpp`。
+>   凡是「必须是 `ActionTarget`」的句子，现在都读作「必须声明 `interact`」。
+> - **`allowedPageIds` / `allowed_page_ids` 两侧都不存在了。** `PageReference`——每个
+>   (页面, 元素) 一行——**就是**授权，那几条拿列表去校验页面存在性的规则也跟着没了。
+> - **`PageSignature::create` 不是公开的。** 签名由 `RecognitionCatalog::create`
+>   从「`exercised` 里 identify 带 `SignatureRole::Required` 或 `Forbidden`」的引用**派生**，
+>   永远不是作者写出来的；`RecognitionCatalog` 是它唯一的 friend。
+> - **`RecognizerId` 改名 `ElementId`**，而且 recognizer 现在只指编译器产出的东西。两者的
+>   分工见 CONTEXT.md 的「Annotation model」一节。
+> - **运行时 schema 是 `umbraflow-annotations/v2`**，不是 `/v1`；授权文档 schema 是
+>   `umbraflow-authoring/v3`，不是 `/v2`。两个旧 id 都没有读路径。
+> - **`evaluateActionTarget` 收 `PageId`**：`(frame, liveFingerprint, pageId, elementId,
+>   policy)`。每页的事实——细化的搜索区域、钉死的形态——都住在引用行上。
+> - **元素带的是有序的 `Variant` 列表**，不是一份模板。每个是
+>   `{name, sourceId, templateRect, threshold, colourKey?}`；声明顺序只裁决平局，别的什么
+>   都不决定。**空列表是合法的**，含义是这个矩形由「页面被认出」定位，也因此该元素不能作为
+>   身份证据。`RuntimeManifest::findAsset` 的键相应变成 `(elementId, variantName)`。
+> - **`derivedRuntimeRecognizerId` 没有了。** 编译器每个元素只产出一个 recognizer，用元素
+>   自己的 id；模板仍按 (source, 矩形, 色键) 去重。
+> - **「`InfoRegion` 求值」那条开放项已被取代**，不是还开着：`read` 是一个带标注期 OCR 参数
+>   的能力，计划 §四之二.7 定下了消费它的 `cycle_read` 动词。
+>
+> 下面**仍然成立**的部分：色键与模板 mask 一节、SAD/阈值/`maximumSad` 的整数规则、
+> 规范 TOML 与逐字节往返、内容寻址的模板编译、帧身份与四要件授权门，以及全部确定性与
+> 资源上限约束。
+
 > **DIRTY（2026-07-26）**：本文尚未反映 authoring schema v2（Element+placement
 > 取代按页拷贝、v1 读取路径退役、编译器按 placement 展开运行时 recognizer、
 > deriveModel 永久桥）。以实际代码与

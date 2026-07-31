@@ -45,6 +45,35 @@
 > 页面签名的严格合取、两个 schema 的升版顺序、证伪矩阵的形状、`ProjectFingerprint`
 > 守的是窗口几何而非窗口内布局。这些是「怎么落地」的清单。
 
+> ## 落地进度(2026-07-31 晚,doc-drift 扫描时记录)
+>
+> 本文写作时是计划;下面这些已经是代码里的事实,读到后文的将来时请按此校正。
+>
+> - **§三 第 1–2 步已完成。** 能力集合、`ExercisedCapabilities`、`PageReference`
+>   (`holding` / `exercised` / `searchRoi?` / `variant?`)、`Variant`、`SignatureRole`
+>   都在 `modules/annotation` 里;两个 schema 在一次原子改动里升到
+>   `umbraflow-authoring/v3` 与 `umbraflow-annotations/v2`,旧 id 没有读路径,
+>   `PERMANENT BRIDGE` 那段随之删除。`AnnotationType`、`ElementKind`、`bool shared`、
+>   `allowed_page_ids`、`retypeRecognizer`、公开的 `PageSignature::create`、
+>   `derivedRuntimeRecognizerId` 都已不存在,`RecognizerId` 已改名 `ElementId`
+>   (§四之二.5)。编译器现在**每个元素只产出一个 recognizer**,用元素自己的 id。
+> - **§四 的三个动词已收敛。** `page add-anchor` / `add-target` / `add-info` 变成
+>   `page add ROOT PAGE NAME --capability C... <draw>`,`--shared` 退掉;
+>   `page reference ROOT PAGE ELEMENT [--search-roi x,y,w,h]` 已落地——就是 §三 那条
+>   「必须在删 `shared` 之前或同时落地」的硬前置。`match` 增加了 `--page`。
+> - **§四之二.1 的 GUI 弃用已执行**(`b57b67b`)。`entry/workbench/app/`、ImGui + D3D11
+>   外壳、文件对话框、一次性抓帧源、imgui submodule 与 ASan smoke fixture 都已归档;
+>   `entry/workbench` 剩下的是 `umbra-authoring` 链接的标注后端。三个前置条件里,
+>   `placeExisting`(经 `page reference`)与按页 `searchRoi` 已补上;**证伪矩阵仍然只有
+>   `entry/workbench/preview.*` 里的 `ModelCheckCell` / `classifyModelCell`,没有 CLI 动词,
+>   也还没有 variant 维度**——§2.3 的 P1–P4 与 R1–R4 一条都还没落地。
+> - **仍未开始:** §三 第 4 步之后的 variant 作者入口(CLI 没有画 variant 的动词)、
+>   第 5 步的 `read` 动词与 OCR 接线(`cycle_read` 尚不存在)、§2.3 更正里点名要先修的
+>   `pitfalls/colour-key-annotation.md` 机制段(已于 2026-07-31 修正)。
+> - **§2.2 那条留给开发者的裁决仍然开着**:`ctx.luau` 的 `view:find` 不自动解析页面,
+>   所以 `ctx:cycle(fn)` 里直接 `find` 而没先 `page()` 会得到 `ActionRejected`
+>   (`task-context.cpp` 的 `cycleFind` 明确这么写)。脚本约定或 `ctx.luau` 二选一,尚未选。
+
 ## 一、为什么现在改
 
 三个问题都不是设想出来的,是 2026-07-31 标注 `chaos-super` 的 `home` 与 `sortie`
@@ -337,7 +366,7 @@ Element {
    > 样例,断言证伪器**拒绝该模型**(否则 `k` 会在调参中漂到 1)。R4 断言 <50 像素的
    > variant 在构造期就报错,而不是匹配期。
    >
-   > **落点**:`ModelCellCell`(`preview.hpp:277-303`)已经是「元素 × 屏幕」的证伪
+   > **落点**:`ModelCheckCell`(`preview.hpp:278-303`)已经是「元素 × 屏幕」的证伪
    > 矩阵,`classifyModelCell` 已经会把「不该命中却命中」标成 `Misfire`——**它就是这个
    > 矩阵,只差一个 variant 维度**。不加这一维,V 个 variant 会塌成一个 Hit/Miss,
    > P1 的非对角格在结构上就无法表示。
@@ -478,7 +507,7 @@ Page "battle"  -> PageReference{ back, Referenced, exercised = { interact, ident
 |---|---|
 | `placeExisting` / `shareRegionOnPage` | `Referenced` 将无法产生,`holding` 失去意义。**已是 §三 的硬前置** |
 | `InteractiveRegion::setSearchRoi` | `PageReference.searchRoi?` 没有作者入口 |
-| `ModelCellCell` / `classifyModelCell` | **证伪矩阵消失** |
+| `ModelCheckCell` / `classifyModelCell` | **证伪矩阵消失** |
 
 第三条是新的前置条件。§2.3 把「每个 variant 各自过证伪、集合整体也要过」定成多形态
 能否成立的前提,而那个矩阵是 workbench 代码(`entry/workbench/preview.*`)。GUI 一

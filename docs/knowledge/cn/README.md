@@ -11,11 +11,13 @@
 3. [`module-domain.md`](module-domain.md) — 帧身份、坐标空间、目标代际、检测和观察租约。
 4. [`module-vision-image.md`](module-vision-image.md) — Gray8/SAD 识别、PNG、像素布局和模板资产。
 5. [`module-annotation.md`](module-annotation.md) — 编辑文档、运行时清单、页面解析和动作授权。
+   **自 2026-07-31 起 DIRTY**——标注模型已变成能力模型，先读它的 banner。
 6. [`module-engine.md`](module-engine.md) — 发布物加载、同帧决策、端口编排、动作执行和追踪记录。
 7. [`module-script.md`](module-script.md) — Luau 底座：沙箱、预算、interrupt 取消，以及
    framework/project 双环境拆分。
 8. [`module-controller.md`](module-controller.md) — WGC、目标连续性、DPI 和严格后台输入。
-9. [`entry-workbench.md`](entry-workbench.md) — GUI 编辑、采集、预览、编译和发布。
+9. [`entry-workbench.md`](entry-workbench.md) — 标注后端：编辑、预览/证伪、编译和发布。
+   **自 2026-07-31 起 DIRTY**——它写的那个 GUI 已归档，标注模型也变了，先读它的 banner。
 10. [`entry-cli.md`](entry-cli.md) — 参数解析、离线加载、Windows 适配和退出码。
 11. [`entry-m0-demo.md`](entry-m0-demo.md) — 已冻结的真机验收程序，以及它和产品代码的边界。
 

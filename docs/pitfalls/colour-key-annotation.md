@@ -11,8 +11,14 @@ output over the frames named.
 
 ### Symptom
 
-`page create` / `page add-anchor` / `page add-target` returns `{"ok":true,...}`
+`page create` / `page add` returns `{"ok":true,...}`
 and `project save` succeeds. Every later `match` of that element fails with:
+
+(Corrected 2026-07-31: the drawing verbs were `page add-anchor` / `page
+add-target` / `page add-info` when this was recorded; they collapsed into
+`page add ROOT PAGE NAME --capability C... <draw>` with the capability model.
+The failure is unchanged — `page create` and `page add` are still the two verbs
+that draw pixels, and neither checks the key.)
 
 ```
 InternalInvariant: template mask excludes every pixel of its template | at sad.cpp:325
@@ -113,6 +119,14 @@ specifically to tell the two states apart, scored 7534-11322 on one state and
 Check `fully_selected_pixels` from `frames probe` and treat anything under
 roughly 50 as measuring nothing. Widen the rectangle, loosen the tolerance, or
 pick a different feature.
+
+> 2026-07-31:
+> [the capability plan](../plans/2026-07-31-annotation-model-capabilities.md)
+> §2.3 P0 rules that this ~50-pixel floor should become a construction-time
+> refusal in `Variant::create`, because adding a variant is cheaper for an author
+> than fixing a rectangle and so makes this rule easier to violate. It has not
+> landed: `Variant::create` today checks only that the threshold has a computable
+> SAD ceiling, so `frames probe` is still the only check.
 
 The general rule this taught, which is the part worth carrying: **an element that
 hits every state it is meant to distinguish is worse than no element, because it

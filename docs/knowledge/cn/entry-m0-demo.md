@@ -39,8 +39,11 @@ click home -> wait result -> click reset -> wait home
 
 - 不读取 `project.toml`、`annotations.toml` 或
   `generated/annotations.runtime.toml`。
-- 不创建或调用 annotation 的 `RecognitionRuntime`，也不理解 recognizer ID、
-  `annotation_type`、page signature、`ResolvedPage` 或 `allowed_page_ids`。
+- 不创建或调用 annotation 的 `RecognitionRuntime`，也不理解元素 ID、能力集合、
+  page signature、`ResolvedPage` 或 page reference。（更正 2026-07-31：这里原本列的是
+  `annotation_type` 与 `allowed_page_ids`，两者都被
+  [能力模型计划](../../plans/2026-07-31-annotation-model-capabilities.md)删除。这一条的意思
+  没变，而且更强了——不管标注模型长成什么样，m0-demo 一概不理解。）
 - 不执行“页面证据授权动作”。一个模板只要通过 SAD 阈值，`clickWhenPresent`
   就点击该匹配矩形中心。
 - 不提供 Luau task、长期 Engine 生命周期、通用 popup sweep、跨平台 port 或 GUI。

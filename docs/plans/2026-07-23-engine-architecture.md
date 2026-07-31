@@ -164,6 +164,15 @@ wait hook→D6/P1 `bot:on`;engine 操作面(capture/find/click/wait)→B2 Luau 1
 
 ## Phase 4 — A1 最小 workbench GUI
 
+> **已归档(2026-07-31)。** 本阶段完成过,产物随后被弃用:`b57b67b` 移除了 Dear ImGui
+> submodule、D3D11+Win32 backend、`panels.cpp` 与 `umbra-workbench` 可执行文件。留下的是
+> 下面第 10 条列出的**后端**能力——`loadAuthoringProject`、`saveAndGenerateAuthoringProject`、
+> `AuthoringEditHistory`、`ResourceId::fromBytes`、Preview——它们现在由
+> `umbra-authoring` 驱动。属性面板那一行的「类型」也已过时:三选一的类型变成能力集合,
+> required/forbidden 挂到页面引用侧。裁决见
+> [`2026-07-31-annotation-model-capabilities.md`](2026-07-31-annotation-model-capabilities.md)
+> §四之二.1。本节其余文字保留为它曾经存在过的记录。
+
 9. **[已批准]** vendor Dear ImGui docking 分支最新 release tag(submodule,
    方式同 Luau),置于 `entry/workbench/external/imgui`;
    D3D11+Win32 backend 封装在 `entry/workbench/platform/`。

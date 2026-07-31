@@ -1,5 +1,34 @@
 # Page-centric authoring: domain model v2 and the editing layer
 
+> **Redirect (2026-07-31).** This plan landed, and the model it produced has
+> since been changed by
+> [`2026-07-31-annotation-model-capabilities.md`](2026-07-31-annotation-model-capabilities.md).
+> Read the rulings below as history, with three specific reversals:
+>
+> 1. §2 item 5 ruled that the authoring-only `shared` flag **stays what it is
+>    today**, carried on the element. That is **reversed**: the flag is deleted
+>    and replaced by `Holding{Owned, Referenced}` on the page reference. The
+>    capability plan §2.2 owns the reasoning (a flag written once by
+>    `shareRegionOnPage` could contradict the placements with nothing noticing).
+> 2. §2 item 3's "one element, N placements" is exactly right and survives; the
+>    row is now called `PageReference` and carries `holding` and `exercised`
+>    besides `{pageId, elementId, searchRoi}`.
+> 3. The **runtime** contract this plan promised would stay frozen throughout
+>    (`k_runtimeManifestSchema`, `annotations.runtime.toml`,
+>    `RecognitionRuntime`) was un-frozen on 2026-07-31. Both schemas were bumped
+>    in one atomic change: `umbraflow-authoring/v2` → `/v3` and
+>    `umbraflow-annotations/v1` → `/v2`. The `PERMANENT BRIDGE` comment this plan
+>    left in `authoring-document.cpp` went with it.
+>
+> One more mechanism this plan introduced is gone:
+> `derivedRuntimeRecognizerId(elementId, pageId)` and the per-placement expansion
+> around it. The compiler now emits exactly **one** recognizer per element under
+> the element's own id, because a page's refinements are read from the reference
+> row at match time instead of being baked into a separate recognizer per page.
+>
+> The GUI this plan's editing layer was built for was archived in `b57b67b`;
+> the editing layer itself remains and is driven by `umbra-authoring`.
+
 Status: proposed; amended 2026-07-26 after adversarial review. Supersedes
 one clause of the redesign agreed in the 2026-07-25 session notes: that
 agreement said "no schema, runtime, or S0 contract change is planned"; the

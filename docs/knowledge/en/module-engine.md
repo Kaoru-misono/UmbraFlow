@@ -150,9 +150,17 @@ The public runtime surface lives in `modules/engine/source/engine/session.hpp`:
 - `EngineSession::resolvePage(Observation const&)` calls its
   `RecognitionRuntime::evaluatePage` against the frame held by the supplied observation and returns
   a `PageOutcome` composed of `ResolvedPage`, `UnknownPage`, or `AmbiguousPages`.
-- `EngineSession::findAction(Observation const&, ElementId)` calls
+- `EngineSession::findAction(Observation const&, annotation::PageId, annotation::ElementId)` calls
   `evaluateActionTarget` against that same frame. A miss is a successful empty value of
   `Result<std::optional<ActionFound>>`, corresponding to D4 Tier A, and is not an error.
+
+  > Corrected 2026-07-31: the page parameter is new. The per-page facts moved onto
+  > `annotation::PageReference` — the search region that page refines and the appearance it pins —
+  > and a page that does not exercise `interact` on the element has no action there to locate at
+  > all. It authorizes nothing: the page selects a reference row rather than granting one, and a
+  > located hit is still refused at delivery unless `act`'s resolved page references the element
+  > for interaction. Deciding artifact:
+  > [the capability plan](../../plans/2026-07-31-annotation-model-capabilities.md) §2.2.
 - `ActionFound` stores the original `AnchorEvidence`, an `ActionDetection` bound to the recognizer
   identity, and a deterministic `PixelPoint`. The click point is decided by annotation's
   `resolveClickPixel`; the match rect becomes an authorization-ready `Detection` through
@@ -202,7 +210,7 @@ loadRuntimeProject
   -> (one turn of ctx.luau's wait loop)
        EngineSession::observe
        -> EngineSession::resolvePage
-       -> EngineSession::findAction(observation, recognizerId)
+       -> EngineSession::findAction(observation, pageId, elementId)
        -> EngineSession::act
        -> IActionSink::click
 ```
@@ -282,8 +290,12 @@ All conditions that would make "what to do where" uncertain fail toward rejectio
 - When the live fingerprint differs from the catalog fingerprint, recognition or authorization
   rejects.
 - The `CaptureSessionId`, `TargetGeneration`, and `FrameId` of the page evidence, action detection, and
-  delivery must be identical; the action recognizer must additionally belong to the active catalog,
-  be of type `ActionTarget`, and be allowed on the resolved page.
+  delivery must be identical; the action element must additionally belong to the active catalog and
+  declare `interact`, and the resolved page must hold a reference to it that exercises `interact`.
+  (Corrected
+  2026-07-31: this read "be of type `ActionTarget`, and be allowed on the resolved page" — two
+  checks against a three-way type and a separate `allowed_page_ids` list. Both are gone; the
+  reference IS the authorization.)
 - `ObservationLease::validate` validates session, generation, frame, and expiration; any mismatch
   returns `StaleObservation`.
 - A recognition budget, deadline, or cancellation produces an explicit stop reason rather than

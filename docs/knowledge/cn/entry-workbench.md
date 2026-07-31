@@ -1,5 +1,41 @@
 # entry/workbench 架构知识
 
+> **DIRTY（2026-07-31）：本文写的那个二进制已经不存在了，它描述的模型也已被替换。**
+> 以实际代码、
+> [`docs/plans/2026-07-31-annotation-model-capabilities.md`](../../plans/2026-07-31-annotation-model-capabilities.md)
+> 和 [`entry-cli.md`](entry-cli.md) 为准，待重新同步。本条 banner 覆盖下面那条
+> 2026-07-26 的；后者保留，作为此前已经积累的漂移记录。
+>
+> **2026-07-31 落了两件互相独立的改动。**
+>
+> *其一：GUI 被归档*（`b57b67b`，计划 §四之二.1）。从代码树里消失的有：
+> `entry/workbench/app/`（`main.cpp`、`panels.*`）、Dear ImGui + Direct3D 11 外壳
+> （`windows-gui-shell.*`、`windows-texture-cache.*`）、文件对话框、一次性 WGC 抓帧源
+> （`windows-capture-source.*`）、imgui submodule，以及那个启动该可执行文件的 ASan
+> smoke fixture。没有 `umbra-workbench` 这个二进制，也没有 `--smoke` 开关。下文每一处
+> 面板、停靠、画布、快捷键、纹理和鼠标交互写的都是已归档的代码；它们留在 git 历史里。
+>
+> *`entry/workbench` 下留下来的是标注后端*，编译成静态库
+> `${PROJECT_NAME}_workbench_support`，由 `umbra-authoring` 链接：编辑层
+> （`authoring-edit.*`、`edit-page.*`、`authoring-actions.*`、`page-view.*`、
+> `project-tree.*`、`panel-state.*`）、证伪矩阵（`preview.*`、`model-check-job.*`、
+> `model-check-view.*`）、项目持久化（`project-persistence.*`，底下是
+> `platform/windows-file-publication.*`）和源图导入（`source-ingestion.*`）。下文讲
+> 编辑/校验/发布流程、以及「`AuthoringDocument` 是唯一写入路径」的那些段落在概念上仍然成立
+> ——把「workbench 做 X」读成「标注后端做 X，由 CLI 驱动」即可。归档时记下两处纠缠：
+> `EditPage` 的公开签名里仍然出现 `AppState` 与 `PanelUiState`，所以中间层在它被重新表达
+> 之前搬不走；`project-persistence` 会调到 `windows-file-publication`，那是每一次
+> `umbra-authoring` 保存背后的原子写，所以那个文件不算 GUI，也就没有跟着走。
+>
+> *其二：标注模型变了。* `AnnotationType`、`ElementKind`、`AnchorElement` /
+> `InteractiveElement` / `InfoElement`、`bool shared`、`allowed_page_ids`、
+> `retypeRecognizer`、公开的 `PageSignature::create` 以及 `derivedRuntimeRecognizerId`
+> 全部消失；`RecognizerId` 改名 `ElementId`。逐条清单见
+> [`module-annotation.md`](module-annotation.md) 的 banner。具体到本文：构造链不再经过
+> `PageSignature::create`（签名由 `RecognitionCatalog::create` 从行使 `identify` 的页面
+> 引用派生），而「selected recognizer 若为 `ActionTarget`」现在读作「选中的元素若声明了
+> `interact`」——并且 `evaluateActionTarget` 还多收一个页面参数。
+
 > **DIRTY（2026-07-26）**：本文尚未反映 page-centric 重构（EditPage/PageView
 > 句柄层、authoring schema v2 的 Element+placement 模型、v1 路径退役、按
 > placement 展开的运行时清单生成）。以实际代码与

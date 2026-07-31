@@ -17,10 +17,18 @@ abbreviation as the C++ `uf::` namespace, used deliberately in both languages.
 _Avoid_: `umbra` (the 2026-07-27 spelling of this root; renamed to `uf` on
 2026-07-29, see `docs/plans/2026-07-29-three-layer-task-system.md` §6 and §18 —
 the rename touches only this script root, never the product names `UmbraFlow`
-and `umbra-flow` or the schema ids `umbraflow-authoring/v2`,
-`umbraflow-annotations/v1`, and the merged trace schema `umbraflow-trace/v1`,
+and `umbra-flow` or the schema ids `umbraflow-authoring/v3`,
+`umbraflow-annotations/v2`, and the merged trace schema `umbraflow-trace/v1`,
 which shipped on 2026-07-29 in `modules/trace`), `bot` (superseded draft
 wording in the grill decisions and the S0 annotation design)
+
+> Corrected 2026-07-31: the two annotation schema ids read
+> `umbraflow-authoring/v2` and `umbraflow-annotations/v1` here until the
+> capability model landed. Both were bumped in one atomic change, and neither
+> old id has a read path — an old schema string fails with the ordinary
+> unsupported-schema error. `umbraflow-trace/v1` is unchanged. Deciding
+> artifact: `docs/plans/2026-07-31-annotation-model-capabilities.md` §三;
+> in code, `k_authoringDocumentSchema` and `k_runtimeManifestSchema`.
 
 **Private capability surface**:
 The one host-built table of primitives that only the trusted Luau framework can
@@ -156,3 +164,68 @@ reopen a sibling name under one parent, so the same path recurs and
 `retry_attempt` is what distinguishes a repeat.
 _Avoid_: step id, step address, step key (all three imply the uniqueness the
 2026-07-29 draft asked for and `4030ffd` dropped as unenforceable)
+
+### Annotation model
+
+Added 2026-07-31 with the capability model. Deciding artifact:
+`docs/plans/2026-07-31-annotation-model-capabilities.md`.
+
+**Element (`annotation::Element`, `annotation::ElementId`)**:
+What an author draws: one rectangle of the target's screen, the set of uses it
+may be put to, and the appearances it can take. It is project-level — nothing on
+it says which page it belongs to. This is the noun the authoring CLI, the
+authoring document, and the editing layer all speak in.
+_Avoid_: recognizer (see below — since 2026-07-31 that word names the compiled
+artifact, not the authored one), region, annotation (the old three-way kind),
+`RecognizerId` (renamed to `ElementId`; an element that only reads text
+recognizes nothing)
+
+**Recognizer (`annotation::RecognizerDefinition`)**:
+What the compiler emits for one element into the runtime manifest, and what the
+runtime matches with. Exactly one is emitted per element, under the element's
+own id; the per-(element, page) derived id the earlier model used is gone with
+`derivedRuntimeRecognizerId`. The distinction from *element* is real and load
+bearing: a recognizer is generated and read-only, an element is authored.
+One deliberate carry-over: the script capability root is still `uf.recognizers`
+(the table of interactive-element handles a task addresses by name). The name
+predates this split and renaming it would be a script-facing break; it is not
+drift.
+_Avoid_: using it for the thing an author draws
+
+**Capability set (`ElementCapabilities` / `ExercisedCapabilities`)**:
+The three uses one patch of pixels can be put to — `identify`, `interact`,
+`read` — held as a set rather than a choice, so an element that both names its
+page and can be clicked is one element matched once per cycle. Each capability
+carries its own payload, which is what makes "an element without `read` has
+nowhere to put OCR parameters" a fact of the type. Two types, not one: the
+element declares what it CAN do (`ElementCapabilities`), a page's reference
+declares what THAT page does with it (`ExercisedCapabilities`), and the second
+must be `isSubsetOf` the first. Empty is rejected on both sides.
+_Avoid_: `AnnotationType`, `ElementKind`, `AnchorElement`, `InteractiveElement`,
+`InfoElement`, `PageAnchor`/`ActionTarget`/`InfoRegion` as element kinds (the
+2026-07-26 three-way enum, replaced 2026-07-31), bitmask
+
+**Page reference (`annotation::PageReference`)**:
+One page's use of one element: `{pageId, elementId, holding, exercised,
+searchRoi?, variant?}`. It is the edge the model is built on — authorisation IS
+the reference, and a page's signature is *derived* from the references whose
+`exercised` identify carries `Required` or `Forbidden`, never authored. `holding`
+is `Owned | Referenced`: an authoring-side editing guard rail the runtime never
+reads, recording that these pixels are this page's alone.
+_Avoid_: `allowed_page_ids` / `allowedPageIds` (the separate authorisation list
+the reference replaced), `bool shared` (an intent flag that could contradict the
+placements with nothing noticing), `PageSignature::create` (a signature has no
+public factory now, because a second way to state one fact could disagree with
+the first), placement (the pre-2026-07-31 name for the same row, when it carried
+neither holding nor exercised capabilities)
+
+**Variant (`annotation::Variant`)**:
+One named appearance of one element. A variant changes what a patch of pixels
+LOOKS like; it does not change where that patch is or what it means. Named
+rather than indexed because for a 1x/2x/3x speed button the matched form IS the
+state and the name has to reach the script surface. Declaration order decides
+ties and nothing else. An empty variant list is legal and means the rectangle is
+located by the page being recognised rather than by pixels of its own — such an
+element can never be identity evidence.
+_Avoid_: form, appearance-kind, template list (a variant is more than its
+template rectangle)

@@ -11,9 +11,10 @@ values. Module manifests continue to own reusable-library metadata and versions
 independently. This boundary was fixed by developer decision on 2026-07-28.
 
 ```text
-entry/${PROJECT_NAME}       -> core, engine; + controller (Windows adapters)
+entry/${PROJECT_NAME}       -> core, engine, task; + controller (Windows adapters)
 entry/m0-demo (Windows)     -> controller, vision, image (frozen M0 substrate demo)
-entry/workbench (Windows)   -> annotation, controller, image
+entry/workbench (Windows)   -> annotation, image (authoring backend library only)
+entry/authoring (Windows)   -> entry/workbench, entry/cli, image (umbra-authoring)
 domain                -> core
 vision                -> core, domain
 image                 -> core, domain
@@ -25,8 +26,10 @@ tests                 -> modules under test
 ```
 
 Edges list every declared module dependency, including private ones such as
-`annotation -> image`. Vendored third-party targets, such as `image_stb`, the
-Luau libraries, and Dear ImGui, are omitted. `scripts/check_modules.py`
+`annotation -> image`. Vendored third-party targets, such as `image_stb` and the
+Luau libraries, are omitted. (Corrected 2026-07-31: Dear ImGui was named here
+until the workbench GUI was archived in `b57b67b`; the submodule is gone from
+this branch.) `scripts/check_modules.py`
 enforces the structural rules below (acyclicity, `core` as a leaf, manifest
 shape); the edge list itself is maintained by hand and reviewed, not
 machine-checked.
@@ -58,11 +61,23 @@ not declare link dependencies. `scripts/check_modules.py` enforces both rules.
   entry `umbra-flow`; its `run` subcommand composes engine ports over the
   controller (WGC frame source, lease-forwarding click sink, JSONL trace).
   `m0-demo/` is the frozen M0 substrate demo kept as the real-machine
-  acceptance reference. The Windows-only `workbench/` hosts the annotation
-  authoring GUI (`umbra-workbench`, Dear ImGui + D3D11) and publishes
-  validated authoring projects through a narrow platform file-publication
-  boundary; content-addressed assets precede the runtime manifest commit
-  point.
+  acceptance reference. The Windows-only `workbench/` is the annotation
+  authoring backend library (`${PROJECT_NAME}_workbench_support`): the editing
+  layer, the falsification matrix in `preview.*`, source ingestion, and
+  publication of validated authoring projects through a narrow platform
+  file-publication boundary; content-addressed assets precede the runtime
+  manifest commit point. `authoring/` is the `umbra-authoring` development
+  tool, the only way to author a project; it drives that library so every
+  write goes through `AuthoringDocument`'s validation.
+
+  > Corrected 2026-07-31: `workbench/` hosted the `umbra-workbench` GUI (Dear
+  > ImGui + D3D11) until `b57b67b` archived it — the panels, the window shell,
+  > the texture cache, the file dialog, the one-shot capture source, and the
+  > imgui submodule. Only the backend below that line remains, because
+  > `umbra-authoring` already linked it. Git history holds the GUI. Deciding
+  > artifact:
+  > [capability model plan](plans/2026-07-31-annotation-model-capabilities.md)
+  > §四之二.1.
 - `tests/`: deterministic offline tests.
 - `cmake/`: module loading, platform selection, caching, warnings, hardening,
   sanitizers, and static-analysis policy.

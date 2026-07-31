@@ -1,5 +1,40 @@
 # Workbench authoring UI
 
+> **HISTORICAL (2026-07-31): every prescription in this file is unreachable.**
+> The `umbra-workbench` GUI was archived in `b57b67b` — `entry/workbench/app/`
+> (`main.cpp`, `panels.*`), the Dear ImGui + D3D11 shell, the file dialog, the
+> capture source, the imgui submodule, and `tests/workbench/asan-smoke-fixture.cpp`
+> with them. There is no `umbra-workbench.exe`, no `--smoke` flag, and no
+> `AsanSmoke` CTest label (the `x64-asan` preset in `CMakePresets.json` outlived
+> the tests that used it). `retypeRecognizer`, `addDefaultRecognizer`, and
+> `setSelectedRecognizerId` were deleted. The catalog rules the second entry
+> deadlocks over are gone too: `AnnotationType` is a capability set, and
+> `allowed_page_ids` no longer exists — a page's `PageReference` exercising
+> `interact` IS the authorization. Deciding artifact:
+> [the capability plan](../plans/2026-07-31-annotation-model-capabilities.md)
+> §四之二.1 (GUI retirement) and §2.2 (the model). Nothing is deleted here; the
+> entries stay because the general rules they distilled outlive the panels.
+>
+> **What still transfers, and to what:**
+>
+> - *Do not commit while holding a borrow into the document.* The rule is about
+>   `AuthoringEditHistory::apply` swapping the whole document out from under every
+>   live borrow, and the editing layer that does this (`authoring-edit.*`,
+>   `edit-page.*`) is still linked, now by `umbra-authoring`. The CLI's shape
+>   makes the bug hard to hit — one command, one edit, no frame that draws while
+>   holding spans — but the rule is a property of the edit layer, not of ImGui.
+> - *Cross-field domain invariants can deadlock per-field editing.* The specific
+>   deadlock is gone with `allowed_page_ids`, but the shape recurs anywhere a
+>   single-field editor meets a multi-field invariant. `ElementCapabilities` and
+>   `ExercisedCapabilities` both reject the empty set, which is exactly a lower
+>   bound of the kind that produced the original deadlock.
+> - *A fixed default name collides on the second create*, and *names are unique
+>   across elements and pages together*, not within a kind. Still true of
+>   `RecognitionCatalog::create`; the CLI takes an explicit name and so cannot hit
+>   the default-name form.
+> - *An entity with no list panel is unreachable after creation* has no CLI
+>   analogue — `project show` enumerates everything — and is kept as history only.
+
 Failure knowledge for the `umbra-workbench` panels — the immediate-mode layer
 between the author and the authoring document. Recorded on 2026-07-25 during the
 first full manual GUI acceptance, which is what surfaced all of it; none of these

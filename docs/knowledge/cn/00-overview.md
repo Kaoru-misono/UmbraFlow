@@ -25,8 +25,13 @@ controller (Windows) -> core, domain
 script               -> core, domain
 entry/cli            -> task（外加 engine、controller）
 entry/authoring      -> entry/workbench + entry/cli（外加 image）
-entry/workbench      -> annotation + engine + controller + image
+entry/workbench      -> annotation（外加 image）
 ```
+
+> 更正（2026-07-31）：`entry/workbench` 还是 GUI 的时候另外读 `engine` 与 `controller`。
+> `b57b67b` 归档了那层外壳，留下的是标注后端库，它 public 链接 `annotation`、private 链接
+> `image`。engine 仍然会进到标注流程，但走的是 `entry/cli`——`umbra-authoring match`
+> 跑的是真的 `RecognitionRuntime`。
 
 图中箭头表示左侧模块依赖右侧模块。`vision` 和 `image` 位于同一层，互不依赖。
 `modules/task` 与 `modules/trace` 没有画在这里，也还没有自己的页；这两页还欠着的范围见
@@ -43,26 +48,32 @@ entry/workbench      -> annotation + engine + controller + image
 | `controller` | 窗口发现、目标连续性、WGC、DPI 和严格后台输入 | 页面识别和动作选择 |
 | `script` | Luau 底座：VM、沙箱、配额、指令与时间预算、interrupt 取消，以及双环境拆分 | task policy——等待、重试、step 和 interrupt，它们住在 `modules/task/runtime/` 下的 Luau framework 里 |
 
-`controller` 是唯一限定为 Windows 的可复用模块。`umbra-workbench` 和
-`umbra-flow run` 的实际适配器也只支持 Windows，但平台代码都留在 `entry/`，
+`controller` 是唯一限定为 Windows 的可复用模块。`umbra-flow run` 的实际适配器
+也只支持 Windows，但平台代码都留在 `entry/`，
 不会反向进入 domain、vision、image、annotation 或 engine。Linux/macOS 因此仍可
 构建平台无关模块，CI 也能用替身端口测试运行时流程。
 
-## 四个二进制、五个入口
+## 三个二进制、四个入口
 
-`umbra-flow` 是一个二进制、两个子命令；另外三个各只有一个入口。
+`umbra-flow` 是一个二进制、两个子命令；另外两个各只有一个入口。
 
 | 入口 | 用途 | 当前状态 |
 | --- | --- | --- |
-| `umbra-workbench` | 编辑标注项目、采集源图、预览、编译和发布 | A1 标注工具 |
-| `umbra-authoring` | 在命令行上做同样的标注工作，外加测量帧 | 开发工具（2026-07-30） |
+| `umbra-authoring` | 在命令行上标注项目，外加测量帧 | 目前唯一的标注工具（2026-07-30） |
 | `umbra-flow run` | 加载已发布项目，运行 `--task NAME` 指名的 Luau 任务 | P0 单任务 runner |
 | `umbra-flow drive` | 加载同样的项目，执行 `--queue` 里操作者送来的 JSON 行命令 | P0 操作者前端（2026-07-30） |
 | `m0-demo` | 验证 WGC 捕获和严格后台输入 | 已冻结，不再承载产品功能 |
 
+> 更正（2026-07-31）：这张表原来第一行是第五个入口 `umbra-workbench`，写着「A1 标注工具」。
+> `b57b67b` 把它归档了，外壳留在 git 历史里。它的后端仍然被链接，只是改由
+> `umbra-authoring` 链接，所以下面描述的标注能力没有跟着一起消失——但有三样只存在于
+> GUI 里的东西确实消失了，它们记在
+> [能力模型计划](../../plans/2026-07-31-annotation-model-capabilities.md) §四之二.1，
+> 其中两样此后以 `umbra-authoring page reference` 的形式落地。
+
 这些路径不能混用：
 
-- Workbench 与 `umbra-authoring` 可以生成识别资产，但两者都没有输入能力。
+- `umbra-authoring` 可以生成识别资产，但它没有输入能力。
 - `umbra-flow` 只读取生成后的运行时清单和模板，不读取完整的编辑截图。
 - **`run` 与 `drive` 是同一张能力面上的两个前端，一个 generation 只接受其中一个。**
   `TaskHost` 在先到的那个前端上上闩，此后终身拒绝另一个。两者都够不到对方够不到的东西：
@@ -72,10 +83,19 @@ entry/workbench      -> annotation + engine + controller + image
 
 `umbra-authoring` 是**开发工具，并且它自己不直接写任何东西**：每一次改动都经过
 `annotation::AuthoringDocument`，因为标注产物就是点击授权的证据，那道校验不能被绕过。
-它的子命令是 `project init|show|save`、`page create|add-anchor|add-target`、`match`
-（拿一张留出来的截图验证某个 recognizer），以及 `frames stability|probe|census`
+它的子命令是 `project init|show|save`、`page create|add|reference`、
+`match ROOT ELEMENT --frame PNG [--page PAGE]`（拿一张留出来的截图验证某个元素），
+以及 `frames stability|probe|census`
 （vision 的那三个测量原语）。每次调用不论成败都往 stdout 写一份 JSON 文档。`match` 才是重点：
 标注、验证、迭代，整个回路里没有人。
+
+> 更正（2026-07-31）：动词表原来写的是 `page create|add-anchor|add-target`。三个画像素的
+> 动词收敛成一个——`page add ROOT PAGE NAME --capability C... <draw>`，`C` 是
+> `identify[:required|:forbidden]`、`interact` 或 `read`，每个能力给一次——因为能力现在是
+> 集合而不是三选一，于是「既认页又可点」的元素是一个元素、一个周期只匹配一次。`--shared`
+> 随 `bool shared` 字段一起退掉。`page reference ROOT PAGE ELEMENT [--search-roi x,y,w,h]`
+> 是新增的：把项目已经持有的元素放到第二个页面，这个动词此前在 CLI 上根本不存在。裁决出处：
+> [能力模型计划](../../plans/2026-07-31-annotation-model-capabilities.md)。
 
 失败文档用 `kind` 与 `response` 作答，两者都采用其他每一个 JSON 表面所用的**wire 拼写**
 （`automationErrorWireName` 与 `failureResponseWireName`），所以是 `recognition_incomplete`
@@ -85,10 +105,16 @@ entry/workbench      -> annotation + engine + controller + image
 
 ## 从编辑项目到运行时
 
-Workbench 维护两类文档：
+标注工具维护两类文档：
 
-- `AuthoringDocument` 保存完整编辑信息，可以重新打开继续修改。
-- `RuntimeManifest` 只保留运行时识别和授权需要的数据。
+- `AuthoringDocument` 保存完整编辑信息，可以重新打开继续修改。schema 是
+  `umbraflow-authoring/v3`。
+- `RuntimeManifest` 只保留运行时识别和授权需要的数据。schema 是
+  `umbraflow-annotations/v2`。
+
+> 更正（2026-07-31）：三值 annotation type 变成能力集合时，两个 schema 在同一次原子改动里
+> 一起升版，并且旧 id 都没有读路径——旧 schema 串会按普通的 unsupported-schema 报错。见
+> [能力模型计划](../../plans/2026-07-31-annotation-model-capabilities.md) §三。
 
 典型目录如下：
 
@@ -101,7 +127,7 @@ assets/templates/<content-hash>.png
 ```
 
 `compileAuthoringDocument` 从源图裁出模板，规范编码 PNG，以编码后的字节计算
-`ContentHash`，再生成运行时清单。Workbench 发布时先写内容寻址资产，最后替换
+`ContentHash`，再生成运行时清单。标注工具发布时先写内容寻址资产，最后替换
 `generated/annotations.runtime.toml`。运行时只信任该清单引用的资产，不扫描目录猜测
 应该加载哪些文件。
 
@@ -118,8 +144,14 @@ Windows 产品路径的组合入口是 `entry/cli/run-windows.cpp`：
 4. `WgcCaptureSession::capture` 返回带像素、捕获时间、坐标变换和身份的 `Frame`。
 5. `EngineSession::observe` 创建 `Observation`。
    `EngineSession::resolvePage(observation)` 与
-   `EngineSession::findAction(observation, id)` 始终使用该 observation 持有的同一帧，
-   不会在中间隐式重新截图。
+   `EngineSession::findAction(observation, pageId, elementId)` 始终使用该 observation
+   持有的同一帧，不会在中间隐式重新截图。
+
+   > 更正（2026-07-31）：`findAction` 原本收 `(observation, id)`。现在它要指名页面，因为
+   > 每页的事实搬到了引用行上——细化的搜索区域和钉死的形态都属于「某一页怎么用这个元素」，
+   > 而不行使 `interact` 的页面在那里根本没有动作可定位。它仍然不授权任何东西：页面参数
+   > 挑的是一行引用，不是发一张许可。id 的类型是 `annotation::ElementId`，同一次改动之前
+   > 叫 `RecognizerId`。
 6. annotation 将页面解析为 `ResolvedPage`、`UnknownPage` 或 `AmbiguousPages`。
    只有唯一页面和完整识别结果可以继续。
 7. `authorizeCoordinateAction` 同时检查页面权限、动作检测、观察租约、项目指纹和帧身份。

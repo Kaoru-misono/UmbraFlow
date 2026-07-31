@@ -1,5 +1,21 @@
 # Workbench UI redesign
 
+> **Superseded 2026-07-31: the GUI this plan redesigns no longer exists.**
+> `b57b67b` archived the Dear ImGui + D3D11 shell — panels, window shell,
+> texture cache, file dialog, one-shot capture source, and the imgui submodule.
+> The deciding artifact is
+> [`2026-07-31-annotation-model-capabilities.md`](2026-07-31-annotation-model-capabilities.md)
+> §四之二.1, which retires the GUI and converts three GUI-only affordances into
+> preconditions on the CLI: `placeExisting`/`shareRegionOnPage` (landed as
+> `umbra-authoring page reference`), `setSearchRoi` per page (landed as
+> `page reference --search-roi`), and the falsification matrix
+> (`ModelCellCell` / `classifyModelCell`, still in `entry/workbench/preview.*`
+> and still owed a CLI verb).
+>
+> Kept as history: the failure modes in "Why" are real observations about
+> authoring, and the model-check reasoning informs the CLI matrix work. Nothing
+> in the layout, docking, or panel sections is actionable.
+
 Status: reviewed (dual review 2026-07-27: Claude Opus "approve with changes",
 Codex "rework"; both verdicts adjudicated below). Supersedes the five-window
 layout. Builds on docs/plans/2026-07-26-page-centric-authoring.md.

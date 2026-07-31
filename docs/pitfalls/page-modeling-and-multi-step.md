@@ -203,6 +203,22 @@ raise from a primitive.
 
 ## Re-pointing an action target at another page: authorize before withdrawing
 
+> **Historical since 2026-07-31.** Both halves of this entry are unreachable now.
+> The properties-panel checkboxes were archived with the workbench GUI
+> (`b57b67b`), and the invariant they tripped over — "an action target must
+> authorize at least one page" — no longer exists: `allowed_page_ids` was
+> deleted, and a page's `PageReference` to an element, exercising `interact`, IS
+> the authorization. Re-pointing is now adding one reference row and removing
+> another; there is no lower bound to widen past, and `retypeRecognizer` was
+> deleted along with the three-way type it rewrote. Deciding artifact:
+> [the capability plan](../plans/2026-07-31-annotation-model-capabilities.md)
+> §2.2 推论 3 and §四之二.1.
+>
+> **What still transfers:** the ordering rule itself — *for any invariant with a
+> lower bound, widen then narrow* — and the observation that a cross-field change
+> no ordering can express has to be one transaction. Both outlive the fields that
+> taught them.
+
 ### Symptom
 
 Unchecking an action target's current page in the properties panel is refused

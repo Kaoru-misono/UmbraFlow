@@ -176,8 +176,18 @@ fail-closed 严格门防止误点,但从第一天保留统一坐标变换接缝;
    P1 另建显式 Base→Live viewport transform。
 3. **page signature 语义**:required/forbidden 全局求唯一解;Unknown/Ambiguous 无动作能力;
    无优先级、阈值覆盖或启发式消歧。
-4. **P0 authoring UI 技术栈**:Dear ImGui + D3D11,复用 WGC 与唯一有界灰度 SAD 内核;
+4. ~~**P0 authoring UI 技术栈**:Dear ImGui + D3D11~~——**已撤销(2026-07-31)**,
+   复用 WGC 与唯一有界灰度 SAD 内核这一条仍然成立;
    运行时浮层仍保持 `WS_EX_NOACTIVATE`/`WDA_EXCLUDEFROMCAPTURE` 纪律。
+
+   > **更正(2026-07-31)。** P0 的标注 UI 不再是 GUI:`b57b67b` 归档了 Dear ImGui + D3D11
+   > 外壳,唯一的标注入口是命令行工具 `umbra-authoring`,它链接同一套标注后端。第 1 条里
+   > 「完整 GUI authoring document」应读作「完整 authoring document」——**确定性生成独立
+   > runtime manifest 与切分模板这条性质没有变**,变的只是谁在编辑它。第 3 条的
+   > required/forbidden 语义也没变,只是这两个角色现在挂在页面**引用**上而不是元素上。
+   > 裁决见
+   > [`2026-07-31-annotation-model-capabilities.md`](2026-07-31-annotation-model-capabilities.md)
+   > §四之二.1;P2 的托盘 App 仍然是 GUI,本条不预判它的技术栈。
 
 ## 四、待定 / 待开发者输入
 

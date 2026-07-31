@@ -14,15 +14,17 @@ responsibilities, key entry points, and tests. Module dependencies are governed 
 4. [`module-vision-image.md`](module-vision-image.md) — Gray8/SAD recognition, PNG, pixel layouts,
    and template assets.
 5. [`module-annotation.md`](module-annotation.md) — Authoring documents, runtime manifests, page
-   resolution, and action authorization.
+   resolution, and action authorization. **DIRTY since 2026-07-31** — the annotation model became
+   the capability model; read its banner first.
 6. [`module-engine.md`](module-engine.md) — Published-artifact loading, same-frame decisions, port
    orchestration, action execution, and tracing.
 7. [`module-script.md`](module-script.md) — The Luau substrate: sandbox, budgets, interrupt
    cancellation, and the framework/project environment split.
 8. [`module-controller.md`](module-controller.md) — WGC, target continuity, DPI, and
    strict-background input.
-9. [`entry-workbench.md`](entry-workbench.md) — GUI editing, capture, preview, compilation, and
-   publication.
+9. [`entry-workbench.md`](entry-workbench.md) — the annotation authoring backend: editing,
+   preview/falsification, compilation, and publication. **DIRTY since 2026-07-31** — the GUI it
+   was written about was archived and the annotation model changed; read its banner first.
 10. [`entry-cli.md`](entry-cli.md) — Argument parsing, offline loading, Windows adapters, and exit
     codes.
 11. [`entry-m0-demo.md`](entry-m0-demo.md) — The frozen on-hardware acceptance program and its

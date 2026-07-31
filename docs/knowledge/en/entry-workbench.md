@@ -1,5 +1,50 @@
 # entry/workbench Architecture Knowledge
 
+> **DIRTY (2026-07-31): the binary this document is about no longer exists, and
+> the model it describes has been replaced.** Trust the code,
+> [`docs/plans/2026-07-31-annotation-model-capabilities.md`](../../plans/2026-07-31-annotation-model-capabilities.md),
+> and [`entry-cli.md`](entry-cli.md) until resynced. This banner subsumes the
+> 2026-07-26 one below, which is kept as the record of the drift that had already
+> accumulated.
+>
+> **Two independent changes landed on 2026-07-31.**
+>
+> *One: the GUI was archived* (`b57b67b`, plan §四之二.1). Gone from the tree:
+> `entry/workbench/app/` (`main.cpp`, `panels.*`), the Dear ImGui + Direct3D 11
+> shell (`windows-gui-shell.*`, `windows-texture-cache.*`), the file dialog, the
+> one-shot WGC capture source (`windows-capture-source.*`), the imgui submodule,
+> and the ASan smoke fixture that launched the executable. There is no
+> `umbra-workbench` binary and no `--smoke` flag. Every panel, dock, canvas,
+> hotkey, texture, and mouse-interaction passage below describes archived code;
+> git history holds it.
+>
+> *What remains under `entry/workbench` is the authoring backend*, built as the
+> static library `${PROJECT_NAME}_workbench_support` and linked by
+> `umbra-authoring`: the editing layer (`authoring-edit.*`, `edit-page.*`,
+> `authoring-actions.*`, `page-view.*`, `project-tree.*`, `panel-state.*`), the
+> falsification matrix (`preview.*`, `model-check-job.*`, `model-check-view.*`),
+> project persistence (`project-persistence.*` over
+> `platform/windows-file-publication.*`), and source ingestion
+> (`source-ingestion.*`). The sections below on the edit/validate/publish flow
+> and on `AuthoringDocument` being the only write path remain conceptually right
+> — read "the workbench does X" as "the authoring backend does X, driven by the
+> CLI". Two entanglements recorded at archival: `EditPage` still names `AppState`
+> and `PanelUiState` in its public signatures, so the middle layer cannot move
+> until it is re-expressed; and `project-persistence` reaches
+> `windows-file-publication` for the atomic write behind every `umbra-authoring`
+> save, which is why that file is not GUI and did not go.
+>
+> *Two: the annotation model changed.* `AnnotationType`, `ElementKind`,
+> `AnchorElement` / `InteractiveElement` / `InfoElement`, `bool shared`,
+> `allowed_page_ids`, `retypeRecognizer`, the public `PageSignature::create`, and
+> `derivedRuntimeRecognizerId` are all gone; `RecognizerId` is `ElementId`. See
+> [`module-annotation.md`](module-annotation.md)'s banner for the itemized list.
+> Concretely for this document: the construction chain no longer runs through
+> `PageSignature::create` (a signature is derived by `RecognitionCatalog::create`
+> from the page references that exercise `identify`), and "if the selected
+> recognizer is an `ActionTarget`" now reads "if the selected element declares
+> `interact`" — with `evaluateActionTarget` additionally taking the page.
+
 > **DIRTY (2026-07-26)**: This document predates the page-centric refactor
 > (the EditPage/PageView handle layer, authoring schema v2's Element+placement
 > model, the v1 sunset, and per-placement runtime manifest expansion). Trust

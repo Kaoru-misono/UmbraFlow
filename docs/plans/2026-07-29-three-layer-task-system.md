@@ -1370,6 +1370,12 @@ SLA;一条 trace 足以解释每一步。
   `umbraflow-trace/v1`,全部保持原样。改的是**脚本能力根**这一个词,不是产品的名字,
   也不是任何线上契约的 id。文档若把这两件事混在一起,以此条为准。
 
+  > 后续事实(2026-07-31,不影响本条裁决):本条要说的是「`uf` 改名不碰这些东西」,那句话
+  > 至今成立。但被点名的三样东西此后各自变了,别把这一行当作它们今天的值:两个标注 schema
+  > 已升到 `umbraflow-authoring/v3` 与 `umbraflow-annotations/v2`(旧 id 无读路径),
+  > `umbraflow-trace/v1` 不变;`umbra-workbench` 这个二进制已随 GUI 归档(`b57b67b`)。
+  > 见 [`2026-07-31-annotation-model-capabilities.md`](2026-07-31-annotation-model-capabilities.md)。
+
 #### 2c — 错误改宿主 mint 的 userdata(**已完成,`c37ee5b`**)
 
 - Tier B 载体从冻结表换成 `lua_newuserdatatagged` 铸的 tagged userdata(§9)。C++ 侧
@@ -1544,6 +1550,12 @@ pause 的实现(只留 §13 的签名,以及「framework 的观察周期边界�
 > `umbraflow-annotations/v1`(`modules/annotation/source/annotation/runtime-manifest.hpp:17`),
 > 升到 v2 的是**授权文档** `umbraflow-authoring/v2`(`authoring-document.hpp:27`);
 > 两者是不同的 schema,此前被混为一谈。
+>
+> > 再更正(2026-07-31):「两者是不同的 schema」这条区分仍然是本条的要点,但两个版本号都
+> > 已经不是这里写的了——能力模型在一次原子改动里把它们一起升到
+> > `umbraflow-authoring/v3` 与 `umbraflow-annotations/v2`,并且旧 id 都没有读路径。
+> > 恰恰因为版本号会错位,写全名而不是「v2」这条纪律更要紧了。见
+> > [`2026-07-31-annotation-model-capabilities.md`](2026-07-31-annotation-model-capabilities.md) §三。
 >
 > 未处理、留给开发者的治理问题:`docs/adr/` 已空,而
 > `.claude/skills/improve-codebase-architecture` 仍教「读 `docs/adr/`、按需写

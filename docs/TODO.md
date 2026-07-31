@@ -31,11 +31,16 @@
 >   拿哪些像素来比,同一对目标降到 0.28 / 0.18。落地形状:vision 的 `matchTemplateSad` 增加
 >   两个带 mask 的 overload(增量,现有调用一处未改;全不透明 mask 与无 mask 逐位一致),
 >   annotation 把 `ColourKey` 烘进模板 PNG 的 **alpha 通道**(无新资产、无 manifest 变更;
->   不带键的模板字节不动),workbench 加取色器与选中像素叠加预览。**注意阈值陷阱**:阈值按
->   模板全部像素数推出,对 mask 一无所知,所以带色键的模板要严得多的阈值(真机 9000 bp →
->   9900 bp),细节见 [`pitfalls/colour-key-annotation.md`](pitfalls/colour-key-annotation.md)。
+>   不带键的模板字节不动),workbench 加取色器与选中像素叠加预览。**注意小掩码陷阱**:
+>   带色键的模板实测需要严得多的阈值(真机 9000 bp → 9900 bp),细节见
+>   [`pitfalls/colour-key-annotation.md`](pitfalls/colour-key-annotation.md)。
+>
+>   > 更正(2026-07-31):此处原本写「阈值按模板全部像素数推出,**对 mask 一无所知**」。
+>   > 那个机制说法是错的——`normalizedScore` 会把加权和缩回整模板尺度,所以阈值其实是
+>   > **掩码相对**的。真正的驱动因素是**掩码大小对 ROI 大小**:27 个饱和白像素总能在大 ROI
+>   > 里找到一个全对齐的位置。该 pitfall 已于同日按此更正,这里跟着改,免得两处机制打架。
 > - **`umbra-authoring`**(`eacb05f`)——第二个二进制,开发工具,让 agent 不开 GUI 也能标注
->   一个项目。它自己不写任何东西,每一次改动都经过 `AuthoringDocument`,因为标注产物就是点击
+>   一个项目。**(2026-07-31 起它是唯一的标注工具:GUI 已归档。)**它自己不写任何东西,每一次改动都经过 `AuthoringDocument`,因为标注产物就是点击
 >   授权的证据。同批加入 vision 的三个帧分析原语(稳定性 / 色键探针 / 颜色普查),它们**收 N 帧
 >   而不是两帧**:两种背景找出「不随背景变的 UI」,几秒后再拍的第三帧才找出「正在动的东西」。
 >   `match` 子命令是重点:标注、对着留出来的截图验证、迭代,回路里没有人。
@@ -46,9 +51,32 @@
 > 文件没有显示密度,唯一可能正确的是窗口的密度,也就是项目的密度——这不是便利,而是因为
 > 运行时在 live 指纹与 catalog 不符时拒绝投递点击,所以按错密度标注的项目是不可用而不是近似。
 
+> **进展(2026-07-31)——标注模型换代 + GUI 弃用,下面 §1 的 checkbox 尚未按此重述。**
+> 裁决与理由见
+> [`2026-07-31-annotation-model-capabilities.md`](plans/2026-07-31-annotation-model-capabilities.md);
+> 该文顶部的「落地进度」块是逐条状态。要点:
+>
+> - **能力模型已落地。** 三选一的 `AnnotationType` 变成能力集合
+>   `{identify, interact, read}`;`bool shared` 换成引用侧的 `Holding{Owned, Referenced}`;
+>   `allowed_page_ids` 整个删除,授权就是「这一页引用了它且行使 `interact`」;元素带的是
+>   有序的具名 `Variant` 列表(空列表 = 由页面定位);`RecognizerId` 改名 `ElementId`;
+>   页面签名不再是作者写的,而是从引用派生。两个 schema 一次原子升到
+>   `umbraflow-authoring/v3` 与 `umbraflow-annotations/v2`,旧 id 没有读路径。
+> - **GUI 已归档**(`b57b67b`):`entry/workbench/app/`、ImGui + D3D11 外壳、文件对话框、
+>   一次性抓帧源、imgui submodule 与 ASan smoke fixture 一并移除;没有 `umbra-workbench.exe`,
+>   没有 `--smoke`,没有 `AsanSmoke` 测试标签。`entry/workbench` 剩下的是
+>   `umbra-authoring` 链接的标注后端(编辑层、`preview.*` 的证伪矩阵、持久化、源图导入)。
+> - **CLI 动词收敛**:`page add-anchor|add-target|add-info` → `page add --capability C...`;
+>   `--shared` 退掉;新增 `page reference`(把已有元素放到第二个页面);`match` 增加 `--page`。
+> - **仍欠的**:证伪矩阵还没有 CLI 动词、还没有 variant 维度(§2.3 的 P1–P4 / R1–R4 一条未落);
+>   CLI 还没有画 variant 的动词;`read` 能力的 `cycle_read` 与 OCR 接线未开始。
+
 - [x] 锁定 authoring/runtime schema、`template_rect`/`search_roi`、page resolution、动作证据、
       项目级尺寸/DPI 兼容契约与 Dear ImGui + D3D11 技术栈(2026-07-23)。
-- [ ] 独立 GUI:WGC 抓帧/导入图片、样本列表、画布缩放/平移、框选编辑、undo/redo。
+      **注(2026-07-31)**:schema 与技术栈两项都已被推翻——schema 见上面的进展块,
+      Dear ImGui + D3D11 随 GUI 一起归档。其余四项仍然有效。
+- [ ] ~~独立 GUI~~(**2026-07-31 弃用**,保留原文作为它曾经存在过的记录):
+      WGC 抓帧/导入图片、样本列表、画布缩放/平移、框选编辑、undo/redo。
       **A1 最小实现已落地(2026-07-24)**:`umbra-workbench`(Dear ImGui 1.92.8-docking +
       D3D11)、四面板、`--smoke` 自检通过。**2026-07-25 真机 GUI 使能修复**(`fix(workbench)` 提交):
       WGC 抓帧在高 DPI 目标上采用线程级 per-monitor 感知 + 真实 DPI 串入 source fingerprint(否则
@@ -69,9 +97,12 @@
       ⑦ **既有 use-after-free**:属性面板持有 `RecognizerDefinition const*` 贯穿整帧,
       而每次提交 `m_current = std::move(next)` 会整体换掉 document → 改为
       `PendingEdit` 延迟提交,在借用 document 的面板画完之后、actions 面板之前统一 apply。
-- [ ] 标注类型:`page_anchor`、`action_target`、`info_region`;分别编辑 `template_rect` 与
-      `search_roi`,以及 page、整数定点阈值和 required/forbidden 关系。
-      **A1 属性面板已覆盖全部字段(2026-07-24)**;多 page 编辑体验留 A2。
+- [ ] 标注能力:`identify` / `interact` / `read`(**2026-07-31 起是集合,不再是三选一的
+      `page_anchor` / `action_target` / `info_region`**);编辑 `template_rect` 与
+      `search_roi`,以及页面引用、整数定点阈值和 required/forbidden 关系
+      (required/forbidden 现在挂在**引用侧**的 `exercised.identify` 上,不在元素上)。
+      **A1 属性面板已覆盖全部字段(2026-07-24)**——该面板已随 GUI 归档,现在的作者入口是
+      `umbra-authoring page add --capability`;多 page 编辑体验留 A2。
 - [ ] 保存可完整 round-trip 的 authoring document,一键生成切分模板与 runtime manifest,无需手改配置。
   - [x] 平台无关后端:canonical authoring document 严格往返、完整引用校验、源 PNG hash/尺寸校验、
         内容寻址模板与 runtime manifest 的纯确定性编译(PNG 编码配置已 pin,2026-07-24)。

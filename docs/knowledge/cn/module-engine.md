@@ -74,9 +74,16 @@ Windows 产品入口使用两个薄适配器：
 - `EngineSession::resolvePage(Observation const&)` 对传入 observation 持有的 frame
   调用自身 `RecognitionRuntime::evaluatePage`，返回由 `ResolvedPage`、
   `UnknownPage` 或 `AmbiguousPages` 组成的 `PageOutcome`。
-- `EngineSession::findAction(Observation const&, ElementId)` 对同一 frame 调用
+- `EngineSession::findAction(Observation const&, annotation::PageId, annotation::ElementId)`
+  对同一 frame 调用
   `evaluateActionTarget`。未命中是 `Result<std::optional<ActionFound>>` 的成功空值，
   对应 D4 Tier A，不是错误。
+
+  > 更正（2026-07-31）：页面参数是新增的。每页的事实搬到了 `annotation::PageReference` 上——
+  > 这一页细化的搜索区域、这一页钉死的形态——而不行使 `interact` 的页面在那里根本没有动作
+  > 可定位。它不授权任何东西：页面参数挑的是一行引用，不是发一张许可；定位到的 hit 仍然会在
+  > 投递时被拒，除非 `act` 解析出的页面引用了该元素并行使 `interact`。裁决出处：
+  > [能力模型计划](../../plans/2026-07-31-annotation-model-capabilities.md) §2.2。
 - `ActionFound` 保存原始 `AnchorEvidence`、绑定 recognizer identity 的 `ActionDetection` 和确定性的 `PixelPoint`。点击点由 annotation 的 `resolveClickPixel` 决定；match rect 经 `pixelRectToFrameRect` 变成 authorization-ready `Detection`。
 - `EngineSession::act(Observation&&, ResolvedPage const&, ActionFound const&)` 消费 observation，成功返回记录被授权 `FrameId` 与 client-space 坐标的 `ActReceipt`。
 - `EngineSession::pressKey(Observation&&, KeyName)` 同样消费 observation，返回 `KeyReceipt`——
@@ -114,7 +121,7 @@ loadRuntimeProject
   -> (ctx.luau 的等待循环，每轮一次)
        EngineSession::observe
        -> EngineSession::resolvePage
-       -> EngineSession::findAction(observation, recognizerId)
+       -> EngineSession::findAction(observation, pageId, elementId)
        -> EngineSession::act
        -> IActionSink::click
 ```
@@ -187,8 +194,10 @@ framework，所以这样一行只可能是宿主 bug 把 task 的结构安到了
 - session 缺任一端口时，`EngineSession::create` 返回 `InvalidResource`。
 - live fingerprint 与 catalog fingerprint 不同，识别或授权拒绝。
 - page evidence、action detection 与 delivery 的 `CaptureSessionId`、
-  `TargetGeneration`、`FrameId` 必须相同；action recognizer 还必须属于 active
-  catalog、类型为 `ActionTarget` 且允许 resolved page。
+  `TargetGeneration`、`FrameId` 必须相同；action 元素还必须属于 active
+  catalog 且声明了 `interact`，并且 resolved page 上有一行引用它、且该引用行使 `interact`。
+  （更正 2026-07-31：此处原本写「类型为 `ActionTarget` 且允许 resolved page」——一个三值类型
+  加一份独立的 `allowed_page_ids` 列表。两者都已删除；引用本身就是授权。）
 - `ObservationLease::validate` 校验 session、generation、frame 和 expiration；
   任一不符返回 `StaleObservation`。
 - recognition budget、deadline 或 cancellation 产生明确 stop reason，而不是把

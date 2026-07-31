@@ -1,5 +1,56 @@
 # annotation Module Architecture Knowledge
 
+> **DIRTY (2026-07-31)**: the annotation model became the capability model, and
+> this document describes the model it replaced. Trust the code and
+> [`docs/plans/2026-07-31-annotation-model-capabilities.md`](../../plans/2026-07-31-annotation-model-capabilities.md)
+> until resynced. This banner subsumes the 2026-07-26 one below, which is kept
+> as the record of the drift that had already accumulated.
+>
+> The specific claims below that are now **false**, so nobody has to guess which
+> half to trust:
+>
+> - **`AnnotationType` does not exist.** The three-way choice `PageAnchor` /
+>   `ActionTarget` / `InfoRegion` became the **set** `ElementCapabilities
+>   {identify, interact, read}`, each capability carrying its own payload
+>   (`Interact` holds the click offset, `Read` holds `ReadLayout` and an optional
+>   `CharsetRestriction`). Empty is rejected. `annotation/capabilities.hpp` is the
+>   new header. Sentences of the form "must be an `ActionTarget`" now read "must
+>   declare `interact`".
+> - **`allowedPageIds` / `allowed_page_ids` does not exist**, on either side.
+>   `PageReference` — one row per (page, element) — IS the authorization, and the
+>   validation bullets that check the list against existing pages are gone with
+>   it.
+> - **`PageSignature::create` is not public.** A signature is *derived* by
+>   `RecognitionCatalog::create` from the references whose `exercised` identify
+>   carries `SignatureRole::Required` or `Forbidden`; it is never authored, and
+>   `RecognitionCatalog` is its only friend.
+> - **`RecognizerId` is `ElementId`**, and *recognizer* now names only what the
+>   compiler emits. See CONTEXT.md's "Annotation model" section for the split.
+> - **The runtime schema is `umbraflow-annotations/v2`**, not `/v1`, and the
+>   authoring schema is `umbraflow-authoring/v3`, not `/v2`. Neither old id has a
+>   read path.
+> - **`evaluateActionTarget` takes a `PageId`**:
+>   `(frame, liveFingerprint, pageId, elementId, policy)`. The per-page facts —
+>   a refined search region, a pinned appearance — live on the reference row.
+> - **An element carries an ordered list of `Variant`s**, not one template.
+>   Each is `{name, sourceId, templateRect, threshold, colourKey?}`; declaration
+>   order decides ties and nothing else. An **empty** list is legal and means the
+>   rectangle is located by the page being recognised, which also makes the
+>   element ineligible for identity evidence. `RuntimeManifest::findAsset` is
+>   therefore keyed by `(elementId, variantName)`.
+> - **`derivedRuntimeRecognizerId` is gone.** The compiler emits exactly one
+>   recognizer per element, under the element's own id; templates still dedupe by
+>   (source, rectangle, colour key).
+> - **The "`InfoRegion` evaluation" open item is superseded**, not still open:
+>   `read` is a capability with authored OCR parameters, and the plan's §四之二.7
+>   specifies the `cycle_read` verb that consumes it.
+>
+> What below is still **true**: the colour key and template mask section, the
+> SAD/threshold/`maximumSad` integer rules, canonical TOML and byte-for-byte
+> round-tripping, content-addressed template compilation, frame identity and the
+> four-requisite authorization gate, and every determinism and resource-bound
+> constraint.
+
 > **DIRTY (2026-07-26)**: This document predates authoring schema v2
 > (Element+placement replacing per-page copies, the v1 read-path sunset,
 > per-placement runtime recognizer expansion in the compiler, and the

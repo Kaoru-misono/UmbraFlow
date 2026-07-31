@@ -198,6 +198,10 @@ C function once the first binding lands. This is the same failure class as the
   [`2026-07-22-annotation-design.md`](2026-07-22-annotation-design.md)
   (`umbraflow-annotations/v1`, page semantics, action authorization, resource
   closure). Schema no longer blocks §6 step 5; its remaining prerequisites are
-  steps 3–4.
+  steps 3–4. (Corrected 2026-07-31: the runtime manifest schema is now
+  `umbraflow-annotations/v2` and the authoring one `umbraflow-authoring/v3`, per
+  [`2026-07-31-annotation-model-capabilities.md`](2026-07-31-annotation-model-capabilities.md).
+  The point of this bullet — that the schema stopped being a blocker — is
+  unaffected.)
 - Submodule name in `.gitmodules` is still the original `external/luau` (internal id);
   the path is correct (`modules/script/external/luau`). Cosmetic; leave unless it bugs you.
