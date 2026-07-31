@@ -54,7 +54,7 @@ umbra-input-agent --hwnd 0xHWND --queue q.jsonl --results r.jsonl --output-dir D
 
 **每一条 results 行都盖着产出它的前端**：行首是 `"front_end":"annotation"`，值来自
 `trace::FrontEnd::Annotation`，拼写来自 `trace::frontEndWireName`。`input_agent_support`
-为这一个类型链接了 `modules/trace`。agent 不写 `umbraflow-trace/v1` 的行——该 schema 每一行
+为这一个类型链接了 `modules/trace`。agent 不写 `umbraflow-trace/v2` 的行——该 schema 每一行
 都带 `runId` 与 `generationId`，而够不到项目的标注会话两者皆无；results 文件就是它的全部
 证据流，盖章由 writer 而不是各个 serializer 完成，理由与「`trace::TraceRecorder` 而不是
 各个发射方拥有那枚章」是同一条。

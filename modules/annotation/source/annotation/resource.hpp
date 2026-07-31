@@ -44,13 +44,13 @@ namespace uf::annotation
         struct SourceIdTag;
     }
 
-    // Identifies one authored element. It was called RecognizerId while an
-    // element and a recognizer were the same thing; they are not. A recognizer
-    // is what the compiler emits, and an element the task only reads state out
-    // of need not recognize anything at all. What the author mints and every
-    // authoring edit addresses is the element, which is what this names.
+    // Identifies one authored element: the rectangle an author drew, the uses
+    // it may be put to, and the appearances it can take. It was spelled
+    // RecognizerId until 2026-07-31, which said the thing recognizes; an
+    // element the task only clicks or only reads recognizes nothing, and is
+    // located by the page it sits on.
     //
-    // One element compiles to exactly one runtime recognizer under this id,
+    // One element compiles to exactly one CompiledElement under this id,
     // whatever pages reference it, so this is also the only id a page
     // signature, an authorisation, or a trace line ever has to resolve.
     using ElementId = StrongValue<detail::ElementIdTag, ResourceId>;

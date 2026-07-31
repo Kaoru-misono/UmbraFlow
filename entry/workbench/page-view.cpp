@@ -17,26 +17,26 @@ namespace uf::workbench
     {
         [[nodiscard]]
         auto memberRow(
-            EditableRecognizer const& recognizer,
+            EditableElement const& element,
             EditableReference const& reference
         ) -> PageView::MemberRow
         {
             auto templateRect = std::optional<PixelRect>{};
-            if (auto const* p_variant = primaryVariant(recognizer))
+            if (auto const* p_appearance = primaryAppearance(element))
             {
-                templateRect = p_variant->templateRect;
+                templateRect = p_appearance->templateRect;
             }
             auto clickOffset = std::optional<EditableTemplateOffset>{};
-            if (auto const& interact = recognizer.capabilities.interact)
+            if (auto const& interact = element.capabilities.interact)
             {
                 clickOffset = interact->clickOffset;
             }
             return PageView::MemberRow{
-                .id           = recognizer.id,
-                .name         = recognizer.name,
+                .id           = element.id,
+                .name         = element.name,
                 .templateRect = templateRect,
                 .searchRoiOnThisPage = reference.searchRoi.value_or(
-                    recognizer.searchRoi
+                    element.searchRoi
                 ),
                 .clickOffset = clickOffset,
                 .holding     = reference.holding,
@@ -97,17 +97,17 @@ namespace uf::workbench
             {
                 continue;
             }
-            auto const recognizer = std::ranges::find(
-                draft.recognizers,
+            auto const element = std::ranges::find(
+                draft.elements,
                 reference.elementId,
-                &EditableRecognizer::id
+                &EditableElement::id
             );
-            if (recognizer == draft.recognizers.end())
+            if (element == draft.elements.end())
             {
                 continue;
             }
 
-            auto const row = memberRow(*recognizer, reference);
+            auto const row = memberRow(*element, reference);
             if (auto const& identify = reference.exercised.identify)
             {
                 switch (identify->role)

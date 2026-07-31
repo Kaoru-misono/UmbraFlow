@@ -53,7 +53,7 @@ namespace uf::task
     namespace
     {
         // The canonical script-visible root object. It carries data alone --
-        // named recognizer and page handles and the error-kind constants -- so
+        // named element and page handles and the error-kind constants -- so
         // every reference to it must be one of the three approved two-level
         // literal accesses; any other contact is rejected (annotation-design 4).
         //
@@ -67,7 +67,7 @@ namespace uf::task
         // error-kind constant table. errors is validated the same way but is host
         // vocabulary rather than a project resource, so a reference to it is
         // approved without entering the resource report.
-        constexpr auto k_recognizersTable = "recognizers";
+        constexpr auto k_elementsTable = "elements";
         constexpr auto k_pagesTable       = "pages";
         constexpr auto k_errorsTable      = "errors";
 
@@ -114,7 +114,7 @@ namespace uf::task
         // AstExprIndexName link -- a parenthesised group, a call, a computed
         // index -- breaks the "direct literal" chain, so only an unbroken member
         // chain over the global uf roots at the namespace. This is what makes
-        // (uf).recognizers.x and uf.recognizers[x].y fall through to their
+        // (uf).elements.x and uf.elements[x].y fall through to their
         // bare-global or computed-index rejection rather than being mistaken for
         // an approved access.
         [[nodiscard]]
@@ -139,10 +139,10 @@ namespace uf::task
         // scripts: one visitor per parse.
         class ResourceVisitor final : public Luau::AstVisitor
         {
-            std::unordered_set<std::string_view> m_recognizerNames{};
+            std::unordered_set<std::string_view> m_elementNames{};
             std::unordered_set<std::string_view> m_pageNames{};
 
-            std::unordered_set<std::string> m_referencedRecognizers{};
+            std::unordered_set<std::string> m_referencedElements{};
             std::unordered_set<std::string> m_referencedPages{};
 
             std::optional<std::string> m_failure{};
@@ -150,9 +150,9 @@ namespace uf::task
         public:
             explicit ResourceVisitor(CapabilitySurface const& surface)
             {
-                for (auto const& spec : surface.recognizers())
+                for (auto const& spec : surface.elements())
                 {
-                    m_recognizerNames.insert(spec.name);
+                    m_elementNames.insert(spec.name);
                 }
                 for (auto const& spec : surface.pages())
                 {
@@ -173,15 +173,15 @@ namespace uf::task
             auto takeReport() -> ScriptResourceReport
             {
                 auto report = ScriptResourceReport{};
-                report.recognizers.assign(
-                    std::make_move_iterator(m_referencedRecognizers.begin()),
-                    std::make_move_iterator(m_referencedRecognizers.end())
+                report.elements.assign(
+                    std::make_move_iterator(m_referencedElements.begin()),
+                    std::make_move_iterator(m_referencedElements.end())
                 );
                 report.pages.assign(
                     std::make_move_iterator(m_referencedPages.begin()),
                     std::make_move_iterator(m_referencedPages.end())
                 );
-                std::sort(report.recognizers.begin(), report.recognizers.end());
+                std::sort(report.elements.begin(), report.elements.end());
                 std::sort(report.pages.begin(), report.pages.end());
                 return report;
             }
@@ -201,7 +201,7 @@ namespace uf::task
                     recordFailure(
                         node->location,
                         "the uf namespace may be used only as "
-                        "uf.recognizers.<name>, uf.pages.<name> or "
+                        "uf.elements.<name>, uf.pages.<name> or "
                         "uf.errors.<kind>; it cannot be aliased, indexed "
                         "dynamically, iterated, passed, or returned"
                     );
@@ -220,7 +220,7 @@ namespace uf::task
                         "the raw global environment '_G' is not accessible from a "
                         "task script; it is an alias door to the uf namespace and "
                         "every other global, so reach the named resources only "
-                        "through uf.recognizers.<name>, uf.pages.<name> and "
+                        "through uf.elements.<name>, uf.pages.<name> and "
                         "uf.errors.<kind>"
                     );
                     return false;
@@ -260,9 +260,9 @@ namespace uf::task
 
             // Classifies a uf-rooted member-access chain whose outermost node is
             // `node`. The only approved shape is exactly two dot levels:
-            // uf . (recognizers|pages|errors) . <name>. Everything else -- a
-            // one-level field (uf.recognizers as a value, uf.foo), a deeper chain
-            // (uf.recognizers.x.y), a colon index (uf:anything), or an unknown
+            // uf . (elements|pages|errors) . <name>. Everything else -- a
+            // one-level field (uf.elements as a value, uf.foo), a deeper chain
+            // (uf.elements.x.y), a colon index (uf:anything), or an unknown
             // sub-namespace -- is rejected.
             void classifyResourceAccess(Luau::AstExprIndexName* node)
             {
@@ -276,9 +276,9 @@ namespace uf::task
                         {
                             std::string_view const table = nameView(mid->index);
                             std::string_view const leaf  = nameView(node->index);
-                            if (table == k_recognizersTable)
+                            if (table == k_elementsTable)
                             {
-                                resolveRecognizer(leaf, node->location);
+                                resolveElement(leaf, node->location);
                                 return;
                             }
                             if (table == k_pagesTable)
@@ -295,7 +295,7 @@ namespace uf::task
                                 mid->location,
                                 "'uf." + std::string{table}
                                     + "' is not a capability namespace; only "
-                                      "uf.recognizers, uf.pages and uf.errors "
+                                      "uf.elements, uf.pages and uf.errors "
                                       "exist"
                             );
                             return;
@@ -306,26 +306,26 @@ namespace uf::task
                     node->location,
                     "'" + std::string{k_namespace}
                         + "' is only accessible as the two-level literals "
-                          "uf.recognizers.<name>, uf.pages.<name> and "
+                          "uf.elements.<name>, uf.pages.<name> and "
                           "uf.errors.<kind>; this access has the wrong shape"
                 );
             }
 
-            // Resolves a recognizer or page leaf `name` against the surface's
+            // Resolves an element or page leaf `name` against the surface's
             // exposed set, recording the reference on success and a precise
             // missing-resource failure otherwise. Split so the pages branch reuses
             // it; see classifyResourceAccess for the dispatch.
-            void resolveRecognizer(std::string_view name, Luau::Location const& location)
+            void resolveElement(std::string_view name, Luau::Location const& location)
             {
-                if (m_recognizerNames.contains(name))
+                if (m_elementNames.contains(name))
                 {
-                    m_referencedRecognizers.insert(std::string{name});
+                    m_referencedElements.insert(std::string{name});
                     return;
                 }
                 recordFailure(
                     location,
-                    "no recognizer named '" + std::string{name}
-                        + "' is exposed under uf.recognizers"
+                    "no element named '" + std::string{name}
+                        + "' is exposed under uf.elements"
                 );
             }
 
@@ -347,7 +347,7 @@ namespace uf::task
             // wire spelling, which is exactly what uf.errors is keyed by. A
             // misspelling would otherwise be a nil that makes every comparison
             // against it silently false, so it is closed here for the same reason
-            // a missing recognizer is. Nothing is recorded on success: the kinds
+            // a missing element is. Nothing is recorded on success: the kinds
             // are host vocabulary, fixed for the binary, and the report enumerates
             // the project resources a run depends on.
             void resolveErrorKind(std::string_view name, Luau::Location const& location)

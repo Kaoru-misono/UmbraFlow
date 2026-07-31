@@ -195,8 +195,8 @@ namespace uf::annotation
                     std::move(name),
                     test::capabilities(Identify{}),
                     test::pixelRect(0, 0, 3, 1),
-                    std::vector<Variant>{
-                        test::variant(
+                    std::vector<Appearance>{
+                        test::appearance(
                             "only",
                             templateSource.source.id(),
                             templateRect,

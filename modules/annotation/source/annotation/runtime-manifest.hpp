@@ -14,36 +14,37 @@
 
 namespace uf::annotation
 {
-    // Bumped from v1 when the three-way annotation type became a capability
-    // set, an element grew an ordered list of appearances instead of one
-    // template, and the page-membership list on the recognizer was replaced by
-    // the page reference rows that already are the authorisation. The v1 read
-    // path has been retired: the manifest is generated from the authoring
-    // document, so migrating it is recompiling it.
+    // Bumped from v2 on 2026-07-31 by the vocabulary rename: `[[recognizer]]` is
+    // now `[[element]]`, `[[variant]]` is now `[[appearance]]`, and a
+    // reference's `variant` field is now `appearance`. v2 was itself the bump
+    // for the capability set, the ordered appearance list, and the page
+    // reference rows that replaced the page-membership list. Every earlier read
+    // path is retired: the manifest is generated from the authoring document, so
+    // migrating it is recompiling it.
     inline constexpr auto k_runtimeManifestSchema = std::string_view{
-        "umbraflow-annotations/v2"
+        "umbraflow-annotations/v3"
     };
 
     // The compiled bytes behind one appearance of one element.
-    struct RuntimeVariantAsset final
+    struct RuntimeAppearanceAsset final
     {
-        ResourceName variantName;
+        ResourceName appearanceName;
         ContentHash  templateHash;
         ContentHash  sourceHash;
     };
 
-    struct RuntimeRecognizerSpec final
+    struct RuntimeElementSpec final
     {
-        RecognizerDefinition definition;
+        CompiledElement definition;
 
-        // One entry per declared variant, in the definition's own order.
-        std::vector<RuntimeVariantAsset> variants{};
+        // One entry per declared appearance, in the definition's own order.
+        std::vector<RuntimeAppearanceAsset> appearances{};
     };
 
-    struct RuntimeRecognizerAsset final
+    struct RuntimeElementAsset final
     {
         ElementId    elementId;
-        ResourceName variantName;
+        ResourceName appearanceName;
         ContentHash  templateHash;
         ContentHash  sourceHash;
         std::string  templatePath{};
@@ -51,12 +52,12 @@ namespace uf::annotation
 
     class RuntimeManifest final
     {
-        RecognitionCatalog                  m_catalog;
-        std::vector<RuntimeRecognizerAsset> m_assets;
+        RecognitionCatalog               m_catalog;
+        std::vector<RuntimeElementAsset> m_assets;
 
         RuntimeManifest(
             RecognitionCatalog catalog,
-            std::vector<RuntimeRecognizerAsset> assets
+            std::vector<RuntimeElementAsset> assets
         ) noexcept;
 
     public:
@@ -64,7 +65,7 @@ namespace uf::annotation
         static auto create(
             ProjectId projectId,
             ProjectFingerprint fingerprint,
-            std::vector<RuntimeRecognizerSpec> recognizers,
+            std::vector<RuntimeElementSpec> elements,
             std::vector<PageSpec> pages,
             std::vector<PageReference> references
         ) -> Result<RuntimeManifest>;
@@ -73,15 +74,15 @@ namespace uf::annotation
         auto catalog() const noexcept UF_LIFETIME_BOUND -> RecognitionCatalog const&;
 
         [[nodiscard]]
-        auto assets() const noexcept UF_LIFETIME_BOUND -> std::span<RuntimeRecognizerAsset const>;
+        auto assets() const noexcept UF_LIFETIME_BOUND -> std::span<RuntimeElementAsset const>;
 
         // One element now has one asset per appearance, so an element alone no
         // longer names a template.
         [[nodiscard]]
         auto findAsset(
             ElementId elementId,
-            ResourceName const& variantName
-        ) const noexcept UF_LIFETIME_BOUND -> RuntimeRecognizerAsset const*;
+            ResourceName const& appearanceName
+        ) const noexcept UF_LIFETIME_BOUND -> RuntimeElementAsset const*;
     };
 
     [[nodiscard]]

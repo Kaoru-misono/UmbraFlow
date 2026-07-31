@@ -17,12 +17,12 @@ namespace uf::annotation
     class ActionDetection final
     {
         ProjectId m_projectId;
-        ElementId m_recognizerId;
+        ElementId m_elementId;
         Detection m_detection;
 
         ActionDetection(
             ProjectId&& projectId,
-            ElementId recognizerId,
+            ElementId elementId,
             Detection&& detection
         ) noexcept;
 
@@ -30,14 +30,14 @@ namespace uf::annotation
         [[nodiscard]]
         static auto create(
             RecognitionCatalog const& catalog,
-            ElementId recognizerId,
+            ElementId elementId,
             Detection detection
         ) -> Result<ActionDetection>;
 
         [[nodiscard]]
         auto projectId() const noexcept UF_LIFETIME_BOUND -> ProjectId const&;
 
-        [[nodiscard]] auto recognizerId() const -> ElementId;
+        [[nodiscard]] auto elementId() const -> ElementId;
 
         [[nodiscard]]
         auto detection() const noexcept UF_LIFETIME_BOUND -> Detection const&;

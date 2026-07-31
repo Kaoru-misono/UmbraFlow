@@ -70,7 +70,7 @@ This directory deliberately does not own the following responsibilities:
   `runProduct` binds a target and calls `TaskHost::startTask`; what happens inside the run is the
   project's task script.
 - It does not translate resource names. A script names its resources directly as
-  `uf.pages.NAME` and `uf.recognizers.NAME` (the root was renamed from `umbra` to `uf` on
+  `uf.pages.NAME` and `uf.elements.NAME` (the root was renamed from `umbra` to `uf` on
   2026-07-29, `2f4af93`), and `task::validateScriptResources` in
   `modules/task/source/task/script-validator.hpp` closes every such reference against the
   capability surface before a VM exists. `entry/cli/name-resolution.{hpp,cpp}` existed only to
@@ -211,7 +211,7 @@ guarantee layer sits below Luau — the cycle ledger, the four-requisite click a
 fingerprint check and the trace are all C++ behind `TaskContext` — so an operator gets exactly the
 primitives and exactly the refusals a task gets. There is no chunk, no source and no string that
 becomes code, and the sandbox's closed eval routes stay closed. An operator may name only what a
-task may name: the session holds a copy of the same `CapabilitySurface` the `uf.recognizers` and
+task may name: the session holds a copy of the same `CapabilitySurface` the `uf.elements` and
 `uf.pages` tables are built from. `raise`, `emit` and `random` are deliberately absent — an operator
 has no framework structure of its own to record, and admitting `emit` would put a second author on
 the `framework.*` events the trace stream validator now refuses outright on an operator stream.
@@ -450,7 +450,7 @@ because the two adapters implement engine ports. What crosses the boundary is:
 
 `task` and `engine` never see the HWND, the console handler, file-selection syntax, the title
 substring, or the queue and results files. In the reverse direction, the CLI never interprets
-recognizer evidence, page outcomes, or authorization rules, and no longer drives any `EngineSession`
+element evidence, page outcomes, or authorization rules, and no longer drives any `EngineSession`
 verb: it calls `loadProject` and then either `startTask` or `startOperatorSession`, and reads the
 report.
 
@@ -507,7 +507,7 @@ whichever arrives first.
 `tests/task/test-task-host.cpp` covers the run lifecycle that used to live here. It publishes a real
 annotation project into a temporary directory and drives `TaskHost` end to end against fake ports,
 then reads the trace file back: the acceptance case asserts the whole ordered
-`umbraflow-trace/v1` bracket from `run.started` through the engine and `task.native_call` events to
+`umbraflow-trace/v2` bracket from `run.started` through the engine and `task.native_call` events to
 `run.finished`, under one sequence and one run and generation identity. It also pins that two runs
 of the same task draw different seeds and that the reported seed is the one `run.started` recorded,
 that a failed run is reported rather than failing the call, that a missing task fails before any

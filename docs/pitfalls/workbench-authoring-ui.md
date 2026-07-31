@@ -6,8 +6,8 @@
 > capture source, the imgui submodule, and `tests/workbench/asan-smoke-fixture.cpp`
 > with them. There is no `umbra-workbench.exe`, no `--smoke` flag, and no
 > `AsanSmoke` CTest label (the `x64-asan` preset in `CMakePresets.json` outlived
-> the tests that used it). `retypeRecognizer`, `addDefaultRecognizer`, and
-> `setSelectedRecognizerId` were deleted. The catalog rules the second entry
+> the tests that used it). `retypeRecognizer`, `addDefaultElement`, and
+> `setSelectedElementId` were deleted. The catalog rules the second entry
 > deadlocks over are gone too: `AnnotationType` is a capability set, and
 > `allowed_page_ids` no longer exists — a page's `PageReference` exercising
 > `interact` IS the authorization. Deciding artifact:
@@ -65,7 +65,7 @@ storage and happen to still look right.
 `drawPropertiesPanel` opened with
 
 ```cpp
-auto const* definition = state.document().catalog().findRecognizer(*recognizerId);
+auto const* definition = state.document().catalog().findElement(*elementId);
 ```
 
 and then used `definition` for the whole panel: the type combo, the threshold
@@ -110,7 +110,7 @@ under the `AsanSmoke` label (registered in `tests/CMakeLists.txt`, kept off the
 
 - `asan-smoke-fixture` — a skipped doctest case in `test-workbench`
   (`tests/workbench/asan-smoke-fixture.cpp`) generates a valid one-source,
-  one-recognizer, one-page project into the build tree
+  one-element, one-page project into the build tree
   (`build/x64-asan/tests/asan-smoke-project`). It is generated rather than
   committed because the loader verifies each source PNG's SHA-256 and decoded
   dimensions, so the fixture cannot be hand-authored, and a committed binary
@@ -149,11 +149,11 @@ can create the GUI window the smoke opens). Add it once billing is restored.
 Two rejections alternating forever, with no ordering that clears both:
 
 ```
-edit rejected: action_target recognizer must authorize at least one page
+edit rejected: action_target element must authorize at least one page
 edit rejected: page_anchor membership must be expressed by page signatures
 ```
 
-Changing a recognizer's type to `ActionTarget` is refused because it authorizes
+Changing an element's type to `ActionTarget` is refused because it authorizes
 no page; authorizing a page first is refused because a page anchor may not hold
 authorizations. The workbench could not author an action target at all.
 
@@ -179,8 +179,8 @@ Make the change a transaction. `retypeRecognizer`
 (`entry/workbench/authoring-edit.cpp`) rewrites the type and every dependent
 field in one draft, and refuses only where no repair exists: becoming an action
 target in a project with no page, or leaving the page-anchor type while being the
-only recognizer some page names. Where it must invent state — an action target
-needs one authorized page — it prefers the page the recognizer already anchored
+only element some page names. Where it must invent state — an action target
+needs one authorized page — it prefers the page the element already anchored
 over an arbitrary one and reports what it did on the status line, because a
 permission the author did not ask for must never be silent. The reverse
 direction is lossy (the click offset cannot survive), so that is reported too.
@@ -200,50 +200,50 @@ than growing a second transaction helper.
 
 ### Symptom
 
-`New Recognizer` (or `New Page`) fails with
-`edit rejected: recognizer names must be unique` the second time it is pressed,
+`New Element` (or `New Page`) fails with
+`edit rejected: element names must be unique` the second time it is pressed,
 unless the author renamed the first one in between.
 
 ### Root cause
 
-`addDefaultRecognizer` named every new recognizer `"recognizer"` and
+`addDefaultElement` named every new element `"element"` and
 `addDefaultPage` named every page `"page"`. Resource names are unique **across**
-recognizers and pages, not just within a kind
-(`RecognitionCatalog::create` compares page names against recognizer names).
+elements and pages, not just within a kind
+(`RecognitionCatalog::create` compares page names against element names).
 
 ### Fix
 
-Take the first free `<stem>_N`, checked against recognizer **and** page names.
+Take the first free `<stem>_N`, checked against element **and** page names.
 
 ### Regression check
 
-Press New Recognizer twice without renaming; both succeed as `recognizer_1` and
-`recognizer_2`.
+Press New Element twice without renaming; both succeed as `element_1` and
+`element_2`.
 
 ## An entity with no list panel is unreachable after creation
 
 ### Symptom
 
-Only the just-created recognizer can be edited. Creating a second one makes the
-first permanently unreachable, and once the selected recognizer stops being a
+Only the just-created element can be edited. Creating a second one makes the
+first permanently unreachable, and once the selected element stops being a
 page anchor, `New Page` — which requires a selected page anchor — can never
 succeed again.
 
 ### Root cause
 
-`setSelectedRecognizerId` had exactly one call site: immediately after
-`New Recognizer`. There was no recognizer list. Pages were worse: visible only
-inside the properties panel of whichever recognizer happened to be selected, and
+`setSelectedElementId` had exactly one call site: immediately after
+`New Element`. There was no element list. Pages were worse: visible only
+inside the properties panel of whichever element happened to be selected, and
 not deletable at all.
 
 ### Fix
 
-A Recognizers panel and a Pages panel, alongside the existing Sources list.
-Selecting a recognizer also selects the source it was authored against —
+A Elements panel and a Pages panel, alongside the existing Sources list.
+Selecting an element also selects the source it was authored against —
 otherwise its rectangles are drawn over whatever image the canvas happens to be
 showing, which is a second latent defect the list would have exposed.
 
 ### Regression check
 
-Manual: create two recognizers, select the first, confirm the properties panel
-follows and the canvas switches to that recognizer's source.
+Manual: create two elements, select the first, confirm the properties panel
+follows and the canvas switches to that element's source.

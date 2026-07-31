@@ -1,5 +1,14 @@
 # UmbraFlow 命令式 Lua 任务模型 — 决策包（grill 前弹药）
 
+> **词汇重定向(2026-07-31)。** 本文是有日期的记录,不改写。下文的
+> `recognizer` / `RecognizerId` / `uf.recognizers` / `recognizerId` 一律读作
+> **element** / `ElementId` / `uf.elements` / `elementId`;`RecognizerDefinition`
+> 与 `RecognizerVariant` 读作 `CompiledElement` 与 `CompiledAppearance`;
+> `Variant` / `variant` 读作 `Appearance` / `appearance`。`RecognitionCatalog` 与
+> `RecognitionRuntime` 名字不变——它们指的是「识别」这个动作。schema id 随改名一起动了:
+> `umbraflow-authoring/v4`、`umbraflow-annotations/v3`、`umbraflow-trace/v2`。
+> 权威词汇见 `CONTEXT.md` 的「Annotation model」一节。
+
 > **状态**：这是 **grill 前的决策弹药，不是最终定稿**。本文档由一次多 agent workflow （5×ground 调研 + 10×grill 逐题裁决 + 3×synth 综合 + 1×critique 完整性审查）的结构化产出组装而成，用于支撑开发者对 Q1–Q10 的当面 grill。所有裁决建议均**待开发者拍板**，凡标注为 open / developerInputNeeded / grillTarget 的条目都尚未定稿。
 >
 > **grill 议程原件**：[`2026-07-20-lua-task-model-grill.md`](2026-07-20-lua-task-model-grill.md)（Q1–Q10 草案立场 + 争议点原文，以及"需要开发者补充"三条）。本决策包是对该议程每一题的弹药扩写。

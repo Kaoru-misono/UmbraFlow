@@ -284,7 +284,7 @@ namespace uf::annotation::detail
                 if (!boundingTemplate)
                 {
                     return invalidField(
-                        "a default click needs a variant template to be measured against"
+                        "a default click needs an appearance template to be measured against"
                     );
                 }
                 UF_TRY_VALUE(

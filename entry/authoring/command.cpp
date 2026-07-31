@@ -729,10 +729,10 @@ namespace uf::authoring
         {
             UF_TRY_VALUE(element, positional(raw, 0, "element"));
 
-            auto searchRoi = std::optional<std::string>{};
-            auto variant   = std::optional<std::string>{};
-            auto stated    = StatedCapabilities{};
-            auto index     = std::size_t{1};
+            auto searchRoi  = std::optional<std::string>{};
+            auto appearance = std::optional<std::string>{};
+            auto stated     = StatedCapabilities{};
+            auto index      = std::size_t{1};
             while (index < raw.size())
             {
                 auto const& flag = raw[index];
@@ -746,9 +746,9 @@ namespace uf::authoring
                 {
                     searchRoi = value;
                 }
-                else if (flag == "--variant")
+                else if (flag == "--appearance")
                 {
-                    variant = value;
+                    appearance = value;
                 }
                 else if (flag == "--capability")
                 {
@@ -787,11 +787,11 @@ namespace uf::authoring
                 stated.identify
                 && !stated.interact
                 && !stated.read
-                && variant
+                && appearance
             )
             {
                 return invalid(
-                    "--capability identify alone and --variant cannot be "
+                    "--capability identify alone and --appearance cannot be "
                     "combined: the anchor pass runs before any page is known, "
                     "so it folds across every appearance whatever this page "
                     "pins, and there is no other search on this page for the "
@@ -818,12 +818,12 @@ namespace uf::authoring
             }
 
             return ReferenceElement{
-                .root      = std::filesystem::path{root},
-                .page      = page,
-                .element   = std::move(element),
-                .exercised = exercised,
-                .searchRoi = refined,
-                .variant   = std::move(variant),
+                .root       = std::filesystem::path{root},
+                .page       = page,
+                .element    = std::move(element),
+                .exercised  = exercised,
+                .searchRoi  = refined,
+                .appearance = std::move(appearance),
             };
         }
 
@@ -905,11 +905,10 @@ namespace uf::authoring
         ) -> Result<AuthoringCommand>
         {
             UF_TRY_VALUE(root, positional(raw, 0, "root"));
-            // The two nouns meet here. An author names the element they drew, so
-            // that is what a missing argument has to ask for and what the usage
-            // text prints. The name then resolves against the compiled catalog's
-            // recognizers, which is why the field it fills keeps the other noun.
-            UF_TRY_VALUE(recognizer, positional(raw, 1, "element"));
+            // An author names the element they drew, and that same name is what
+            // the compiled catalog answers to, so the argument, the usage text,
+            // and the field all say element.
+            UF_TRY_VALUE(element, positional(raw, 1, "element"));
 
             auto frame  = std::optional<std::string>{};
             auto page   = std::optional<std::string>{};
@@ -946,12 +945,12 @@ namespace uf::authoring
             }
 
             UF_TRY_VALUE(requiredFrame, require(std::move(frame), "--frame"));
-            return MatchRecognizer{
-                .root       = std::filesystem::path{root},
-                .recognizer = std::move(recognizer),
-                .frame      = std::filesystem::path{requiredFrame},
-                .page       = std::move(page),
-                .budget     = budget,
+            return MatchElement{
+                .root    = std::filesystem::path{root},
+                .element = std::move(element),
+                .frame   = std::filesystem::path{requiredFrame},
+                .page    = std::move(page),
+                .budget  = budget,
             };
         }
 
@@ -1305,7 +1304,7 @@ namespace uf::authoring
             "  umbra-authoring page reference ROOT PAGE ELEMENT "
             "[--capability C...]\n"
             "                                 [--search-roi x,y,w,h] "
-            "[--variant NAME]\n"
+            "[--appearance NAME]\n"
             "  umbra-authoring element appearance ROOT ELEMENT NAME <draw>\n"
             "  umbra-authoring match ROOT ELEMENT --frame PNG [--page PAGE]\n"
             "                                     [--budget N]\n"
@@ -1427,7 +1426,7 @@ namespace uf::authoring
             "are how a second page takes an existing mark into its own signature,\n"
             "and one mark may be required by one page and forbidden by another.\n"
             "\n"
-            "--capability, --search-roi and --variant refine THIS page's use of\n"
+            "--capability, --search-roi and --appearance refine THIS page's use of\n"
             "the element; none of them edits the element, which stays one\n"
             "rectangle and one set of appearances every page sees. Without\n"
             "--search-roi the page searches the element's own region and keeps\n"
@@ -1435,7 +1434,7 @@ namespace uf::authoring
             "with --capability identify: the anchor pass reads the element's own\n"
             "region, before any page is known.\n"
             "\n"
-            "--variant NAME pins which appearance this page expects, for the case\n"
+            "--appearance NAME pins which appearance this page expects, for the case\n"
             "where the PAGE decides it -- a back arrow drawn white on one screen\n"
             "and dark on another. The page then searches once instead of once per\n"
             "appearance, and cannot answer with the wrong one. Leave it off when\n"

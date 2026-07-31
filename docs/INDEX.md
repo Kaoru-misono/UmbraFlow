@@ -26,7 +26,7 @@ Mirrored English and Chinese trees; see the [language guide](knowledge/README.md
 - Current annotation-model decisions (approved 2026-07-31; supersedes the
   three-way annotation type, `bool shared`, and `allowed_page_ids` in the S0
   contract below, and retires the workbench GUI):
-  [Annotation model — capabilities, holding, variants](plans/2026-07-31-annotation-model-capabilities.md)
+  [Annotation model — capabilities, holding, appearances](plans/2026-07-31-annotation-model-capabilities.md)
 - Locked S0 annotation contract (data-model rulings superseded 2026-07-31 by the
   plan above; retained as the record of the contract it replaced):
   [P0-A Visual Annotation System & Data Model](plans/2026-07-22-annotation-design.md)

@@ -88,8 +88,8 @@ namespace uf::annotation
                 std::move(name),
                 test::capabilities(Identify{}),
                 wholeCrop(),
-                std::vector<Variant>{
-                    test::variant(
+                std::vector<Appearance>{
+                    test::appearance(
                         "only",
                         sourceId,
                         wholeCrop(),
@@ -357,7 +357,7 @@ namespace uf::annotation
             auto const found = std::ranges::find(
                 evidence,
                 id,
-                &AnchorEvidence::recognizerId
+                &AnchorEvidence::elementId
             );
             REQUIRE(found != evidence.end());
             return *found;
@@ -381,7 +381,7 @@ namespace uf::annotation
         auto const outcome = compileAndMatch();
 
         // A keyed and an unkeyed template of the same rectangle are two assets,
-        // and each recognizer points at its own.
+        // and each element points at its own.
         CHECK(outcome.templateAssetCount == 2);
         CHECK(outcome.templateHashesDiffer);
 

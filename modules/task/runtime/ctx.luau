@@ -166,11 +166,11 @@ local function newCycleView(state)
     --     ctx:cycle(function(cycle)
     --         local page = cycle:page()       -- REQUIRED before find
     --         if page == nil then return end  -- Unknown/Ambiguous: no page
-    --         local hit = cycle:find(uf.recognizers.back)
+    --         local hit = cycle:find(uf.elements.back)
     --     end)
     --
     --     ctx:wait_for_page(uf.pages.home, nil, function(cycle)
-    --         local hit = cycle:find(uf.recognizers.back)   -- already resolved
+    --         local hit = cycle:find(uf.elements.back)   -- already resolved
     --     end)
     --
     -- `ctx:wait_for_page` and an interrupt handler both hand over a cycle whose
@@ -182,9 +182,9 @@ local function newCycleView(state)
     -- paid for it would hide the cost of the loop it sits in; and a screen that
     -- resolves to no page would then surface as a FIND that failed, which is a
     -- worse sentence to debug than the one above.
-    function view:find(recognizer)
+    function view:find(element)
         requireLive(state)
-        return native.cycle_find(state.ticket, recognizer)
+        return native.cycle_find(state.ticket, element)
     end
 
     -- A delivered click CONSUMES the cycle, so the view goes dead here rather
@@ -609,8 +609,8 @@ end
 -- Same ordering rule as view:find, and it is easier to break here because
 -- nothing above this line resolves anything: cycle_page on the ticket first, or
 -- this raises uf.errors.page_unresolved.
-function ctx:cycle_find(ticket, recognizer)
-    return native.cycle_find(ticket, recognizer)
+function ctx:cycle_find(ticket, element)
+    return native.cycle_find(ticket, element)
 end
 
 function ctx:cycle_click(ticket, hit)
@@ -659,7 +659,7 @@ end
 -- halves of the test do work. Userdata is what a project script cannot produce
 -- at all -- setmetatable and table.clone take tables, and newproxy is removed
 -- from both environments -- and the label is what tells a Tier B error apart
--- from the other host userdata a script can hold, a page or a recognizer.
+-- from the other host userdata a script can hold, a page or an element.
 --
 -- Anything else is the script's own failure -- including the Tier C
 -- cancellation sentinel, which is a plain string -- and is re-raised unchanged,

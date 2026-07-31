@@ -104,8 +104,8 @@ namespace uf::annotation
                         Interact{.clickOffset = *click}
                     ),
                     test::pixelRect(3, 2, 4, 3),
-                    std::vector<Variant>{
-                        test::variant(
+                    std::vector<Appearance>{
+                        test::appearance(
                             "only",
                             sourceId,
                             test::pixelRect(4, 3, 2, 1),
@@ -122,8 +122,8 @@ namespace uf::annotation
                     "home_marker",
                     test::capabilities(Identify{}),
                     test::pixelRect(0, 0, 3, 3),
-                    std::vector<Variant>{
-                        test::variant(
+                    std::vector<Appearance>{
+                        test::appearance(
                             "only",
                             sourceId,
                             test::pixelRect(1, 1, 1, 1)
@@ -171,14 +171,14 @@ namespace uf::annotation
     {
         auto const encoded = serializeAuthoringDocument(authoringDocument());
         // Six tables. An annotation row states what the element is and what it
-        // may be used for; its pixels live in the variant rows keyed back to it,
+        // may be used for; its pixels live in the appearance rows keyed back to it,
         // because one element can now wear several appearances. A page row is
         // identity alone -- what it requires and forbids is derived from the
         // reference rows, which are also the authorisation, so neither fact is
         // written twice. The colour key stays here and never reaches the runtime
         // manifest: the compiler bakes it into the template's alpha channel.
         auto const expected = std::string{
-            "schema = \"umbraflow-authoring/v3\"\n"
+            "schema = \"umbraflow-authoring/v4\"\n"
             "project_id = \"personal.test\"\n"
             "base_resolution = [8, 6]\n"
             "base_dpi = [96, 96]\n"
@@ -195,32 +195,32 @@ namespace uf::annotation
             "target_generation = 7\n"
             "captured_at = \"2026-07-23T09:15:00+09:00\"\n"
             "\n"
-            "[[annotation]]\n"
+            "[[element]]\n"
             "id = \"00000000-0000-0000-0000-000000000001\"\n"
             "name = \"home_marker\"\n"
             "search_roi = [0, 0, 3, 3]\n"
             "capabilities = [\"identify\"]\n"
             "\n"
-            "[[annotation]]\n"
+            "[[element]]\n"
             "id = \"00000000-0000-0000-0000-000000000002\"\n"
             "name = \"daily_button\"\n"
             "search_roi = [3, 2, 4, 3]\n"
             "capabilities = [\"interact\"]\n"
             "default_click = [1, 0]\n"
             "\n"
-            "[[variant]]\n"
+            "[[appearance]]\n"
             "element_id = \"00000000-0000-0000-0000-000000000001\"\n"
             "name = \"only\"\n"
             "source_id = \"00000000-0000-0000-0000-000000000201\"\n"
-            "recognizer_kind = \"gray_template\"\n"
+            "element_kind = \"gray_template\"\n"
             "template_rect = [1, 1, 1, 1]\n"
             "min_similarity_bp = 9000\n"
             "\n"
-            "[[variant]]\n"
+            "[[appearance]]\n"
             "element_id = \"00000000-0000-0000-0000-000000000002\"\n"
             "name = \"only\"\n"
             "source_id = \"00000000-0000-0000-0000-000000000201\"\n"
-            "recognizer_kind = \"gray_template\"\n"
+            "element_kind = \"gray_template\"\n"
             "template_rect = [4, 3, 2, 1]\n"
             "min_similarity_bp = 9000\n"
             "colour_key = [10, 20, 30]\n"
@@ -262,14 +262,14 @@ namespace uf::annotation
         CHECK(parsed->sources().size() == 1U);
         CHECK(parsed->elements().size() == 2U);
         CHECK(parsed->references().size() == 2U);
-        CHECK(parsed->catalog().recognizers().size() == 2U);
+        CHECK(parsed->catalog().elements().size() == 2U);
         CHECK(parsed->catalog().pages().size() == 1U);
         CHECK(parsed->regressions().size() == 1U);
 
         auto const* p_action = parsed->findElement(test::elementId(k_actionId));
         REQUIRE(p_action != nullptr);
-        REQUIRE(p_action->variants().size() == 1U);
-        CHECK(p_action->variants().front().colourKey() == colourKey());
+        REQUIRE(p_action->appearances().size() == 1U);
+        CHECK(p_action->appearances().front().colourKey() == colourKey());
     }
 
     TEST_CASE("annotation authoring reader rejects non-canonical or drifting input")
@@ -297,7 +297,7 @@ namespace uf::annotation
             )
         );
         invalid.emplace_back(
-            replaceOnce(canonical, "recognizer_kind = \"gray_template\"", "recognizer_kind = \"raster\"")
+            replaceOnce(canonical, "element_kind = \"gray_template\"", "element_kind = \"raster\"")
         );
         // A colour key and its tolerance are one fact spread over two lines, so
         // half of one must fail rather than default to a value nobody authored.
@@ -380,7 +380,7 @@ namespace uf::annotation
 
     TEST_CASE("annotation authoring reader keeps no read path for any retired schema")
     {
-        // Both retired versions, not only the one just replaced: v1 once had a
+        // Every retired version, not only the one just replaced: v1 once had a
         // documented upgrade path in the reader, and this is what says that path
         // left with it rather than surviving one bump behind.
         auto const canonical = serializeAuthoringDocument(authoringDocument());
@@ -388,13 +388,14 @@ namespace uf::annotation
             auto const retired : {
                 std::string_view{"umbraflow-authoring/v1"},
                 std::string_view{"umbraflow-authoring/v2"},
+                std::string_view{"umbraflow-authoring/v3"},
             }
         )
         {
             INFO(retired);
             auto const drifted = replaceOnce(
                 canonical,
-                "umbraflow-authoring/v3",
+                "umbraflow-authoring/v4",
                 retired
             );
             auto const rejected = parseAuthoringDocument(drifted);
@@ -427,8 +428,8 @@ namespace uf::annotation
                 std::move(name),
                 test::capabilities(std::nullopt, Interact{}),
                 roi,
-                std::vector<Variant>{
-                    test::variant("only", sourceId, templateRect),
+                std::vector<Appearance>{
+                    test::appearance("only", sourceId, templateRect),
                 }
             );
         };
@@ -441,8 +442,8 @@ namespace uf::annotation
                 "home_marker",
                 test::capabilities(Identify{}),
                 roi,
-                std::vector<Variant>{
-                    test::variant("only", sourceId, templateRect),
+                std::vector<Appearance>{
+                    test::appearance("only", sourceId, templateRect),
                 }
             )
         );
@@ -473,7 +474,7 @@ namespace uf::annotation
         REQUIRE(document.has_value());
 
         auto const encoded = serializeAuthoringDocument(*document);
-        // Searched from the first reference table, because the variant rows
+        // Searched from the first reference table, because the appearance rows
         // above carry element_id too and are sorted by the same key: matching
         // them would let this case pass without the references being ordered.
         auto const firstReference = encoded.find("\n[[reference]]\n");

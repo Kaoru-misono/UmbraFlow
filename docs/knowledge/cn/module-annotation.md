@@ -18,18 +18,20 @@
 > - **`PageSignature::create` 不是公开的。** 签名由 `RecognitionCatalog::create`
 >   从「`exercised` 里 identify 带 `SignatureRole::Required` 或 `Forbidden`」的引用**派生**，
 >   永远不是作者写出来的；`RecognitionCatalog` 是它唯一的 friend。
-> - **`RecognizerId` 改名 `ElementId`**，而且 recognizer 现在只指编译器产出的东西。两者的
->   分工见 CONTEXT.md 的「Annotation model」一节。
-> - **运行时 schema 是 `umbraflow-annotations/v2`**，不是 `/v1`；授权文档 schema 是
->   `umbraflow-authoring/v3`，不是 `/v2`。两个旧 id 都没有读路径。
+> - **`RecognizerId` 改名 `ElementId`**；2026-07-31 起 recognizer 这个词彻底退出模型：
+>   作者画的叫 `Element`，编译产物叫 `CompiledElement`。recognition 只保留在它指「识别
+>   这个动作」的地方——`RecognitionCatalog`、`RecognitionRuntime`。见 CONTEXT.md 的
+>   「Annotation model」一节。
+> - **运行时 schema 是 `umbraflow-annotations/v3`**，不是 `/v1`；授权文档 schema 是
+>   `umbraflow-authoring/v4`，不是 `/v2`。退役的 id 都没有读路径。
 > - **`evaluateActionTarget` 收 `PageId`**：`(frame, liveFingerprint, pageId, elementId,
 >   policy)`。每页的事实——细化的搜索区域、钉死的形态——都住在引用行上。
-> - **元素带的是有序的 `Variant` 列表**，不是一份模板。每个是
+> - **元素带的是有序的 `Appearance` 列表**，不是一份模板。每个是
 >   `{name, sourceId, templateRect, threshold, colourKey?}`；声明顺序只裁决平局，别的什么
 >   都不决定。**空列表是合法的**，含义是这个矩形由「页面被认出」定位，也因此该元素不能作为
->   身份证据。`RuntimeManifest::findAsset` 的键相应变成 `(elementId, variantName)`。
-> - **`derivedRuntimeRecognizerId` 没有了。** 编译器每个元素只产出一个 recognizer，用元素
->   自己的 id；模板仍按 (source, 矩形, 色键) 去重。
+>   身份证据。`RuntimeManifest::findAsset` 的键相应变成 `(elementId, appearanceName)`。
+> - **`derivedRuntimeRecognizerId` 没有了。** 编译器每个元素只产出一个
+>   `CompiledElement`，用元素自己的 id；模板仍按 (source, 矩形, 色键) 去重。
 > - **「`InfoRegion` 求值」那条开放项已被取代**，不是还开着：`read` 是一个带标注期 OCR 参数
 >   的能力，计划 §四之二.7 定下了消费它的 `cycle_read` 动词。
 >
@@ -38,7 +40,7 @@
 > 资源上限约束。
 
 > **DIRTY（2026-07-26）**：本文尚未反映 authoring schema v2（Element+placement
-> 取代按页拷贝、v1 读取路径退役、编译器按 placement 展开运行时 recognizer、
+> 取代按页拷贝、v1 读取路径退役、编译器按 placement 展开运行时 element、
 > deriveModel 永久桥）。以实际代码与
 > `docs/plans/2026-07-26-page-centric-authoring.md` 为准，待重新同步。
 >
@@ -74,7 +76,7 @@
   `entry/workbench/project-persistence.cpp`，engine 的磁盘装载边界在
   `modules/engine/source/engine/runtime-loader.cpp`。
 - 不负责 Luau VM、脚本 AST 或 opaque handle 暴露；这里只验证 `ResourceName` 是可直接访问的 ASCII Luau member key，并提供 host 可包装的强类型资源。
-- 不做浮点阈值决策、颜色/HSV/OCR/composite recognizer、分辨率缩放、页面优先级或 best-effort schema 兼容。
+- 不做浮点阈值决策、颜色/HSV/OCR/composite 匹配器、分辨率缩放、页面优先级或 best-effort schema 兼容。
 - 不保证“点击一定成功”。它只证明 annotation 侧授权条件成立；engine 仍须在 sink 调用前复验目标实例，controller 仍须在实际投递层验证 lease。
 
 `annotation` 不投递后台输入。它负责拒绝可疑坐标动作，确保 `Unknown`、`Ambiguous`、
@@ -91,9 +93,9 @@ catalog 定义则在 `modules/annotation/source/annotation/catalog.hpp` 上层�
 - `ElementId`、`PageId`、`SourceId` 和 `RegressionId` 是基于 `ResourceId` 的不同 `StrongValue`，避免跨资源类别误传。
 - `ProjectId` 要求非空有效 UTF-8；`ResourceName` 要求非空 ASCII identifier 且不是 Luau 保留字。
 - `ProjectFingerprint` 是非零的 `width`、`height`、`dpiX`、`dpiY`。S0 把 AnnotationSpace 固定为此 base resolution 下的整数 `FrameSpace`。
-- `AnnotationType` 当前有 `PageAnchor`、`ActionTarget`、`InfoRegion`。S0 schema 的 recognizer kind 仍只有 `gray_template`。
+- `AnnotationType` 当前有 `PageAnchor`、`ActionTarget`、`InfoRegion`。S0 schema 的 element kind 仍只有 `gray_template`。
 
-`RecognizerDefinition::create` 是单个识别器的验证入口。输入 `RecognizerSpec` 后，它验证
+`CompiledElement::create` 是单个识别器的验证入口。输入 `CompiledElementSpec` 后，它验证
 `templateRect` 和 `searchRoi` 都位于项目范围内、模板尺寸能放进 ROI、阈值可计算、click 只属于
 `ActionTarget` 且落在模板内、`PageAnchor` 不携带 page membership、`ActionTarget` 至少授权一个页面。随后它按 `PageId` 排序 `allowedPageIds` 并拒绝重复项。
 
@@ -102,8 +104,8 @@ catalog 定义则在 `modules/annotation/source/annotation/catalog.hpp` 上层�
 
 `RecognitionCatalog::create` 再做跨资源闭包验证：
 
-- recognizer 和 page 都按 UUID 排序；
-- ID 与 name 在各自类别内唯一，并且 page 与 recognizer 之间也全局唯一；
+- element 和 page 都按 UUID 排序；
+- ID 与 name 在各自类别内唯一，并且 page 与 element 之间也全局唯一；
 - page signature 只能引用存在的 `PageAnchor`；
 - 每个 `allowedPageIds` 必须指向存在的 page；
 - 两个 page 不得拥有完全相同的 required/forbidden 集合。
@@ -111,8 +113,8 @@ catalog 定义则在 `modules/annotation/source/annotation/catalog.hpp` 上层�
 构造成功后，`RecognitionCatalog` 还保存去重、按 UUID 排序的 `pageAnchorOrder`。页面识别和
 `PageResolver` 都以它为唯一锚点评估顺序，所以输入容器顺序不会渗入运行结果。
 
-`recognizers()`、`pages()`、`pageAnchorOrder()` 返回只读 `std::span`；
-`findRecognizer()` 和 `findPage()` 返回 non-owning pointer。这些 view/pointer 都以 catalog 的生命周期为上界，声明处用 `UF_LIFETIME_BOUND` 或注释明确了约束。
+`elements()`、`pages()`、`pageAnchorOrder()` 返回只读 `std::span`；
+`findElement()` 和 `findPage()` 返回 non-owning pointer。这些 view/pointer 都以 catalog 的生命周期为上界，声明处用 `UF_LIFETIME_BOUND` 或注释明确了约束。
 
 ### 规范化编辑文档
 
@@ -123,14 +125,14 @@ catalog 定义则在 `modules/annotation/source/annotation/catalog.hpp` 上层�
   `assets/sources/<hash>.png` 路径、`ProjectFingerprint` 与 `SourceProvenance`。
 - `WgcSourceProvenance`：`TargetGeneration` 和 canonical RFC 3339 `capturedAt`；
   `ImportedSourceProvenance` 没有伪造的 WGC 字段。
-- `AuthoringRecognizerSpec`：一个已验证的 `RecognizerDefinition` 加其 `SourceId`。
+- `AuthoringElementSpec`：一个已验证的 `CompiledElement` 加其 `SourceId`。
 - `RegressionCase`：独立保存 `RegressionClassification` 与
   `RegressionExpectation`；positive/negative/confusable 不会暗改 resolved/unknown/ambiguous 期望。
-- `AuthoringDocument`：拥有 `RecognitionCatalog`、sources、recognizer-source 关系和 regressions。
+- `AuthoringDocument`：拥有 `RecognitionCatalog`、sources、element-source 关系和 regressions。
 
-`AuthoringDocument::create` 是 document 级 validation gate。它把 source、recognizer 和 regression
-按 UUID 排序，要求所有 source fingerprint 等于项目 fingerprint，闭合 annotation→source、
-regression→source 和 resolved regression→page 引用，并保证 source、recognizer、page、regression
+`AuthoringDocument::create` 是 document 级 validation gate。它把 source、element 和 regression
+按 UUID 排序，要求所有 source fingerprint 等于项目 fingerprint，闭合 element→source、
+regression→source 和 resolved regression→page 引用，并保证 source、element、page、regression
 的 ID 全局唯一。每类表最多 4096 条，canonical 序列化结果最多 16 MiB。
 
 序列化和解析在 `modules/annotation/source/annotation/authoring-document.cpp`。
@@ -170,7 +172,7 @@ regression→source 和 resolved regression→page 引用，并保证 source、r
    `modules/annotation/source/annotation/template-asset.cpp` 调用
    `image::cropBgra8`、`image::bgra8ToRgba8`、`image::encodeRgbaPng`，最后对编码后的 PNG bytes 调用 `sha256`。
 5. 生成路径固定为 `assets/templates/<hash>.png`；相同 hash 的相同 bytes 只保留一个资产，hash 相同但 bytes 不同则拒绝。
-6. recognizer 与生成 hash 重新关联，创建 `RuntimeManifest` 并 canonical 序列化。
+6. element 与生成 hash 重新关联，创建 `RuntimeManifest` 并 canonical 序列化。
 
 编译器在分配/处理前使用 checked arithmetic。当前实现限制总 source pixels 加唯一 template-task pixels
 不超过 256 Mi-pixels，唯一生成模板 PNG bytes 总和不超过 512 MiB；单个 PNG 还受 image codec
@@ -199,7 +201,7 @@ regression→source 和 resolved regression→page 引用，并保证 source、r
 - **不带色键的元素输出逐字节相同的字节**，走的是原来那条调用，所以重新保存一个已有项目不会挪动
   任何东西，色键出现之前标注的每一个模板也都保持全不透明的 alpha。
 - **派生 catalog 不带色键。** 键是编辑期的真相，运行时从模板的 alpha 上读 mask，所以编译器从
-  recognizer 派生自的那个 element 上取它。对同一屏同一矩形用两个不同色键的两个元素是两个模板
+  编译产物派生自的那个 element 上取它。对同一屏同一矩形用两个不同色键的两个元素是两个模板
   任务，因此裁剪/哈希去重也把色键计入键值。
 
 `ContentHash` 与内置 SHA-256 实现在
@@ -209,12 +211,12 @@ regression→source 和 resolved regression→page 引用，并保证 source、r
 
 `RuntimeManifest` 位于
 `modules/annotation/source/annotation/runtime-manifest.hpp`。它拥有一个
-`RecognitionCatalog` 和按 recognizer 对齐的 `RuntimeRecognizerAsset`：
+`RecognitionCatalog` 和按 element 对齐的 `RuntimeElementAsset`：
 `templateHash`、`sourceHash`、`templatePath`。runtime schema 是
 `umbraflow-annotations/v1`，不包含 source ID、capture time、target generation 或完整截图。
 
-`RuntimeManifest::create` 验证每个 recognizer 只有一个 asset，并把 template path 从 hash 派生为
-`assets/templates/<hash>.png`。`parseRuntimeManifest` 使用同一 canonical reader，要求 recognizer
+`RuntimeManifest::create` 验证每个 element 只有一个 asset，并把 template path 从 hash 派生为
+`assets/templates/<hash>.png`。`parseRuntimeManifest` 使用同一 canonical reader，要求 element
 先于 page、每类最多 4096 条、文档最多 16 MiB，并在末尾通过
 `serializeRuntimeManifest(manifest) == input` 拒绝非 canonical 输入。
 
@@ -233,7 +235,7 @@ hit    = sadScore <= maxSad
 一个只选中寥寥几个像素的键，被拿去对着按整个矩形定的上限打分，而且什么都不会失败：一张 27 像素
 的 mask 对着按 920 像素定的阈值，每一帧都命中，什么也没测出来。一个在它本该区分的每种状态下
 都命中的元素，比没有这个元素更糟，因为它看起来是绿的。所以带色键的模板需要比不带的严得多的
-阈值——真机上 9000 基点让九个 recognizer 里三个假阳性，改标到 9900 后，七个标签在一张没见过的
+阈值——真机上 9000 基点让九个 element 里三个假阳性，改标到 9900 后，七个标签在一张没见过的
 帧上 7/7、在一张无 UI 的帧上 0/7。模型本身仍然两种失败都不拒绝：`page create` 与 `page add`
 会量出自己刚画的 mask，在选中像素少于 50、或占矩形一半以上时于 `authored.mask.warning`
 **给出警告**，而真正的闸门是 `umbra-authoring check`。见
@@ -252,7 +254,7 @@ hit    = sadScore <= maxSad
 
 - `create` 接受 `RuntimeManifest` 与 `EncodedRuntimeTemplate`。它要求收到的 hash 集合恰好等于 manifest
   引用的唯一模板集合，重新计算每份 PNG 的 SHA-256，解码为自有 Gray8 bytes，并核对模板尺寸与
-  recognizer geometry。它还把每个模板的 **alpha 通道抽成一张 mask 平面**；所有像素都不透明时
+  element geometry。它还把每个模板的 **alpha 通道抽成一张 mask 平面**；所有像素都不透明时
   mask 留空，于是选中的是无 mask 匹配器，也就是色键出现之前的项目原本的行为。
 - `evaluatePage` 返回 `PageRecognitionAttempt`，既可携带完整 `PageOutcome`，也可携带
   `PageRecognitionStop`，同时保留已经完成的 anchor evidence 和 pixel comparison 计数。
@@ -278,7 +280,7 @@ frame 是 Gray8 时直接建立同步只读 view；是 Bgra8 时只转换一次�
 
 页面证据类型在 `modules/annotation/source/annotation/recognition.hpp`：
 
-- `AnchorEvidence` 记录 recognizer ID、hit、可选 SAD score、`maximumSad`、可选 matched rect 和展示 confidence。
+- `AnchorEvidence` 记录 element ID、hit、可选 SAD score、`maximumSad`、可选 matched rect 和展示 confidence。
 - `PageEvaluation` 保存某 page 的 required/forbidden evidence 与 candidate 标志。
 - `PageResolutionEvidence` 拥有 project ID、`FrameIdentity`、全部 page evaluations 和完整 candidate IDs。
 - `ResolvedPage`、`UnknownPage`、`AmbiguousPages` 都拥有证据；只有 `ResolvedPage` 还能携带唯一 `PageId`。
@@ -296,7 +298,7 @@ required 全 hit 且 forbidden 全 miss 才是 candidate。零个候选返回 `U
 
 动作授权定义在 `modules/annotation/source/annotation/authorization.hpp` 和
 `modules/annotation/source/annotation/authorization.cpp`。`ActionDetection::create` 不信任字符串 label：
-它要求 recognizer 确实是 catalog 中的 `ActionTarget`，label 与该 recognizer name 相等，并把
+它要求 element 确实是 catalog 中的 `ActionTarget`，label 与该 element name 相等，并把
 `ProjectId`、`ElementId` 和拥有的 `Detection` 绑定在一个值中。
 
 `authorizeCoordinateAction` 实现四条件 gate，并在每层继续做闭包校验：
@@ -305,7 +307,7 @@ required 全 hit 且 forbidden 全 miss 才是 candidate。零个候选返回 `U
    `TargetCompatibilityUnverified`。
 2. **同项目的 ResolvedPage 条件**：page evidence 和 action detection 都必须属于 active project；
    resolved page 必须仍存在于 active catalog。
-3. **同帧 ActionDetection 条件**：recognizer 必须仍是 active catalog 的 `ActionTarget`，其
+3. **同帧 ActionDetection 条件**：element 必须仍是 active catalog 的 `ActionTarget`，其
    `allowedPageIds` 必须包含 resolved page；page evidence、detection 和 delivery 的
    session/generation/frame 三元组必须完全相同。
 4. **有效 ObservationLease 条件**：最后调用 `ObservationLease::validate`，用 delivery 时刻再次验证
@@ -359,7 +361,7 @@ delivery 指纹/身份同时成立。`modules/engine/source/engine/session.cpp` 
   template PNG，交给 `RecognitionRuntime::create` 再验 hash closure。
 - `modules/engine/source/engine/session.cpp` 从 config 构造 `RecognitionPolicy`，在同一个
   `Observation` frame 上 resolve page 和 find action。
-- action hit 被转换为 domain `Detection`，再经 `ActionDetection::create` 绑定 recognizer identity；
+- action hit 被转换为 domain `Detection`，再经 `ActionDetection::create` 绑定 element identity；
   `resolveClickPixel` 生成 frame pixel，`authorizeCoordinateAction` 在 act 时验证四条件 gate。
 - engine 把 pixel 转为 `FrameSpace`/`ClientSpace`，复验 target instance，才调用 controller-backed
   `IActionSink`。跨 annotation 边界传递的是值、证据和 `Status`，不是 OS handle。
@@ -374,7 +376,7 @@ cancellation 与 absolute deadline 跨 suite。Cancel/timeout 中断后续 case�
 
 `tests/annotation` 是确定性离线测试面；各文件固定的契约如下：
 
-- `test-catalog.cpp`：UUID/name canonical form、basis-point 边界、recognizer geometry/page membership、
+- `test-catalog.cpp`：UUID/name canonical form、basis-point 边界、element geometry/page membership、
   空/重复/矛盾 signature、跨资源闭包与重复 signature。
 - `test-authoring-document.cpp`：authoring 文档完整 byte-stable round trip、schema/顺序/整数/路径/
   RFC 3339/CRLF drift 拒绝，以及 regression classification 与 expectation 独立性。
@@ -389,7 +391,7 @@ cancellation 与 absolute deadline 跨 suite。Cancel/timeout 中断后续 case�
 - `test-recognition-runtime.cpp`：Gray8/Bgra8 evidence 等价、page outcome、全局 budget、cancel、
   deadline、fingerprint/template closure、共享模板、action hit/miss/type checks、action stop 与
   `resolveClickPixel`。
-- `test-authorization.cpp`：fingerprint、同帧 identity、recognizer-label binding、allowed page、
+- `test-authorization.cpp`：fingerprint、同帧 identity、element-label binding、allowed page、
   active catalog/project 和 lease 组成的授权门。
 - `test-regression-runner.cpp`：resolved/unknown/ambiguous evidence、expectation mismatch、
   suite interruption、per-case budget 与 source 复用。
@@ -407,9 +409,9 @@ runtime happy path 也不足以证明非 canonical 输入继续 fail-closed。
 `docs/plans/2026-07-21-lua-task-model-grill-decisions.md` D8 要求新增显式
 `BaseToLiveTransform { uniformScale, offset, viewport }`。它应位于 base annotation geometry 进入
 live frame search/click geometry 的边界，并完整进入 trace；不能修改现有 live
-`CoordinateTransform` 的 Client↔Frame 职责，也不能把裸 scale 散入 recognizer。
+`CoordinateTransform` 的 Client↔Frame 职责，也不能把裸 scale 散入 element。
 
-**新 recognizer kind。** `RecognizerDefinition` 已把 type、geometry、threshold 和 page membership
+**新 element kind。** `CompiledElement` 已把 type、geometry、threshold 和 page membership
 集中，`RecognitionRuntime` 又把已解码模板隔离为内部 `GrayTemplate`。新增颜色、OCR 或 composite
 时，改动会贯穿 schema version/parser、catalog validation、compiler asset closure、runtime-owned
 kernel 与 evidence；不能只在 workbench 增加一个 UI 选项。权威计划 §7 明确 P0 只允许

@@ -223,21 +223,21 @@ namespace uf::task
         return CycleTicket{.generation = m_ticket->generation, .ordinal = ordinal};
     }
 
-    auto OperatorSession::findRecognizer(
+    auto OperatorSession::findElement(
         std::string_view name
     ) const -> Result<annotation::ElementId>
     {
-        auto const exposed = m_surface.recognizers();
+        auto const exposed = m_surface.elements();
         auto const found   = std::ranges::find(
             exposed,
             name,
-            &RecognizerHandleSpec::name
+            &ElementHandleSpec::name
         );
         if (found == exposed.end())
         {
             return invalid(
                 std::format(
-                    "this project exposes no action-target recognizer named \"{}\"",
+                    "this project exposes no action-target element named \"{}\"",
                     name
                 )
             );
@@ -360,7 +360,7 @@ namespace uf::task
 
     auto OperatorSession::cycleFind(
         uint64 cycleOrdinal,
-        std::string_view recognizerName
+        std::string_view elementName
     ) -> Result<std::optional<uint64>>
     {
         UF_TRY(requireLiveGeneration(m_context));
@@ -368,15 +368,15 @@ namespace uf::task
         // Resolved before the call is recorded, exactly as the Luau primitive
         // validates its handle argument before building the identity: a name that
         // addresses nothing is a bad argument rather than a call that happened.
-        UF_TRY_VALUE(recognizerId, findRecognizer(recognizerName));
+        UF_TRY_VALUE(elementId, findElement(elementName));
 
         auto const call = NativeCallIdentity{
             .verb         = "cycle_find",
             .cycleOrdinal = cycleOrdinal,
-            .recognizerId = recognizerId,
+            .elementId    = elementId,
         };
 
-        auto result = m_context.cycleFind(ticketFor(cycleOrdinal), recognizerId);
+        auto result = m_context.cycleFind(ticketFor(cycleOrdinal), elementId);
         if (!result)
         {
             recordNativeCallFailure(m_context, call, result.error());

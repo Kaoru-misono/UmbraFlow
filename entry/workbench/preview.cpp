@@ -43,12 +43,12 @@ namespace uf::workbench
         auto toAnchorRow(annotation::AnchorEvidence const& evidence) -> PreviewAnchorRow
         {
             return PreviewAnchorRow{
-                .recognizerId = evidence.recognizerId(),
-                .appearance   = evidence.variantName(),
-                .hit          = evidence.hit(),
-                .sadScore     = evidence.sadScore(),
-                .maximumSad   = evidence.maximumSad(),
-                .matchedRect  = evidence.matchedRect(),
+                .elementId   = evidence.elementId(),
+                .appearance  = evidence.appearanceName(),
+                .hit         = evidence.hit(),
+                .sadScore    = evidence.sadScore(),
+                .maximumSad  = evidence.maximumSad(),
+                .matchedRect = evidence.matchedRect(),
             };
         }
 
@@ -167,7 +167,7 @@ namespace uf::workbench
 
         // The page half of a preview: every anchor's evidence and how the page
         // classified. Shared so the model check evaluates each screen once,
-        // rather than once per recognizer it wants a score for.
+        // rather than once per element it wants a score for.
         //
         // The policy arrives carrying the per-search budget. evaluatePage shares
         // its budget across every anchor, so it is scaled here by the runtime's
@@ -205,7 +205,7 @@ namespace uf::workbench
             )
             {
                 result.pageStop = PreviewStop{
-                    .recognizerId = p_stop->recognizerId,
+                    .elementId = p_stop->elementId,
                     .reason       = p_stop->reason,
                 };
                 return result;
@@ -252,7 +252,7 @@ namespace uf::workbench
 
         // The page whose reference supplies an element's interact search.
         //
-        // One element compiles to one recognizer under its own id, so what a
+        // One element compiles to one CompiledElement under its own id, so what a
         // page still decides is the region searched and any pinned appearance,
         // and evaluateActionTarget reads both off the reference. The screen
         // being searched and the page supplying the reference are therefore
@@ -321,26 +321,26 @@ namespace uf::workbench
                 : ScreenCheckOutcome::WrongPage;
         }
 
-        // Which screen one recognizer has to work on, paired with its identity.
+        // Which screen one element has to work on, paired with its identity.
         struct WorkingScreen final
         {
-            annotation::ElementId               recognizerId;
+            annotation::ElementId               elementId;
             std::optional<annotation::SourceId> sourceId{};
         };
 
-        // The screen each recognizer is searched on at runtime: the screen
+        // The screen each element is searched on at runtime: the screen
         // recorded for the page it belongs to.
         //
         // For anything drawn on the page it serves this is also the screen its
         // template was cut from, and the distinction never shows. A shared
         // element is the exception -- cut from one screen, used on another -- and
         // reading its score against the screen it was cut from would report a
-        // perfect match for a recognizer that never fires anywhere it is
+        // perfect match for an element that never fires anywhere it is
         // authorized. The page's screen is the only one that answers the question
         // the author is asking.
         //
         // Falls back to the screen the template was cut from when no page claims
-        // the recognizer or that page records no screen.
+        // the element or that page records no screen.
         [[nodiscard]]
         auto workingScreens(
             annotation::AuthoringDocument const& document
@@ -364,8 +364,8 @@ namespace uf::workbench
             };
 
             auto screens = std::vector<WorkingScreen>{};
-            screens.reserve(document.catalog().recognizers().size());
-            for (auto const& recognizer : document.catalog().recognizers())
+            screens.reserve(document.catalog().elements().size());
+            for (auto const& element : document.catalog().elements())
             {
                 auto working = std::optional<annotation::SourceId>{};
 
@@ -374,7 +374,7 @@ namespace uf::workbench
                 // element and the page it identifies as well.
                 for (auto const& reference : document.references())
                 {
-                    if (reference.elementId != recognizer.id())
+                    if (reference.elementId != element.id())
                     {
                         continue;
                     }
@@ -386,29 +386,29 @@ namespace uf::workbench
                 }
                 if (!working.has_value())
                 {
-                    auto const* p_element = document.findElement(recognizer.id());
-                    if (p_element != nullptr && !p_element->variants().empty())
+                    auto const* p_element = document.findElement(element.id());
+                    if (p_element != nullptr && !p_element->appearances().empty())
                     {
-                        working = p_element->variants().front().sourceId();
+                        working = p_element->appearances().front().sourceId();
                     }
                 }
 
                 screens.emplace_back(
                     WorkingScreen{
-                        .recognizerId = recognizer.id(),
-                        .sourceId     = working,
+                        .elementId = element.id(),
+                        .sourceId  = working,
                     }
                 );
             }
             return screens;
         }
 
-        // Files one score under the recognizer it belongs to, keeping the score
+        // Files one score under the element it belongs to, keeping the score
         // on the screen it has to work on and the lowest score on any other. The
         // lowest is the interesting one: it is the screen this mark comes closest
         // to claiming by mistake.
         auto recordMargin(
-            std::vector<RecognizerMargin>& margins,
+            std::vector<ElementMargin>& margins,
             std::span<WorkingScreen const> working,
             annotation::SourceId sourceId,
             PreviewAnchorRow const& row
@@ -416,20 +416,20 @@ namespace uf::workbench
         {
             auto found = std::ranges::find(
                 margins,
-                row.recognizerId,
-                &RecognizerMargin::recognizerId
+                row.elementId,
+                &ElementMargin::elementId
             );
             if (found == margins.end())
             {
                 auto const entry = std::ranges::find(
                     working,
-                    row.recognizerId,
-                    &WorkingScreen::recognizerId
+                    row.elementId,
+                    &WorkingScreen::elementId
                 );
                 margins.emplace_back(
-                    RecognizerMargin{
-                        .recognizerId = row.recognizerId,
-                        .maximumSad   = row.maximumSad,
+                    ElementMargin{
+                        .elementId  = row.elementId,
+                        .maximumSad = row.maximumSad,
                         .ownSourceId  = entry == working.end()
                             ? std::optional<annotation::SourceId>{}
                             : entry->sourceId,
@@ -458,17 +458,17 @@ namespace uf::workbench
         }
 
         // Files a score measured on the running target. The live frame is
-        // evaluated after every captured screen, so each recognizer already has
+        // evaluated after every captured screen, so each element already has
         // an entry; a frame nobody authored against introduces no new ones.
         auto recordLiveMargin(
-            std::vector<RecognizerMargin>& margins,
+            std::vector<ElementMargin>& margins,
             PreviewAnchorRow const& row
         ) -> void
         {
             auto const found = std::ranges::find(
                 margins,
-                row.recognizerId,
-                &RecognizerMargin::recognizerId
+                row.elementId,
+                &ElementMargin::elementId
             );
             if (found != margins.end())
             {
@@ -532,7 +532,7 @@ namespace uf::workbench
             auto const row = std::ranges::find(
                 anchorRows,
                 elementId,
-                &PreviewAnchorRow::recognizerId
+                &PreviewAnchorRow::elementId
             );
             if (row == anchorRows.end())
             {
@@ -661,11 +661,11 @@ namespace uf::workbench
             annotation::SourceId screenId
         ) -> std::optional<annotation::ResourceName>
         {
-            if (p_reference != nullptr && p_reference->variant.has_value())
+            if (p_reference != nullptr && p_reference->appearance.has_value())
             {
-                return p_reference->variant;
+                return p_reference->appearance;
             }
-            auto const appearances = element.variants();
+            auto const appearances = element.appearances();
             if (appearances.size() == 1U)
             {
                 return appearances.front().name();
@@ -673,7 +673,7 @@ namespace uf::workbench
             auto const cutHere = std::ranges::find(
                 appearances,
                 screenId,
-                &annotation::Variant::sourceId
+                &annotation::Appearance::sourceId
             );
             if (cutHere == appearances.end())
             {
@@ -880,11 +880,11 @@ namespace uf::workbench
             )
             {
                 auto const* p_element = document.findElement(elementId);
-                if (p_element == nullptr || p_element->variants().size() < 2U)
+                if (p_element == nullptr || p_element->appearances().size() < 2U)
                 {
                     return;
                 }
-                for (auto const& appearance : p_element->variants())
+                for (auto const& appearance : p_element->appearances())
                 {
                     searches.emplace_back(
                         AppearanceSearch{
@@ -1065,7 +1065,7 @@ namespace uf::workbench
                 auto const row = std::ranges::find(
                     preview.anchorRows,
                     anchorId,
-                    &PreviewAnchorRow::recognizerId
+                    &PreviewAnchorRow::elementId
                 );
                 if (row != preview.anchorRows.end())
                 {
@@ -1120,7 +1120,7 @@ namespace uf::workbench
                 auto const row = std::ranges::find(
                     actionEval.rows,
                     actionId,
-                    &PreviewAnchorRow::recognizerId
+                    &PreviewAnchorRow::elementId
                 );
                 if (row != actionEval.rows.end())
                 {
@@ -1423,7 +1423,7 @@ namespace uf::workbench
         annotation::AuthoringDocument const& document,
         std::span<annotation::AuthoringSourceAsset const> sourceAssets,
         annotation::SourceId selectedSourceId,
-        std::optional<annotation::ElementId> selectedRecognizerId,
+        std::optional<annotation::ElementId> selectedElementId,
         annotation::RecognitionPolicy const& policy
     ) -> Result<PreviewResult>
     {
@@ -1447,17 +1447,17 @@ namespace uf::workbench
         UF_TRY_VALUE(result, evaluatePageOn(runtime, frame, fingerprint, policy));
         result.sourceId = selectedSourceId;
 
-        if (selectedRecognizerId.has_value())
+        if (selectedElementId.has_value())
         {
-            auto const* p_recognizer = document.catalog().findRecognizer(
-                *selectedRecognizerId
+            auto const* p_element = document.catalog().findElement(
+                *selectedElementId
             );
             if (
-                p_recognizer != nullptr
-                && p_recognizer->capabilities().hasInteract()
+                p_element != nullptr
+                && p_element->capabilities().hasInteract()
             )
             {
-                // The element is one recognizer under the id the UI selected it
+                // The element is one compiled element under the id the UI selected it
                 // by, so the only thing the shown screen's page decides is which
                 // reference supplies the search region. When it decides nothing
                 // -- an unclaimed screen -- the element's own page does, and the
@@ -1466,7 +1466,7 @@ namespace uf::workbench
                 auto const pageContext = expectedPageOf(document, selectedSourceId);
                 auto const searchPage  = interactPageFor(
                     document,
-                    *selectedRecognizerId,
+                    *selectedElementId,
                     pageContext
                 );
                 if (searchPage.has_value())
@@ -1477,7 +1477,7 @@ namespace uf::workbench
                             frame,
                             fingerprint,
                             *searchPage,
-                            *selectedRecognizerId,
+                            *selectedElementId,
                             policy
                         )
                     );
@@ -1488,7 +1488,7 @@ namespace uf::workbench
                     )
                     {
                         result.actionStop = PreviewStop{
-                            .recognizerId = *selectedRecognizerId,
+                            .elementId = *selectedElementId,
                             .reason       = p_actionStop->reason,
                         };
                     }
@@ -1508,7 +1508,7 @@ namespace uf::workbench
     auto scoreRegionOnScreen(
         annotation::AuthoringDocument const& document,
         std::span<annotation::AuthoringSourceAsset const> sourceAssets,
-        annotation::ElementId recognizerId,
+        annotation::ElementId elementId,
         annotation::SourceId screenId,
         annotation::RecognitionPolicy const& policy
     ) -> Result<PreviewAnchorRow>
@@ -1525,10 +1525,10 @@ namespace uf::workbench
                 "scoring a region requires the screen to be part of the project"
             );
         }
-        auto const* p_recognizer = document.catalog().findRecognizer(recognizerId);
+        auto const* p_element = document.catalog().findElement(elementId);
         if (
-            p_recognizer == nullptr
-            || !p_recognizer->capabilities().hasInteract()
+            p_element == nullptr
+            || !p_element->capabilities().hasInteract()
         )
         {
             return fail(
@@ -1538,7 +1538,7 @@ namespace uf::workbench
         }
         auto const searchPage = interactPageFor(
             document,
-            recognizerId,
+            elementId,
             std::nullopt
         );
         if (!searchPage.has_value())
@@ -1558,7 +1558,7 @@ namespace uf::workbench
                 frame,
                 fingerprint,
                 *searchPage,
-                recognizerId,
+                elementId,
                 policy
             )
         );
@@ -1722,26 +1722,26 @@ namespace uf::workbench
 
         auto anchorIds = std::vector<annotation::ElementId>{};
         auto actionIds = std::vector<annotation::ElementId>{};
-        for (auto const& recognizer : catalog.recognizers())
+        for (auto const& element : catalog.elements())
         {
             // Declares identify but no page exercises it: nothing scores it, and
             // its row stays as an explicit not-searched column rather than
             // vanishing from the grid.
             auto const unexercisedMark = (
-                recognizer.capabilities().hasIdentify()
-                && !recognizer.capabilities().hasInteract()
+                element.capabilities().hasIdentify()
+                && !element.capabilities().hasInteract()
             );
-            if (scannedByPagePass(recognizer.id()) || unexercisedMark)
+            if (scannedByPagePass(element.id()) || unexercisedMark)
             {
-                anchorIds.emplace_back(recognizer.id());
+                anchorIds.emplace_back(element.id());
             }
-            else if (recognizer.capabilities().hasInteract())
+            else if (element.capabilities().hasInteract())
             {
-                actionIds.emplace_back(recognizer.id());
+                actionIds.emplace_back(element.id());
             }
         }
 
-        // Resolved once: which screen each recognizer is actually searched on.
+        // Resolved once: which screen each element is actually searched on.
         // For a shared element that is not the screen its template came from.
         auto const working = workingScreens(document);
 
@@ -1861,7 +1861,7 @@ namespace uf::workbench
             return check;
         }
 
-        // The live frame is measured last, once every recognizer already has a
+        // The live frame is measured last, once every element already has a
         // margin entry, and it is never added to the project: a frame taken to
         // measure against is not a screen the model is authored on.
         auto livePolicy     = policy;

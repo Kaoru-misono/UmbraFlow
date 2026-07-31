@@ -175,9 +175,9 @@ fill, or pick a different feature.
 >
 > [The capability plan](../plans/2026-07-31-annotation-model-capabilities.md)
 > §2.3 P0 originally wanted this floor as a construction-time refusal in
-> `Variant::create`. That was **demoted to a warning** (see the plan's
+> `Appearance::create`. That was **demoted to a warning** (see the plan's
 > "两条实现期裁决" B), for two reasons this section is the evidence for: a
-> variant carries a `sourceId` and no pixels, so that layer cannot count
+> appearance carries a `sourceId` and no pixels, so that layer cannot count
 > anything; and a pixel count is the wrong measure on its own, since it waves the
 > 68% orange fill straight through. **The gate stays the falsification matrix**,
 > `umbra-authoring check` — that measures whether the element hits a screen it
@@ -186,7 +186,7 @@ fill, or pick a different feature.
 The general rule this taught, which is the part worth carrying: **an element that
 hits every state it is meant to distinguish is worse than no element, because it
 looks green.** This is the same discipline as the repository's falsification rule
-for tests — a recognizer counts only once it has been shown to miss the state it
+for tests — an element counts only once it has been shown to miss the state it
 is supposed to reject.
 
 ### Regression check
@@ -199,7 +199,7 @@ hits both is to be deleted, not tuned.
 
 ### Symptom
 
-A page's recognizers all pass on every frame available, then the page stops
+A page's elements all pass on every frame available, then the page stops
 resolving entirely when the same screen is reached at a different location in the
 game.
 

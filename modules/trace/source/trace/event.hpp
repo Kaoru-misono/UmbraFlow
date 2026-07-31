@@ -33,7 +33,13 @@ namespace uf::trace
     // handed, which is what still names the frame when a host-side guard fails the
     // verb before the engine ever sees it. The version is emitted first on every
     // line so a downstream consumer can reject a line it does not understand.
-    inline constexpr auto k_traceSchema = std::string_view{"umbraflow-trace/v1"};
+    //
+    // Bumped from v1 on 2026-07-31 when the annotated thing stopped being spelled
+    // `recognizer` on this wire: `recognizerId` is now `elementId` and the
+    // resources line's `recognizers` array is now `elements`. Renaming a field is
+    // a wire change whatever the field means, so v1 readers are turned away by
+    // the version rather than handed a line missing the key they look for.
+    inline constexpr auto k_traceSchema = std::string_view{"umbraflow-trace/v2"};
 
     // The single JSON member holding every field that may legitimately differ
     // between two runs of the same task at the same seed. It exists so the wall
@@ -273,7 +279,7 @@ namespace uf::trace
         // the wire.
         struct Resources final
         {
-            std::vector<std::string> recognizers{};
+            std::vector<std::string> elements{};
             std::vector<std::string> pages{};
         };
 
@@ -285,8 +291,8 @@ namespace uf::trace
         // reached, so its task.native_call is the only line the failure produces
         // and nothing else would say which cycle the script tried to use.
         // cycle_open mints its own ordinal rather than receiving one, so it
-        // carries none. The recognizer a find was handed travels on
-        // TraceEvent::recognizerId.
+        // carries none. The element a find was handed travels on
+        // TraceEvent::elementId.
         struct NativeCall final
         {
             std::string       verb{};
@@ -356,11 +362,11 @@ namespace uf::trace
         std::optional<NativeCall> nativeCall{};
         std::optional<Framework>  framework{};
 
-        // Fields that cut across the groups above: the recognizer a page stop, an
+        // Fields that cut across the groups above: the element a page stop, an
         // action search or an authorization refusal names; why a recognition
         // search stopped early; how the run ended; and the failure detail any
         // event may carry.
-        std::optional<annotation::ElementId> recognizerId{};
+        std::optional<annotation::ElementId> elementId{};
         std::optional<SadSearchStopReason>   stopReason{};
         std::optional<RunOutcome>            runOutcome{};
         std::optional<AutomationErrorKind>   errorKind{};

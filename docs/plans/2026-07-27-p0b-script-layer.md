@@ -1,5 +1,14 @@
 # P0-B 脚本层 — 动工前裁决与执行切片
 
+> **词汇重定向(2026-07-31)。** 本文是有日期的记录,不改写。下文的
+> `recognizer` / `RecognizerId` / `uf.recognizers` / `recognizerId` 一律读作
+> **element** / `ElementId` / `uf.elements` / `elementId`;`RecognizerDefinition`
+> 与 `RecognizerVariant` 读作 `CompiledElement` 与 `CompiledAppearance`;
+> `Variant` / `variant` 读作 `Appearance` / `appearance`。`RecognitionCatalog` 与
+> `RecognitionRuntime` 名字不变——它们指的是「识别」这个动作。schema id 随改名一起动了:
+> `umbraflow-authoring/v4`、`umbraflow-annotations/v3`、`umbraflow-trace/v2`。
+> 权威词汇见 `CONTEXT.md` 的「Annotation model」一节。
+
 > **2026-07-29 取代注记**:本文的**脚本层裁决(§一)与阶段 2 API 草图(§四)已被
 > [`2026-07-29-three-layer-task-system.md`](2026-07-29-three-layer-task-system.md)
 > 取代**,不再是实现依据。仍然有效的是**已落地工作的记录**——§三各阶段的「已完成」

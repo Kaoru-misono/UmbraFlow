@@ -10,7 +10,7 @@ dependencies; unfinished product capabilities are tracked under
 UmbraFlow authorizes background actions from visual evidence. Platform-independent modules own
 recognition and authorization, while Windows code owns target capture and input delivery. They are
 combined only under `entry/`, so recognition policy does not depend on HWND and controller does not
-need to understand pages or recognizers.
+need to understand pages or elements.
 
 ```text
 core
@@ -45,7 +45,7 @@ their own yet; see `README.md` for the scope those two pages are still owed.
 | `core` | `Result`, checked arithmetic, strong types, monotonic time, UTF-8, contract checks | Game, image, page, or platform policy |
 | `domain` | Frame identity, coordinate spaces, target generations, detections, observation leases, error classification | Recognition algorithms and input delivery |
 | `vision` | Gray8 conversion and resource-bounded SAD matching | PNG, page rules, and product thresholds |
-| `image` | PNG encoding/decoding, pixel-layout conversion, and rectangular crops | Recognizers and action authorization |
+| `image` | PNG encoding/decoding, pixel-layout conversion, and rectangular crops | Elements and action authorization |
 | `annotation` | Annotation model, page recognition, evidence, authorization, and deterministic compilation | Window capture and input delivery |
 | `engine` | Published-artifact loading, same-frame decisions, port orchestration, and trace events | Win32, target selection, and the Luau host |
 | `controller` | Window discovery, target continuity, WGC, DPI, and strict-background input | Page recognition and action selection |
@@ -94,7 +94,7 @@ These paths must not be mixed:
   to measure it, with no project, no generation and no capability surface. It is named in the same
   enum because "who drove this target" is one question with one set of answers, and an annotation
   session's clicks and captures were otherwise unattributable after the fact. It writes no
-  `umbraflow-trace/v1` line — every line of that schema carries a `runId` and a `generationId`, and
+  `umbraflow-trace/v2` line — every line of that schema carries a `runId` and a `generationId`, and
   it has neither — so it stamps its own results file with the same value under the same spelling.
 - `m0-demo` does not use the annotation authorization stack and cannot serve as shared
   implementation for engine or CLI.
@@ -135,9 +135,9 @@ kind.
 The authoring tool maintains two document forms:
 
 - `AuthoringDocument` stores the complete editable state and can be reopened for further changes.
-  Its schema is `umbraflow-authoring/v3`.
+  Its schema is `umbraflow-authoring/v4`.
 - `RuntimeManifest` retains only what runtime recognition and authorization require. Its schema is
-  `umbraflow-annotations/v2`.
+  `umbraflow-annotations/v3`.
 
 > Corrected 2026-07-31: both schema ids were bumped in one atomic change when the
 > three-way annotation type became a capability set, and neither old id has a

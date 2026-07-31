@@ -116,7 +116,7 @@ namespace uf::engine
                         anno::test::capabilities(anno::Identify{}),
                         anno::test::pixelRect(0, 0, 3, 2),
                         {
-                            anno::test::variant(
+                            anno::test::appearance(
                                 "default",
                                 sourceId,
                                 anno::test::pixelRect(0, 0, 1, 1)
@@ -133,7 +133,7 @@ namespace uf::engine
                         ),
                         anno::test::pixelRect(0, 0, 3, 2),
                         {
-                            anno::test::variant(
+                            anno::test::appearance(
                                 "default",
                                 sourceId,
                                 anno::test::pixelRect(1, 0, 2, 2)

@@ -1,5 +1,14 @@
 # Luau 0.730 integration plan (P0-B foundation)
 
+> **词汇重定向(2026-07-31)。** 本文是有日期的记录,不改写。下文的
+> `recognizer` / `RecognizerId` / `uf.recognizers` / `recognizerId` 一律读作
+> **element** / `ElementId` / `uf.elements` / `elementId`;`RecognizerDefinition`
+> 与 `RecognizerVariant` 读作 `CompiledElement` 与 `CompiledAppearance`;
+> `Variant` / `variant` 读作 `Appearance` / `appearance`。`RecognitionCatalog` 与
+> `RecognitionRuntime` 名字不变——它们指的是「识别」这个动作。schema id 随改名一起动了:
+> `umbraflow-authoring/v4`、`umbraflow-annotations/v3`、`umbraflow-trace/v2`。
+> 权威词汇见 `CONTEXT.md` 的「Annotation model」一节。
+
 > 状态:部分完成(2026-07-24)——基础集成已于 2026-07-22 以 `84713e4` 落地并有后续修正；§6 步骤 1–2 已完成，3–5 仍开放。
 >
 > **机制取代 2026-07-29**:§1 的沙箱结论与 §6 步骤 5 教「每个 task 线程

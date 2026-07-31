@@ -46,7 +46,7 @@ namespace uf::task
         std::string_view                     verb;
         std::optional<uint64>                cycleOrdinal{};
         std::optional<uint64>                hitCycleOrdinal{};
-        std::optional<annotation::ElementId> recognizerId{};
+        std::optional<annotation::ElementId> elementId{};
 
         // The pause a settle declared, in whole milliseconds. A settle reaches no
         // engine verb, so this is the only evidence it happened, and a replay

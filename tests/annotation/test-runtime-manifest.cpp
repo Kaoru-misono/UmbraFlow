@@ -45,10 +45,10 @@ namespace uf::annotation
             auto const click = TemplateOffset::create(1, 0, 2, 1);
             REQUIRE(click.has_value());
 
-            auto recognizers = std::vector<RuntimeRecognizerSpec>{};
-            recognizers.emplace_back(
-                RuntimeRecognizerSpec{
-                    .definition = test::recognizer(
+            auto elements = std::vector<RuntimeElementSpec>{};
+            elements.emplace_back(
+                RuntimeElementSpec{
+                    .definition = test::element(
                         fingerprint,
                         actionId,
                         "daily_button",
@@ -57,42 +57,42 @@ namespace uf::annotation
                             Interact{.clickOffset = *click}
                         ),
                         test::pixelRect(3, 2, 4, 3),
-                        std::vector<RecognizerVariant>{
-                            test::recognizerVariant(
+                        std::vector<CompiledAppearance>{
+                            test::compiledAppearance(
                                 "only",
                                 test::pixelRect(4, 3, 2, 1)
                             ),
                         }
                     ),
-                    .variants = std::vector<RuntimeVariantAsset>{
-                        RuntimeVariantAsset{
-                            .variantName  = test::resourceName("only"),
-                            .templateHash = contentHash(k_actionHash),
-                            .sourceHash   = contentHash(k_sourceHash),
+                    .appearances = std::vector<RuntimeAppearanceAsset>{
+                        RuntimeAppearanceAsset{
+                            .appearanceName = test::resourceName("only"),
+                            .templateHash   = contentHash(k_actionHash),
+                            .sourceHash     = contentHash(k_sourceHash),
                         },
                     },
                 }
             );
-            recognizers.emplace_back(
-                RuntimeRecognizerSpec{
-                    .definition = test::recognizer(
+            elements.emplace_back(
+                RuntimeElementSpec{
+                    .definition = test::element(
                         fingerprint,
                         anchorId,
                         "home_marker",
                         test::capabilities(Identify{}),
                         test::pixelRect(0, 0, 3, 3),
-                        std::vector<RecognizerVariant>{
-                            test::recognizerVariant(
+                        std::vector<CompiledAppearance>{
+                            test::compiledAppearance(
                                 "only",
                                 test::pixelRect(1, 1, 1, 1)
                             ),
                         }
                     ),
-                    .variants = std::vector<RuntimeVariantAsset>{
-                        RuntimeVariantAsset{
-                            .variantName  = test::resourceName("only"),
-                            .templateHash = contentHash(k_anchorHash),
-                            .sourceHash   = contentHash(k_sourceHash),
+                    .appearances = std::vector<RuntimeAppearanceAsset>{
+                        RuntimeAppearanceAsset{
+                            .appearanceName = test::resourceName("only"),
+                            .templateHash   = contentHash(k_anchorHash),
+                            .sourceHash     = contentHash(k_sourceHash),
                         },
                     },
                 }
@@ -109,7 +109,7 @@ namespace uf::annotation
             auto result = RuntimeManifest::create(
                 test::projectId(std::move(project)),
                 fingerprint,
-                std::move(recognizers),
+                std::move(elements),
                 {test::page(pageId, "home")},
                 std::move(references)
             );
@@ -137,31 +137,31 @@ namespace uf::annotation
         // Four tables, in one order. An element row carries only what is true of
         // the element everywhere -- its region and the set of things it can be
         // used for -- because a rectangle now serves several uses at once and
-        // none of them owns the row. The pixels moved out to one variant row per
+        // none of them owns the row. The pixels moved out to one appearance row per
         // appearance, keyed back by element_id, so the rows stay one field per
         // line. And a page row carries only its identity: what a page requires
         // and forbids is derived from the reference rows below it, which are
         // also what authorises a click, so no fact is written twice.
         auto const expected = std::string{
-            "schema = \"umbraflow-annotations/v2\"\n"
+            "schema = \"umbraflow-annotations/v3\"\n"
             "project_id = \"personal.test\"\n"
             "base_resolution = [8, 6]\n"
             "base_dpi = [96, 96]\n"
             "\n"
-            "[[recognizer]]\n"
+            "[[element]]\n"
             "id = \"00000000-0000-0000-0000-000000000001\"\n"
             "name = \"home_marker\"\n"
             "search_roi = [0, 0, 3, 3]\n"
             "capabilities = [\"identify\"]\n"
             "\n"
-            "[[recognizer]]\n"
+            "[[element]]\n"
             "id = \"00000000-0000-0000-0000-000000000002\"\n"
             "name = \"daily_button\"\n"
             "search_roi = [3, 2, 4, 3]\n"
             "capabilities = [\"interact\"]\n"
             "default_click = [1, 0]\n"
             "\n"
-            "[[variant]]\n"
+            "[[appearance]]\n"
             "element_id = \"00000000-0000-0000-0000-000000000001\"\n"
             "name = \"only\"\n"
             "kind = \"gray_template\"\n"
@@ -171,7 +171,7 @@ namespace uf::annotation
             "template_rect = [1, 1, 1, 1]\n"
             "min_similarity_bp = 9000\n"
             "\n"
-            "[[variant]]\n"
+            "[[appearance]]\n"
             "element_id = \"00000000-0000-0000-0000-000000000002\"\n"
             "name = \"only\"\n"
             "kind = \"gray_template\"\n"
@@ -209,7 +209,7 @@ namespace uf::annotation
         auto const parsed = parseRuntimeManifest(encoded);
         REQUIRE(parsed.has_value());
         CHECK(serializeRuntimeManifest(*parsed) == encoded);
-        CHECK(parsed->catalog().recognizers().size() == 2U);
+        CHECK(parsed->catalog().elements().size() == 2U);
         CHECK(parsed->catalog().pages().size() == 1U);
         CHECK(parsed->catalog().references().size() == 2U);
         auto const* p_asset = parsed->findAsset(
@@ -227,7 +227,7 @@ namespace uf::annotation
         );
         CHECK(
             encoded.starts_with(
-                "schema = \"umbraflow-annotations/v2\"\n"
+                "schema = \"umbraflow-annotations/v3\"\n"
                 "project_id = \"personal.\\\"quoted\\\"\\\\line\\nnext\"\n"
             )
         );
@@ -249,8 +249,8 @@ namespace uf::annotation
         auto const canonical = serializeRuntimeManifest(runtimeManifest());
         auto const retired   = replaceOnce(
             canonical,
-            "umbraflow-annotations/v2",
-            "umbraflow-annotations/v1"
+            "umbraflow-annotations/v3",
+            "umbraflow-annotations/v2"
         );
         auto const rejected = parseRuntimeManifest(retired);
         REQUIRE_FALSE(rejected.has_value());

@@ -458,7 +458,7 @@ namespace uf::annotation
     auto validateElementShape(
         ProjectFingerprint fingerprint,
         PixelRect searchRoi,
-        std::span<RecognizerVariant const> variants,
+        std::span<CompiledAppearance const> appearances,
         ElementCapabilities const& capabilities
     ) -> Status
     {
@@ -469,51 +469,51 @@ namespace uf::annotation
             );
         }
 
-        for (auto const& variant : variants)
+        for (auto const& appearance : appearances)
         {
-            if (!rectWithin(variant.templateRect, fingerprint))
+            if (!rectWithin(appearance.templateRect, fingerprint))
             {
                 return invalidCatalog(
                     std::format(
-                        "variant \"{}\" template_rect must fit the project resolution",
-                        variant.name.value()
+                        "appearance \"{}\" template_rect must fit the project resolution",
+                        appearance.name.value()
                     )
                 );
             }
-            if (!templateFits(variant.templateRect, searchRoi))
+            if (!templateFits(appearance.templateRect, searchRoi))
             {
                 return invalidCatalog(
                     std::format(
-                        "variant \"{}\" template must fit inside the element search_roi",
-                        variant.name.value()
+                        "appearance \"{}\" template must fit inside the element search_roi",
+                        appearance.name.value()
                     )
                 );
             }
             UF_TRY(
-                variant.threshold.maximumSad(
-                    variant.templateRect.width(),
-                    variant.templateRect.height()
+                appearance.threshold.maximumSad(
+                    appearance.templateRect.width(),
+                    appearance.templateRect.height()
                 )
             );
         }
 
-        for (auto left = std::size_t{0}; left < variants.size(); ++left)
+        for (auto left = std::size_t{0}; left < appearances.size(); ++left)
         {
-            for (auto right = left + 1U; right < variants.size(); ++right)
+            for (auto right = left + 1U; right < appearances.size(); ++right)
             {
-                if (checkedAt(variants, left).name == checkedAt(variants, right).name)
+                if (checkedAt(appearances, left).name == checkedAt(appearances, right).name)
                 {
-                    return invalidCatalog("element variant names must be unique");
+                    return invalidCatalog("element appearance names must be unique");
                 }
             }
         }
 
         // A rectangle with no pixels of its own is located by the page that was
         // recognised, so it cannot be part of what recognises that page.
-        if (variants.empty() && capabilities.hasIdentify())
+        if (appearances.empty() && capabilities.hasIdentify())
         {
             return invalidCatalog(
-                "an element with no variants cannot exercise identify: it has no pixels to be evidence"
+                "an element with no appearances cannot exercise identify: it has no pixels to be evidence"
             );
         }
 
@@ -522,23 +522,23 @@ namespace uf::annotation
         {
             // The offset is template-local, so with no template there is
             // nothing for it to be local to.
-            if (variants.empty())
+            if (appearances.empty())
             {
                 return invalidCatalog(
-                    "an element with no variants cannot define a click offset: there is no template to measure it from"
+                    "an element with no appearances cannot define a click offset: there is no template to measure it from"
                 );
             }
-            for (auto const& variant : variants)
+            for (auto const& appearance : appearances)
             {
                 if (
-                    interact->clickOffset->x() >= variant.templateRect.width()
-                    || interact->clickOffset->y() >= variant.templateRect.height()
+                    interact->clickOffset->x() >= appearance.templateRect.width()
+                    || interact->clickOffset->y() >= appearance.templateRect.height()
                 )
                 {
                     return invalidCatalog(
                         std::format(
-                            "click offset must be inside every variant template, and falls outside \"{}\"",
-                            variant.name.value()
+                            "click offset must be inside every appearance template, and falls outside \"{}\"",
+                            appearance.name.value()
                         )
                     );
                 }
@@ -548,53 +548,53 @@ namespace uf::annotation
         return ok();
     }
 
-    RecognizerDefinition::RecognizerDefinition(RecognizerSpec spec) noexcept
+    CompiledElement::CompiledElement(CompiledElementSpec spec) noexcept
         : m_id{spec.id}
         , m_name{std::move(spec.name)}
         , m_capabilities{spec.capabilities}
         , m_searchRoi{spec.searchRoi}
-        , m_variants{std::move(spec.variants)}
+        , m_appearances{std::move(spec.appearances)}
     {
     }
 
-    auto RecognizerDefinition::create(
+    auto CompiledElement::create(
         ProjectFingerprint fingerprint,
-        RecognizerSpec const& spec
-    ) -> Result<RecognizerDefinition>
+        CompiledElementSpec const& spec
+    ) -> Result<CompiledElement>
     {
         UF_TRY(
             validateElementShape(
                 fingerprint,
                 spec.searchRoi,
-                spec.variants,
+                spec.appearances,
                 spec.capabilities
             )
         );
 
-        return RecognizerDefinition{spec};
+        return CompiledElement{spec};
     }
 
-    auto RecognizerDefinition::id() const -> ElementId { return m_id; }
-    auto RecognizerDefinition::name() const -> ResourceName { return m_name; }
-    auto RecognizerDefinition::capabilities() const noexcept -> ElementCapabilities const&
+    auto CompiledElement::id() const -> ElementId { return m_id; }
+    auto CompiledElement::name() const -> ResourceName { return m_name; }
+    auto CompiledElement::capabilities() const noexcept -> ElementCapabilities const&
     {
         return m_capabilities;
     }
-    auto RecognizerDefinition::searchRoi() const noexcept -> PixelRect { return m_searchRoi; }
-    auto RecognizerDefinition::variants() const noexcept -> std::span<RecognizerVariant const>
+    auto CompiledElement::searchRoi() const noexcept -> PixelRect { return m_searchRoi; }
+    auto CompiledElement::appearances() const noexcept -> std::span<CompiledAppearance const>
     {
-        return m_variants;
+        return m_appearances;
     }
-    auto RecognizerDefinition::findVariant(
+    auto CompiledElement::findAppearance(
         ResourceName const& name
-    ) const noexcept -> RecognizerVariant const*
+    ) const noexcept -> CompiledAppearance const*
     {
         auto const found = std::ranges::find(
-            m_variants,
+            m_appearances,
             name,
-            &RecognizerVariant::name
+            &CompiledAppearance::name
         );
-        return found == m_variants.end() ? nullptr : &*found;
+        return found == m_appearances.end() ? nullptr : &*found;
     }
 
     PageSignature::PageSignature(
@@ -623,14 +623,14 @@ namespace uf::annotation
     RecognitionCatalog::RecognitionCatalog(
         ProjectId projectId,
         ProjectFingerprint fingerprint,
-        std::vector<RecognizerDefinition> recognizers,
+        std::vector<CompiledElement> elements,
         std::vector<PageSignature> pages,
         std::vector<PageReference> references,
         std::vector<ElementId> pageAnchorOrder
     ) noexcept
         : m_projectId{std::move(projectId)}
         , m_fingerprint{fingerprint}
-        , m_recognizers{std::move(recognizers)}
+        , m_elements{std::move(elements)}
         , m_pages{std::move(pages)}
         , m_references{std::move(references)}
         , m_pageAnchorOrder{std::move(pageAnchorOrder)}
@@ -640,17 +640,17 @@ namespace uf::annotation
     auto RecognitionCatalog::create(
         ProjectId projectId,
         ProjectFingerprint fingerprint,
-        std::vector<RecognizerDefinition> recognizers,
+        std::vector<CompiledElement> elements,
         std::vector<PageSpec> pages,
         std::vector<PageReference> references
     ) -> Result<RecognitionCatalog>
     {
         std::ranges::sort(
-            recognizers,
+            elements,
             {},
-            [](RecognizerDefinition const& recognizer) -> ResourceId
+            [](CompiledElement const& element) -> ResourceId
             {
-                return recognizer.id().value();
+                return element.id().value();
             }
         );
         std::ranges::sort(
@@ -663,28 +663,28 @@ namespace uf::annotation
         );
         std::ranges::sort(references, referenceLess);
 
-        for (auto index = std::size_t{1}; index < recognizers.size(); ++index)
+        for (auto index = std::size_t{1}; index < elements.size(); ++index)
         {
             if (
-                checkedAt(recognizers, index - 1U).id()
-                == checkedAt(recognizers, index).id()
+                checkedAt(elements, index - 1U).id()
+                == checkedAt(elements, index).id()
             )
             {
                 return invalidCatalog("element IDs must be unique");
             }
         }
 
-        for (auto leftIndex = std::size_t{0}; leftIndex < recognizers.size(); ++leftIndex)
+        for (auto leftIndex = std::size_t{0}; leftIndex < elements.size(); ++leftIndex)
         {
             for (
                 auto rightIndex = leftIndex + 1U;
-                rightIndex < recognizers.size();
+                rightIndex < elements.size();
                 ++rightIndex
             )
             {
                 if (
-                    checkedAt(recognizers, leftIndex).name()
-                    == checkedAt(recognizers, rightIndex).name()
+                    checkedAt(elements, leftIndex).name()
+                    == checkedAt(elements, rightIndex).name()
                 )
                 {
                     return invalidCatalog("element names must be unique");
@@ -713,11 +713,11 @@ namespace uf::annotation
 
         for (auto const& page : pages)
         {
-            for (auto const& recognizer : recognizers)
+            for (auto const& element : elements)
             {
                 if (
-                    page.id.value() == recognizer.id().value()
-                    || page.name == recognizer.name()
+                    page.id.value() == element.id().value()
+                    || page.name == element.name()
                 )
                 {
                     return invalidCatalog(
@@ -727,16 +727,16 @@ namespace uf::annotation
             }
         }
 
-        auto findRecognizer = [&recognizers](
+        auto findElement = [&elements](
             ElementId id
-        ) noexcept -> RecognizerDefinition const*
+        ) noexcept -> CompiledElement const*
         {
             auto const found = std::ranges::find(
-                recognizers,
+                elements,
                 id,
-                &RecognizerDefinition::id
+                &CompiledElement::id
             );
-            return found == recognizers.end() ? nullptr : &*found;
+            return found == elements.end() ? nullptr : &*found;
         };
         auto findPage = [&pages](PageId id) noexcept -> PageSpec const*
         {
@@ -761,7 +761,7 @@ namespace uf::annotation
             {
                 return invalidCatalog("page reference names an unknown page");
             }
-            auto const* p_element = findRecognizer(reference.elementId);
+            auto const* p_element = findElement(reference.elementId);
             if (p_element == nullptr)
             {
                 return invalidCatalog("page reference names an unknown element");
@@ -801,19 +801,19 @@ namespace uf::annotation
                     validateElementShape(
                         fingerprint,
                         *refined,
-                        p_element->variants(),
+                        p_element->appearances(),
                         p_element->capabilities()
                     )
                 );
             }
 
-            if (auto const& pinned = reference.variant)
+            if (auto const& pinned = reference.appearance)
             {
-                if (p_element->findVariant(*pinned) == nullptr)
+                if (p_element->findAppearance(*pinned) == nullptr)
                 {
                     return invalidCatalog(
                         std::format(
-                            "page \"{}\" pins variant \"{}\", which \"{}\" does not declare",
+                            "page \"{}\" pins appearance \"{}\", which \"{}\" does not declare",
                             p_page->name.value(),
                             pinned->value(),
                             p_element->name().value()
@@ -823,7 +823,7 @@ namespace uf::annotation
             }
         }
 
-        for (auto const& recognizer : recognizers)
+        for (auto const& element : elements)
         {
             // Owned is the author saying an element belongs to one page. Two
             // pages claiming to own the same one is the contradiction the flag
@@ -832,7 +832,7 @@ namespace uf::annotation
             for (auto const& reference : references)
             {
                 if (
-                    reference.elementId == recognizer.id()
+                    reference.elementId == element.id()
                     && reference.holding == Holding::Owned
                 )
                 {
@@ -844,7 +844,7 @@ namespace uf::annotation
                 return invalidCatalog(
                     std::format(
                         "\"{}\" is owned by more than one page",
-                        recognizer.name().value()
+                        element.name().value()
                     )
                 );
             }
@@ -853,16 +853,16 @@ namespace uf::annotation
             // page": an element the runtime could be asked to click has to be
             // reachable somewhere it can be clicked. An element that is only
             // read, or only identifies, needs no such edge.
-            if (!recognizer.capabilities().hasInteract())
+            if (!element.capabilities().hasInteract())
             {
                 continue;
             }
             auto const exercised = std::ranges::any_of(
                 references,
-                [&recognizer](PageReference const& reference)
+                [&element](PageReference const& reference)
                 {
                     return (
-                        reference.elementId == recognizer.id()
+                        reference.elementId == element.id()
                         && reference.exercised.hasInteract()
                     );
                 }
@@ -872,7 +872,7 @@ namespace uf::annotation
                 return invalidCatalog(
                     std::format(
                         "\"{}\" declares interact but no page exercises it",
-                        recognizer.name().value()
+                        element.name().value()
                     )
                 );
             }
@@ -961,7 +961,7 @@ namespace uf::annotation
         return RecognitionCatalog{
             std::move(projectId),
             fingerprint,
-            std::move(recognizers),
+            std::move(elements),
             std::move(signatures),
             std::move(references),
             std::move(pageAnchorOrder)
@@ -978,9 +978,9 @@ namespace uf::annotation
         return m_fingerprint;
     }
 
-    auto RecognitionCatalog::recognizers() const noexcept -> std::span<RecognizerDefinition const>
+    auto RecognitionCatalog::elements() const noexcept -> std::span<CompiledElement const>
     {
-        return m_recognizers;
+        return m_elements;
     }
 
     auto RecognitionCatalog::pages() const noexcept -> std::span<PageSignature const>
@@ -993,16 +993,16 @@ namespace uf::annotation
         return m_references;
     }
 
-    auto RecognitionCatalog::findRecognizer(
+    auto RecognitionCatalog::findElement(
         ElementId id
-    ) const noexcept -> RecognizerDefinition const*
+    ) const noexcept -> CompiledElement const*
     {
         auto const found = std::ranges::find(
-            m_recognizers,
+            m_elements,
             id,
-            &RecognizerDefinition::id
+            &CompiledElement::id
         );
-        return found == m_recognizers.end() ? nullptr : &*found;
+        return found == m_elements.end() ? nullptr : &*found;
     }
 
     auto RecognitionCatalog::findPage(PageId id) const noexcept -> PageSignature const*

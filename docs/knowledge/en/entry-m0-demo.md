@@ -129,7 +129,7 @@ The default pipeline's `--threshold` is required and ranges over 0..255; the def
 
 In `entry/m0-demo/pipeline.hpp`, `Template` owns a label, grayscale pixels as a
 `std::vector<std::byte>`, a width and height, and a `Rect<FrameSpace>` search ROI. `Templates` is
-merely the fixed home/result/reset triple; it is not a generic recognizer collection.
+merely the fixed home/result/reset triple; it is not a generic element collection.
 
 ### Capture, SAD Matching, and Result Acceptance
 
@@ -388,7 +388,7 @@ M0 has no internal seam for "growing it into a product"; the correct way to exte
 it from the outside.
 
 The recognition and authorization seams have already moved to `modules/annotation` and
-`modules/engine`. New recognizers, page evidence, action targets, default clicks, basis-point
+`modules/engine`. New elements, page evidence, action targets, default clicks, basis-point
 thresholds, and runtime manifests should all follow `docs/plans/2026-07-22-annotation-design.md`, and
 must not add a fourth M0 template or stuff a page special case into `clickWhenPresent()`.
 

@@ -22,7 +22,7 @@ namespace uf::annotation::detail
 {
     // One element's capability row exactly as it is spelled on disk. The click
     // offset stays raw here because a TemplateOffset has to be bounded by a
-    // template, and the variant rows carrying the templates follow the element
+    // template, and the appearance rows carrying the templates follow the element
     // row that owns them, in both schemas.
     struct CapabilityFields final
     {
@@ -46,7 +46,7 @@ namespace uf::annotation::detail
 
     // Completes the parsed row once a template exists to bound the click offset
     // against. An absent boundingTemplate means the element declares no
-    // variants, and then no click offset can be measured at all.
+    // appearances, and then no click offset can be measured at all.
     [[nodiscard]]
     auto toElementCapabilities(
         CapabilityFields const& fields,

@@ -265,7 +265,7 @@ namespace uf::task
             auto side = buildTaskSide(resolvingFrames(FrameId{31}), lenientFrameAge());
             auto const source = std::string{
                 "local cycle = ctx:cycle_open()\n"
-                "local hit = ctx:cycle_find(cycle, uf.recognizers.action_target)\n"
+                "local hit = ctx:cycle_find(cycle, uf.elements.action_target)\n"
                 "ctx:cycle_click(cycle, hit)\n"
                 "return 1\n"
             };
@@ -314,7 +314,7 @@ namespace uf::task
             auto const source = std::string{
                 "local cycle = ctx:cycle_open()\n"
                 "local page = ctx:cycle_page(cycle)\n"
-                "local hit = ctx:cycle_find(cycle, uf.recognizers.action_target)\n"
+                "local hit = ctx:cycle_find(cycle, uf.elements.action_target)\n"
                 "ctx:cycle_click(cycle, hit)\n"
                 "return 1\n"
             };

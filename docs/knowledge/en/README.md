@@ -54,7 +54,7 @@ that are not theirs.
 > landed". **Stage 3 is now complete in full** (3d `4030ffd` semantic events plus the validation
 > state machine; 3e/3f `1fb41a7` the framework unit tests and veto 6), so that condition is met.
 > Write them **now, rather than waiting for stage 4's on-hardware run**: finishing stage 3 is what
-> made these two layers' surface stable — all twelve primitives present, `umbraflow-trace/v1`'s
+> made these two layers' surface stable — all twelve primitives present, `umbraflow-trace/v2`'s
 > event families fixed, the validation state machine landed in
 > `modules/trace/source/trace/stream-validator.{hpp,cpp}`. Stage 4 *uses* that surface to write the
 > first real daily and calibrate constants; it changes numbers, not shapes. Waiting for it only
@@ -82,7 +82,7 @@ The suggested scope:
   an open cycle and spending it, with no hit ordinal and no page requirement. It must **not** restate
   the sandbox, budgets, and dual environments that `module-script.md` already covers, nor the
   operator wire protocol that `entry-cli.md` covers.
-- **`module-trace.md`** — schema ownership of `umbraflow-trace/v1`; the event families (`run.*`,
+- **`module-trace.md`** — schema ownership of `umbraflow-trace/v2`; the event families (`run.*`,
   `engine.*` including `engine.key_delivered`, `task.native_call`, and the eight `framework.*`
   events from 3d on); field ordering and the rules for golden comparison; the documented non-golden
   field set; `ITraceSink`'s synchronous fallible contract and the failure-precedence rules; the

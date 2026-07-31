@@ -162,7 +162,7 @@ namespace uf::script
         // framework bundle has loaded and before the sandbox freezes the globals
         // (this is installSandbox's order). Empty by default, which yields a
         // bare sandboxed VM with no host capabilities. modules/task supplies the
-        // uf.* data tables here -- recognizers, pages and error kinds, all of
+        // uf.* data tables here -- elements, pages and error kinds, all of
         // which are data a project script may name.
         HostTableInstaller installHostTables{};
 

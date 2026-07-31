@@ -45,43 +45,43 @@ namespace uf::annotation
         constexpr auto k_sourceS  = "00000000-0000-0000-0000-000000000201";
 
         [[nodiscard]]
-        auto identifyingRecognizer(
+        auto identifyingElement(
             std::string name,
             char const* id
-        ) -> RecognizerDefinition
+        ) -> CompiledElement
         {
-            return test::recognizer(
+            return test::element(
                 test::fingerprint(16, 16),
                 test::elementId(id),
                 std::move(name),
                 test::capabilities(Identify{}),
                 test::pixelRect(0, 0, 8, 8),
-                std::vector<RecognizerVariant>{
-                    test::recognizerVariant("only", test::pixelRect(0, 0, 4, 4)),
+                std::vector<CompiledAppearance>{
+                    test::compiledAppearance("only", test::pixelRect(0, 0, 4, 4)),
                 }
             );
         }
 
         [[nodiscard]]
-        auto interactingRecognizer(
+        auto interactingElement(
             ElementCapabilities elementCapabilities
-        ) -> RecognizerDefinition
+        ) -> CompiledElement
         {
-            return test::recognizer(
+            return test::element(
                 test::fingerprint(16, 16),
                 test::elementId(k_elementB),
                 "target",
                 std::move(elementCapabilities),
                 test::pixelRect(0, 0, 8, 8),
-                std::vector<RecognizerVariant>{
-                    test::recognizerVariant("only", test::pixelRect(0, 0, 4, 4)),
+                std::vector<CompiledAppearance>{
+                    test::compiledAppearance("only", test::pixelRect(0, 0, 4, 4)),
                 }
             );
         }
 
         [[nodiscard]]
         auto buildCatalog(
-            std::vector<RecognizerDefinition> recognizers,
+            std::vector<CompiledElement> elements,
             std::vector<PageSpec> pages,
             std::vector<PageReference> references
         ) -> Result<RecognitionCatalog>
@@ -89,21 +89,21 @@ namespace uf::annotation
             return RecognitionCatalog::create(
                 test::projectId(),
                 test::fingerprint(16, 16),
-                std::move(recognizers),
+                std::move(elements),
                 std::move(pages),
                 std::move(references)
             );
         }
 
         [[nodiscard]]
-        auto anchorAndTargetRecognizers() -> std::vector<RecognizerDefinition>
+        auto anchorAndTargetElements() -> std::vector<CompiledElement>
         {
-            auto recognizers = std::vector<RecognizerDefinition>{};
-            recognizers.emplace_back(identifyingRecognizer("mark", k_elementA));
-            recognizers.emplace_back(
-                interactingRecognizer(test::capabilities(std::nullopt, Interact{}))
+            auto elements = std::vector<CompiledElement>{};
+            elements.emplace_back(identifyingElement("mark", k_elementA));
+            elements.emplace_back(
+                interactingElement(test::capabilities(std::nullopt, Interact{}))
             );
-            return recognizers;
+            return elements;
         }
 
         [[nodiscard]]
@@ -115,7 +115,7 @@ namespace uf::annotation
         }
     }
 
-    TEST_CASE("an element with no variants cannot be identity evidence")
+    TEST_CASE("an element with no appearances cannot be identity evidence")
     {
         auto const projectFingerprint = test::fingerprint(16, 16);
         auto const searchRoi          = test::pixelRect(0, 0, 8, 8);
@@ -141,8 +141,8 @@ namespace uf::annotation
                 .name         = test::resourceName("mark"),
                 .capabilities = test::capabilities(Identify{}),
                 .searchRoi    = searchRoi,
-                .variants     = std::vector<Variant>{
-                    test::variant(
+                .appearances     = std::vector<Appearance>{
+                    test::appearance(
                         "only",
                         test::sourceId(k_sourceS),
                         test::pixelRect(0, 0, 4, 4)
@@ -152,7 +152,7 @@ namespace uf::annotation
         );
         CHECK(withPixels.has_value());
 
-        // An empty variant list stays legal for the capabilities the page
+        // An empty appearance list stays legal for the capabilities the page
         // locates: a readable cell and a click target inside a resolved page.
         auto const locatedByPage = Element::create(
             projectFingerprint,
@@ -190,7 +190,7 @@ namespace uf::annotation
             )
         );
         auto const rejected = buildCatalog(
-            anchorAndTargetRecognizers(),
+            anchorAndTargetElements(),
             onePage(),
             std::move(references)
         );
@@ -214,7 +214,7 @@ namespace uf::annotation
         );
         CHECK(
             buildCatalog(
-                anchorAndTargetRecognizers(),
+                anchorAndTargetElements(),
                 onePage(),
                 std::move(accepted)
             ).has_value()
@@ -241,7 +241,7 @@ namespace uf::annotation
             )
         );
         auto const rejected = buildCatalog(
-            anchorAndTargetRecognizers(),
+            anchorAndTargetElements(),
             onePage(),
             std::move(references)
         );
@@ -269,7 +269,7 @@ namespace uf::annotation
         );
         CHECK(
             buildCatalog(
-                anchorAndTargetRecognizers(),
+                anchorAndTargetElements(),
                 onePage(),
                 std::move(accepted)
             ).has_value()
@@ -314,7 +314,7 @@ namespace uf::annotation
             )
         );
         auto const rejected = buildCatalog(
-            anchorAndTargetRecognizers(),
+            anchorAndTargetElements(),
             pages,
             std::move(owningTwice)
         );
@@ -355,14 +355,14 @@ namespace uf::annotation
         );
         CHECK(
             buildCatalog(
-                anchorAndTargetRecognizers(),
+                anchorAndTargetElements(),
                 std::move(pages),
                 std::move(borrowed)
             ).has_value()
         );
     }
 
-    TEST_CASE("a pinned variant must be one the element declares")
+    TEST_CASE("a pinned appearance must be one the element declares")
     {
         auto references = std::vector<PageReference>{};
         references.emplace_back(
@@ -383,7 +383,7 @@ namespace uf::annotation
             )
         );
         auto const rejected = buildCatalog(
-            anchorAndTargetRecognizers(),
+            anchorAndTargetElements(),
             onePage(),
             std::move(references)
         );
@@ -410,7 +410,7 @@ namespace uf::annotation
         );
         CHECK(
             buildCatalog(
-                anchorAndTargetRecognizers(),
+                anchorAndTargetElements(),
                 onePage(),
                 std::move(accepted)
             ).has_value()
@@ -436,10 +436,10 @@ namespace uf::annotation
                 test::exercised(std::nullopt, std::nullopt, ExercisedRead{})
             )
         );
-        auto bothDeclared = std::vector<RecognizerDefinition>{};
-        bothDeclared.emplace_back(identifyingRecognizer("mark", k_elementA));
+        auto bothDeclared = std::vector<CompiledElement>{};
+        bothDeclared.emplace_back(identifyingElement("mark", k_elementA));
         bothDeclared.emplace_back(
-            interactingRecognizer(
+            interactingElement(
                 test::capabilities(std::nullopt, Interact{}, Read{})
             )
         );
@@ -466,10 +466,10 @@ namespace uf::annotation
                 test::exercised(std::nullopt, ExercisedInteract{}, ExercisedRead{})
             )
         );
-        auto declaredAgain = std::vector<RecognizerDefinition>{};
-        declaredAgain.emplace_back(identifyingRecognizer("mark", k_elementA));
+        auto declaredAgain = std::vector<CompiledElement>{};
+        declaredAgain.emplace_back(identifyingElement("mark", k_elementA));
         declaredAgain.emplace_back(
-            interactingRecognizer(
+            interactingElement(
                 test::capabilities(std::nullopt, Interact{}, Read{})
             )
         );
@@ -484,11 +484,11 @@ namespace uf::annotation
 
     TEST_CASE("a page signature is derived from the references that identify")
     {
-        auto recognizers = std::vector<RecognizerDefinition>{};
-        recognizers.emplace_back(identifyingRecognizer("mark", k_elementA));
-        recognizers.emplace_back(identifyingRecognizer("decoy", k_elementC));
-        recognizers.emplace_back(
-            interactingRecognizer(test::capabilities(std::nullopt, Interact{}))
+        auto elements = std::vector<CompiledElement>{};
+        elements.emplace_back(identifyingElement("mark", k_elementA));
+        elements.emplace_back(identifyingElement("decoy", k_elementC));
+        elements.emplace_back(
+            interactingElement(test::capabilities(std::nullopt, Interact{}))
         );
 
         auto references = std::vector<PageReference>{};
@@ -515,7 +515,7 @@ namespace uf::annotation
         );
 
         auto const catalog = buildCatalog(
-            std::move(recognizers),
+            std::move(elements),
             onePage(),
             std::move(references)
         );
@@ -547,7 +547,7 @@ namespace uf::annotation
             )
         );
         auto const rejected = buildCatalog(
-            anchorAndTargetRecognizers(),
+            anchorAndTargetElements(),
             onePage(),
             std::move(references)
         );
@@ -618,7 +618,7 @@ namespace uf::annotation
 
         // One element shared by two pages -- the shape the compiler could not
         // represent before, because it minted a derived id per page and left
-        // the element's own id with no recognizer at all.
+        // the element's own id with no compiled element at all.
         [[nodiscard]]
         auto sharedElementFixture() -> DocumentFixture
         {
@@ -644,8 +644,8 @@ namespace uf::annotation
                     "home_mark",
                     test::capabilities(Identify{}),
                     test::pixelRect(0, 0, 4, 4),
-                    std::vector<Variant>{
-                        test::variant(
+                    std::vector<Appearance>{
+                        test::appearance(
                             "only",
                             test::sourceId(k_sourceS),
                             test::pixelRect(0, 0, 2, 2)
@@ -660,8 +660,8 @@ namespace uf::annotation
                     "sortie_mark",
                     test::capabilities(Identify{}),
                     test::pixelRect(0, 0, 4, 4),
-                    std::vector<Variant>{
-                        test::variant(
+                    std::vector<Appearance>{
+                        test::appearance(
                             "only",
                             test::sourceId(k_sourceS),
                             test::pixelRect(2, 2, 2, 2)
@@ -670,7 +670,7 @@ namespace uf::annotation
                 )
             );
             // Two appearances of one semantic element, which is the case the
-            // whole variant list exists for.
+            // whole appearance list exists for.
             elements.emplace_back(
                 test::element(
                     projectFingerprint,
@@ -681,13 +681,13 @@ namespace uf::annotation
                         Interact{.clickOffset = test::templateOffset(1, 1, 2, 2)}
                     ),
                     test::pixelRect(0, 0, 4, 4),
-                    std::vector<Variant>{
-                        test::variant(
+                    std::vector<Appearance>{
+                        test::appearance(
                             "on_dark",
                             test::sourceId(k_sourceS),
                             test::pixelRect(0, 0, 2, 2)
                         ),
-                        test::variant(
+                        test::appearance(
                             "on_light",
                             test::sourceId(k_sourceS),
                             test::pixelRect(2, 0, 2, 2)
@@ -770,8 +770,8 @@ namespace uf::annotation
 
         auto const* p_back = parsed->findElement(test::elementId(k_elementB));
         REQUIRE(p_back != nullptr);
-        REQUIRE(p_back->variants().size() == 2U);
-        CHECK(p_back->variants().front().name().value() == "on_dark");
+        REQUIRE(p_back->appearances().size() == 2U);
+        CHECK(p_back->appearances().front().name().value() == "on_dark");
         CHECK(p_back->capabilities().hasInteract());
     }
 
@@ -779,7 +779,7 @@ namespace uf::annotation
     {
         auto const fixture = sharedElementFixture();
         auto encoded       = serializeAuthoringDocument(fixture.document);
-        replaceOnce(encoded, "umbraflow-authoring/v3", "umbraflow-authoring/v2");
+        replaceOnce(encoded, "umbraflow-authoring/v4", "umbraflow-authoring/v3");
 
         auto const parsed = parseAuthoringDocument(encoded);
         REQUIRE(!parsed.has_value());
@@ -804,7 +804,7 @@ namespace uf::annotation
         CHECK(parsed.error().message().contains("canonical"));
     }
 
-    TEST_CASE("every element compiles to one recognizer under its own id")
+    TEST_CASE("every element compiles to one element under its own id")
     {
         auto const fixture = sharedElementFixture();
         auto const assets  = std::vector<AuthoringSourceAsset>{fixture.sourceAsset};
@@ -812,14 +812,14 @@ namespace uf::annotation
         REQUIRE(compiled.has_value());
 
         auto const& catalog = compiled->runtimeManifest.catalog();
-        CHECK(catalog.recognizers().size() == 3U);
+        CHECK(catalog.elements().size() == 3U);
 
         // The element two pages reference is present under the id the author
         // minted, which is the id its page signatures and every script name.
-        auto const* p_back = catalog.findRecognizer(test::elementId(k_elementB));
+        auto const* p_back = catalog.findElement(test::elementId(k_elementB));
         REQUIRE(p_back != nullptr);
         CHECK(p_back->name().value() == "back");
-        REQUIRE(p_back->variants().size() == 2U);
+        REQUIRE(p_back->appearances().size() == 2U);
 
         // One template asset per appearance, not per page.
         CHECK(compiled->runtimeManifest.assets().size() == 4U);
@@ -854,7 +854,7 @@ namespace uf::annotation
         CHECK(serializeRuntimeManifest(*parsed) == compiled->runtimeManifestToml);
 
         auto encoded = compiled->runtimeManifestToml;
-        replaceOnce(encoded, "umbraflow-annotations/v2", "umbraflow-annotations/v1");
+        replaceOnce(encoded, "umbraflow-annotations/v3", "umbraflow-annotations/v2");
         auto const rejected = parseRuntimeManifest(encoded);
         REQUIRE(!rejected.has_value());
         test::requireErrorKind(rejected.error(), AutomationErrorKind::InvalidResource);
@@ -957,8 +957,8 @@ namespace uf::annotation
                 "home_mark",
                 test::capabilities(Identify{}),
                 test::pixelRect(0, 0, 4, 4),
-                std::vector<Variant>{
-                    test::variant(
+                std::vector<Appearance>{
+                    test::appearance(
                         "only",
                         test::sourceId(k_sourceS),
                         test::pixelRect(2, 2, 2, 2)
@@ -976,13 +976,13 @@ namespace uf::annotation
                 "back",
                 test::capabilities(std::nullopt, Interact{}),
                 test::pixelRect(0, 0, 4, 4),
-                std::vector<Variant>{
-                    test::variant(
+                std::vector<Appearance>{
+                    test::appearance(
                         "wide",
                         test::sourceId(k_sourceS),
                         test::pixelRect(0, 0, 1, 1)
                     ),
-                    test::variant(
+                    test::appearance(
                         "narrow",
                         test::sourceId(k_sourceS),
                         test::pixelRect(2, 2, 2, 2)
@@ -1047,9 +1047,9 @@ namespace uf::annotation
         );
         REQUIRE(runtime.has_value());
 
-        // The live screen shifts the single pixel the wide variant was cut
+        // The live screen shifts the single pixel the wide appearance was cut
         // from, so that one still passes its threshold but no longer exactly:
-        // the narrow variant is the strictly better margin.
+        // the narrow appearance is the strictly better margin.
         auto const frame = frameWithPixels(
             projectFingerprint,
             greyScreen(k_shiftedPixel)
@@ -1065,13 +1065,13 @@ namespace uf::annotation
         auto const* p_evidence = std::get_if<AnchorEvidence>(&attempt->result);
         REQUIRE(p_evidence != nullptr);
         CHECK(p_evidence->hit());
-        REQUIRE(p_evidence->variantName().has_value());
-        CHECK(p_evidence->variantName()->value() == "narrow");
+        REQUIRE(p_evidence->appearanceName().has_value());
+        CHECK(p_evidence->appearanceName()->value() == "narrow");
         REQUIRE(p_evidence->matchedRect().has_value());
         CHECK(*p_evidence->matchedRect() == test::pixelRect(2, 2, 2, 2));
     }
 
-    TEST_CASE("an element with no variants is located where the page put it")
+    TEST_CASE("an element with no appearances is located where the page put it")
     {
         auto const fixture = sharedElementFixture();
         auto const assets  = std::vector<AuthoringSourceAsset>{fixture.sourceAsset};

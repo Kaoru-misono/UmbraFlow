@@ -40,7 +40,7 @@ It owns six groups of contracts:
 - It does not interpret whether a detection label can trigger an action. `Detection` is merely
   geometric evidence bearing same-frame identity; only `ActionDetection` and
   `authorizeCoordinateAction` in `modules/annotation/source/annotation/authorization.cpp` bind the
-  catalog, recognizer, page, and live fingerprint.
+  catalog, element, page, and live fingerprint.
 - It does not perform template matching, cropping, PNG codec work, trace, or retries. Those policies
   belong respectively to `vision`, `image`, `engine`, or the caller.
 - It does not implement strict-background. Background delivery is implemented at the `PostMessageW`
@@ -208,7 +208,7 @@ produce time, nor a serializable wall clock.
 
 `Detection` is an immutable value carrier: it holds `CaptureSessionId`, `TargetGeneration`, `FrameId`,
 `Label`, `Rect<FrameSpace>`, and `confidence`. The constructor does not validate the rect or the
-confidence; a trustworthy action must additionally pass annotation's recognizer/page authorization
+confidence; a trustworthy action must additionally pass annotation's element/page authorization
 and cannot rely on the label alone.
 
 `Label::create` guarantees the string is valid UTF-8 but allows the empty string; `value()` returns a
@@ -384,7 +384,7 @@ The typical data flow is as follows:
    `ObservationLease` from the frame.
 5. `annotation::RecognitionRuntime`/`vision` produce integer `PixelRect` evidence on the frame
    pixels; engine creates a same-frame `Detection` via `pixelRectToFrameRect`.
-6. annotation binds the detection to the `action_target` recognizer and proves that the page,
+6. annotation binds the detection to the `action_target` element and proves that the page,
    project, fingerprint, identity triple, and lease are consistent.
 7. engine converts the integer click pixel into a `Point<ClientSpace>` via `pixelPointToFramePoint`
    and the frame's `frameToClient`.
@@ -450,7 +450,7 @@ Cross-module tests pin "how domain values actually land":
 - `tests/controller/test-audit-log.cpp` pins the strict-background forbidden API set and the
   delivery audit.
 - `tests/annotation/test-authorization.cpp` pins same-frame page/detection/lease/fingerprint,
-  recognizer identity, and allowed-page authorization.
+  element identity, and allowed-page authorization.
 - `tests/engine/test-session.cpp` pins the observe-to-click data flow, verbatim lease forwarding,
   post-action invalidation, moved-from/foreign observation rejection, delivery-edge target
   revalidation, and that a trace failure cannot make an action replayable.

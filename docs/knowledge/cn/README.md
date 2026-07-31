@@ -42,7 +42,7 @@ policy 整个搬进这两层之后，engine 页与 CLI 页已经在替它们解�
 > **时点更新（2026-07-29，`1fb41a7`）**：这里原本写「等阶段 3d 落地后一并写」。
 > **阶段 3 已整体完成**（3d `4030ffd` 语义事件 + 校验状态机、3e/3f `1fb41a7` framework
 > 单测与一票否决第 6 条），条件满足。建议**现在写，不等阶段 4 的真机验收**：阶段 3 完成
-> 意味着这两层的表面已经稳定——十二个原语到齐、`umbraflow-trace/v1` 的事件族固定、
+> 意味着这两层的表面已经稳定——十二个原语到齐、`umbraflow-trace/v2` 的事件族固定、
 > 校验状态机落在 `modules/trace/source/trace/stream-validator.{hpp,cpp}`——而阶段 4 是
 > **用**这个表面写第一个真日常并标定常数，改的是数值不是形状。等阶段 4 只会让这两页在最
 > 需要它们的那一刻（照着一条 trace 读一次真机失败）刚好还不存在。
@@ -65,7 +65,7 @@ policy 整个搬进这两层之后，engine 页与 CLI 页已经在替它们解�
   ——Luau 侧是 `ctx:key(ticket, name)` 与 `view:key(name)`，要求一个打开的周期并花掉它，
   没有命中序数、也没有 page 要求。**不重复** `module-script.md` 已经写清的沙箱、
   预算与双环境机制，也不重复 `entry-cli.md` 已经写清的操作者线协议。
-- **`module-trace.md`** — `umbraflow-trace/v1` 的 schema 所有权、事件族
+- **`module-trace.md`** — `umbraflow-trace/v2` 的 schema 所有权、事件族
   （`run.*` / `engine.*`（含 `engine.key_delivered`）/ `task.native_call`，以及 3d 起的八条
   `framework.*`）、字段顺序与 golden 比较的规则、非 golden 字段集、`ITraceSink` 的同步可失败
   契约与失败优先级、`frontEnd` 这个盖章字段（`"task"` / `"operator"` / `"annotation"`，最后一个

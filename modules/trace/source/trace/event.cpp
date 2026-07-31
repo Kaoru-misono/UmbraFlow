@@ -613,8 +613,8 @@ namespace uf::trace
         if (event.resources.has_value())
         {
             builder.addStringArray(
-                "recognizers",
-                sortedCopy(event.resources->recognizers)
+                "elements",
+                sortedCopy(event.resources->elements)
             );
             builder.addStringArray("pages", sortedCopy(event.resources->pages));
         }
@@ -672,9 +672,9 @@ namespace uf::trace
             }
         }
 
-        if (event.recognizerId.has_value())
+        if (event.elementId.has_value())
         {
-            builder.addString("recognizerId", event.recognizerId->value().toString());
+            builder.addString("elementId", event.elementId->value().toString());
         }
 
         if (event.stopReason.has_value())

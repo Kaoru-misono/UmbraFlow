@@ -4,7 +4,7 @@
 #include "catalog.hpp"
 #include "content-hash.hpp"
 #include "resource.hpp"
-#include "variant.hpp"
+#include "appearance.hpp"
 
 #include <core/error/result.hpp>
 #include <core/safety/annotations.hpp>
@@ -22,14 +22,19 @@
 
 namespace uf::annotation
 {
-    // The schema the authoring tools read and write. Bumped from v2 when the
-    // three-way annotation type became a capability set, the shared flag became
-    // page-side holding, and a page's signature stopped being authored and
-    // started being derived from its references. The v2 read path has been
-    // retired the way the v1 one was: an old schema string fails with the
-    // ordinary unsupported-schema error rather than upgrading.
+    // The schema the authoring tools read and write. Bumped from v3 on
+    // 2026-07-31 by the vocabulary rename: `[[annotation]]` is now
+    // `[[element]]`, `[[variant]]` is now `[[appearance]]`, a reference's
+    // `variant` field is now `appearance`, and `recognizer_kind` is now
+    // `element_kind`. `[[annotation]]` rode in with the three-way
+    // anchor/target/info taxonomy the capability model retired, so it named a
+    // classification that no longer exists; it moves in this bump rather than
+    // costing a v5 of its own. v3 was itself the bump for the capability set,
+    // page-side holding, and the derived page signature. Every earlier read path
+    // is retired the same way: an old schema string fails with the ordinary
+    // unsupported-schema error rather than upgrading.
     inline constexpr auto k_authoringDocumentSchema = std::string_view{
-        "umbraflow-authoring/v3"
+        "umbraflow-authoring/v4"
     };
 
     namespace detail
@@ -96,7 +101,7 @@ namespace uf::annotation
     // for, and the appearances it can take. Where it is used is a page-side
     // fact and lives on PageReference; nothing here says which page.
     //
-    // An empty variant list is a legal and meaningful state: it says this
+    // An empty appearance list is a legal and meaningful state: it says this
     // rectangle is located by the page being recognised rather than by pixels
     // of its own, which is what a readable cell and a click target inside an
     // already-identified page both need. Its cost is the one section 2.1
@@ -114,9 +119,9 @@ namespace uf::annotation
             PixelRect           searchRoi;
 
             // Ordered. Declaration order decides ties and nothing else: which
-            // variant matched is decided by normalized margin, because a wide
-            // early variant winning by arriving first would move the click.
-            std::vector<Variant> variants{};
+            // appearance matched is decided by normalized margin, because a wide
+            // early appearance winning by arriving first would move the click.
+            std::vector<Appearance> appearances{};
         };
 
     private:
@@ -125,7 +130,7 @@ namespace uf::annotation
         ElementCapabilities m_capabilities;
         PixelRect           m_searchRoi;
 
-        std::vector<Variant> m_variants;
+        std::vector<Appearance> m_appearances;
 
         explicit Element(Spec spec) noexcept;
 
@@ -145,20 +150,20 @@ namespace uf::annotation
         [[nodiscard]] auto searchRoi() const noexcept -> PixelRect;
 
         [[nodiscard]]
-        auto variants() const noexcept UF_LIFETIME_BOUND -> std::span<Variant const>;
+        auto appearances() const noexcept UF_LIFETIME_BOUND -> std::span<Appearance const>;
 
         // Returned observations remain valid only while this element lives.
         [[nodiscard]]
-        auto findVariant(
+        auto findAppearance(
             ResourceName const& name
-        ) const noexcept UF_LIFETIME_BOUND -> Variant const*;
+        ) const noexcept UF_LIFETIME_BOUND -> Appearance const*;
     };
 
-    // The runtime's view of one authored variant. The source it was cut from
+    // The runtime's view of one authored appearance. The source it was cut from
     // and the colour key that masked it are authoring truth and stop here: the
     // runtime reads the mask off the compiled template's alpha channel.
     [[nodiscard]]
-    auto runtimeVariantOf(Variant const& variant) -> RecognizerVariant;
+    auto runtimeAppearanceOf(Appearance const& appearance) -> CompiledAppearance;
 
     enum class RegressionClassification : uint8
     {

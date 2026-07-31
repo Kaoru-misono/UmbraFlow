@@ -33,12 +33,12 @@ namespace uf::workbench
     [[nodiscard]]
     auto previewPageKindName(PreviewPageKind kind) noexcept -> char const*;
 
-    // One recognizer's evidence as surfaced to the property/preview panels. It
+    // One element's evidence as surfaced to the property/preview panels. It
     // flattens the fields the GUI reads from an AnchorEvidence so the panel layer
     // never depends on the recognition module's evidence type.
     struct PreviewAnchorRow final
     {
-        annotation::ElementId recognizerId;
+        annotation::ElementId elementId;
 
         // Which appearance produced this evidence. Absent only for an element
         // that declares none and is located by the page being recognised.
@@ -50,11 +50,11 @@ namespace uf::workbench
         std::optional<PixelRect> matchedRect{};
     };
 
-    // A recognizer search that a policy limit interrupted before it produced
-    // evidence, naming the recognizer that was running and why it stopped.
+    // An element search that a policy limit interrupted before it produced
+    // evidence, naming the element that was running and why it stopped.
     struct PreviewStop final
     {
-        annotation::ElementId recognizerId;
+        annotation::ElementId elementId;
         SadSearchStopReason   reason{};
     };
 
@@ -62,7 +62,7 @@ namespace uf::workbench
     // The page evaluation always runs: it either classifies the page
     // (m_pageKind, with m_resolvedPageId set only when resolved) or stops
     // (m_pageStop). The action fields are populated only when the selected
-    // recognizer is an action target that was evaluated.
+    // element is an action target that was evaluated.
     struct PreviewResult final
     {
         // The screen this preview was evaluated against. Its matched rectangles
@@ -113,7 +113,7 @@ namespace uf::workbench
 
     // Compiles the document with its in-memory sources, builds a recognition
     // runtime, and evaluates the page against the selected source's image. When
-    // the selected recognizer is an action target, its evidence is evaluated too.
+    // the selected element is an action target, its evidence is evaluated too.
     // The policy carries the comparison budget and any deadline or cancellation,
     // so a caller can preview under a real limit or a zero budget.
     [[nodiscard]]
@@ -121,7 +121,7 @@ namespace uf::workbench
         annotation::AuthoringDocument const& document,
         std::span<annotation::AuthoringSourceAsset const> sourceAssets,
         annotation::SourceId selectedSourceId,
-        std::optional<annotation::ElementId> selectedRecognizerId,
+        std::optional<annotation::ElementId> selectedElementId,
         annotation::RecognitionPolicy const& policy
     ) -> Result<PreviewResult>;
 
@@ -141,7 +141,7 @@ namespace uf::workbench
     auto scoreRegionOnScreen(
         annotation::AuthoringDocument const& document,
         std::span<annotation::AuthoringSourceAsset const> sourceAssets,
-        annotation::ElementId recognizerId,
+        annotation::ElementId elementId,
         annotation::SourceId screenId,
         annotation::RecognitionPolicy const& policy
     ) -> Result<PreviewAnchorRow>;
@@ -219,7 +219,7 @@ namespace uf::workbench
         ScreenCheckOutcome                outcome{};
     };
 
-    // One recognizer's similarity scores on the screen it was drawn on and on
+    // One element's similarity scores on the screen it was drawn on and on
     // the other screen it comes closest to matching. Both are reported as a raw
     // score against the shared budget rather than a ratio, because maximumSad
     // depends only on the template and the threshold -- never on the screen --
@@ -229,12 +229,12 @@ namespace uf::workbench
     // above it on every other. The gap is the number worth watching: a mark that
     // only passes at nearly zero is over-fitted to a still, and one that nearly
     // passes elsewhere will eventually resolve the wrong page.
-    struct RecognizerMargin final
+    struct ElementMargin final
     {
-        annotation::ElementId recognizerId;
+        annotation::ElementId elementId;
         uint64                maximumSad{};
 
-        // The screen this recognizer has to work on -- the one recorded for the
+        // The screen this element has to work on -- the one recorded for the
         // page it belongs to -- and its score there. For anything drawn on the
         // page it serves that is also the screen its template was cut from. A
         // shared element is the exception: cut from one screen and used on
@@ -268,7 +268,7 @@ namespace uf::workbench
         // produced evidence, so no score was measured here.
         Stopped,
         // Nothing searched for the element here. One element compiles to one
-        // recognizer, so an element some page exercises is searched on every
+        // compiled element, so an element some page exercises is searched on every
         // screen, on and off its own pages -- which is what makes the grid's
         // off-diagonal cells measurable. What is left is an element no page
         // exercises at all: it has no region to be searched in anywhere.
@@ -425,7 +425,7 @@ namespace uf::workbench
     struct ModelCheck final
     {
         std::vector<ScreenCheck>       screens{};
-        std::vector<RecognizerMargin>  margins{};
+        std::vector<ElementMargin>     margins{};
         std::optional<LiveScreenCheck> live{};
 
         // One cell per (element, screen), plus one per (element, appearance,
@@ -506,15 +506,15 @@ namespace uf::workbench
     [[nodiscard]]
     auto judgeModelCheck(ModelCheck const& check) -> std::vector<ModelFinding>;
 
-    // Evaluates every recognizer against every captured screen, once, and reports
-    // both what each screen resolved to and how much room each recognizer has.
+    // Evaluates every element against every captured screen, once, and reports
+    // both what each screen resolved to and how much room each element has.
     // This is the check an author cannot perform by eye: a mark always matches
     // the image it was cut from at a score of zero, so the only evidence that it
     // identifies one screen rather than another is how it scores on the others.
     //
     // liveFrameBytes is a PNG freshly captured from the running target, or empty
     // when there is none. It is evaluated as one more screen and folded into the
-    // same margins, so the author reads one row per recognizer rather than
+    // same margins, so the author reads one row per element rather than
     // comparing two reports. It is deliberately not added to the project: a frame
     // taken to measure against is not a screen the model is authored on.
     [[nodiscard]]

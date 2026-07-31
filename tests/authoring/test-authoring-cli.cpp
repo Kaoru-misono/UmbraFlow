@@ -363,12 +363,12 @@ namespace uf::authoring
         // authored here has exactly one, so a test that finds another number is
         // looking at a document the CLI did not write.
         [[nodiscard]]
-        auto soleVariant(
+        auto soleAppearance(
             annotation::Element const& element
-        ) -> annotation::Variant
+        ) -> annotation::Appearance
         {
-            REQUIRE(element.variants().size() == 1U);
-            return element.variants().front();
+            REQUIRE(element.appearances().size() == 1U);
+            return element.appearances().front();
         }
 
         [[nodiscard]]
@@ -618,7 +618,7 @@ namespace uf::authoring
                     project.text(),
                     "sortie",
                     "back",
-                    "--variant",
+                    "--appearance",
                     std::string{pin}
                 )
             );
@@ -874,23 +874,23 @@ namespace uf::authoring
         CHECK(p_keyed->capabilities().hasIdentify());
         CHECK_FALSE(p_keyed->capabilities().hasInteract());
 
-        auto const keyedVariant = soleVariant(*p_keyed);
+        auto const keyedAppearance = soleAppearance(*p_keyed);
         CHECK(
-            keyedVariant.templateRect()
+            keyedAppearance.templateRect()
             == *PixelRect::create(0, 0, fixture::k_width, fixture::k_height)
         );
-        REQUIRE(keyedVariant.colourKey().has_value());
-        CHECK(keyedVariant.colourKey()->red() == fixture::k_textRed);
-        CHECK(keyedVariant.colourKey()->green() == fixture::k_textGreen);
-        CHECK(keyedVariant.colourKey()->blue() == fixture::k_textBlue);
-        CHECK(keyedVariant.colourKey()->tolerance() == k_tolerance);
+        REQUIRE(keyedAppearance.colourKey().has_value());
+        CHECK(keyedAppearance.colourKey()->red() == fixture::k_textRed);
+        CHECK(keyedAppearance.colourKey()->green() == fixture::k_textGreen);
+        CHECK(keyedAppearance.colourKey()->blue() == fixture::k_textBlue);
+        CHECK(keyedAppearance.colourKey()->tolerance() == k_tolerance);
 
         auto const* p_unkeyed = elementNamed(document, "unkeyed_menu");
         REQUIRE(p_unkeyed != nullptr);
         // The control on the key checks above: an element authored without
         // --key must come back carrying none, so a CLI that invented a key
         // would fail here rather than pass everything.
-        CHECK_FALSE(soleVariant(*p_unkeyed).colourKey().has_value());
+        CHECK_FALSE(soleAppearance(*p_unkeyed).colourKey().has_value());
 
         auto const* p_target = elementNamed(document, "menu_button");
         REQUIRE(p_target != nullptr);
@@ -899,12 +899,12 @@ namespace uf::authoring
         CHECK_FALSE(p_target->capabilities().hasRead());
         CHECK(p_target->searchRoi() == *PixelRect::create(0, 0, 60, 30));
 
-        auto const targetVariant = soleVariant(*p_target);
-        CHECK(targetVariant.templateRect() == *PixelRect::create(10, 4, 20, 12));
-        CHECK(targetVariant.threshold().basisPoints() == 8500);
-        REQUIRE(targetVariant.colourKey().has_value());
-        CHECK(targetVariant.colourKey()->red() == 249);
-        CHECK(targetVariant.colourKey()->tolerance() == 8);
+        auto const targetAppearance = soleAppearance(*p_target);
+        CHECK(targetAppearance.templateRect() == *PixelRect::create(10, 4, 20, 12));
+        CHECK(targetAppearance.threshold().basisPoints() == 8500);
+        REQUIRE(targetAppearance.colourKey().has_value());
+        CHECK(targetAppearance.colourKey()->red() == 249);
+        CHECK(targetAppearance.colourKey()->tolerance() == 8);
 
         // Every page-side use is a reference now, and the two anchors reach the
         // page through one as well: their references are what the signature is
@@ -967,7 +967,7 @@ namespace uf::authoring
         // above; a CLI that drew the rectangle once per capability would leave
         // two elements matched twice a cycle, which is the cost this replaces.
         CHECK(document.elements().size() == 4U);
-        CHECK(soleVariant(*p_dual).templateRect() == *PixelRect::create(40, 4, 30, 12));
+        CHECK(soleAppearance(*p_dual).templateRect() == *PixelRect::create(40, 4, 30, 12));
 
         auto const* p_menu = pageNamed(document, "menu");
         REQUIRE(p_menu != nullptr);
@@ -1561,7 +1561,7 @@ namespace uf::authoring
         // A readout carries no template at all, which is the model's own rule:
         // sortie_level's value IS what is read, so a template of it would
         // require the level not to change in order to read the level.
-        CHECK(p_readout->variants().empty());
+        CHECK(p_readout->appearances().empty());
 
         // Nothing to compare, so match refuses rather than answering with a
         // measurement it never made.
@@ -1725,7 +1725,7 @@ namespace uf::authoring
             REQUIRE(loaded.has_value());
             auto const* p_glyph = elementNamed(loaded->document, "glyph");
             REQUIRE(p_glyph != nullptr);
-            CHECK(p_glyph->findVariant(*annotation::ResourceName::create("tiny")) != nullptr);
+            CHECK(p_glyph->findAppearance(*annotation::ResourceName::create("tiny")) != nullptr);
         }
 
         SUBCASE("a key that takes most of the rectangle warns")
@@ -1818,7 +1818,7 @@ namespace uf::authoring
         // document would pass the two checks above only by accident, so the
         // published closure is measured: both anchors, each with its own
         // template asset installed where the manifest says it is.
-        CHECK(parsed->catalog().recognizers().size() == 2U);
+        CHECK(parsed->catalog().elements().size() == 2U);
         REQUIRE(parsed->assets().size() == 2U);
         for (auto const& asset : parsed->assets())
         {
@@ -1835,7 +1835,7 @@ namespace uf::authoring
         CHECK(parsed->assets()[0].templateHash != parsed->assets()[1].templateHash);
     }
 
-    TEST_CASE("authoring CLI match separates a keyed recognizer from an unkeyed one")
+    TEST_CASE("authoring CLI match separates a keyed element from an unkeyed one")
     {
         auto const project = TemporaryProject{"match"};
         auto const frames  = authorKeyedProject(project);
@@ -1859,7 +1859,7 @@ namespace uf::authoring
         requireOk(unkeyed);
 
         // The whole point of the tool: the artwork under the glyphs changed
-        // completely between the two captures, and only the recognizer whose
+        // completely between the two captures, and only the element whose
         // colour key selects the glyphs still matches. The two differ in
         // nothing else -- same source, same rectangle, same threshold, same
         // frame -- so this cannot pass for any other reason.
@@ -2500,7 +2500,7 @@ namespace uf::authoring
         // Nothing was cut and nothing was ingested, and the answer says both
         // rather than leaving them out: an agent reading this document finds
         // the same keys the drawing half answers with.
-        CHECK(drawn.json.contains("\"variants\":[]"));
+        CHECK(drawn.json.contains("\"appearances\":[]"));
         CHECK(drawn.json.contains("\"mask\":null"));
         CHECK(drawn.json.contains("\"source_ingested\":false"));
 
@@ -2510,7 +2510,7 @@ namespace uf::authoring
 
         auto const* p_area = elementNamed(document, "hand_area");
         REQUIRE(p_area != nullptr);
-        CHECK(p_area->variants().empty());
+        CHECK(p_area->appearances().empty());
 
         // The rectangle landed on the ELEMENT's region rather than on this
         // page's reference. A reference's region is optional and means "this
@@ -2614,7 +2614,7 @@ namespace uf::authoring
             );
             requireOk(located);
             CHECK(located.json.contains("\"hit\":true"));
-            CHECK(located.json.contains("\"variant\":\"on_purple\""));
+            CHECK(located.json.contains("\"appearance\":\"on_purple\""));
             CHECK(unsignedField(located.json, "sad_score") < 1'000);
         }
 
@@ -2639,7 +2639,7 @@ namespace uf::authoring
             );
             requireOk(located);
             CHECK(located.json.contains("\"hit\":false"));
-            CHECK(located.json.contains("\"variant\":\"on_blue\""));
+            CHECK(located.json.contains("\"appearance\":\"on_blue\""));
             CHECK(unsignedField(located.json, "sad_score") > 200'000);
         }
 
@@ -2659,7 +2659,7 @@ namespace uf::authoring
                 project.text(),
                 "menu",
                 "back",
-                "--variant",
+                "--appearance",
                 "on_blue"
             );
             CHECK_FALSE(refused.ok);
@@ -2676,7 +2676,7 @@ namespace uf::authoring
             );
             requireOk(folded);
             CHECK(folded.json.contains("\"hit\":true"));
-            CHECK(folded.json.contains("\"variant\":\"on_blue\""));
+            CHECK(folded.json.contains("\"appearance\":\"on_blue\""));
         }
     }
 
@@ -2787,7 +2787,7 @@ namespace uf::authoring
                 project.text(),
                 "sortie",
                 "menu_button",
-                "--variant",
+                "--appearance",
                 "on_purple"
             );
             CHECK_FALSE(refused.ok);
@@ -2810,7 +2810,7 @@ namespace uf::authoring
                 "menu_mark",
                 "--capability",
                 "identify:required",
-                "--variant",
+                "--appearance",
                 "default"
             );
             CHECK_FALSE(refused.ok);

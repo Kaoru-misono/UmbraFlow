@@ -424,7 +424,7 @@ CHAPTERS = [
         {
             auto event         = identityEvent(TraceEventKind::ActionRejected, identity);
             event.errorKind    = automationErrorKind(revalidation.error());
-            event.recognizerId = action.actionDetection().recognizerId();
+            event.elementId = action.actionDetection().elementId();
             event.message      = std::string{revalidation.error().message()};
             UF_TRY(emit(event));
             return std::unexpected{std::move(revalidation).error()};

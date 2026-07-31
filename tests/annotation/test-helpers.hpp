@@ -4,7 +4,7 @@
 #include <annotation/capabilities.hpp>
 #include <annotation/catalog.hpp>
 #include <annotation/resource.hpp>
-#include <annotation/variant.hpp>
+#include <annotation/appearance.hpp>
 
 #include <core/numeric/checked-arithmetic.hpp>
 #include <core/numeric/checked-cast.hpp>
@@ -152,18 +152,18 @@ namespace uf::annotation::test
         return exercised(std::nullopt, ExercisedInteract{});
     }
 
-    inline auto variant(
+    inline auto appearance(
         std::string name,
-        SourceId variantSourceId,
+        SourceId appearanceSourceId,
         PixelRect templateRect,
         SimilarityThreshold similarityThreshold = threshold(),
         std::optional<ColourKey> colourKey      = std::nullopt
-    ) -> Variant
+    ) -> Appearance
     {
-        auto result = Variant::create(
-            Variant::Spec{
+        auto result = Appearance::create(
+            Appearance::Spec{
                 .name         = resourceName(std::move(name)),
-                .sourceId     = variantSourceId,
+                .sourceId     = appearanceSourceId,
                 .templateRect = templateRect,
                 .threshold    = similarityThreshold,
                 .colourKey    = colourKey,
@@ -173,13 +173,13 @@ namespace uf::annotation::test
         return *std::move(result);
     }
 
-    inline auto recognizerVariant(
+    inline auto compiledAppearance(
         std::string name,
         PixelRect templateRect,
         SimilarityThreshold similarityThreshold = threshold()
-    ) -> RecognizerVariant
+    ) -> CompiledAppearance
     {
-        return RecognizerVariant{
+        return CompiledAppearance{
             .name         = resourceName(std::move(name)),
             .templateRect = templateRect,
             .threshold    = similarityThreshold,
@@ -192,7 +192,7 @@ namespace uf::annotation::test
         std::string name,
         ElementCapabilities elementCapabilities,
         PixelRect searchRoi,
-        std::vector<Variant> variants = {}
+        std::vector<Appearance> appearances = {}
     ) -> Element
     {
         auto result = Element::create(
@@ -202,30 +202,30 @@ namespace uf::annotation::test
                 .name         = resourceName(std::move(name)),
                 .capabilities = std::move(elementCapabilities),
                 .searchRoi    = searchRoi,
-                .variants     = std::move(variants),
+                .appearances  = std::move(appearances),
             }
         );
         REQUIRE(result.has_value());
         return *std::move(result);
     }
 
-    inline auto recognizer(
+    inline auto element(
         ProjectFingerprint projectFingerprint,
         ElementId id,
         std::string name,
         ElementCapabilities elementCapabilities,
         PixelRect searchRoi,
-        std::vector<RecognizerVariant> variants = {}
-    ) -> RecognizerDefinition
+        std::vector<CompiledAppearance> appearances = {}
+    ) -> CompiledElement
     {
-        auto result = RecognizerDefinition::create(
+        auto result = CompiledElement::create(
             projectFingerprint,
-            RecognizerSpec{
+            CompiledElementSpec{
                 .id           = id,
                 .name         = resourceName(std::move(name)),
                 .capabilities = std::move(elementCapabilities),
                 .searchRoi    = searchRoi,
-                .variants     = std::move(variants),
+                .appearances  = std::move(appearances),
             }
         );
         REQUIRE(result.has_value());
@@ -246,22 +246,22 @@ namespace uf::annotation::test
         ExercisedCapabilities exercisedCapabilities,
         Holding holding                          = Holding::Owned,
         std::optional<PixelRect> searchRoi        = std::nullopt,
-        std::optional<ResourceName> pinnedVariant = std::nullopt
+        std::optional<ResourceName> pinnedAppearance = std::nullopt
     ) -> PageReference
     {
         return PageReference{
-            .pageId    = referencedPageId,
-            .elementId = referencedElementId,
-            .holding   = holding,
-            .exercised = std::move(exercisedCapabilities),
-            .searchRoi = searchRoi,
-            .variant   = std::move(pinnedVariant),
+            .pageId     = referencedPageId,
+            .elementId  = referencedElementId,
+            .holding    = holding,
+            .exercised  = std::move(exercisedCapabilities),
+            .searchRoi  = searchRoi,
+            .appearance = std::move(pinnedAppearance),
         };
     }
 
     inline auto catalog(
         ProjectFingerprint projectFingerprint,
-        std::vector<RecognizerDefinition> recognizers,
+        std::vector<CompiledElement> elements,
         std::vector<PageSpec> pages,
         std::vector<PageReference> references
     ) -> RecognitionCatalog
@@ -269,7 +269,7 @@ namespace uf::annotation::test
         auto result = RecognitionCatalog::create(
             projectId(),
             projectFingerprint,
-            std::move(recognizers),
+            std::move(elements),
             std::move(pages),
             std::move(references)
         );

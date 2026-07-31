@@ -11,16 +11,16 @@
 
 namespace uf::annotation
 {
-    // One appearance of one element. A variant changes what a patch of pixels
+    // One appearance of one element. An appearance changes what a patch of pixels
     // LOOKS like; it does not change where that patch is or what it means. A
-    // form that moves or resizes is not a variant, and a form that would carry
+    // form that moves or resizes is not an appearance, and a form that would carry
     // different capabilities is not one either.
     //
-    // Variants are named because for a 1x/2x/3x speed button the matched form
+    // Appearances are named because for a 1x/2x/3x speed button the matched form
     // IS the state: the script reads which one matched and thereby learns the
     // current speed. That is why the name is a ResourceName -- it has to reach
     // the script surface as a member key -- and not an index.
-    class Variant final
+    class Appearance final
     {
     public:
         struct Spec final
@@ -39,13 +39,13 @@ namespace uf::annotation
         SimilarityThreshold      m_threshold;
         std::optional<ColourKey> m_colourKey;
 
-        explicit Variant(Spec spec) noexcept;
+        explicit Appearance(Spec spec) noexcept;
 
     public:
-        auto operator==(Variant const&) const -> bool = default;
+        auto operator==(Appearance const&) const -> bool = default;
 
         [[nodiscard]]
-        static auto create(Spec const& spec) -> Result<Variant>;
+        static auto create(Spec const& spec) -> Result<Appearance>;
 
         [[nodiscard]] auto name() const -> ResourceName;
         [[nodiscard]] auto sourceId() const -> SourceId;

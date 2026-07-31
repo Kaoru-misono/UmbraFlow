@@ -48,42 +48,42 @@ namespace uf::annotation
             ElementId id,
             std::string name,
             PixelRect templateRect
-        ) -> RecognizerDefinition
+        ) -> CompiledElement
         {
-            return test::recognizer(
+            return test::element(
                 test::fingerprint(),
                 id,
                 std::move(name),
                 test::capabilities(Identify{}),
                 test::pixelRect(0, 0, 4, 4),
-                std::vector<RecognizerVariant>{
-                    test::recognizerVariant("only", templateRect),
+                std::vector<CompiledAppearance>{
+                    test::compiledAppearance("only", templateRect),
                 }
             );
         }
 
         [[nodiscard]]
-        auto interactiveElement(ElementId id, std::string name) -> RecognizerDefinition
+        auto interactiveElement(ElementId id, std::string name) -> CompiledElement
         {
-            return test::recognizer(
+            return test::element(
                 test::fingerprint(),
                 id,
                 std::move(name),
                 test::capabilities(std::nullopt, Interact{}),
                 test::pixelRect(0, 0, 4, 4),
-                std::vector<RecognizerVariant>{
-                    test::recognizerVariant("only", test::pixelRect(1, 1, 1, 1)),
+                std::vector<CompiledAppearance>{
+                    test::compiledAppearance("only", test::pixelRect(1, 1, 1, 1)),
                 }
             );
         }
 
         [[nodiscard]]
-        auto hitEvaluation(RecognizerDefinition const& recognizer) -> AnchorEvaluation
+        auto hitEvaluation(CompiledElement const& element) -> AnchorEvaluation
         {
             auto result = AnchorEvaluation::fromSadOutcome(
-                recognizer,
-                recognizer.variants().front(),
-                recognizer.searchRoi(),
+                element,
+                element.appearances().front(),
+                element.searchRoi(),
                 SadSearchOutcome{std::optional<SadMatch>{SadMatch{0, 0, 0}}}
             );
             REQUIRE(result.has_value());
@@ -91,12 +91,12 @@ namespace uf::annotation
         }
 
         [[nodiscard]]
-        auto missEvaluation(RecognizerDefinition const& recognizer) -> AnchorEvaluation
+        auto missEvaluation(CompiledElement const& element) -> AnchorEvaluation
         {
             auto result = AnchorEvaluation::fromSadOutcome(
-                recognizer,
-                recognizer.variants().front(),
-                recognizer.searchRoi(),
+                element,
+                element.appearances().front(),
+                element.searchRoi(),
                 SadSearchOutcome{std::optional<SadMatch>{}}
             );
             REQUIRE(result.has_value());
@@ -119,11 +119,11 @@ namespace uf::annotation
             auto const anchorId = test::elementId(k_anchorId);
             auto const actionId = test::elementId(k_actionId);
             auto const pageId = test::pageId(k_pageId);
-            auto recognizers = std::vector<RecognizerDefinition>{};
-            recognizers.emplace_back(
+            auto elements = std::vector<CompiledElement>{};
+            elements.emplace_back(
                 anchorElement(anchorId, "home_marker", test::pixelRect(0, 0, 1, 1))
             );
-            recognizers.emplace_back(interactiveElement(actionId, "daily_button"));
+            elements.emplace_back(interactiveElement(actionId, "daily_button"));
             auto references = std::vector<PageReference>{};
             references.emplace_back(
                 test::reference(pageId, anchorId, test::identifiesAs())
@@ -133,11 +133,11 @@ namespace uf::annotation
             );
             auto catalog = test::catalog(
                 projectFingerprint,
-                std::move(recognizers),
+                std::move(elements),
                 {test::page(pageId, "home")},
                 std::move(references)
             );
-            auto const* p_anchor = catalog.findRecognizer(anchorId);
+            auto const* p_anchor = catalog.findElement(anchorId);
             REQUIRE(p_anchor != nullptr);
 
             auto frame = test::frame(
@@ -267,7 +267,7 @@ namespace uf::annotation
         REQUIRE_FALSE(mismatched.has_value());
         requireActionRejected(
             mismatched.error(),
-            "detection label does not match its bound recognizer identity"
+            "detection label does not match its bound element identity"
         );
 
         // The anchor is a real catalog element under a real name; what it does
@@ -293,14 +293,14 @@ namespace uf::annotation
         auto const homePageId         = test::pageId(k_pageId);
         auto const awayPageId         = test::pageId(k_awayPageId);
 
-        auto recognizers = std::vector<RecognizerDefinition>{};
-        recognizers.emplace_back(
+        auto elements = std::vector<CompiledElement>{};
+        elements.emplace_back(
             anchorElement(homeAnchorId, "home_marker", test::pixelRect(0, 0, 1, 1))
         );
-        recognizers.emplace_back(
+        elements.emplace_back(
             anchorElement(awayAnchorId, "away_marker", test::pixelRect(2, 2, 1, 1))
         );
-        recognizers.emplace_back(interactiveElement(actionId, "daily_button"));
+        elements.emplace_back(interactiveElement(actionId, "daily_button"));
 
         // Only the away page references the button for interaction, while the
         // frame resolves to home. The authorisation IS that missing reference.
@@ -316,7 +316,7 @@ namespace uf::annotation
         );
         auto catalog = test::catalog(
             projectFingerprint,
-            std::move(recognizers),
+            std::move(elements),
             {
                 test::page(homePageId, "home"),
                 test::page(awayPageId, "away"),
@@ -324,8 +324,8 @@ namespace uf::annotation
             std::move(references)
         );
 
-        auto const* p_home = catalog.findRecognizer(homeAnchorId);
-        auto const* p_away = catalog.findRecognizer(awayAnchorId);
+        auto const* p_home = catalog.findElement(homeAnchorId);
+        auto const* p_away = catalog.findElement(awayAnchorId);
         REQUIRE(p_home != nullptr);
         REQUIRE(p_away != nullptr);
 
@@ -412,7 +412,7 @@ namespace uf::annotation
             );
             return references;
         };
-        auto anchorOnly = std::vector<RecognizerDefinition>{};
+        auto anchorOnly = std::vector<CompiledElement>{};
         anchorOnly.emplace_back(
             anchorElement(anchorId, "home_marker", test::pixelRect(0, 0, 1, 1))
         );

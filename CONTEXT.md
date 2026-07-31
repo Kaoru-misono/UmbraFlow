@@ -10,15 +10,18 @@ task scripts written in Luau drive the loop through a minimal capability API.
 
 **Capability namespace (`uf`)**:
 The single read-only global root through which a project task script reaches
-the host: `uf.pages`, `uf.recognizers`, `uf.task`, and `uf.errors`. A script
+the host: `uf.pages`, `uf.elements`, `uf.task`, and `uf.errors`. A script
 sees nothing of the host outside this root, and effects reach it only through
 the `ctx` object passed into a task's `run`. `uf` is the same product
 abbreviation as the C++ `uf::` namespace, used deliberately in both languages.
-_Avoid_: `umbra` (the 2026-07-27 spelling of this root; renamed to `uf` on
+_Avoid_: `uf.recognizers` (this table's spelling until 2026-07-31; the
+capability model had already made it false, because the table holds exactly the
+elements a script may CLICK and excludes the identify-only ones that do the
+recognising), `umbra` (the 2026-07-27 spelling of this root; renamed to `uf` on
 2026-07-29, see `docs/plans/2026-07-29-three-layer-task-system.md` §6 and §18 —
 the rename touches only this script root, never the product names `UmbraFlow`
-and `umbra-flow` or the schema ids `umbraflow-authoring/v3`,
-`umbraflow-annotations/v2`, and the merged trace schema `umbraflow-trace/v1`,
+and `umbra-flow` or the schema ids `umbraflow-authoring/v4`,
+`umbraflow-annotations/v3`, and the merged trace schema `umbraflow-trace/v2`,
 which shipped on 2026-07-29 in `modules/trace`), `bot` (superseded draft
 wording in the grill decisions and the S0 annotation design)
 
@@ -26,9 +29,24 @@ wording in the grill decisions and the S0 annotation design)
 > `umbraflow-authoring/v2` and `umbraflow-annotations/v1` here until the
 > capability model landed. Both were bumped in one atomic change, and neither
 > old id has a read path — an old schema string fails with the ordinary
-> unsupported-schema error. `umbraflow-trace/v1` is unchanged. Deciding
-> artifact: `docs/plans/2026-07-31-annotation-model-capabilities.md` §三;
-> in code, `k_authoringDocumentSchema` and `k_runtimeManifestSchema`.
+> unsupported-schema error. Deciding artifact:
+> `docs/plans/2026-07-31-annotation-model-capabilities.md` §三; in code,
+> `k_authoringDocumentSchema` and `k_runtimeManifestSchema`.
+
+> Corrected 2026-07-31 (vocabulary rename): all three ids moved again, because
+> a key rename is a wire change. `umbraflow-authoring/v3` → `v4`
+> (`[[annotation]]` → `[[element]]`, `[[variant]]` → `[[appearance]]`, a
+> reference's `variant` → `appearance`, `recognizer_kind` → `element_kind`),
+> `umbraflow-annotations/v2` → `v3` (`[[recognizer]]` → `[[element]]`, plus the
+> same two appearance keys), and `umbraflow-trace/v1` → `v2` (`recognizerId` →
+> `elementId`, the resources line's `recognizers` array → `elements`). No old id
+> has a read path. In code: `k_authoringDocumentSchema`,
+> `k_runtimeManifestSchema`, `k_traceSchema`.
+>
+> `[[annotation]]` is the third instance of the same defect and the oldest: it
+> spelled the anchor/target/info taxonomy the capability model had already
+> retired, so a persisted key named a classification that no longer exists. It
+> moved inside the bump that was happening anyway rather than costing a v5.
 
 **Private capability surface**:
 The one host-built table of primitives that only the trusted Luau framework can
@@ -112,7 +130,7 @@ _Avoid_: `SessionId` (too generic), engine session id, task session id
 
 **Observation cycle**:
 The explicit open/close scope around exactly one capture, inside which page
-resolution, recognizer lookup, and a single click all read the same frame.
+resolution, element lookup, and a single click all read the same frame.
 Opening it costs one capture; closing it releases the frame deterministically
 and is idempotent. It replaces GC-driven frame lifetime, and because a page and
 a hit from one cycle are same-frame by construction, cross-frame evidence
@@ -168,29 +186,35 @@ _Avoid_: step id, step address, step key (all three imply the uniqueness the
 ### Annotation model
 
 Added 2026-07-31 with the capability model. Deciding artifact:
-`docs/plans/2026-07-31-annotation-model-capabilities.md`.
+`docs/plans/2026-07-31-annotation-model-capabilities.md`. Renamed the same day
+to one vocabulary: the thing is an **element** everywhere, and *recognition*
+survives only where it names the activity (`RecognitionCatalog`,
+`RecognitionRuntime`, `recognition-runtime.cpp`), never the thing.
 
 **Element (`annotation::Element`, `annotation::ElementId`)**:
 What an author draws: one rectangle of the target's screen, the set of uses it
 may be put to, and the appearances it can take. It is project-level — nothing on
 it says which page it belongs to. This is the noun the authoring CLI, the
-authoring document, and the editing layer all speak in.
-_Avoid_: recognizer (see below — since 2026-07-31 that word names the compiled
-artifact, not the authored one), region, annotation (the old three-way kind),
-`RecognizerId` (renamed to `ElementId`; an element that only reads text
-recognizes nothing)
+authoring document, the editing layer, the script surface (`uf.elements`), and
+the trace (`elementId`) all speak in.
+_Avoid_: recognizer (the pre-2026-07-31 spelling; an element that only reads
+text or only receives a click recognizes nothing, and is located by the page it
+sits on), region, annotation (the old three-way kind), `RecognizerId` (renamed
+to `ElementId`)
 
-**Recognizer (`annotation::RecognizerDefinition`)**:
+**Compiled element (`annotation::CompiledElement`)**:
 What the compiler emits for one element into the runtime manifest, and what the
 runtime matches with. Exactly one is emitted per element, under the element's
 own id; the per-(element, page) derived id the earlier model used is gone with
 `derivedRuntimeRecognizerId`. The distinction from *element* is real and load
-bearing: a recognizer is generated and read-only, an element is authored.
-One deliberate carry-over: the script capability root is still `uf.recognizers`
-(the table of interactive-element handles a task addresses by name). The name
-predates this split and renaming it would be a script-facing break; it is not
-drift.
-_Avoid_: using it for the thing an author draws
+bearing: a compiled element is generated and read-only, an element is authored.
+The runtime side carries the same adjective throughout —
+`CompiledAppearance`, `CompiledElementSpec`, `RuntimeElementSpec`,
+`RuntimeElementAsset`, `RuntimeAppearanceAsset`.
+_Avoid_: `RecognizerDefinition` and `RecognizerVariant` (the spellings until
+2026-07-31), recognizer (it named the compiled artifact for one day, between
+the capability model landing and this rename; it names nothing now), using
+either for the thing an author draws
 
 **Capability set (`ElementCapabilities` / `ExercisedCapabilities`)**:
 The three uses one patch of pixels can be put to — `identify`, `interact`,
@@ -207,7 +231,7 @@ _Avoid_: `AnnotationType`, `ElementKind`, `AnchorElement`, `InteractiveElement`,
 
 **Page reference (`annotation::PageReference`)**:
 One page's use of one element: `{pageId, elementId, holding, exercised,
-searchRoi?, variant?}`. It is the edge the model is built on — authorisation IS
+searchRoi?, appearance?}`. It is the edge the model is built on — authorisation IS
 the reference, and a page's signature is *derived* from the references whose
 `exercised` identify carries `Required` or `Forbidden`, never authored. `holding`
 is `Owned | Referenced`: an authoring-side editing guard rail the runtime never
@@ -219,13 +243,15 @@ public factory now, because a second way to state one fact could disagree with
 the first), placement (the pre-2026-07-31 name for the same row, when it carried
 neither holding nor exercised capabilities)
 
-**Variant (`annotation::Variant`)**:
-One named appearance of one element. A variant changes what a patch of pixels
-LOOKS like; it does not change where that patch is or what it means. Named
-rather than indexed because for a 1x/2x/3x speed button the matched form IS the
-state and the name has to reach the script surface. Declaration order decides
-ties and nothing else. An empty variant list is legal and means the rectangle is
-located by the page being recognised rather than by pixels of its own — such an
-element can never be identity evidence.
-_Avoid_: form, appearance-kind, template list (a variant is more than its
-template rectangle)
+**Appearance (`annotation::Appearance`)**:
+One named appearance of one element. An appearance changes what a patch of
+pixels LOOKS like; it does not change where that patch is or what it means.
+Named rather than indexed because for a 1x/2x/3x speed button the matched form
+IS the state and the name has to reach the script surface. Declaration order
+decides ties and nothing else. An empty appearance list is legal and means the
+rectangle is located by the page being recognised rather than by pixels of its
+own — such an element can never be identity evidence.
+_Avoid_: variant (the spelling until 2026-07-31; the CLI verb was already
+`element appearance`, and the word also collides with `std::variant` — which
+keeps its own name, as does the UUID variant field), form, appearance-kind,
+template list (an appearance is more than its template rectangle)

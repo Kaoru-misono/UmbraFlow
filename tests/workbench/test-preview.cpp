@@ -175,7 +175,7 @@ namespace uf::workbench
 
         REQUIRE(preview->anchorRows.size() == 1U);
         auto const& row = preview->anchorRows.front();
-        CHECK(row.recognizerId == fixture.anchorId);
+        CHECK(row.elementId == fixture.anchorId);
         CHECK(row.hit);
         REQUIRE(row.sadScore.has_value());
         CHECK(row.sadScore.value() == 0);
@@ -201,7 +201,7 @@ namespace uf::workbench
         REQUIRE(preview.has_value());
         REQUIRE(preview->actionEvidence.has_value());
         auto const& action = preview->actionEvidence.value();
-        CHECK(action.recognizerId == fixture.actionId);
+        CHECK(action.elementId == fixture.actionId);
         CHECK(action.hit);
         REQUIRE(action.matchedRect.has_value());
         CHECK(action.matchedRect.value() == annotation::test::pixelRect(1, 0, 1, 1));
@@ -223,7 +223,7 @@ namespace uf::workbench
         REQUIRE(preview.has_value());
         CHECK_FALSE(preview->pageKind.has_value());
         REQUIRE(preview->pageStop.has_value());
-        CHECK(preview->pageStop->recognizerId == fixture.anchorId);
+        CHECK(preview->pageStop->elementId == fixture.anchorId);
         CHECK(
             preview->pageStop->reason
             == SadSearchStopReason::ComparisonBudgetExhausted
@@ -725,16 +725,16 @@ namespace uf::workbench
 
         auto const fixture = modelFixture(true);
         auto draft         = makeAuthoringDraft(fixture.document);
-        draft.recognizers.emplace_back(
-            EditableRecognizer{
+        draft.elements.emplace_back(
+            EditableElement{
                 .id   = sharedId,
                 .name = "shared_region",
                 .capabilities = EditableCapabilities{
                     .interact = EditableInteract{},
                 },
                 .searchRoi = annotation::test::pixelRect(0, 0, 1, 1),
-                .variants  = {
-                    EditableVariant{
+                .appearances  = {
+                    EditableAppearance{
                         .name         = "default",
                         .sourceId     = darkSource,
                         .templateRect = annotation::test::pixelRect(0, 0, 1, 1),
@@ -769,7 +769,7 @@ namespace uf::workbench
         auto const margin = std::ranges::find(
             check->margins,
             sharedId,
-            &RecognizerMargin::recognizerId
+            &ElementMargin::elementId
         );
         REQUIRE(margin != check->margins.end());
 
@@ -813,11 +813,11 @@ namespace uf::workbench
         for (auto const& margin : check->margins)
         {
             REQUIRE(margin.liveSadScore.has_value());
-            if (margin.recognizerId == darkId)
+            if (margin.elementId == darkId)
             {
                 CHECK(*margin.liveSadScore == 0U);
             }
-            else if (margin.recognizerId == lightId)
+            else if (margin.elementId == lightId)
             {
                 CHECK(*margin.liveSadScore > margin.maximumSad);
             }
@@ -876,8 +876,8 @@ namespace uf::workbench
         // own claimed screen, plus a third screen no page claims. The menu
         // appearance is pixel B, which sits at a DIFFERENT column on each claimed
         // screen, so a per-screen search lands its box in a different place. The
-        // element is one recognizer under its own id, which is the id every
-        // consumer keys evidence by.
+        // element is one compiled element under its own id, which is the id
+        // every consumer keys evidence by.
         [[nodiscard]]
         auto multiPlacedFixture() -> MultiPlacedFixture
         {
@@ -1028,7 +1028,7 @@ namespace uf::workbench
 
     TEST_CASE("runPreview evaluates an element referenced by two pages on each")
     {
-        // One element is one recognizer under its own id, so the id the UI
+        // One element is one compiled element under its own id, so the id the UI
         // selected it by is the id the runtime answers to. What the shown
         // screen's page still decides is which reference supplies the region,
         // and each page's reference lands the box where that screen has it.
@@ -1043,7 +1043,7 @@ namespace uf::workbench
         );
         REQUIRE(onDark.has_value());
         REQUIRE(onDark->actionEvidence.has_value());
-        CHECK(onDark->actionEvidence->recognizerId == fixture.menuId);
+        CHECK(onDark->actionEvidence->elementId == fixture.menuId);
         CHECK(onDark->actionEvidence->hit);
         REQUIRE(onDark->actionEvidence->matchedRect.has_value());
         CHECK(
@@ -1060,7 +1060,7 @@ namespace uf::workbench
         );
         REQUIRE(onLight.has_value());
         REQUIRE(onLight->actionEvidence.has_value());
-        CHECK(onLight->actionEvidence->recognizerId == fixture.menuId);
+        CHECK(onLight->actionEvidence->elementId == fixture.menuId);
         CHECK(onLight->actionEvidence->hit);
         REQUIRE(onLight->actionEvidence->matchedRect.has_value());
         // The same element's box lands at a different column, because that is
@@ -1089,7 +1089,7 @@ namespace uf::workbench
         );
         REQUIRE(onSpare.has_value());
         REQUIRE(onSpare->actionEvidence.has_value());
-        CHECK(onSpare->actionEvidence->recognizerId == fixture.menuId);
+        CHECK(onSpare->actionEvidence->elementId == fixture.menuId);
         // The spare screen is three copies of pixel A and the menu is pixel B,
         // so the honest answer is a measured miss rather than a skipped search.
         CHECK_FALSE(onSpare->actionEvidence->hit);
@@ -1115,7 +1115,7 @@ namespace uf::workbench
         auto const margin = std::ranges::find(
             check->margins,
             fixture.menuId,
-            &RecognizerMargin::recognizerId
+            &ElementMargin::elementId
         );
         REQUIRE(margin != check->margins.end());
         // The template (pixel B) matches on both claimed screens, so its own
@@ -1498,7 +1498,7 @@ namespace uf::workbench
         // rather than for the reason the pitfall records.
         [[nodiscard]]
         auto appearanceFixture(
-            std::vector<annotation::Variant> backAppearances
+            std::vector<annotation::Appearance> backAppearances
         ) -> AppearanceFixture
         {
             auto const fingerprint = annotation::test::fingerprint(8, 1, 96, 96);
@@ -1632,18 +1632,18 @@ namespace uf::workbench
         // The healthy pair: each appearance cut from the screen it serves, two
         // pixels wide, at a threshold that leaves a SAD ceiling of 51.
         [[nodiscard]]
-        auto healthyAppearances() -> std::vector<annotation::Variant>
+        auto healthyAppearances() -> std::vector<annotation::Appearance>
         {
-            auto appearances = std::vector<annotation::Variant>{};
+            auto appearances = std::vector<annotation::Appearance>{};
             appearances.emplace_back(
-                annotation::test::variant(
+                annotation::test::appearance(
                     "on_dark",
                     annotation::test::sourceId(k_sourceId),
                     annotation::test::pixelRect(0, 0, 2, 1)
                 )
             );
             appearances.emplace_back(
-                annotation::test::variant(
+                annotation::test::appearance(
                     "on_light",
                     annotation::test::sourceId(k_otherSourceId),
                     annotation::test::pixelRect(0, 0, 2, 1)
@@ -1798,9 +1798,9 @@ namespace uf::workbench
         //
         // Delete the off-diagonal from the grid and this cannot fail: the cell
         // it reads does not exist.
-        auto appearances = std::vector<annotation::Variant>{};
+        auto appearances = std::vector<annotation::Appearance>{};
         appearances.emplace_back(
-            annotation::test::variant(
+            annotation::test::appearance(
                 "on_dark_tiny",
                 annotation::test::sourceId(k_sourceId),
                 annotation::test::pixelRect(0, 0, 4, 1),
@@ -1809,7 +1809,7 @@ namespace uf::workbench
             )
         );
         appearances.emplace_back(
-            annotation::test::variant(
+            annotation::test::appearance(
                 "on_light",
                 annotation::test::sourceId(k_otherSourceId),
                 annotation::test::pixelRect(0, 0, 2, 1)
@@ -1863,9 +1863,9 @@ namespace uf::workbench
         // rectangle three columns away -- and resolveClickPixel would take the
         // click there. Declaration order settles ties and nothing else, so the
         // answer has to be "narrow" at column zero.
-        auto appearances = std::vector<annotation::Variant>{};
+        auto appearances = std::vector<annotation::Appearance>{};
         appearances.emplace_back(
-            annotation::test::variant(
+            annotation::test::appearance(
                 "wide",
                 annotation::test::sourceId(k_sourceId),
                 annotation::test::pixelRect(0, 0, 4, 1),
@@ -1873,7 +1873,7 @@ namespace uf::workbench
             )
         );
         appearances.emplace_back(
-            annotation::test::variant(
+            annotation::test::appearance(
                 "narrow",
                 annotation::test::sourceId(k_otherSourceId),
                 annotation::test::pixelRect(0, 0, 2, 1)
@@ -1955,16 +1955,16 @@ namespace uf::workbench
             auto const lightPageId = annotation::test::pageId(k_lightPageId);
             auto const closePageId = annotation::test::pageId(k_closePageId);
 
-            auto appearances = std::vector<annotation::Variant>{};
+            auto appearances = std::vector<annotation::Appearance>{};
             appearances.emplace_back(
-                annotation::test::variant(
+                annotation::test::appearance(
                     "on_dark",
                     darkSource,
                     annotation::test::pixelRect(0, 0, 2, 1)
                 )
             );
             appearances.emplace_back(
-                annotation::test::variant(
+                annotation::test::appearance(
                     "on_light",
                     lightSource,
                     annotation::test::pixelRect(0, 0, 2, 1)

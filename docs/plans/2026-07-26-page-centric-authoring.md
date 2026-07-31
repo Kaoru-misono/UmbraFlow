@@ -1,5 +1,15 @@
 # Page-centric authoring: domain model v2 and the editing layer
 
+> **Vocabulary redirect (2026-07-31).** This document is a dated record and is not
+> rewritten. Read `recognizer` / `RecognizerId` / `uf.recognizers` / `recognizerId`
+> below as **element** / `ElementId` / `uf.elements` / `elementId`,
+> `RecognizerDefinition` and `RecognizerVariant` as `CompiledElement` and
+> `CompiledAppearance`, and `Variant` / `variant` as `Appearance` / `appearance`.
+> `RecognitionCatalog` and `RecognitionRuntime` keep their names -- they name the
+> activity. The schema ids moved with the rename: `umbraflow-authoring/v4`,
+> `umbraflow-annotations/v3`, `umbraflow-trace/v2`. Canonical vocabulary:
+> `CONTEXT.md` "Annotation model".
+
 > **Redirect (2026-07-31).** This plan landed, and the model it produced has
 > since been changed by
 > [`2026-07-31-annotation-model-capabilities.md`](2026-07-31-annotation-model-capabilities.md).

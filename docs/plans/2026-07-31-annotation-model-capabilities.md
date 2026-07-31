@@ -1,5 +1,16 @@
 # 标注模型重构 — 能力集合、持有关系、多形态
 
+> **词汇统一(2026-07-31,同日第二次改名)。** 本文正文已按新词汇改写:
+> `recognizer` → `element`,`RecognizerDefinition`/`RecognizerVariant` →
+> `CompiledElement`/`CompiledAppearance`,`uf.recognizers` → `uf.elements`,
+> trace 的 `recognizerId` → `elementId`,`Variant`/`variant` →
+> `Appearance`/`appearance`(CLI 旗标 `--variant` → `--appearance`)。
+> `RecognitionCatalog`、`RecognitionRuntime`、`recognition-runtime.cpp` 不变——
+> 它们指的是「识别」这个动作。授权文档里的 `[[annotation]]` 表(三选一分类留下的最后一个
+> 持久化名字)也在这一次改名 `[[element]]`。三个 schema 都随之升版:
+> `umbraflow-authoring/v4`、`umbraflow-annotations/v3`、`umbraflow-trace/v2`。
+> 权威词汇见 `CONTEXT.md` 的「Annotation model」一节。
+
 > 状态:**已定方向,2026-07-31 开发者确认**。与 `chaos-super` 的标注工作**并行**推进,
 > 标注不因此停下。
 >
@@ -36,8 +47,8 @@
 > 代价是多一个类型和一条显式的子集关系,换来的是「后者是前者的子集」从一句话变成
 > 一个可调用、可测试的谓词。
 >
-> **§四之二 记录同日晚些时候的四条追加裁决**:GUI 弃用及其三个前置条件;`variants`
-> 为空表示「由页面定位」;三种多形态各自的表示法与 variant 的定义边界;`cycle_read`
+> **§四之二 记录同日晚些时候的四条追加裁决**:GUI 弃用及其三个前置条件;`appearances`
+> 为空表示「由页面定位」;三种多形态各自的表示法与 appearance 的定义边界;`cycle_read`
 > 的形状、trace 字段与独立预算。其中「点击不再要求命中已标注元素」**已撤销**——
 > 四要件一条不掉。
 >
@@ -50,7 +61,7 @@
 > ### A. `find` 需要页面 —— 写进脚本约定,不让框架自动解析
 >
 > `cycle_find` 现在要求周期已解析出页面。这是**被逼的**:细化的 `searchRoi`、钉死的
-> variant、以及 interact 那条边(也就是授权)全都挂在页面引用行上,所以
+> appearance、以及 interact 那条边(也就是授权)全都挂在页面引用行上,所以
 > `evaluateActionTarget` 必须先知道是哪一页,不存在无页入口。
 >
 > 症状:`ctx.luau` 的 `ctx:cycle(fn)` 不解析页面,脚本在里面直接 `find` 会被拒。
@@ -104,8 +115,8 @@
 >
 > ### B. §2.3 的 P0 掩码下限降级为警告,闸门交给证伪矩阵
 >
-> P0 原文要求「掩码全选像素低于 ~50 在 `Variant::create` 构造时拒绝」。**那一层做不到**:
-> `Variant::Spec` 携带的是 `sourceId`,不是像素;数掩码需要图像,而那一层够不着。
+> P0 原文要求「掩码全选像素低于 ~50 在 `Appearance::create` 构造时拒绝」。**那一层做不到**:
+> `Appearance::Spec` 携带的是 `sourceId`,不是像素;数掩码需要图像,而那一层够不着。
 >
 > 更要紧的是**像素数本身就是错的度量**。今晚实测:
 >
@@ -155,13 +166,13 @@
 > 本文写作时是计划;下面这些已经是代码里的事实,读到后文的将来时请按此校正。
 >
 > - **§三 第 1–2 步已完成。** 能力集合、`ExercisedCapabilities`、`PageReference`
->   (`holding` / `exercised` / `searchRoi?` / `variant?`)、`Variant`、`SignatureRole`
+>   (`holding` / `exercised` / `searchRoi?` / `appearance?`)、`Appearance`、`SignatureRole`
 >   都在 `modules/annotation` 里;两个 schema 在一次原子改动里升到
 >   `umbraflow-authoring/v3` 与 `umbraflow-annotations/v2`,旧 id 没有读路径,
 >   `PERMANENT BRIDGE` 那段随之删除。`AnnotationType`、`ElementKind`、`bool shared`、
 >   `allowed_page_ids`、`retypeRecognizer`、公开的 `PageSignature::create`、
 >   `derivedRuntimeRecognizerId` 都已不存在,`RecognizerId` 已改名 `ElementId`
->   (§四之二.5)。编译器现在**每个元素只产出一个 recognizer**,用元素自己的 id。
+>   (§四之二.5)。编译器现在**每个元素只产出一个 `CompiledElement`**,用元素自己的 id。
 > - **§四 的三个动词已收敛。** `page add-anchor` / `add-target` / `add-info` 变成
 >   `page add ROOT PAGE NAME --capability C... <draw>`,`--shared` 退掉;
 >   `page reference ROOT PAGE ELEMENT [--capability C...] [--search-roi x,y,w,h]`
@@ -182,7 +193,7 @@
 >   外壳、文件对话框、一次性抓帧源、imgui submodule 与 ASan smoke fixture 都已归档;
 >   `entry/workbench` 剩下的是 `umbra-authoring` 链接的标注后端。三个前置条件**都已补上**:
 >   `placeExisting`(经 `page reference`)、按页 `searchRoi`,以及证伪矩阵的 CLI 动词
->   `umbra-authoring check`(`41e0816`)——它带了 variant 维度(`ModelCellSubject::Element`
+>   `umbra-authoring check`(`41e0816`)——它带了 appearance 维度(`ModelCellSubject::Element`
 >   与 `::Appearance` 两种行),P1–P4 与 R1–R4 落在 `entry/workbench/preview.*` 与
 >   `tests/workbench/test-preview.cpp`。判据后来又收窄过一次(`d489979`):页面签名是合取,
 >   所以离对角格的期望是**整条签名**的性质,不是逐个成员读出来的,`ModelCellExpectation`
@@ -196,12 +207,12 @@
 >   `catalog.cpp:826-850` 的**唯一所有者**:同一个元素最多有一行 `Owned`,第二行必须是
 >   `Referenced`。两种读法要选一个:要么把 `Owned` 读成「家在这一页」(现状,注释要改),
 >   要么给作者一个显式的「独占」声明(新字段或新标志,`page add` 上加),不能两者都不选。
-> - ~~**仍未开始:** §三 第 4 步之后的 variant 作者入口~~ —— **已落地(2026-07-31)**,
->   连同 §四之二.2 的「空 variant 列表」一起,因为两者是同一个问题的两半:
+> - ~~**仍未开始:** §三 第 4 步之后的 appearance 作者入口~~ —— **已落地(2026-07-31)**,
+>   连同 §四之二.2 的「空 appearance 列表」一起,因为两者是同一个问题的两半:
 >   **像素只在某个能力需要像素时才被切出来**。
 >
 >   - **`page add` 的能力集合里没有 `identify` 时不切模板。** `--rect` 成为**元素自己的
->     `searchRoi`**,元素的 variant 列表为空,`--source` / `--search-roi` / `--key` /
+>     `searchRoi`**,元素的 appearance 列表为空,`--source` / `--search-roi` / `--key` /
 >     `--tolerance` / `--min-similarity-bp` 一律**拒绝并点名**——它们描述的是要比较的
 >     像素,而这里没有。放在元素侧而不是引用侧,是因为引用侧的 `searchRoi` 是**可选
 >     细化**、语义是「这一页收窄元素的那一份」,所以必须先有一份可收窄的;把元素的留成
@@ -213,8 +224,8 @@
 >     (元素画出来时就定了)与 `--search-roi`(区域是元素的,每个形态都在这一个区域里搜)。
 >     没有形态的元素也可以被补上一个——那正是 §四之二.6 缓解措施 (2)「给槽位加一个可
 >     匹配的小特征」的入口。
->   - **`page reference --variant NAME`** 钉死这一页期望的形态。只对**页面作用域**的搜索
->     生效,所以「只行使 identify」的引用给 `--variant` 会被拒(锚点扫描跑在页面确定之前,
+>   - **`page reference --appearance NAME`** 钉死这一页期望的形态。只对**页面作用域**的搜索
+>     生效,所以「只行使 identify」的引用给 `--appearance` 会被拒(锚点扫描跑在页面确定之前,
 >     无论钉什么都跨形态折叠)。
 >   - **`match` 拒绝没有形态的元素**:运行时会答「命中」,而且在**任何**一帧上都答命中,
 >     因为什么都没比较过。
@@ -226,7 +237,7 @@
 >   - **一个缺口,留给后续裁决:拥有元素的那一页钉不了形态。** `page add` 在画元素的同一次
 >     编辑里就写了拥有页的引用,而 `page reference` 拒绝已有引用的页面,所以第二个形态出现
 >     之后,拥有页只能跨形态折叠(结果正确,但每周期多搜一次)。补法二选一:一个
->     `page pin ROOT PAGE ELEMENT NAME` 动词,或让 `page reference --variant` 能更新已有的
+>     `page pin ROOT PAGE ELEMENT NAME` 动词,或让 `page reference --appearance` 能更新已有的
 >     那一行。测试 `the page that owns the element still folds across both` 把这个现状钉住了。
 > - **`check` 的 JSON 从 `expected_hit`(bool)改成 `expectation`(`match` /
 >   `absent` / `unclaimed`)。** 三态是 `ModelCellExpectation` 本来就有的,而 bool 把
@@ -281,7 +292,7 @@
 
 ### 1. 一块像素只能有一个用途
 
-`ElementKind` 是三选一的 variant(`AnchorElement` / `InteractiveElement` /
+`ElementKind` 是三选一的枚举(`AnchorElement` / `InteractiveElement` /
 `InfoElement`),编译成同样三值的 `AnnotationType`。所以「既用来认页、又可以点」的
 元素必须画两遍:两个 id、两份模板、每个观察周期匹配两次、各付一次像素预算。
 
@@ -300,7 +311,7 @@
 
 > **更正(2026-07-31):关系本身已经存在,缺口在 CLI。** workbench 有
 > `EditPage::placeExisting`,底下是 `shareRegionOnPage`——「一个元素放在 N 页,不
-> 复制 recognizer,改模板一次到位」。四个 `page` CLI 动词却全都在画新像素,而这个
+> 复制 element,改模板一次到位」。四个 `page` CLI 动词却全都在画新像素,而这个
 > 项目是**用 CLI/agent 标注的**,GUI 有不等于标注流程有。
 >
 > 而「布尔说不出关系」这一条,有比原文更硬的证据:`shareRegionOnPage` 只是在放到
@@ -371,7 +382,7 @@ Capabilities {
 
 ```text
 PageReference {
-    recognizerId
+    elementId
     holding: Owned | Referenced   // 新增
     exercised: Capabilities       // 新增:这一页实际行使它的哪几种能力
     searchRoi?                    // 本页可细化
@@ -389,7 +400,7 @@ PageReference {
 > 和本节是同一句话。
 >
 > 所以本节真正新增的只有 `holding` 和 `exercised` 两个字段。这不削弱本节 ——
-> 恰恰相反,最贵的那次搬迁(把 membership 从 recognizer 挪到页面侧)已经付过了,
+> 恰恰相反,最贵的那次搬迁(把 membership 从 element 挪到页面侧)已经付过了,
 > 剩下的是在既有 `AuthoringPlacement` 上加两个字段。
 
 三条推论:
@@ -456,7 +467,7 @@ PageReference {
 > **实现后果(2026-07-31):`cycle_find` 从此要求该周期已解析出页面。** 这不是选择,
 > 是被逼出来的——每页的细化 ROI、钉死的形态、以及 interact 那条边都挂在引用行上,
 > 所以 `evaluateActionTarget` 必须先知道是哪一页,不存在无页入口。这与 §四之二.3
-> 「`variants` 为空 ⟹ 页面认出来了矩形就在标注的地方」是同一句话的两面。
+> 「`appearances` 为空 ⟹ 页面认出来了矩形就在标注的地方」是同一句话的两面。
 >
 > **一个脚本可见的变化,需要裁决:** `modules/task/runtime/ctx.luau` 的
 > `ctx:cycle(fn)` 不解析页面,于是脚本在里面直接 `cycle:find(...)` 而没先
@@ -488,11 +499,11 @@ PageReference {
 ```text
 Element {
     id, name, capabilities, searchRoi
-    variants: [ Variant{ sourceId, templateRect, colourKey, threshold } ]   // 有序
+    appearances: [ Appearance{ sourceId, templateRect, colourKey, threshold } ]   // 有序
 }
 ```
 
-脚本只认识 `uf.recognizers.back` 一个名字,授权也只有一个 id。两点都比「两个元素靠
+脚本只认识 `uf.elements.back` 一个名字,授权也只有一个 id。两点都比「两个元素靠
 命名约定绑定」干净,而且把「该用哪一套像素」这个判断留在了宿主。
 
 **三条必须钉死,否则这个设计会变成灾难:**
@@ -504,33 +515,33 @@ Element {
    > 规则。** 「先过阈值者胜」同样是确定性的——所以确定性不是反对它的理由;真正的
    > 理由是它会**移动点击位置**:`resolveClickPixel`
    > (`recognition-runtime.cpp:637-670`)是从 `matchedRect` 推点击点的,一个过宽的
-   > 早序 variant 抢答之后,返回的是**它自己**的矩形,点击就落错像素,而下游没有任何
+   > 早序 appearance 抢答之后,返回的是**它自己**的矩形,点击就落错像素,而下游没有任何
    > 东西会察觉。
    >
    > 改述:**声明顺序在归一化裕度打平时裁决,不决定谁匹配。** 代价为零——代价那行
    > 本来就承诺了要搜完 N 个。
    >
-   > 但比较必须小心:**variant 之间的分数不可直接比较**。`maximumSad` 是
+   > 但比较必须小心:**appearance 之间的分数不可直接比较**。`maximumSad` 是
    > `templateWidth·templateHeight` 与阈值的函数(`catalog.cpp:300-339`),而每个
-   > variant 各有自己的 `templateRect` 和 `threshold`。唯一精确的整数比较是交叉相乘:
+   > appearance 各有自己的 `templateRect` 和 `threshold`。唯一精确的整数比较是交叉相乘:
    > `scoreᵢ · maxSadⱼ` 对 `scoreⱼ · maxSadᵢ`。
    >
-   > **补第 4 条:variant 集合内部的预算中断。** 任何 variant 搜索途中撞到预算或
+   > **补第 4 条:appearance 集合内部的预算中断。** 任何 appearance 搜索途中撞到预算或
    > 截止,就是整个元素停止——**不能**「取已搜过的里面最好的那个」。后者会让答案变成
    > 比较预算(一个配置值)的函数,那才是真正违反 §10 的那种违反。
-2. **命中的是哪个 variant 必须进 trace。** 否则「为什么这次匹配上了」在证据流里
-   答不出来。engine 的 `engine.action_found` / `engine.page_resolved` 要带 variant
+2. **命中的是哪个 appearance 必须进 trace。** 否则「为什么这次匹配上了」在证据流里
+   答不出来。engine 的 `engine.action_found` / `engine.page_resolved` 要带 appearance
    身份。
 
    > 更正(2026-07-31):事件名带 `engine.` 前缀(`trace/event.cpp:79-80`)。更要紧
    > 的是,这一条撞上一个**有意为之**的既有决定:`Page::Score` 只携带最差的那个必需
    > 锚点,`trace/event.hpp:187-201` 明确写了这是刻意的(「a trace line is read rather
-   > than queried」)。要给每个锚点都带上 variant 身份,就得推翻那条决定。代价最小
-   > 而且大概率正确的做法是只加 `Score.worstAnchorVariant`——已解析页面上最差的那个
+   > than queried」)。要给每个锚点都带上 appearance 身份,就得推翻那条决定。代价最小
+   > 而且大概率正确的做法是只加 `Score.worstAnchorAppearance`——已解析页面上最差的那个
    > 必需锚点本来就是最接近翻车的那一个。上游 `AnchorEvidence`
-   > (`recognition.hpp:68-77`)也还没有 variant 成员,那是要先加的字段。
-3. **每个 variant 各自过证伪,集合整体也要过。** 这是最大的风险:多试几个模板直到
-   有一个命中,本质上是在放宽判定。要求是「每个 variant 命中它自己那个状态」**并且**
+   > (`recognition.hpp:68-77`)也还没有 appearance 成员,那是要先加的字段。
+3. **每个 appearance 各自过证伪,集合整体也要过。** 这是最大的风险:多试几个模板直到
+   有一个命中,本质上是在放宽判定。要求是「每个 appearance 命中它自己那个状态」**并且**
    「整个集合在该拒绝的状态上全部落空」。否则它就是
    [colour-key-annotation](../pitfalls/colour-key-annotation.md) 里那个
    「小掩码恒命中」陷阱的高阶版本——看起来最可靠,实际什么都没区分。
@@ -548,29 +559,29 @@ Element {
    > 而不是瞄准掩码大小 × ROI 大小(真正的驱动因素)。
    >
    > **(b) 「集合整体也要过」在拒绝侧不需要新的运行时算子**——
-   > `¬(∃i hit_i) ≡ ∀i ¬hit_i`,集合拒绝就是逐 variant 拒绝的合取。它需要的是
-   > **完备性**:每个 variant 对**每个**拒绝状态都测,而不是各测各自剪出来的那些。
+   > `¬(∃i hit_i) ≡ ∀i ¬hit_i`,集合拒绝就是逐 appearance 拒绝的合取。它需要的是
+   > **完备性**:每个 appearance 对**每个**拒绝状态都测,而不是各测各自剪出来的那些。
    > 作者的自然习惯(暗色的只在暗色屏上测)恰好跳过了要紧的那一半。
    >
-   > **(c) 真正危险的状态不在拒绝集里,是别的 variant 的命中状态。** `S_light` 上
+   > **(c) 真正危险的状态不在拒绝集里,是别的 appearance 的命中状态。** `S_light` 上
    > `back` 确实存在,它不属于任何人的拒绝集;若 `on_dark` 在那里刚好压线通过,
-   > 逐 variant 矩阵**全绿**而元素已经坏了(点击落在 `on_dark` 的矩形上)。
+   > 逐 appearance 矩阵**全绿**而元素已经坏了(点击落在 `on_dark` 的矩形上)。
    >
-   > 所以矩阵要求写成可实现的四条(元素 `back`,variant `v₀=on_dark`/`v₁=on_light`,
+   > 所以矩阵要求写成可实现的四条(元素 `back`,appearance `v₀=on_dark`/`v₁=on_light`,
    > 屏幕 `S_dark`/`S_light`/`S_none`,`S_none` 必须是**真的**无该 UI 的画面):
    >
    > - **P1 完备性**:对每个 `(v, s)`,实测 `hit == owns(v, s)`,N×M 全测,
    >   **包含非对角格**。
    > - **P2 集合拒绝**:无人拥有的状态上,**折叠后**的元素报 miss(逻辑上由 P1 蕴含,
    >   但要单独断言在折叠结果上,才能抓住折叠实现的 bug)。
-   > - **P3 归属**:被 `v*` 拥有的状态上,折叠结果的 `variantId == v*` **且**
+   > - **P3 归属**:被 `v*` 拥有的状态上,折叠结果的 `appearanceId == v*` **且**
    >   `matchedRect == v*` 的矩形。这条正是「先过阈值者胜」会违反的那条。
    > - **P4 分离度**(整数、精确):对每个 `v ≠ v*`,
    >   `score_{v*}(s) · maxSad_v · k <= score_v(s) · maxSad_{v*}`。`k` 取仓库里已测得的
    >   跨屏 miss 落差 2.85×–4.15×,`k = 4` 站得住。
-   > - **P0 构造期前置**(不是测试):每个 variant 的掩码全选像素 ≥ ~50,在
-   >   `Variant::create` 里**拒绝**。今天没有任何代码级守卫,而「加一个 variant」对
-   >   作者来说比「修矩形」便宜,所以 variant 让这条更容易被违反。
+   > - **P0 构造期前置**(不是测试):每个 appearance 的掩码全选像素 ≥ ~50,在
+   >   `Appearance::create` 里**拒绝**。今天没有任何代码级守卫,而「加一个 appearance」对
+   >   作者来说比「修矩形」便宜,所以 appearance 让这条更容易被违反。
    >
    > **红证**(项目纪律:测试只有在去掉性质后会变红才算数):
    > R1 把那个 27 像素病态掩码当 `v₀`,断言检查器在 `(v₀, S_light)` 报 misfire——
@@ -578,17 +589,17 @@ Element {
    > 匹配 `S_light`,断言返回 `v₁` 和 `v₁` 的矩形——「先过阈值者胜」下它是红的,
    > 这一条才让「声明顺序只是平局裁决」从一句话变成事实。R3 造一个赢但裕度 `< k` 的
    > 样例,断言证伪器**拒绝该模型**(否则 `k` 会在调参中漂到 1)。R4 断言 <50 像素的
-   > variant 在构造期就报错,而不是匹配期。
+   > appearance 在构造期就报错,而不是匹配期。
    >
    > **落点**:`ModelCheckCell`(`preview.hpp:278-303`)已经是「元素 × 屏幕」的证伪
    > 矩阵,`classifyModelCell` 已经会把「不该命中却命中」标成 `Misfire`——**它就是这个
-   > 矩阵,只差一个 variant 维度**。不加这一维,V 个 variant 会塌成一个 Hit/Miss,
+   > 矩阵,只差一个 appearance 维度**。不加这一维,V 个 appearance 会塌成一个 Hit/Miss,
    > P1 的非对角格在结构上就无法表示。
 
-**代价**:N 个 variant 就是 N 次搜索,像素预算按最坏情况算,不是按平均。
+**代价**:N 个 appearance 就是 N 次搜索,像素预算按最坏情况算,不是按平均。
 
 > **更正(2026-07-31,见 §四之二.4):这个代价的适用范围小得多。** 当「哪个形态适用」
-> 由**页面**决定(返回键此页白、彼页黑),variant 在 `PageReference` 上钉死,那一页
+> 由**页面**决定(返回键此页白、彼页黑),appearance 在 `PageReference` 上钉死,那一页
 > 只搜一次。需要搜 N 次的只剩「同页内、由运行时状态决定」那一类(加速按钮 1x/2x/3x)。
 > 证伪的压力也集中到同一小类:**同页内互斥的那几个形态必须两两落空**。
 
@@ -597,7 +608,7 @@ Element {
 ```text
 Element "back"
   capabilities: { identify, interact }
-  variants: [ on_dark(白字, key=白), on_light(黑字, key=黑) ]
+  appearances: [ on_dark(白字, key=白), on_light(黑字, key=黑) ]
 
 Page "sortie"  -> PageReference{ back, Referenced, exercised = { interact } }
 Page "battle"  -> PageReference{ back, Referenced, exercised = { interact, identify } }
@@ -607,20 +618,20 @@ Page "battle"  -> PageReference{ back, Referenced, exercised = { interact, ident
 用法——这是今天的模型表达不了的那句话。
 
 > **更正(2026-07-31):这个例子今天的编译器直接表达不出来,不只是「模型说不出」。**
-> `authoring-compiler.cpp:685-709`:放置数 ≤1 时运行时 recognizer **保留元素自己的
+> `authoring-compiler.cpp:685-709`:放置数 ≤1 时运行时 element **保留元素自己的
 > id**;≥2 时(`:712-727`)展开成 N 个**派生 id**
 > (`derivedRuntimeRecognizerId(element.id(), placement.pageId)`)。而这个例子里
-> `back` 放在两页上,于是元素 id 下**根本没有 recognizer**——`battle` 的签名会引用
+> `back` 放在两页上,于是元素 id 下**根本没有 element**——`battle` 的签名会引用
 > 一个运行时目录里不存在的 id。
 >
 > 更深一层:页面签名是**严格合取**——`PageResolver::resolve` 对 `page.required()` 做
 > `candidate = candidate && p_evidence->hit()`(`recognition.cpp:391-397`)。所以
-> **variant 的折叠也不能靠编译器展开**:把一个锚点的 V 个 variant 编译成 V 个必需
-> 锚点,会把「任一 variant 命中」变成「全部 variant 都要命中」。折叠必须发生在
+> **appearance 的折叠也不能靠编译器展开**:把一个锚点的 V 个 appearance 编译成 V 个必需
+> 锚点,会把「任一 appearance 命中」变成「全部 appearance 都要命中」。折叠必须发生在
 > **单个 `AnchorEvidence` 内部**,在证据到达 resolver 之前。
 >
-> 连带两处:`RuntimeManifest::findAsset(recognizerId)` 变成一对多;创建期的几何校验
-> (`recognition-runtime.cpp:272-296`)要逐 variant 做。
+> 连带两处:`RuntimeManifest::findAsset(elementId)` 变成一对多;创建期的几何校验
+> (`recognition-runtime.cpp:272-296`)要逐 appearance 做。
 >
 > 还有一条把两件事连起来的裁决,建议在本节直接钉死:**行使 `identify` 的引用不得
 > 细化 `searchRoi`**(锚点走元素级 ROI)。否则同一块像素在认页和点击两条路径上用
@@ -655,7 +666,7 @@ Page "battle"  -> PageReference{ back, Referenced, exercised = { interact, ident
 
 > **更正(2026-07-31):这个顺序走不通,而且漏了一个 schema。** 三条硬依赖:
 >
-> 1. **授权与运行时之间没有接缝。** `RecognizerDefinition`(`catalog.hpp:31-63`)
+> 1. **授权与运行时之间没有接缝。** `CompiledElement`(`catalog.hpp:31-63`)
 >    **同时**是运行时清单的载荷和授权文档的派生读模型,`annotationType` 和
 >    `allowedPageIds` 都是它的字段。「先改授权、运行时以后再说」在类型上表达不出来。
 > 2. **两个解析器都要求逐字节规范输出**(`runtime-manifest.cpp:474-479` 把序列化
@@ -673,7 +684,7 @@ Page "battle"  -> PageReference{ back, Referenced, exercised = { interact, ident
 > **可行的顺序**(每一步都能过完整门禁):
 >
 > - **第 1 步:只加词汇,不改一个字节。** 引入 `Capabilities`,让
->   `RecognizerDefinition` 从现有三值枚举**派生**出 `capabilities()`
+>   `CompiledElement` 从现有三值枚举**派生**出 `capabilities()`
 >   (PageAnchor→`{identify}`、ActionTarget→`{interact}`、InfoRegion→`{read}`),
 >   `annotationType()` 保留。不动序列化、不升版,所有 golden 测试逐字节不变。然后
 >   一次一个小提交地把读方改过来。**这一步的价值是把第 2 步从 ~40 个调用点压到
@@ -681,7 +692,7 @@ Page "battle"  -> PageReference{ back, Referenced, exercised = { interact, ident
 > - **第 2 步:一个原子提交,两个 schema 同时升。** 这一步不可再分——规范往返校验
 >   让任何中间态都不可表示。`PERMANENT BRIDGE` 那段和它描述的反演一起删。
 > - **第 3 步:重放/迁移磁盘上的项目**(见下面的前置条件)。
-> - **第 4 步:`variants`。** 没有数据、没有消费者、没有测试钉着它。
+> - **第 4 步:`appearances`。** 没有数据、没有消费者、没有测试钉着它。
 > - **第 5 步:`read` 动词 + OCR 接线。** 到这里,本节「最不急」的直觉才是对的。
 >
 > **前置条件,必须在删 `shared` 的那一步之前或同时落地**:CLI 至今没有「把已有元素
@@ -723,7 +734,7 @@ Page "battle"  -> PageReference{ back, Referenced, exercised = { interact, ident
 | `InteractiveRegion::setSearchRoi` | `PageReference.searchRoi?` 没有作者入口 |
 | `ModelCheckCell` / `classifyModelCell` | **证伪矩阵消失** |
 
-第三条是新的前置条件。§2.3 把「每个 variant 各自过证伪、集合整体也要过」定成多形态
+第三条是新的前置条件。§2.3 把「每个 appearance 各自过证伪、集合整体也要过」定成多形态
 能否成立的前提,而那个矩阵是 workbench 代码(`entry/workbench/preview.*`)。GUI 一
 弃用,前提就没有工具支撑。而且矩阵结论本来就没进项目文件——`chaos-super/annotations.toml`
 只有 2 条 regression 且都是 positive。所以:**把证伪矩阵搬进 CLI,并把结论落进项目
@@ -733,18 +744,18 @@ Page "battle"  -> PageReference{ back, Referenced, exercised = { interact, ident
 
 页面被认出之后,「哪些区域能点」就已知;具体点哪里由 OCR 决定,那块像素不必标定。
 
-**不新增第四种能力**,把这条性质提到 `variants` 上,因为它和已裁定的「`Read` 不带
+**不新增第四种能力**,把这条性质提到 `appearances` 上,因为它和已裁定的「`Read` 不带
 模板」是同一件事:
 
 ```text
 Element {
     id, name, capabilities, searchRoi
-    variants: [ ... ]   // 空 = 这个矩形由「页面被认出」定位,不由自己的像素定位
+    appearances: [ ... ]   // 空 = 这个矩形由「页面被认出」定位,不由自己的像素定位
 }
 ```
 
-- `variants` 非空 → 元素能自定位,可以行使 `identify`
-- `variants` 为空 → 只能靠页面定位;构造时应拒绝 `identify`(它没有像素可当证据)
+- `appearances` 非空 → 元素能自定位,可以行使 `identify`
+- `appearances` 为空 → 只能靠页面定位;构造时应拒绝 `identify`(它没有像素可当证据)
 
 一条规则同时覆盖 `Read` 和交互区域,不必为后者发明新概念。代价与 `Read` 已接受的
 那条相同:布局若移动,矩形就指错地方。
@@ -764,7 +775,7 @@ Element {
 于是流程完全落在既有动词上:
 
 ```lua
--- 页面认出来了,每个 slot 的矩形都已知(variants 为空 ⟹ 由页面定位)
+-- 页面认出来了,每个 slot 的矩形都已知(appearances 为空 ⟹ 由页面定位)
 for _, slot in ipairs(candidates) do
     local reading = uf.cycle_read(ticket, slot)          -- 唯一新增的动词
     if reading and reading.text == want then
@@ -777,7 +788,7 @@ end
 授权仍然是「这一页引用它且行使 `interact`」。四要件全部保持「构造上不可能违反」,
 [三层 Task System](2026-07-29-three-layer-task-system.md) §4 那句话不需要更正。
 
-对 `variants` 为空的元素,`cycle_find` 的语义是「页面认出来了 ⟹ 矩形就在标注的
+对 `appearances` 为空的元素,`cycle_find` 的语义是「页面认出来了 ⟹ 矩形就在标注的
 地方」,必然成功;它不做像素匹配,因为没有模板可匹配。这正是 §2.1 为 `Read` 已经
 接受过的那条代价,原样适用。
 
@@ -792,34 +803,34 @@ end
 
 | 实例 | 性质 | 表示 | 每周期搜索 |
 |---|---|---|---|
-| 加速按钮 1x / 2x / 3x | **状态读出**——命中哪个本身就是信息 | 一个元素,**有名字的** variant 列表;命中身份上到脚本面 | N |
-| 返回键此页白、彼页黑 | **页面决定**——标注期就知道哪套适用 | 一个元素,两个 variant,**在引用侧钉死** | 1 |
+| 加速按钮 1x / 2x / 3x | **状态读出**——命中哪个本身就是信息 | 一个元素,**有名字的** appearance 列表;命中身份上到脚本面 | N |
+| 返回键此页白、彼页黑 | **页面决定**——标注期就知道哪套适用 | 一个元素,两个 appearance,**在引用侧钉死** | 1 |
 | 卡片点击后向上扩展 | **几何变化**——位置和尺寸变了 | **不进模型** | 0 |
 
-**(a) 状态读出:variant 要有名字,而且要上到脚本面。**
+**(a) 状态读出:appearance 要有名字,而且要上到脚本面。**
 
 ```text
-Variant { name, sourceId, templateRect, colourKey, threshold }
+Appearance { name, sourceId, templateRect, colourKey, threshold }
 
-hit.variant == uf.variants.speed_2x   -- 脚本据此知道当前倍速
+hit.appearance == uf.appearances.speed_2x   -- 脚本据此知道当前倍速
 ```
 
-§2.3 原本只要求 variant 身份进 trace;这个实例说明它还要到达**脚本**。
+§2.3 原本只要求 appearance 身份进 trace;这个实例说明它还要到达**脚本**。
 
 **(b) 页面决定:钉死在引用侧,不要靠试。**
 
 ```text
 PageReference {
-    recognizerId
+    elementId
     holding, exercised, searchRoi?
-    variant?          // 这一页上,它长这个样子
+    appearance?          // 这一页上,它长这个样子
 }
 ```
 
 > **更正(2026-07-31,实现时发现):钉死只对 `interact` 成立,对 `identify` 不成立。**
 > 锚点扫描是**全局的**——`pageAnchorOrder` 是跨页去重的并集,每帧走一遍,而且它跑在
 > **页面被确定之前**(那正是「一次搜索服务所有页面」的由来)。所以扫描时根本不知道
-> 该用哪一页的钉子,`identify` 只能跨所有 variant 折叠。引用侧的 `variant` 在
+> 该用哪一页的钉子,`identify` 只能跨所有 appearance 折叠。引用侧的 `appearance` 在
 > `identify` 上被接受但忽略,并在声明处写明。
 >
 > 下面这句话因此只对 `interact` 成立:
@@ -827,7 +838,7 @@ PageReference {
 **这一条把 §2.3 最大的风险直接消掉。** 「多试几个模板直到一个命中」危险,是因为它
 本质上在放宽判定;页面钉死之后那一页**只搜一次**,没有任何放宽,像素预算回到 1。
 于是**需要搜 N 次的情形只剩 (a) 一类**——同页内、由运行时状态决定的形态。§2.3 那条
-「N 个 variant 就是 N 次搜索」的代价只落在这一小类上,不是所有多形态元素。
+「N 个 appearance 就是 N 次搜索」的代价只落在这一小类上,不是所有多形态元素。
 
 证伪的压力也随之集中:**同页内互斥的那几个形态必须两两落空**。三个倍速图标很可能
 只差一个数字,掩码选大一点三个就互相命中而矩阵全绿——正是 §2.3 里 P1 非对角格要抓
@@ -839,26 +850,32 @@ PageReference {
 Luau;模型不编码它,脚本没展开就去点 B,点到的是一个**已授权区域内**的空白,那是脚本
 bug,不是安全问题。
 
-**variant 的定义边界**(写死,否则它会变成什么都往里塞的口袋):
+**appearance 的定义边界**(写死,否则它会变成什么都往里塞的口袋):
 
-> **variant 换的是同一块像素长什么样;它不换这块像素在哪,也不换它是什么东西。**
+> **appearance 换的是同一块像素长什么样;它不换这块像素在哪,也不换它是什么东西。**
 >
-> - 位置或尺寸随运行时变 → **不是** variant
-> - 「命中哪个」本身有意义 → 是 variant,要有名字并暴露给脚本(a)
+> - 位置或尺寸随运行时变 → **不是** appearance
+> - 「命中哪个」本身有意义 → 是 appearance,要有名字并暴露给脚本(a)
 > - 「哪个适用」由页面决定 → 不进有序列表,在引用侧钉死(b)
 
 这条边界同时**关闭 §五 开放问题 1**:「暗色可点、亮色是禁用态」是**状态**,按 (a)
-处理——有名字的 variant,脚本读命中身份自己决定点不点。variant 不需要携带能力差异。
+处理——有名字的 appearance,脚本读命中身份自己决定点不点。appearance 不需要携带能力差异。
 
 ### 5. `RecognizerId` 改名 `ElementId`
 
 开发者裁定改名。`RecognizerId` 来自 2026-07-26 之前的模型,那时「recognizer」确实是
-主名词。在目标模型里 recognizer 是编译器**生成**的、每 (元素, 页面) 一个的运行时产物
-(`derivedRuntimeRecognizerId`),而一个只有 `read` 能力的元素什么都不识别。schema
+主名词。在那一版目标模型里 recognizer 是编译器**生成**的、每 (元素, 页面) 一个的运行时
+产物(`derivedRuntimeRecognizerId`),而一个只有 `read` 能力的元素什么都不识别。schema
 本来就要破坏性升版,现在改是免费的;放过这次,下次要改就得再破一次版。
 
+> 更正(2026-07-31,词汇统一):这里保留的「recognizer 指编译产物」这条分工也已经作废。
+> 同一天的第二次改名把这个词整个撤掉了——编译产物叫 `CompiledElement`,`uf.recognizers`
+> 叫 `uf.elements`,trace 的 `recognizerId` 叫 `elementId`。recognition 只留在它指
+> 「识别这个动作」的地方(`RecognitionCatalog`、`RecognitionRuntime`)。见 CONTEXT.md
+> 「Annotation model」一节。
+
 波及 `Element::Spec.id`、`AuthoringPlacement.elementId`、`PageSignature` 的两个向量、
-`RecognizerSpec/RecognizerDefinition`,以及 TOML 的字段名。
+`CompiledElementSpec/CompiledElement`,以及 TOML 的字段名。
 
 ### 6. 一个页面的多种形态:判据是授权集
 
@@ -869,7 +886,7 @@ bug,不是安全问题。
 > **形态只改变「现在该点哪一个」→ 同一个页面的状态,由脚本判别。**
 
 后者**不需要任何新机械**,复用 §四之二.4 已定的三种手段:`cycle_find` 返回 hit/nil
-(某元素只在形态 A 出现)、`hit.variant`(同一位置多种外观)、`cycle_read` 的
+(某元素只在形态 A 出现)、`hit.appearance`(同一位置多种外观)、`cycle_read` 的
 text/confidence(没有稳定模板时)。页面保持一个 id,签名由**两种形态都成立的不变
 标记**组成。
 
@@ -879,7 +896,7 @@ text/confidence(没有稳定模板时)。页面保持一个 id,签名由**两种
 动了。于是在展开态点邻居,宿主会放行,而点到的是展开的卡片。宿主拦不住,因为邻居的
 矩形确实在这一页的授权列表里。
 
-更硬的一句:**`variants` 为空的元素,点击前无法做像素级复验。** 有模板的元素,
+更硬的一句:**`appearances` 为空的元素,点击前无法做像素级复验。** 有模板的元素,
 `cycle_find` 在同一周期刚匹配过,那本身就是一次复验;没有模板的元素只有「页面认出来
 了」这一句,没有任何东西能证明那块像素此刻还属于它。这是 §2.1 为 `Read` 接受的那条
 代价在 `interact` 上的翻版,而且后果更重——读错只是读错,点错是**投递了一次动作**。
@@ -928,10 +945,10 @@ confidence + rect 是它的替代证据。
 
 ## 五、开放问题
 
-1. ~~**variant 与能力的关系。**~~ —— **已关闭(2026-07-31),见 §四之二.4。**
-   原文担心「暗色形态可点、亮色形态是禁用态不可点」会逼 variant 携带能力差异。
-   答案是那不是 variant:**它是状态**,按 §四之二.4 (a) 处理——有名字的 variant,
-   脚本读命中身份自己决定点不点。variant 的定义边界(换外观,不换位置、不换意义)
+1. ~~**appearance 与能力的关系。**~~ —— **已关闭(2026-07-31),见 §四之二.4。**
+   原文担心「暗色形态可点、亮色形态是禁用态不可点」会逼 appearance 携带能力差异。
+   答案是那不是 appearance:**它是状态**,按 §四之二.4 (a) 处理——有名字的 appearance,
+   脚本读命中身份自己决定点不点。appearance 的定义边界(换外观,不换位置、不换意义)
    把这个情况排除在列表之外,所以它永远不会逼出能力差异。
 2. **per-reference 的 searchRoi 细化。** 今天没有一个页面需要它。同上,有实例再做。
 
@@ -940,7 +957,7 @@ confidence + rect 是它的替代证据。
    >
    > 补充(2026-07-31):
    > `AuthoringPlacement.searchRoi` 今天存在、已经通到运行时(编译器按放置展开,
-   > 每个 recognizer 带那一页自己的 ROI),而且 workbench 已经能按页改它——
+   > 每个 element 带那一页自己的 ROI),而且 workbench 已经能按页改它——
    > `InteractiveRegion::setSearchRoi`(`edit-page.cpp:773-791`)写的就是本页
    > placement,注释还点名了它取代的那个「改一页动全部」的缺陷。只有 CLI 没有。
    >

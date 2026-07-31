@@ -31,3 +31,14 @@ they are rendered from `scripts/generate_code_atlas/data/*.json` by the
 > > regeneration, `entry/workbench` holds only `authoring-edit`, `edit-page`,
 > > `page-view`, `preview`, `project-persistence`, `source-ingestion`, and
 > > `platform/windows-file-publication`.
+>
+> > **Widened again 2026-07-31 (vocabulary rename).** Every generated file also
+> > still spells the annotated thing `recognizer` and its appearances `variant`.
+> > The code now says `element` / `CompiledElement` / `Appearance`, the script
+> > table is `uf.elements`, the trace field is `elementId`, and the three schema
+> > ids are `umbraflow-authoring/v4`, `umbraflow-annotations/v3`, and
+> > `umbraflow-trace/v2`. `scripts/generate_code_atlas/data/*.json`,
+> > `atlas.html`, and `tour.html` were left untouched for the same reason as
+> > above; `scripts/generate_code_atlas/tour_content.py` had its one quoted
+> > source line corrected so the regeneration does not reproduce the old
+> > spelling.

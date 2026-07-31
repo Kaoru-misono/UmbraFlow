@@ -6,7 +6,7 @@
 #include <annotation/capabilities.hpp>
 #include <annotation/catalog.hpp>
 #include <annotation/resource.hpp>
-#include <annotation/variant.hpp>
+#include <annotation/appearance.hpp>
 
 #include <core/types/integer.hpp>
 
@@ -32,18 +32,18 @@ namespace uf::workbench::test
         annotation::SourceId sourceId,
         PixelRect templateRect,
         uint32 basisPoints = 9'000
-    ) -> std::vector<annotation::Variant>
+    ) -> std::vector<annotation::Appearance>
     {
-        auto variants = std::vector<annotation::Variant>{};
-        variants.emplace_back(
-            annotation::test::variant(
+        auto appearances = std::vector<annotation::Appearance>{};
+        appearances.emplace_back(
+            annotation::test::appearance(
                 "default",
                 sourceId,
                 templateRect,
                 annotation::test::threshold(basisPoints)
             )
         );
-        return variants;
+        return appearances;
     }
 
     // Pixels a page can be recognised by.

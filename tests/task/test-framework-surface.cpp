@@ -117,7 +117,7 @@ namespace uf::task
                 return page
             end
 
-            function fake.cycle_find(ticket, recognizer)
+            function fake.cycle_find(ticket, element)
                 local scripted = answer("cycle_find")
                 local where    = "cycle_find(" .. ticket.ordinal .. ")"
                 if type(scripted) == "string" then
@@ -297,7 +297,7 @@ namespace uf::task
                                 -- still be all the log shows for this turn.
                                 if cycle:page() == nil then return end
                                 if cycle:page() == nil then return end
-                                local hit = cycle:find(uf.recognizers.action_target)
+                                local hit = cycle:find(uf.elements.action_target)
                                 if hit == nil then return end
                                 cycle:click(hit)
                                 ran = 1
@@ -365,7 +365,7 @@ namespace uf::task
                         uf.pages.page_a,
                         { timeout_ms = 2000, poll_ms = 20 },
                         function(cycle)
-                            cycle:find(uf.recognizers.action_target)
+                            cycle:find(uf.elements.action_target)
                         end
                     )
                 end)
@@ -463,7 +463,7 @@ namespace uf::task
                     ctx:retry({ attempts = 3, backoff_ms = 250 }, function()
                         tries += 1
                         ctx:cycle(function(cycle)
-                            cycle:find(uf.recognizers.action_target)
+                            cycle:find(uf.elements.action_target)
                         end)
                     end)
                 end)
@@ -524,7 +524,7 @@ namespace uf::task
                         ctx:retry(policy, function()
                             tries += 1
                             ctx:cycle(function(cycle)
-                                cycle:find(uf.recognizers.action_target)
+                                cycle:find(uf.elements.action_target)
                             end)
                         end)
                     end)
@@ -592,7 +592,7 @@ namespace uf::task
                     max_hits = 3,
                     handle = function(ctx, cycle)
                         handled += 1
-                        local close = cycle:find(uf.recognizers.close_dialog)
+                        local close = cycle:find(uf.elements.close_dialog)
                         if close ~= nil then
                             cycle:click(close)
                         end
@@ -606,7 +606,7 @@ namespace uf::task
                             uf.pages.page_a,
                             { timeout_ms = 30000, poll_ms = 100 },
                             function(cycle)
-                                local hit = cycle:find(uf.recognizers.action_target)
+                                local hit = cycle:find(uf.elements.action_target)
                                 if hit ~= nil then
                                     cycle:click(hit)
                                     clicked += 1

@@ -8,7 +8,7 @@
 
 UmbraFlow 根据视觉证据授权后台操作。平台无关模块负责识别和授权；Windows 代码
 负责目标捕获与输入投递。二者只在 `entry/` 组合，因此识别策略不依赖 HWND，
-controller 也不需要了解 page 或 recognizer。
+controller 也不需要了解 page 或 element。
 
 ```text
 core
@@ -83,7 +83,7 @@ entry/workbench      -> annotation（外加 image）
 - **`trace::FrontEnd` 有第三个值，而它不是那张能力面的第三个消费者**（2026-07-31）。
   `annotation` 就是 `umbra-input-agent`：标注会话为了量一个裸窗口而驱动它，没有项目、
   没有 generation、也没有能力面。把它写进同一个枚举，是因为「是谁驱动了这个目标」是一个问题、
-  一套答案，而在此之前标注会话的点击与抓帧事后根本归不了属。它不写 `umbraflow-trace/v1` 的行
+  一套答案，而在此之前标注会话的点击与抓帧事后根本归不了属。它不写 `umbraflow-trace/v2` 的行
   ——该 schema 每一行都带 `runId` 与 `generationId`，而它两者皆无——所以它用同一个值、
   同一套拼写盖在自己的 results 文件上。
 - `m0-demo` 没有接入 annotation 授权栈，也不能作为 engine 或 CLI 的共享实现。
@@ -118,9 +118,9 @@ entry/workbench      -> annotation（外加 image）
 标注工具维护两类文档：
 
 - `AuthoringDocument` 保存完整编辑信息，可以重新打开继续修改。schema 是
-  `umbraflow-authoring/v3`。
+  `umbraflow-authoring/v4`。
 - `RuntimeManifest` 只保留运行时识别和授权需要的数据。schema 是
-  `umbraflow-annotations/v2`。
+  `umbraflow-annotations/v3`。
 
 > 更正（2026-07-31）：三值 annotation type 变成能力集合时，两个 schema 在同一次原子改动里
 > 一起升版，并且旧 id 都没有读路径——旧 schema 串会按普通的 unsupported-schema 报错。见

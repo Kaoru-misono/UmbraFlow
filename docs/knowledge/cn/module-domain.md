@@ -19,7 +19,7 @@
 
 - 不产生 `CaptureSessionId` 或 `FrameId`。`CaptureSessionId` 由组合根提供，当前 CLI 在 `entry/cli/run-windows.cpp` 构造；`FrameId` 的逐捕获分配由 `modules/controller/source/controller/detail/capture-wgc.hpp` 的 `FrameIdCounter` 完成。
 - 不判断何时目标窗口已换代。`modules/controller/source/controller/target.cpp` 的 `ResolvedTarget` 根据进程实例、窗口句柄、client size 和连续性推进 `TargetGeneration`。
-- 不解释检测标签是否能触发动作。`Detection` 只是带同帧身份的几何证据；`modules/annotation/source/annotation/authorization.cpp` 的 `ActionDetection` 和 `authorizeCoordinateAction` 才绑定 catalog、recognizer、page 与 live fingerprint。
+- 不解释检测标签是否能触发动作。`Detection` 只是带同帧身份的几何证据；`modules/annotation/source/annotation/authorization.cpp` 的 `ActionDetection` 和 `authorizeCoordinateAction` 才绑定 catalog、element、page 与 live fingerprint。
 - 不执行模板匹配、裁图、PNG 编解码、trace 或重试。相应策略分别属于 `vision`、`image`、`engine` 或调用者。
 - 不实现 strict-background。后台投递由 `modules/controller/source/controller/platform/windows-input.cpp` 的 `PostMessageW` 边界实现；禁止前台化和全局注入的 API 名单位于 `modules/controller/source/controller/input.hpp`。
 - 不给任意 `Point`、`Rect` 或 `Detection` 构造器附加隐式校验。需要安全保证的边界必须显式调用 `create`、`ensure...` 或授权函数，不能把“类型存在”误当成“值已验证”。
@@ -120,7 +120,7 @@ Windows capture 在 `modules/controller/source/controller/platform/windows-captu
 
 ### `Detection` 与 `ObservationLease`
 
-`Detection` 是不可变值载体：保存 `CaptureSessionId`、`TargetGeneration`、`FrameId`、`Label`、`Rect<FrameSpace>` 和 `confidence`。构造器不校验 rect 或 confidence；可信动作还必须经过 annotation 的 recognizer/page 授权，不能只凭 label。
+`Detection` 是不可变值载体：保存 `CaptureSessionId`、`TargetGeneration`、`FrameId`、`Label`、`Rect<FrameSpace>` 和 `confidence`。构造器不校验 rect 或 confidence；可信动作还必须经过 annotation 的 element/page 授权，不能只凭 label。
 
 `Label::create` 保证字符串是合法 UTF-8，但允许空字符串；`value()` 返回受 owner
 生命周期约束的 const reference。根据
@@ -193,7 +193,7 @@ Windows capture 在 `modules/controller/source/controller/platform/windows-captu
 3. `Frame::create` 验证 buffer geometry、transform 尺寸和 immutable pixel owner。
 4. `engine::EngineSession::observe` 先 revalidate target，再 capture，并从 frame 创建 `ObservationLease`。
 5. `annotation::RecognitionRuntime`/`vision` 在 frame 像素上产生整数 `PixelRect` 证据；engine 通过 `pixelRectToFrameRect` 创建同帧 `Detection`。
-6. annotation 把 detection 绑定到 `action_target` recognizer，并证明 page、project、fingerprint、三元身份和 lease 一致。
+6. annotation 把 detection 绑定到 `action_target` element，并证明 page、project、fingerprint、三元身份和 lease 一致。
 7. engine 把整数 click pixel 经 `pixelPointToFramePoint` 和 frame 的 `frameToClient` 转成 `Point<ClientSpace>`。
 8. `engine::IActionSink::click` 把 client point 与原 lease 一并交给 Controller；Controller 重检目标 generation、session、年龄、窗口存活与 client bounds，再由 `PostMessageW` 后台投递。
 9. 成功后 engine 使 `Observation` 失效，下一动作必须重新 observe。
@@ -229,7 +229,7 @@ Windows capture 在 `modules/controller/source/controller/platform/windows-captu
 - `tests/controller/test-target.cpp` 固定何种窗口身份变化恰好推进一次 `TargetGeneration`。
 - `tests/controller/test-input-revalidation.cpp` 固定 session/generation/age fencing、client bounds 和 signed-16-bit message 坐标限制；它也反映当前没有 current `FrameId` 入参。
 - `tests/controller/test-audit-log.cpp` 固定 strict-background forbidden API 集合与投递 audit。
-- `tests/annotation/test-authorization.cpp` 固定 same-frame page/detection/lease/fingerprint、recognizer identity 和 allowed-page 授权。
+- `tests/annotation/test-authorization.cpp` 固定 same-frame page/detection/lease/fingerprint、element identity 和 allowed-page 授权。
 - `tests/engine/test-session.cpp` 固定 observe-to-click 数据流、lease 原样传递、动作后失效、moved-from/foreign observation 拒绝、delivery-edge target revalidation，以及 trace 失败不能使动作可重放。
 
 这些测试大多使用合成 frame 和显式 `MonotonicInstant`，避免真实窗口、墙钟抖动或 GPU 时序进入 domain 的确定性回归面。

@@ -63,7 +63,7 @@ namespace uf::engine
     };
 
     // The result of a successful action-target search on one observation: the raw
-    // anchor evidence, the authorization-ready detection bound to its recognizer
+    // anchor evidence, the authorization-ready detection bound to its element
     // identity, and the single deterministic click pixel derived from the match.
     // None of its members has a default, so it is only ever built by findAction.
     class ActionFound final

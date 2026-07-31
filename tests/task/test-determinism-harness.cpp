@@ -79,7 +79,7 @@ namespace uf::task
             if page2 == nil or not page2:is(uf.pages.page_a) then
                 error("frame 2 must resolve page_a")
             end
-            local miss = ctx:cycle_find(c2, uf.recognizers.action_target)
+            local miss = ctx:cycle_find(c2, uf.elements.action_target)
             if miss ~= nil then error("frame 2 find must miss") end
             ctx:cycle_close(c2)
 
@@ -89,7 +89,7 @@ namespace uf::task
             if page3 == nil or not page3:is(uf.pages.page_a) then
                 error("frame 3 must resolve page_a")
             end
-            local hit = ctx:cycle_find(c3, uf.recognizers.action_target)
+            local hit = ctx:cycle_find(c3, uf.elements.action_target)
             if hit == nil then error("frame 3 target must hit") end
             ctx:cycle_click(c3, hit)
 

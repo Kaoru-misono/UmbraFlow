@@ -42,7 +42,7 @@ namespace uf::workbench
             return fail(
                 AutomationErrorKind::InvalidResource,
                 std::format(
-                    "recognizer {} is not part of this draft",
+                    "element {} is not part of this draft",
                     id.value().toString()
                 )
             );
@@ -60,16 +60,16 @@ namespace uf::workbench
             );
         }
 
-        // The mutable half of primaryVariant, kept here because only the edit
+        // The mutable half of primaryAppearance, kept here because only the edit
         // transactions in this file write an appearance.
         [[nodiscard]]
-        auto primaryVariantOf(
-            EditableRecognizer& recognizer
-        ) noexcept -> EditableVariant*
+        auto primaryAppearanceOf(
+            EditableElement& element
+        ) noexcept -> EditableAppearance*
         {
-            return recognizer.variants.empty()
+            return element.appearances.empty()
                 ? nullptr
-                : &recognizer.variants.front();
+                : &element.appearances.front();
         }
 
         [[nodiscard]]
@@ -110,7 +110,7 @@ namespace uf::workbench
         // is what lets the message name the element the author typed.
         [[nodiscard]]
         auto validateReference(
-            EditableRecognizer const& element,
+            EditableElement const& element,
             EditableExercised const& exercised,
             std::optional<PixelRect> const& searchRoi
         ) -> Status
@@ -200,7 +200,7 @@ namespace uf::workbench
         // signature from being handed permission to click it.
         [[nodiscard]]
         auto resolveExercise(
-            EditableRecognizer const& element,
+            EditableElement const& element,
             std::optional<EditableExercised> const& requested
         ) -> Result<EditableExercised>
         {
@@ -241,20 +241,20 @@ namespace uf::workbench
         // located by its page and has no appearance to pin at all, which is
         // said in those words rather than as an empty list.
         [[nodiscard]]
-        auto appearanceNameList(EditableRecognizer const& element) -> std::string
+        auto appearanceNameList(EditableElement const& element) -> std::string
         {
-            if (element.variants.empty())
+            if (element.appearances.empty())
             {
                 return "none, it is located by its page";
             }
             auto listed = std::string{};
-            for (auto const& variant : element.variants)
+            for (auto const& appearance : element.appearances)
             {
                 if (!listed.empty())
                 {
                     listed += ", ";
                 }
-                listed += variant.name;
+                listed += appearance.name;
             }
             return listed;
         }
@@ -303,14 +303,14 @@ namespace uf::workbench
         }
 
         [[nodiscard]]
-        auto toEditableVariant(annotation::Variant const& variant) -> EditableVariant
+        auto toEditableAppearance(annotation::Appearance const& appearance) -> EditableAppearance
         {
-            return EditableVariant{
-                .name                  = variant.name().value(),
-                .sourceId              = variant.sourceId(),
-                .templateRect          = variant.templateRect(),
-                .similarityBasisPoints = variant.threshold().basisPoints(),
-                .colourKey             = variant.colourKey(),
+            return EditableAppearance{
+                .name                  = appearance.name().value(),
+                .sourceId              = appearance.sourceId(),
+                .templateRect          = appearance.templateRect(),
+                .similarityBasisPoints = appearance.threshold().basisPoints(),
+                .colourKey             = appearance.colourKey(),
             };
         }
 
@@ -353,24 +353,24 @@ namespace uf::workbench
 
         [[nodiscard]]
         auto buildCapabilities(
-            EditableRecognizer const& recognizer
+            EditableElement const& element
         ) -> Result<annotation::ElementCapabilities>
         {
             auto interact = std::optional<annotation::Interact>{};
-            if (auto const& declared = recognizer.capabilities.interact)
+            if (auto const& declared = element.capabilities.interact)
             {
                 auto clickOffset = std::optional<annotation::TemplateOffset>{};
                 if (auto const click = declared->clickOffset)
                 {
-                    auto const* p_variant = primaryVariant(recognizer);
-                    if (p_variant == nullptr)
+                    auto const* p_appearance = primaryAppearance(element);
+                    if (p_appearance == nullptr)
                     {
                         return fail(
                             AutomationErrorKind::InvalidResource,
                             std::format(
                                 "\"{}\" carries a default click but declares no "
                                 "appearance to measure it from",
-                                recognizer.name
+                                element.name
                             )
                         );
                     }
@@ -379,8 +379,8 @@ namespace uf::workbench
                         annotation::TemplateOffset::create(
                             click->x,
                             click->y,
-                            p_variant->templateRect.width(),
-                            p_variant->templateRect.height()
+                            p_appearance->templateRect.width(),
+                            p_appearance->templateRect.height()
                         )
                     );
                     clickOffset = offset;
@@ -388,33 +388,33 @@ namespace uf::workbench
                 interact = annotation::Interact{.clickOffset = clickOffset};
             }
             return annotation::ElementCapabilities::create(
-                recognizer.capabilities.identify,
+                element.capabilities.identify,
                 interact,
-                recognizer.capabilities.read
+                element.capabilities.read
             );
         }
     }
 
-    auto primaryVariant(
-        EditableRecognizer const& recognizer
-    ) noexcept -> EditableVariant const*
+    auto primaryAppearance(
+        EditableElement const& element
+    ) noexcept -> EditableAppearance const*
     {
-        return recognizer.variants.empty()
+        return element.appearances.empty()
             ? nullptr
-            : &recognizer.variants.front();
+            : &element.appearances.front();
     }
 
-    auto findEditableRecognizer(
+    auto findEditableElement(
         AuthoringDraft& draft,
         annotation::ElementId id
-    ) noexcept -> EditableRecognizer*
+    ) noexcept -> EditableElement*
     {
         auto const found = std::ranges::find(
-            draft.recognizers,
+            draft.elements,
             id,
-            &EditableRecognizer::id
+            &EditableElement::id
         );
-        return found == draft.recognizers.end() ? nullptr : &*found;
+        return found == draft.elements.end() ? nullptr : &*found;
     }
 
     auto makeAuthoringDraft(
@@ -438,24 +438,24 @@ namespace uf::workbench
         // Elements and references map straight across, one to one, with no
         // inversion: the capability set, the appearances, and every page-side
         // fact are the same values on both sides.
-        auto recognizers = std::vector<EditableRecognizer>{};
-        recognizers.reserve(document.elements().size());
+        auto elements = std::vector<EditableElement>{};
+        elements.reserve(document.elements().size());
         for (auto const& element : document.elements())
         {
-            auto variants = std::vector<EditableVariant>{};
-            variants.reserve(element.variants().size());
-            for (auto const& variant : element.variants())
+            auto appearances = std::vector<EditableAppearance>{};
+            appearances.reserve(element.appearances().size());
+            for (auto const& appearance : element.appearances())
             {
-                variants.emplace_back(toEditableVariant(variant));
+                appearances.emplace_back(toEditableAppearance(appearance));
             }
 
-            recognizers.emplace_back(
-                EditableRecognizer{
+            elements.emplace_back(
+                EditableElement{
                     .id           = element.id(),
                     .name         = element.name().value(),
                     .capabilities = toEditableCapabilities(element.capabilities()),
                     .searchRoi    = element.searchRoi(),
-                    .variants     = std::move(variants),
+                    .appearances  = std::move(appearances),
                 }
             );
         }
@@ -464,19 +464,19 @@ namespace uf::workbench
         references.reserve(document.references().size());
         for (auto const& reference : document.references())
         {
-            auto variant = std::optional<std::string>{};
-            if (auto const& pinned = reference.variant)
+            auto appearance = std::optional<std::string>{};
+            if (auto const& pinned = reference.appearance)
             {
-                variant = pinned->value();
+                appearance = pinned->value();
             }
             references.emplace_back(
                 EditableReference{
-                    .pageId    = reference.pageId,
-                    .elementId = reference.elementId,
-                    .holding   = reference.holding,
-                    .exercised = toEditableExercised(reference.exercised),
-                    .searchRoi = reference.searchRoi,
-                    .variant   = std::move(variant),
+                    .pageId     = reference.pageId,
+                    .elementId  = reference.elementId,
+                    .holding    = reference.holding,
+                    .exercised  = toEditableExercised(reference.exercised),
+                    .searchRoi  = reference.searchRoi,
+                    .appearance = std::move(appearance),
                 }
             );
         }
@@ -511,7 +511,7 @@ namespace uf::workbench
             .projectId   = document.catalog().projectId(),
             .fingerprint = document.catalog().fingerprint(),
             .sources     = std::move(sources),
-            .recognizers = std::move(recognizers),
+            .elements    = std::move(elements),
             .references  = std::move(references),
             .pages       = std::move(pages),
             .regressions = std::move(regressions),
@@ -541,42 +541,42 @@ namespace uf::workbench
         }
 
         auto elements = std::vector<annotation::Element>{};
-        elements.reserve(draft.recognizers.size());
-        for (auto const& recognizer : draft.recognizers)
+        elements.reserve(draft.elements.size());
+        for (auto const& editable : draft.elements)
         {
             UF_TRY_VALUE(
                 name,
-                annotation::ResourceName::create(recognizer.name)
+                annotation::ResourceName::create(editable.name)
             );
-            UF_TRY_VALUE(capabilities, buildCapabilities(recognizer));
+            UF_TRY_VALUE(capabilities, buildCapabilities(editable));
 
-            auto variants = std::vector<annotation::Variant>{};
-            variants.reserve(recognizer.variants.size());
-            for (auto const& variant : recognizer.variants)
+            auto appearances = std::vector<annotation::Appearance>{};
+            appearances.reserve(editable.appearances.size());
+            for (auto const& appearance : editable.appearances)
             {
                 UF_TRY_VALUE(
-                    variantName,
-                    annotation::ResourceName::create(variant.name)
+                    appearanceName,
+                    annotation::ResourceName::create(appearance.name)
                 );
                 UF_TRY_VALUE(
                     threshold,
                     annotation::SimilarityThreshold::create(
-                        variant.similarityBasisPoints
+                        appearance.similarityBasisPoints
                     )
                 );
                 UF_TRY_VALUE(
                     validated,
-                    annotation::Variant::create(
-                        annotation::Variant::Spec{
-                            .name         = std::move(variantName),
-                            .sourceId     = variant.sourceId,
-                            .templateRect = variant.templateRect,
+                    annotation::Appearance::create(
+                        annotation::Appearance::Spec{
+                            .name         = std::move(appearanceName),
+                            .sourceId     = appearance.sourceId,
+                            .templateRect = appearance.templateRect,
                             .threshold    = threshold,
-                            .colourKey    = variant.colourKey,
+                            .colourKey    = appearance.colourKey,
                         }
                     )
                 );
-                variants.emplace_back(std::move(validated));
+                appearances.emplace_back(std::move(validated));
             }
 
             UF_TRY_VALUE(
@@ -584,11 +584,11 @@ namespace uf::workbench
                 annotation::Element::create(
                     draft.fingerprint,
                     annotation::Element::Spec{
-                        .id           = recognizer.id,
+                        .id           = editable.id,
                         .name         = std::move(name),
                         .capabilities = std::move(capabilities),
-                        .searchRoi    = recognizer.searchRoi,
-                        .variants     = std::move(variants),
+                        .searchRoi    = editable.searchRoi,
+                        .appearances  = std::move(appearances),
                     }
                 )
             );
@@ -609,23 +609,23 @@ namespace uf::workbench
             );
 
             auto pinned = std::optional<annotation::ResourceName>{};
-            if (auto const& variant = reference.variant)
+            if (auto const& appearance = reference.appearance)
             {
                 UF_TRY_VALUE(
                     validated,
-                    annotation::ResourceName::create(*variant)
+                    annotation::ResourceName::create(*appearance)
                 );
                 pinned = std::move(validated);
             }
 
             references.emplace_back(
                 annotation::PageReference{
-                    .pageId    = reference.pageId,
-                    .elementId = reference.elementId,
-                    .holding   = reference.holding,
-                    .exercised = std::move(exercised),
-                    .searchRoi = reference.searchRoi,
-                    .variant   = std::move(pinned),
+                    .pageId     = reference.pageId,
+                    .elementId  = reference.elementId,
+                    .holding    = reference.holding,
+                    .exercised  = std::move(exercised),
+                    .searchRoi  = reference.searchRoi,
+                    .appearance = std::move(pinned),
                 }
             );
         }
@@ -676,9 +676,9 @@ namespace uf::workbench
         auto const taken = [&draft](std::string_view candidate)
         {
             return std::ranges::contains(
-                       draft.recognizers,
+                       draft.elements,
                        candidate,
-                       &EditableRecognizer::name
+                       &EditableElement::name
                    )
                 || std::ranges::contains(
                        draft.pages,
@@ -687,7 +687,7 @@ namespace uf::workbench
                    );
         };
 
-        auto const limit = draft.recognizers.size() + draft.pages.size() + 1U;
+        auto const limit = draft.elements.size() + draft.pages.size() + 1U;
         auto candidate   = std::string{};
         for (auto index = std::size_t{1}; index <= limit; ++index)
         {
@@ -717,17 +717,17 @@ namespace uf::workbench
         }
 
         auto anchorName = freshAuthoringName(draft, "anchor");
-        draft.recognizers.emplace_back(
-            EditableRecognizer{
+        draft.elements.emplace_back(
+            EditableElement{
                 .id   = spec.anchorId,
                 .name = anchorName,
                 .capabilities = EditableCapabilities{
                     .identify = annotation::Identify{},
                 },
                 .searchRoi = spec.searchRoi,
-                .variants  = {
-                    EditableVariant{
-                        .name                  = std::string{k_defaultVariantName},
+                .appearances  = {
+                    EditableAppearance{
+                        .name                  = std::string{k_defaultAppearanceName},
                         .sourceId              = spec.sourceId,
                         .templateRect          = spec.templateRect,
                         .similarityBasisPoints = spec.similarityBasisPoints,
@@ -850,15 +850,15 @@ namespace uf::workbench
 
         auto shape = memberShapeOf(spec.kind);
         auto name  = freshAuthoringName(draft, shape.stem);
-        draft.recognizers.emplace_back(
-            EditableRecognizer{
-                .id           = spec.recognizerId,
+        draft.elements.emplace_back(
+            EditableElement{
+                .id           = spec.elementId,
                 .name         = name,
                 .capabilities = std::move(shape.declared),
                 .searchRoi    = spec.searchRoi,
-                .variants     = {
-                    EditableVariant{
-                        .name                  = std::string{k_defaultVariantName},
+                .appearances     = {
+                    EditableAppearance{
+                        .name                  = std::string{k_defaultAppearanceName},
                         .sourceId              = spec.sourceId,
                         .templateRect          = spec.templateRect,
                         .similarityBasisPoints = spec.similarityBasisPoints,
@@ -873,7 +873,7 @@ namespace uf::workbench
         draft.references.emplace_back(
             EditableReference{
                 .pageId    = spec.pageId,
-                .elementId = spec.recognizerId,
+                .elementId = spec.elementId,
                 .holding   = annotation::Holding::Owned,
                 .exercised = std::move(shape.exercised),
             }
@@ -910,7 +910,7 @@ namespace uf::workbench
         annotation::PageId pageId
     ) -> Result<AuthoringDraft>
     {
-        auto const* p_target = findEditableRecognizer(draft, id);
+        auto const* p_target = findEditableElement(draft, id);
         if (p_target == nullptr)
         {
             return missingElement(id);
@@ -968,11 +968,11 @@ namespace uf::workbench
     ) -> Result<DuplicatedElement>
     {
         auto const origin = std::ranges::find(
-            draft.recognizers,
+            draft.elements,
             spec.sourceElementId,
-            &EditableRecognizer::id
+            &EditableElement::id
         );
-        if (origin == draft.recognizers.end())
+        if (origin == draft.elements.end())
         {
             return missingElement(spec.sourceElementId);
         }
@@ -985,7 +985,7 @@ namespace uf::workbench
         copy.name = name;
 
         // Mirror the original's references onto the copy, each retargeted to the
-        // new id and keeping its own refinements. Collected before the recognizer
+        // new id and keeping its own refinements. Collected before the element
         // is appended so a reallocation cannot invalidate the read.
         auto references = std::vector<EditableReference>{};
         for (auto const& reference : draft.references)
@@ -998,7 +998,7 @@ namespace uf::workbench
             }
         }
 
-        draft.recognizers.emplace_back(std::move(copy));
+        draft.elements.emplace_back(std::move(copy));
         draft.references.insert(
             draft.references.end(),
             references.begin(),
@@ -1017,7 +1017,7 @@ namespace uf::workbench
         std::optional<annotation::ColourKey> colourKey
     ) -> Result<AuthoringDraft>
     {
-        auto* p_target = findEditableRecognizer(draft, id);
+        auto* p_target = findEditableElement(draft, id);
         if (p_target == nullptr)
         {
             return missingElement(id);
@@ -1025,9 +1025,9 @@ namespace uf::workbench
 
         // An element is drawn once and referenced by N pages, so its mask, like
         // the rectangle it masks, is one fact every page sees.
-        for (auto& variant : p_target->variants)
+        for (auto& appearance : p_target->appearances)
         {
-            variant.colourKey = colourKey;
+            appearance.colourKey = colourKey;
         }
         return draft;
     }
@@ -1037,7 +1037,7 @@ namespace uf::workbench
         ReferenceElementSpec const& spec
     ) -> Result<ReferencedElement>
     {
-        auto const* p_origin = findEditableRecognizer(draft, spec.elementId);
+        auto const* p_origin = findEditableElement(draft, spec.elementId);
         if (p_origin == nullptr)
         {
             return missingElement(spec.elementId);
@@ -1064,13 +1064,13 @@ namespace uf::workbench
         // again over the built document -- that is what makes it a rule rather
         // than a courtesy -- but from there it can only say the name is not
         // declared, never which names are.
-        if (spec.variant.has_value())
+        if (spec.appearance.has_value())
         {
             if (
                 !std::ranges::contains(
-                    p_origin->variants,
-                    *spec.variant,
-                    &EditableVariant::name
+                    p_origin->appearances,
+                    *spec.appearance,
+                    &EditableAppearance::name
                 )
             )
             {
@@ -1079,7 +1079,7 @@ namespace uf::workbench
                     std::format(
                         "\"{}\" has no appearance named \"{}\"; it declares: {}",
                         p_origin->name,
-                        *spec.variant,
+                        *spec.appearance,
                         appearanceNameList(*p_origin)
                     )
                 );
@@ -1093,12 +1093,12 @@ namespace uf::workbench
         auto name = p_origin->name;
         draft.references.emplace_back(
             EditableReference{
-                .pageId    = spec.pageId,
-                .elementId = spec.elementId,
-                .holding   = annotation::Holding::Referenced,
-                .exercised = std::move(exercised),
-                .searchRoi = spec.searchRoi,
-                .variant   = spec.variant,
+                .pageId     = spec.pageId,
+                .elementId  = spec.elementId,
+                .holding    = annotation::Holding::Referenced,
+                .exercised  = std::move(exercised),
+                .searchRoi  = spec.searchRoi,
+                .appearance = spec.appearance,
             }
         );
 
@@ -1134,7 +1134,7 @@ namespace uf::workbench
             return std::move(referenced.draft);
         }
 
-        auto const* p_element = findEditableRecognizer(draft, id);
+        auto const* p_element = findEditableElement(draft, id);
         if (p_element == nullptr)
         {
             return missingElement(id);
@@ -1158,12 +1158,12 @@ namespace uf::workbench
         PixelRect templateRect
     ) -> Result<RetemplatedElement>
     {
-        auto* p_target = findEditableRecognizer(draft, id);
+        auto* p_target = findEditableElement(draft, id);
         if (p_target == nullptr)
         {
             return missingElement(id);
         }
-        if (p_target->variants.empty())
+        if (p_target->appearances.empty())
         {
             return fail(
                 AutomationErrorKind::InvalidResource,
@@ -1173,7 +1173,7 @@ namespace uf::workbench
                 )
             );
         }
-        if (p_target->variants.size() > 1U)
+        if (p_target->appearances.size() > 1U)
         {
             return fail(
                 AutomationErrorKind::InvalidResource,
@@ -1230,9 +1230,9 @@ namespace uf::workbench
             }
         }
 
-        auto* p_variant = primaryVariantOf(*p_target);
-        UF_CHECK(p_variant != nullptr);
-        p_variant->templateRect = templateRect;
+        auto* p_appearance = primaryAppearanceOf(*p_target);
+        UF_CHECK(p_appearance != nullptr);
+        p_appearance->templateRect = templateRect;
         return RetemplatedElement{
             .draft            = std::move(draft),
             .referencingPages = referencingPages,
@@ -1348,12 +1348,12 @@ namespace uf::workbench
         return draft;
     }
 
-    auto deleteRecognizer(
+    auto deleteElement(
         AuthoringDraft draft,
         annotation::ElementId id
     ) -> Result<DeletedEntity>
     {
-        auto const* p_target = findEditableRecognizer(draft, id);
+        auto const* p_target = findEditableElement(draft, id);
         if (p_target == nullptr)
         {
             return missingElement(id);
@@ -1401,10 +1401,10 @@ namespace uf::workbench
             }
         );
         std::erase_if(
-            draft.recognizers,
-            [id](EditableRecognizer const& recognizer)
+            draft.elements,
+            [id](EditableElement const& element)
             {
-                return recognizer.id == id;
+                return element.id == id;
             }
         );
 
@@ -1433,19 +1433,19 @@ namespace uf::workbench
         // exercise would be left unreachable, which the closure rule forbids;
         // that is a choice between deleting it and re-pointing it that only the
         // author can make. An element that is only read may be left unreferenced.
-        for (auto const& recognizer : draft.recognizers)
+        for (auto const& element : draft.elements)
         {
-            if (!recognizer.capabilities.interact.has_value())
+            if (!element.capabilities.interact.has_value())
             {
                 continue;
             }
-            auto const* p_here = findReferenceIn(draft, id, recognizer.id);
+            auto const* p_here = findReferenceIn(draft, id, element.id);
             auto const onThisPage = (
                 p_here != nullptr && p_here->exercised.interact.has_value()
             );
             if (
                 onThisPage
-                && interactReferenceCount(draft, recognizer.id) <= 1U
+                && interactReferenceCount(draft, element.id) <= 1U
             )
             {
                 return fail(
@@ -1454,7 +1454,7 @@ namespace uf::workbench
                         "page \"{}\" is the only page \"{}\" can be clicked on; "
                         "place it elsewhere or delete it first",
                         target->name,
-                        recognizer.name
+                        element.name
                     )
                 );
             }
@@ -1507,13 +1507,13 @@ namespace uf::workbench
         }
 
         auto authored = std::size_t{0};
-        for (auto const& recognizer : draft.recognizers)
+        for (auto const& element : draft.elements)
         {
             authored += static_cast<std::size_t>(
                 std::ranges::count(
-                    recognizer.variants,
+                    element.appearances,
                     id,
-                    &EditableVariant::sourceId
+                    &EditableAppearance::sourceId
                 )
             );
         }

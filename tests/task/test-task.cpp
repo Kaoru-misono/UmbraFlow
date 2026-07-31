@@ -54,35 +54,35 @@ namespace uf::task
             auto const dailyId     = at::elementId(k_dailyId);
             auto const battleId    = at::elementId(k_battleId);
 
-            auto recognizers = std::vector<annotation::RecognizerDefinition>{};
-            recognizers.push_back(at::recognizer(
+            auto elements = std::vector<annotation::CompiledElement>{};
+            elements.push_back(at::element(
                 fingerprint,
                 anchorId,
                 "home_marker",
                 at::capabilities(annotation::Identify{}),
                 at::pixelRect(0, 0, 4, 4),
-                {at::recognizerVariant("default", at::pixelRect(0, 0, 1, 1))}
+                {at::compiledAppearance("default", at::pixelRect(0, 0, 1, 1))}
             ));
-            recognizers.push_back(at::recognizer(
+            elements.push_back(at::element(
                 fingerprint,
                 dailyId,
                 "daily_button",
                 at::capabilities(std::nullopt, annotation::Interact{}),
                 at::pixelRect(0, 0, 4, 4),
-                {at::recognizerVariant("default", at::pixelRect(1, 1, 1, 1))}
+                {at::compiledAppearance("default", at::pixelRect(1, 1, 1, 1))}
             ));
-            recognizers.push_back(at::recognizer(
+            elements.push_back(at::element(
                 fingerprint,
                 battleId,
                 "battle",
                 at::capabilities(std::nullopt, annotation::Interact{}),
                 at::pixelRect(0, 0, 4, 4),
-                {at::recognizerVariant("default", at::pixelRect(2, 2, 1, 1))}
+                {at::compiledAppearance("default", at::pixelRect(2, 2, 1, 1))}
             ));
 
             return at::catalog(
                 fingerprint,
-                std::move(recognizers),
+                std::move(elements),
                 {at::page(pageId, "home")},
                 {
                     at::reference(pageId, anchorId, at::identifiesAs()),
@@ -217,7 +217,7 @@ namespace uf::task
 
             // An element that only identifies is not findable, so only the two
             // that declare interact are exposed; every page is exposed.
-            CHECK(surface->recognizerCount() == 2);
+            CHECK(surface->elementCount() == 2);
             CHECK(surface->pageCount() == 1);
         }
 
@@ -231,8 +231,8 @@ namespace uf::task
             REQUIRE(engine.has_value());
 
             constexpr std::string_view present[] = {
-                "uf.recognizers.daily_button ~= nil",
-                "uf.recognizers.battle ~= nil",
+                "uf.elements.daily_button ~= nil",
+                "uf.elements.battle ~= nil",
                 "uf.pages.home ~= nil",
             };
             for (std::string_view const expr : present)
@@ -244,9 +244,9 @@ namespace uf::task
             constexpr std::string_view absent[] = {
                 // An element that only identifies is page-internal evidence,
                 // never a findable handle.
-                "uf.recognizers.home_marker == nil",
+                "uf.elements.home_marker == nil",
                 // Names that do not exist resolve to nil, not an error.
-                "uf.recognizers.does_not_exist == nil",
+                "uf.elements.does_not_exist == nil",
                 "uf.pages.does_not_exist == nil",
             };
             for (std::string_view const expr : absent)
@@ -269,13 +269,13 @@ namespace uf::task
             {
                 expectRejected(*engine, "uf.injected = 1\nreturn 0");
             }
-            SUBCASE("a new key on uf.recognizers is rejected")
+            SUBCASE("a new key on uf.elements is rejected")
             {
-                expectRejected(*engine, "uf.recognizers.injected = 1\nreturn 0");
+                expectRejected(*engine, "uf.elements.injected = 1\nreturn 0");
             }
-            SUBCASE("overwriting an existing recognizer handle is rejected")
+            SUBCASE("overwriting an existing element handle is rejected")
             {
-                expectRejected(*engine, "uf.recognizers.daily_button = 1\nreturn 0");
+                expectRejected(*engine, "uf.elements.daily_button = 1\nreturn 0");
             }
             SUBCASE("a new key on uf.pages is rejected")
             {
@@ -285,7 +285,7 @@ namespace uf::task
             {
                 expectRejected(
                     *engine,
-                    "uf.recognizers.daily_button.x = 1\nreturn 0"
+                    "uf.elements.daily_button.x = 1\nreturn 0"
                 );
             }
             SUBCASE("a new key on uf.errors is rejected")
@@ -348,7 +348,7 @@ namespace uf::task
             // The invariant the two deleted copies of this mapping asserted in
             // comments and nothing checked: a trace line names a failure with
             // exactly the string the script layer sees. Both sides are read from
-            // the real artifacts -- serialized umbraflow-trace/v1 lines and the
+            // the real artifacts -- serialized umbraflow-trace/v2 lines and the
             // table installed on a live VM -- so a divergence shows up as wrong
             // output rather than as two calls to the same function.
             auto const traced = tracedErrorKindSpellings();
@@ -374,17 +374,17 @@ namespace uf::task
             // A handle is userdata, and its metatable and tostring reveal only the
             // fixed kind label -- never the internal id or an address.
             constexpr std::string_view opaque[] = {
-                "type(uf.recognizers.daily_button) == 'userdata'",
+                "type(uf.elements.daily_button) == 'userdata'",
                 "type(uf.pages.home) == 'userdata'",
-                "tostring(uf.recognizers.daily_button) == 'uf.recognizer'",
+                "tostring(uf.elements.daily_button) == 'uf.element'",
                 "tostring(uf.pages.home) == 'uf.page'",
-                "getmetatable(uf.recognizers.daily_button) == 'uf.recognizer'",
+                "getmetatable(uf.elements.daily_button) == 'uf.element'",
                 "getmetatable(uf.pages.home) == 'uf.page'",
                 // A field read of a handle yields nil (the method table is empty
                 // this wave), never any internal state.
-                "uf.recognizers.daily_button.id == nil",
+                "uf.elements.daily_button.id == nil",
                 // pairs() cannot enumerate a userdata's contents.
-                "pcall(function() for _ in pairs(uf.recognizers.daily_button) do end end) == false",
+                "pcall(function() for _ in pairs(uf.elements.daily_button) do end end) == false",
             };
             for (std::string_view const expr : opaque)
             {
@@ -406,7 +406,7 @@ namespace uf::task
             // reopen the handle for indexing or writing.
             expectRejected(
                 *engine,
-                "setmetatable(uf.recognizers.daily_button, {})\nreturn 0"
+                "setmetatable(uf.elements.daily_button, {})\nreturn 0"
             );
         }
 
@@ -424,14 +424,14 @@ namespace uf::task
             CHECK(
                 truthy(
                     *engine,
-                    "uf.recognizers.daily_button == uf.recognizers.daily_button"
+                    "uf.elements.daily_button == uf.elements.daily_button"
                 )
                 == doctest::Approx(1.0)
             );
             CHECK(
                 truthy(
                     *engine,
-                    "uf.recognizers.daily_button ~= uf.recognizers.battle"
+                    "uf.elements.daily_button ~= uf.elements.battle"
                 )
                 == doctest::Approx(1.0)
             );

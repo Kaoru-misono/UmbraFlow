@@ -119,7 +119,7 @@ click home -> wait result -> click reset -> wait home
 
 `Template` 在 `entry/m0-demo/pipeline.hpp` 中拥有 label、灰度像素
 `std::vector<std::byte>`、宽高和一个 `Rect<FrameSpace>` 搜索 ROI。
-`Templates` 只是固定的 home/result/reset 三元组；它不是通用 recognizer collection。
+`Templates` 只是固定的 home/result/reset 三元组；它不是通用 element collection。
 
 ### 捕获、SAD 匹配与结果验收
 
@@ -360,7 +360,7 @@ path race 和 shutdown ordering 的自动测试。
 M0 不应继续扩成产品；后续能力从外部替代。
 
 识别与授权已经迁到 `modules/annotation` 和 `modules/engine`。
-新 recognizer、page evidence、action target、default click、basis-point threshold 和
+新 element、page evidence、action target、default click、basis-point threshold 和
 runtime manifest 都应遵循 `docs/plans/2026-07-22-annotation-design.md`，不能增加第四张
 M0 template 或给 `clickWhenPresent()` 塞 page 特例。
 

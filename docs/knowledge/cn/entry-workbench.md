@@ -35,11 +35,11 @@
 > > `authoring-actions`、`canvas-math`（`CanvasPoint`、`ScreenPixelRect`、
 > > `RectGripKind`）、`model-check-view`、`project-tree`（`ScreenBucket`）——连同
 > > 它们的测试；其中 `mintResourceId` 与 `searchRoiForDrawnTemplate` 被救进
-> > `edit-page`，`findEditableRecognizer` 被救进 `authoring-edit`。
+> > `edit-page`，`findEditableElement` 被救进 `authoring-edit`。
 > > `model-check-job` 随后也删了：`ModelCheckJob` 的存在只是为了把 `runModelCheck`
 > > 挪出 GUI 线程，GUI 归档之后 `umbra-authoring check` 是同步跑矩阵的，于是它唯一
 > > 剩下的消费者是它自己的测试。`preview.*` 里的 `runModelCheck`、`ModelCheck`、
-> > `ModelCheckCell`、`classifyModelCell`、`RecognizerMargin` 一字未动。
+> > `ModelCheckCell`、`classifyModelCell`、`ElementMargin` 一字未动。
 > >
 > > 因此本 banner 记的那处纠缠**已经解除**：`EditPage` 的签名里不再出现 `AppState`
 > > 或 `PanelUiState`。它现在按值收一份 `AuthoringDraft` 外加一个由调用方命名的不透明
@@ -72,7 +72,7 @@
 > 全部消失；`RecognizerId` 改名 `ElementId`。逐条清单见
 > [`module-annotation.md`](module-annotation.md) 的 banner。具体到本文：构造链不再经过
 > `PageSignature::create`（签名由 `RecognitionCatalog::create` 从行使 `identify` 的页面
-> 引用派生），而「selected recognizer 若为 `ActionTarget`」现在读作「选中的元素若声明了
+> 引用派生），而「selected element 若为 `ActionTarget`」现在读作「选中的元素若声明了
 > `interact`」——并且 `evaluateActionTarget` 还多收一个页面参数。
 
 > **DIRTY（2026-07-26）**：本文尚未反映 page-centric 重构（EditPage/PageView
@@ -92,7 +92,7 @@ Workbench 拥有从“取得一张完整源图”到“发布可供 runtime 消�
 - 从 PNG 或 WGC frame 构造带 provenance 的 canonical source；
 - 保存 source selection、canvas view 和即时 Preview 等 session state；
 - 把控件产生的修改统一变成完整、可验证的 `AuthoringDocument` 版本，并提供 undo/redo；
-- 展示和编辑 recognizer、page、regression、`template_rect`、`search_roi`、threshold 和 click offset；
+- 展示和编辑 element、page、regression、`template_rect`、`search_roi`、threshold 和 click offset；
 - 用当前内存 source 编译 template assets 和 runtime manifest；
 - 用生产侧同一个 `RecognitionRuntime` 对选中 source 做有界 Preview；
 - 按内容寻址资产优先、runtime manifest 最后的顺序发布项目。
@@ -129,21 +129,21 @@ shell 每帧同步调用 `drawWorkbench`。只有 `dispatch`/`main` 会把错误
 ### 编辑状态与修改入口
 
 `entry/workbench/authoring-edit.hpp` 定义供界面编辑的中间数据：
-`AuthoringDraft` 聚合 `EditableSource`、`EditableRecognizer`、`EditablePage` 和
+`AuthoringDraft` 聚合 `EditableSource`、`EditableElement`、`EditablePage` 和
 `EditableRegression`。控件可以暂时写入普通字符串、整数和 vector，但这些值不能
 直接持久化。
 
 `makeAuthoringDraft` 把规范化的 `annotation::AuthoringDocument` 展开成上述中间数据；
 `buildAuthoringDocument` 再依次调用 `AuthoringSource::create`、
 `ResourceName::create`、`SimilarityThreshold::create`、`TemplateOffset::create`、
-`RecognizerDefinition::create`、`PageSignature::create`，最后调用
+`CompiledElement::create`、`PageSignature::create`，最后调用
 `AuthoringDocument::create`。
 这条重建路径解释了为何 GUI 不做“先改半个对象、以后再校验”：一次 edit 要么得到完整有效的 document，要么原版本不动。
 
 `AuthoringEditHistory::apply` 先完成重建，再比较新旧 document 的规范序列化结果。
 相同 draft 返回 `false`，不写入历史；发生变化时，把当前 document 移入 undo、清空
 redo，并把 undo 限制为 `k_maximumAuthoringUndoEntries == 100`。
-`undo`/`redo` 移动完整 document value，所以跨 recognizer/page 的引用始终作为同一版本恢复。
+`undo`/`redo` 移动完整 document value，所以跨 element/page 的引用始终作为同一版本恢复。
 
 `entry/workbench/workbench-app.hpp` 的 `AppState` 是窗口背后的
 ImGui-free session aggregate：
@@ -167,7 +167,7 @@ Preview。dirty flag 则保守：undo 回已保存内容仍可能保持 dirty，
 `entry/workbench/workbench-app.cpp` 的 `mintResourceId` 用 `std::random_device` 填满 16 bytes，再设置 UUID version 4 nibble 和 RFC 4122 variant bits，最后调用 `modules/annotation/source/annotation/resource.hpp` 的 `ResourceId::fromBytes`。
 `fromBytes` 本身按契约不验证 version/variant，因此 authoring caller 负责设置 convention。
 
-`SourceId`、`ElementId`、`PageId` 等是 `ResourceId` 上的 distinct strong types；panel 在新增 source、recognizer 或 page 时先 mint，再包成对应 ID。随机性只决定新资源 identity，不进入 runtime matching。
+`SourceId`、`ElementId`、`PageId` 等是 `ResourceId` 上的 distinct strong types；panel 在新增 source、element 或 page 时先 mint，再包成对应 ID。随机性只决定新资源 identity，不进入 runtime matching。
 ID 一旦进入 document，canonical compiler 以它作为稳定 ordering/reference key。
 
 ### 导入源图
@@ -248,13 +248,13 @@ source fingerprint。返回的 `LoadedAuthoringProject` 保留原 PNG bytes，�
 4. 调用 `annotation::RecognitionRuntime::create`；
 5. 把 selected PNG decode 成 project-fingerprint-sized BGRA `Frame`；
 6. 调用 `RecognitionRuntime::evaluatePage`；
-7. selected recognizer 若为 `ActionTarget`，再调用
+7. selected element 若为 `ActionTarget`，再调用
    `evaluateActionTarget`。
 
 panel 构造的 `RecognitionPolicy` 同时给出 comparison budget 和 deadline；
 API 还支持 `std::stop_token`。`PreviewResult` 保留 completed
 `PreviewAnchorRow`、Resolved/Unknown/Ambiguous、resolved page ID，以及
-`PreviewStop` 中的 recognizer ID 和 `SadSearchStopReason`。stop 不会被压成
+`PreviewStop` 中的 element ID 和 `SadSearchStopReason`。stop 不会被压成
 `hit=false`。Preview frame 的 synthetic frame/session/generation identity 只为
 满足真实 recognition API；结果不进入 document、history 或 action delivery。
 

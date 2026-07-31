@@ -21,7 +21,7 @@ namespace uf::annotation
     {
         [[nodiscard]]
         auto stopFailure(
-            ElementId recognizerId,
+            ElementId elementId,
             SadSearchStopReason reason
         ) -> std::unexpected<Error>
         {
@@ -30,7 +30,7 @@ namespace uf::annotation
                 std::format(
                     "page recognition {} at anchor {}",
                     searchStopDescription(reason),
-                    recognizerId.value().toString()
+                    elementId.value().toString()
                 )
             );
         }
@@ -44,7 +44,7 @@ namespace uf::annotation
             auto const found = std::ranges::find(
                 evidence,
                 id,
-                &AnchorEvidence::recognizerId
+                &AnchorEvidence::elementId
             );
             return found == evidence.end() ? nullptr : &*found;
         }
@@ -92,17 +92,17 @@ namespace uf::annotation
     auto FrameIdentity::frameId() const noexcept -> FrameId { return m_frameId; }
 
     AnchorEvidence::AnchorEvidence(
-        ElementId recognizerId,
+        ElementId elementId,
         bool hit,
-        std::optional<ResourceName> variantName,
+        std::optional<ResourceName> appearanceName,
         std::optional<uint64> sadScore,
         uint64 maximumSad,
         std::optional<PixelRect> matchedRect,
         std::optional<float> displayConfidence
     ) noexcept
-        : m_recognizerId{recognizerId}
+        : m_elementId{elementId}
         , m_hit{hit}
-        , m_variantName{std::move(variantName)}
+        , m_appearanceName{std::move(appearanceName)}
         , m_sadScore{sadScore}
         , m_maximumSad{maximumSad}
         , m_matchedRect{matchedRect}
@@ -111,12 +111,12 @@ namespace uf::annotation
     }
 
     auto AnchorEvidence::locatedByPage(
-        ElementId recognizerId,
+        ElementId elementId,
         PixelRect rect
     ) -> AnchorEvidence
     {
         return AnchorEvidence{
-            recognizerId,
+            elementId,
             true,
             std::nullopt,
             std::nullopt,
@@ -126,11 +126,11 @@ namespace uf::annotation
         };
     }
 
-    auto AnchorEvidence::recognizerId() const -> ElementId { return m_recognizerId; }
+    auto AnchorEvidence::elementId() const -> ElementId { return m_elementId; }
     auto AnchorEvidence::hit() const noexcept -> bool { return m_hit; }
-    auto AnchorEvidence::variantName() const noexcept -> std::optional<ResourceName> const&
+    auto AnchorEvidence::appearanceName() const noexcept -> std::optional<ResourceName> const&
     {
-        return m_variantName;
+        return m_appearanceName;
     }
     auto AnchorEvidence::sadScore() const noexcept -> std::optional<uint64> { return m_sadScore; }
     auto AnchorEvidence::maximumSad() const noexcept -> uint64 { return m_maximumSad; }
@@ -144,43 +144,43 @@ namespace uf::annotation
     }
 
     AnchorEvaluation::AnchorEvaluation(
-        ElementId recognizerId,
+        ElementId elementId,
         Evaluation evaluation
     ) noexcept
-        : m_recognizerId{recognizerId}
+        : m_elementId{elementId}
         , m_evaluation{evaluation}
     {
     }
 
     auto AnchorEvaluation::fromSadOutcome(
-        RecognizerDefinition const& recognizer,
-        RecognizerVariant const& variant,
+        CompiledElement const& element,
+        CompiledAppearance const& appearance,
         PixelRect searchRoi,
         SadSearchOutcome const& outcome
     ) -> Result<AnchorEvaluation>
     {
-        auto const* p_declared = recognizer.findVariant(variant.name);
-        if (p_declared == nullptr || *p_declared != variant)
+        auto const* p_declared = element.findAppearance(appearance.name);
+        if (p_declared == nullptr || *p_declared != appearance)
         {
             return fail(
                 AutomationErrorKind::InvalidResource,
-                "SAD evidence must name a variant the element declares"
+                "SAD evidence must name an appearance the element declares"
             );
         }
 
         if (auto const* p_stop = std::get_if<SadSearchStopReason>(&outcome))
         {
             return AnchorEvaluation{
-                recognizer.id(),
+                element.id(),
                 *p_stop
             };
         }
 
         auto const& match = std::get<std::optional<SadMatch>>(outcome);
-        auto const templateRect = variant.templateRect;
+        auto const templateRect = appearance.templateRect;
         UF_TRY_VALUE(
             maximumSad,
-            variant.threshold.maximumSad(
+            appearance.threshold.maximumSad(
                 templateRect.width(),
                 templateRect.height()
             )
@@ -189,11 +189,11 @@ namespace uf::annotation
         if (!match)
         {
             return AnchorEvaluation{
-                recognizer.id(),
+                element.id(),
                 AnchorEvidence{
-                    recognizer.id(),
+                    element.id(),
                     false,
-                    variant.name,
+                    appearance.name,
                     std::nullopt,
                     maximumSad,
                     std::nullopt,
@@ -254,11 +254,11 @@ namespace uf::annotation
             / static_cast<float>(*maximumPossibleSad)
         );
         return AnchorEvaluation{
-            recognizer.id(),
+            element.id(),
             AnchorEvidence{
-                recognizer.id(),
+                element.id(),
                 match->score() <= maximumSad,
-                variant.name,
+                appearance.name,
                 match->score(),
                 maximumSad,
                 matchedRect,
@@ -269,11 +269,11 @@ namespace uf::annotation
 
     auto AnchorEvaluation::fromEvidence(AnchorEvidence evidence) -> AnchorEvaluation
     {
-        auto const id = evidence.recognizerId();
+        auto const id = evidence.elementId();
         return AnchorEvaluation{id, Evaluation{std::move(evidence)}};
     }
 
-    auto AnchorEvaluation::recognizerId() const -> ElementId { return m_recognizerId; }
+    auto AnchorEvaluation::elementId() const -> ElementId { return m_elementId; }
     auto AnchorEvaluation::evaluation() const noexcept -> Evaluation const&
     {
         return m_evaluation;
@@ -379,7 +379,7 @@ namespace uf::annotation
         {
             if (
                 index >= expectedOrder.size()
-                || evaluations[index].recognizerId() != expectedOrder[index]
+                || evaluations[index].elementId() != expectedOrder[index]
             )
             {
                 return fail(
@@ -391,7 +391,7 @@ namespace uf::annotation
             auto const& evaluation = evaluations[index].evaluation();
             if (auto const* p_stop = std::get_if<SadSearchStopReason>(&evaluation))
             {
-                return stopFailure(evaluations[index].recognizerId(), *p_stop);
+                return stopFailure(evaluations[index].elementId(), *p_stop);
             }
 
             completed.emplace_back(std::get<AnchorEvidence>(evaluation));

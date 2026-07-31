@@ -98,16 +98,16 @@ namespace uf::annotation
         // Several appearances of one element are the annotation-model test's
         // subject; this file is about what compilation does with the pixels.
         [[nodiscard]]
-        auto singleVariant(
+        auto singleAppearance(
             SourceId sourceId,
             PixelRect templateRect
-        ) -> std::vector<Variant>
+        ) -> std::vector<Appearance>
         {
-            auto variants = std::vector<Variant>{};
-            variants.emplace_back(
-                test::variant("only", sourceId, templateRect)
+            auto appearances = std::vector<Appearance>{};
+            appearances.emplace_back(
+                test::appearance("only", sourceId, templateRect)
             );
-            return variants;
+            return appearances;
         }
 
         [[nodiscard]]
@@ -126,7 +126,7 @@ namespace uf::annotation
                 std::move(name),
                 test::capabilities(Identify{}),
                 searchRoi,
-                singleVariant(sourceId, templateRect)
+                singleAppearance(sourceId, templateRect)
             );
         }
 
@@ -150,7 +150,7 @@ namespace uf::annotation
                     Interact{.clickOffset = clickOffset}
                 ),
                 searchRoi,
-                singleVariant(sourceId, templateRect)
+                singleAppearance(sourceId, templateRect)
             );
         }
 
@@ -360,7 +360,7 @@ namespace uf::annotation
                         std::format("boundary_item_{}", index),
                         test::capabilities(std::nullopt, std::nullopt, Read{}),
                         searchRoi,
-                        singleVariant(
+                        singleAppearance(
                             sourceIds.front(),
                             checkedAt(templateRects, index)
                         )
@@ -416,7 +416,7 @@ namespace uf::annotation
 
         auto const parsed = parseRuntimeManifest(first->runtimeManifestToml);
         REQUIRE(parsed.has_value());
-        CHECK(parsed->catalog().recognizers().size() == 2U);
+        CHECK(parsed->catalog().elements().size() == 2U);
         CHECK(parsed->catalog().pages().size() == 1U);
         for (auto const& asset : parsed->assets())
         {
@@ -433,10 +433,10 @@ namespace uf::annotation
 
         auto authoringToml = serializeAuthoringDocument(fixture.document);
 
-        auto const annotationPosition = authoringToml.find("\n[[annotation]]");
-        REQUIRE(annotationPosition != std::string::npos);
+        auto const elementPosition = authoringToml.find("\n[[element]]");
+        REQUIRE(elementPosition != std::string::npos);
         authoringToml.insert(
-            annotationPosition,
+            elementPosition,
             std::format(
                 "\n[[source]]\n"
                 "id = \"{}\"\n"
@@ -450,19 +450,19 @@ namespace uf::annotation
                 secondHash->toString()
             )
         );
-        // The source an appearance was cut from is a fact of the variant row, so
-        // the edit has to land in the button's variant rather than in whichever
+        // The source an appearance was cut from is a fact of the appearance row, so
+        // the edit has to land in the button's appearance rather than in whichever
         // one happens to come first.
-        auto const actionVariantPosition = authoringToml.find(
+        auto const actionAppearancePosition = authoringToml.find(
             std::format(
-                "\n[[variant]]\nelement_id = \"{}\"\n",
+                "\n[[appearance]]\nelement_id = \"{}\"\n",
                 k_actionId
             )
         );
-        REQUIRE(actionVariantPosition != std::string::npos);
+        REQUIRE(actionAppearancePosition != std::string::npos);
         auto const relationshipPosition = authoringToml.find(
             std::string{"source_id = \""} + k_sourceId + '"',
-            actionVariantPosition
+            actionAppearancePosition
         );
         REQUIRE(relationshipPosition != std::string::npos);
         authoringToml.replace(
@@ -691,10 +691,10 @@ namespace uf::annotation
         // whatever the writer happened to emit.
         //
         // The property the old golden pinned -- a placement inverted into an
-        // allowed-page list on the recognizer -- has no bytes to check any more,
+        // allowed-page list on the element -- has no bytes to check any more,
         // because the reference rows below ARE the authorisation and reach the
         // runtime unchanged. What is checked instead is that an element keeps
-        // its own id through compilation and carries one variant row per
+        // its own id through compilation and carries one appearance row per
         // appearance.
         auto const fixture  = compilerFixture();
         auto const assets   = std::span{&fixture.sourceAsset, std::size_t{1}};
@@ -702,25 +702,25 @@ namespace uf::annotation
         REQUIRE(compiled.has_value());
 
         auto const expected = std::string{
-            "schema = \"umbraflow-annotations/v2\"\n"
+            "schema = \"umbraflow-annotations/v3\"\n"
             "project_id = \"personal.test\"\n"
             "base_resolution = [3, 2]\n"
             "base_dpi = [96, 96]\n"
             "\n"
-            "[[recognizer]]\n"
+            "[[element]]\n"
             "id = \"00000000-0000-0000-0000-000000000001\"\n"
             "name = \"home_marker\"\n"
             "search_roi = [0, 0, 3, 2]\n"
             "capabilities = [\"identify\"]\n"
             "\n"
-            "[[recognizer]]\n"
+            "[[element]]\n"
             "id = \"00000000-0000-0000-0000-000000000002\"\n"
             "name = \"daily_button\"\n"
             "search_roi = [0, 0, 3, 2]\n"
             "capabilities = [\"interact\"]\n"
             "default_click = [1, 1]\n"
             "\n"
-            "[[variant]]\n"
+            "[[appearance]]\n"
             "element_id = \"00000000-0000-0000-0000-000000000001\"\n"
             "name = \"only\"\n"
             "kind = \"gray_template\"\n"
@@ -733,7 +733,7 @@ namespace uf::annotation
             "template_rect = [0, 0, 1, 1]\n"
             "min_similarity_bp = 9000\n"
             "\n"
-            "[[variant]]\n"
+            "[[appearance]]\n"
             "element_id = \"00000000-0000-0000-0000-000000000002\"\n"
             "name = \"only\"\n"
             "kind = \"gray_template\"\n"
@@ -769,12 +769,12 @@ namespace uf::annotation
     TEST_CASE("annotation authoring compilation carries each page's refined region")
     {
         // One interactive element referenced by two pages with DIFFERENT search
-        // rectangles. It compiles to ONE recognizer under its own id -- the id
-        // its scripts and its authorisation use -- and the per-page rectangle
-        // rides on the reference rows, which reach the runtime unchanged. The
-        // rule this replaces minted a derived id per page instead, which left
-        // the element's own id with no recognizer at all as soon as a second
-        // page referenced it.
+        // rectangles. It compiles to ONE compiled element under its own id --
+        // the id its scripts and its authorisation use -- and the per-page
+        // rectangle rides on the reference rows, which reach the runtime
+        // unchanged. The rule this replaces minted a derived id per page
+        // instead, which left the element's own id with no compiled element at
+        // all as soon as a second page referenced it.
         constexpr auto k_anchorTwoId = "00000000-0000-0000-0000-000000000003";
         constexpr auto k_pageTwoId   = "00000000-0000-0000-0000-000000000102";
 
@@ -885,9 +885,9 @@ namespace uf::annotation
         CHECK(first->runtimeManifestToml == second->runtimeManifestToml);
 
         auto const& catalog = first->runtimeManifest.catalog();
-        // Two anchors and the one button, not one recognizer per placement.
-        CHECK(catalog.recognizers().size() == 3U);
-        auto const* p_action = catalog.findRecognizer(actionId);
+        // Two anchors and the one button, not one element per placement.
+        CHECK(catalog.elements().size() == 3U);
+        auto const* p_action = catalog.findElement(actionId);
         REQUIRE(p_action != nullptr);
         CHECK(p_action->name().value() == "daily_button");
 

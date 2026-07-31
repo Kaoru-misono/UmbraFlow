@@ -227,7 +227,7 @@ namespace uf::workbench
     private:
         // Borrowed by the handles, which are friends. draftCopy hands out a copy
         // to feed the value-taking edit transactions; replaceDraft installs the
-        // result; findRecognizer resolves a member for a read, valid only until
+        // result; findElement resolves a member for a read, valid only until
         // the next mutation.
         [[nodiscard]] auto draftCopy() const -> AuthoringDraft;
         auto replaceDraft(AuthoringDraft draft) -> void;
@@ -236,8 +236,8 @@ namespace uf::workbench
         auto draftView() const noexcept UF_LIFETIME_BOUND -> AuthoringDraft const&;
 
         [[nodiscard]]
-        auto findRecognizer(MemberId member) const UF_LIFETIME_BOUND
-            -> EditableRecognizer const*;
+        auto findElement(MemberId member) const UF_LIFETIME_BOUND
+            -> EditableElement const*;
 
         [[nodiscard]] auto pageId() const noexcept -> annotation::PageId;
     };

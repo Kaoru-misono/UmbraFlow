@@ -29,7 +29,7 @@ namespace uf::annotation
     {
         constexpr auto k_maximumAuthoringDocumentBytes = std::size_t{16} * 1024U * 1024U;
         constexpr auto k_maximumAuthoringResources     = std::size_t{4096};
-        constexpr auto k_maximumAuthoringVariants      = std::size_t{4096} * 8U;
+        constexpr auto k_maximumAuthoringAppearances      = std::size_t{4096} * 8U;
         constexpr auto k_maximumAuthoringReferences    = std::size_t{4096} * 16U;
 
         [[nodiscard]]
@@ -354,7 +354,7 @@ namespace uf::annotation
             return id.value().toString();
         }
 
-        // An element as its own table row leaves it: the variants that carry
+        // An element as its own table row leaves it: the appearances that carry
         // its templates arrive in later rows, and the click offset cannot
         // become a TemplateOffset until one of them is known.
         struct ParsedElement final
@@ -364,13 +364,13 @@ namespace uf::annotation
             PixelRect                searchRoi;
             detail::CapabilityFields capabilities;
 
-            std::vector<Variant> variants{};
+            std::vector<Appearance> appearances{};
         };
 
-        struct ParsedVariant final
+        struct ParsedAppearance final
         {
-            ElementId elementId;
-            Variant   variant;
+            ElementId  elementId;
+            Appearance appearance;
         };
 
         [[nodiscard]]
@@ -396,9 +396,9 @@ namespace uf::annotation
         }
 
         [[nodiscard]]
-        auto parseVariant(
+        auto parseAppearance(
             detail::CanonicalTomlReader& reader
-        ) -> Result<ParsedVariant>
+        ) -> Result<ParsedAppearance>
         {
             UF_TRY_VALUE(elementIdText, reader.takeStringField("element_id"));
             UF_TRY_VALUE(elementId, detail::parseId<ElementId>(elementIdText));
@@ -406,11 +406,11 @@ namespace uf::annotation
             UF_TRY_VALUE(name, ResourceName::create(std::move(nameText)));
             UF_TRY_VALUE(sourceIdText, reader.takeStringField("source_id"));
             UF_TRY_VALUE(sourceId, detail::parseId<SourceId>(sourceIdText));
-            UF_TRY_VALUE(kindText, reader.takeStringField("recognizer_kind"));
+            UF_TRY_VALUE(kindText, reader.takeStringField("element_kind"));
             if (kindText != "gray_template")
             {
                 return invalidAuthoring(
-                    "authoring P0 recognizer kind must be gray_template"
+                    "authoring P0 element kind must be gray_template"
                 );
             }
             UF_TRY_VALUE(
@@ -458,9 +458,9 @@ namespace uf::annotation
             }
 
             UF_TRY_VALUE(
-                variant,
-                Variant::create(
-                    Variant::Spec{
+                appearance,
+                Appearance::create(
+                    Appearance::Spec{
                         .name         = std::move(name),
                         .sourceId     = sourceId,
                         .templateRect = templateRect,
@@ -469,9 +469,9 @@ namespace uf::annotation
                     }
                 )
             );
-            return ParsedVariant{
-                .elementId = elementId,
-                .variant   = std::move(variant),
+            return ParsedAppearance{
+                .elementId  = elementId,
+                .appearance = std::move(appearance),
             };
         }
 
@@ -505,22 +505,22 @@ namespace uf::annotation
                 searchRoi = refined;
             }
 
-            auto variant = std::optional<ResourceName>{};
-            UF_TRY_VALUE(hasVariant, reader.nextIsField("variant"));
-            if (hasVariant)
+            auto appearance = std::optional<ResourceName>{};
+            UF_TRY_VALUE(hasAppearance, reader.nextIsField("appearance"));
+            if (hasAppearance)
             {
-                UF_TRY_VALUE(variantText, reader.takeStringField("variant"));
-                UF_TRY_VALUE(name, ResourceName::create(std::move(variantText)));
-                variant = std::move(name);
+                UF_TRY_VALUE(appearanceText, reader.takeStringField("appearance"));
+                UF_TRY_VALUE(name, ResourceName::create(std::move(appearanceText)));
+                appearance = std::move(name);
             }
 
             return PageReference{
-                .pageId    = pageId,
-                .elementId = elementId,
-                .holding   = *holding,
-                .exercised = exercised,
-                .searchRoi = searchRoi,
-                .variant   = std::move(variant),
+                .pageId     = pageId,
+                .elementId  = elementId,
+                .holding    = *holding,
+                .exercised  = exercised,
+                .searchRoi  = searchRoi,
+                .appearance = std::move(appearance),
             };
         }
 
@@ -533,26 +533,26 @@ namespace uf::annotation
             std::vector<PageReference> references
         ) -> Result<RecognitionCatalog>
         {
-            auto definitions = std::vector<RecognizerDefinition>{};
+            auto definitions = std::vector<CompiledElement>{};
             definitions.reserve(elements.size());
             for (auto const& element : elements)
             {
-                auto variants = std::vector<RecognizerVariant>{};
-                variants.reserve(element.variants().size());
-                for (auto const& variant : element.variants())
+                auto appearances = std::vector<CompiledAppearance>{};
+                appearances.reserve(element.appearances().size());
+                for (auto const& appearance : element.appearances())
                 {
-                    variants.emplace_back(runtimeVariantOf(variant));
+                    appearances.emplace_back(runtimeAppearanceOf(appearance));
                 }
                 UF_TRY_VALUE(
                     definition,
-                    RecognizerDefinition::create(
+                    CompiledElement::create(
                         fingerprint,
-                        RecognizerSpec{
+                        CompiledElementSpec{
                             .id           = element.id(),
                             .name         = element.name(),
                             .capabilities = element.capabilities(),
                             .searchRoi    = element.searchRoi(),
-                            .variants     = std::move(variants),
+                            .appearances  = std::move(appearances),
                         }
                     )
                 );
@@ -569,12 +569,12 @@ namespace uf::annotation
         }
     }
 
-    auto runtimeVariantOf(Variant const& variant) -> RecognizerVariant
+    auto runtimeAppearanceOf(Appearance const& appearance) -> CompiledAppearance
     {
-        return RecognizerVariant{
-            .name         = variant.name(),
-            .templateRect = variant.templateRect(),
-            .threshold    = variant.threshold(),
+        return CompiledAppearance{
+            .name         = appearance.name(),
+            .templateRect = appearance.templateRect(),
+            .threshold    = appearance.threshold(),
         };
     }
 
@@ -583,7 +583,7 @@ namespace uf::annotation
         , m_name{std::move(spec.name)}
         , m_capabilities{spec.capabilities}
         , m_searchRoi{spec.searchRoi}
-        , m_variants{std::move(spec.variants)}
+        , m_appearances{std::move(spec.appearances)}
     {
     }
 
@@ -592,17 +592,17 @@ namespace uf::annotation
         Spec const& spec
     ) -> Result<Element>
     {
-        auto runtimeVariants = std::vector<RecognizerVariant>{};
-        runtimeVariants.reserve(spec.variants.size());
-        for (auto const& variant : spec.variants)
+        auto runtimeAppearances = std::vector<CompiledAppearance>{};
+        runtimeAppearances.reserve(spec.appearances.size());
+        for (auto const& appearance : spec.appearances)
         {
-            runtimeVariants.emplace_back(runtimeVariantOf(variant));
+            runtimeAppearances.emplace_back(runtimeAppearanceOf(appearance));
         }
         UF_TRY(
             validateElementShape(
                 fingerprint,
                 spec.searchRoi,
-                runtimeVariants,
+                runtimeAppearances,
                 spec.capabilities
             )
         );
@@ -617,16 +617,16 @@ namespace uf::annotation
         return m_capabilities;
     }
     auto Element::searchRoi() const noexcept -> PixelRect { return m_searchRoi; }
-    auto Element::variants() const noexcept -> std::span<Variant const>
+    auto Element::appearances() const noexcept -> std::span<Appearance const>
     {
-        return m_variants;
+        return m_appearances;
     }
-    auto Element::findVariant(
+    auto Element::findAppearance(
         ResourceName const& name
-    ) const noexcept -> Variant const*
+    ) const noexcept -> Appearance const*
     {
-        auto const found = std::ranges::find(m_variants, name, &Variant::name);
-        return found == m_variants.end() ? nullptr : &*found;
+        auto const found = std::ranges::find(m_appearances, name, &Appearance::name);
+        return found == m_appearances.end() ? nullptr : &*found;
     }
 
     AuthoringSource::AuthoringSource(AuthoringSourceSpec const& spec)
@@ -767,27 +767,27 @@ namespace uf::annotation
                 return element.id().value();
             }
         );
-        auto totalVariants = std::size_t{0};
+        auto totalAppearances = std::size_t{0};
         for (auto const& element : elements)
         {
-            totalVariants += element.variants().size();
-            for (auto const& variant : element.variants())
+            totalAppearances += element.appearances().size();
+            for (auto const& appearance : element.appearances())
             {
-                if (findSource(variant.sourceId()) == nullptr)
+                if (findSource(appearance.sourceId()) == nullptr)
                 {
                     return invalidAuthoring(
                         std::format(
-                            "variant \"{}\" of \"{}\" references an unknown source",
-                            variant.name().value(),
+                            "appearance \"{}\" of \"{}\" references an unknown source",
+                            appearance.name().value(),
                             element.name().value()
                         )
                     );
                 }
             }
         }
-        if (totalVariants > k_maximumAuthoringVariants)
+        if (totalAppearances > k_maximumAuthoringAppearances)
         {
-            return invalidAuthoring("authoring document exceeds the variant quota");
+            return invalidAuthoring("authoring document exceeds the appearance quota");
         }
 
         std::ranges::sort(
@@ -987,7 +987,7 @@ namespace uf::annotation
 
         for (auto const& element : document.elements())
         {
-            output += "\n[[annotation]]\n";
+            output += "\n[[element]]\n";
             detail::appendStringField(
                 output,
                 "id",
@@ -998,40 +998,40 @@ namespace uf::annotation
             detail::appendCapabilityFields(output, element.capabilities());
         }
 
-        // Variants are a flat table keyed back to their element, which keeps
+        // Appearances are a flat table keyed back to their element, which keeps
         // them inside the reader's one-field-per-line grammar, and they are
         // written in declaration order because that order is the tie-break rule
         // and reordering them would change which appearance wins a draw.
         for (auto const& element : document.elements())
         {
-            for (auto const& variant : element.variants())
+            for (auto const& appearance : element.appearances())
             {
-                output += "\n[[variant]]\n";
+                output += "\n[[appearance]]\n";
                 detail::appendStringField(
                     output,
                     "element_id",
                     resourceIdText(element.id())
                 );
-                detail::appendStringField(output, "name", variant.name().value());
+                detail::appendStringField(output, "name", appearance.name().value());
                 detail::appendStringField(
                     output,
                     "source_id",
-                    resourceIdText(variant.sourceId())
+                    resourceIdText(appearance.sourceId())
                 );
                 detail::appendStringField(
                     output,
-                    "recognizer_kind",
+                    "element_kind",
                     "gray_template"
                 );
                 detail::appendRectField(
                     output,
                     "template_rect",
-                    variant.templateRect()
+                    appearance.templateRect()
                 );
                 output += "min_similarity_bp = ";
-                output += std::to_string(variant.threshold().basisPoints());
+                output += std::to_string(appearance.threshold().basisPoints());
                 output.push_back('\n');
-                if (auto const key = variant.colourKey())
+                if (auto const key = appearance.colourKey())
                 {
                     output += "colour_key = ";
                     auto const channels = std::array{
@@ -1081,9 +1081,9 @@ namespace uf::annotation
             {
                 detail::appendRectField(output, "search_roi", *refined);
             }
-            if (auto const& pinned = reference.variant)
+            if (auto const& pinned = reference.appearance)
             {
-                detail::appendStringField(output, "variant", pinned->value());
+                detail::appendStringField(output, "appearance", pinned->value());
             }
         }
 
@@ -1182,13 +1182,13 @@ namespace uf::annotation
             )
         );
 
-        auto sources        = std::vector<AuthoringSource>{};
-        auto parsedElements = std::vector<ParsedElement>{};
-        auto pages          = std::vector<PageSpec>{};
-        auto references     = std::vector<PageReference>{};
-        auto regressions    = std::vector<RegressionCase>{};
-        auto variantCount   = std::size_t{0};
-        auto section        = uint8{0};
+        auto sources         = std::vector<AuthoringSource>{};
+        auto parsedElements  = std::vector<ParsedElement>{};
+        auto pages           = std::vector<PageSpec>{};
+        auto references      = std::vector<PageReference>{};
+        auto regressions     = std::vector<RegressionCase>{};
+        auto appearanceCount = std::size_t{0};
+        auto section         = uint8{0};
         while (!reader.eof())
         {
             UF_TRY(reader.expect(""));
@@ -1205,24 +1205,24 @@ namespace uf::annotation
                 UF_TRY_VALUE(source, parseSource(reader));
                 sources.emplace_back(std::move(source));
             }
-            else if (header == "[[annotation]]")
+            else if (header == "[[element]]")
             {
                 rank = 2;
                 if (parsedElements.size() >= k_maximumAuthoringResources)
                 {
-                    return invalidAuthoring("authoring annotation quota exceeded");
+                    return invalidAuthoring("authoring element quota exceeded");
                 }
                 UF_TRY_VALUE(element, parseElement(reader));
                 parsedElements.emplace_back(std::move(element));
             }
-            else if (header == "[[variant]]")
+            else if (header == "[[appearance]]")
             {
                 rank = 3;
-                if (variantCount >= k_maximumAuthoringVariants)
+                if (appearanceCount >= k_maximumAuthoringAppearances)
                 {
-                    return invalidAuthoring("authoring variant quota exceeded");
+                    return invalidAuthoring("authoring appearance quota exceeded");
                 }
-                UF_TRY_VALUE(parsed, parseVariant(reader));
+                UF_TRY_VALUE(parsed, parseAppearance(reader));
                 auto const owner = std::ranges::find(
                     parsedElements,
                     parsed.elementId,
@@ -1231,11 +1231,11 @@ namespace uf::annotation
                 if (owner == parsedElements.end())
                 {
                     return invalidAuthoring(
-                        "authoring variant references an unknown element"
+                        "authoring appearance references an unknown element"
                     );
                 }
-                owner->variants.emplace_back(std::move(parsed.variant));
-                ++variantCount;
+                owner->appearances.emplace_back(std::move(parsed.appearance));
+                ++appearanceCount;
             }
             else if (header == "[[page]]")
             {
@@ -1280,7 +1280,7 @@ namespace uf::annotation
             if (rank < section)
             {
                 return invalidAuthoring(
-                    "authoring source, annotation, variant, page, reference, and regression tables are out of order"
+                    "authoring source, element, appearance, page, reference, and regression tables are out of order"
                 );
             }
             section = rank;
@@ -1291,9 +1291,9 @@ namespace uf::annotation
         for (auto& parsed : parsedElements)
         {
             auto boundingTemplate = std::optional<PixelRect>{};
-            if (!parsed.variants.empty())
+            if (!parsed.appearances.empty())
             {
-                boundingTemplate = parsed.variants.front().templateRect();
+                boundingTemplate = parsed.appearances.front().templateRect();
             }
             UF_TRY_VALUE(
                 capabilities,
@@ -1308,7 +1308,7 @@ namespace uf::annotation
                         .name         = std::move(parsed.name),
                         .capabilities = capabilities,
                         .searchRoi    = parsed.searchRoi,
-                        .variants     = std::move(parsed.variants),
+                        .appearances  = std::move(parsed.appearances),
                     }
                 )
             );

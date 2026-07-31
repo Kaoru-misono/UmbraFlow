@@ -151,16 +151,16 @@ namespace uf::workbench
         }
 
         [[nodiscard]]
-        auto recognizerName(
+        auto elementName(
             AuthoringEditHistory const& source,
             annotation::ElementId id
         ) -> std::string
         {
-            for (auto const& recognizer : source.document().catalog().recognizers())
+            for (auto const& element : source.document().catalog().elements())
             {
-                if (recognizer.id() == id)
+                if (element.id() == id)
                 {
-                    return recognizer.name().value();
+                    return element.name().value();
                 }
             }
             return {};
@@ -178,15 +178,15 @@ namespace uf::workbench
         CHECK(text.at(18) == '-');
         CHECK(text.at(23) == '-');
 
-        // RFC 4122: the version nibble is 4 and the variant nibble is 8..b.
+        // RFC 4122: the version nibble is 4 and the appearance nibble is 8..b.
         CHECK(text.at(14) == '4');
-        auto const variant = text.at(19);
+        auto const appearance = text.at(19);
         CHECK(
             (
-                variant == '8'
-                || variant == '9'
-                || variant == 'a'
-                || variant == 'b'
+                appearance == '8'
+                || appearance == '9'
+                || appearance == 'a'
+                || appearance == 'b'
             )
         );
 
@@ -239,12 +239,12 @@ namespace uf::workbench
         // The editor owns a copy of the whole draft, so the live document is
         // untouched no matter how much is edited through it.
         auto const committed = std::move(*page).commit();
-        CHECK(recognizerName(edits, anchorId) == "home_marker");
+        CHECK(elementName(edits, anchorId) == "home_marker");
 
         auto const applied = applyCommittedPage(edits, committed);
         REQUIRE(applied.has_value());
         CHECK(*applied);
-        CHECK(recognizerName(edits, anchorId) == "renamed_marker");
+        CHECK(elementName(edits, anchorId) == "renamed_marker");
         CHECK(edits.canUndo());
     }
 
@@ -264,7 +264,7 @@ namespace uf::workbench
                 applyCommittedPage(edits, std::move(*first).commit()).has_value()
             );
         }
-        REQUIRE(recognizerName(edits, anchorId) == "first_name");
+        REQUIRE(elementName(edits, anchorId) == "first_name");
 
         auto page = openPage(edits, annotation::test::pageId(k_homePage));
         REQUIRE(page.has_value());
@@ -273,12 +273,12 @@ namespace uf::workbench
         // The author undoes between opening the page and committing it, so the
         // version this draft was built against is no longer current.
         REQUIRE(edits.undo());
-        REQUIRE(recognizerName(edits, anchorId) == "home_marker");
+        REQUIRE(elementName(edits, anchorId) == "home_marker");
 
         // The stale commit must not resurrect the undone version.
         auto const applied = applyCommittedPage(edits, std::move(*page).commit());
         REQUIRE_FALSE(applied.has_value());
-        CHECK(recognizerName(edits, anchorId) == "home_marker");
+        CHECK(elementName(edits, anchorId) == "home_marker");
     }
 
     TEST_CASE("a rejected commit moves nothing")
@@ -293,7 +293,7 @@ namespace uf::workbench
 
         auto const applied = applyCommittedPage(edits, std::move(*page).commit());
         REQUIRE_FALSE(applied.has_value());
-        CHECK(recognizerName(edits, anchorId) == "home_marker");
+        CHECK(elementName(edits, anchorId) == "home_marker");
         CHECK_FALSE(edits.canUndo());
     }
 
@@ -312,7 +312,7 @@ namespace uf::workbench
         auto const applied = applyCommittedPage(edits, std::move(*page).commit());
         REQUIRE(applied.has_value());
         CHECK(*applied);
-        CHECK(recognizerName(edits, addedId) == "anchor_1");
+        CHECK(elementName(edits, addedId) == "anchor_1");
         // One transaction, one undo entry.
         CHECK(edits.canUndo());
     }
@@ -343,18 +343,18 @@ namespace uf::workbench
         // One transaction, one undo entry.
         CHECK(edits.canUndo());
 
-        auto const* recognizer =
-            edits.document().catalog().findRecognizer(newId);
-        REQUIRE(recognizer != nullptr);
-        REQUIRE(recognizer->variants().size() == 1U);
-        CHECK(recognizer->variants().front().templateRect == drawn);
-        CHECK(recognizer->capabilities().hasInteract());
+        auto const* element =
+            edits.document().catalog().findElement(newId);
+        REQUIRE(element != nullptr);
+        REQUIRE(element->appearances().size() == 1U);
+        CHECK(element->appearances().front().templateRect == drawn);
+        CHECK(element->capabilities().hasInteract());
 
         // The element's search region is the one seeded from the given template
         // -- grown by its extent and clamped to the 8x8 frame -- not the whole
         // frame by luck. It always encloses the template, and the page's
         // reference inherits it rather than pinning a copy.
-        CHECK(recognizer->searchRoi() == annotation::test::pixelRect(0, 0, 8, 8));
+        CHECK(element->searchRoi() == annotation::test::pixelRect(0, 0, 8, 8));
         auto const* reference = edits.document().catalog().findReference(
             homePage,
             newId
@@ -457,11 +457,11 @@ namespace uf::workbench
 
         // One element, one appearance, corrected once -- yet referenced by both
         // pages, so both see the correction and neither holds a copy.
-        auto const* recognizer =
-            edits.document().catalog().findRecognizer(regionId);
-        REQUIRE(recognizer != nullptr);
-        REQUIRE(recognizer->variants().size() == 1U);
-        CHECK(recognizer->variants().front().templateRect == newRect);
+        auto const* element =
+            edits.document().catalog().findElement(regionId);
+        REQUIRE(element != nullptr);
+        REQUIRE(element->appearances().size() == 1U);
+        CHECK(element->appearances().front().templateRect == newRect);
         CHECK(
             edits.document().catalog().findReference(homePage, regionId)
             != nullptr
@@ -524,11 +524,11 @@ namespace uf::workbench
         REQUIRE(reference != draft.references.end());
 
         auto const target = std::ranges::find(
-            draft.recognizers,
+            draft.elements,
             regionId,
-            &EditableRecognizer::id
+            &EditableElement::id
         );
-        REQUIRE(target != draft.recognizers.end());
+        REQUIRE(target != draft.elements.end());
         target->capabilities.read = annotation::Read{};
         reference->exercised.read = annotation::ExercisedRead{};
 
@@ -572,7 +572,7 @@ namespace uf::workbench
             applyCommittedPage(edits, std::move(*page).commit()).has_value()
         );
         CHECK(edits.document().catalog().pages().size() == 3U);
-        CHECK(recognizerName(edits, anchorId).empty() == false);
+        CHECK(elementName(edits, anchorId).empty() == false);
     }
 
     TEST_CASE("placeRegion authorizes a fresh interactive region on this page")
@@ -591,10 +591,10 @@ namespace uf::workbench
             applyCommittedPage(edits, std::move(*page).commit()).has_value()
         );
 
-        auto const* recognizer =
-            edits.document().catalog().findRecognizer(newId);
-        REQUIRE(recognizer != nullptr);
-        CHECK(recognizer->capabilities().hasInteract());
+        auto const* element =
+            edits.document().catalog().findElement(newId);
+        REQUIRE(element != nullptr);
+        CHECK(element->capabilities().hasInteract());
         auto const* reference = edits.document().catalog().findReference(
             awayPage,
             newId

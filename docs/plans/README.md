@@ -9,11 +9,11 @@ location required by `CLAUDE.md` and `AGENTS.md`.
   P0–P3 scope and exit criteria.
 - [Luau task-model grill decisions](2026-07-21-lua-task-model-grill-decisions.md) — implementation-level
   decisions to revalidate when entering each phase.
-- [Annotation model — capabilities, holding, variants](2026-07-31-annotation-model-capabilities.md) —
+- [Annotation model — capabilities, holding, appearances](2026-07-31-annotation-model-capabilities.md) —
   developer-approved 2026-07-31 authority for the annotation data model: the capability set
   `{identify, interact, read}`, `PageReference` with `Holding` and exercised capabilities, named
-  `Variant` appearances, `ElementId`, the `umbraflow-authoring/v3` and `umbraflow-annotations/v2`
-  schema bump, and the retirement of the workbench GUI. Supersedes the data-model clauses of the
+  `Appearance`s, `ElementId`, the `umbraflow-authoring/v4` and `umbraflow-annotations/v3`
+  schema bumps, and the retirement of the workbench GUI. Supersedes the data-model clauses of the
   S0 contract below.
 - [P0-A Visual Annotation System & Data Model](2026-07-22-annotation-design.md) — developer-approved,
   S0-locked authority for template and search geometry, page resolution, action evidence, and the
@@ -23,7 +23,7 @@ location required by `CLAUDE.md` and `AGENTS.md`.
 - [Three-layer task system](2026-07-29-three-layer-task-system.md) — developer-approved
   2026-07-29 authority for the task system: C++ guarantee layer, bundled trusted Luau
   framework, and project-owned tasks; the observation-cycle protocol, the `uf` script
-  root, the merged `umbraflow-trace/v1` stream, and the staged implementation. Supersedes
+  root, the merged `umbraflow-trace/v2` stream, and the staged implementation. Supersedes
   the draft below in full and the script-layer rulings of
   [P0-B script layer](2026-07-27-p0b-script-layer.md).
 

@@ -135,7 +135,7 @@ namespace uf::input_agent
     // one place every answer passes through, including the two the loop itself
     // authors, so no answer can reach the file without saying who produced it.
     // Until an annotation session drives the host it has no run and no
-    // generation, so it writes no umbraflow-trace/v1 line and this file is its
+    // generation, so it writes no umbraflow-trace/v2 line and this file is its
     // whole evidence stream; the value stamped here is nevertheless
     // trace::FrontEnd's, so the day it does join the host the attribution a
     // reader already knows does not change.

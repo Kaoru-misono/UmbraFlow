@@ -87,7 +87,7 @@ namespace uf::annotation
         // below wants: the fold across several is the annotation-model test's
         // subject, not this file's.
         [[nodiscard]]
-        auto oneVariantSpec(
+        auto oneAppearanceSpec(
             ProjectFingerprint fingerprint,
             ElementId id,
             std::string name,
@@ -95,28 +95,28 @@ namespace uf::annotation
             PixelRect templateRect,
             ContentHash templateHash,
             ContentHash sourceHash
-        ) -> RuntimeRecognizerSpec
+        ) -> RuntimeElementSpec
         {
-            return RuntimeRecognizerSpec{
-                .definition = test::recognizer(
+            return RuntimeElementSpec{
+                .definition = test::element(
                     fingerprint,
                     id,
                     std::move(name),
                     std::move(capabilities),
                     test::pixelRect(0, 0, fingerprint.width(), fingerprint.height()),
-                    std::vector<RecognizerVariant>{
-                        test::recognizerVariant(
+                    std::vector<CompiledAppearance>{
+                        test::compiledAppearance(
                             "only",
                             templateRect,
                             test::threshold(10'000)
                         ),
                     }
                 ),
-                .variants = std::vector<RuntimeVariantAsset>{
-                    RuntimeVariantAsset{
-                        .variantName  = test::resourceName("only"),
-                        .templateHash = templateHash,
-                        .sourceHash   = sourceHash,
+                .appearances = std::vector<RuntimeAppearanceAsset>{
+                    RuntimeAppearanceAsset{
+                        .appearanceName = test::resourceName("only"),
+                        .templateHash   = templateHash,
+                        .sourceHash     = sourceHash,
                     },
                 },
             };
@@ -164,9 +164,9 @@ namespace uf::annotation
             auto const sourceHash  = sha256(sourceBytes);
             REQUIRE(sourceHash.has_value());
 
-            auto recognizers = std::vector<RuntimeRecognizerSpec>{};
-            recognizers.emplace_back(
-                oneVariantSpec(
+            auto elements = std::vector<RuntimeElementSpec>{};
+            elements.emplace_back(
+                oneAppearanceSpec(
                     fingerprint,
                     anchorA,
                     "anchor_a",
@@ -176,8 +176,8 @@ namespace uf::annotation
                     *sourceHash
                 )
             );
-            recognizers.emplace_back(
-                oneVariantSpec(
+            elements.emplace_back(
+                oneAppearanceSpec(
                     fingerprint,
                     anchorB,
                     "anchor_b",
@@ -217,7 +217,7 @@ namespace uf::annotation
             auto manifest = RuntimeManifest::create(
                 test::projectId("personal.recognition_runtime"),
                 fingerprint,
-                std::move(recognizers),
+                std::move(elements),
                 {
                     test::page(pageA, "page_a"),
                     test::page(pageB, "page_b"),
@@ -386,9 +386,9 @@ namespace uf::annotation
             auto const sourceHash  = sha256(sourceBytes);
             REQUIRE(sourceHash.has_value());
 
-            auto recognizers = std::vector<RuntimeRecognizerSpec>{};
-            recognizers.emplace_back(
-                oneVariantSpec(
+            auto elements = std::vector<RuntimeElementSpec>{};
+            elements.emplace_back(
+                oneAppearanceSpec(
                     fingerprint,
                     anchorA,
                     "anchor_a",
@@ -398,8 +398,8 @@ namespace uf::annotation
                     *sourceHash
                 )
             );
-            recognizers.emplace_back(
-                oneVariantSpec(
+            elements.emplace_back(
+                oneAppearanceSpec(
                     fingerprint,
                     actionT,
                     "action_target",
@@ -423,7 +423,7 @@ namespace uf::annotation
             auto manifest = RuntimeManifest::create(
                 test::projectId("personal.action_target_runtime"),
                 fingerprint,
-                std::move(recognizers),
+                std::move(elements),
                 {test::page(pageA, "page_a")},
                 std::move(references)
             );
@@ -612,10 +612,10 @@ namespace uf::annotation
         REQUIRE(attempt.has_value());
         auto const* p_stop = std::get_if<PageRecognitionStop>(&attempt->result);
         REQUIRE(p_stop != nullptr);
-        CHECK(p_stop->recognizerId == fixture.anchorB);
+        CHECK(p_stop->elementId == fixture.anchorB);
         CHECK(p_stop->reason == SadSearchStopReason::ComparisonBudgetExhausted);
         REQUIRE(attempt->completedAnchorEvidence.size() == 1U);
-        CHECK(attempt->completedAnchorEvidence.front().recognizerId() == fixture.anchorA);
+        CHECK(attempt->completedAnchorEvidence.front().elementId() == fixture.anchorA);
         CHECK(attempt->completedPixelComparisons == 2);
 
         auto const outcome = fixture.runtime.recognizePage(
@@ -658,7 +658,7 @@ namespace uf::annotation
         REQUIRE(attempt.has_value());
         auto const* p_stop = std::get_if<PageRecognitionStop>(&attempt->result);
         REQUIRE(p_stop != nullptr);
-        CHECK(p_stop->recognizerId == fixture.anchorA);
+        CHECK(p_stop->elementId == fixture.anchorA);
         CHECK(p_stop->reason == SadSearchStopReason::Cancelled);
         CHECK(attempt->completedAnchorEvidence.empty());
         CHECK(attempt->completedPixelComparisons == 0);
@@ -698,7 +698,7 @@ namespace uf::annotation
         REQUIRE(attempt.has_value());
         auto const* p_stop = std::get_if<PageRecognitionStop>(&attempt->result);
         REQUIRE(p_stop != nullptr);
-        CHECK(p_stop->recognizerId == fixture.anchorA);
+        CHECK(p_stop->elementId == fixture.anchorA);
         CHECK(p_stop->reason == SadSearchStopReason::TimedOut);
         CHECK(attempt->completedAnchorEvidence.empty());
         CHECK(attempt->completedPixelComparisons == 0);
@@ -818,7 +818,7 @@ namespace uf::annotation
         REQUIRE(attempt.has_value());
         auto const* p_evidence = std::get_if<AnchorEvidence>(&attempt->result);
         REQUIRE(p_evidence != nullptr);
-        CHECK(p_evidence->recognizerId() == fixture.actionTarget);
+        CHECK(p_evidence->elementId() == fixture.actionTarget);
         CHECK(p_evidence->hit());
         REQUIRE(p_evidence->sadScore().has_value());
         CHECK(p_evidence->sadScore().value() == 0);
@@ -847,10 +847,10 @@ namespace uf::annotation
         REQUIRE(attempt.has_value());
         auto const* p_evidence = std::get_if<AnchorEvidence>(&attempt->result);
         REQUIRE(p_evidence != nullptr);
-        CHECK(p_evidence->recognizerId() == fixture.actionTarget);
+        CHECK(p_evidence->elementId() == fixture.actionTarget);
         CHECK_FALSE(p_evidence->hit());
         // The reusable matcher always returns its best candidate while the
-        // recognizer search_roi fits its template, so a miss is Tier A absence
+        // element search_roi fits its template, so a miss is Tier A absence
         // carrying a best score above threshold rather than an error.
         REQUIRE(p_evidence->sadScore().has_value());
         CHECK(p_evidence->sadScore().value() > p_evidence->maximumSad());
@@ -950,7 +950,7 @@ namespace uf::annotation
             &cancelled->result
         );
         REQUIRE(p_cancelStop != nullptr);
-        CHECK(p_cancelStop->recognizerId == fixture.actionTarget);
+        CHECK(p_cancelStop->elementId == fixture.actionTarget);
         CHECK(p_cancelStop->reason == SadSearchStopReason::Cancelled);
         CHECK(cancelled->completedPixelComparisons == 0);
 
@@ -966,7 +966,7 @@ namespace uf::annotation
             &exhausted->result
         );
         REQUIRE(p_budgetStop != nullptr);
-        CHECK(p_budgetStop->recognizerId == fixture.actionTarget);
+        CHECK(p_budgetStop->elementId == fixture.actionTarget);
         CHECK(
             p_budgetStop->reason
             == SadSearchStopReason::ComparisonBudgetExhausted
@@ -998,9 +998,9 @@ namespace uf::annotation
         auto const sourceHash  = sha256(sourceBytes);
         REQUIRE(sourceHash.has_value());
 
-        auto recognizers = std::vector<RuntimeRecognizerSpec>{};
-        recognizers.emplace_back(
-            oneVariantSpec(
+        auto elements = std::vector<RuntimeElementSpec>{};
+        elements.emplace_back(
+            oneAppearanceSpec(
                 fingerprint,
                 maskedId,
                 "masked_anchor",
@@ -1010,8 +1010,8 @@ namespace uf::annotation
                 *sourceHash
             )
         );
-        recognizers.emplace_back(
-            oneVariantSpec(
+        elements.emplace_back(
+            oneAppearanceSpec(
                 fingerprint,
                 opaqueId,
                 "opaque_anchor",
@@ -1032,7 +1032,7 @@ namespace uf::annotation
         auto manifest = RuntimeManifest::create(
             test::projectId("personal.masked_runtime"),
             fingerprint,
-            std::move(recognizers),
+            std::move(elements),
             {test::page(pageA, "page_a")},
             std::move(references)
         );
@@ -1065,7 +1065,7 @@ namespace uf::annotation
             auto const found = std::ranges::find(
                 attempt->completedAnchorEvidence,
                 id,
-                &AnchorEvidence::recognizerId
+                &AnchorEvidence::elementId
             );
             REQUIRE(found != attempt->completedAnchorEvidence.end());
             return *found;
@@ -1097,7 +1097,7 @@ namespace uf::annotation
 
         auto const offset = TemplateOffset::create(2, 1, 4, 3);
         REQUIRE(offset.has_value());
-        auto const withOffset = test::recognizer(
+        auto const withOffset = test::element(
             fingerprint,
             actionT,
             "action_target",
@@ -1106,8 +1106,8 @@ namespace uf::annotation
                 Interact{.clickOffset = *offset}
             ),
             test::pixelRect(0, 0, 4, 3),
-            std::vector<RecognizerVariant>{
-                test::recognizerVariant(
+            std::vector<CompiledAppearance>{
+                test::compiledAppearance(
                     "only",
                     test::pixelRect(0, 0, 4, 3),
                     test::threshold(10'000)
@@ -1122,14 +1122,14 @@ namespace uf::annotation
         CHECK(*offsetClick == PixelPoint{12, 21});
 
         // Odd extents pin the truncating integer center: 3 / 2 == 1, 5 / 2 == 2.
-        auto const centered = test::recognizer(
+        auto const centered = test::element(
             fingerprint,
             actionT,
             "action_target",
             test::capabilities(std::nullopt, Interact{}),
             test::pixelRect(0, 0, 3, 5),
-            std::vector<RecognizerVariant>{
-                test::recognizerVariant(
+            std::vector<CompiledAppearance>{
+                test::compiledAppearance(
                     "only",
                     test::pixelRect(0, 0, 3, 5),
                     test::threshold(10'000)
@@ -1143,14 +1143,14 @@ namespace uf::annotation
         REQUIRE(centerClick.has_value());
         CHECK(*centerClick == PixelPoint{3, 6});
 
-        auto const anchor = test::recognizer(
+        auto const anchor = test::element(
             fingerprint,
             test::elementId(k_anchorAId),
             "anchor_a",
             test::capabilities(Identify{}),
             test::pixelRect(0, 0, 3, 5),
-            std::vector<RecognizerVariant>{
-                test::recognizerVariant(
+            std::vector<CompiledAppearance>{
+                test::compiledAppearance(
                     "only",
                     test::pixelRect(0, 0, 3, 5),
                     test::threshold(10'000)

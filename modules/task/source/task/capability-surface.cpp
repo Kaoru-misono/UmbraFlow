@@ -15,10 +15,10 @@
 namespace uf::task
 {
     CapabilitySurface::CapabilitySurface(
-        std::vector<RecognizerHandleSpec> recognizers,
+        std::vector<ElementHandleSpec> elements,
         std::vector<PageHandleSpec> pages
     ) noexcept
-        : m_recognizers{std::move(recognizers)}
+        : m_elements{std::move(elements)}
         , m_pages{std::move(pages)}
     {
     }
@@ -27,10 +27,10 @@ namespace uf::task
         annotation::RecognitionCatalog const& catalog
     ) -> Result<CapabilitySurface>
     {
-        auto recognizers = std::vector<RecognizerHandleSpec>{};
-        auto seenNames   = std::unordered_set<std::string>{};
+        auto elements  = std::vector<ElementHandleSpec>{};
+        auto seenNames = std::unordered_set<std::string>{};
 
-        for (auto const& definition : catalog.recognizers())
+        for (auto const& definition : catalog.elements())
         {
             // Findable means interactable: a handle a script holds is one it
             // could go on to click. Identify contributes page-internal
@@ -52,12 +52,12 @@ namespace uf::task
             {
                 return fail(
                     AutomationErrorKind::InvalidResource,
-                    "duplicate interactive element name in uf.recognizers: " + name
+                    "duplicate interactive element name in uf.elements: " + name
                 );
             }
 
-            recognizers.push_back(
-                RecognizerHandleSpec{.name = std::move(name), .id = definition.id()}
+            elements.push_back(
+                ElementHandleSpec{.name = std::move(name), .id = definition.id()}
             );
         }
 
@@ -80,12 +80,12 @@ namespace uf::task
             );
         }
 
-        return CapabilitySurface{std::move(recognizers), std::move(pages)};
+        return CapabilitySurface{std::move(elements), std::move(pages)};
     }
 
-    auto CapabilitySurface::recognizerCount() const noexcept -> std::size_t
+    auto CapabilitySurface::elementCount() const noexcept -> std::size_t
     {
-        return m_recognizers.size();
+        return m_elements.size();
     }
 
     auto CapabilitySurface::pageCount() const noexcept -> std::size_t
@@ -93,10 +93,10 @@ namespace uf::task
         return m_pages.size();
     }
 
-    auto CapabilitySurface::recognizers() const noexcept
-        -> std::span<RecognizerHandleSpec const>
+    auto CapabilitySurface::elements() const noexcept
+        -> std::span<ElementHandleSpec const>
     {
-        return m_recognizers;
+        return m_elements;
     }
 
     auto CapabilitySurface::pages() const noexcept -> std::span<PageHandleSpec const>

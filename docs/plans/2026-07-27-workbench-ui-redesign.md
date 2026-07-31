@@ -1,5 +1,14 @@
 # Workbench UI redesign
 
+> **词汇重定向(2026-07-31)。** 本文是有日期的记录,不改写。下文的
+> `recognizer` / `RecognizerId` / `uf.recognizers` / `recognizerId` 一律读作
+> **element** / `ElementId` / `uf.elements` / `elementId`;`RecognizerDefinition`
+> 与 `RecognizerVariant` 读作 `CompiledElement` 与 `CompiledAppearance`;
+> `Variant` / `variant` 读作 `Appearance` / `appearance`。`RecognitionCatalog` 与
+> `RecognitionRuntime` 名字不变——它们指的是「识别」这个动作。schema id 随改名一起动了:
+> `umbraflow-authoring/v4`、`umbraflow-annotations/v3`、`umbraflow-trace/v2`。
+> 权威词汇见 `CONTEXT.md` 的「Annotation model」一节。
+
 > **Superseded 2026-07-31: the GUI this plan redesigns no longer exists.**
 > `b57b67b` archived the Dear ImGui + D3D11 shell — panels, window shell,
 > texture cache, file dialog, one-shot capture source, and the imgui submodule.

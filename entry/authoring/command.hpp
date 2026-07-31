@@ -145,7 +145,7 @@ namespace uf::authoring
     // may land and its pixels are different every turn; a level counter is read
     // precisely because its content is not known in advance. Cutting a template
     // for either states a stability neither has, and the model already has the
-    // representation for saying so: an element declaring no variant is located
+    // representation for saying so: an element declaring no appearance is located
     // by the page being recognised, and its rectangle is where it was annotated.
     //
     // Separate from AddElement rather than an AddElement with its pixel fields
@@ -184,7 +184,7 @@ namespace uf::authoring
         std::string           element{};
 
         // `draw.name` is the appearance's name, not the element's. Names are why
-        // Variant carries one at all: a script reads which appearance matched to
+        // Appearance carries one at all: a script reads which appearance matched to
         // learn which state the target is in.
         ElementDraw draw;
     };
@@ -224,13 +224,13 @@ namespace uf::authoring
         //
         // It is text here because only the loaded document knows which names the
         // element declares.
-        std::optional<std::string> variant{};
+        std::optional<std::string> appearance{};
     };
 
-    struct MatchRecognizer final
+    struct MatchElement final
     {
         std::filesystem::path root{};
-        std::string           recognizer{};
+        std::string           element{};
         std::filesystem::path frame{};
 
         // Which page to locate a click target on. Locating one is page-scoped
@@ -322,7 +322,7 @@ namespace uf::authoring
         AddRegion,
         AddAppearance,
         ReferenceElement,
-        MatchRecognizer,
+        MatchElement,
         CheckModel,
         AnalyseFrameStability,
         ProbeFrameColour,

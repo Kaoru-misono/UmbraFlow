@@ -30,8 +30,8 @@ namespace uf::cli
     // task::OperatorSession verb, which maps to exactly one TaskContext call -- the
     // same call ctx.luau makes.
     //
-    // LAYER TWO is convenience: waiting for a page, and finding-then-clicking a
-    // recognizer, each in one command instead of a hand-written loop.
+    // LAYER TWO is convenience: waiting for a page, and finding-then-clicking
+    // an element, each in one command instead of a hand-written loop.
     //
     // THE CONSTRAINT THAT MAKES LAYER TWO SAFE, and the point of the whole design: a
     // convenience command carries NO POLICY DEFAULTS OF ITS OWN. Every timeout, poll
@@ -67,7 +67,7 @@ namespace uf::cli
     struct DriveCycleFindCommand final
     {
         uint64      cycle{};
-        std::string recognizer{};
+        std::string element{};
 
         auto operator==(DriveCycleFindCommand const&) const -> bool = default;
     };
@@ -128,7 +128,7 @@ namespace uf::cli
 
     struct DriveFindClickCommand final
     {
-        std::string                recognizer{};
+        std::string                element{};
         MonotonicInstant::Duration timeout{};
         MonotonicInstant::Duration pollInterval{};
 

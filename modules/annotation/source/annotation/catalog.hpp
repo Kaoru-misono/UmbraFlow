@@ -17,21 +17,21 @@
 namespace uf::annotation
 {
     // One appearance of one element as the runtime sees it: which rectangle to
-    // cut and how close a match has to be. The authoring-side Variant carries
+    // cut and how close a match has to be. The authoring-side Appearance carries
     // two more facts -- the source screen it was cut from and the colour key
     // that produced its mask -- and neither reaches the runtime, because the
     // mask is baked into the compiled template's alpha channel and the source
     // is authoring truth.
-    struct RecognizerVariant final
+    struct CompiledAppearance final
     {
         ResourceName        name;
         PixelRect           templateRect;
         SimilarityThreshold threshold;
 
-        auto operator==(RecognizerVariant const&) const -> bool = default;
+        auto operator==(CompiledAppearance const&) const -> bool = default;
     };
 
-    struct RecognizerSpec final
+    struct CompiledElementSpec final
     {
         ElementId           id;
         ResourceName        name;
@@ -41,41 +41,41 @@ namespace uf::annotation
         // Ordered, and empty is a legal state: it says this rectangle is
         // located by the page being recognised rather than by pixels of its
         // own. Declaration order decides nothing but ties.
-        std::vector<RecognizerVariant> variants{};
+        std::vector<CompiledAppearance> appearances{};
     };
 
     // The shape rules an element obeys whichever side states it: the search
-    // region fits the project, every variant template fits the project and that
-    // region, every threshold has a computable SAD ceiling, variant names are
+    // region fits the project, every appearance template fits the project and that
+    // region, every threshold has a computable SAD ceiling, appearance names are
     // distinct, a rectangle with no pixels of its own cannot be identity
     // evidence, and a click offset lands inside every appearance it could be
-    // measured from. The authoring Element and the runtime RecognizerDefinition
+    // measured from. The authoring Element and the runtime CompiledElement
     // both call it, so the two cannot drift apart.
     [[nodiscard]]
     auto validateElementShape(
         ProjectFingerprint fingerprint,
         PixelRect searchRoi,
-        std::span<RecognizerVariant const> variants,
+        std::span<CompiledAppearance const> appearances,
         ElementCapabilities const& capabilities
     ) -> Status;
 
-    class RecognizerDefinition final
+    class CompiledElement final
     {
         ElementId           m_id;
         ResourceName        m_name;
         ElementCapabilities m_capabilities;
         PixelRect           m_searchRoi;
 
-        std::vector<RecognizerVariant> m_variants;
+        std::vector<CompiledAppearance> m_appearances;
 
-        explicit RecognizerDefinition(RecognizerSpec spec) noexcept;
+        explicit CompiledElement(CompiledElementSpec spec) noexcept;
 
     public:
         [[nodiscard]]
         static auto create(
             ProjectFingerprint fingerprint,
-            RecognizerSpec const& spec
-        ) -> Result<RecognizerDefinition>;
+            CompiledElementSpec const& spec
+        ) -> Result<CompiledElement>;
 
         [[nodiscard]] auto id() const -> ElementId;
         [[nodiscard]] auto name() const -> ResourceName;
@@ -86,13 +86,13 @@ namespace uf::annotation
         [[nodiscard]] auto searchRoi() const noexcept -> PixelRect;
 
         [[nodiscard]]
-        auto variants() const noexcept UF_LIFETIME_BOUND -> std::span<RecognizerVariant const>;
+        auto appearances() const noexcept UF_LIFETIME_BOUND -> std::span<CompiledAppearance const>;
 
         // Returned observations remain valid only while this definition lives.
         [[nodiscard]]
-        auto findVariant(
+        auto findAppearance(
             ResourceName const& name
-        ) const noexcept UF_LIFETIME_BOUND -> RecognizerVariant const*;
+        ) const noexcept UF_LIFETIME_BOUND -> CompiledAppearance const*;
     };
 
     // Which page owns an element's definition -- its rectangle and its
@@ -138,13 +138,13 @@ namespace uf::annotation
         std::optional<PixelRect> searchRoi{};
 
         // Which appearance applies here, when the page decides it. Absent means
-        // every variant is searched and the best normalized margin wins.
+        // every appearance is searched and the best normalized margin wins.
         //
         // It binds the page-scoped paths only. The anchor pass runs before any
         // page is known -- that is what makes one search serve every page -- so
-        // identify always folds across every variant, whatever a reference
+        // identify always folds across every appearance, whatever a reference
         // pins.
-        std::optional<ResourceName> variant{};
+        std::optional<ResourceName> appearance{};
 
         auto operator==(PageReference const&) const -> bool = default;
     };
@@ -187,17 +187,17 @@ namespace uf::annotation
 
     class RecognitionCatalog final
     {
-        ProjectId                         m_projectId;
-        ProjectFingerprint                m_fingerprint;
-        std::vector<RecognizerDefinition> m_recognizers;
-        std::vector<PageSignature>        m_pages;
-        std::vector<PageReference>        m_references;
-        std::vector<ElementId>            m_pageAnchorOrder;
+        ProjectId                    m_projectId;
+        ProjectFingerprint           m_fingerprint;
+        std::vector<CompiledElement> m_elements;
+        std::vector<PageSignature>   m_pages;
+        std::vector<PageReference>   m_references;
+        std::vector<ElementId>       m_pageAnchorOrder;
 
         RecognitionCatalog(
             ProjectId projectId,
             ProjectFingerprint fingerprint,
-            std::vector<RecognizerDefinition> recognizers,
+            std::vector<CompiledElement> elements,
             std::vector<PageSignature> pages,
             std::vector<PageReference> references,
             std::vector<ElementId> pageAnchorOrder
@@ -212,7 +212,7 @@ namespace uf::annotation
         static auto create(
             ProjectId projectId,
             ProjectFingerprint fingerprint,
-            std::vector<RecognizerDefinition> recognizers,
+            std::vector<CompiledElement> elements,
             std::vector<PageSpec> pages,
             std::vector<PageReference> references
         ) -> Result<RecognitionCatalog>;
@@ -223,7 +223,7 @@ namespace uf::annotation
         [[nodiscard]] auto fingerprint() const noexcept -> ProjectFingerprint;
 
         [[nodiscard]]
-        auto recognizers() const noexcept UF_LIFETIME_BOUND -> std::span<RecognizerDefinition const>;
+        auto elements() const noexcept UF_LIFETIME_BOUND -> std::span<CompiledElement const>;
 
         [[nodiscard]]
         auto pages() const noexcept UF_LIFETIME_BOUND -> std::span<PageSignature const>;
@@ -233,9 +233,9 @@ namespace uf::annotation
 
         // Returned observations remain valid only while this catalog is alive.
         [[nodiscard]]
-        auto findRecognizer(
+        auto findElement(
             ElementId id
-        ) const noexcept UF_LIFETIME_BOUND -> RecognizerDefinition const*;
+        ) const noexcept UF_LIFETIME_BOUND -> CompiledElement const*;
 
         [[nodiscard]]
         auto findPage(PageId id) const noexcept UF_LIFETIME_BOUND -> PageSignature const*;

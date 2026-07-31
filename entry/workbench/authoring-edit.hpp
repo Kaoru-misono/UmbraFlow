@@ -22,7 +22,7 @@ namespace uf::workbench
     // The name every appearance the authoring layer mints carries. One element
     // gets one appearance here, because a rectangle is drawn once; the CLI and
     // the model are what a second one arrives through.
-    inline constexpr auto k_defaultVariantName = std::string_view{"default"};
+    inline constexpr auto k_defaultAppearanceName = std::string_view{"default"};
 
     struct EditableTemplateOffset final
     {
@@ -42,7 +42,7 @@ namespace uf::workbench
     // else: unvalidated. The threshold stays basis points and the rectangle
     // stays a bare rect, because an author drags both through states the
     // document types refuse, and the rebuild is where they are judged.
-    struct EditableVariant final
+    struct EditableAppearance final
     {
         std::string                          name{};
         annotation::SourceId                 sourceId;
@@ -75,7 +75,7 @@ namespace uf::workbench
         std::optional<annotation::Read>     read{};
     };
 
-    struct EditableRecognizer final
+    struct EditableElement final
     {
         annotation::ElementId id;
         std::string           name{};
@@ -89,7 +89,7 @@ namespace uf::workbench
         // located by the page being recognised rather than by pixels of its
         // own, which is what a readable cell needs and what makes such an
         // element unable to be identity evidence.
-        std::vector<EditableVariant> variants{};
+        std::vector<EditableAppearance> appearances{};
     };
 
     // The draft twin of annotation::ExercisedCapabilities. A second type rather
@@ -122,7 +122,7 @@ namespace uf::workbench
 
         // Which appearance applies on this page, when the page decides it.
         // Carried so a document authored with one survives an edit here.
-        std::optional<std::string> variant{};
+        std::optional<std::string> appearance{};
     };
 
     struct EditablePage final
@@ -144,7 +144,7 @@ namespace uf::workbench
         annotation::ProjectId           projectId;
         annotation::ProjectFingerprint  fingerprint;
         std::vector<EditableSource>     sources{};
-        std::vector<EditableRecognizer> recognizers{};
+        std::vector<EditableElement>    elements{};
         std::vector<EditableReference>  references{};
         std::vector<EditablePage>       pages{};
         std::vector<EditableRegression> regressions{};
@@ -152,22 +152,22 @@ namespace uf::workbench
 
     // The appearance the single-appearance editing verbs read and write. This
     // layer draws one rectangle per element, so it is the first declared
-    // variant; an element located by its page declares none and yields nothing.
+    // appearance; an element located by its page declares none and yields nothing.
     // The observation is valid only until the draft is mutated.
     [[nodiscard]]
-    auto primaryVariant(
-        EditableRecognizer const& recognizer UF_LIFETIME_BOUND
-    ) noexcept -> EditableVariant const*;
+    auto primaryAppearance(
+        EditableElement const& element UF_LIFETIME_BOUND
+    ) noexcept -> EditableAppearance const*;
 
     // The draft's own copy of one element, or nullptr when the draft does not
     // hold it. Every verb that edits an element in place resolves it through
     // this, so the observation is valid only until the draft is mutated or
     // rebuilt.
     [[nodiscard]]
-    auto findEditableRecognizer(
+    auto findEditableElement(
         AuthoringDraft& draft UF_LIFETIME_BOUND,
         annotation::ElementId id
-    ) noexcept -> EditableRecognizer*;
+    ) noexcept -> EditableElement*;
 
     [[nodiscard]]
     auto makeAuthoringDraft(
@@ -180,7 +180,7 @@ namespace uf::workbench
     ) -> Result<annotation::AuthoringDocument>;
 
     // The first free "<stem>_N" name in a draft. The catalog requires names to be
-    // unique across recognizers and pages rather than within a kind, so both are
+    // unique across elements and pages rather than within a kind, so both are
     // checked. One of the first N + 1 candidates is always free, so this ends.
     [[nodiscard]]
     auto freshAuthoringName(
@@ -235,7 +235,7 @@ namespace uf::workbench
 
     struct PageMemberSpec final
     {
-        annotation::ElementId recognizerId;
+        annotation::ElementId elementId;
         annotation::PageId    pageId;
         annotation::SourceId  sourceId;
         PixelRect             templateRect;
@@ -360,7 +360,7 @@ namespace uf::workbench
         // It binds the page-scoped searches only. The anchor pass runs before
         // any page is known, so identify folds across every appearance whatever
         // a reference pins.
-        std::optional<std::string> variant{};
+        std::optional<std::string> appearance{};
     };
 
     struct ReferencedElement final
@@ -514,7 +514,7 @@ namespace uf::workbench
     // recognising no screen at all; the author decides whether the page goes too
     // or another element takes over.
     [[nodiscard]]
-    auto deleteRecognizer(
+    auto deleteElement(
         AuthoringDraft draft,
         annotation::ElementId id
     ) -> Result<DeletedEntity>;

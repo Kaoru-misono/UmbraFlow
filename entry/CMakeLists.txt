@@ -281,7 +281,7 @@ if(WIN32 AND TARGET ${PROJECT_NAME}_annotation)
     # workbench_support carries the authoring document, its edit layer, and the
     # atomic publication of a project. cli_support carries the exit-code
     # boundary this tool reuses, and the engine's runtime loader behind it is
-    # what `match` runs a recognizer with. The image module decodes the PNG a
+    # what `match` runs an element with. The image module decodes the PNG a
     # match is measured against.
     target_link_libraries(${AUTHORING_LIBRARY}
         PUBLIC

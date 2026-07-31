@@ -29,26 +29,26 @@ namespace uf::annotation
         constexpr auto k_secondPageId = "00000000-0000-0000-0000-000000000102";
         constexpr auto k_unknownPageId = "00000000-0000-0000-0000-0000000001ff";
 
-        // Deliberately bypasses test::recognizer, which REQUIREs success and so
+        // Deliberately bypasses test::element, which REQUIREs success and so
         // cannot observe a rejection.
         [[nodiscard]]
-        auto anchorSpec() -> RecognizerSpec
+        auto anchorSpec() -> CompiledElementSpec
         {
-            return RecognizerSpec{
+            return CompiledElementSpec{
                 .id           = test::elementId(k_anchorId),
                 .name         = test::resourceName("home_marker"),
                 .capabilities = test::capabilities(Identify{}),
                 .searchRoi    = test::pixelRect(0, 0, 4, 4),
-                .variants     = std::vector<RecognizerVariant>{
-                    test::recognizerVariant("only", test::pixelRect(0, 0, 2, 2)),
+                .appearances     = std::vector<CompiledAppearance>{
+                    test::compiledAppearance("only", test::pixelRect(0, 0, 2, 2)),
                 },
             };
         }
 
         struct InvalidElement final
         {
-            std::string_view expected{};
-            RecognizerSpec   spec;
+            std::string_view    expected{};
+            CompiledElementSpec spec;
         };
 
         // Pins each case to the branch it targets. Asserting only the error kind
@@ -162,34 +162,34 @@ namespace uf::annotation
         auto const pageId   = test::pageId(k_pageId);
         auto const anchor   = [&]
         {
-            return test::recognizer(
+            return test::element(
                 projectFingerprint,
                 anchorId,
                 "home_marker",
                 test::capabilities(Identify{}),
                 test::pixelRect(0, 0, 4, 4),
-                std::vector<RecognizerVariant>{
-                    test::recognizerVariant("only", test::pixelRect(0, 0, 1, 1)),
+                std::vector<CompiledAppearance>{
+                    test::compiledAppearance("only", test::pixelRect(0, 0, 1, 1)),
                 }
             );
         };
         auto const action = [&]
         {
-            return test::recognizer(
+            return test::element(
                 projectFingerprint,
                 actionId,
                 "daily_button",
                 test::capabilities(std::nullopt, Interact{}),
                 test::pixelRect(0, 0, 4, 4),
-                std::vector<RecognizerVariant>{
-                    test::recognizerVariant("only", test::pixelRect(1, 1, 1, 1)),
+                std::vector<CompiledAppearance>{
+                    test::compiledAppearance("only", test::pixelRect(1, 1, 1, 1)),
                 }
             );
         };
 
-        auto recognizers = std::vector<RecognizerDefinition>{};
-        recognizers.emplace_back(anchor());
-        recognizers.emplace_back(action());
+        auto elements = std::vector<CompiledElement>{};
+        elements.emplace_back(anchor());
+        elements.emplace_back(action());
         auto references = std::vector<PageReference>{};
         references.emplace_back(
             test::reference(pageId, anchorId, test::identifiesAs())
@@ -200,7 +200,7 @@ namespace uf::annotation
         auto const valid = RecognitionCatalog::create(
             test::projectId(),
             projectFingerprint,
-            std::move(recognizers),
+            std::move(elements),
             {test::page(pageId, "home")},
             std::move(references)
         );
@@ -215,8 +215,8 @@ namespace uf::annotation
         // borrows the anchor, because two pages owning it would be refused
         // first and this case would stop testing signatures.
         auto const secondPageId = test::pageId(k_secondPageId);
-        auto twinRecognizers    = std::vector<RecognizerDefinition>{};
-        twinRecognizers.emplace_back(anchor());
+        auto twinElements    = std::vector<CompiledElement>{};
+        twinElements.emplace_back(anchor());
         auto twinReferences = std::vector<PageReference>{};
         twinReferences.emplace_back(
             test::reference(pageId, anchorId, test::identifiesAs())
@@ -232,7 +232,7 @@ namespace uf::annotation
         auto const duplicateSignature = RecognitionCatalog::create(
             test::projectId(),
             projectFingerprint,
-            std::move(twinRecognizers),
+            std::move(twinElements),
             {
                 test::page(pageId, "home"),
                 test::page(secondPageId, "home_copy"),
@@ -246,7 +246,7 @@ namespace uf::annotation
         );
     }
 
-    TEST_CASE("an element definition rejects malformed search, variant, and click geometry")
+    TEST_CASE("an element definition rejects malformed search, appearance, and click geometry")
     {
         auto const projectFingerprint = test::fingerprint();
         auto const outsideTemplate    = TemplateOffset::create(3, 3, 4, 4);
@@ -265,8 +265,8 @@ namespace uf::annotation
         }
         {
             auto spec     = anchorSpec();
-            spec.variants = std::vector<RecognizerVariant>{
-                test::recognizerVariant("only", test::pixelRect(3, 3, 4, 4)),
+            spec.appearances = std::vector<CompiledAppearance>{
+                test::compiledAppearance("only", test::pixelRect(3, 3, 4, 4)),
             };
             invalid.emplace_back(
                 "template_rect must fit the project resolution",
@@ -276,8 +276,8 @@ namespace uf::annotation
         {
             auto spec      = anchorSpec();
             spec.searchRoi = test::pixelRect(0, 0, 2, 2);
-            spec.variants  = std::vector<RecognizerVariant>{
-                test::recognizerVariant("only", test::pixelRect(0, 0, 4, 4)),
+            spec.appearances  = std::vector<CompiledAppearance>{
+                test::compiledAppearance("only", test::pixelRect(0, 0, 4, 4)),
             };
             invalid.emplace_back(
                 "template must fit inside the element search_roi",
@@ -286,12 +286,12 @@ namespace uf::annotation
         }
         {
             auto spec     = anchorSpec();
-            spec.variants = std::vector<RecognizerVariant>{
-                test::recognizerVariant("only", test::pixelRect(0, 0, 2, 2)),
-                test::recognizerVariant("only", test::pixelRect(2, 2, 2, 2)),
+            spec.appearances = std::vector<CompiledAppearance>{
+                test::compiledAppearance("only", test::pixelRect(0, 0, 2, 2)),
+                test::compiledAppearance("only", test::pixelRect(2, 2, 2, 2)),
             };
             invalid.emplace_back(
-                "element variant names must be unique",
+                "element appearance names must be unique",
                 std::move(spec)
             );
         }
@@ -303,22 +303,22 @@ namespace uf::annotation
                 std::nullopt,
                 Interact{.clickOffset = *insideTemplate}
             );
-            spec.variants = {};
+            spec.appearances = {};
             invalid.emplace_back(
-                "an element with no variants cannot define a click offset",
+                "an element with no appearances cannot define a click offset",
                 std::move(spec)
             );
         }
         {
             // Every appearance has to be clickable at the same template-local
-            // point, or which variant matched would move the click.
+            // point, or which appearance matched would move the click.
             auto spec         = anchorSpec();
             spec.capabilities = test::capabilities(
                 std::nullopt,
                 Interact{.clickOffset = *outsideTemplate}
             );
             invalid.emplace_back(
-                "click offset must be inside every variant template",
+                "click offset must be inside every appearance template",
                 std::move(spec)
             );
         }
@@ -326,7 +326,7 @@ namespace uf::annotation
         for (auto const& entry : invalid)
         {
             INFO(entry.expected);
-            auto const rejected = RecognizerDefinition::create(
+            auto const rejected = CompiledElement::create(
                 projectFingerprint,
                 entry.spec
             );
@@ -345,16 +345,16 @@ namespace uf::annotation
         auto const projectFingerprint = test::fingerprint();
         auto const anchorId = test::elementId(k_anchorId);
         auto const pageId   = test::pageId(k_pageId);
-        auto recognizers    = std::vector<RecognizerDefinition>{};
-        recognizers.emplace_back(
-            test::recognizer(
+        auto elements    = std::vector<CompiledElement>{};
+        elements.emplace_back(
+            test::element(
                 projectFingerprint,
                 anchorId,
                 "home_marker",
                 test::capabilities(Identify{}),
                 test::pixelRect(0, 0, 4, 4),
-                std::vector<RecognizerVariant>{
-                    test::recognizerVariant("only", test::pixelRect(0, 0, 1, 1)),
+                std::vector<CompiledAppearance>{
+                    test::compiledAppearance("only", test::pixelRect(0, 0, 1, 1)),
                 }
             )
         );
@@ -374,7 +374,7 @@ namespace uf::annotation
         auto const rejected = RecognitionCatalog::create(
             test::projectId(),
             projectFingerprint,
-            std::move(recognizers),
+            std::move(elements),
             {test::page(pageId, "home")},
             std::move(references)
         );
@@ -390,16 +390,16 @@ namespace uf::annotation
         auto const projectFingerprint = test::fingerprint();
         auto const anchorId = test::elementId(k_anchorId);
         auto const pageId   = test::pageId(k_pageId);
-        auto recognizers    = std::vector<RecognizerDefinition>{};
-        recognizers.emplace_back(
-            test::recognizer(
+        auto elements    = std::vector<CompiledElement>{};
+        elements.emplace_back(
+            test::element(
                 projectFingerprint,
                 anchorId,
                 "home_marker",
                 test::capabilities(Identify{}),
                 test::pixelRect(0, 0, 4, 4),
-                std::vector<RecognizerVariant>{
-                    test::recognizerVariant("only", test::pixelRect(0, 0, 1, 1)),
+                std::vector<CompiledAppearance>{
+                    test::compiledAppearance("only", test::pixelRect(0, 0, 1, 1)),
                 }
             )
         );
@@ -415,7 +415,7 @@ namespace uf::annotation
         auto const catalog = RecognitionCatalog::create(
             test::projectId(),
             projectFingerprint,
-            std::move(recognizers),
+            std::move(elements),
             {test::page(pageId, "home")},
             std::move(references)
         );
@@ -439,14 +439,14 @@ namespace uf::annotation
 
         auto const anchor = [&](ElementId id, std::string name)
         {
-            return test::recognizer(
+            return test::element(
                 projectFingerprint,
                 id,
                 std::move(name),
                 test::capabilities(Identify{}),
                 test::pixelRect(0, 0, 4, 4),
-                std::vector<RecognizerVariant>{
-                    test::recognizerVariant("only", test::pixelRect(0, 0, 1, 1)),
+                std::vector<CompiledAppearance>{
+                    test::compiledAppearance("only", test::pixelRect(0, 0, 1, 1)),
                 }
             );
         };
@@ -456,7 +456,7 @@ namespace uf::annotation
         };
         auto const reject = [&](
             std::string_view expected,
-            std::vector<RecognizerDefinition> recognizers,
+            std::vector<CompiledElement> elements,
             std::vector<PageSpec> pages,
             std::vector<PageReference> references
         )
@@ -465,7 +465,7 @@ namespace uf::annotation
             auto const rejected = RecognitionCatalog::create(
                 test::projectId(),
                 projectFingerprint,
-                std::move(recognizers),
+                std::move(elements),
                 std::move(pages),
                 std::move(references)
             );

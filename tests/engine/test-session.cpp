@@ -105,9 +105,9 @@ namespace uf::engine
         // One element's only appearance, named the way a single-form element is
         // named throughout these fixtures.
         [[nodiscard]]
-        auto soleVariant() -> anno::RecognizerVariant
+        auto soleAppearance() -> anno::CompiledAppearance
         {
-            return anno::test::recognizerVariant(
+            return anno::test::compiledAppearance(
                 "default",
                 anno::test::pixelRect(0, 0, 1, 1),
                 anno::test::threshold(10'000)
@@ -115,17 +115,17 @@ namespace uf::engine
         }
 
         [[nodiscard]]
-        auto soleVariantAsset(
+        auto soleAppearanceAsset(
             anno::ContentHash const& templateHash,
             anno::ContentHash const& sourceHash
-        ) -> std::vector<anno::RuntimeVariantAsset>
+        ) -> std::vector<anno::RuntimeAppearanceAsset>
         {
-            auto assets = std::vector<anno::RuntimeVariantAsset>{};
+            auto assets = std::vector<anno::RuntimeAppearanceAsset>{};
             assets.emplace_back(
-                anno::RuntimeVariantAsset{
-                    .variantName  = anno::test::resourceName("default"),
-                    .templateHash = templateHash,
-                    .sourceHash   = sourceHash,
+                anno::RuntimeAppearanceAsset{
+                    .appearanceName = anno::test::resourceName("default"),
+                    .templateHash   = templateHash,
+                    .sourceHash     = sourceHash,
                 }
             );
             return assets;
@@ -152,27 +152,27 @@ namespace uf::engine
                 anno::test::projectId("personal.engine_session"),
                 fingerprint,
                 {
-                    anno::RuntimeRecognizerSpec{
-                        .definition = anno::test::recognizer(
+                    anno::RuntimeElementSpec{
+                        .definition = anno::test::element(
                             fingerprint,
                             anchorA,
                             "anchor_a",
                             anno::test::capabilities(anno::Identify{}),
                             anno::test::pixelRect(0, 0, 3, 1),
-                            {soleVariant()}
+                            {soleAppearance()}
                         ),
-                        .variants = soleVariantAsset(anchorTemplate.hash, *sourceHash),
+                        .appearances = soleAppearanceAsset(anchorTemplate.hash, *sourceHash),
                     },
-                    anno::RuntimeRecognizerSpec{
-                        .definition = anno::test::recognizer(
+                    anno::RuntimeElementSpec{
+                        .definition = anno::test::element(
                             fingerprint,
                             actionT,
                             "action_target",
                             anno::test::capabilities(std::nullopt, anno::Interact{}),
                             anno::test::pixelRect(0, 0, 3, 1),
-                            {soleVariant()}
+                            {soleAppearance()}
                         ),
-                        .variants = soleVariantAsset(actionTemplate.hash, *sourceHash),
+                        .appearances = soleAppearanceAsset(actionTemplate.hash, *sourceHash),
                     },
                 },
                 {anno::test::page(pageA, "page_a")},
@@ -221,38 +221,38 @@ namespace uf::engine
                 anno::test::projectId("personal.engine_session_wrong_page"),
                 fingerprint,
                 {
-                    anno::RuntimeRecognizerSpec{
-                        .definition = anno::test::recognizer(
+                    anno::RuntimeElementSpec{
+                        .definition = anno::test::element(
                             fingerprint,
                             anchorA,
                             "anchor_a",
                             anno::test::capabilities(anno::Identify{}),
                             anno::test::pixelRect(0, 0, 3, 1),
-                            {soleVariant()}
+                            {soleAppearance()}
                         ),
-                        .variants = soleVariantAsset(anchorATemplate.hash, *sourceHash),
+                        .appearances = soleAppearanceAsset(anchorATemplate.hash, *sourceHash),
                     },
-                    anno::RuntimeRecognizerSpec{
-                        .definition = anno::test::recognizer(
+                    anno::RuntimeElementSpec{
+                        .definition = anno::test::element(
                             fingerprint,
                             anchorB,
                             "anchor_b",
                             anno::test::capabilities(anno::Identify{}),
                             anno::test::pixelRect(0, 0, 3, 1),
-                            {soleVariant()}
+                            {soleAppearance()}
                         ),
-                        .variants = soleVariantAsset(anchorBTemplate.hash, *sourceHash),
+                        .appearances = soleAppearanceAsset(anchorBTemplate.hash, *sourceHash),
                     },
-                    anno::RuntimeRecognizerSpec{
-                        .definition = anno::test::recognizer(
+                    anno::RuntimeElementSpec{
+                        .definition = anno::test::element(
                             fingerprint,
                             actionT,
                             "action_target",
                             anno::test::capabilities(std::nullopt, anno::Interact{}),
                             anno::test::pixelRect(0, 0, 3, 1),
-                            {soleVariant()}
+                            {soleAppearance()}
                         ),
-                        .variants = soleVariantAsset(actionTemplate.hash, *sourceHash),
+                        .appearances = soleAppearanceAsset(actionTemplate.hash, *sourceHash),
                     },
                 },
                 {

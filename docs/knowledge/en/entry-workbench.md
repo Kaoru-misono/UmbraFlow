@@ -41,12 +41,12 @@
 > > `authoring-actions`, `canvas-math` (`CanvasPoint`, `ScreenPixelRect`,
 > > `RectGripKind`), `model-check-view`, and `project-tree` (`ScreenBucket`) —
 > > with their tests, rescuing `mintResourceId` and `searchRoiForDrawnTemplate`
-> > into `edit-page` and `findEditableRecognizer` into `authoring-edit`.
+> > into `edit-page` and `findEditableElement` into `authoring-edit`.
 > > `model-check-job` followed: `ModelCheckJob` existed only to run
 > > `runModelCheck` off the GUI thread, and with the GUI archived
 > > `umbra-authoring check` runs the matrix synchronously, so its only remaining
 > > consumer was its own test. `runModelCheck`, `ModelCheck`, `ModelCheckCell`,
-> > `classifyModelCell`, and `RecognizerMargin` are untouched in `preview.*`.
+> > `classifyModelCell`, and `ElementMargin` are untouched in `preview.*`.
 > >
 > > The entanglement this banner recorded is therefore **resolved**: `EditPage` no
 > > longer names `AppState` or `PanelUiState`. It takes an `AuthoringDraft` by
@@ -88,7 +88,7 @@
 > Concretely for this document: the construction chain no longer runs through
 > `PageSignature::create` (a signature is derived by `RecognitionCatalog::create`
 > from the page references that exercise `identify`), and "if the selected
-> recognizer is an `ActionTarget`" now reads "if the selected element declares
+> element is an `ActionTarget`" now reads "if the selected element declares
 > `interact`" — with `evaluateActionTarget` additionally taking the page.
 
 > **DIRTY (2026-07-26)**: This document predates the page-centric refactor
@@ -110,7 +110,7 @@ The Workbench owns the author workflow that runs from "obtaining a complete sour
 - persist session state such as source selection, canvas view, and the live Preview;
 - turn every modification produced by a widget into a complete, verifiable `AuthoringDocument`
   version, with undo/redo;
-- display and edit recognizers, pages, regressions, `template_rect`, `search_roi`, thresholds, and
+- display and edit elements, pages, regressions, `template_rect`, `search_roi`, thresholds, and
   click offsets;
 - compile template assets and the runtime manifest from the current in-memory sources;
 - run a bounded Preview over the selected source with the same `RecognitionRuntime` used in
@@ -171,13 +171,13 @@ frame. Failures are written to `stderr` only at the `dispatch`/`main` boundary.
 ### Editing State and Mutation Entry Points
 
 `entry/workbench/authoring-edit.hpp` defines the editable transport: `AuthoringDraft` aggregates
-`EditableSource`, `EditableRecognizer`, `EditablePage`, and `EditableRegression`. These types let a
+`EditableSource`, `EditableElement`, `EditablePage`, and `EditableRegression`. These types let a
 widget temporarily write plain strings, integers, and vectors, but they are not the persistable
 truth.
 
 `makeAuthoringDraft` expands the canonical `annotation::AuthoringDocument` into the transport above;
 `buildAuthoringDocument` runs the reverse, calling `AuthoringSource::create`, `ResourceName::create`,
-`SimilarityThreshold::create`, `TemplateOffset::create`, `RecognizerDefinition::create`,
+`SimilarityThreshold::create`, `TemplateOffset::create`, `CompiledElement::create`,
 `PageSignature::create`, and finally `AuthoringDocument::create`.
 This rebuild path explains why the GUI never does "mutate half an object now, validate later": an
 edit either yields a complete, valid document or leaves the original version untouched.
@@ -186,7 +186,7 @@ edit either yields a complete, valid document or leaves the original version unt
 of the new and old documents. An identical draft returns `false` and does not pollute the history; a
 genuine change moves the current document into undo, clears redo, and caps undo at
 `k_maximumAuthoringUndoEntries == 100`.
-`undo`/`redo` move a complete document value, so references spanning recognizers/pages are always
+`undo`/`redo` move a complete document value, so references spanning elements/pages are always
 restored as one and the same version.
 
 The `AppState` in `entry/workbench/workbench-app.hpp` is the ImGui-free session aggregate behind
@@ -221,7 +221,7 @@ By contract, `fromBytes` itself does not validate version/variant, so the author
 responsible for setting the convention.
 
 `SourceId`, `ElementId`, `PageId`, and similar are distinct strong types over `ResourceId`; when
-adding a source, recognizer, or page, the panel mints first and then wraps the result in the
+adding a source, element, or page, the panel mints first and then wraps the result in the
 corresponding ID. The randomness determines only the identity of a new resource and does not enter
 runtime matching.
 Once an ID enters the document, the canonical compiler uses it as a stable ordering/reference key.
@@ -317,11 +317,11 @@ The `runPreview` in `entry/workbench/preview.hpp` contains no private matcher:
 4. calls `annotation::RecognitionRuntime::create`;
 5. decodes the selected PNG into a project-fingerprint-sized BGRA `Frame`;
 6. calls `RecognitionRuntime::evaluatePage`;
-7. if the selected recognizer is an `ActionTarget`, additionally calls `evaluateActionTarget`.
+7. if the selected element is an `ActionTarget`, additionally calls `evaluateActionTarget`.
 
 The `RecognitionPolicy` constructed by the panel provides both a comparison budget and a deadline;
 the API also supports a `std::stop_token`. `PreviewResult` retains the completed `PreviewAnchorRow`,
-Resolved/Unknown/Ambiguous, the resolved page ID, and the recognizer ID and `SadSearchStopReason`
+Resolved/Unknown/Ambiguous, the resolved page ID, and the element ID and `SadSearchStopReason`
 inside `PreviewStop`. A stop is never collapsed into `hit=false`. The synthetic
 frame/session/generation identity of the Preview frame exists only to satisfy the real recognition
 API; the result does not enter the document, the history, or action delivery.

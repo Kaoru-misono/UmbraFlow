@@ -59,17 +59,25 @@
 > - **能力模型已落地。** 三选一的 `AnnotationType` 变成能力集合
 >   `{identify, interact, read}`;`bool shared` 换成引用侧的 `Holding{Owned, Referenced}`;
 >   `allowed_page_ids` 整个删除,授权就是「这一页引用了它且行使 `interact`」;元素带的是
->   有序的具名 `Variant` 列表(空列表 = 由页面定位);`RecognizerId` 改名 `ElementId`;
+>   有序的具名 `Appearance` 列表(空列表 = 由页面定位);`RecognizerId` 改名 `ElementId`;
 >   页面签名不再是作者写的,而是从引用派生。两个 schema 一次原子升到
 >   `umbraflow-authoring/v3` 与 `umbraflow-annotations/v2`,旧 id 没有读路径。
+> - **词汇统一(2026-07-31,同日第二次改名)。** `recognizer` 这个词整个退出模型:
+>   `uf.recognizers` → `uf.elements`,trace 的 `recognizerId` → `elementId`,
+>   `RecognizerDefinition`/`RecognizerVariant` → `CompiledElement`/`CompiledAppearance`,
+>   `Variant`/`variant` → `Appearance`/`appearance`(CLI 旗标 `--variant` → `--appearance`)。
+>   `RecognitionCatalog`/`RecognitionRuntime` 不变。三个 schema 再升一版:
+>   `umbraflow-authoring/v4`、`umbraflow-annotations/v3`、`umbraflow-trace/v2`。
+>   授权文档里的 `[[annotation]]` 表——三选一分类留下的最后一个持久化名字——在同一次
+>   v4 升版里改名 `[[element]]`。
 > - **GUI 已归档**(`b57b67b`):`entry/workbench/app/`、ImGui + D3D11 外壳、文件对话框、
 >   一次性抓帧源、imgui submodule 与 ASan smoke fixture 一并移除;没有 `umbra-workbench.exe`,
 >   没有 `--smoke`,没有 `AsanSmoke` 测试标签。`entry/workbench` 剩下的是
 >   `umbra-authoring` 链接的标注后端(编辑层、`preview.*` 的证伪矩阵、持久化、源图导入)。
 > - **CLI 动词收敛**:`page add-anchor|add-target|add-info` → `page add --capability C...`;
 >   `--shared` 退掉;新增 `page reference`(把已有元素放到第二个页面);`match` 增加 `--page`。
-> - **仍欠的**:证伪矩阵还没有 CLI 动词、还没有 variant 维度(§2.3 的 P1–P4 / R1–R4 一条未落);
->   CLI 还没有画 variant 的动词;`read` 能力的 `cycle_read` 与 OCR 接线未开始。
+> - **仍欠的**:证伪矩阵还没有 CLI 动词、还没有 appearance 维度(§2.3 的 P1–P4 / R1–R4 一条未落);
+>   CLI 还没有画 appearance 的动词;`read` 能力的 `cycle_read` 与 OCR 接线未开始。
 
 - [x] 锁定 authoring/runtime schema、`template_rect`/`search_roi`、page resolution、动作证据、
       项目级尺寸/DPI 兼容契约与 Dear ImGui + D3D11 技术栈(2026-07-23)。
@@ -84,17 +92,17 @@
       启用 docking(vendored 已是 docking 分支,原先没接线)。
       **2026-07-25 人工 GUI 走查暴露并修复的可用性/正确性缺口**(见
       [`pitfalls/workbench-authoring-ui.md`](pitfalls/workbench-authoring-ui.md)):
-      ① recognizer 只在新建那一刻可选中(`setSelectedRecognizerId` 全项目仅一处调用),
-      建了第二个后第一个永久不可达 → 新增 **Recognizers 面板**,选中时同步跟到它所属 source
-      (否则框会画在无关图上);② page 只在选中某 recognizer 时才在属性面板露一眼且**无法删除**
+      ① element 只在新建那一刻可选中(`setSelectedElementId` 全项目仅一处调用),
+      建了第二个后第一个永久不可达 → 新增 **Elements 面板**,选中时同步跟到它所属 source
+      (否则框会画在无关图上);② page 只在选中某 element 时才在属性面板露一眼且**无法删除**
       → 新增 **Pages 面板**;③ **完全没有删除**(建错只能立刻 undo)→ 补
-      `deleteRecognizer`/`deletePage`/`deleteSource`,连带撤出 page signature、清授权、
+      `deleteElement`/`deletePage`/`deleteSource`,连带撤出 page signature、清授权、
       删源上的回归用例,级联会触及只有作者能决定的东西时改为拒绝并给出可执行提示;
       ④ `page_anchor` ↔ `action_target` 类型切换在逐控件提交模型下**无解**(两条规则互锁)
       → `retypeRecognizer` 单事务改写类型及全部依赖字段;⑤ 默认名固定导致第二次新建必撞
-      (名字跨 recognizer/page 全局唯一)→ 取第一个空闲 `<stem>_N`;
+      (名字跨 element/page 全局唯一)→ 取第一个空闲 `<stem>_N`;
       ⑥ 成功编辑不写日志,只有失败留痕 → 每次被接受的编辑都要带描述;
-      ⑦ **既有 use-after-free**:属性面板持有 `RecognizerDefinition const*` 贯穿整帧,
+      ⑦ **既有 use-after-free**:属性面板持有 `CompiledElement const*` 贯穿整帧,
       而每次提交 `m_current = std::move(next)` 会整体换掉 document → 改为
       `PendingEdit` 延迟提交,在借用 document 的面板画完之后、actions 面板之前统一 apply。
 - [ ] 标注能力:`identify` / `interact` / `read`(**2026-07-31 起是集合,不再是三选一的
@@ -231,7 +239,7 @@
       (2026-07-29 核对:`installSandbox` / `createStateWithQuota` /
       `ffi/cancellation.cpp`),此前这里写的「沙箱/取消/配额未做」已过时。
       历史记录见 `2026-07-21-p0b-luau-hardening-ledger.md`。
-- [ ] 最小 capability API 与 observe/resolve/act/wait 引擎循环;manifest 只读 recognizer/page 句柄,
+- [ ] 最小 capability API 与 observe/resolve/act/wait 引擎循环;manifest 只读 element/page 句柄,
       `ResolvedPage` + Detection + lease 才能授权坐标动作。
 - [ ] 每任务 VM generation、allocator 配额、interrupt 硬取消、逻辑时钟/RNG 与 generation 热加载
       (热加载 P0 只做加载边界语义,活体中途热切推 P2——2026-07-27 裁决)。

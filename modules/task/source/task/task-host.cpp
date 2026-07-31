@@ -80,8 +80,8 @@ namespace uf::task
             return trace::TraceEvent{
                 .kind      = trace::TraceEventKind::RunResourcesValidated,
                 .resources = trace::TraceEvent::Resources{
-                    .recognizers = report.recognizers,
-                    .pages       = report.pages,
+                    .elements = report.elements,
+                    .pages    = report.pages,
                 },
             };
         }

@@ -109,13 +109,13 @@ namespace uf::annotation
 
         [[nodiscard]]
         auto taskKeyOf(
-            Variant const& variant
+            Appearance const& appearance
         ) -> TemplateTaskKey
         {
             return TemplateTaskKey{
-                .sourceId     = variant.sourceId(),
-                .templateRect = variant.templateRect(),
-                .colourKey    = variant.colourKey(),
+                .sourceId     = appearance.sourceId(),
+                .templateRect = appearance.templateRect(),
+                .colourKey    = appearance.colourKey(),
             };
         }
 
@@ -159,15 +159,15 @@ namespace uf::annotation
 
             for (auto const& element : elements)
             {
-                for (auto const& variant : element.variants())
+                for (auto const& appearance : element.appearances())
                 {
-                    auto const insertion = templateTasks.emplace(taskKeyOf(variant));
+                    auto const insertion = templateTasks.emplace(taskKeyOf(appearance));
                     if (!insertion.second)
                     {
                         continue;
                     }
 
-                    auto const templateRect = variant.templateRect();
+                    auto const templateRect = appearance.templateRect();
                     auto const taskPixels   = checkedMultiply(
                         static_cast<std::size_t>(templateRect.width()),
                         static_cast<std::size_t>(templateRect.height())
@@ -491,36 +491,36 @@ namespace uf::annotation
         }
         UF_CHECK_MSG(
             taskIterator == templateTasks.end(),
-            "authoring variant source closure references an unknown source"
+            "authoring appearance source closure references an unknown source"
         );
 
-        // One recognizer per element, under the element's own id. Templates
-        // still dedupe by (source, rectangle, colour key), so two elements
-        // cutting the same pixels share one asset.
-        auto runtimeRecognizers = std::vector<RuntimeRecognizerSpec>{};
-        runtimeRecognizers.reserve(elements.size());
+        // One compiled element per authored element, under the element's own
+        // id. Templates still dedupe by (source, rectangle, colour key), so two
+        // elements cutting the same pixels share one asset.
+        auto runtimeElements = std::vector<RuntimeElementSpec>{};
+        runtimeElements.reserve(elements.size());
         for (auto const& element : elements)
         {
-            auto variants = std::vector<RecognizerVariant>{};
-            auto assets   = std::vector<RuntimeVariantAsset>{};
-            variants.reserve(element.variants().size());
-            assets.reserve(element.variants().size());
-            for (auto const& variant : element.variants())
+            auto appearances = std::vector<CompiledAppearance>{};
+            auto assets      = std::vector<RuntimeAppearanceAsset>{};
+            appearances.reserve(element.appearances().size());
+            assets.reserve(element.appearances().size());
+            for (auto const& appearance : element.appearances())
             {
-                auto const generated = generatedTaskHashes.find(taskKeyOf(variant));
+                auto const generated = generatedTaskHashes.find(taskKeyOf(appearance));
                 UF_CHECK_MSG(
                     generated != generatedTaskHashes.end(),
-                    "authoring variant template task was not generated"
+                    "authoring appearance template task was not generated"
                 );
-                auto const* p_source = document.findSource(variant.sourceId());
+                auto const* p_source = document.findSource(appearance.sourceId());
                 UF_CHECK_MSG(
                     p_source != nullptr,
-                    "authoring variant source closure references an unknown source"
+                    "authoring appearance source closure references an unknown source"
                 );
-                variants.emplace_back(runtimeVariantOf(variant));
+                appearances.emplace_back(runtimeAppearanceOf(appearance));
                 assets.emplace_back(
-                    RuntimeVariantAsset{
-                        .variantName  = variant.name(),
+                    RuntimeAppearanceAsset{
+                        .appearanceName  = appearance.name(),
                         .templateHash = generated->second,
                         .sourceHash   = p_source->contentHash(),
                     }
@@ -529,21 +529,21 @@ namespace uf::annotation
 
             UF_TRY_VALUE(
                 definition,
-                RecognizerDefinition::create(
+                CompiledElement::create(
                     document.catalog().fingerprint(),
-                    RecognizerSpec{
+                    CompiledElementSpec{
                         .id           = element.id(),
                         .name         = element.name(),
                         .capabilities = element.capabilities(),
                         .searchRoi    = element.searchRoi(),
-                        .variants     = std::move(variants),
+                        .appearances  = std::move(appearances),
                     }
                 )
             );
-            runtimeRecognizers.emplace_back(
-                RuntimeRecognizerSpec{
-                    .definition = std::move(definition),
-                    .variants   = std::move(assets),
+            runtimeElements.emplace_back(
+                RuntimeElementSpec{
+                    .definition  = std::move(definition),
+                    .appearances = std::move(assets),
                 }
             );
         }
@@ -574,7 +574,7 @@ namespace uf::annotation
             RuntimeManifest::create(
                 document.catalog().projectId(),
                 document.catalog().fingerprint(),
-                std::move(runtimeRecognizers),
+                std::move(runtimeElements),
                 std::move(pages),
                 std::move(references)
             ),

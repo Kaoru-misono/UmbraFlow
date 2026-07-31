@@ -125,7 +125,7 @@ namespace uf::workbench
         // expectation, and a non-empty forbidden set. Without these a draft
         // round-trip that silently dropped the field would still compare equal.
         [[nodiscard]]
-        auto variantDocument() -> annotation::AuthoringDocument
+        auto appearanceDocument() -> annotation::AuthoringDocument
         {
             auto const fingerprint = annotation::test::fingerprint(8, 8, 96, 96);
             auto const sourceId    = annotation::test::sourceId(k_sourceId);
@@ -207,7 +207,7 @@ namespace uf::workbench
         }
 
         // Two pages whose anchors differ, so a conversion that must pick a page
-        // to authorize can be observed picking the recognizer's own page rather
+        // to authorize can be observed picking the element's own page rather
         // than the first one. "battle" survives losing its required anchor
         // because it still forbids one.
         [[nodiscard]]
@@ -286,29 +286,29 @@ namespace uf::workbench
         }
 
         [[nodiscard]]
-        auto recognizerName(
+        auto elementName(
             AuthoringEditHistory const& history,
             std::size_t index
         ) -> std::string
         {
-            return history.draft().recognizers.at(index).name;
+            return history.draft().elements.at(index).name;
         }
 
-        // Reads a recognizer out of a draft by identity rather than by position,
-        // so a test states which recognizer it means instead of depending on the
+        // Reads an element out of a draft by identity rather than by position,
+        // so a test states which element it means instead of depending on the
         // catalog's ordering.
         [[nodiscard]]
-        auto recognizerIn(
+        auto elementIn(
             AuthoringDraft const& draft,
             annotation::ElementId id
-        ) -> EditableRecognizer
+        ) -> EditableElement
         {
             auto const found = std::ranges::find(
-                draft.recognizers,
+                draft.elements,
                 id,
-                &EditableRecognizer::id
+                &EditableElement::id
             );
-            REQUIRE(found != draft.recognizers.end());
+            REQUIRE(found != draft.elements.end());
             return *found;
         }
 
@@ -341,13 +341,13 @@ namespace uf::workbench
         }
     }
 
-    TEST_CASE("a fresh name avoids recognizer and page names alike")
+    TEST_CASE("a fresh name avoids element and page names alike")
     {
-        // The catalog compares a page name against recognizer names too, so a
+        // The catalog compares a page name against element names too, so a
         // fresh name checked against one kind still collides.
         auto draft = makeAuthoringDraft(document());
         draft.pages.at(0).name       = "thing_1";
-        draft.recognizers.at(0).name = "thing_2";
+        draft.elements.at(0).name = "thing_2";
 
         CHECK(freshAuthoringName(draft, "thing") == "thing_3");
         CHECK(freshAuthoringName(draft, "other") == "other_1");
@@ -379,10 +379,10 @@ namespace uf::workbench
         );
         REQUIRE(created.has_value());
 
-        auto const anchor = recognizerIn(created->draft, anchorId);
+        auto const anchor = elementIn(created->draft, anchorId);
         CHECK(anchor.capabilities.identify.has_value());
-        REQUIRE(anchor.variants.size() == 1U);
-        CHECK(anchor.variants.front().sourceId == sourceId);
+        REQUIRE(anchor.appearances.size() == 1U);
+        CHECK(anchor.appearances.front().sourceId == sourceId);
 
         // The page's signature is derived from the reference, which is why the
         // page and the reference cannot be authored one at a time.
@@ -440,7 +440,7 @@ namespace uf::workbench
         auto const spec = [&](PageMemberKind kind)
         {
             return PageMemberSpec{
-                .recognizerId = newId,
+                .elementId    = newId,
                 .pageId       = pageId,
                 .sourceId     = sourceId,
                 .templateRect = annotation::test::pixelRect(0, 0, 2, 2),
@@ -458,8 +458,8 @@ namespace uf::workbench
             );
             REQUIRE(added.has_value());
 
-            auto const recognizer = recognizerIn(added->draft, newId);
-            CHECK(recognizer.capabilities.identify.has_value());
+            auto const element = elementIn(added->draft, newId);
+            CHECK(element.capabilities.identify.has_value());
             CHECK(
                 signatureRoleIn(added->draft, pageId, newId)
                 == annotation::SignatureRole::Required
@@ -475,8 +475,8 @@ namespace uf::workbench
             );
             REQUIRE(added.has_value());
 
-            auto const recognizer = recognizerIn(added->draft, newId);
-            CHECK(recognizer.capabilities.interact.has_value());
+            auto const element = elementIn(added->draft, newId);
+            CHECK(element.capabilities.interact.has_value());
             CHECK(
                 std::ranges::contains(pagesReferencing(added->draft, newId), pageId)
             );
@@ -492,8 +492,8 @@ namespace uf::workbench
             );
             REQUIRE(added.has_value());
 
-            auto const recognizer = recognizerIn(added->draft, newId);
-            CHECK(recognizer.capabilities.read.has_value());
+            auto const element = elementIn(added->draft, newId);
+            CHECK(element.capabilities.read.has_value());
             CHECK(
                 std::ranges::contains(pagesReferencing(added->draft, newId), pageId)
             );
@@ -508,7 +508,7 @@ namespace uf::workbench
         auto const newId    = annotation::test::elementId(k_awayId);
         auto const pageId   = annotation::test::pageId(k_pageId);
 
-        auto const original = recognizerIn(makeAuthoringDraft(document()), actionId);
+        auto const original = elementIn(makeAuthoringDraft(document()), actionId);
 
         auto const duplicated = duplicateElement(
             makeAuthoringDraft(document()),
@@ -520,7 +520,7 @@ namespace uf::workbench
         REQUIRE(duplicated.has_value());
 
         // A genuinely new element: a fresh id and a distinct, unique name.
-        auto const copy = recognizerIn(duplicated->draft, newId);
+        auto const copy = elementIn(duplicated->draft, newId);
         CHECK(copy.id == newId);
         CHECK(copy.name != original.name);
         CHECK(copy.name == duplicated->name);
@@ -528,15 +528,15 @@ namespace uf::workbench
             copy.capabilities.interact.has_value()
             == original.capabilities.interact.has_value()
         );
-        REQUIRE(copy.variants.size() == original.variants.size());
-        REQUIRE(copy.variants.size() == 1U);
+        REQUIRE(copy.appearances.size() == original.appearances.size());
+        REQUIRE(copy.appearances.size() == 1U);
         CHECK(
-            copy.variants.front().templateRect
-            == original.variants.front().templateRect
+            copy.appearances.front().templateRect
+            == original.appearances.front().templateRect
         );
         CHECK(
-            copy.variants.front().similarityBasisPoints
-            == original.variants.front().similarityBasisPoints
+            copy.appearances.front().similarityBasisPoints
+            == original.appearances.front().similarityBasisPoints
         );
         REQUIRE(copy.capabilities.interact.has_value());
         REQUIRE(original.capabilities.interact.has_value());
@@ -553,7 +553,7 @@ namespace uf::workbench
         CHECK(
             std::ranges::contains(pagesReferencing(duplicated->draft, newId), pageId)
         );
-        CHECK(recognizerIn(duplicated->draft, actionId).name == original.name);
+        CHECK(elementIn(duplicated->draft, actionId).name == original.name);
         CHECK(buildAuthoringDocument(duplicated->draft).has_value());
     }
 
@@ -563,7 +563,7 @@ namespace uf::workbench
         auto const newId    = annotation::test::elementId(k_awayId);
 
         auto history = AuthoringEditHistory{document()};
-        auto const before = history.document().catalog().recognizers().size();
+        auto const before = history.document().catalog().elements().size();
 
         auto const duplicated = duplicateElement(
             history.draft(),
@@ -577,10 +577,10 @@ namespace uf::workbench
         auto const applied = history.apply(duplicated->draft);
         REQUIRE(applied.has_value());
         CHECK(*applied);
-        CHECK(history.document().catalog().recognizers().size() == before + 1U);
+        CHECK(history.document().catalog().elements().size() == before + 1U);
 
         REQUIRE(history.undo());
-        CHECK(history.document().catalog().recognizers().size() == before);
+        CHECK(history.document().catalog().elements().size() == before);
     }
 
     TEST_CASE("duplicating an element outside the draft is refused")
@@ -605,16 +605,16 @@ namespace uf::workbench
         auto draft = makeAuthoringDraft(twoPageDocument());
         // twoPageDocument has nothing clickable, so give it the element being
         // borrowed, owned by the home page.
-        draft.recognizers.emplace_back(
-            EditableRecognizer{
+        draft.elements.emplace_back(
+            EditableElement{
                 .id   = actionId,
                 .name = "back",
                 .capabilities = EditableCapabilities{
                     .interact = EditableInteract{},
                 },
                 .searchRoi = annotation::test::pixelRect(3, 3, 4, 4),
-                .variants  = {
-                    EditableVariant{
+                .appearances  = {
+                    EditableAppearance{
                         .name         = "default",
                         .sourceId     = annotation::test::sourceId(k_sourceId),
                         .templateRect = annotation::test::pixelRect(4, 4, 2, 2),
@@ -790,7 +790,7 @@ namespace uf::workbench
         // let the function under test be what puts it back.
         auto draft = makeAuthoringDraft(twoPageDocument());
         std::erase_if(draft.references, onBattle);
-        auto const elements = draft.recognizers.size();
+        auto const elements = draft.elements.size();
 
         auto const referenced = referenceElementOnPage(
             std::move(draft),
@@ -808,7 +808,7 @@ namespace uf::workbench
 
         // The assertion the whole verb is for: no second element over the same
         // pixels. One patch, one id, two pages pointing opposite ways at it.
-        CHECK(referenced->draft.recognizers.size() == elements);
+        CHECK(referenced->draft.elements.size() == elements);
         CHECK(pagesReferencing(referenced->draft, markId).size() == 2U);
 
         auto const forbidding = std::ranges::find_if(
@@ -870,8 +870,8 @@ namespace uf::workbench
         auto const battleId = annotation::test::pageId(k_secondPageId);
 
         auto draft = makeAuthoringDraft(twoPageDocument());
-        draft.recognizers.emplace_back(
-            EditableRecognizer{
+        draft.elements.emplace_back(
+            EditableElement{
                 .id   = backId,
                 .name = "back",
                 .capabilities = EditableCapabilities{
@@ -879,8 +879,8 @@ namespace uf::workbench
                     .interact = EditableInteract{},
                 },
                 .searchRoi = annotation::test::pixelRect(3, 3, 4, 4),
-                .variants  = {
-                    EditableVariant{
+                .appearances  = {
+                    EditableAppearance{
                         .name         = "on_dark",
                         .sourceId     = annotation::test::sourceId(k_sourceId),
                         .templateRect = annotation::test::pixelRect(4, 4, 2, 2),
@@ -899,7 +899,7 @@ namespace uf::workbench
                 },
             }
         );
-        auto const elements = draft.recognizers.size();
+        auto const elements = draft.elements.size();
 
         auto const referenced = referenceElementOnPage(
             std::move(draft),
@@ -970,8 +970,8 @@ namespace uf::workbench
         };
 
         auto draft = makeAuthoringDraft(twoPageDocument());
-        draft.recognizers.emplace_back(
-            EditableRecognizer{
+        draft.elements.emplace_back(
+            EditableElement{
                 .id   = backId,
                 .name = "back",
                 .capabilities = EditableCapabilities{
@@ -979,8 +979,8 @@ namespace uf::workbench
                     .interact = EditableInteract{},
                 },
                 .searchRoi = annotation::test::pixelRect(3, 3, 4, 4),
-                .variants  = {
-                    EditableVariant{
+                .appearances  = {
+                    EditableAppearance{
                         .name         = "on_dark",
                         .sourceId     = annotation::test::sourceId(k_sourceId),
                         .templateRect = annotation::test::pixelRect(4, 4, 2, 2),
@@ -1147,7 +1147,7 @@ namespace uf::workbench
         // measurements the author made, and which one goes is theirs to say.
         auto const homeId = annotation::test::pageId(k_pageId);
         auto refining     = makeAuthoringDraft(document());
-        for (auto& element : refining.recognizers)
+        for (auto& element : refining.elements)
         {
             if (element.id == actionId)
             {
@@ -1222,9 +1222,9 @@ namespace uf::workbench
         );
         REQUIRE(retemplated.has_value());
         CHECK(retemplated->referencingPages == 2U);
-        auto const changed = recognizerIn(retemplated->draft, actionId);
-        REQUIRE(changed.variants.size() == 1U);
-        CHECK(changed.variants.front().templateRect == moved);
+        auto const changed = elementIn(retemplated->draft, actionId);
+        REQUIRE(changed.appearances.size() == 1U);
+        CHECK(changed.appearances.front().templateRect == moved);
         // Both references still name the one, corrected element.
         CHECK(pagesReferencing(retemplated->draft, actionId).size() == 2U);
     }
@@ -1239,7 +1239,7 @@ namespace uf::workbench
         auto const outgrown = annotation::test::pixelRect(0, 0, 4, 4);
 
         auto draft = makeAuthoringDraft(document());
-        REQUIRE(recognizerIn(draft, actionId).searchRoi.width() == 4U);
+        REQUIRE(elementIn(draft, actionId).searchRoi.width() == 4U);
         draft.references.emplace_back(
             EditableReference{
                 .pageId    = annotation::test::pageId(k_secondPageId),
@@ -1424,7 +1424,7 @@ namespace uf::workbench
         auto const added = addPageMember(
             makeAuthoringDraft(document()),
             PageMemberSpec{
-                .recognizerId = annotation::test::elementId(k_awayId),
+                .elementId    = annotation::test::elementId(k_awayId),
                 .pageId       = annotation::test::pageId(k_secondPageId),
                 .sourceId     = annotation::test::sourceId(k_sourceId),
                 .templateRect = annotation::test::pixelRect(0, 0, 2, 2),
@@ -1436,18 +1436,18 @@ namespace uf::workbench
         CHECK_FALSE(added.has_value());
     }
 
-    TEST_CASE("deleting a recognizer withdraws it from the pages that name it")
+    TEST_CASE("deleting an element withdraws it from the pages that name it")
     {
         auto const awayId   = annotation::test::elementId(k_awayId);
         auto const battleId = annotation::test::pageId(k_secondPageId);
 
-        auto const deleted = deleteRecognizer(
+        auto const deleted = deleteElement(
             makeAuthoringDraft(twoPageDocument()),
             awayId
         );
         REQUIRE(deleted.has_value());
         CHECK(deleted->withdrawnRoles == 1U);
-        CHECK(deleted->draft.recognizers.size() == 1U);
+        CHECK(deleted->draft.elements.size() == 1U);
         CHECK_FALSE(signatureRoleIn(deleted->draft, battleId, awayId).has_value());
 
         CHECK(buildAuthoringDocument(deleted->draft).has_value());
@@ -1459,7 +1459,7 @@ namespace uf::workbench
         // say whether the page goes too or another mark takes over.
         auto const anchorId = annotation::test::elementId(k_anchorId);
 
-        auto const deleted = deleteRecognizer(
+        auto const deleted = deleteElement(
             makeAuthoringDraft(document()),
             anchorId
         );
@@ -1541,10 +1541,10 @@ namespace uf::workbench
         // The clickable element would be left unreachable, which is refused on
         // its own; this case is about the regression, so it goes first.
         std::erase_if(
-            draft.recognizers,
-            [actionId](EditableRecognizer const& recognizer)
+            draft.elements,
+            [actionId](EditableElement const& element)
             {
-                return recognizer.id == actionId;
+                return element.id == actionId;
             }
         );
         std::erase_if(
@@ -1571,7 +1571,7 @@ namespace uf::workbench
         auto const sourceId = annotation::test::sourceId(k_sourceId);
 
         auto draft = makeAuthoringDraft(document());
-        draft.recognizers.clear();
+        draft.elements.clear();
         draft.references.clear();
         draft.pages.clear();
         REQUIRE(draft.regressions.size() == 1U);
@@ -1602,7 +1602,7 @@ namespace uf::workbench
     {
         auto const documents = std::vector<annotation::AuthoringDocument>{
             document(),
-            variantDocument(),
+            appearanceDocument(),
         };
         for (auto const& original : documents)
         {
@@ -1622,17 +1622,17 @@ namespace uf::workbench
         auto history = AuthoringEditHistory{document()};
         auto renamed = history.draft();
 
-        renamed.recognizers.at(0).name = "renamed_marker";
+        renamed.elements.at(0).name = "renamed_marker";
 
         auto const applied = history.apply(renamed);
         REQUIRE(applied.has_value());
         CHECK(*applied);
-        CHECK(recognizerName(history, 0) == "renamed_marker");
+        CHECK(elementName(history, 0) == "renamed_marker");
         CHECK(history.canUndo());
         CHECK_FALSE(history.canRedo());
 
         CHECK(history.undo());
-        CHECK(recognizerName(history, 0) == "home_marker");
+        CHECK(elementName(history, 0) == "home_marker");
         CHECK_FALSE(history.canUndo());
         CHECK(history.canRedo());
         CHECK(
@@ -1641,7 +1641,7 @@ namespace uf::workbench
         );
 
         CHECK(history.redo());
-        CHECK(recognizerName(history, 0) == "renamed_marker");
+        CHECK(elementName(history, 0) == "renamed_marker");
         CHECK(history.canUndo());
         CHECK_FALSE(history.canRedo());
     }
@@ -1655,13 +1655,13 @@ namespace uf::workbench
         auto const loaded = history.position();
 
         auto first = history.draft();
-        first.recognizers.at(0).name = "first_name";
+        first.elements.at(0).name = "first_name";
         REQUIRE(history.apply(first).has_value());
         auto const afterFirst = history.position();
         CHECK(afterFirst != loaded);
 
         auto second = history.draft();
-        second.recognizers.at(0).name = "second_name";
+        second.elements.at(0).name = "second_name";
         REQUIRE(history.apply(second).has_value());
         CHECK(history.position() != afterFirst);
 
@@ -1677,7 +1677,7 @@ namespace uf::workbench
         // A fresh edit past a restored position mints a new identity rather than
         // reusing the abandoned redo one, so it never collides with a saved state.
         auto branch = history.draft();
-        branch.recognizers.at(0).name = "branch_name";
+        branch.elements.at(0).name = "branch_name";
         REQUIRE(history.apply(branch).has_value());
         CHECK(history.position() != loaded);
         CHECK(history.position() != afterFirst);
@@ -1688,22 +1688,22 @@ namespace uf::workbench
         auto history = AuthoringEditHistory{document()};
         auto renamed = history.draft();
 
-        renamed.recognizers.at(0).name = "renamed_marker";
+        renamed.elements.at(0).name = "renamed_marker";
         REQUIRE(history.apply(renamed).has_value());
         REQUIRE(history.undo());
         REQUIRE(history.canRedo());
 
         auto invalid = history.draft();
 
-        invalid.recognizers.at(0).name.clear();
+        invalid.elements.at(0).name.clear();
 
         auto const applied = history.apply(invalid);
         REQUIRE_FALSE(applied.has_value());
-        CHECK(recognizerName(history, 0) == "home_marker");
+        CHECK(elementName(history, 0) == "home_marker");
         CHECK_FALSE(history.canUndo());
         CHECK(history.canRedo());
         CHECK(history.redo());
-        CHECK(recognizerName(history, 0) == "renamed_marker");
+        CHECK(elementName(history, 0) == "renamed_marker");
     }
 
     TEST_CASE("authoring history ignores identical edits and clears abandoned redo")
@@ -1717,7 +1717,7 @@ namespace uf::workbench
 
         auto first = history.draft();
 
-        first.recognizers.at(0).name = "first_name";
+        first.elements.at(0).name = "first_name";
         REQUIRE(history.apply(first).has_value());
         REQUIRE(history.undo());
         CHECK(history.canRedo());
@@ -1730,9 +1730,9 @@ namespace uf::workbench
 
         auto branch = history.draft();
 
-        branch.recognizers.at(0).name = "branch_name";
+        branch.elements.at(0).name = "branch_name";
         REQUIRE(history.apply(branch).has_value());
-        CHECK(recognizerName(history, 0) == "branch_name");
+        CHECK(elementName(history, 0) == "branch_name");
         CHECK_FALSE(history.canRedo());
     }
 
@@ -1743,22 +1743,22 @@ namespace uf::workbench
 
         auto first = history.draft();
 
-        first.recognizers.at(0).name = "first_name";
+        first.elements.at(0).name = "first_name";
         REQUIRE(history.apply(first).has_value());
 
         auto second = history.draft();
 
-        second.recognizers.at(0).name = "second_name";
+        second.elements.at(0).name = "second_name";
         REQUIRE(history.apply(second).has_value());
 
         REQUIRE(history.undo());
         REQUIRE(history.undo());
-        CHECK(recognizerName(history, 0) == "home_marker");
+        CHECK(elementName(history, 0) == "home_marker");
 
         CHECK(history.redo());
-        CHECK(recognizerName(history, 0) == "first_name");
+        CHECK(elementName(history, 0) == "first_name");
         CHECK(history.redo());
-        CHECK(recognizerName(history, 0) == "second_name");
+        CHECK(elementName(history, 0) == "second_name");
         CHECK_FALSE(history.redo());
     }
 
@@ -1773,7 +1773,7 @@ namespace uf::workbench
         {
             auto next = history.draft();
 
-            next.recognizers.at(0).name = "marker_" + std::to_string(index);
+            next.elements.at(0).name = "marker_" + std::to_string(index);
 
             auto const applied = history.apply(next);
             REQUIRE(applied.has_value());
@@ -1789,7 +1789,7 @@ namespace uf::workbench
             REQUIRE(history.undo());
         }
         CHECK_FALSE(history.undo());
-        CHECK(recognizerName(history, 0) == "marker_0");
+        CHECK(elementName(history, 0) == "marker_0");
     }
 
     namespace
@@ -1853,9 +1853,9 @@ namespace uf::workbench
                 colour_key_fixture::k_width,
                 colour_key_fixture::k_height
             );
-            auto variants = std::vector<annotation::Variant>{};
-            variants.emplace_back(
-                annotation::test::variant(
+            auto appearances = std::vector<annotation::Appearance>{};
+            appearances.emplace_back(
+                annotation::test::appearance(
                     "default",
                     sourceId,
                     wholeCrop,
@@ -1869,7 +1869,7 @@ namespace uf::workbench
                 "menu_entry",
                 annotation::test::capabilities(annotation::Identify{}),
                 wholeCrop,
-                std::move(variants)
+                std::move(appearances)
             );
 
             auto created = annotation::AuthoringDocument::create(
@@ -1980,15 +1980,15 @@ namespace uf::workbench
         REQUIRE(parsed.has_value());
         CHECK(annotation::serializeAuthoringDocument(*parsed) == text);
         REQUIRE(parsed->elements().size() == 1U);
-        REQUIRE(parsed->elements().front().variants().size() == 1U);
-        CHECK(parsed->elements().front().variants().front().colourKey() == key);
+        REQUIRE(parsed->elements().front().appearances().size() == 1U);
+        CHECK(parsed->elements().front().appearances().front().colourKey() == key);
 
         // The draft the editing layer works through has to carry the key across
         // both conversions, or every edit made here would silently drop it.
         auto const draft = makeAuthoringDraft(*parsed);
-        REQUIRE(draft.recognizers.size() == 1U);
-        REQUIRE(draft.recognizers.at(0).variants.size() == 1U);
-        CHECK(draft.recognizers.at(0).variants.at(0).colourKey == key);
+        REQUIRE(draft.elements.size() == 1U);
+        REQUIRE(draft.elements.at(0).appearances.size() == 1U);
+        CHECK(draft.elements.at(0).appearances.at(0).colourKey == key);
         auto const rebuilt = buildAuthoringDocument(draft);
         REQUIRE(rebuilt.has_value());
         CHECK(annotation::serializeAuthoringDocument(*rebuilt) == text);
@@ -2007,9 +2007,9 @@ namespace uf::workbench
         REQUIRE(parsed.has_value());
         CHECK(annotation::serializeAuthoringDocument(*parsed) == text);
         REQUIRE(parsed->elements().size() == 1U);
-        REQUIRE(parsed->elements().front().variants().size() == 1U);
+        REQUIRE(parsed->elements().front().appearances().size() == 1U);
         CHECK_FALSE(
-            parsed->elements().front().variants().front().colourKey().has_value()
+            parsed->elements().front().appearances().front().colourKey().has_value()
         );
 
         // The control for the case above: the same document with a key does emit
@@ -2181,8 +2181,8 @@ namespace uf::workbench
         {
             auto const* element = history.document().findElement(anchorId);
             REQUIRE(element != nullptr);
-            REQUIRE(element->variants().size() == 1U);
-            return element->variants().front().colourKey();
+            REQUIRE(element->appearances().size() == 1U);
+            return element->appearances().front().colourKey();
         };
         REQUIRE_FALSE(storedKey().has_value());
 

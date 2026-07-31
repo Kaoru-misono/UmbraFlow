@@ -56,7 +56,7 @@ namespace uf::annotation
                 std::format(
                     "page recognition {} at anchor {}",
                     searchStopDescription(stop.reason),
-                    stop.recognizerId.value().toString()
+                    stop.elementId.value().toString()
                 )
             );
         }
@@ -141,8 +141,8 @@ namespace uf::annotation
             UF_UNREACHABLE_MSG("Unknown PixelFormat value");
         }
 
-        // Variant scores are not comparable as they stand: maximumSad is a
-        // function of each variant's own template size and threshold, so a raw
+        // Appearance scores are not comparable as they stand: maximumSad is a
+        // function of each appearance's own template size and threshold, so a raw
         // SAD from a 40x12 template says nothing beside one from a 90x20. The
         // exact integer comparison of two normalized margins is their cross
         // product, which needs no division and so loses nothing to truncation.
@@ -151,7 +151,7 @@ namespace uf::annotation
         // lower normalized distance wins; a search that matched nothing at all
         // is last. A tie keeps the incumbent, which is the earlier declaration.
         // Declaration order decides ties and nothing else, because "first past
-        // the threshold wins" would let a wide early variant answer for a
+        // the threshold wins" would let a wide early appearance answer for a
         // narrow later one and move the click to its own rectangle, with
         // nothing downstream able to notice.
         [[nodiscard]]
@@ -182,7 +182,7 @@ namespace uf::annotation
             {
                 return fail(
                     AutomationErrorKind::InternalInvariant,
-                    "comparing two variant margins overflowed"
+                    "comparing two appearance margins overflowed"
                 );
             }
             return *left < *right;
@@ -317,31 +317,31 @@ namespace uf::annotation
             std::move(manifest),
             std::move(templates)
         };
-        for (auto const& recognizer : runtime.m_manifest.catalog().recognizers())
+        for (auto const& element : runtime.m_manifest.catalog().elements())
         {
-            for (auto const& variant : recognizer.variants())
+            for (auto const& appearance : element.appearances())
             {
                 auto const* p_asset = runtime.m_manifest.findAsset(
-                    recognizer.id(),
-                    variant.name
+                    element.id(),
+                    appearance.name
                 );
                 UF_CHECK(p_asset != nullptr);
                 auto const* p_template = runtime.findTemplate(p_asset->templateHash);
                 UF_CHECK(p_template != nullptr);
                 if (
-                    p_template->width != variant.templateRect.width()
-                    || p_template->height != variant.templateRect.height()
+                    p_template->width != appearance.templateRect.width()
+                    || p_template->height != appearance.templateRect.height()
                 )
                 {
                     return invalidRuntime(
                         std::format(
-                            "runtime template {} dimensions {}x{} do not match variant {} geometry {}x{}",
+                            "runtime template {} dimensions {}x{} do not match appearance {} geometry {}x{}",
                             p_asset->templateHash.toString(),
                             p_template->width,
                             p_template->height,
-                            variant.name.value(),
-                            variant.templateRect.width(),
-                            variant.templateRect.height()
+                            appearance.name.value(),
+                            appearance.templateRect.width(),
+                            appearance.templateRect.height()
                         )
                     );
                 }
@@ -438,8 +438,8 @@ namespace uf::annotation
 
         for (auto const id : anchorOrder)
         {
-            auto const* p_recognizer = catalog.findRecognizer(id);
-            UF_CHECK(p_recognizer != nullptr);
+            auto const* p_element = catalog.findElement(id);
+            UF_CHECK(p_element != nullptr);
 
             auto const remainingBudget = checkedSubtract(
                 policy.maximumPixelComparisons,
@@ -447,14 +447,14 @@ namespace uf::annotation
             );
             UF_CHECK(remainingBudget.has_value());
             // No page is known yet -- that is exactly what lets one search
-            // serve every page -- so identify never honours a pinned variant
+            // serve every page -- so identify never honours a pinned appearance
             // and always folds across all of them.
             UF_TRY_VALUE(
                 attempt,
                 matchElement(
                     grayFrame,
-                    *p_recognizer,
-                    p_recognizer->searchRoi(),
+                    *p_element,
+                    p_element->searchRoi(),
                     std::nullopt,
                     *remainingBudget,
                     poll
@@ -475,8 +475,8 @@ namespace uf::annotation
             {
                 return PageRecognitionAttempt{
                     .result = PageRecognitionStop{
-                        .recognizerId = id,
-                        .reason       = *p_stop,
+                        .elementId = id,
+                        .reason    = *p_stop,
                     },
                     .completedAnchorEvidence   = std::move(completedEvidence),
                     .completedPixelComparisons = completedPixelComparisons,
@@ -583,23 +583,23 @@ namespace uf::annotation
 
     auto RecognitionRuntime::matchElement(
         GrayImage const& grayFrame,
-        RecognizerDefinition const& recognizer,
+        CompiledElement const& element,
         PixelRect searchRoi,
-        std::optional<ResourceName> const& pinnedVariant,
+        std::optional<ResourceName> const& pinnedAppearance,
         uint64 maximumPixelComparisons,
         SadSearchPoll const& poll
     ) const -> Result<ElementMatchAttempt>
     {
         auto completedPixelComparisons = uint64{0};
         auto best                      = std::optional<AnchorEvidence>{};
-        for (auto const& variant : recognizer.variants())
+        for (auto const& appearance : element.appearances())
         {
-            if (pinnedVariant.has_value() && variant.name != *pinnedVariant)
+            if (pinnedAppearance.has_value() && appearance.name != *pinnedAppearance)
             {
                 continue;
             }
 
-            auto const* p_asset = m_manifest.findAsset(recognizer.id(), variant.name);
+            auto const* p_asset = m_manifest.findAsset(element.id(), appearance.name);
             UF_CHECK(p_asset != nullptr);
             auto const* p_template = findTemplate(p_asset->templateHash);
             UF_CHECK(p_template != nullptr);
@@ -641,8 +641,8 @@ namespace uf::annotation
             UF_TRY_VALUE(
                 evaluation,
                 AnchorEvaluation::fromSadOutcome(
-                    recognizer,
-                    variant,
+                    element,
+                    appearance,
                     searchRoi,
                     sadReport.outcome
                 )
@@ -665,7 +665,7 @@ namespace uf::annotation
 
         UF_CHECK_MSG(
             best.has_value(),
-            "matching an element requires at least one searchable variant"
+            "matching an element requires at least one searchable appearance"
         );
         return ElementMatchAttempt{
             .result                    = *std::move(best),
@@ -684,8 +684,8 @@ namespace uf::annotation
         UF_TRY(ensureCompatibleFrame(frame, liveFingerprint));
 
         auto const& catalog      = m_manifest.catalog();
-        auto const* p_recognizer = catalog.findRecognizer(elementId);
-        if (p_recognizer == nullptr)
+        auto const* p_element = catalog.findElement(elementId);
+        if (p_element == nullptr)
         {
             return invalidRuntime(
                 std::format(
@@ -706,12 +706,12 @@ namespace uf::annotation
         }
 
         auto const searchRoi = p_reference->searchRoi.value_or(
-            p_recognizer->searchRoi()
+            p_element->searchRoi()
         );
 
-        // No variants means the page's own resolution located it: the
+        // No appearances means the page's own resolution located it: the
         // rectangle is where it was annotated, and there is nothing to match.
-        if (p_recognizer->variants().empty())
+        if (p_element->appearances().empty())
         {
             return ActionTargetAttempt{
                 .result                    = AnchorEvidence::locatedByPage(elementId, searchRoi),
@@ -722,7 +722,7 @@ namespace uf::annotation
         auto const poll = makeSadSearchPoll(policy);
         return withGrayFrame(
             frame,
-            [this, p_recognizer, p_reference, searchRoi, &policy, &poll](
+            [this, p_element, p_reference, searchRoi, &policy, &poll](
                 GrayImage const& grayFrame
             ) -> Result<ActionTargetAttempt>
             {
@@ -730,9 +730,9 @@ namespace uf::annotation
                     attempt,
                     matchElement(
                         grayFrame,
-                        *p_recognizer,
+                        *p_element,
                         searchRoi,
-                        p_reference->variant,
+                        p_reference->appearance,
                         policy.maximumPixelComparisons,
                         poll
                     )
@@ -745,7 +745,7 @@ namespace uf::annotation
                 {
                     return ActionTargetAttempt{
                         .result = PageRecognitionStop{
-                            .recognizerId = p_recognizer->id(),
+                            .elementId = p_element->id(),
                             .reason       = *p_stop,
                         },
                         .completedPixelComparisons = attempt.completedPixelComparisons,
@@ -770,8 +770,8 @@ namespace uf::annotation
     {
         UF_TRY(ensureCompatibleFrame(frame, liveFingerprint));
 
-        auto const* p_recognizer = m_manifest.catalog().findRecognizer(elementId);
-        if (p_recognizer == nullptr)
+        auto const* p_element = m_manifest.catalog().findElement(elementId);
+        if (p_element == nullptr)
         {
             return invalidRuntime(
                 std::format(
@@ -780,7 +780,7 @@ namespace uf::annotation
                 )
             );
         }
-        if (p_recognizer->findVariant(appearance) == nullptr)
+        if (p_element->findAppearance(appearance) == nullptr)
         {
             return invalidRuntime(
                 std::format(
@@ -795,7 +795,7 @@ namespace uf::annotation
         auto const poll   = makeSadSearchPoll(policy);
         return withGrayFrame(
             frame,
-            [this, p_recognizer, searchRoi, &pinned, &policy, &poll](
+            [this, p_element, searchRoi, &pinned, &policy, &poll](
                 GrayImage const& grayFrame
             ) -> Result<ActionTargetAttempt>
             {
@@ -803,7 +803,7 @@ namespace uf::annotation
                     attempt,
                     matchElement(
                         grayFrame,
-                        *p_recognizer,
+                        *p_element,
                         searchRoi,
                         pinned,
                         policy.maximumPixelComparisons,
@@ -818,7 +818,7 @@ namespace uf::annotation
                 {
                     return ActionTargetAttempt{
                         .result = PageRecognitionStop{
-                            .recognizerId = p_recognizer->id(),
+                            .elementId = p_element->id(),
                             .reason       = *p_stop,
                         },
                         .completedPixelComparisons = attempt.completedPixelComparisons,
@@ -833,11 +833,11 @@ namespace uf::annotation
     }
 
     auto resolveClickPixel(
-        RecognizerDefinition const& recognizer,
+        CompiledElement const& element,
         PixelRect const& matchedRect
     ) -> Result<PixelPoint>
     {
-        auto const& interact = recognizer.capabilities().interact();
+        auto const& interact = element.capabilities().interact();
         if (!interact.has_value())
         {
             return invalidRuntime(

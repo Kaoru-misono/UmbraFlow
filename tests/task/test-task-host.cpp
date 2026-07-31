@@ -73,15 +73,15 @@ namespace uf::task
         constexpr auto k_projectId = std::string_view{"personal.task_host"};
 
         // The task every run in this file drives: one observation cycle, one page
-        // check, one action search, one click. It names both a page and a
-        // recognizer, so the run.resources_validated line carries a non-empty
+        // check, one action search, one click. It names both a page and an
+        // element, so the run.resources_validated line carries a non-empty
         // closure of each.
         constexpr auto k_taskSource = std::string_view{
             "local cycle = ctx:cycle_open()\n"
             "local page = ctx:cycle_page(cycle)\n"
             "if page == nil then ctx:cycle_close(cycle) return 0 end\n"
             "if not page:is(uf.pages.home) then ctx:cycle_close(cycle) return 0 end\n"
-            "local hit = ctx:cycle_find(cycle, uf.recognizers.daily_button)\n"
+            "local hit = ctx:cycle_find(cycle, uf.elements.daily_button)\n"
             "if hit == nil then ctx:cycle_close(cycle) return 0 end\n"
             "ctx:cycle_click(cycle, hit)\n"
             "return 1\n"
@@ -229,7 +229,7 @@ namespace uf::task
                         anno::test::capabilities(anno::Identify{}),
                         anno::test::pixelRect(0, 0, 3, 2),
                         {
-                            anno::test::variant(
+                            anno::test::appearance(
                                 "default",
                                 sourceId,
                                 anno::test::pixelRect(0, 0, 1, 1)
@@ -246,7 +246,7 @@ namespace uf::task
                         ),
                         anno::test::pixelRect(0, 0, 3, 2),
                         {
-                            anno::test::variant(
+                            anno::test::appearance(
                                 "default",
                                 sourceId,
                                 anno::test::pixelRect(1, 0, 2, 2)
@@ -383,7 +383,7 @@ namespace uf::task
         auto stampedPrefix(std::string_view kind, std::size_t sequence) -> std::string
         {
             return std::format(
-                R"({{"schema":"umbraflow-trace/v1","kind":"{}")"
+                R"({{"schema":"umbraflow-trace/v2","kind":"{}")"
                 R"(,"seq":{},"runId":1,"generationId":1,"frontEnd":"task")",
                 kind,
                 sequence
@@ -811,7 +811,7 @@ namespace uf::task
         );
     }
 
-    TEST_CASE("a TaskHost run writes one ordered umbraflow-trace/v1 run bracket")
+    TEST_CASE("a TaskHost run writes one ordered umbraflow-trace/v2 run bracket")
     {
         // The acceptance criterion for the whole slice: one call drives the host
         // events, the engine's recognition and delivery events, and the script
@@ -872,7 +872,7 @@ namespace uf::task
         CHECK(
             lines.front()
             == std::format(
-                R"({{"schema":"umbraflow-trace/v1","kind":"run.started")"
+                R"({{"schema":"umbraflow-trace/v2","kind":"run.started")"
                 R"(,"seq":1,"runId":1,"generationId":1,"frontEnd":"task")"
                 R"(,"projectId":"{}","taskName":"daily")"
                 R"(,"sourceHash":"{}","frameworkVersion":"{}")"
@@ -887,13 +887,13 @@ namespace uf::task
         );
         CHECK(
             lines[1]
-            == R"({"schema":"umbraflow-trace/v1","kind":"run.resources_validated")"
+            == R"({"schema":"umbraflow-trace/v2","kind":"run.resources_validated")"
                R"(,"seq":2,"runId":1,"generationId":1,"frontEnd":"task")"
-               R"(,"recognizers":["daily_button"],"pages":["home"]})"
+               R"(,"elements":["daily_button"],"pages":["home"]})"
         );
         CHECK(
             lines.back()
-            == R"({"schema":"umbraflow-trace/v1","kind":"run.finished")"
+            == R"({"schema":"umbraflow-trace/v2","kind":"run.finished")"
                R"(,"seq":13,"runId":1,"generationId":1,"frontEnd":"task","runOutcome":"Completed"})"
         );
 

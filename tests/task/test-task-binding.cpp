@@ -168,7 +168,7 @@ namespace uf::task
                 local page = ctx:cycle_page(cycle)
                 if page == nil then return 0 end
                 if not page:is(uf.pages.page_a) then return 0 end
-                local hit = ctx:cycle_find(cycle, uf.recognizers.action_target)
+                local hit = ctx:cycle_find(cycle, uf.elements.action_target)
                 if hit == nil then return 0 end
                 ctx:cycle_click(cycle, hit)
                 return 1
@@ -212,7 +212,7 @@ namespace uf::task
                 -- finds and clicks.
                 local page = ctx:cycle_page(first)
                 if page == nil then return 0 end
-                local hit = ctx:cycle_find(first, uf.recognizers.action_target)
+                local hit = ctx:cycle_find(first, uf.elements.action_target)
                 if hit == nil then return 0 end
                 ctx:cycle_click(first, hit)
                 return 1
@@ -246,7 +246,7 @@ namespace uf::task
                 local cycle = ctx:cycle_open()
 
                 local ok, err = pcall(function()
-                    return ctx:cycle_find(cycle, uf.recognizers.action_target)
+                    return ctx:cycle_find(cycle, uf.elements.action_target)
                 end)
                 if ok then return 0 end
                 if err.kind ~= 'page_unresolved' then return 0 end
@@ -259,7 +259,7 @@ namespace uf::task
                 -- same ticket now finds and delivers.
                 local page = ctx:cycle_page(cycle)
                 if page == nil then return 0 end
-                local hit = ctx:cycle_find(cycle, uf.recognizers.action_target)
+                local hit = ctx:cycle_find(cycle, uf.elements.action_target)
                 if hit == nil then return 0 end
                 ctx:cycle_click(cycle, hit)
                 return 1
@@ -352,7 +352,7 @@ namespace uf::task
             constexpr std::string_view source = R"lua(
                 local cycle = ctx:cycle_open()
                 local page = ctx:cycle_page(cycle)
-                local hit = ctx:cycle_find(cycle, uf.recognizers.action_target)
+                local hit = ctx:cycle_find(cycle, uf.elements.action_target)
                 ctx:cycle_click(cycle, hit)
 
                 local okPage, errPage = pcall(function() return ctx:cycle_page(cycle) end)
@@ -366,7 +366,7 @@ namespace uf::task
                 if pcall(function() errPage.kind = 'tampered' end) then return 0 end
 
                 local okFind, errFind = pcall(function()
-                    return ctx:cycle_find(cycle, uf.recognizers.action_target)
+                    return ctx:cycle_find(cycle, uf.elements.action_target)
                 end)
                 if okFind or errFind.kind ~= 'stale_observation' then return 0 end
 
@@ -379,7 +379,7 @@ namespace uf::task
                 -- against a cycle that IS open.
                 local closed = ctx:cycle_open()
                 if ctx:cycle_page(closed) == nil then return 0 end
-                local staleHit = ctx:cycle_find(closed, uf.recognizers.action_target)
+                local staleHit = ctx:cycle_find(closed, uf.elements.action_target)
                 ctx:cycle_close(closed)
                 local okClosed, errClosed = pcall(function()
                     return ctx:cycle_page(closed)
@@ -417,7 +417,7 @@ namespace uf::task
 
                 local second = ctx:cycle_open()
                 local page = ctx:cycle_page(second)
-                local hit = ctx:cycle_find(second, uf.recognizers.action_target)
+                local hit = ctx:cycle_find(second, uf.elements.action_target)
                 ctx:cycle_click(second, hit)
                 ctx:cycle_close(second)
 
@@ -522,7 +522,7 @@ namespace uf::task
             constexpr std::string_view source = R"lua(
                 local cycle = ctx:cycle_open()
                 if ctx:cycle_page(cycle) == nil then return 0 end
-                local hit = ctx:cycle_find(cycle, uf.recognizers.action_target)
+                local hit = ctx:cycle_find(cycle, uf.elements.action_target)
                 ctx:cycle_close(cycle)
                 return (hit == nil) and 1 or 0
             )lua";
@@ -555,7 +555,7 @@ namespace uf::task
                     local cycle = ctx:cycle_open()
                     local page = ctx:cycle_page(cycle)
                     if page ~= nil and page:is(target) then
-                        local hit = ctx:cycle_find(cycle, uf.recognizers.action_target)
+                        local hit = ctx:cycle_find(cycle, uf.elements.action_target)
                         if hit ~= nil then
                             ctx:cycle_click(cycle, hit)
                         else
@@ -617,7 +617,7 @@ namespace uf::task
             constexpr std::string_view source = R"lua(
                 local cycle = ctx:cycle_open()
                 local page = ctx:cycle_page(cycle)
-                local hit = ctx:cycle_find(cycle, uf.recognizers.action_target)
+                local hit = ctx:cycle_find(cycle, uf.elements.action_target)
                 ctx:cycle_click(cycle, hit)
 
                 local ok, err = ctx:try(function() ctx:cycle_click(cycle, hit) end)
@@ -658,7 +658,7 @@ namespace uf::task
             constexpr std::string_view source = R"lua(
                 local cycle = ctx:cycle_open()
                 local page = ctx:cycle_page(cycle)
-                local hit = ctx:cycle_find(cycle, uf.recognizers.action_target)
+                local hit = ctx:cycle_find(cycle, uf.elements.action_target)
                 ctx:cycle_click(cycle, hit)
 
                 local ok, real = ctx:try(function() ctx:cycle_click(cycle, hit) end)
@@ -729,7 +729,7 @@ namespace uf::task
                 constexpr std::string_view source = R"lua(
                     local cycle = ctx:cycle_open()
                     local page = ctx:cycle_page(cycle)
-                    local hit = ctx:cycle_find(cycle, uf.recognizers.action_target)
+                    local hit = ctx:cycle_find(cycle, uf.elements.action_target)
                     ctx:cycle_click(cycle, hit)
                     -- Unguarded: the stale click raises and nothing catches it.
                     ctx:cycle_click(cycle, hit)
@@ -756,7 +756,7 @@ namespace uf::task
                 constexpr std::string_view source = R"lua(
                     local cycle = ctx:cycle_open()
                     local page = ctx:cycle_page(cycle)
-                    local hit = ctx:cycle_find(cycle, uf.recognizers.action_target)
+                    local hit = ctx:cycle_find(cycle, uf.elements.action_target)
                     ctx:cycle_click(cycle, hit)
 
                     local ok, real = ctx:try(function() ctx:cycle_click(cycle, hit) end)
@@ -796,7 +796,7 @@ namespace uf::task
             constexpr std::string_view source = R"lua(
                 local cycle = ctx:cycle_open()
                 local page = ctx:cycle_page(cycle)
-                local hit = ctx:cycle_find(cycle, uf.recognizers.action_target)
+                local hit = ctx:cycle_find(cycle, uf.elements.action_target)
                 ctx:cycle_click(cycle, hit)
 
                 local ok, err = ctx:try(function() ctx:cycle_click(cycle, hit) end)
@@ -1018,7 +1018,7 @@ namespace uf::task
                 if pcall(function() return umbra.pages.page_a end) then return 0 end
 
                 if uf.pages.page_a == nil then return 0 end
-                if uf.recognizers.action_target == nil then return 0 end
+                if uf.elements.action_target == nil then return 0 end
                 if getmetatable(uf.pages.page_a) ~= 'uf.page' then return 0 end
                 return 1
             )lua";
@@ -1149,7 +1149,7 @@ namespace uf::task
             constexpr std::string_view source = R"lua(
                 local cycle = ctx:cycle_open()
                 local page = ctx:cycle_page(cycle)
-                local hit = ctx:cycle_find(cycle, uf.recognizers.action_target)
+                local hit = ctx:cycle_find(cycle, uf.elements.action_target)
                 if page == nil or hit == nil then return 0 end
                 ctx:cycle_click(cycle, hit)
 
@@ -1217,7 +1217,7 @@ namespace uf::task
             constexpr std::string_view source = R"lua(
                 local cycle = ctx:cycle_open()
                 local page = ctx:cycle_page(cycle)
-                local hit = ctx:cycle_find(cycle, uf.recognizers.action_target)
+                local hit = ctx:cycle_find(cycle, uf.elements.action_target)
                 ctx:cycle_click(cycle, hit)
                 ctx:cycle_close(cycle)
                 return 1
@@ -1328,7 +1328,7 @@ namespace uf::task
 
                 local resolved = ctx:cycle_open()
                 local page2 = ctx:cycle_page(resolved)
-                local hit = ctx:cycle_find(resolved, uf.recognizers.action_target)
+                local hit = ctx:cycle_find(resolved, uf.elements.action_target)
                 ctx:cycle_close(resolved)
                 return (page1 == nil and page2 ~= nil and hit == nil) and 1 or 0
             )lua";

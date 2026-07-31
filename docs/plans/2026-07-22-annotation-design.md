@@ -1,5 +1,16 @@
 # P0-A Visual Annotation System & Data Model — S0 Locked Design
 
+> **Vocabulary redirect (2026-07-31).** This document is a dated record and is not
+> rewritten. Read `recognizer` / `RecognizerId` / `uf.recognizers` / `recognizerId`
+> below as **element** / `ElementId` / `uf.elements` / `elementId`,
+> `RecognizerDefinition` and `RecognizerVariant` as `CompiledElement` and
+> `CompiledAppearance`, and `Variant` / `variant` as `Appearance` / `appearance`.
+> `RecognitionCatalog` and `RecognitionRuntime` keep their names -- they name the
+> activity. The schema ids moved with the rename: `umbraflow-authoring/v4`,
+> `umbraflow-annotations/v3`, `umbraflow-trace/v2`. Canonical vocabulary:
+> `CONTEXT.md` "Annotation model". The authoring document's `[[annotation]]`
+> table is now `[[element]]` in the same v4 bump.
+
 > Status: **S0 LOCKED — developer-approved 2026-07-23**.
 >
 > This document is the authority for the shared S0 annotation contract and the

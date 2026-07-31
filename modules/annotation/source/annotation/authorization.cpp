@@ -21,25 +21,25 @@ namespace uf::annotation
 
     ActionDetection::ActionDetection(
         ProjectId&& projectId,
-        ElementId recognizerId,
+        ElementId elementId,
         Detection&& detection
     ) noexcept
         : m_projectId{std::move(projectId)}
-        , m_recognizerId{recognizerId}
+        , m_elementId{elementId}
         , m_detection{std::move(detection)}
     {
     }
 
     auto ActionDetection::create(
         RecognitionCatalog const& catalog,
-        ElementId recognizerId,
+        ElementId elementId,
         Detection detection
     ) -> Result<ActionDetection>
     {
-        auto const* p_recognizer = catalog.findRecognizer(recognizerId);
+        auto const* p_element = catalog.findElement(elementId);
         if (
-            p_recognizer == nullptr
-            || !p_recognizer->capabilities().hasInteract()
+            p_element == nullptr
+            || !p_element->capabilities().hasInteract()
         )
         {
             return fail(
@@ -48,17 +48,17 @@ namespace uf::annotation
             );
         }
 
-        if (p_recognizer->name().value() != detection.label().value())
+        if (p_element->name().value() != detection.label().value())
         {
             return fail(
                 AutomationErrorKind::ActionRejected,
-                "detection label does not match its bound recognizer identity"
+                "detection label does not match its bound element identity"
             );
         }
 
         return ActionDetection{
             ProjectId{catalog.projectId()},
-            recognizerId,
+            elementId,
             std::move(detection)
         };
     }
@@ -67,7 +67,7 @@ namespace uf::annotation
     {
         return m_projectId;
     }
-    auto ActionDetection::recognizerId() const -> ElementId { return m_recognizerId; }
+    auto ActionDetection::elementId() const -> ElementId { return m_elementId; }
     auto ActionDetection::detection() const noexcept -> Detection const& { return m_detection; }
 
     auto authorizeCoordinateAction(
@@ -99,11 +99,11 @@ namespace uf::annotation
         }
 
         auto const* p_page = catalog.findPage(resolvedPage.pageId());
-        auto const* p_recognizer = catalog.findRecognizer(actionDetection.recognizerId());
+        auto const* p_element = catalog.findElement(actionDetection.elementId());
         if (
             p_page == nullptr
-            || p_recognizer == nullptr
-            || !p_recognizer->capabilities().hasInteract()
+            || p_element == nullptr
+            || !p_element->capabilities().hasInteract()
         )
         {
             return fail(
@@ -117,7 +117,7 @@ namespace uf::annotation
         // checking that it was.
         auto const* p_reference = catalog.findReference(
             resolvedPage.pageId(),
-            actionDetection.recognizerId()
+            actionDetection.elementId()
         );
         if (p_reference == nullptr || !p_reference->exercised.hasInteract())
         {

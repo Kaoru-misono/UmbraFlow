@@ -60,7 +60,7 @@ adapter，并把它们装进 `task::TaskRunConfig` 交给 `task::TaskHost`。CLI
   （等待一个页面、寻找一个 action target、存在时点击一次）已于 2026-07-29 删除
   （`docs/plans/2026-07-29-three-layer-task-system.md` 第十六节）。`runProduct`
   绑定目标后调用 `TaskHost::startTask`，run 内部发生什么由项目的 task 脚本决定。
-- 不做资源名称翻译。脚本直接以 `uf.pages.NAME` 与 `uf.recognizers.NAME`
+- 不做资源名称翻译。脚本直接以 `uf.pages.NAME` 与 `uf.elements.NAME`
   命名资源（根已于 2026-07-29 由 `umbra` 改名为 `uf`，`2f4af93`），
   `modules/task/source/task/script-validator.hpp` 的
   `task::validateScriptResources` 在 VM 存在之前就把每处引用对能力面闭合。
@@ -177,7 +177,7 @@ config 字段一起删除；今天它们会被上面那条未知 flag 规则**�
 观察周期账本、四要件点击授权、指纹检查和 trace 全在 `TaskContext` 背后的 C++ 里——所以操作者
 拿到的原语与拒绝，和 task 拿到的一模一样。这里没有 chunk、没有源码、没有任何字符串会变成代码，
 沙箱关掉的 eval 路径也一条都没重开。操作者能命名的只有 task 能命名的：会话持有一份与
-`uf.recognizers` / `uf.pages` 同源的 `CapabilitySurface`。`raise`、`emit` 与 `random` 被有意
+`uf.elements` / `uf.pages` 同源的 `CapabilitySurface`。`raise`、`emit` 与 `random` 被有意
 排除——操作者没有自己的 framework 结构要记录，而放进 `emit` 会给 `framework.*` 事件添第二个
 作者，而 trace 校验状态机现在在 operator 流上对这类事件直接拒绝。
 
@@ -392,7 +392,7 @@ PUBLIC，因为两个 adapter 实现的是 engine 端口。跨边界的是：
   ——这是两个前端唯一的生命周期差别。
 
 `task` 与 `engine` 都不看到 HWND、console handler、文件选择语法、标题 substring，也不看到
-queue 与 results 文件。反方向，CLI 不解释 recognizer evidence、page outcome 或授权规则，
+queue 与 results 文件。反方向，CLI 不解释 element evidence、page outcome 或授权规则，
 也不再驱动 `EngineSession` 的任何动词：它只调用 `loadProject`，然后调 `startTask` 或
 `startOperatorSession`，再读报告。
 
@@ -442,7 +442,7 @@ operator 流对 `framework.*` 事件直接拒绝。它还钉住一次投出去�
 
 `tests/task/test-task-host.cpp` 覆盖原先住在这里的运行生命周期。它把一个真实
 annotation 项目发布到临时目录，用 fake 端口把 `TaskHost` 端到端跑通，再把 trace 文件
-读回来：验收用例断言整条有序的 `umbraflow-trace/v1` 括号——从 `run.started` 经 engine
+读回来：验收用例断言整条有序的 `umbraflow-trace/v2` 括号——从 `run.started` 经 engine
 事件与 `task.native_call` 直到 `run.finished`，且处在同一 seq、同一 run 与 generation
 身份下。它还钉住同一 task 的两次 run 抽到不同种子、报告里的种子就是 `run.started`
 记录的那枚、失败的 run 是被报告而不是让调用失败、缺失的 task 在打开任何 trace 文件

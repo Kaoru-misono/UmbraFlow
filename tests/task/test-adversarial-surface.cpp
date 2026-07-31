@@ -422,7 +422,7 @@ namespace uf::task
                 auto const source = prelude + R"lua(
                     local cycle = ctx:cycle_open()
                     local page = ctx:cycle_page(cycle)
-                    local hit = ctx:cycle_find(cycle, uf.recognizers.action_target)
+                    local hit = ctx:cycle_find(cycle, uf.elements.action_target)
 
                     local roots = {
                         -- The framework global BY NAME, first. A project
@@ -431,10 +431,10 @@ namespace uf::task
                         -- hangs off the environment table itself, which a
                         -- project script has no name for.
                         frameworkSentinel, frameworkTaskRegistry,
-                        ctx, task, uf, uf.pages, uf.recognizers, uf.errors,
+                        ctx, task, uf, uf.pages, uf.elements, uf.errors,
                         table.clone(ctx), table.clone(task), table.clone(uf),
                         cycle, page, hit,
-                        uf.pages.page_a, uf.recognizers.action_target,
+                        uf.pages.page_a, uf.elements.action_target,
                         -- library indirection, including the string metatable a
                         -- sandboxed VM leaves readable
                         ('').format, getmetatable(''), getmetatable('').__index,
@@ -546,7 +546,7 @@ namespace uf::task
             constexpr std::string_view source = R"lua(
                 local cycle = ctx:cycle_open()
                 local page = ctx:cycle_page(cycle)
-                local hit = ctx:cycle_find(cycle, uf.recognizers.action_target)
+                local hit = ctx:cycle_find(cycle, uf.elements.action_target)
                 ctx:cycle_click(cycle, hit)
 
                 -- Control: the genuine carrier IS classified by this exact path.
@@ -558,7 +558,7 @@ namespace uf::task
                 -- and each wears a label of its own. try must refuse all of them.
                 local impostors = {
                     uf.pages.page_a,
-                    uf.recognizers.action_target,
+                    uf.elements.action_target,
                     cycle,
                     page,
                     hit,
@@ -629,7 +629,7 @@ namespace uf::task
                 constexpr std::string_view source = R"lua(
                     local cycle = ctx:cycle_open()
                     local page = ctx:cycle_page(cycle)
-                    local hit = ctx:cycle_find(cycle, uf.recognizers.action_target)
+                    local hit = ctx:cycle_find(cycle, uf.elements.action_target)
                     ctx:cycle_click(cycle, hit)
                     local ok, real = ctx:try(function() ctx:cycle_click(cycle, hit) end)
                     if ok ~= false or real == nil then return 1 end
@@ -653,14 +653,14 @@ namespace uf::task
 
             // Handles and the uf data tables are identities the host hands out.
             // A script that could write one could redirect a click; a script that
-            // could add one could name a recognizer the catalog never authorized.
+            // could add one could name an element the catalog never authorized.
             constexpr Attack attacks[] = {
                 {"control: the data tables are readable",
-                 "uf.pages.page_a ~= nil and uf.recognizers.action_target ~= nil"
+                 "uf.pages.page_a ~= nil and uf.elements.action_target ~= nil"
                  " and uf.errors.timeout == 'timeout'"},
                 {"uf is frozen", "table.isfrozen(uf)"},
                 {"uf.pages is frozen", "table.isfrozen(uf.pages)"},
-                {"uf.recognizers is frozen", "table.isfrozen(uf.recognizers)"},
+                {"uf.elements is frozen", "table.isfrozen(uf.elements)"},
                 {"uf.errors is frozen", "table.isfrozen(uf.errors)"},
                 {"a root field cannot be replaced",
                  "not pcall(function() uf.pages = {} end)"},
@@ -670,8 +670,8 @@ namespace uf::task
                  "not pcall(rawset, uf, 'pages', {})"},
                 {"a page cannot be added",
                  "not pcall(function() uf.pages.forged = uf.pages.page_a end)"},
-                {"a recognizer cannot be replaced",
-                 "not pcall(rawset, uf.recognizers, 'action_target', uf.pages.page_a)"},
+                {"an element cannot be replaced",
+                 "not pcall(rawset, uf.elements, 'action_target', uf.pages.page_a)"},
                 {"an error constant cannot be replaced",
                  "not pcall(function() uf.errors.timeout = 'cancelled' end)"},
                 {"a handle refuses a field write",
@@ -682,15 +682,15 @@ namespace uf::task
                  "not pcall(setmetatable, uf.pages.page_a, {})"},
                 {"a handle hands out a label, not its metatable",
                  "getmetatable(uf.pages.page_a) == 'uf.page'"
-                 " and getmetatable(uf.recognizers.action_target) == 'uf.recognizer'"},
+                 " and getmetatable(uf.elements.action_target) == 'uf.element'"},
                 {"a handle's printed form is its label and nothing else",
                  "tostring(uf.pages.page_a) == 'uf.page'"
-                 " and tostring(uf.recognizers.action_target) == 'uf.recognizer'"},
+                 " and tostring(uf.elements.action_target) == 'uf.element'"},
                 {"a live ticket and hit are just as opaque",
                  "(function()\n"
                  "    local cycle = ctx:cycle_open()\n"
                  "    local page = ctx:cycle_page(cycle)\n"
-                 "    local hit = ctx:cycle_find(cycle, uf.recognizers.action_target)\n"
+                 "    local hit = ctx:cycle_find(cycle, uf.elements.action_target)\n"
                  "    local sealed =\n"
                  "        tostring(cycle) == 'uf.cycle'\n"
                  "        and tostring(hit) == 'uf.hit'\n"
@@ -711,7 +711,7 @@ namespace uf::task
                  "(function()\n"
                  "    local copy = table.clone(uf)\n"
                  "    return copy.pages == uf.pages\n"
-                 "        and copy.recognizers == uf.recognizers\n"
+                 "        and copy.elements == uf.elements\n"
                  "        and table.isfrozen(copy.pages)\n"
                  "        and not pcall(function() copy.pages.forged = 1 end)\n"
                  "end)()"},
@@ -992,7 +992,7 @@ namespace uf::task
                 constexpr std::string_view source = R"lua(
                     local cycle = ctx:cycle_open()
                     local page = ctx:cycle_page(cycle)
-                    local hit = ctx:cycle_find(cycle, uf.recognizers.action_target)
+                    local hit = ctx:cycle_find(cycle, uf.elements.action_target)
                     ctx:cycle_click(cycle, hit)
 
                     -- A genuine host-minted carrier, in hand before anything is

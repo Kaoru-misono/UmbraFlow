@@ -101,12 +101,12 @@ namespace uf::cli
         );
 
         auto const found = parseDriveCommand(
-            R"({"op":"cycle_find","cycle":3,"recognizer":"end_turn"})"
+            R"({"op":"cycle_find","cycle":3,"element":"end_turn"})"
         );
         REQUIRE(found.has_value());
         CHECK(
             std::get<DriveCycleFindCommand>(*found)
-            == DriveCycleFindCommand{.cycle = 3, .recognizer = "end_turn"}
+            == DriveCycleFindCommand{.cycle = 3, .element = "end_turn"}
         );
 
         auto const clicked = parseDriveCommand(
@@ -209,8 +209,8 @@ namespace uf::cli
             R"({"op":"wait_page","page":"battle","timeout_ms":30000})",
             // find_click: the same, for its own three.
             R"({"op":"find_click","timeout_ms":5000,"poll_ms":250})",
-            R"({"op":"find_click","recognizer":"end_turn","poll_ms":250})",
-            R"({"op":"find_click","recognizer":"end_turn","timeout_ms":5000})",
+            R"({"op":"find_click","element":"end_turn","poll_ms":250})",
+            R"({"op":"find_click","element":"end_turn","timeout_ms":5000})",
         })
         {
             CAPTURE(line);
@@ -223,13 +223,13 @@ namespace uf::cli
         }
 
         auto const findClick = parseDriveCommand(
-            R"({"op":"find_click","recognizer":"end_turn","timeout_ms":5000,"poll_ms":250})"
+            R"({"op":"find_click","element":"end_turn","timeout_ms":5000,"poll_ms":250})"
         );
         REQUIRE(findClick.has_value());
         CHECK(
             std::get<DriveFindClickCommand>(*findClick)
             == DriveFindClickCommand{
-                .recognizer   = "end_turn",
+                .element   = "end_turn",
                 .timeout      = millis(5'000),
                 .pollInterval = millis(250),
             }

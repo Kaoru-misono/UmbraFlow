@@ -84,7 +84,7 @@ Windows 产品入口使用两个薄适配器：
   > 可定位。它不授权任何东西：页面参数挑的是一行引用，不是发一张许可；定位到的 hit 仍然会在
   > 投递时被拒，除非 `act` 解析出的页面引用了该元素并行使 `interact`。裁决出处：
   > [能力模型计划](../../plans/2026-07-31-annotation-model-capabilities.md) §2.2。
-- `ActionFound` 保存原始 `AnchorEvidence`、绑定 recognizer identity 的 `ActionDetection` 和确定性的 `PixelPoint`。点击点由 annotation 的 `resolveClickPixel` 决定；match rect 经 `pixelRectToFrameRect` 变成 authorization-ready `Detection`。
+- `ActionFound` 保存原始 `AnchorEvidence`、绑定 element identity 的 `ActionDetection` 和确定性的 `PixelPoint`。点击点由 annotation 的 `resolveClickPixel` 决定；match rect 经 `pixelRectToFrameRect` 变成 authorization-ready `Detection`。
 - `EngineSession::act(Observation&&, ResolvedPage const&, ActionFound const&)` 消费 observation，成功返回记录被授权 `FrameId` 与 client-space 坐标的 `ActReceipt`。
 - `EngineSession::pressKey(Observation&&, KeyName)` 同样消费 observation，返回 `KeyReceipt`——
   `{ frameId, key }`，没有点，因为按键本来就没有点；这也正是它是一个独立回执、而不是一个带着
@@ -145,7 +145,7 @@ loadRuntimeProject
 ### 追踪事件
 
 schema 由 `modules/trace/source/trace/event.hpp` 拥有，id 是
-`umbraflow-trace/v1`；engine 与 task 写同一条流。engine 发出的事件是：
+`umbraflow-trace/v2`；engine 与 task 写同一条流。engine 发出的事件是：
 
 - `engine.observed`、`engine.observation_invalidated`。
 - `engine.page_resolved`，outcome 为 `Resolved` / `Unknown` / `Ambiguous` /
@@ -181,7 +181,7 @@ run 持有一个值并盖到每一行上，没有任何发射方能忘掉它，�
 **这个枚举有三个值，其中只有两个会走到 `TaskHost`**（2026-07-31）。`"task"` 与 `"operator"`
 是能力面的两个消费者，闩使它们按 generation 互斥。`"annotation"` 就是 `umbra-input-agent`
 ——标注会话为了「量」一个裸窗口而驱动它。它够不到任何项目，因此没有 generation 可闩、
-也没有能力面可消费，于是它**根本不写 `umbraflow-trace/v1` 的行**：该 schema 的每一行都带
+也没有能力面可消费，于是它**根本不写 `umbraflow-trace/v2` 的行**：该 schema 的每一行都带
 `runId` 与 `generationId`，而标注会话两者皆无。它盖章的是自己的 results 文件，用的是这个枚举的
 值和 `trace::frontEndWireName` 的拼写——这样将来它接进宿主时，读者已经认识的那条归属不会变。
 见 [`entry-input-agent.md`](entry-input-agent.md)。

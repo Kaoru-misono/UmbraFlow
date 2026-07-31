@@ -59,9 +59,9 @@ namespace uf::task
     // nothing here restores one.
     //
     // WHAT AN OPERATOR MAY NAME. Only what a task may name: the session holds a copy
-    // of the same CapabilitySurface the uf.recognizers and uf.pages tables are built
+    // of the same CapabilitySurface the uf.elements and uf.pages tables are built
     // from, and a name it does not carry is refused. An operator cannot address a
-    // page anchor, an unexposed recognizer, or a raw id.
+    // page anchor, an unexposed element, or a raw id.
     //
     // WHAT IS DELIBERATELY ABSENT. There is no `raise`, no `emit` and no `random`.
     // The first two exist so the trusted framework can fail on its own terms and
@@ -136,10 +136,10 @@ namespace uf::task
         // The ticket for `ordinal`, for the ledger to judge. See m_ticket.
         [[nodiscard]] auto ticketFor(uint64 ordinal) const noexcept -> CycleTicket;
 
-        // The recognizer or page the operator named, or an InvalidResource. Both
+        // The element or page the operator named, or an InvalidResource. Both
         // resolve against the same surface a task's uf tables are built from.
         [[nodiscard]]
-        auto findRecognizer(std::string_view name) const
+        auto findElement(std::string_view name) const
             -> Result<annotation::ElementId>;
 
         [[nodiscard]]
@@ -225,7 +225,7 @@ namespace uf::task
         [[nodiscard]]
         auto cycleFind(
             uint64 cycleOrdinal,
-            std::string_view recognizerName
+            std::string_view elementName
         ) -> Result<std::optional<uint64>>;
 
         [[nodiscard]] auto cycleClick(uint64 cycleOrdinal, uint64 hitId) -> Status;

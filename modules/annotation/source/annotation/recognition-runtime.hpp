@@ -37,7 +37,7 @@ namespace uf::annotation
 
     struct PageRecognitionStop final
     {
-        ElementId           recognizerId;
+        ElementId           elementId;
         SadSearchStopReason reason{};
     };
 
@@ -78,8 +78,8 @@ namespace uf::annotation
         };
 
         // Searching one element across its appearances: either the folded
-        // evidence, or the stop that ended the search. A stop in any variant
-        // stops the whole element -- taking the best of the variants already
+        // evidence, or the stop that ended the search. A stop in any appearance
+        // stops the whole element -- taking the best of the appearances already
         // searched would make the answer a function of the comparison budget,
         // which is a configuration value.
         struct ElementMatchAttempt final
@@ -105,14 +105,14 @@ namespace uf::annotation
         // Every declared appearance is searched and the results are folded into
         // one piece of evidence before anything downstream sees them. The fold
         // has to happen here: PageResolver ANDs over a page's required anchors,
-        // so V variants compiled into V required anchors would turn "any
+        // so V appearances compiled into V required anchors would turn "any
         // appearance matches" into "all of them must".
         [[nodiscard]]
         auto matchElement(
             GrayImage const& grayFrame,
-            RecognizerDefinition const& recognizer,
+            CompiledElement const& element,
             PixelRect searchRoi,
-            std::optional<ResourceName> const& pinnedVariant,
+            std::optional<ResourceName> const& pinnedAppearance,
             uint64 maximumPixelComparisons,
             SadSearchPoll const& poll
         ) const -> Result<ElementMatchAttempt>;
@@ -213,7 +213,7 @@ namespace uf::annotation
     // takes the center of the region the page put it in.
     [[nodiscard]]
     auto resolveClickPixel(
-        RecognizerDefinition const& recognizer,
+        CompiledElement const& element,
         PixelRect const& matchedRect
     ) -> Result<PixelPoint>;
 }

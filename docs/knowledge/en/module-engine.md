@@ -161,7 +161,7 @@ The public runtime surface lives in `modules/engine/source/engine/session.hpp`:
   > located hit is still refused at delivery unless `act`'s resolved page references the element
   > for interaction. Deciding artifact:
   > [the capability plan](../../plans/2026-07-31-annotation-model-capabilities.md) §2.2.
-- `ActionFound` stores the original `AnchorEvidence`, an `ActionDetection` bound to the recognizer
+- `ActionFound` stores the original `AnchorEvidence`, an `ActionDetection` bound to the element
   identity, and a deterministic `PixelPoint`. The click point is decided by annotation's
   `resolveClickPixel`; the match rect becomes an authorization-ready `Detection` through
   `pixelRectToFrameRect`.
@@ -234,7 +234,7 @@ failed.
 
 ### Trace Events
 
-The schema is owned by `modules/trace/source/trace/event.hpp` under the id `umbraflow-trace/v1`;
+The schema is owned by `modules/trace/source/trace/event.hpp` under the id `umbraflow-trace/v2`;
 engine and task write into the same stream. The events engine emits are:
 
 - `engine.observed`, `engine.observation_invalidated`.
@@ -275,7 +275,7 @@ produced it are one fact rather than two that have to agree.
 `"operator"` are the two consumers of the capability surface, and the latch makes them mutually
 exclusive per generation. `"annotation"` is `umbra-input-agent` — an authoring session driving a
 raw window to measure it. It reaches no project, so it has no generation to latch and no capability
-surface to consume, and it therefore writes no `umbraflow-trace/v1` line at all: every line of that
+surface to consume, and it therefore writes no `umbraflow-trace/v2` line at all: every line of that
 schema carries a `runId` and a `generationId`, and an annotation session has neither. What it stamps
 is its own results file, using this enum's value and `trace::frontEndWireName`'s spelling, so the
 day it joins the host the attribution a reader already knows does not change. See

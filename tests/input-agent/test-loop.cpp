@@ -512,7 +512,7 @@ namespace uf::input_agent
     {
         // A results file is an annotation session's whole evidence stream. The
         // session reaches no host, so it has no run and no generation and writes
-        // no umbraflow-trace/v1 line; without this stamp nothing in the file says
+        // no umbraflow-trace/v2 line; without this stamp nothing in the file says
         // an annotation session produced it, and the three lines below come from
         // three different authors -- the session, the loop refusing a line that
         // never parsed, and the loop's own quit. That is why the stamp sits where

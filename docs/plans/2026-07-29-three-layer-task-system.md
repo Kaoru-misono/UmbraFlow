@@ -1,5 +1,10 @@
 # 三层 Task System — 目标架构与实施计划
 
+> **词汇统一(2026-07-31)。** 本文正文已按新词汇改写:脚本能力根表
+> `uf.recognizers` 改名 `uf.elements`,trace 字段 `recognizerId` 改名 `elementId`,
+> 合并 trace schema 随之升到 `umbraflow-trace/v2`。裁决与理由见
+> `CONTEXT.md` 的「Annotation model」一节。
+
 > 状态:**已定方向,2026-07-29 开发者确认**。允许大范围重构与删除。
 >
 > 权威性:本文取代
@@ -102,7 +107,7 @@ framework 若用 C++ 写,上面每一个都是「C++ 回调进 Lua」:project �
 cycle_open(deadline)              -> ticket        一次 capture
 cycle_close(ticket)               -> ()            确定性释放,幂等
 cycle_page(ticket)                -> page | nil    同帧页面解析
-cycle_find(ticket, recognizer)    -> hit | nil     同帧查找
+cycle_find(ticket, element)    -> hit | nil     同帧查找
 cycle_click(ticket, hit)          -> receipt       消费周期
 ```
 
@@ -186,7 +191,7 @@ C++ 兜底释放账本里的一切。
 cycle_open()                      -> ticket | raise        捕获期限由宿主铸,不经脚本
 cycle_close(ticket)               -> ()
 cycle_page(ticket)                -> page | nil          nil = Unknown/Ambiguous(已入 trace)
-cycle_find(ticket, recognizer)    -> hit | nil           nil = Tier A 未命中
+cycle_find(ticket, element)    -> hit | nil           nil = Tier A 未命中
 cycle_click(ticket, hit)          -> receipt | raise
 
 -- 时间与等待:全部有界、感知 stop token
@@ -292,7 +297,7 @@ random(...)                       -> number
 >
 > - **收 ticket,不收 hit。** 没有命中序数,因为根本没有命中:按键不指名位置,没有「先找到
 >   什么」这一步。
-> - **不要求已解析的 page。** 标注项目声明的是「这一页授权哪些 recognizer」,对按键则什么
+> - **不要求已解析的 page。** 标注项目声明的是「这一页授权哪些 element」,对按键则什么
 >   都没声明;这里的一个 resolved page 会是一份没有东西能核对它的证据。
 > - **仍然要求周期打开,并且花掉它。** 要求打开的周期不是仪式:它把这次按键放进「同时只有
 >   一个周期」的定序里,与它前后的每次观察和点击排在一起,并给它的 trace 行一个周期序数,
@@ -344,7 +349,7 @@ random(...)                       -> number
 
 ```lua
 uf.pages.<name>          -- 冻结句柄
-uf.recognizers.<name>    -- 冻结句柄
+uf.elements.<name>    -- 冻结句柄
 uf.task                  -- define / interrupt / import(P1) / backoff
 uf.errors.<kind>         -- 错误 kind 常量,由 AutomationErrorKind 生成
 ```
@@ -382,7 +387,7 @@ return uf.task.define {
     run = function(ctx)
         ctx:step("daily", function()
             ctx:wait_for_page(uf.pages.home, { timeout_ms = 60000 }, function(home)
-                local hit = home:find(uf.recognizers.daily_button)
+                local hit = home:find(uf.elements.daily_button)
                 if hit then
                     home:click(hit)
                 end
@@ -413,7 +418,7 @@ return uf.task.interrupt {
     max_hits = 3,
 
     handle = function(ctx, cycle)
-        local close = cycle:find(uf.recognizers.close_dialog)
+        local close = cycle:find(uf.elements.close_dialog)
         if close then
             cycle:click(close)
         end
@@ -544,7 +549,7 @@ boot 顺序:
 -> C++ 构造私有能力面,留在栈上
 -> luau_load(framework bundle, env = framework env, arg = 私有能力面),执行,
    冻结每个模块的 exports 并按模块名绑进 framework env;随后丢掉宿主自己那份引用
--> 装宿主数据表(uf.recognizers / uf.pages / uf.errors)为普通全局并递归冻结
+-> 装宿主数据表(uf.elements / uf.pages / uf.errors)为普通全局并递归冻结
 -> luaL_sandbox
 -> C++ 构造 project env 原型:显式白名单,【没有】metatable,因而没有 __index 链
    指向 framework env 或主 globals;白名单含 projectGlobals(`uf`)与
@@ -716,7 +721,7 @@ veto 第 6 条(人为阻塞每个长耗时 binding,验证总退出仍在预算�
   合并前有两份(`uf-tables.cpp`——当时还叫 `umbra-tables.cpp`——的 `snakeName` 与
   `trace/event.cpp` 的
   `errorKindWireName`),注释要求二者恒等但无共享真相、无一致性测试(p0b §6 第 5 项)。
-- `uf.errors` 由**宿主在装能力面时用 C++ 直接构建**,与 `uf.pages` / `uf.recognizers`
+- `uf.errors` 由**宿主在装能力面时用 C++ 直接构建**,与 `uf.pages` / `uf.elements`
   并列,递归只读。
 - 两条测试:表覆盖 enum 的每个取值(不多不少);同一 kind 在 trace 里的拼写与脚本
   可见的拼写是同一个字符串。
@@ -888,7 +893,7 @@ run.resources_validated
 run.finished             outcome / error kind
 engine.observed          capture session id / target generation / frame id
 engine.page_resolved     page id | unknown | ambiguous,分数
-engine.action_found      recognizer id / sad score / matched rect
+engine.action_found      element id / sad score / matched rect
 engine.action_authorized
 engine.action_rejected   原因
 engine.action_delivered  client 坐标 / receipt
@@ -1298,7 +1303,7 @@ SLA;一条 trace 足以解释每一步。
   `domain::automationErrorWireName`,错误 kind 表由宿主从它构建。根改名已于阶段 2d
   `2f4af93` 落地,这张表今天挂在 `uf.errors` 上。)
 - project 环境里的全部裸动词。(**已删,阶段 2b-2 `e89bc53`**:project 全局 `uf` 只剩
-  数据——`uf.recognizers` / `uf.pages` / `uf.errors`,`buildUfData` 里没有任何能观察或
+  数据——`uf.elements` / `uf.pages` / `uf.errors`,`buildUfData` 里没有任何能观察或
   动作的东西;原来的动词由 `ctx` 顶替。)
 
 **entry/cli**
@@ -1409,7 +1414,7 @@ SLA;一条 trace 足以解释每一步。
 #### 2d — 根 `umbra` → `uf`(**已完成,`2f4af93`**)
 
 - `lua_setglobal` 的根名与校验器的 `k_namespace` 都改成 `uf`;六张句柄 metatable 的标签
-  改成 `uf.recognizer` / `uf.page` / `uf.cycle` / `uf.resolved_page` / `uf.hit` /
+  改成 `uf.element` / `uf.page` / `uf.cycle` / `uf.resolved_page` / `uf.hit` /
   `uf.error`;Tier C 哨兵串改成 `"uf: task cancelled"`;错误消息与示例一并改。
   `umbra-tables.cpp` 随之改名为 `uf-tables.cpp`。
 - **刻意不动的边界**:产品名 `UmbraFlow` / `umbra-flow` / `umbra-workbench`,以及
@@ -1565,7 +1570,7 @@ pause 的实现(只留 §13 的签名,以及「framework 的观察周期边界�
    代价是错误报得晚:一个从不触发的 interrupt 带着非法 id 也不会有人说什么。
    第一个真日常时一并看:要么接受这个延迟,要么给 framework 一个查上限的原语。
 
-2. workbench 共享元素展开名(`back_<page>`)直接成为 `uf.recognizers.back_main`
+2. workbench 共享元素展开名(`back_<page>`)直接成为 `uf.elements.back_main`
    这类 member key,可读性是否接受(p0b 遗留项)。
 3. **最小验证门是否补一道 clang 检查。** 2026-07-29 实测发现一个结构性盲区:
    `modules/core/source/core/safety/annotations.hpp` 里的 `UF_LIFETIME_BOUND` 等
@@ -1613,7 +1618,7 @@ pause 的实现(只留 §13 的签名,以及「framework 的观察周期边界�
 - `CONTEXT.md` — capability 根改 `uf`;新增词条「观察周期(Observation cycle)」、
   「票据(Ticket)」、「私有能力面」;`umbra` 移入 _Avoid_。
 - `docs/plans/2026-07-22-annotation-design.md` §4 — S0 拼写改
-  `uf.recognizers.NAME` / `uf.pages.NAME`,加日期注记。
+  `uf.elements.NAME` / `uf.pages.NAME`,加日期注记。
 - `docs/plans/2026-07-21-product-form-and-roadmap.md` — 落地约束「脚本只看到
   `umbra.*`」改 `uf.*`;`:244` 指向已删 ADR 0001 的注记改为指向本文 §11 的可逆性论证。
 - `docs/plans/2026-07-27-p0b-script-layer.md` — 顶部加「脚本层裁决已被本文取代」;

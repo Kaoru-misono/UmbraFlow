@@ -54,7 +54,7 @@ check a whole model without the GUI — both formulas are small and fixed:
 - threshold: `maxSad = (10000 - bp) * 255 * w * h / 10000`
   (`SimilarityThreshold::maximumSad`, `modules/annotation/.../catalog.cpp`)
 
-Slide each recognizer's template over every captured source within its
+Slide each element's template over every captured source within its
 `search_roi` and compare the minimum SAD against `maxSad`. An anchor must hit its
 own source and miss all the others. In the recorded run the cross-screen misses
 sat at 2.85x–4.15x the threshold, which settled the "do these two top-left
@@ -93,14 +93,14 @@ return task.define {
             -- The block receives the observation CYCLE that resolved the page,
             -- so the find and the click both read the same frame.
             ctx:wait_for_page(uf.pages.main, { timeout_ms = 30000 }, function(cycle)
-                local hit = cycle:find(uf.recognizers.battleCharacter)
+                local hit = cycle:find(uf.elements.battleCharacter)
                 if hit then cycle:click(hit) end
             end)
         end)
 
         ctx:step("open_closeup", function()
             ctx:wait_for_page(uf.pages.character, { timeout_ms = 30000 }, function(cycle)
-                local hit = cycle:find(uf.recognizers.meiling)
+                local hit = cycle:find(uf.elements.meiling)
                 if hit then cycle:click(hit) end
             end)
         end)
@@ -222,7 +222,7 @@ raise from a primitive.
 ### Symptom
 
 Unchecking an action target's current page in the properties panel is refused
-with `action_target recognizer must authorize at least one page`, and the
+with `action_target element must authorize at least one page`, and the
 checkbox snaps back.
 
 ### Root cause
@@ -286,7 +286,7 @@ explicitly.
 
 ### Regression check
 
-Every colour-keyed recognizer needs both halves: a positive frame it was not
+Every colour-keyed element needs both halves: a positive frame it was not
 authored against, and a frame that genuinely lacks the UI. The negative half is
 what catches this, and it has to be *genuinely* UI-free — a frame captured while
 the HUD was fading in still contains most of the glyph and will match, which

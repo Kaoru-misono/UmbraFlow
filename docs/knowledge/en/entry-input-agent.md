@@ -62,7 +62,7 @@ feeds it — and `main.cpp` is the process boundary above it.
 **Every results line is stamped with the front-end that produced it**: it opens with
 `"front_end":"annotation"`, from `trace::FrontEnd::Annotation` under `trace::frontEndWireName`'s
 spelling. `input_agent_support` links `modules/trace` for that one type. The agent writes no
-`umbraflow-trace/v1` line, because every line of that schema carries a `runId` and a `generationId`
+`umbraflow-trace/v2` line, because every line of that schema carries a `runId` and a `generationId`
 and an annotation session — which reaches no project — has neither; the results file is its whole
 evidence stream, and the stamp is applied by the writer rather than by each serializer for the
 reason `trace::TraceRecorder` rather than each emitter owns that stamp.

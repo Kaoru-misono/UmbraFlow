@@ -69,7 +69,7 @@ namespace uf::task
     inline constexpr auto k_actionId = "00000000-0000-0000-0000-000000000013";
     inline constexpr auto k_pageId   = "00000000-0000-0000-0000-000000000111";
 
-    // The second page and its two recognizers, so a popup is a page in its own
+    // The second page and its two elements, so a popup is a page in its own
     // right and a target page exists for a wait to be waiting FOR.
     inline constexpr auto k_popupAnchorId = "00000000-0000-0000-0000-000000000012";
     inline constexpr auto k_closeDialogId = "00000000-0000-0000-0000-000000000014";
@@ -120,9 +120,9 @@ namespace uf::task
     // exactly one, so its name is fixed here rather than threaded through each
     // call.
     [[nodiscard]]
-    inline auto soleVariant() -> anno::RecognizerVariant
+    inline auto soleAppearance() -> anno::CompiledAppearance
     {
-        return anno::test::recognizerVariant(
+        return anno::test::compiledAppearance(
             "default",
             anno::test::pixelRect(0, 0, 1, 1),
             anno::test::threshold(10'000)
@@ -130,17 +130,17 @@ namespace uf::task
     }
 
     [[nodiscard]]
-    inline auto soleVariantAsset(
+    inline auto soleAppearanceAsset(
         anno::ContentHash const& templateHash,
         anno::ContentHash const& sourceHash
-    ) -> std::vector<anno::RuntimeVariantAsset>
+    ) -> std::vector<anno::RuntimeAppearanceAsset>
     {
-        auto assets = std::vector<anno::RuntimeVariantAsset>{};
+        auto assets = std::vector<anno::RuntimeAppearanceAsset>{};
         assets.emplace_back(
-            anno::RuntimeVariantAsset{
-                .variantName  = anno::test::resourceName("default"),
-                .templateHash = templateHash,
-                .sourceHash   = sourceHash,
+            anno::RuntimeAppearanceAsset{
+                .appearanceName = anno::test::resourceName("default"),
+                .templateHash   = templateHash,
+                .sourceHash     = sourceHash,
             }
         );
         return assets;
@@ -168,27 +168,27 @@ namespace uf::task
             anno::test::projectId("personal.task_binding"),
             fingerprint,
             {
-                anno::RuntimeRecognizerSpec{
-                    .definition = anno::test::recognizer(
+                anno::RuntimeElementSpec{
+                    .definition = anno::test::element(
                         fingerprint,
                         anchorA,
                         "anchor_a",
                         anno::test::capabilities(anno::Identify{}),
                         anno::test::pixelRect(0, 0, 3, 1),
-                        {soleVariant()}
+                        {soleAppearance()}
                     ),
-                    .variants = soleVariantAsset(anchorTemplate.hash, *sourceHash),
+                    .appearances = soleAppearanceAsset(anchorTemplate.hash, *sourceHash),
                 },
-                anno::RuntimeRecognizerSpec{
-                    .definition = anno::test::recognizer(
+                anno::RuntimeElementSpec{
+                    .definition = anno::test::element(
                         fingerprint,
                         actionT,
                         "action_target",
                         anno::test::capabilities(std::nullopt, anno::Interact{}),
                         anno::test::pixelRect(0, 0, 3, 1),
-                        {soleVariant()}
+                        {soleAppearance()}
                     ),
-                    .variants = soleVariantAsset(actionTemplate.hash, *sourceHash),
+                    .appearances = soleAppearanceAsset(actionTemplate.hash, *sourceHash),
                 },
             },
             {anno::test::page(pageA, "page_a")},
@@ -240,32 +240,32 @@ namespace uf::task
                                     std::string_view name,
                                     anno::ContentHash templateHash)
         {
-            return anno::RuntimeRecognizerSpec{
-                .definition = anno::test::recognizer(
+            return anno::RuntimeElementSpec{
+                .definition = anno::test::element(
                     fingerprint,
                     id,
                     std::string{name},
                     anno::test::capabilities(anno::Identify{}),
                     anno::test::pixelRect(0, 0, 3, 1),
-                    {soleVariant()}
+                    {soleAppearance()}
                 ),
-                .variants = soleVariantAsset(templateHash, *sourceHash),
+                .appearances = soleAppearanceAsset(templateHash, *sourceHash),
             };
         };
         auto const actionSpec = [&](anno::ElementId id,
                                     std::string_view name,
                                     anno::ContentHash templateHash)
         {
-            return anno::RuntimeRecognizerSpec{
-                .definition = anno::test::recognizer(
+            return anno::RuntimeElementSpec{
+                .definition = anno::test::element(
                     fingerprint,
                     id,
                     std::string{name},
                     anno::test::capabilities(std::nullopt, anno::Interact{}),
                     anno::test::pixelRect(0, 0, 3, 1),
-                    {soleVariant()}
+                    {soleAppearance()}
                 ),
-                .variants = soleVariantAsset(templateHash, *sourceHash),
+                .appearances = soleAppearanceAsset(templateHash, *sourceHash),
             };
         };
 
@@ -691,7 +691,7 @@ namespace uf::task
     // The run's recorder, a constructed EngineSession over it, the surface
     // built from its own catalog, and a non-owning observer of the click sink.
     // The surface is captured before the runtime moves into the session, so
-    // both name the same recognizer and page identities.
+    // both name the same element and page identities.
     //
     // The recorder is declared first and held through a unique_ptr: the
     // session borrows it (see engine/session.hpp), so it must outlive the

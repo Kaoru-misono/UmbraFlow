@@ -28,40 +28,40 @@ namespace uf::annotation
         constexpr auto k_pageBId = "00000000-0000-0000-0000-000000000102";
 
         [[nodiscard]]
-        auto singleVariantAnchor(
+        auto singleAppearanceAnchor(
             ElementId id,
             std::string name,
             PixelRect templateRect
-        ) -> RecognizerDefinition
+        ) -> CompiledElement
         {
-            return test::recognizer(
+            return test::element(
                 test::fingerprint(),
                 id,
                 std::move(name),
                 test::capabilities(Identify{}),
                 test::pixelRect(0, 0, 4, 4),
-                std::vector<RecognizerVariant>{
-                    test::recognizerVariant("only", templateRect),
+                std::vector<CompiledAppearance>{
+                    test::compiledAppearance("only", templateRect),
                 }
             );
         }
 
         // Every threshold and every rectangle in the evidence belongs to the
-        // variant that produced it, so the variant has to be named alongside the
+        // appearance that produced it, so the appearance has to be named alongside the
         // element it belongs to.
         auto anchorEvaluation(
-            RecognizerDefinition const& recognizer,
+            CompiledElement const& element,
             uint64 score
         ) -> AnchorEvaluation
         {
             auto const outcome = SadSearchOutcome{
                 std::optional<SadMatch>{SadMatch{0, 0, score}}
             };
-            REQUIRE(recognizer.variants().size() == 1U);
+            REQUIRE(element.appearances().size() == 1U);
             auto result = AnchorEvaluation::fromSadOutcome(
-                recognizer,
-                recognizer.variants().front(),
-                recognizer.searchRoi(),
+                element,
+                element.appearances().front(),
+                element.searchRoi(),
                 outcome
             );
             REQUIRE(result.has_value());
@@ -84,12 +84,12 @@ namespace uf::annotation
             auto const anchorB = test::elementId(k_anchorBId);
             auto const pageA = test::pageId(k_pageAId);
             auto const pageB = test::pageId(k_pageBId);
-            auto recognizers = std::vector<RecognizerDefinition>{};
-            recognizers.emplace_back(
-                singleVariantAnchor(anchorA, "anchor_a", test::pixelRect(0, 0, 1, 1))
+            auto elements = std::vector<CompiledElement>{};
+            elements.emplace_back(
+                singleAppearanceAnchor(anchorA, "anchor_a", test::pixelRect(0, 0, 1, 1))
             );
-            recognizers.emplace_back(
-                singleVariantAnchor(anchorB, "anchor_b", test::pixelRect(0, 0, 1, 1))
+            elements.emplace_back(
+                singleAppearanceAnchor(anchorB, "anchor_b", test::pixelRect(0, 0, 1, 1))
             );
 
             // page_a requires A and forbids B; page_b requires A alone. The two
@@ -120,7 +120,7 @@ namespace uf::annotation
             return ResolutionFixture{
                 .catalog = test::catalog(
                     projectFingerprint,
-                    std::move(recognizers),
+                    std::move(elements),
                     {
                         test::page(pageA, "page_a"),
                         test::page(pageB, "page_b"),
@@ -140,8 +140,8 @@ namespace uf::annotation
             uint64 anchorBScore
         ) -> Result<PageOutcome>
         {
-            auto const* p_anchorA = fixture.catalog.findRecognizer(fixture.anchorA);
-            auto const* p_anchorB = fixture.catalog.findRecognizer(fixture.anchorB);
+            auto const* p_anchorA = fixture.catalog.findElement(fixture.anchorA);
+            auto const* p_anchorB = fixture.catalog.findElement(fixture.anchorB);
             REQUIRE(p_anchorA != nullptr);
             REQUIRE(p_anchorB != nullptr);
             auto const evaluations = std::array{
@@ -158,7 +158,7 @@ namespace uf::annotation
 
     TEST_CASE("anchor evidence accepts the inclusive integer SAD boundary")
     {
-        auto const anchor = singleVariantAnchor(
+        auto const anchor = singleAppearanceAnchor(
             test::elementId(k_anchorAId),
             "anchor",
             test::pixelRect(0, 0, 2, 2)
@@ -186,8 +186,8 @@ namespace uf::annotation
             REQUIRE(p_evidence->matchedRect().has_value());
             // Which appearance answered is part of the evidence, or "why did
             // this match" cannot be read back out of the stream.
-            REQUIRE(p_evidence->variantName().has_value());
-            CHECK(p_evidence->variantName()->value() == "only");
+            REQUIRE(p_evidence->appearanceName().has_value());
+            CHECK(p_evidence->appearanceName()->value() == "only");
         }
     }
 
@@ -223,9 +223,9 @@ namespace uf::annotation
     TEST_CASE("a search that never finished is not classified as a decided miss")
     {
         auto const fixture = resolutionFixture();
-        auto const* p_anchor = fixture.catalog.findRecognizer(fixture.anchorA);
+        auto const* p_anchor = fixture.catalog.findElement(fixture.anchorA);
         REQUIRE(p_anchor != nullptr);
-        REQUIRE(p_anchor->variants().size() == 1U);
+        REQUIRE(p_anchor->appearances().size() == 1U);
         auto const identity = FrameIdentity{
             CaptureSessionId{7},
             TargetGeneration::fromValue(3),
@@ -274,7 +274,7 @@ namespace uf::annotation
             auto const sadOutcome = SadSearchOutcome{testCase.reason};
             auto const evaluation = AnchorEvaluation::fromSadOutcome(
                 *p_anchor,
-                p_anchor->variants().front(),
+                p_anchor->appearances().front(),
                 p_anchor->searchRoi(),
                 sadOutcome
             );
