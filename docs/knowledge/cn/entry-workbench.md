@@ -17,15 +17,54 @@
 >
 > *`entry/workbench` 下留下来的是标注后端*，编译成静态库
 > `${PROJECT_NAME}_workbench_support`，由 `umbra-authoring` 链接：编辑层
-> （`authoring-edit.*`、`edit-page.*`、`authoring-actions.*`、`page-view.*`、
-> `project-tree.*`、`panel-state.*`）、证伪矩阵（`preview.*`、`model-check-job.*`、
-> `model-check-view.*`）、项目持久化（`project-persistence.*`，底下是
-> `platform/windows-file-publication.*`）和源图导入（`source-ingestion.*`）。下文讲
-> 编辑/校验/发布流程、以及「`AuthoringDocument` 是唯一写入路径」的那些段落在概念上仍然成立
-> ——把「workbench 做 X」读成「标注后端做 X，由 CLI 驱动」即可。归档时记下两处纠缠：
-> `EditPage` 的公开签名里仍然出现 `AppState` 与 `PanelUiState`，所以中间层在它被重新表达
-> 之前搬不走；`project-persistence` 会调到 `windows-file-publication`，那是每一次
-> `umbra-authoring` 保存背后的原子写，所以那个文件不算 GUI，也就没有跟着走。
+> （`authoring-edit.*`、`edit-page.*`、`page-view.*`）、证伪矩阵（`preview.*`）、
+> 项目持久化（`project-persistence.*`，底下是
+> `platform/windows-file-publication.*`）和源图导入（`source-ingestion.*`）。
+> 这就是全部。下文讲编辑/校验/发布流程、以及「`AuthoringDocument` 是唯一写入路径」
+> 的那些段落在概念上仍然成立——把「workbench 做 X」读成「标注后端做 X，由 CLI 驱动」
+> 即可。有一处纠缠值得留着：`project-persistence` 会调到
+> `windows-file-publication`，那是每一次 `umbra-authoring` 保存背后的原子写，
+> 所以那个文件不算 GUI，也就没有跟着走。
+>
+> > **更正（2026-07-31，`f768e6c`，外加同一个工作树里对 `model-check-job` 的删除）。**
+> > 上面这份清单原本还把 `authoring-actions.*`、`project-tree.*`、`panel-state.*`、
+> > `model-check-job.*`、`model-check-view.*` 列为幸存者。它们已经没了。`f768e6c`
+> > 归档了剩下的面板层——`workbench-app`（`AppState`、`CanvasView`、
+> > `mintResourceId`）、`panel-state`（`PanelUiState`、`ToolbarCommand`、
+> > `PendingEdit`、`InlineRename`、`ColourKeyMemo`、`PendingDelete`）、
+> > `authoring-actions`、`canvas-math`（`CanvasPoint`、`ScreenPixelRect`、
+> > `RectGripKind`）、`model-check-view`、`project-tree`（`ScreenBucket`）——连同
+> > 它们的测试；其中 `mintResourceId` 与 `searchRoiForDrawnTemplate` 被救进
+> > `edit-page`，`findEditableRecognizer` 被救进 `authoring-edit`。
+> > `model-check-job` 随后也删了：`ModelCheckJob` 的存在只是为了把 `runModelCheck`
+> > 挪出 GUI 线程，GUI 归档之后 `umbra-authoring check` 是同步跑矩阵的，于是它唯一
+> > 剩下的消费者是它自己的测试。`preview.*` 里的 `runModelCheck`、`ModelCheck`、
+> > `ModelCheckCell`、`classifyModelCell`、`RecognizerMargin` 一字未动。
+> >
+> > 因此本 banner 记的那处纠缠**已经解除**：`EditPage` 的签名里不再出现 `AppState`
+> > 或 `PanelUiState`。它现在按值收一份 `AuthoringDraft` 外加一个由调用方命名的不透明
+> > `baseRevision`，`commit() &&` 移出 `Committed{draft, baseRevision}`，
+> > `commitSelecting` 已删除，陈旧基线的拒绝搬进了
+> > `applyCommittedPage(AuthoringEditHistory&, EditPage::Committed const&)`。
+> > 裁决依据：[能力模型计划](../../plans/2026-07-31-annotation-model-capabilities.md)
+> > §四之二。
+> >
+> > 这条更正把 banner 的覆盖面**扩大**而不是收窄。下文**每一处**提到 `AppState`、
+> > `PanelUiState`、`CanvasView`、canvas math、project tree 或面板的段落写的都是已删
+> > 代码——包括《编辑状态与修改入口》《ResourceId 铸造》（那个函数现在在 `edit-page`
+> > 里）《所有权与生命周期》，以及《未来扩展》——后者提出的 `modules/authoring` 接缝
+> > 整个是按 `AppState` 定义的。《测试》一节两头都错：它说七个 synthetic 文件，而
+> > `tests/CMakeLists.txt` 现在注册五个；它列的七个里有三个
+> > （`test-workbench-app`、`test-canvas-math`、`test-model-check-job`）已不存在；
+> > 而 `test-edit-page.cpp`（19 个用例，现在是编辑层的主要覆盖）根本没被列进去。
+> > 仍然可读的是：《源图导入》《保存、重开与发布顺序》《有界 Preview》《挑颜色键》。
+>
+> *现在的标注入口是 `umbra-authoring`，不是本文这个二进制。* 它是标注项目的唯一途径
+> （见 `docs/ARCHITECTURE.md`；[`00-overview.md`](00-overview.md) 的入口表自
+> 2026-07-30 起就写着「目前唯一的标注工具」）。知识库还没有它的页面——
+> [`entry-cli.md`](entry-cli.md) 讲的是 `umbra-flow` 的 `run`/`drive`，只顺带提过一次
+> `umbra-authoring`——所以重新同步时欠一份 `entry-authoring.md`，见
+> [`README.md`](README.md)。
 >
 > *其二：标注模型变了。* `AnnotationType`、`ElementKind`、`AnchorElement` /
 > `InteractiveElement` / `InfoElement`、`bool shared`、`allowed_page_ids`、

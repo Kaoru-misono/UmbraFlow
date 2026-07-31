@@ -23,6 +23,16 @@
 >   `edit-page.*`) is still linked, now by `umbra-authoring`. The CLI's shape
 >   makes the bug hard to hit — one command, one edit, no frame that draws while
 >   holding spans — but the rule is a property of the edit layer, not of ImGui.
+>
+>   > **Mechanism updated 2026-07-31 (`f768e6c`).** The *Fix* section below
+>   > prescribes parking a `PendingEdit` on `PanelUiState` and letting
+>   > `drawWorkbench` apply it. Both are deleted. The surviving layer answers the
+>   > same rule by construction rather than by ordering: `EditPage` now owns an
+>   > `AuthoringDraft` **by value** — it borrows no history for the length of an
+>   > edit — and `commit() &&` moves out a `Committed{draft, baseRevision}` that
+>   > `applyCommittedPage(AuthoringEditHistory&, EditPage::Committed const&)`
+>   > refuses if the base revision has moved. Read the *Fix* as history and this
+>   > as the current shape; the rule it distils is unchanged.
 > - *Cross-field domain invariants can deadlock per-field editing.* The specific
 >   deadlock is gone with `allowed_page_ids`, but the shape recurs anywhere a
 >   single-field editor meets a multi-field invariant. `ElementCapabilities` and

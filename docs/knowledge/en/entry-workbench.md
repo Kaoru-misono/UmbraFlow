@@ -21,18 +21,64 @@
 > *What remains under `entry/workbench` is the authoring backend*, built as the
 > static library `${PROJECT_NAME}_workbench_support` and linked by
 > `umbra-authoring`: the editing layer (`authoring-edit.*`, `edit-page.*`,
-> `authoring-actions.*`, `page-view.*`, `project-tree.*`, `panel-state.*`), the
-> falsification matrix (`preview.*`, `model-check-job.*`, `model-check-view.*`),
-> project persistence (`project-persistence.*` over
-> `platform/windows-file-publication.*`), and source ingestion
-> (`source-ingestion.*`). The sections below on the edit/validate/publish flow
-> and on `AuthoringDocument` being the only write path remain conceptually right
-> — read "the workbench does X" as "the authoring backend does X, driven by the
-> CLI". Two entanglements recorded at archival: `EditPage` still names `AppState`
-> and `PanelUiState` in its public signatures, so the middle layer cannot move
-> until it is re-expressed; and `project-persistence` reaches
-> `windows-file-publication` for the atomic write behind every `umbra-authoring`
-> save, which is why that file is not GUI and did not go.
+> `page-view.*`), the falsification matrix (`preview.*`), project persistence
+> (`project-persistence.*` over `platform/windows-file-publication.*`), and
+> source ingestion (`source-ingestion.*`). That is the whole list. The sections
+> below on the edit/validate/publish flow and on `AuthoringDocument` being the
+> only write path remain conceptually right — read "the workbench does X" as
+> "the authoring backend does X, driven by the CLI". One entanglement is worth
+> keeping: `project-persistence` reaches `windows-file-publication` for the
+> atomic write behind every `umbra-authoring` save, which is why that file is not
+> GUI and did not go.
+>
+> > **Corrected 2026-07-31 (`f768e6c`, plus the `model-check-job` deletion in the
+> > same working tree).** The list above first named `authoring-actions.*`,
+> > `project-tree.*`, `panel-state.*`, `model-check-job.*`, and
+> > `model-check-view.*` as survivors. They are gone. `f768e6c` archived the
+> > remaining panel layer — `workbench-app` (`AppState`, `CanvasView`,
+> > `mintResourceId`), `panel-state` (`PanelUiState`, `ToolbarCommand`,
+> > `PendingEdit`, `InlineRename`, `ColourKeyMemo`, `PendingDelete`),
+> > `authoring-actions`, `canvas-math` (`CanvasPoint`, `ScreenPixelRect`,
+> > `RectGripKind`), `model-check-view`, and `project-tree` (`ScreenBucket`) —
+> > with their tests, rescuing `mintResourceId` and `searchRoiForDrawnTemplate`
+> > into `edit-page` and `findEditableRecognizer` into `authoring-edit`.
+> > `model-check-job` followed: `ModelCheckJob` existed only to run
+> > `runModelCheck` off the GUI thread, and with the GUI archived
+> > `umbra-authoring check` runs the matrix synchronously, so its only remaining
+> > consumer was its own test. `runModelCheck`, `ModelCheck`, `ModelCheckCell`,
+> > `classifyModelCell`, and `RecognizerMargin` are untouched in `preview.*`.
+> >
+> > The entanglement this banner recorded is therefore **resolved**: `EditPage` no
+> > longer names `AppState` or `PanelUiState`. It takes an `AuthoringDraft` by
+> > value plus an opaque `baseRevision`, `commit() &&` moves out a
+> > `Committed{draft, baseRevision}`, `commitSelecting` is deleted, and the
+> > stale-base refusal moved into
+> > `applyCommittedPage(AuthoringEditHistory&, EditPage::Committed const&)`.
+> > Deciding artifact:
+> > [the capability plan](../../plans/2026-07-31-annotation-model-capabilities.md)
+> > §四之二.
+> >
+> > This widens the banner rather than narrowing it. **Every** passage below that
+> > names `AppState`, `PanelUiState`, `CanvasView`, canvas math, the project tree,
+> > or a panel describes deleted code — including *Editing State and Mutation
+> > Entry Points*, *ResourceId minting* (the function now lives in `edit-page`),
+> > *Ownership and lifetime*, and *Future Extensions*, whose proposed
+> > `modules/authoring` seam is defined in terms of `AppState`. The *Tests*
+> > section is wrong in both directions: it says seven synthetic files where
+> > `tests/CMakeLists.txt` now registers five, three of the seven it lists
+> > (`test-workbench-app`, `test-canvas-math`, `test-model-check-job`) no longer
+> > exist, and `test-edit-page.cpp` — 19 cases, now the editing layer's main
+> > coverage — is missing from it. What still reads true: *Source ingestion*,
+> > *Save, Reopen, and Publication Order*, *Resource-Bounded Preview*, and
+> > *Picking a colour key*.
+>
+> *The authoring surface is now `umbra-authoring`, not this binary.* It is the
+> only way to author a project (`docs/ARCHITECTURE.md`; the entry-point table in
+> [`00-overview.md`](00-overview.md) has said "the only authoring tool" since
+> 2026-07-30). No knowledge page covers it yet — [`entry-cli.md`](entry-cli.md)
+> is about `umbra-flow`'s `run`/`drive` and mentions `umbra-authoring` once, in
+> passing — so a resync owes an `entry-authoring.md`; see
+> [`README.md`](README.md).
 >
 > *Two: the annotation model changed.* `AnnotationType`, `ElementKind`,
 > `AnchorElement` / `InteractiveElement` / `InfoElement`, `bool shared`,

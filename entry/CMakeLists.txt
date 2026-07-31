@@ -164,8 +164,6 @@ if(WIN32 AND TARGET ${PROJECT_NAME}_annotation)
         workbench/authoring-edit.hpp
         workbench/edit-page.cpp
         workbench/edit-page.hpp
-        workbench/model-check-job.cpp
-        workbench/model-check-job.hpp
         workbench/page-view.cpp
         workbench/page-view.hpp
         workbench/platform/windows-file-publication.cpp

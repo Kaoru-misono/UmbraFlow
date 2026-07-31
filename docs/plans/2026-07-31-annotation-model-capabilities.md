@@ -69,6 +69,39 @@
 >    定位。用同一个种类,脚本就无法区分「我少调了一步」和「这一页真的不授权点这个」,
 >    而这两件事的处理方式完全不同。
 >
+> > **落地(2026-07-31,同日实现)。两件都做了,而且第 2 条选了「新增种类」。**
+> >
+> > **新种类 `AutomationErrorKind::PageUnresolved`,wire 名 `page_unresolved`,
+> > `FailureResponse::StepFailed`。** 选它而不是留着 `ActionRejected`,理由就是上面
+> > 第 2 条那句:两种失败要求的修法相反——`page_unresolved` 要改**脚本的调用顺序**,
+> > `action_rejected` 要改**标注**。合用一个种类,脚本连分辨都做不到。而
+> > `ActionRejected` 这个名字本身也在说谎:动作被「拒绝」意味着它被判过,而这里
+> > `find` 只是定位、`consume` 里那次 click 根本没走到那条能拒绝它的授权检查。
+> >
+> > **为什么 response 仍是 `StepFailed` 而不是 `Retry`。** 换一帧确实可能解析出这一帧
+> > 没解析出的页面,但页面是解析到**周期上**的:拿同一个周期重复同一次调用永远不会成功。
+> > 要拿到页面就得重新观察,那是这一步从头再来,不是这次操作被重试。
+> >
+> > **同一个种类覆盖两处**:`task-context.cpp` 的 `cycleFind`,以及 `cycle-ledger.cpp`
+> > 的 `consume`——同一个漏掉的步骤,晚一个动词而已。
+> >
+> > **消息**(`cycleFind`):「this observation cycle has not resolved a page, and
+> > finding an element is page-scoped: the refined search region, the pinned appearance
+> > and the interact authorisation all live on the page's reference to the element, so a
+> > find has nothing to work from until a page resolves. Resolve this cycle's page first,
+> > then find」。三个名词是刻意的——只写「先解析页面」会被读成仪式,作者会去找绕过它的
+> > 办法。
+> >
+> > **脚本约定写在**`modules/task/runtime/ctx.luau` 的三处:`view:find`(含两段
+> > 示例:`ctx:cycle` 要自己先 `cycle:page()` 并判 nil,`ctx:wait_for_page` 已经解析好)、
+> > `ctx:cycle`、以及原语转发 `ctx:cycle_find`。
+> >
+> > **顺带更正 §2.2 末尾那条诚实标注**:那里写「`consume` 里那个没有页面的分支从任务面
+> > 已经不可达,没有任何东西能让它变红」。**前半句仍然成立,后半句不成立了**——
+> > `tests/task/test-task-binding.cpp` 直接走 C++ 原语,把第一个周期取到的 hit 带到
+> > 第二个未解析的周期上,就能打到那个分支;把它的种类改回 `ActionRejected` 该用例当场变红。
+> > 脚本做不到这件事(拿不到 hit),C++ 做得到。
+>
 > ### B. §2.3 的 P0 掩码下限降级为警告,闸门交给证伪矩阵
 >
 > P0 原文要求「掩码全选像素低于 ~50 在 `Variant::create` 构造时拒绝」。**那一层做不到**:
@@ -125,9 +158,10 @@
 > - **仍未开始:** §三 第 4 步之后的 variant 作者入口(CLI 没有画 variant 的动词)、
 >   第 5 步的 `read` 动词与 OCR 接线(`cycle_read` 尚不存在)、§2.3 更正里点名要先修的
 >   `pitfalls/colour-key-annotation.md` 机制段(已于 2026-07-31 修正)。
-> - **§2.2 那条留给开发者的裁决仍然开着**:`ctx.luau` 的 `view:find` 不自动解析页面,
->   所以 `ctx:cycle(fn)` 里直接 `find` 而没先 `page()` 会得到 `ActionRejected`
->   (`task-context.cpp` 的 `cycleFind` 明确这么写)。脚本约定或 `ctx.luau` 二选一,尚未选。
+> - ~~**§2.2 那条留给开发者的裁决仍然开着**~~ —— **已关闭(2026-07-31)**,裁决见
+>   「两条实现期裁决」A,两件配套工作也已落地:`view:find` 仍然不自动解析,
+>   「先解析页面再 find」写进了脚本约定,诊断换成了新的错误种类
+>   **`PageUnresolved`**(wire `page_unresolved`)。落地细节见 A 下面的注记。
 
 ## 一、为什么现在改
 
@@ -264,6 +298,12 @@ PageReference {
    > 过滤条件(`panels.cpp:1514-1530`),而那个面板正是拖到第二页、通向
    > `placeExisting` 的入口。删字段就要把面板改成按 `Owned` 反过来筛,否则入口一起
    > 没了。
+   >
+   > > **这条已作废(2026-07-31,`b57b67b` + `f768e6c`)。** 面板连同整个 GUI 都归档了,
+   > > 所以没有面板要改。它守的那个入口改由 CLI 提供:`umbra-authoring page reference`
+   > > 就是「把已有元素放到第二页」的动词(见顶部落地进度)。本条保留,是因为它记下的
+   > > 那个顾虑——「删 `shared` 会连带删掉通往第二次放置的唯一入口」——正是 §四之二.1
+   > > 把 `placeExisting` 列为硬前置的理由。
 2. **这是编辑护栏,这才是它真正的价值。** 改一个 `Owned` 元素的矩形是安全的;改一个
    被三页引用的元素,三页都会变,工具必须当场说出来。
 
@@ -314,10 +354,18 @@ PageReference {
 > 所以实现时没有动它。要么改 `ctx.luau`,要么把「find 之前先 page」写进脚本约定——
 > 这条留给开发者。
 >
-> 另一条诚实标注:`CycleLedger::consume` 里那个「没有页面」的 `ActionRejected` 分支
-> 从任务面已经**不可达**了(拿不到 hit 就无从点击)。它作为 fail-closed 守卫保留,
-> 但没有任何东西能让它变红——按本项目的证伪纪律,这属于"守着但测不出"的那一类,
-> 记录而不删除。
+> > **已裁决并落地(2026-07-31):写进脚本约定,不自动解析;错误种类换成
+> > `page_unresolved`。** 上面那句「会得到 `action_rejected`」按此读作
+> > `page_unresolved`。完整理由与消息原文见顶部「两条实现期裁决」A 下面的落地注记。
+>
+> 另一条诚实标注:`CycleLedger::consume` 里那个「没有页面」的分支从任务面已经
+> **不可达**了(拿不到 hit 就无从点击)。它作为 fail-closed 守卫保留。
+>
+> > **更正(2026-07-31,实现时):「没有任何东西能让它变红」这半句不成立了。**
+> > 原文据此把它归进「守着但测不出」那一类。实际上**脚本**做不到而**C++ 做得到**:
+> > `tests/task/test-task-binding.cpp` 用第一个周期取到 hit,再把它带到第二个未解析
+> > 页面的周期上,就打进了这个分支;改掉它的种类该用例当场变红。不可达的是任务面,
+> > 不是测试面。
 
 > 与 [三层 Task System](2026-07-29-three-layer-task-system.md) §4 的衔接:
 > `cycle_click` 不收 page 参数、四要件「从校验变成构造上不可能违反」这条性质不受

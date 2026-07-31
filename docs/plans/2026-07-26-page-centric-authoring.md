@@ -28,6 +28,24 @@
 >
 > The GUI this plan's editing layer was built for was archived in `b57b67b`;
 > the editing layer itself remains and is driven by `umbra-authoring`.
+>
+> > **Signatures updated 2026-07-31 (`f768e6c`).** The `EditPage` / `PageView`
+> > sketch below is no longer the shape of the code. `f768e6c` archived the rest
+> > of the panel layer — `workbench-app` (`AppState`), `panel-state`
+> > (`PanelUiState`), `authoring-actions`, `canvas-math`, `project-tree`,
+> > `model-check-view` — with their tests, so the types those signatures name are
+> > gone. `EditPage::open` / `createFrom` no longer take an `AppState const&`;
+> > `EditPage` takes an `AuthoringDraft` **by value** plus an opaque
+> > `baseRevision`, `commit() &&` moves out a `Committed{draft, baseRevision}`
+> > (no `PanelUiState&`, no description string), `commitSelecting` is **deleted**
+> > because the ids it returned already come back from
+> > `placeAnchor`/`placeRegion`/`placeInfo`/`placeDrawn`, and the stale-base
+> > refusal this plan gave to `applyPendingEdit` now lives in
+> > `applyCommittedPage(AuthoringEditHistory&, EditPage::Committed const&)`. The
+> > migration note about `test-authoring-actions.cpp` moving "unchanged" is moot:
+> > that suite was deleted, and `test-edit-page.cpp` (19 cases) carries the
+> > coverage. Deciding artifact:
+> > [the capability plan](2026-07-31-annotation-model-capabilities.md) §四之二.
 
 Status: proposed; amended 2026-07-26 after adversarial review. Supersedes
 one clause of the redesign agreed in the 2026-07-25 session notes: that

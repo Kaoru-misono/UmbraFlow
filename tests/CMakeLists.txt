@@ -206,7 +206,6 @@ if(TARGET ${PROJECT_NAME}_workbench_support)
         SOURCES
             workbench/test-authoring-edit.cpp
             workbench/test-edit-page.cpp
-            workbench/test-model-check-job.cpp
             workbench/test-preview.cpp
             workbench/test-project-persistence.cpp
             workbench/test-source-ingestion.cpp

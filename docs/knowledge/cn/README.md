@@ -21,10 +21,21 @@
 10. [`entry-cli.md`](entry-cli.md) — 参数解析、离线加载、Windows 适配和退出码。
 11. [`entry-m0-demo.md`](entry-m0-demo.md) — 已冻结的真机验收程序，以及它和产品代码的边界。
 
-## 待补的两页（2026-07-29）
+## 待补的页（2026-07-29；2026-07-31 又加了一页）
 
 `modules/task` 与 `modules/trace` 至今没有自己的页，而 2026-07-29 的阶段 3 把任务
 policy 整个搬进这两层之后，engine 页与 CLI 页已经在替它们解释一些不属于自己的东西。
+
+> **又欠一页（2026-07-31，`b57b67b` + `f768e6c`）**：**`entry-authoring.md`**。本节标题
+> 原本写「待补的两页」，那是 `umbra-workbench` GUI 还是标注入口、`entry-workbench.md`
+> 还在写它的时候。GUI 已归档，`umbra-authoring` 成了标注项目的唯一途径，却没有任何一页
+> 写它——`entry-cli.md` 讲的是 `umbra-flow` 的 `run`/`drive`，只顺带提过一次
+> `umbra-authoring`；`entry-workbench.md` 写的只是 CLI 链接的那个后端库，而且整篇挂着
+> DIRTY banner。建议范围：`project` / `page` / `element` / `match` / `check` 的动词面
+> （`entry/authoring/command.hpp`、`command-runner.cpp`）；为什么每一次写入仍然经过
+> `AuthoringDocument`；以及证伪矩阵（`entry/workbench/preview.*` 里同步跑的
+> `runModelCheck`）按[能力模型计划](../../plans/2026-07-31-annotation-model-capabilities.md)
+> §四之二.1 仍然欠一个 CLI 动词。
 
 > **时点更新（2026-07-29，`1fb41a7`）**：这里原本写「等阶段 3d 落地后一并写」。
 > **阶段 3 已整体完成**（3d `4030ffd` 语义事件 + 校验状态机、3e/3f `1fb41a7` framework

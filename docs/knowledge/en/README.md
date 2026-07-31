@@ -30,11 +30,23 @@ responsibilities, key entry points, and tests. Module dependencies are governed 
 11. [`entry-m0-demo.md`](entry-m0-demo.md) — The frozen on-hardware acceptance program and its
     boundary with product code.
 
-## Two pages still missing (2026-07-29)
+## Pages still missing (2026-07-29; a third was added 2026-07-31)
 
 `modules/task` and `modules/trace` have no page of their own, and since stage 3 of 2026-07-29 moved
 task policy wholesale into those two layers, the engine and CLI pages have been explaining things
 that are not theirs.
+
+> **A third page is owed (2026-07-31, `b57b67b` + `f768e6c`)**: **`entry-authoring.md`**. This
+> section was headed "Two pages still missing" when the `umbra-workbench` GUI was the authoring
+> surface and `entry-workbench.md` documented it. The GUI is archived and `umbra-authoring` is now
+> the only way to author a project, but no page covers it — `entry-cli.md` is about `umbra-flow`'s
+> `run`/`drive` and names `umbra-authoring` once in passing, and `entry-workbench.md` describes only
+> the backend library the CLI links, from behind a DIRTY banner. Scope: the `project` / `page` /
+> `element` / `match` / `check` verb surface (`entry/authoring/command.hpp`,
+> `command-runner.cpp`); why every write still goes through `AuthoringDocument`; and where the
+> falsification matrix (`runModelCheck` in `entry/workbench/preview.*`, run synchronously) is still
+> owed a CLI verb per
+> [the capability plan](../../plans/2026-07-31-annotation-model-capabilities.md) §四之二.1.
 
 > **Timing updated (2026-07-29, `1fb41a7`)**: this used to say "write them once stage 3d has
 > landed". **Stage 3 is now complete in full** (3d `4030ffd` semantic events plus the validation

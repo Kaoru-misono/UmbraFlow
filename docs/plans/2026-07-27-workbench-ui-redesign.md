@@ -15,6 +15,19 @@
 > Kept as history: the failure modes in "Why" are real observations about
 > authoring, and the model-check reasoning informs the CLI matrix work. Nothing
 > in the layout, docking, or panel sections is actionable.
+>
+> > **Extended 2026-07-31 (`f768e6c`).** `b57b67b` took the ImGui shell; the
+> > *backend* units this plan's landed-stage records name went next. Deleted with
+> > their tests: `workbench-app` (`AppState`, `AppState::Selection` — decision 3
+> > in full), `panel-state` (`PanelUiState`, `ToolbarCommand`, `LogEvent` and the
+> > bounded event history — decision 8's reporting seam), `authoring-actions`,
+> > `canvas-math` (decision 9's geometry), `project-tree` (decision 2's screen
+> > buckets), and `model-check-view`. `model-check-job` followed in the same
+> > working tree. Every "Files:" list below therefore names paths that no longer
+> > exist; they record what the stage touched at the time, not where to look.
+> > What survives from this plan is `edit-page.*` / `page-view.*` (re-expressed:
+> > `EditPage` now holds an `AuthoringDraft` by value and `commitSelecting` is
+> > gone) and the falsification matrix in `preview.*`.
 
 Status: reviewed (dual review 2026-07-27: Claude Opus "approve with changes",
 Codex "rework"; both verdicts adjudicated below). Supersedes the five-window
