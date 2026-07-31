@@ -382,7 +382,7 @@ Element {
 
 ```text
 Element "back"
-  capabilities: { interact }
+  capabilities: { identify, interact }
   variants: [ on_dark(白字, key=白), on_light(黑字, key=黑) ]
 
 Page "sortie"  -> PageReference{ back, Referenced, exercised = { interact } }

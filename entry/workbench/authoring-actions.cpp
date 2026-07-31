@@ -602,7 +602,6 @@ namespace uf::workbench
             ReferenceElementSpec{
                 .elementId = elementId,
                 .pageId    = pageId,
-                .searchRoi = origin->searchRoi,
             }
         );
         if (!referenced)

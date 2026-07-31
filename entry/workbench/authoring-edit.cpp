@@ -9,6 +9,7 @@
 #include <domain/error.hpp>
 
 #include <algorithm>
+#include <array>
 #include <cstddef>
 #include <expected>
 #include <format>
@@ -101,6 +102,152 @@ namespace uf::workbench
                 }
             );
             return found == draft.references.end() ? nullptr : &*found;
+        }
+
+        // Why a page cannot exercise a capability its element does not
+        // declare, one sentence each so the refusal says what the element
+        // would have to become rather than only that it is not that.
+        constexpr auto k_undeclaredIdentify = std::string_view{
+            "is not an identifying mark, so no page's signature can be built "
+            "out of it"
+        };
+        constexpr auto k_undeclaredInteract = std::string_view{
+            "receives no action, so no page can authorise a click on it"
+        };
+        constexpr auto k_undeclaredRead = std::string_view{
+            "holds no readable text, so no page can read it"
+        };
+
+        // Every rule one reference row has to satisfy, stated once so the verb
+        // that mints a row and the verb that edits one cannot drift apart. The
+        // catalog checks the same rules over the built document; refusing here
+        // is what lets the message name the element the author typed.
+        [[nodiscard]]
+        auto validateReference(
+            EditableRecognizer const& element,
+            EditableExercised const& exercised,
+            std::optional<PixelRect> const& searchRoi
+        ) -> Status
+        {
+            if (
+                !exercised.identify.has_value()
+                && !exercised.interact.has_value()
+                && !exercised.read.has_value()
+            )
+            {
+                return fail(
+                    AutomationErrorKind::InvalidResource,
+                    std::format(
+                        "that page would reference \"{}\" and use it for "
+                        "nothing",
+                        element.name
+                    )
+                );
+            }
+
+            // Two levels, one direction: the element declares what it can do,
+            // the reference declares what this page does with it. Checked one
+            // capability at a time rather than as a set difference, so the
+            // refusal can say which use is missing and why.
+            struct RequestedUse final
+            {
+                bool             requested{};
+                bool             declared{};
+                std::string_view undeclared{};
+            };
+
+            auto const uses = std::array{
+                RequestedUse{
+                    .requested  = exercised.identify.has_value(),
+                    .declared   = element.capabilities.identify.has_value(),
+                    .undeclared = k_undeclaredIdentify,
+                },
+                RequestedUse{
+                    .requested  = exercised.interact.has_value(),
+                    .declared   = element.capabilities.interact.has_value(),
+                    .undeclared = k_undeclaredInteract,
+                },
+                RequestedUse{
+                    .requested  = exercised.read.has_value(),
+                    .declared   = element.capabilities.read.has_value(),
+                    .undeclared = k_undeclaredRead,
+                },
+            };
+            for (auto const& use : uses)
+            {
+                if (use.requested && !use.declared)
+                {
+                    return fail(
+                        AutomationErrorKind::InvalidResource,
+                        std::format("\"{}\" {}", element.name, use.undeclared)
+                    );
+                }
+            }
+
+            // Refused by name rather than made unrepresentable, because the row
+            // this writes is flat: annotation::PageReference carries both
+            // fields and the catalog refuses the pair, so a spec shaped to
+            // forbid it would be a third shape of one fact and would still have
+            // to be flattened here. Silently dropping either half is the one
+            // outcome ruled out -- both are measurements the author made.
+            if (exercised.identify.has_value() && searchRoi.has_value())
+            {
+                return fail(
+                    AutomationErrorKind::InvalidResource,
+                    std::format(
+                        "that page identifies by \"{}\" and so may not refine "
+                        "its search region: the anchor pass reads the "
+                        "element's own, before any page is known",
+                        element.name
+                    )
+                );
+            }
+            return ok();
+        }
+
+        // The set one new reference carries: what the caller asked for, or --
+        // when they asked for nothing -- every use a placement carries on its
+        // own. Identify is not one of those. Its page-side payload is the role,
+        // and the element has no answer to which way its evidence points, so
+        // there is nothing to inherit and a page enters a signature only by
+        // asking. That is also what stops a page borrowing a mark for its
+        // signature from being handed permission to click it.
+        [[nodiscard]]
+        auto resolveExercise(
+            EditableRecognizer const& element,
+            std::optional<EditableExercised> const& requested
+        ) -> Result<EditableExercised>
+        {
+            if (requested.has_value())
+            {
+                return *requested;
+            }
+
+            auto inherited = EditableExercised{};
+            if (element.capabilities.interact.has_value())
+            {
+                inherited.interact = annotation::ExercisedInteract{};
+            }
+            if (element.capabilities.read.has_value())
+            {
+                inherited.read = annotation::ExercisedRead{};
+            }
+            if (
+                !inherited.interact.has_value()
+                && !inherited.read.has_value()
+            )
+            {
+                return fail(
+                    AutomationErrorKind::InvalidResource,
+                    std::format(
+                        "\"{}\" only identifies a page, which it joins through "
+                        "that page's signature rather than by being placed on "
+                        "it",
+                        element.name
+                    )
+                );
+            }
+            return inherited;
         }
 
         // How many of a page's references put it in a signature. A page with
@@ -874,20 +1021,6 @@ namespace uf::workbench
             return missingElement(spec.elementId);
         }
         if (
-            !p_origin->capabilities.interact.has_value()
-            && !p_origin->capabilities.read.has_value()
-        )
-        {
-            return fail(
-                AutomationErrorKind::InvalidResource,
-                std::format(
-                    "\"{}\" only identifies a page, which it joins through that "
-                    "page's signature rather than by being placed on it",
-                    p_origin->name
-                )
-            );
-        }
-        if (
             !std::ranges::contains(draft.pages, spec.pageId, &EditablePage::id)
         )
         {
@@ -901,15 +1034,8 @@ namespace uf::workbench
             );
         }
 
-        auto exercised = EditableExercised{};
-        if (p_origin->capabilities.interact.has_value())
-        {
-            exercised.interact = annotation::ExercisedInteract{};
-        }
-        if (p_origin->capabilities.read.has_value())
-        {
-            exercised.read = annotation::ExercisedRead{};
-        }
+        UF_TRY_VALUE(exercised, resolveExercise(*p_origin, spec.exercised));
+        UF_TRY(validateReference(*p_origin, exercised, spec.searchRoi));
 
         // One element, referenced again. No copy is minted -- a later appearance
         // edit touches this element once and every page sees it. The holding is
@@ -932,64 +1058,48 @@ namespace uf::workbench
         };
     }
 
-    auto referenceElementForIdentify(
+    auto setReferenceIdentifyRole(
         AuthoringDraft draft,
-        IdentifyReferenceSpec const& spec
-    ) -> Result<ReferencedElement>
+        annotation::ElementId id,
+        annotation::PageId pageId,
+        annotation::SignatureRole role
+    ) -> Result<AuthoringDraft>
     {
-        auto const* p_origin = findRecognizerIn(draft, spec.elementId);
-        if (p_origin == nullptr)
+        auto const evidence = annotation::ExercisedIdentify{.role = role};
+
+        auto* p_reference = findReferenceIn(draft, pageId, id);
+        if (p_reference == nullptr)
         {
-            return missingElement(spec.elementId);
-        }
-        if (!p_origin->capabilities.identify.has_value())
-        {
-            return fail(
-                AutomationErrorKind::InvalidResource,
-                std::format(
-                    "\"{}\" is not an identifying mark, so no page's signature "
-                    "can be built out of it",
-                    p_origin->name
+            UF_TRY_VALUE(
+                referenced,
+                referenceElementOnPage(
+                    std::move(draft),
+                    ReferenceElementSpec{
+                        .elementId = id,
+                        .pageId    = pageId,
+                        .exercised = EditableExercised{.identify = evidence},
+                    }
                 )
             );
-        }
-        if (
-            !std::ranges::contains(draft.pages, spec.pageId, &EditablePage::id)
-        )
-        {
-            return missingPage(spec.pageId);
-        }
-        if (findReferenceIn(draft, spec.pageId, spec.elementId) != nullptr)
-        {
-            return fail(
-                AutomationErrorKind::InvalidResource,
-                std::format("\"{}\" is already on that page", p_origin->name)
-            );
+            return std::move(referenced.draft);
         }
 
-        // One element, referenced again as evidence. Identify is the whole of
-        // what this page exercises: the element may also be clickable, but
-        // exercising interact IS the authorisation to click it here, and
-        // borrowing a mark for a signature asks for no such thing. No search
-        // region is written either -- the anchor pass reads the element's own.
-        auto name = p_origin->name;
-        draft.references.emplace_back(
-            EditableReference{
-                .pageId    = spec.pageId,
-                .elementId = spec.elementId,
-                .holding   = annotation::Holding::Referenced,
-                .exercised = EditableExercised{
-                    .identify = annotation::ExercisedIdentify{
-                        .role = spec.role,
-                    },
-                },
-            }
-        );
+        auto const* p_element = findRecognizerIn(draft, id);
+        if (p_element == nullptr)
+        {
+            return missingElement(id);
+        }
 
-        return ReferencedElement{
-            .draft = std::move(draft),
-            .name  = std::move(name),
-        };
+        // The row this page already has, pointed the new way, judged before it
+        // is installed. Building the candidate and validating it is what keeps
+        // this from being a second copy of the rules: the refusal a new row
+        // would get is the refusal this one gets, refined region included.
+        auto updated     = p_reference->exercised;
+        updated.identify = evidence;
+        UF_TRY(validateReference(*p_element, updated, p_reference->searchRoi));
+
+        p_reference->exercised = std::move(updated);
+        return draft;
     }
 
     auto setElementTemplateRect(

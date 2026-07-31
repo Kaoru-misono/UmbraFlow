@@ -81,70 +81,6 @@ namespace uf::workbench
                 )
             );
         }
-
-        // Moves one page's reference to one element between the two identify
-        // roles, minting the reference when the page has none yet. The element
-        // has to declare identify: pixels that cannot be evidence cannot be
-        // put in a signature.
-        [[nodiscard]]
-        auto setSignatureRole(
-            AuthoringDraft& draft,
-            annotation::PageId pageId,
-            annotation::ElementId member,
-            annotation::SignatureRole role
-        ) -> Status
-        {
-            auto const* p_target = findEditableRecognizer(draft, member);
-            if (p_target == nullptr)
-            {
-                return missingMember(member);
-            }
-            if (!p_target->capabilities.identify.has_value())
-            {
-                return fail(
-                    AutomationErrorKind::InvalidResource,
-                    std::format(
-                        "\"{}\" is not an identifying mark",
-                        p_target->name
-                    )
-                );
-            }
-            if (!std::ranges::contains(draft.pages, pageId, &EditablePage::id))
-            {
-                return fail(
-                    AutomationErrorKind::InvalidResource,
-                    "this page is no longer in the project"
-                );
-            }
-
-            auto const existing = std::ranges::find_if(
-                draft.references,
-                [pageId, member](EditableReference const& reference)
-                {
-                    return reference.pageId == pageId
-                        && reference.elementId == member;
-                }
-            );
-            auto const exercised = annotation::ExercisedIdentify{.role = role};
-            if (existing != draft.references.end())
-            {
-                existing->exercised.identify = exercised;
-                // The anchor pass reads the element-level region, so a reference
-                // that starts exercising identify gives up any refinement it had.
-                existing->searchRoi.reset();
-                return ok();
-            }
-
-            draft.references.emplace_back(
-                EditableReference{
-                    .pageId    = pageId,
-                    .elementId = member,
-                    .holding   = annotation::Holding::Owned,
-                    .exercised = EditableExercised{.identify = exercised},
-                }
-            );
-            return ok();
-        }
     }
 
     EditPage::EditPage(
@@ -258,12 +194,12 @@ namespace uf::workbench
 
     auto EditPage::requireAnchor(MemberId member) -> Status
     {
-        auto draft = m_draft;
-        UF_TRY(
-            setSignatureRole(
-                draft,
-                m_id,
+        UF_TRY_VALUE(
+            draft,
+            setReferenceIdentifyRole(
+                m_draft,
                 member,
+                m_id,
                 annotation::SignatureRole::Required
             )
         );
@@ -273,12 +209,12 @@ namespace uf::workbench
 
     auto EditPage::forbidAnchor(MemberId member) -> Status
     {
-        auto draft = m_draft;
-        UF_TRY(
-            setSignatureRole(
-                draft,
-                m_id,
+        UF_TRY_VALUE(
+            draft,
+            setReferenceIdentifyRole(
+                m_draft,
                 member,
+                m_id,
                 annotation::SignatureRole::Forbidden
             )
         );
@@ -476,9 +412,10 @@ namespace uf::workbench
             return ok();
         }
 
-        // The reference seeds its per-page region from the element's own, the
-        // same region a fresh reference would inherit.
-        auto const seedRoi = p_target->searchRoi;
+        // Nothing is asked for: the reference exercises what the element
+        // declares a placement can carry, and inherits the element's own search
+        // region rather than pinning a copy that would go stale the moment the
+        // element's own moved.
         UF_TRY_VALUE(
             referenced,
             referenceElementOnPage(
@@ -486,7 +423,6 @@ namespace uf::workbench
                 ReferenceElementSpec{
                     .elementId = member,
                     .pageId    = m_id,
-                    .searchRoi = seedRoi,
                 }
             )
         );
@@ -824,7 +760,6 @@ namespace uf::workbench
             return missingMember(m_id);
         }
 
-        auto const roi = origin->searchRoi;
         UF_TRY_VALUE(
             referenced,
             referenceElementOnPage(
@@ -832,7 +767,6 @@ namespace uf::workbench
                 ReferenceElementSpec{
                     .elementId = m_id,
                     .pageId    = page,
-                    .searchRoi = roi,
                 }
             )
         );

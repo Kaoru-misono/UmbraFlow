@@ -316,7 +316,25 @@ namespace uf::workbench
     {
         annotation::ElementId elementId;
         annotation::PageId    pageId;
-        PixelRect             searchRoi;
+
+        // What this page will do with the element, and the whole of it.
+        // Absent means every use a placement carries on its own -- interact
+        // and read, whichever the element declares -- which is what dragging
+        // pixels onto a second page asks for.
+        //
+        // Identify is never among those. Its page-side payload is the role,
+        // and whether a mark is evidence FOR this page or AGAINST it is a
+        // question the element has no answer to, so a page joins a signature
+        // only by asking for it. Read the other way, that is what keeps
+        // borrowing honest: exercising interact IS the authorisation to click
+        // here, and a page taking up a mark as evidence did not ask for that.
+        std::optional<EditableExercised> exercised{};
+
+        // Absent means the element's own region. That is what "this page did
+        // not refine it" says, and it is what a caller gets by not asking:
+        // pinning a copy of the element's rectangle here would go stale the
+        // moment the element's own moved.
+        std::optional<PixelRect> searchRoi{};
     };
 
     struct ReferencedElement final
@@ -326,62 +344,50 @@ namespace uf::workbench
     };
 
     // Puts one existing element on a second page: a new reference to the SAME
-    // element, held as Referenced and carrying its own search region, seeded by
-    // the caller. No copy is minted -- one element is referenced by N pages, so
-    // a later appearance edit touches it once and every page sees it.
+    // element, held as Referenced and exercising what the spec asks for. No
+    // copy is minted -- one element is referenced by N pages, so a later
+    // appearance edit touches it once and every page sees it.
+    //
+    // One verb for all three capabilities, because a page's use of an element
+    // is one set rather than three kinds. It is what makes "sortie clicks this
+    // mark, battle clicks it AND is identified by it" one element with two
+    // references instead of two rectangles over one patch -- two ids, two
+    // templates, two searches a cycle -- which is the duplication the
+    // capability model exists to delete.
     //
     // Referenced is the whole of what the old reuse flag tried to say, and it
     // cannot contradict the references the way a flag could: a borrowed element
     // is one whose home page is another.
     //
-    // Fails when the element or the page is not in the draft, when the element
-    // declares neither interact nor read (an element that only identifies joins
-    // a page through its signature), or when that page already references it.
+    // Fails when the element or the page is not in the draft, when that page
+    // already references it, when the requested set is empty or exercises
+    // something the element does not declare, when nothing is asked for and the
+    // element only identifies (such an element joins a page through its
+    // signature, not by being placed on it), and when the request exercises
+    // identify and refines a search region at once.
     [[nodiscard]]
     auto referenceElementOnPage(
         AuthoringDraft draft,
         ReferenceElementSpec const& spec
     ) -> Result<ReferencedElement>;
 
-    // Which side a page takes on one existing mark. There is deliberately no
-    // search region here: a reference exercising identify may not refine one,
-    // and a spec without the field cannot state what the catalog would reject.
+    // Points one page's identify evidence at one element: the reference gains
+    // the role when the page already has one, and is minted through
+    // referenceElementOnPage when it does not -- so a page taking up a mark
+    // borrows it rather than claiming to own pixels whose home is elsewhere.
     //
-    // The role is stated rather than left to `{}` for the reason
-    // ExercisedIdentify states it: both enumerators are ordinary authored
-    // choices, and putting a mark in a signature normally means it as evidence
-    // for the page.
-    struct IdentifyReferenceSpec final
-    {
-        annotation::ElementId     elementId;
-        annotation::PageId        pageId;
-        annotation::SignatureRole role{annotation::SignatureRole::Required};
-    };
-
-    // Puts one existing element into a second page's signature: a new reference
-    // to the SAME element, exercising identify and pointing whichever way the
-    // role says. This is what makes "page A requires this mark, page B forbids
-    // the same pixels" one element rather than two rectangles over one patch --
-    // two ids, two templates, two searches a cycle -- which is the duplication
-    // the capability model exists to delete.
-    //
-    // The reference refines no search region and has nowhere to put one. The
-    // anchor pass reads the element-level region, so narrowing it per page
-    // would search the same pixels a second time in the same cycle, which is
-    // exactly the cost merging capabilities removes.
-    //
-    // Identify is all this page exercises, even when the element also declares
-    // interact or read. Exercising interact IS the authorisation to click here,
-    // and a page borrowing a mark for its signature did not ask for that.
-    //
-    // Fails when the element or the page is not in the draft, when the element
-    // declares no identify (pixels that cannot be evidence cannot enter a
-    // signature), or when that page already references it.
+    // Fails for every reason referenceElementOnPage does, and additionally when
+    // the page's existing reference refines a search region. The anchor pass
+    // reads the element-level region, so dropping that refinement to make room
+    // for the role would discard a measurement the author made without saying
+    // so; which of the two goes is theirs to decide.
     [[nodiscard]]
-    auto referenceElementForIdentify(
+    auto setReferenceIdentifyRole(
         AuthoringDraft draft,
-        IdentifyReferenceSpec const& spec
-    ) -> Result<ReferencedElement>;
+        annotation::ElementId id,
+        annotation::PageId pageId,
+        annotation::SignatureRole role
+    ) -> Result<AuthoringDraft>;
 
     struct RetemplatedElement final
     {
