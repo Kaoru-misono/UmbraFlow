@@ -35,6 +35,15 @@ namespace uf::m0_demo::platform
             std::filesystem::path const& path
         ) -> Result<FileWriter>;
 
+        // Replaces the whole file, for the small self-describing documents the
+        // agent rewrites rather than appends to. Unlike createExclusive this
+        // deliberately accepts an existing path and is confined to nothing, so
+        // callers own the decision that the path is theirs to overwrite.
+        [[nodiscard]]
+        static auto createOrReplace(
+            std::filesystem::path const& path
+        ) -> Result<FileWriter>;
+
         [[nodiscard]]
         auto write(std::span<std::byte const> bytes) -> Status;
 

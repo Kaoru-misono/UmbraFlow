@@ -1,6 +1,7 @@
 #include "test-helpers.hpp"
 
 #include <args.hpp>
+#include <input-agent-cursor.hpp>
 #include <pacing.hpp>
 
 #include <core/types/integer.hpp>
@@ -439,6 +440,53 @@ namespace uf::m0_demo
         CHECK(result->results == std::filesystem::path{"results.jsonl"});
         CHECK(result->outputDirectory == std::filesystem::path{"agent-output"});
         CHECK(result->idleTimeout == k_defaultInputAgentIdleTimeout);
+        // The unstated policy is the one that asks rather than the one that
+        // walks a live target back through a queue it has already run.
+        CHECK(result->queueStart == InputAgentQueueStart::Refuse);
+    }
+
+    TEST_CASE("m0 input-agent arguments name the uncursored queue policy")
+    {
+        auto const parseStart = [](
+            std::string_view value
+        ) -> Result<InputAgentArgs>
+        {
+            return parseInputAgentArguments(
+                argumentsOf(
+                    {
+                        "--hwnd",
+                        "0x1",
+                        "--queue",
+                        "commands.jsonl",
+                        "--results",
+                        "results.jsonl",
+                        "--output-dir",
+                        "agent-output",
+                        "--queue-start",
+                        value,
+                    }
+                )
+            );
+        };
+
+        auto const beginning = parseStart("beginning");
+        REQUIRE(beginning.has_value());
+        CHECK(beginning->queueStart == InputAgentQueueStart::Beginning);
+
+        auto const end = parseStart("end");
+        REQUIRE(end.has_value());
+        CHECK(end->queueStart == InputAgentQueueStart::End);
+
+        auto const refuse = parseStart("refuse");
+        REQUIRE(refuse.has_value());
+        CHECK(refuse->queueStart == InputAgentQueueStart::Refuse);
+
+        auto const rejected = parseStart("sometimes");
+        REQUIRE_FALSE(rejected.has_value());
+        test_m0_demo::requireErrorKind(
+            rejected.error(),
+            AutomationErrorKind::InvalidResource
+        );
     }
 
     TEST_CASE("m0 input-agent arguments reject missing and invalid values")

@@ -83,12 +83,13 @@ namespace uf::m0_demo
         [[nodiscard]]
         auto isInputAgentValueFlag(std::string_view flag) noexcept -> bool
         {
-            auto constexpr flags = std::array<std::string_view, 5>{
+            auto constexpr flags = std::array<std::string_view, 6>{
                 "--hwnd",
                 "--queue",
                 "--results",
                 "--output-dir",
                 "--idle-timeout-s",
+                "--queue-start",
             };
             return std::ranges::find(flags, flag) != flags.end();
         }
@@ -215,6 +216,40 @@ namespace uf::m0_demo
                     value
                 )
             );
+        }
+
+        struct QueueStartName final
+        {
+            std::string_view     name{};
+            InputAgentQueueStart value{};
+        };
+
+        [[nodiscard]]
+        auto parseQueueStart(
+            std::string_view value
+        ) -> Result<InputAgentQueueStart>
+        {
+            auto constexpr names = std::array<QueueStartName, 3>{{
+                {.name = "refuse", .value = InputAgentQueueStart::Refuse},
+                {.name = "beginning", .value = InputAgentQueueStart::Beginning},
+                {.name = "end", .value = InputAgentQueueStart::End},
+            }};
+            auto const found = std::ranges::find(
+                names,
+                value,
+                &QueueStartName::name
+            );
+            if (found == names.end())
+            {
+                return invalid(
+                    std::format(
+                        "--queue-start expects 'refuse', 'beginning', or "
+                        "'end', got \"{}\"",
+                        value
+                    )
+                );
+            }
+            return found->value;
         }
 
         [[nodiscard]]
@@ -657,6 +692,7 @@ namespace uf::m0_demo
         auto results         = std::optional<std::filesystem::path>{};
         auto outputDirectory = std::optional<std::filesystem::path>{};
         auto idleTimeout     = k_defaultInputAgentIdleTimeout;
+        auto queueStart      = InputAgentQueueStart::Refuse;
 
         auto index = std::size_t{0};
         while (index < raw.size())
@@ -696,6 +732,11 @@ namespace uf::m0_demo
                 UF_TRY_VALUE(parsed, parsePositiveSeconds(value, flag));
                 idleTimeout = parsed;
             }
+            else if (flag == "--queue-start")
+            {
+                UF_TRY_VALUE(parsed, parseQueueStart(value));
+                queueStart = parsed;
+            }
             index += 2U;
         }
 
@@ -725,6 +766,7 @@ namespace uf::m0_demo
             .results         = std::move(requiredResults),
             .outputDirectory = std::move(requiredOutputDirectory),
             .idleTimeout     = idleTimeout,
+            .queueStart      = queueStart,
         };
     }
 
@@ -774,7 +816,15 @@ namespace uf::m0_demo
             "Usage: m0-demo input-agent --hwnd N|0xHEX --queue PATH "
             "--results PATH --output-dir DIR [options]\n"
             "\n"
+            "The agent records how far it has consumed the queue in a\n"
+            "<queue>.cursor file and resumes there, so a restart never\n"
+            "re-delivers commands the target has already seen.\n"
+            "\n"
             "Options:\n"
-            "  --idle-timeout-s N           Default: 120; must be positive\n";
+            "  --idle-timeout-s N           Default: 120; must be positive\n"
+            "  --queue-start MODE           refuse|beginning|end; default:\n"
+            "                               refuse. Read only when no cursor\n"
+            "                               exists yet and the queue is not\n"
+            "                               empty; a cursor always wins\n";
     }
 }

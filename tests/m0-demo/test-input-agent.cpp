@@ -1,5 +1,6 @@
 #include "test-helpers.hpp"
 
+#include <input-agent-cursor.hpp>
 #include <input-agent-protocol.hpp>
 #include <input-agent.hpp>
 #include <path-validation.hpp>
@@ -588,7 +589,7 @@ namespace uf::m0_demo
         auto const queue = directory / "queue.jsonl";
         writeFile(queue, "", std::ios::trunc);
 
-        auto reader = InputAgentQueueReader::create(queue);
+        auto reader = InputAgentQueueReader::create(queue, uintmax{});
         REQUIRE(reader.has_value());
 
         writeFile(queue, "partial", std::ios::app);
@@ -600,15 +601,21 @@ namespace uf::m0_demo
         auto second = reader->readAvailable();
         REQUIRE(second.has_value());
         REQUIRE(second->size() == 2U);
-        CHECK((*second)[0] == "partial-one");
-        CHECK((*second)[1] == "second");
+        CHECK((*second)[0].text == "partial-one");
+        CHECK((*second)[1].text == "second");
+        // "partial-one\r\n" is thirteen bytes and "second\n" seven, so the
+        // position an entry reports is the offset just past its own newline.
+        CHECK((*second)[0].consumedBytes == uintmax{13});
+        CHECK((*second)[1].consumedBytes == uintmax{20});
 
         writeFile(queue, "-tail\nfour\n", std::ios::app);
         auto third = reader->readAvailable();
         REQUIRE(third.has_value());
         REQUIRE(third->size() == 2U);
-        CHECK((*third)[0] == "third-tail");
-        CHECK((*third)[1] == "four");
+        CHECK((*third)[0].text == "third-tail");
+        CHECK((*third)[1].text == "four");
+        CHECK((*third)[0].consumedBytes == uintmax{31});
+        CHECK((*third)[1].consumedBytes == uintmax{36});
     }
 
     TEST_CASE("m0 input-agent queue reader rejects truncation")
@@ -623,7 +630,7 @@ namespace uf::m0_demo
         auto const queue = directory / "queue.jsonl";
         writeFile(queue, "first\n", std::ios::trunc);
 
-        auto reader = InputAgentQueueReader::create(queue);
+        auto reader = InputAgentQueueReader::create(queue, uintmax{});
         REQUIRE(reader.has_value());
         auto const first = reader->readAvailable();
         REQUIRE(first.has_value());
@@ -651,7 +658,7 @@ namespace uf::m0_demo
         auto const queue = directory / "queue.jsonl";
         writeFile(queue, "", std::ios::trunc);
 
-        auto reader = InputAgentQueueReader::create(queue);
+        auto reader = InputAgentQueueReader::create(queue, uintmax{});
         REQUIRE(reader.has_value());
         auto constexpr maximumPendingBytes = std::size_t{1024} * 1024U;
         auto constexpr readsPerMebibyte = std::size_t{16};
@@ -668,7 +675,7 @@ namespace uf::m0_demo
         auto const boundary = reader->readAvailable();
         REQUIRE(boundary.has_value());
         REQUIRE(boundary->size() == 1U);
-        CHECK(boundary->front().size() == maximumPendingBytes);
+        CHECK(boundary->front().text.size() == maximumPendingBytes);
 
         auto oversizedLine = std::string(maximumPendingBytes + 1U, 'b');
         oversizedLine += '\n';
@@ -686,6 +693,275 @@ namespace uf::m0_demo
             AutomationErrorKind::InvalidResource
         );
         CHECK(oversized.error().message().contains("exceeding 1048576 bytes"));
+    }
+
+    TEST_CASE("m0 input-agent resumes a restarted queue instead of replaying it")
+    {
+        // The defect this guards: the agent tailed its queue by an offset that
+        // lived only in memory, so a restart re-read from byte zero and drove
+        // every command already in the file into the live target a second time.
+        auto const directory = createTemporaryDirectory("input-agent-resume");
+        auto const cleanup = scopeExit(
+            [cleanupPath = directory]() noexcept
+            {
+                removeAllBestEffort(cleanupPath);
+            }
+        );
+        auto const queue = directory / "queue.jsonl";
+        auto const cursorPath = inputAgentQueueCursorPath(queue);
+        auto const history = std::string{
+            R"({"op":"key","key":"e"})"
+            "\n"
+            R"({"op":"key","key":"1"})"
+            "\n"
+            R"({"op":"key","key":"2"})"
+            "\n"
+        };
+        writeFile(queue, history, std::ios::trunc);
+
+        auto const firstExtent = measureInputAgentQueue(queue);
+        REQUIRE(firstExtent.has_value());
+        CHECK(firstExtent->framedCommands == uintmax{3});
+        CHECK(firstExtent->framedBytes == history.size());
+        CHECK(firstExtent->totalBytes == history.size());
+
+        auto const absent = readInputAgentQueueCursor(cursorPath, queue);
+        REQUIRE(absent.has_value());
+        CHECK_FALSE(absent->has_value());
+        auto const firstStart = resolveInputAgentQueueStart(
+            *absent,
+            *firstExtent,
+            InputAgentQueueStart::Beginning
+        );
+        REQUIRE(firstStart.has_value());
+
+        {
+            auto cursor = InputAgentQueueCursor::open(
+                cursorPath,
+                queue,
+                *firstStart
+            );
+            REQUIRE(cursor.has_value());
+            auto reader = InputAgentQueueReader::create(
+                queue,
+                firstStart->consumedBytes
+            );
+            REQUIRE(reader.has_value());
+            auto const entries = reader->readAvailable();
+            REQUIRE(entries.has_value());
+            REQUIRE(entries->size() == 3U);
+            for (auto const& entry : *entries)
+            {
+                auto const advanced = cursor->advance(entry.consumedBytes);
+                REQUIRE(advanced.has_value());
+            }
+            CHECK(cursor->position().consumedCommands == uintmax{3});
+            CHECK(cursor->position().consumedBytes == history.size());
+        }
+        // The agent dies here, for one of the ordinary reasons: an idle
+        // timeout, or a linker overwriting the executable underneath it.
+
+        auto const recorded = readInputAgentQueueCursor(cursorPath, queue);
+        REQUIRE(recorded.has_value());
+        REQUIRE(recorded->has_value());
+        CHECK((*recorded)->consumedCommands == uintmax{3});
+        CHECK((*recorded)->consumedBytes == history.size());
+
+        auto const secondExtent = measureInputAgentQueue(queue);
+        REQUIRE(secondExtent.has_value());
+        auto const secondStart = resolveInputAgentQueueStart(
+            *recorded,
+            *secondExtent,
+            InputAgentQueueStart::Refuse
+        );
+        REQUIRE(secondStart.has_value());
+
+        auto restarted = InputAgentQueueReader::create(
+            queue,
+            secondStart->consumedBytes
+        );
+        REQUIRE(restarted.has_value());
+        auto const replayed = restarted->readAvailable();
+        REQUIRE(replayed.has_value());
+        CHECK(replayed->empty());
+
+        // Resuming is not the same as going deaf: what the operator appends
+        // after the restart still reaches the target exactly once.
+        auto const appended = std::string{
+            R"({"op":"key","key":"3"})"
+            "\n"
+        };
+        writeFile(queue, appended, std::ios::app);
+        auto const fresh = restarted->readAvailable();
+        REQUIRE(fresh.has_value());
+        REQUIRE(fresh->size() == 1U);
+        CHECK((*fresh)[0].text == R"({"op":"key","key":"3"})");
+        CHECK((*fresh)[0].consumedBytes == history.size() + appended.size());
+    }
+
+    TEST_CASE("m0 input-agent will not guess a start for an uncursored queue")
+    {
+        // A half-written fourth command trails the three framed ones, which is
+        // what an operator appending to a live queue looks like mid-write.
+        auto const extent = InputAgentQueueExtent{
+            .framedBytes    = uintmax{69},
+            .framedCommands = uintmax{3},
+            .totalBytes     = uintmax{80},
+        };
+        auto const none = std::optional<InputAgentQueuePosition>{};
+
+        auto const refused = resolveInputAgentQueueStart(
+            none,
+            extent,
+            InputAgentQueueStart::Refuse
+        );
+        REQUIRE_FALSE(refused.has_value());
+        test_m0_demo::requireErrorKind(
+            refused.error(),
+            AutomationErrorKind::InvalidResource
+        );
+        CHECK(refused.error().message().contains("--queue-start"));
+
+        auto const beginning = resolveInputAgentQueueStart(
+            none,
+            extent,
+            InputAgentQueueStart::Beginning
+        );
+        REQUIRE(beginning.has_value());
+        CHECK(*beginning == InputAgentQueuePosition{});
+
+        // End stops at the last newline rather than at the file's end, or the
+        // operator's next append would be spliced onto half a command.
+        auto const end = resolveInputAgentQueueStart(
+            none,
+            extent,
+            InputAgentQueueStart::End
+        );
+        REQUIRE(end.has_value());
+        CHECK(end->consumedBytes == uintmax{69});
+        CHECK(end->consumedCommands == uintmax{3});
+
+        // An empty queue is the one unambiguous case, so it never asks.
+        auto const empty = resolveInputAgentQueueStart(
+            none,
+            InputAgentQueueExtent{},
+            InputAgentQueueStart::Refuse
+        );
+        REQUIRE(empty.has_value());
+        CHECK(*empty == InputAgentQueuePosition{});
+
+        // A recorded position outranks the policy, so an operator who has
+        // learned to type --queue-start cannot replay a session with it.
+        auto const recorded = std::optional<InputAgentQueuePosition>{
+            InputAgentQueuePosition{
+                .consumedBytes    = uintmax{69},
+                .consumedCommands = uintmax{3},
+            }
+        };
+        auto const resumed = resolveInputAgentQueueStart(
+            recorded,
+            extent,
+            InputAgentQueueStart::Beginning
+        );
+        REQUIRE(resumed.has_value());
+        CHECK(*resumed == *recorded);
+
+        auto const stale = std::optional<InputAgentQueuePosition>{
+            InputAgentQueuePosition{
+                .consumedBytes    = uintmax{81},
+                .consumedCommands = uintmax{4},
+            }
+        };
+        auto const rejected = resolveInputAgentQueueStart(
+            stale,
+            extent,
+            InputAgentQueueStart::Beginning
+        );
+        REQUIRE_FALSE(rejected.has_value());
+        CHECK(rejected.error().message().contains("truncated or replaced"));
+    }
+
+    TEST_CASE("m0 input-agent queue cursor refuses every partial write")
+    {
+        auto const queue = std::filesystem::path{"C:/session/queue.jsonl"};
+        auto const path = inputAgentQueueCursorPath(queue);
+        auto const text = serializeInputAgentQueueCursor(
+            InputAgentQueueCursorRecord{
+                .queue    = queue,
+                .position = InputAgentQueuePosition{
+                    .consumedBytes    = uintmax{4213},
+                    .consumedCommands = uintmax{47},
+                },
+            }
+        );
+
+        // The directory is read by hand during annotation sessions, so the
+        // file has to say what it means without the reader knowing the code.
+        CHECK(text.starts_with("# umbraflow input-agent queue cursor\n"));
+        CHECK(text.contains("\nqueue=C:/session/queue.jsonl\n"));
+        CHECK(text.contains("\nconsumed-bytes=4213\n"));
+        CHECK(text.ends_with("\nconsumed-commands=47\n"));
+
+        auto const parsed = parseInputAgentQueueCursor(text, path);
+        REQUIRE(parsed.has_value());
+        CHECK(parsed->queue == queue);
+        CHECK(parsed->position.consumedBytes == uintmax{4213});
+        CHECK(parsed->position.consumedCommands == uintmax{47});
+
+        // The cursor is rewritten whole, so every proper prefix of it is a
+        // write that died halfway. None may parse: a shorter number that still
+        // looks plausible is exactly what would replay the difference.
+        for (auto length = std::size_t{}; length < text.size(); ++length)
+        {
+            auto const truncated = parseInputAgentQueueCursor(
+                std::string_view{text}.substr(0, length),
+                path
+            );
+            REQUIRE_FALSE(truncated.has_value());
+        }
+    }
+
+    TEST_CASE("m0 input-agent queue cursor refuses a foreign or unreadable position")
+    {
+        auto const directory = createTemporaryDirectory("input-agent-cursor");
+        auto const cleanup = scopeExit(
+            [cleanupPath = directory]() noexcept
+            {
+                removeAllBestEffort(cleanupPath);
+            }
+        );
+        auto const queue = directory / "queue.jsonl";
+        auto const other = directory / "other.jsonl";
+        auto const cursorPath = inputAgentQueueCursorPath(queue);
+        CHECK(cursorPath == directory / "queue.jsonl.cursor");
+
+        writeFile(
+            cursorPath,
+            serializeInputAgentQueueCursor(
+                InputAgentQueueCursorRecord{
+                    .queue    = other,
+                    .position = InputAgentQueuePosition{
+                        .consumedBytes    = uintmax{40},
+                        .consumedCommands = uintmax{2},
+                    },
+                }
+            ),
+            std::ios::trunc
+        );
+        auto const foreign = readInputAgentQueueCursor(cursorPath, queue);
+        REQUIRE_FALSE(foreign.has_value());
+        test_m0_demo::requireErrorKind(
+            foreign.error(),
+            AutomationErrorKind::InvalidResource
+        );
+        CHECK(foreign.error().message().contains("records queue"));
+
+        // A cursor nobody can read is a refusal, never an absence: reading it
+        // as "no position recorded" is how a full replay would come back.
+        writeFile(cursorPath, "consumed-bytes=40\n", std::ios::trunc);
+        auto const unreadable = readInputAgentQueueCursor(cursorPath, queue);
+        REQUIRE_FALSE(unreadable.has_value());
+        CHECK(unreadable.error().message().contains("is missing"));
     }
 
     TEST_CASE("m0 input-agent file writer validates the opened output path")

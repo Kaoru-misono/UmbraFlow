@@ -2,6 +2,7 @@
 
 #include "args.hpp"
 #include "capture-output.hpp"
+#include "input-agent-cursor.hpp"
 #include "input-agent-protocol.hpp"
 #include "json-string.hpp"
 #include "log-jsonl.hpp"
@@ -87,16 +88,24 @@ namespace uf::m0_demo
     }
 
     InputAgentQueueReader::InputAgentQueueReader(
-        std::filesystem::path path
+        std::filesystem::path path,
+        uintmax startBytes
     ) noexcept
         : m_path{std::move(path)}
+        , m_offset{startBytes}
     {
     }
 
-    auto InputAgentQueueReader::extractLines()
-        -> Result<std::vector<std::string>>
+    auto InputAgentQueueReader::extractEntries()
+        -> Result<std::vector<Entry>>
     {
-        auto lines    = std::vector<std::string>{};
+        // Every byte in m_pending was read from the file and bytes only leave
+        // it from the front, so this is the queue offset m_pending[0] sits at.
+        auto const pendingSize = static_cast<uintmax>(m_pending.size());
+        UF_ASSERT(m_offset >= pendingSize);
+        auto const pendingBase = m_offset - pendingSize;
+
+        auto entries  = std::vector<Entry>{};
         auto consumed = std::size_t{};
         while (true)
         {
@@ -131,8 +140,14 @@ namespace uf::m0_demo
             {
                 line.pop_back();
             }
-            lines.emplace_back(std::move(line));
-            consumed = newline + 1U;
+            consumed              = newline + 1U;
+            auto const entryBytes = pendingBase + static_cast<uintmax>(consumed);
+            entries.emplace_back(
+                Entry{
+                    .text          = std::move(line),
+                    .consumedBytes = entryBytes,
+                }
+            );
         }
         if (consumed != 0U)
         {
@@ -149,11 +164,12 @@ namespace uf::m0_demo
                 )
             );
         }
-        return lines;
+        return entries;
     }
 
     auto InputAgentQueueReader::create(
-        std::filesystem::path path
+        std::filesystem::path path,
+        uintmax startBytes
     ) -> Result<InputAgentQueueReader>
     {
         errno       = 0;
@@ -162,11 +178,11 @@ namespace uf::m0_demo
         {
             return agentIoFailure("open queue file", path, currentIoError());
         }
-        return InputAgentQueueReader{std::move(path)};
+        return InputAgentQueueReader{std::move(path), startBytes};
     }
 
     auto InputAgentQueueReader::readAvailable()
-        -> Result<std::vector<std::string>>
+        -> Result<std::vector<Entry>>
     {
         auto fileError = std::error_code{};
         auto const size = std::filesystem::file_size(m_path, fileError);
@@ -186,7 +202,7 @@ namespace uf::m0_demo
         }
         if (size == m_offset)
         {
-            return extractLines();
+            return extractEntries();
         }
 
         auto const available = size - m_offset;
@@ -231,7 +247,7 @@ namespace uf::m0_demo
         }
         m_offset += readBytes;
         m_pending += chunk;
-        return extractLines();
+        return extractEntries();
     }
 
     namespace
@@ -1175,9 +1191,58 @@ namespace uf::m0_demo
             );
         }
 
+        // The cursor is what stops a restarted agent from walking the target
+        // through every command the queue already holds. It is derived from the
+        // queue path so the pairing is legible on disk, and it must not land on
+        // either IPC file, which a hard link could otherwise arrange.
+        auto const cursorPath = inputAgentQueueCursorPath(canonicalQueue);
+        UF_TRY_VALUE(
+            cursorAliasesQueue,
+            canonicalPathsAlias(cursorPath, canonicalQueue)
+        );
+        UF_TRY_VALUE(
+            cursorAliasesResults,
+            canonicalPathsAlias(cursorPath, canonicalResults)
+        );
+        if (cursorAliasesQueue || cursorAliasesResults)
+        {
+            return fail(
+                AutomationErrorKind::InvalidResource,
+                std::format(
+                    "input-agent queue cursor {} must not be the queue or the "
+                    "results file",
+                    cursorPath.string()
+                )
+            );
+        }
+
+        UF_TRY_VALUE(
+            recordedPosition,
+            readInputAgentQueueCursor(cursorPath, canonicalQueue)
+        );
+        UF_TRY_VALUE(queueExtent, measureInputAgentQueue(canonicalQueue));
+        UF_TRY_VALUE(
+            startPosition,
+            resolveInputAgentQueueStart(
+                recordedPosition,
+                queueExtent,
+                args.queueStart
+            )
+        );
+        UF_TRY_VALUE(
+            cursor,
+            InputAgentQueueCursor::open(
+                cursorPath,
+                canonicalQueue,
+                startPosition
+            )
+        );
         UF_TRY_VALUE(
             reader,
-            InputAgentQueueReader::create(canonicalQueue)
+            InputAgentQueueReader::create(
+                canonicalQueue,
+                startPosition.consumedBytes
+            )
         );
         UF_TRY_VALUE(writer, ResultWriter::create(canonicalResults));
         UF_TRY(ensurePerMonitorAwareV2());
@@ -1216,14 +1281,15 @@ namespace uf::m0_demo
         auto lastActivity = MonotonicInstant::now();
         while (true)
         {
-            UF_TRY_VALUE(lines, reader.readAvailable());
-            for (auto const& line : lines)
+            UF_TRY_VALUE(entries, reader.readAvailable());
+            for (auto const& entry : entries)
             {
-                auto command = parseInputAgentCommand(line);
+                auto command = parseInputAgentCommand(entry.text);
                 if (!command)
                 {
                     clearInputAgentCommandAudit(audit);
                     UF_TRY(writer.write(serializeInvalidCommand(command.error())));
+                    UF_TRY(cursor.advance(entry.consumedBytes));
                     lastActivity = MonotonicInstant::now();
                     continue;
                 }
@@ -1232,6 +1298,7 @@ namespace uf::m0_demo
                 {
                     clearInputAgentCommandAudit(audit);
                     UF_TRY(writer.write(serializeQuit()));
+                    UF_TRY(cursor.advance(entry.consumedBytes));
                     UF_TRY(session.close());
                     UF_TRY(writer.flush());
                     return ok();
@@ -1312,6 +1379,11 @@ namespace uf::m0_demo
                 }
                 clearInputAgentCommandAudit(audit);
                 UF_TRY(writer.write(resultLine));
+                // Advancing after the results line is the deliberate order: a
+                // hard kill in the gap replays this one command, where the
+                // reverse order would silently skip an action whose delivery
+                // nobody can still observe.
+                UF_TRY(cursor.advance(entry.consumedBytes));
                 if (stopAgent)
                 {
                     UF_TRY(session.close());

@@ -18,17 +18,31 @@ namespace uf::m0_demo
 {
     class InputAgentQueueReader final
     {
+    public:
+        // One framed command together with the queue position that command
+        // occupies. consumedBytes ends just past its newline, so recording it
+        // once the command has run is exactly what a restart must not undo.
+        struct Entry final
+        {
+            std::string text{};
+            uintmax     consumedBytes{};
+
+            auto operator==(Entry const&) const -> bool = default;
+        };
+
+    private:
         std::filesystem::path m_path;
 
-        uintmax     m_offset{};
+        uintmax     m_offset;
         std::string m_pending{};
 
-        explicit InputAgentQueueReader(
-            std::filesystem::path path
+        InputAgentQueueReader(
+            std::filesystem::path path,
+            uintmax startBytes
         ) noexcept;
 
         [[nodiscard]]
-        auto extractLines() -> Result<std::vector<std::string>>;
+        auto extractEntries() -> Result<std::vector<Entry>>;
 
     public:
         InputAgentQueueReader(InputAgentQueueReader const&) = delete;
@@ -39,13 +53,17 @@ namespace uf::m0_demo
             -> InputAgentQueueReader& = default;
         ~InputAgentQueueReader() = default;
 
+        // startBytes is stated rather than defaulted: where a reader begins
+        // decides whether an operator's history is delivered a second time, so
+        // no caller gets to leave it unsaid.
         [[nodiscard]]
         static auto create(
-            std::filesystem::path path
+            std::filesystem::path path,
+            uintmax startBytes
         ) -> Result<InputAgentQueueReader>;
 
         [[nodiscard]]
-        auto readAvailable() -> Result<std::vector<std::string>>;
+        auto readAvailable() -> Result<std::vector<Entry>>;
     };
 
     struct InputAgentFramePaths final

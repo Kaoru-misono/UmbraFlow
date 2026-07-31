@@ -1,5 +1,6 @@
 #pragma once
 
+#include "input-agent-cursor.hpp"
 #include "pacing.hpp"
 
 #include <core/error/result.hpp>
@@ -84,6 +85,11 @@ namespace uf::m0_demo
         std::filesystem::path      results{};
         std::filesystem::path      outputDirectory{};
         MonotonicInstant::Duration idleTimeout{};
+
+        // Consulted only when no cursor exists beside a queue that is already
+        // non-empty. Refuse is the zero value, so the unstated policy is the
+        // one that asks rather than the one that replays.
+        InputAgentQueueStart queueStart{};
 
         auto operator==(InputAgentArgs const&) const -> bool = default;
     };

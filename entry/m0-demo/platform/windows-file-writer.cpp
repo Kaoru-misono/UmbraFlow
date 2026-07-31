@@ -639,6 +639,32 @@ namespace uf::m0_demo::platform
         };
     }
 
+    auto FileWriter::createOrReplace(
+        std::filesystem::path const& path
+    ) -> Result<FileWriter>
+    {
+        UF_TRY_VALUE(
+            handle,
+            openFile(
+                path,
+                GENERIC_WRITE,
+                // Share reads so the file stays readable while an annotation
+                // session inspects the directory by hand.
+                FILE_SHARE_READ,
+                CREATE_ALWAYS,
+                "create or replace file"
+            )
+        );
+        return FileWriter{
+            std::make_unique<State>(
+                State{
+                    .path   = path,
+                    .handle = std::move(handle),
+                }
+            )
+        };
+    }
+
     auto FileWriter::write(std::span<std::byte const> bytes) -> Status
     {
         UF_CHECK(m_state != nullptr);
