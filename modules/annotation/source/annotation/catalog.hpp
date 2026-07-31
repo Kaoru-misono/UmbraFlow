@@ -95,12 +95,20 @@ namespace uf::annotation
         ) const noexcept UF_LIFETIME_BOUND -> RecognizerVariant const*;
     };
 
-    // Which page an element's rectangle belongs to. Owned is the author saying
-    // these pixels are this page's alone, and the editing tools refuse to
-    // reference them elsewhere; Referenced is a page borrowing an element whose
-    // home is another page. It replaces the old `bool shared`, which could only
-    // record an intent and could contradict the placements without anything
-    // noticing.
+    // Which page owns an element's definition -- its rectangle and its
+    // appearances. Owned is the element's home page, the one `page add` drew it
+    // on; Referenced is another page borrowing it. Exactly one Owned row per
+    // element is enforced here; every other page that uses it is Referenced.
+    // It replaces the old `bool shared`, which could only record an intent and
+    // could contradict the placements without anything noticing.
+    //
+    // Ownership is not exclusivity, and the two were conflated here until
+    // 2026-07-31. "These pixels are this page's alone, so refuse to reference
+    // them elsewhere" cannot be what Owned means: `runAddElement` marks every
+    // drawn element Owned on its home page, so that reading makes
+    // `page reference` fail for every element there is. If an author ever needs
+    // to declare an element private to one page, that is a separate statement
+    // on the element, not a second meaning for this enum.
     enum class Holding : uint8
     {
         Owned,
