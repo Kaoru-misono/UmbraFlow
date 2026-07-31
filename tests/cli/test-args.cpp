@@ -156,6 +156,43 @@ namespace uf::cli
         CHECK(result->recognitionTimeout == k_defaultRunRecognitionTimeout);
         CHECK(result->maxFrameAge == k_defaultRunMaxFrameAge);
         CHECK(result->trace == k_defaultTracePath);
+        // Absent by default: a run that never asked for --ocr-models must not
+        // pay for an engine, and cycle_read refuses on its own terms instead.
+        CHECK_FALSE(result->ocrModels.has_value());
+    }
+
+    TEST_CASE("parseRunArguments accepts --ocr-models and passes the directory through")
+    {
+        auto raw = minimalArgs();
+        raw.emplace_back("--ocr-models");
+        raw.emplace_back("models");
+
+        auto const result = parse(raw);
+        REQUIRE(result.has_value());
+        REQUIRE(result->ocrModels.has_value());
+        CHECK(*result->ocrModels == std::filesystem::path{"models"});
+    }
+
+    TEST_CASE("parseDriveArguments accepts the same optional --ocr-models flag as run")
+    {
+        auto const withoutFlag = std::vector<std::string>{
+            "--project",  "proj",
+            "--selector", "Game",
+            "--queue",    "queue.jsonl",
+            "--results",  "results.jsonl",
+        };
+        auto const withoutResult = parseDriveArguments(withoutFlag);
+        REQUIRE(withoutResult.has_value());
+        CHECK_FALSE(withoutResult->ocrModels.has_value());
+
+        auto withFlag = withoutFlag;
+        withFlag.emplace_back("--ocr-models");
+        withFlag.emplace_back("models");
+
+        auto const withResult = parseDriveArguments(withFlag);
+        REQUIRE(withResult.has_value());
+        REQUIRE(withResult->ocrModels.has_value());
+        CHECK(*withResult->ocrModels == std::filesystem::path{"models"});
     }
 
     TEST_CASE("the default comparison budget covers a page evaluation but not a full frame")

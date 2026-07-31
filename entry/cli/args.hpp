@@ -6,6 +6,7 @@
 
 #include <chrono>
 #include <filesystem>
+#include <optional>
 #include <span>
 #include <string>
 #include <string_view>
@@ -75,6 +76,15 @@ namespace uf::cli
 
         std::filesystem::path trace{k_defaultTracePath};
 
+        // The "models" directory cycle_read's OCR engine loads from, or absent
+        // for a run that never reads text. Absent by default, because the
+        // weights are tens of megabytes and a run that reads nothing must not
+        // pay for them; cycle_read refuses on its own terms instead. When
+        // present, the layout is the one modules/ocr/external commits and
+        // entry/input-agent's OcrTextReader already resolves: `ocrModels /
+        // "ppocr-v6-small-rec" / {inference.onnx, inference.yml}`.
+        std::optional<std::filesystem::path> ocrModels{};
+
         auto operator==(RunArgs const&) const -> bool = default;
     };
 
@@ -128,6 +138,11 @@ namespace uf::cli
         MonotonicInstant::Duration idleTimeout{k_defaultDriveIdleTimeout};
 
         std::filesystem::path trace{k_defaultTracePath};
+
+        // Same field, same default, same reason as RunArgs::ocrModels: the two
+        // front-ends must not be able to run cycle_read under different
+        // guarantees.
+        std::optional<std::filesystem::path> ocrModels{};
 
         auto operator==(DriveArgs const&) const -> bool = default;
     };

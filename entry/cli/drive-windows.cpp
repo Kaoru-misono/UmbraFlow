@@ -1,5 +1,6 @@
 #include "drive.hpp"
 
+#include "platform/ocr-engine-binding.hpp"
 #include "platform/target-binding.hpp"
 #include "platform/windows-console-cancellation.hpp"
 
@@ -34,6 +35,11 @@ namespace uf::cli
             )
         );
 
+        // Built before the target, for the same reason `run` orders it that way:
+        // a model directory that will not build an engine must fail before any
+        // window is enumerated.
+        UF_TRY_VALUE(ocrEngine, platform::bindOcrEngine(args.ocrModels));
+
         UF_TRY_VALUE(bound, platform::bindTarget(args.selector));
 
         // Every bound below is the same field with the same default `run` passes, and
@@ -46,6 +52,7 @@ namespace uf::cli
                 task::TaskRunConfig{
                     .frameSource             = std::move(bound.frameSource),
                     .actionSink              = std::move(bound.actionSink),
+                    .ocrEngine               = std::move(ocrEngine),
                     .liveFingerprint         = bound.liveFingerprint,
                     .maximumPixelComparisons = args.budget,
                     .recognitionTimeout      = args.recognitionTimeout,

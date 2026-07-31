@@ -47,6 +47,8 @@ if(WIN32 AND TARGET ${PROJECT_NAME}_controller)
             cli/run-windows.cpp
             cli/platform/controller-action-sink.cpp
             cli/platform/controller-action-sink.hpp
+            cli/platform/ocr-engine-binding.cpp
+            cli/platform/ocr-engine-binding.hpp
             cli/platform/target-binding.cpp
             cli/platform/target-binding.hpp
             cli/platform/wgc-frame-source.hpp

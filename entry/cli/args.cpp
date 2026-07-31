@@ -26,7 +26,7 @@ namespace uf::cli
         [[nodiscard]]
         auto isRunValueFlag(std::string_view flag) noexcept -> bool
         {
-            auto constexpr flags = std::array<std::string_view, 7>{
+            auto constexpr flags = std::array<std::string_view, 8>{
                 "--project",
                 "--selector",
                 "--task",
@@ -34,6 +34,7 @@ namespace uf::cli
                 "--recognition-timeout",
                 "--max-frame-age",
                 "--trace",
+                "--ocr-models",
             };
             return std::ranges::find(flags, flag) != flags.end();
         }
@@ -45,7 +46,7 @@ namespace uf::cli
         [[nodiscard]]
         auto isDriveValueFlag(std::string_view flag) noexcept -> bool
         {
-            auto constexpr flags = std::array<std::string_view, 9>{
+            auto constexpr flags = std::array<std::string_view, 10>{
                 "--project",
                 "--selector",
                 "--queue",
@@ -55,6 +56,7 @@ namespace uf::cli
                 "--max-frame-age",
                 "--idle-timeout",
                 "--trace",
+                "--ocr-models",
             };
             return std::ranges::find(flags, flag) != flags.end();
         }
@@ -139,6 +141,7 @@ namespace uf::cli
         auto recognitionTimeout = k_defaultRunRecognitionTimeout;
         auto maxFrameAge        = k_defaultRunMaxFrameAge;
         auto trace              = std::filesystem::path{k_defaultTracePath};
+        auto ocrModels          = std::optional<std::filesystem::path>{};
 
         auto index = std::size_t{0};
         while (index < raw.size())
@@ -193,6 +196,10 @@ namespace uf::cli
             {
                 trace = std::filesystem::path{value};
             }
+            else if (flag == "--ocr-models")
+            {
+                ocrModels = std::filesystem::path{value};
+            }
             index += 2U;
         }
 
@@ -208,6 +215,7 @@ namespace uf::cli
             .recognitionTimeout = recognitionTimeout,
             .maxFrameAge        = maxFrameAge,
             .trace              = std::move(trace),
+            .ocrModels          = std::move(ocrModels),
         };
     }
 
@@ -223,6 +231,7 @@ namespace uf::cli
         auto maxFrameAge        = k_defaultRunMaxFrameAge;
         auto idleTimeout        = k_defaultDriveIdleTimeout;
         auto trace              = std::filesystem::path{k_defaultTracePath};
+        auto ocrModels          = std::optional<std::filesystem::path>{};
 
         auto index = std::size_t{0};
         while (index < raw.size())
@@ -290,6 +299,10 @@ namespace uf::cli
             {
                 trace = std::filesystem::path{value};
             }
+            else if (flag == "--ocr-models")
+            {
+                ocrModels = std::filesystem::path{value};
+            }
             index += 2U;
         }
 
@@ -308,6 +321,7 @@ namespace uf::cli
             .maxFrameAge        = maxFrameAge,
             .idleTimeout        = idleTimeout,
             .trace              = std::move(trace),
+            .ocrModels          = std::move(ocrModels),
         };
     }
 
@@ -328,7 +342,9 @@ namespace uf::cli
             "  --recognition-timeout MS     Per-recognition deadline; default: 2000\n"
             "  --max-frame-age MS           Action frame age ceiling; default: 750\n"
             "  --trace PATH                 Trace JSONL path; default: "
-            "umbra-flow-trace.jsonl\n";
+            "umbra-flow-trace.jsonl\n"
+            "  --ocr-models DIR             \"models\" directory enabling cycle_read;\n"
+            "                                default: no OCR engine, cycle_read refuses\n";
     }
 
     auto driveUsageText() noexcept -> std::string_view
@@ -354,7 +370,9 @@ namespace uf::cli
             "  --max-frame-age MS           Action frame age ceiling; default: 750\n"
             "  --idle-timeout S             End after an idle queue; default: 120\n"
             "  --trace PATH                 Trace JSONL path; default: "
-            "umbra-flow-trace.jsonl\n";
+            "umbra-flow-trace.jsonl\n"
+            "  --ocr-models DIR             \"models\" directory enabling cycle_read;\n"
+            "                                default: no OCR engine, cycle_read refuses\n";
     }
 
     auto usageText() -> std::string
