@@ -3,6 +3,7 @@
 #include <controller/input.hpp>
 #include <core/error/result.hpp>
 #include <core/time/monotonic-time.hpp>
+#include <domain/space.hpp>
 
 #include <chrono>
 #include <filesystem>
@@ -69,6 +70,28 @@ namespace uf::input_agent
         auto operator==(InputAgentScrollCommand const&) const -> bool = default;
     };
 
+    // Reading one line of text off the target, and the only verb that answers
+    // with what the screen SAYS rather than with a file to go and look at.
+    //
+    // It names no output path, and that absence is the point: measuring text
+    // during an annotation session otherwise means capturing a PNG and reading
+    // it with human eyes, and the verb exists to remove that step. Nothing is
+    // delivered either, so this carries neither the before/after framing nor the
+    // settle the three input verbs need.
+    //
+    // The rectangle is in the captured frame's OWN PIXEL SPACE -- what an author
+    // measures on a capture PNG -- rather than the client space `click` and
+    // `scroll` take. `capture` reports both sizes and the delta between them,
+    // which is what tells an author whether the two differ on this target.
+    struct InputAgentReadCommand final
+    {
+        // No in-class initializer: PixelRect has no default state, and a rect
+        // this layer invented would be one the operator never asked for.
+        PixelRect rect;
+
+        auto operator==(InputAgentReadCommand const&) const -> bool = default;
+    };
+
     struct InputAgentQuitCommand final
     {
         auto operator==(InputAgentQuitCommand const&) const -> bool = default;
@@ -79,6 +102,7 @@ namespace uf::input_agent
         InputAgentClickCommand,
         InputAgentKeyCommand,
         InputAgentScrollCommand,
+        InputAgentReadCommand,
         InputAgentQuitCommand
     >;
 

@@ -8,6 +8,7 @@
 #include "path-validation.hpp"
 #include "platform/windows-file-writer.hpp"
 #include "protocol.hpp"
+#include "text-reader.hpp"
 
 #include <controller/discovery.hpp>
 #include <core/error/contracts.hpp>
@@ -17,7 +18,9 @@
 #include <domain/error.hpp>
 #include <domain/frame.hpp>
 #include <domain/space.hpp>
+#include <ocr/text.hpp>
 
+#include <expected>
 #include <filesystem>
 #include <format>
 #include <memory>
@@ -148,6 +151,28 @@ namespace uf::input_agent
             return InputAgentCommandOutcome{
                 .resultLine = serializeInputAgentActionResult(operation, result),
                 .stopAgent  = stopAgent,
+            };
+        }
+
+        // Every way a read can end, in one place, because they agree on the one
+        // thing that is easy to get wrong: a read NEVER ends the run. A reader
+        // that will not come up is not a reason to stop serving -- every other
+        // verb still works, and the queue behind this command may hold nothing
+        // but captures and clicks.
+        [[nodiscard]]
+        auto finishRead(
+            std::optional<uint64> frame,
+            TextReadOutcome outcome
+        ) -> InputAgentCommandOutcome
+        {
+            return InputAgentCommandOutcome{
+                .resultLine = serializeInputAgentReadResult(
+                    InputAgentReadResult{
+                        .frame   = frame,
+                        .outcome = std::move(outcome),
+                    }
+                ),
+                .stopAgent = false,
             };
         }
 
@@ -378,6 +403,58 @@ namespace uf::input_agent
         };
     }
 
+    auto serializeInputAgentReadResult(
+        InputAgentReadResult const& result
+    ) -> std::string
+    {
+        auto const& lines = result.outcome.lines;
+        auto output = std::string{R"({"op":"read","ok":)"};
+        output += lines ? "true" : "false";
+        output += R"(,"frame_id":)";
+        appendOptionalNumber(output, result.frame);
+
+        // Stated on every line, success or failure, because it is the one fact
+        // that is about the run rather than about this command: false means no
+        // read in this run will succeed until the payload beside the binary is
+        // fixed, and true means the rectangle is what to look at.
+        output += R"(,"reader_ready":)";
+        output += result.outcome.readerUnavailable ? "false" : "true";
+
+        output += R"(,"lines":)";
+        if (!lines)
+        {
+            output += R"(null,"error":)";
+            output += escapeJsonString(formatAutomationError(lines.error()));
+            output += '}';
+            return output;
+        }
+
+        // Lines rather than one joined string, and each with the model's own
+        // confidence: an author measuring a region needs to know both what was
+        // read and how much of it to believe, and a concatenation throws the
+        // second away. The bounds come back too because a Block read will one
+        // day return boxes the caller did not supply.
+        output += '[';
+        auto separator = std::string_view{};
+        for (auto const& line : *lines)
+        {
+            output += separator;
+            separator = ",";
+            output += std::format(
+                R"({{"text":{},"confidence_bp":{},)"
+                R"("bounds":{{"x":{},"y":{},"width":{},"height":{}}}}})",
+                escapeJsonString(line.text),
+                line.confidenceBp,
+                line.bounds.x(),
+                line.bounds.y(),
+                line.bounds.width(),
+                line.bounds.height()
+            );
+        }
+        output += R"(],"error":null})";
+        return output;
+    }
+
     auto serializeInputAgentActionResult(
         std::string_view operation,
         InputAgentActionResult const& result
@@ -408,11 +485,13 @@ namespace uf::input_agent
 
     AnnotationSession::AnnotationSession(
         std::unique_ptr<IInputAgentDrive> p_drive,
+        std::unique_ptr<IInputAgentTextReader> p_reader,
         std::filesystem::path canonicalOutputDirectory,
         std::filesystem::path canonicalQueue,
         std::filesystem::path canonicalResults
     )
         : m_drive{std::move(p_drive)}
+        , m_reader{std::move(p_reader)}
         , m_outputDirectory{std::move(canonicalOutputDirectory)}
         , m_queue{std::move(canonicalQueue)}
         , m_results{std::move(canonicalResults)}
@@ -568,6 +647,51 @@ namespace uf::input_agent
                 return m_drive->scroll(observation, point, delta);
             }
         );
+    }
+
+    auto AnnotationSession::run(
+        InputAgentReadCommand const& command
+    ) -> InputAgentCommandOutcome
+    {
+        // No output path and so no confinement fence: a read writes no file.
+        // The one fence it does have is the rect against the observation, and it
+        // is this layer's rather than the reader's for the reason the
+        // confinement fence is this layer's -- a rectangle that was never going
+        // to be readable must be refused with the reader untouched, so a bad
+        // number cannot be what brings a 20 MB model up.
+        auto observation = m_drive->capture();
+        if (!observation)
+        {
+            return finishRead(
+                std::nullopt,
+                TextReadOutcome{
+                    .lines = std::unexpected{
+                        std::move(observation).error(),
+                    },
+                    .readerUnavailable = false,
+                }
+            );
+        }
+
+        auto const frame = observation->id().value();
+        auto within = command.rect.ensureWithinExtent(
+            observation->width(),
+            observation->height()
+        );
+        if (!within)
+        {
+            return finishRead(
+                frame,
+                TextReadOutcome{
+                    .lines = std::unexpected{
+                        std::move(within).error(),
+                    },
+                    .readerUnavailable = false,
+                }
+            );
+        }
+
+        return finishRead(frame, m_reader->read(*observation, command.rect));
     }
 
     auto AnnotationSession::run(

@@ -40,17 +40,22 @@ detached.
 
 ## Layering
 
-Three files, three concerns, each testable without the two below it.
+One serving loop over two ports, each concern testable without the ones below it.
 
 - `loop.{hpp,cpp}` — `runInputAgentQueueLoop`, the serving loop and the only place the ways a run
   ends are decided, over the `IInputAgentSession` port. `InputAgentResultWriter` lives here too, and
   it is where the front-end stamp goes on.
 - `annotation.{hpp,cpp}` — `AnnotationSession`, the annotation layer: output-path confinement, the
-  before/after framing, PNG encoding, and the results-line shape. This is where a verb an authoring
-  session grows later — reading a region, proposing an element from what was read — belongs.
+  before/after framing, PNG encoding, the rect fence, and the results-line shape. This is where a
+  verb an authoring session grows belongs, and `read` is the first one that did.
 - `drive.{hpp,cpp}` — `IInputAgentDrive` and `WindowInputAgentDrive`: delivering one input to a
   window against one observation and getting a frame back. It names no file, encodes no image and
   parses no command, so nothing an authoring session invents reaches it.
+- `text-reader.{hpp,cpp}` — `IInputAgentTextReader`, the second port the annotation layer stands on:
+  a rectangle of one observation in, `ocr::TextLine`s out. It is a sibling of the drive rather than
+  a verb on it, because a drive knows only a window, an input and a frame, while what a rectangle of
+  that frame *says* is what an author is measuring.
+- `ocr-text-reader.{hpp,cpp}` — `OcrTextReader`, the live half: PP-OCRv6_small over ONNX Runtime.
 
 `IInputAgentDrive` is deliberately not `engine::IActionSink`, for the same reason
 `IInputAgentSession` is not: that port speaks the engine's vocabulary of one already-authorized
@@ -69,16 +74,18 @@ reason `trace::TraceRecorder` rather than each emitter owns that stamp.
 
 ## Protocol
 
-`entry/input-agent/protocol.hpp` defines five variants:
+`entry/input-agent/protocol.hpp` defines six variants:
 
 - `InputAgentCaptureCommand{output}`;
 - `InputAgentClickCommand{x, y, outputBefore, outputAfter, settle}`;
 - `InputAgentKeyCommand{key, outputBefore, outputAfter, settle}`;
 - `InputAgentScrollCommand{x, y, delta, outputBefore, outputAfter, settle}`;
+- `InputAgentReadCommand{rect}`;
 - `InputAgentQuitCommand`.
 
-The corresponding JSON objects accept only `op=capture|click|key|scroll|quit` and each one's exact
-field set; the frame fields are spelled `out`, `out_before`, `out_after`, and `settle_ms`.
+The corresponding JSON objects accept only `op=capture|click|key|scroll|read|quit` and each one's
+exact field set; the frame fields are spelled `out`, `out_before`, `out_after`, and `settle_ms`, and
+the rect fields `rect_x`, `rect_y`, `rect_width`, `rect_height`.
 `parseInputAgentCommand()` rejects anything over 64 KiB, invalid UTF-8, duplicate/unknown fields,
 malformed JSON numbers, empty paths, NUL, non-finite coordinates, and a settle over 5000 ms. The
 default action settle is 400 ms.
@@ -86,7 +93,78 @@ default action settle is 400 ms.
 `delta` is a whole number of wheel notches rather than raw `WHEEL_DELTA` units, and the parser
 resolves it through `WheelDelta::create`, so a zero, a fraction, and a count whose raw form would
 not fit `wParam`'s signed 16-bit word are all refused before any command is queued — the same way
-`key` is resolved through `KeyInput::fromName`.
+`key` is resolved through `KeyInput::fromName` and the rect through `PixelRect::create`.
+
+## The `read` verb
+
+```text
+{"op":"read","rect_x":262,"rect_y":14,"rect_width":138,"rect_height":36}
+{"front_end":"annotation","op":"read","ok":true,"frame_id":7,"reader_ready":true,
+ "lines":[{"text":"621/922","confidence_bp":9871,
+           "bounds":{"x":262,"y":14,"width":138,"height":36}}],"error":null}
+```
+
+(The results line is one physical line; it is wrapped here only to fit the page.)
+
+The rectangle is in the **captured frame's own pixel space** — what an author measures on a capture
+PNG — and not the client space `click` and `scroll` take. `capture` reports `frame_size`,
+`client_size` and their `delta`, which is what tells an author whether the two differ on a target.
+
+The verb names no output path, and that absence is the point: measuring text during an annotation
+session otherwise means capturing a PNG and reading it with human eyes.
+
+`rect_*` are whole non-negative pixels, so a fraction or a negative is refused at parse time rather
+than truncated onto a grid that has no fractions. `PixelRect::create` refuses an empty or
+overflowing rectangle, and `PixelRect::ensureWithinExtent` refuses one that does not fit the
+observation — the second fence is the annotation layer's rather than the engine's, so a rectangle
+that was never going to be readable cannot be what brings a 20 MB model up.
+
+**One line, not a block.** The rect is asserted by the caller to hold exactly one line, which skips
+detection and is both the cheap path and the one immune to a detector that splits a label in two. A
+rect that in fact holds several lines reads as one run of nonsense rather than failing; that is
+`modules/ocr`'s documented behaviour and nothing here can detect it. `TextLayout::Block` needs the
+detection model, which the adapter does not run yet, so no field selects a layout — the day
+detection lands is the day this verb grows one.
+
+**Lines rather than one joined string**, each with the model's own confidence in basis points: an
+author measuring a region needs to know both what was read and how much of it to believe, and a
+concatenation throws the second away. `bounds` travels too, because a block read will one day return
+boxes the caller did not supply.
+
+### Three answers, kept apart
+
+| condition | `ok` | `reader_ready` | `lines` |
+|---|---|---|---|
+| the model would not load | `false` | `false` | `null` |
+| this rect or this frame was refused | `false` | `true` | `null` |
+| the region was read and holds no text | `true` | `true` | `[]` |
+
+`reader_ready` is the only fact on the line that is about the run rather than about this command:
+false means no read will succeed until the payload is fixed, true means the rectangle is what to
+look at. An empty `lines` array is an **answer**, not a failure — a region with no text is an
+ordinary fact about the screen, and folding it into the failure side would make "the popup is not
+showing" and "the model would not load" the same line.
+
+A reader that cannot come up does **not** end the run. Every other verb is unaffected, and the queue
+behind the command may hold nothing but captures and clicks.
+
+### The engine's lifetime and its payload
+
+`OcrTextReader` builds the ONNX Runtime session on the **first read**, never at startup. Two things
+follow: a session that only captures pays nothing for a model it never uses, and an agent whose
+payload is missing still starts and still serves every other verb. A creation *failure* is not
+cached, so a payload restored beside a running agent is picked up by the next read; only a success
+is.
+
+The payload is resolved **relative to the executable** — `<exe dir>/models/ppocr-v6-small-rec/` —
+with no flag pointing elsewhere, because the agent is launched detached and its working directory is
+not something it may depend on. `entry/CMakeLists.txt` stages that directory and the ONNX Runtime
+DLLs into the runtime output directory, and a release ships them the same way. The detection model
+is deliberately not staged: nothing loads it.
+
+Linking `modules/ocr` gives `umbra-input-agent` a load-time import of `onnxruntime.dll`. `m0-demo`
+links the same support library but references nothing in the ocr module, so the linker drops it and
+the frozen demo gained no runtime dependency.
 
 `InputAgentQueueReader` reads the append-only queue incrementally by offset, accepts LF/CRLF, and
 retains incomplete lines; it fails closed when the queue is truncated or a pending command exceeds
@@ -171,7 +249,12 @@ frames already captured.
 - `test-annotation.cpp` pins the seam the drive/annotation split bought: an unconfined output is
   refused before the drive is asked to observe, the before-frame is encoded only after delivery so
   the observe->act window holds nothing slow, a replaced window is the one failure that ends the
-  run, and `delivered` follows the drive's answer rather than a flag the session sets.
+  run, and `delivered` follows the drive's answer rather than a flag the session sets. It also pins
+  the read verb over a scripted `IInputAgentTextReader`: the three answers stay apart, a rect outside
+  the observation is refused with the reader untouched, and an absent payload is reported as the
+  reader rather than as the rect. One case uses the real `OcrTextReader` against the payload staged
+  beside the test binary, which is the only automated proof that the shipped resolution path finds a
+  model at all; what it reads is `tests/ocr/test-ocr-real.cpp`'s subject, not this file's.
 - `test-args.cpp` pins the required file-IPC paths, the defaults, the uncursored-queue policy, and
   the rejection boundaries.
 - `test-target-setup.cpp` pins target revalidation and the empty-client-area refusal.
@@ -190,7 +273,10 @@ Outbound toward `controller`: discovery (`enumerateCandidates`, `resolveTarget`,
 `ResolvedTarget::revalidate`), DPI (`ensurePerMonitorAwareV2`), capture (`WgcCaptureSession`,
 `Frame`), and input (`DeliveryTarget`, `ObservationLease`, `click`, `scroll`, `keyPress`,
 `releaseHeld`, `AuditLog`). Toward `image`: PNG encoding of a captured frame. Toward `trace`: the
-front-end value and its wire name, and nothing else.
+front-end value and its wire name, and nothing else. Toward `ocr`: the `IOcrEngine` port, its
+`TextLine` vocabulary, and `createOnnxEngine` — this program is that module's composition root and,
+as of 2026-07-31, its only caller. Toward `vision`: `BgraImage`, the form a `Frame` has to be
+viewed as before it can be recognised.
 
 `modules/annotation` and `modules/engine` have no link edge with this program, and the reason is not
 layering hygiene but the domain: an annotation session has nothing annotated to authorize against.

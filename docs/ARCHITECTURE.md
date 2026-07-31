@@ -46,6 +46,11 @@ not declare link dependencies. `scripts/check_modules.py` enforces both rules.
 - `modules/domain/`: platform-free UmbraFlow frames, coordinates, detections,
   identifiers, leases, and automation errors.
 - `modules/vision/`: platform-free grayscale conversion and SAD template matching.
+- `modules/ocr/`: a rectangle of pixels in, lines of text with confidences out.
+  The `IOcrEngine` port and its `TextLine` vocabulary are platform-free; the
+  PP-OCRv6_small adapter and ONNX Runtime stay behind its FFI boundary, and its
+  model payloads are committed under `external/`. Its caller is the
+  `umbra-input-agent` `read` verb.
 - `modules/image/`: platform-free PNG I/O, pixel-layout conversion, and
   deterministic rectangular cropping; vendored codecs stay behind its FFI boundary.
 - `modules/annotation/`: platform-free annotation catalog validation, page
@@ -63,10 +68,13 @@ not declare link dependencies. `scripts/check_modules.py` enforces both rules.
   controller (WGC frame source, lease-forwarding click sink, JSONL trace).
   `input-agent/` is the `umbra-input-agent` annotation front-end: it serves one
   authoring session's command queue against a raw window, and it is the third
-  `trace::FrontEnd`. It also owns the entry-level substrate it shares with the
-  demo below -- frame PNG output, path confinement, target selection and
-  capture-session setup, JSON string escaping, error text, and the
-  command-line parsing primitives. `m0-demo/` is the frozen M0 substrate demo
+  `trace::FrontEnd`. Its `read` verb is `modules/ocr`'s composition root: it
+  resolves the model payload beside the executable and brings the engine up on
+  first use, so a session that only captures pays nothing and a missing payload
+  fails one command rather than the launch. It also owns the entry-level
+  substrate it shares with the demo below -- frame PNG output, path
+  confinement, target selection and capture-session setup, JSON string
+  escaping, error text, and the command-line parsing primitives. `m0-demo/` is the frozen M0 substrate demo
   kept as the real-machine acceptance reference: the fixed
   home -> result -> reset loop and the `capture` diagnostic, and nothing else
   since the front-end left it on 2026-07-31. The demo links the front-end's

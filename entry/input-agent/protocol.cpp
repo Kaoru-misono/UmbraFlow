@@ -74,7 +74,50 @@ namespace uf::input_agent
             std::optional<std::string> outputBefore{};
             std::optional<std::string> outputAfter{};
             std::optional<Duration>    settle{};
+
+            // Spelled apart from x and y rather than reusing them, because they
+            // are a different thing measured in a different space: these are
+            // whole frame pixels, while x and y are client-space coordinates a
+            // pointer lands on. One name for both would let a rect measured on a
+            // capture PNG be delivered as a click.
+            std::optional<uint32> rectX{};
+            std::optional<uint32> rectY{};
+            std::optional<uint32> rectWidth{};
+            std::optional<uint32> rectHeight{};
         };
+
+        [[nodiscard]]
+        auto hasRectFields(ParsedCommandFields const& fields) noexcept -> bool
+        {
+            return (
+                fields.rectX
+                || fields.rectY
+                || fields.rectWidth
+                || fields.rectHeight
+            );
+        }
+
+        // Only `read` measures a rectangle. Every other op refuses all four
+        // fields through this rather than by naming them in its own guard, so a
+        // fifth rect field could not be added to the grammar and quietly become
+        // legal on `click`.
+        [[nodiscard]]
+        auto rejectRectFields(
+            ParsedCommandFields const& fields,
+            std::string_view operation
+        ) -> Status
+        {
+            if (!hasRectFields(fields))
+            {
+                return ok();
+            }
+            return invalidCommand(
+                std::format(
+                    "input-agent {} command contains read-only rect fields",
+                    operation
+                )
+            );
+        }
 
         class CommandParser final
         {
@@ -404,6 +447,35 @@ namespace uf::input_agent
                 return notches;
             }
 
+            // Whole frame pixels, so a fraction or an exponent is refused here
+            // rather than silently truncated onto a pixel grid that has no
+            // fractions. PixelRect decides which combinations describe an area.
+            [[nodiscard]]
+            auto parsePixelExtent(std::string_view field) -> Result<uint32>
+            {
+                UF_TRY_VALUE(token, parseNumberToken());
+                auto pixels = uint32{};
+                auto const* const begin = std::to_address(token.cbegin());
+                auto const* const end = std::to_address(token.cend());
+                auto const parsed = std::from_chars(
+                    begin,
+                    end,
+                    pixels,
+                    10
+                );
+                if (parsed.ec != std::errc{} || parsed.ptr != end)
+                {
+                    return invalidCommand(
+                        std::format(
+                            "input-agent command field {} must be a whole "
+                            "non-negative pixel count",
+                            field
+                        )
+                    );
+                }
+                return pixels;
+            }
+
             [[nodiscard]]
             auto parseSettle() -> Result<MonotonicInstant::Duration>
             {
@@ -519,6 +591,26 @@ namespace uf::input_agent
                     UF_TRY_VALUE(value, parseSettle());
                     return setOnce(fields.settle, value, field);
                 }
+                if (field == "rect_x")
+                {
+                    UF_TRY_VALUE(value, parsePixelExtent(field));
+                    return setOnce(fields.rectX, value, field);
+                }
+                if (field == "rect_y")
+                {
+                    UF_TRY_VALUE(value, parsePixelExtent(field));
+                    return setOnce(fields.rectY, value, field);
+                }
+                if (field == "rect_width")
+                {
+                    UF_TRY_VALUE(value, parsePixelExtent(field));
+                    return setOnce(fields.rectWidth, value, field);
+                }
+                if (field == "rect_height")
+                {
+                    UF_TRY_VALUE(value, parsePixelExtent(field));
+                    return setOnce(fields.rectHeight, value, field);
+                }
                 return invalidCommand(
                     std::format(
                         "input-agent command has unrecognized field \"{}\"",
@@ -625,6 +717,7 @@ namespace uf::input_agent
 
             if (*fields.operation == "capture")
             {
+                UF_TRY(rejectRectFields(fields, "capture"));
                 if (
                     fields.key
                     || fields.x
@@ -647,6 +740,7 @@ namespace uf::input_agent
 
             if (*fields.operation == "click")
             {
+                UF_TRY(rejectRectFields(fields, "click"));
                 if (fields.output)
                 {
                     return invalidCommand(
@@ -692,6 +786,7 @@ namespace uf::input_agent
 
             if (*fields.operation == "key")
             {
+                UF_TRY(rejectRectFields(fields, "key"));
                 if (fields.output)
                 {
                     return invalidCommand(
@@ -746,6 +841,7 @@ namespace uf::input_agent
 
             if (*fields.operation == "scroll")
             {
+                UF_TRY(rejectRectFields(fields, "scroll"));
                 if (fields.output)
                 {
                     return invalidCommand(
@@ -800,8 +896,69 @@ namespace uf::input_agent
                 };
             }
 
+            if (*fields.operation == "read")
+            {
+                if (fields.output || fields.outputBefore || fields.outputAfter)
+                {
+                    return invalidCommand(
+                        "input-agent read command writes no file and takes no "
+                        "output path"
+                    );
+                }
+                if (fields.key || fields.x || fields.y || fields.delta)
+                {
+                    return invalidCommand(
+                        "input-agent read command delivers no input and takes "
+                        "no action fields"
+                    );
+                }
+                if (fields.settle)
+                {
+                    return invalidCommand(
+                        "input-agent read command contains action-only field "
+                        "settle_ms"
+                    );
+                }
+                if (
+                    !fields.rectX
+                    || !fields.rectY
+                    || !fields.rectWidth
+                    || !fields.rectHeight
+                )
+                {
+                    return invalidCommand(
+                        "input-agent read command requires rect_x, rect_y, "
+                        "rect_width and rect_height fields"
+                    );
+                }
+                // PixelRect is what decides an empty or overflowing rectangle,
+                // the same way WheelDelta decides an undeliverable notch count.
+                // Its own failure kind is InternalInvariant, which is the wrong
+                // thing to tell an operator about a number they typed, so the
+                // reason is carried into an invalid-command failure here.
+                auto const rect = PixelRect::create(
+                    *fields.rectX,
+                    *fields.rectY,
+                    *fields.rectWidth,
+                    *fields.rectHeight
+                );
+                if (!rect)
+                {
+                    return invalidCommand(
+                        std::format(
+                            "input-agent read command has an unreadable rect: {}",
+                            rect.error().message()
+                        )
+                    );
+                }
+                return InputAgentReadCommand{
+                    .rect = *rect,
+                };
+            }
+
             if (*fields.operation == "quit")
             {
+                UF_TRY(rejectRectFields(fields, "quit"));
                 if (
                     fields.output
                     || fields.key

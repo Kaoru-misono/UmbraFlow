@@ -1,7 +1,9 @@
 #include <annotation.hpp>
 #include <drive.hpp>
+#include <ocr-text-reader.hpp>
 #include <protocol.hpp>
 #include <path-validation.hpp>
+#include <text-reader.hpp>
 
 #include <controller/discovery.hpp>
 #include <core/error/result.hpp>
@@ -12,11 +14,13 @@
 #include <domain/frame.hpp>
 #include <domain/ids.hpp>
 #include <domain/space.hpp>
+#include <ocr/text.hpp>
 
 #include <doctest/doctest.h>
 
 #include <chrono>
 #include <cstddef>
+#include <expected>
 #include <filesystem>
 #include <format>
 #include <memory>
@@ -38,6 +42,13 @@ namespace uf::input_agent
     {
         constexpr auto k_client = ClientSize{800, 450};
 
+        // The scripted frame has area rather than being one pixel, because the
+        // read verb's own fence is a rectangle against this extent: a 1x1
+        // observation would leave nothing but the empty rect the parser already
+        // refuses.
+        constexpr auto k_frameWidth = uint32{40};
+        constexpr auto k_frameHeight = uint32{20};
+
         [[nodiscard]]
         auto scriptedFrame(uint64 id) -> Frame
         {
@@ -45,27 +56,36 @@ namespace uf::input_agent
                 Point<DesktopSpace>{0.0F, 0.0F},
                 1.0F,
                 1.0F,
-                1,
-                1
+                k_frameWidth,
+                k_frameHeight
             );
             REQUIRE(transform.has_value());
+            auto const stride = std::size_t{k_frameWidth} * 4U;
             auto const pixels = std::make_shared<FrameBuffer const>(
-                std::vector<std::byte>(4)
+                std::vector<std::byte>(stride * k_frameHeight)
             );
             auto frame = Frame::create(
                 FrameId{id},
                 CaptureSessionId{1},
                 TargetGeneration{},
                 MonotonicInstant::now(),
-                1,
-                1,
-                4,
+                k_frameWidth,
+                k_frameHeight,
+                stride,
                 PixelFormat::Bgra8,
                 pixels,
                 *transform
             );
             REQUIRE(frame.has_value());
             return *std::move(frame);
+        }
+
+        [[nodiscard]]
+        auto rectOf(uint32 x, uint32 y, uint32 width, uint32 height) -> PixelRect
+        {
+            auto rect = PixelRect::create(x, y, width, height);
+            REQUIRE(rect.has_value());
+            return *rect;
         }
 
         auto removeAllBestEffort(
@@ -257,30 +277,96 @@ namespace uf::input_agent
             }
         };
 
-        // The session under test plus the observing pointer a case reads the
-        // scripted drive back through. The pointer is taken before the drive is
-        // moved into the session, and the session owns it for the whole case.
+        // How the scripted reader below answers a read. Described rather than
+        // stored as a TextReadOutcome, for ScriptedAnswer's reason: an Error is
+        // move-only, so a reader asked twice has to produce a second answer of
+        // its own.
+        struct ScriptedRead final
+        {
+            std::optional<AutomationErrorKind> refusal{};
+            std::string                        message{};
+            bool                               readerUnavailable{};
+
+            std::vector<ocr::TextLine> lines{};
+        };
+
+        // A reader that answers from a script instead of from a model, and
+        // records the rectangles the annotation layer handed it -- which is how
+        // "the fence ran before the reader was asked" is asserted without 20 MB
+        // of weights on disk.
+        class ScriptedTextReader final : public IInputAgentTextReader
+        {
+            ScriptedRead m_answer;
+
+            std::vector<PixelRect> m_asked{};
+
+        public:
+            explicit ScriptedTextReader(ScriptedRead answer)
+                : m_answer{std::move(answer)}
+            {
+            }
+
+            [[nodiscard]]
+            auto read(Frame const&, PixelRect rect) -> TextReadOutcome override
+            {
+                m_asked.emplace_back(rect);
+                if (m_answer.refusal.has_value())
+                {
+                    return TextReadOutcome{
+                        .lines = fail(
+                            *m_answer.refusal,
+                            m_answer.message
+                        ),
+                        .readerUnavailable = m_answer.readerUnavailable,
+                    };
+                }
+                return TextReadOutcome{
+                    .lines             = m_answer.lines,
+                    .readerUnavailable = false,
+                };
+            }
+
+            [[nodiscard]]
+            auto asked() const noexcept UF_LIFETIME_BOUND
+                -> std::vector<PixelRect> const&
+            {
+                return m_asked;
+            }
+        };
+
+        // The session under test plus the observing pointers a case reads the
+        // scripted collaborators back through. Both are taken before their
+        // owners are moved into the session, and the session owns them for the
+        // whole case.
         struct SessionUnderTest final
         {
             ScriptedDrive*                     p_drive{};
+            ScriptedTextReader*                p_reader{};
             std::unique_ptr<AnnotationSession> session{};
         };
 
         [[nodiscard]]
         auto buildSession(
             SessionFiles const& files,
-            ScriptedAnswer answer
+            ScriptedAnswer answer,
+            ScriptedRead readAnswer = ScriptedRead{}
         ) -> SessionUnderTest
         {
             auto drive = std::make_unique<ScriptedDrive>(
                 files.outputDirectory / "before.png",
                 std::move(answer)
             );
-            auto* p_drive = drive.get();
+            auto reader = std::make_unique<ScriptedTextReader>(
+                std::move(readAnswer)
+            );
+            auto* p_drive  = drive.get();
+            auto* p_reader = reader.get();
             return SessionUnderTest{
-                .p_drive = p_drive,
-                .session = std::make_unique<AnnotationSession>(
+                .p_drive  = p_drive,
+                .p_reader = p_reader,
+                .session  = std::make_unique<AnnotationSession>(
                     std::move(drive),
+                    std::move(reader),
                     files.outputDirectory,
                     files.queue,
                     files.results
@@ -422,6 +508,273 @@ namespace uf::input_agent
         CHECK(gone.resultLine.contains(R"("ok":false)"));
         CHECK(gone.resultLine.contains(R"("delivered":false)"));
         CHECK(gone.stopAgent);
+    }
+
+    // The read verb's whole contract, and the reason it is three cases rather
+    // than one: an operator that cannot tell a reader which never came up from a
+    // rectangle that was refused from a region that really holds no text has no
+    // idea which of the three things to go and fix.
+    TEST_CASE("annotation session answers a read with the text and its confidence")
+    {
+        auto const files = createSessionFiles("annotation-read");
+        auto const cleanup = scopeExit(
+            [cleanupPath = files.root]() noexcept
+            {
+                removeAllBestEffort(cleanupPath);
+            }
+        );
+
+        auto under = buildSession(
+            files,
+            ScriptedAnswer{},
+            ScriptedRead{
+                .lines = {
+                    ocr::TextLine{
+                        .text         = R"(621/922 "x")",
+                        .bounds       = rectOf(2, 3, 10, 5),
+                        .confidenceBp = 9871U,
+                    },
+                },
+            }
+        );
+        auto const outcome = under.session->execute(
+            parsed(
+                R"({"op":"read","rect_x":2,"rect_y":3,)"
+                R"("rect_width":10,"rect_height":5})"
+            )
+        );
+
+        CHECK(outcome.resultLine.contains(R"("op":"read")"));
+        CHECK(outcome.resultLine.contains(R"("ok":true)"));
+        CHECK(outcome.resultLine.contains(R"("reader_ready":true)"));
+        CHECK(outcome.resultLine.contains(R"("frame_id":1)"));
+        CHECK(outcome.resultLine.contains(R"("error":null)"));
+
+        // The text is escaped as JSON, and the confidence travels with it: a
+        // bare joined string would leave an author with no way to tell a read
+        // worth trusting from one that is not.
+        CHECK(
+            outcome.resultLine.contains(
+                R"({"text":"621/922 \"x\"","confidence_bp":9871,)"
+                R"("bounds":{"x":2,"y":3,"width":10,"height":5}})"
+            )
+        );
+
+        // A read brackets nothing and writes nothing, so the drive observes once
+        // and is never asked to deliver.
+        CHECK(under.p_drive->captures() == 1U);
+        CHECK(under.p_drive->asked().empty());
+        CHECK(under.p_reader->asked() == std::vector<PixelRect>{rectOf(2, 3, 10, 5)});
+        CHECK_FALSE(outcome.stopAgent);
+    }
+
+    TEST_CASE("annotation session reports a region with no text as an answer")
+    {
+        auto const files = createSessionFiles("annotation-read-empty");
+        auto const cleanup = scopeExit(
+            [cleanupPath = files.root]() noexcept
+            {
+                removeAllBestEffort(cleanupPath);
+            }
+        );
+
+        // The engine ran and found nothing. That is a fact about the screen --
+        // the popup is not showing -- and reporting it as a failure would make
+        // it indistinguishable from a model that would not load.
+        auto under = buildSession(files, ScriptedAnswer{}, ScriptedRead{});
+        auto const outcome = under.session->execute(
+            parsed(
+                R"({"op":"read","rect_x":0,"rect_y":0,)"
+                R"("rect_width":4,"rect_height":4})"
+            )
+        );
+
+        CHECK(outcome.resultLine.contains(R"("ok":true)"));
+        CHECK(outcome.resultLine.contains(R"("reader_ready":true)"));
+        CHECK(outcome.resultLine.contains(R"("lines":[])"));
+        CHECK(outcome.resultLine.contains(R"("error":null)"));
+        CHECK(under.p_reader->asked().size() == 1U);
+    }
+
+    TEST_CASE("annotation session separates a missing reader from a refused read")
+    {
+        auto const refused = createSessionFiles("annotation-read-refused");
+        auto const refusedCleanup = scopeExit(
+            [cleanupPath = refused.root]() noexcept
+            {
+                removeAllBestEffort(cleanupPath);
+            }
+        );
+
+        auto const readCommand = std::string{
+            R"({"op":"read","rect_x":0,"rect_y":0,)"
+            R"("rect_width":4,"rect_height":4})"
+        };
+
+        // This one read failed. The reader is fine, so the next read may well
+        // succeed and the operator's move is to look at the rectangle.
+        auto refusedRead = buildSession(
+            refused,
+            ScriptedAnswer{},
+            ScriptedRead{
+                .refusal = AutomationErrorKind::InvalidResource,
+                .message = "the ocr rect does not fit inside the image",
+            }
+        );
+        auto const refusal = refusedRead.session->execute(parsed(readCommand));
+        CHECK(refusal.resultLine.contains(R"("ok":false)"));
+        CHECK(refusal.resultLine.contains(R"("reader_ready":true)"));
+        CHECK(refusal.resultLine.contains(R"("lines":null)"));
+        CHECK(refusal.resultLine.contains("does not fit inside the image"));
+        CHECK_FALSE(refusal.stopAgent);
+
+        auto const missing = createSessionFiles("annotation-read-unavailable");
+        auto const missingCleanup = scopeExit(
+            [cleanupPath = missing.root]() noexcept
+            {
+                removeAllBestEffort(cleanupPath);
+            }
+        );
+
+        // The reader never came up. Every read in this run will answer the same
+        // way until the payload beside the binary is fixed -- and yet the run
+        // goes on, because capture and the input verbs are unaffected.
+        auto unavailable = buildSession(
+            missing,
+            ScriptedAnswer{},
+            ScriptedRead{
+                .refusal           = AutomationErrorKind::InvalidResource,
+                .message           = "the ocr model file 'inference.onnx' is missing",
+                .readerUnavailable = true,
+            }
+        );
+        auto const absent = unavailable.session->execute(parsed(readCommand));
+        CHECK(absent.resultLine.contains(R"("ok":false)"));
+        CHECK(absent.resultLine.contains(R"("reader_ready":false)"));
+        CHECK(absent.resultLine.contains(R"("lines":null)"));
+        CHECK(absent.resultLine.contains("is missing"));
+        CHECK_FALSE(absent.stopAgent);
+    }
+
+    TEST_CASE("annotation session refuses a rect outside the observation")
+    {
+        auto const files = createSessionFiles("annotation-read-outside");
+        auto const cleanup = scopeExit(
+            [cleanupPath = files.root]() noexcept
+            {
+                removeAllBestEffort(cleanupPath);
+            }
+        );
+
+        // The fence is this layer's rather than the engine's, and it has to run
+        // before the reader is touched: a rectangle that was never going to be
+        // readable must not be what brings a 20 MB model up.
+        auto under = buildSession(files, ScriptedAnswer{}, ScriptedRead{});
+        auto const outcome = under.session->execute(
+            parsed(
+                std::format(
+                    R"({{"op":"read","rect_x":0,"rect_y":0,)"
+                    R"("rect_width":{},"rect_height":{}}})",
+                    k_frameWidth + 1U,
+                    k_frameHeight
+                )
+            )
+        );
+
+        CHECK(outcome.resultLine.contains(R"("ok":false)"));
+        CHECK(outcome.resultLine.contains(R"("reader_ready":true)"));
+        CHECK(outcome.resultLine.contains(R"("lines":null)"));
+        CHECK(outcome.resultLine.contains(R"("frame_id":1)"));
+        CHECK(under.p_reader->asked().empty());
+    }
+
+    TEST_CASE("the ocr reader reports an absent payload as the reader, not the rect")
+    {
+        // The one failure mode of the live reader that needs no model to prove:
+        // pointed at a directory with no weights in it, it must answer that the
+        // reader is unavailable rather than that this rectangle was bad, and it
+        // must do so without the agent having failed to start.
+        auto const files = createSessionFiles("annotation-read-payload");
+        auto const cleanup = scopeExit(
+            [cleanupPath = files.root]() noexcept
+            {
+                removeAllBestEffort(cleanupPath);
+            }
+        );
+
+        auto reader = OcrTextReader{files.root / "absent-models"};
+        auto const outcome = reader.read(scriptedFrame(1), rectOf(0, 0, 4, 4));
+
+        REQUIRE_FALSE(outcome.lines.has_value());
+        CHECK(outcome.readerUnavailable);
+        CHECK(outcome.lines.error().message().contains("inference.onnx"));
+    }
+
+    TEST_CASE("the shipped reader finds the payload staged beside the binary")
+    {
+        // The one thing about the live read path that no scripted reader can
+        // stand in for: that `models/ppocr-v6-small-rec` really is beside the
+        // executable, that createOcrTextReader resolves that directory the way
+        // a detached agent has to, and that ONNX Runtime brings the recognition
+        // model up from it. The test binary lands in the same directory the
+        // agent does, so it resolves the same payload the agent will.
+        //
+        // What is read is deliberately not asserted: a blank frame is whatever
+        // the model decides it is, and the accuracy of a real frame is
+        // tests/ocr/test-ocr-real.cpp's subject rather than this one's.
+        auto reader = createOcrTextReader();
+        REQUIRE(reader.has_value());
+
+        auto const outcome = (*reader)->read(
+            scriptedFrame(1),
+            rectOf(0, 0, k_frameWidth, k_frameHeight)
+        );
+        auto const reason = outcome.lines
+            ? std::string{}
+            : std::string{outcome.lines.error().message()};
+        REQUIRE_MESSAGE(outcome.lines.has_value(), reason);
+        CHECK_FALSE(outcome.readerUnavailable);
+    }
+
+    TEST_CASE("a frame is read as the BGRA plane it was captured as")
+    {
+        auto const frame = scriptedFrame(1);
+        auto const image = frameAsBgraImage(frame);
+        REQUIRE(image.has_value());
+        CHECK(image->width() == k_frameWidth);
+        CHECK(image->height() == k_frameHeight);
+        CHECK(image->stride() == std::size_t{k_frameWidth} * 4U);
+
+        // A greyscale frame would be recognised as confident nonsense rather
+        // than failing, because the model reads whatever bytes it is handed as
+        // three channels; refusing it here is the only place that can tell.
+        auto const transform = CoordinateTransform::create(
+            Point<DesktopSpace>{0.0F, 0.0F},
+            1.0F,
+            1.0F,
+            2,
+            2
+        );
+        REQUIRE(transform.has_value());
+        auto grey = Frame::create(
+            FrameId{2},
+            CaptureSessionId{1},
+            TargetGeneration{},
+            MonotonicInstant::now(),
+            2,
+            2,
+            2,
+            PixelFormat::Gray8,
+            std::make_shared<FrameBuffer const>(std::vector<std::byte>(4)),
+            *transform
+        );
+        REQUIRE(grey.has_value());
+        auto const refused = frameAsBgraImage(*grey);
+        REQUIRE_FALSE(refused.has_value());
+        CHECK(
+            automationErrorKind(refused.error())
+            == AutomationErrorKind::UnsupportedCapability
+        );
     }
 
     TEST_CASE("annotation session reports the drive's own client size")

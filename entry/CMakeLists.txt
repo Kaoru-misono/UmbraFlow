@@ -117,10 +117,14 @@ if(TARGET ${PROJECT_NAME}_controller)
         input-agent/json-string.hpp
         input-agent/loop.cpp
         input-agent/loop.hpp
+        input-agent/ocr-text-reader.cpp
+        input-agent/ocr-text-reader.hpp
         input-agent/path-validation.cpp
         input-agent/path-validation.hpp
         input-agent/platform/windows-client-origin.cpp
         input-agent/platform/windows-client-origin.hpp
+        input-agent/platform/windows-executable-path.cpp
+        input-agent/platform/windows-executable-path.hpp
         input-agent/platform/windows-file-writer.cpp
         input-agent/platform/windows-file-writer.hpp
         input-agent/platform/windows-path.cpp
@@ -129,6 +133,8 @@ if(TARGET ${PROJECT_NAME}_controller)
         input-agent/protocol.hpp
         input-agent/target-setup.cpp
         input-agent/target-setup.hpp
+        input-agent/text-reader.cpp
+        input-agent/text-reader.hpp
     )
     cpp_apply_safety_profile(${INPUT_AGENT_LIBRARY})
     target_include_directories(${INPUT_AGENT_LIBRARY}
@@ -140,9 +146,16 @@ if(TARGET ${PROJECT_NAME}_controller)
     # whole system already has one definition of. Spelling it a second time here
     # is how the two would come to disagree, so the agent stamps its results
     # lines with trace's own value and trace's own wire name.
+    #
+    # The ocr module is PUBLIC because ocr::TextLine is in this library's own
+    # headers: the `read` verb answers with lines, and a caller that reads a
+    # results struct names them. It brings ONNX Runtime's import library with
+    # it, so every executable linking this one resolves onnxruntime.dll at
+    # process start; the copy rules below are what put it beside them.
     target_link_libraries(${INPUT_AGENT_LIBRARY}
         PUBLIC
             ${PROJECT_NAME}_controller
+            ${PROJECT_NAME}_ocr
             ${PROJECT_NAME}_trace
         PRIVATE
             ${PROJECT_NAME}_image
@@ -150,6 +163,67 @@ if(TARGET ${PROJECT_NAME}_controller)
             user32
     )
     target_compile_features(${INPUT_AGENT_LIBRARY} PUBLIC cxx_std_23)
+
+    # What the `read` verb stands on at runtime, staged into the runtime output
+    # directory every executable here already lands in.
+    #
+    # Beside the binary rather than at a configured path, and with no flag to
+    # point elsewhere: the agent is launched detached by another program, so its
+    # working directory is not something it may depend on, and a release ships
+    # the payload the same way this build stages it. A missing model is answered
+    # on a results line rather than at startup, so this copy failing to happen
+    # costs the read verb and nothing else.
+    #
+    # The detection model is deliberately NOT staged. The adapter recognises an
+    # already-located line and refuses TextLayout::Block, so shipping 9.8 MB of
+    # weights nothing loads would only make the payload look complete.
+    set(INPUT_AGENT_OCR_PAYLOAD_DIR
+        "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/models/ppocr-v6-small-rec"
+    )
+    set(INPUT_AGENT_OCR_MODEL_ROOT
+        "${CMAKE_SOURCE_DIR}/modules/ocr/external/models/ppocr-v6-small-rec"
+    )
+
+    # Named outputs rather than a bare custom target, so a 21 MB model is
+    # compared once and then skipped instead of on every build of every
+    # executable that links this library.
+    set(INPUT_AGENT_OCR_MODEL_SOURCES "")
+    set(INPUT_AGENT_OCR_STAGED "")
+    foreach(PAYLOAD_FILE IN ITEMS inference.onnx inference.yml)
+        list(APPEND INPUT_AGENT_OCR_MODEL_SOURCES
+            "${INPUT_AGENT_OCR_MODEL_ROOT}/${PAYLOAD_FILE}"
+        )
+        list(APPEND INPUT_AGENT_OCR_STAGED
+            "${INPUT_AGENT_OCR_PAYLOAD_DIR}/${PAYLOAD_FILE}"
+        )
+    endforeach()
+    foreach(RUNTIME_LIBRARY IN LISTS UF_OCR_ONNXRUNTIME_SHARED_LIBRARIES)
+        get_filename_component(RUNTIME_LIBRARY_NAME "${RUNTIME_LIBRARY}" NAME)
+        list(APPEND INPUT_AGENT_OCR_STAGED
+            "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/${RUNTIME_LIBRARY_NAME}"
+        )
+    endforeach()
+
+    add_custom_command(
+        OUTPUT ${INPUT_AGENT_OCR_STAGED}
+        COMMAND ${CMAKE_COMMAND} -E make_directory
+            "${INPUT_AGENT_OCR_PAYLOAD_DIR}"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            ${INPUT_AGENT_OCR_MODEL_SOURCES}
+            "${INPUT_AGENT_OCR_PAYLOAD_DIR}"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            ${UF_OCR_ONNXRUNTIME_SHARED_LIBRARIES}
+            "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}"
+        DEPENDS
+            ${INPUT_AGENT_OCR_MODEL_SOURCES}
+            ${UF_OCR_ONNXRUNTIME_SHARED_LIBRARIES}
+        COMMENT "[Payload] input-agent: staging the ocr model and runtime"
+        VERBATIM
+    )
+    add_custom_target(${INPUT_AGENT_LIBRARY}_ocr_payload
+        DEPENDS ${INPUT_AGENT_OCR_STAGED}
+    )
+    add_dependencies(${INPUT_AGENT_LIBRARY} ${INPUT_AGENT_LIBRARY}_ocr_payload)
 
     add_executable(${INPUT_AGENT_EXECUTABLE}
         input-agent/main.cpp

@@ -5,6 +5,7 @@
 #include "cursor.hpp"
 #include "drive.hpp"
 #include "loop.hpp"
+#include "ocr-text-reader.hpp"
 #include "path-validation.hpp"
 #include "protocol.hpp"
 #include "target-setup.hpp"
@@ -388,6 +389,13 @@ namespace uf::input_agent
             )
         );
 
+        // The reader is built here and never loads anything: the model comes up
+        // on the first `read` command, so a run that only captures pays nothing
+        // for it and a run whose payload is missing still serves every other
+        // verb. What can fail here is naming this executable's own directory,
+        // which is where the payload is looked for.
+        UF_TRY_VALUE(textReader, createOcrTextReader());
+
         auto session = AnnotationSession{
             std::make_unique<WindowInputAgentDrive>(
                 std::move(resolved),
@@ -395,6 +403,7 @@ namespace uf::input_agent
                 delivery,
                 client
             ),
+            std::move(textReader),
             canonicalOutputDirectory,
             canonicalQueue,
             canonicalResults,

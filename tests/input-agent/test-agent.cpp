@@ -14,6 +14,7 @@
 #include <core/utility/scope-exit.hpp>
 #include <domain/error.hpp>
 #include <domain/frame.hpp>
+#include <domain/space.hpp>
 
 #include <doctest/doctest.h>
 
@@ -218,6 +219,51 @@ namespace uf::input_agent
         );
         REQUIRE(quit.has_value());
         CHECK(std::holds_alternative<InputAgentQuitCommand>(*quit));
+    }
+
+    TEST_CASE("input-agent parses a read command as a frame-space rectangle")
+    {
+        auto const command = parseInputAgentCommand(
+            R"({"op":"read","rect_x":262,"rect_y":14,)"
+            R"("rect_width":138,"rect_height":36})"
+        );
+        REQUIRE(command.has_value());
+        auto const* readCommand = std::get_if<InputAgentReadCommand>(&*command);
+        REQUIRE(readCommand != nullptr);
+
+        auto const expected = PixelRect::create(262, 14, 138, 36);
+        REQUIRE(expected.has_value());
+        CHECK(readCommand->rect == *expected);
+    }
+
+    TEST_CASE("input-agent refuses rects no region could be measured from")
+    {
+        // The rect fields belong to `read` alone, and `read` takes nothing else:
+        // a rectangle measured on a capture PNG must never be reachable as a
+        // click coordinate, and a read must never look like it wrote a file.
+        for (auto const line : std::array<std::string_view, 12>{
+            R"({"op":"read","rect_x":0,"rect_y":0,"rect_width":0,"rect_height":4})",
+            R"({"op":"read","rect_x":0,"rect_y":0,"rect_width":4,"rect_height":0})",
+            R"({"op":"read","rect_x":4294967295,"rect_y":0,"rect_width":4,"rect_height":4})",
+            R"({"op":"read","rect_x":0,"rect_y":0,"rect_width":4})",
+            R"({"op":"read","rect_x":-1,"rect_y":0,"rect_width":4,"rect_height":4})",
+            R"({"op":"read","rect_x":1.5,"rect_y":0,"rect_width":4,"rect_height":4})",
+            R"({"op":"read","rect_x":0,"rect_x":1,"rect_y":0,"rect_width":4,"rect_height":4})",
+            R"({"op":"read","rect_x":0,"rect_y":0,"rect_width":4,"rect_height":4,"out":"a.png"})",
+            R"({"op":"read","rect_x":0,"rect_y":0,"rect_width":4,"rect_height":4,"x":1,"y":2})",
+            R"({"op":"read","rect_x":0,"rect_y":0,"rect_width":4,"rect_height":4,"settle_ms":10})",
+            R"({"op":"click","x":1,"y":2,"rect_x":0,"out_before":"a.png","out_after":"b.png"})",
+            R"({"op":"capture","out":"a.png","rect_width":4})",
+        })
+        {
+            CAPTURE(line);
+            auto const result = parseInputAgentCommand(line);
+            REQUIRE_FALSE(result.has_value());
+            test_input_agent::requireErrorKind(
+                result.error(),
+                AutomationErrorKind::InvalidResource
+            );
+        }
     }
 
     TEST_CASE("input-agent rejects malformed and unrecognized commands")

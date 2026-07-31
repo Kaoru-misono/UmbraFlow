@@ -87,6 +87,10 @@ namespace uf::input_agent
                 {
                     return "scroll";
                 },
+                [](InputAgentReadCommand const&) -> std::string
+                {
+                    return "read";
+                },
                 [](InputAgentQuitCommand const&) -> std::string
                 {
                     return "quit";
