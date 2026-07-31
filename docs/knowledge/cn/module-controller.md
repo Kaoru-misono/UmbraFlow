@@ -360,8 +360,9 @@ errors，没有 HWND 或 D3D resource 进入 engine。
 source ingestion。其 visible/non-iconic 和“第一个 title substring match”策略
 属于 workbench，不是 controller 的解析契约。
 
-`entry/m0-demo/` 直接使用 target、capture 和 input 接口，现已冻结为真机验收
-参考；产品路径由 engine/CLI 组合取代。低层 `AuditLog` 记录 Win32 message
+`entry/input-agent/` 与 `entry/m0-demo/` 直接使用 target、capture 和 input 接口。前者是标注前端
+（见 [`entry-input-agent.md`](entry-input-agent.md)）；后者已冻结为真机验收参考，
+其产品路径由 engine/CLI 组合取代。低层 `AuditLog` 记录 Win32 message
 attempt，engine `ITraceSink` 记录 observe/authorize/deliver 等产品事件，二者目的
 不同，不能互相替代。
 

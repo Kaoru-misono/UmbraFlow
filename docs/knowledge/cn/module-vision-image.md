@@ -329,8 +329,8 @@ access；`domain` 提供 `PixelRect`、`PixelFormat`、`Frame` 与 `validateBuff
 并在 `modules/engine/source/engine/trace.cpp` 序列化 `SadSearchStopReason`。这使 engine 看到
 recognizer evidence 和 stop vocabulary，却看不到 codec 或 matcher 内部 storage。
 
-`entry/m0-demo` 是冻结的真机验收参考，仍直接使用两模块：load/convert template、crop/convert frame、
-bounded SAD，以及 capture PNG 输出。它的直接调用不应被当作新产品策略的扩展点；当前产品路径是
+`entry/m0-demo` 是冻结的真机验收参考，仍直接使用两模块：load/convert template、crop/convert frame
+与 bounded SAD。capture PNG 输出搬去了 `entry/input-agent`，两个程序调用的写出器由它拥有。它的直接调用不应被当作新产品策略的扩展点；当前产品路径是
 annotation + engine。
 
 controller 只生产带 `PixelFormat`、stride 与 owning `FrameBuffer` 的 `Frame`。它无需链接任一模块；

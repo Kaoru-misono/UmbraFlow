@@ -399,7 +399,8 @@ through its public dependency on `annotation` and serializes `SadSearchStopReaso
 vocabulary but not the codec or the matcher's internal storage.
 
 `entry/m0-demo` is a frozen real-hardware acceptance reference and still uses both modules directly:
-load/convert template, crop/convert frame, bounded SAD, and capture PNG output. Its direct calls
+load/convert template, crop/convert frame, and bounded SAD. Capture PNG output moved to
+`entry/input-agent`, which owns the writer both programs call. Its direct calls
 should not be treated as an extension point for new product policy; the current product path is
 annotation + engine.
 

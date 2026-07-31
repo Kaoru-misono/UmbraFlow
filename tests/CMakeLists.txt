@@ -182,6 +182,21 @@ if(TARGET ${PROJECT_NAME}_controller)
     )
 endif()
 
+if(TARGET ${PROJECT_NAME}_input_agent_support)
+    cpp_add_test(
+        NAME test-input-agent
+        SOURCES
+            input-agent/test-agent.cpp
+            input-agent/test-annotation.cpp
+            input-agent/test-args.cpp
+            input-agent/test-error-text.cpp
+            input-agent/test-loop.cpp
+            input-agent/test-target-setup.cpp
+        LIBS
+            ${PROJECT_NAME}_input_agent_support
+    )
+endif()
+
 if(TARGET ${PROJECT_NAME}_m0_demo_support)
     cpp_add_test(
         NAME test-m0-demo
@@ -189,9 +204,6 @@ if(TARGET ${PROJECT_NAME}_m0_demo_support)
             m0-demo/test-args.cpp
             m0-demo/test-capture-mode.cpp
             m0-demo/test-guard.cpp
-            m0-demo/test-input-agent.cpp
-            m0-demo/test-input-agent-annotation.cpp
-            m0-demo/test-input-agent-loop.cpp
             m0-demo/test-log-jsonl.cpp
             m0-demo/test-pacing.cpp
             m0-demo/test-pipeline.cpp

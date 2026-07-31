@@ -66,11 +66,6 @@ namespace uf::m0_demo
         return platform::observeGuard(policy);
     }
 
-    auto clientOriginDesktop(WindowHandle windowHandle) -> Result<Point<DesktopSpace>>
-    {
-        return platform::clientOriginDesktop(windowHandle);
-    }
-
     auto currentProcessIntegrity() -> std::optional<IntegrityLevel>
     {
         return platform::currentProcessIntegrity();

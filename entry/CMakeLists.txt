@@ -83,36 +83,102 @@ target_link_libraries(${PROJECT_NAME} PRIVATE ${CLI_LIBRARY} ${PROJECT_NAME}_cor
 target_compile_features(${PROJECT_NAME} PRIVATE cxx_std_23)
 
 if(TARGET ${PROJECT_NAME}_controller)
+    set(INPUT_AGENT_LIBRARY ${PROJECT_NAME}_input_agent_support)
+    set(INPUT_AGENT_EXECUTABLE ${PROJECT_NAME}_input_agent)
+
+    # The annotation front-end. It serves one authoring session's command queue
+    # against one raw window: read a queue line, deliver the input, capture the
+    # frames it was decided from, and answer on the results file. It grew out of
+    # the M0 demo below and moved out of it on 2026-07-31, because it is product
+    # and the demo is not.
+    #
+    # It also owns what the two still share -- the frame PNG writer, the path
+    # confinement rules, the target selection and session setup, the JSON string
+    # escape, the error text. The direction is deliberate: the frozen demo links
+    # the product, never the reverse, so retiring the demo is a delete and not
+    # another extraction.
+    add_library(${INPUT_AGENT_LIBRARY} STATIC
+        input-agent/agent.cpp
+        input-agent/agent.hpp
+        input-agent/annotation.cpp
+        input-agent/annotation.hpp
+        input-agent/arg-parsing.hpp
+        input-agent/args.cpp
+        input-agent/args.hpp
+        input-agent/capture-output.cpp
+        input-agent/capture-output.hpp
+        input-agent/cursor.cpp
+        input-agent/cursor.hpp
+        input-agent/drive.cpp
+        input-agent/drive.hpp
+        input-agent/error-text.cpp
+        input-agent/error-text.hpp
+        input-agent/json-string.cpp
+        input-agent/json-string.hpp
+        input-agent/loop.cpp
+        input-agent/loop.hpp
+        input-agent/path-validation.cpp
+        input-agent/path-validation.hpp
+        input-agent/platform/windows-client-origin.cpp
+        input-agent/platform/windows-client-origin.hpp
+        input-agent/platform/windows-file-writer.cpp
+        input-agent/platform/windows-file-writer.hpp
+        input-agent/platform/windows-path.cpp
+        input-agent/platform/windows-path.hpp
+        input-agent/protocol.cpp
+        input-agent/protocol.hpp
+        input-agent/target-setup.cpp
+        input-agent/target-setup.hpp
+    )
+    cpp_apply_safety_profile(${INPUT_AGENT_LIBRARY})
+    target_include_directories(${INPUT_AGENT_LIBRARY}
+        PUBLIC
+            ${CMAKE_CURRENT_SOURCE_DIR}/input-agent
+    )
+    # The trace module is here for one type: trace::FrontEnd. The input agent is
+    # the annotation front-end, and which front-end drove a target is a fact the
+    # whole system already has one definition of. Spelling it a second time here
+    # is how the two would come to disagree, so the agent stamps its results
+    # lines with trace's own value and trace's own wire name.
+    target_link_libraries(${INPUT_AGENT_LIBRARY}
+        PUBLIC
+            ${PROJECT_NAME}_controller
+            ${PROJECT_NAME}_trace
+        PRIVATE
+            ${PROJECT_NAME}_image
+            ntdll
+            user32
+    )
+    target_compile_features(${INPUT_AGENT_LIBRARY} PUBLIC cxx_std_23)
+
+    add_executable(${INPUT_AGENT_EXECUTABLE}
+        input-agent/main.cpp
+        ${CPP_UTF8_RC}
+    )
+    cpp_apply_safety_profile(${INPUT_AGENT_EXECUTABLE})
+    cpp_apply_utf8_manifest(${INPUT_AGENT_EXECUTABLE})
+    set_target_properties(${INPUT_AGENT_EXECUTABLE} PROPERTIES
+        OUTPUT_NAME "umbra-input-agent"
+    )
+    target_link_libraries(${INPUT_AGENT_EXECUTABLE} PRIVATE ${INPUT_AGENT_LIBRARY})
+    target_compile_features(${INPUT_AGENT_EXECUTABLE} PRIVATE cxx_std_23)
+
     set(M0_DEMO_LIBRARY ${PROJECT_NAME}_m0_demo_support)
     set(M0_DEMO_EXECUTABLE ${PROJECT_NAME}_m0_demo)
 
+    # The frozen M0 substrate demo: a fixed home -> result -> reset loop over
+    # Windows Graphics Capture and strict-background input, plus the `capture`
+    # subcommand the pitfalls notes still reach for. Nothing here is a product
+    # path; `umbra-flow run` replaced it.
     add_library(${M0_DEMO_LIBRARY} STATIC
         m0-demo/args.cpp
         m0-demo/args.hpp
         m0-demo/capture-mode.cpp
         m0-demo/capture-mode.hpp
-        m0-demo/capture-output.cpp
-        m0-demo/capture-output.hpp
         m0-demo/guard.cpp
         m0-demo/guard.hpp
-        m0-demo/input-agent.cpp
-        m0-demo/input-agent.hpp
-        m0-demo/input-agent-annotation.cpp
-        m0-demo/input-agent-annotation.hpp
-        m0-demo/input-agent-cursor.cpp
-        m0-demo/input-agent-cursor.hpp
-        m0-demo/input-agent-drive.cpp
-        m0-demo/input-agent-drive.hpp
-        m0-demo/input-agent-loop.cpp
-        m0-demo/input-agent-loop.hpp
-        m0-demo/input-agent-protocol.cpp
-        m0-demo/input-agent-protocol.hpp
-        m0-demo/json-string.cpp
-        m0-demo/json-string.hpp
         m0-demo/log-jsonl.cpp
         m0-demo/log-jsonl.hpp
-        m0-demo/path-validation.cpp
-        m0-demo/path-validation.hpp
         m0-demo/pacing.cpp
         m0-demo/pacing.hpp
         m0-demo/pipeline.cpp
@@ -121,36 +187,23 @@ if(TARGET ${PROJECT_NAME}_controller)
         m0-demo/platform/windows-background-messages.hpp
         m0-demo/platform/windows-console-control.cpp
         m0-demo/platform/windows-console-control.hpp
-        m0-demo/platform/windows-file-writer.cpp
-        m0-demo/platform/windows-file-writer.hpp
         m0-demo/platform/windows-guard.cpp
         m0-demo/platform/windows-guard.hpp
-        m0-demo/platform/windows-path.cpp
-        m0-demo/platform/windows-path.hpp
         m0-demo/shutdown.cpp
         m0-demo/shutdown.hpp
-        m0-demo/target-setup.cpp
-        m0-demo/target-setup.hpp
     )
     cpp_apply_safety_profile(${M0_DEMO_LIBRARY})
     target_include_directories(${M0_DEMO_LIBRARY}
         PUBLIC
             ${CMAKE_CURRENT_SOURCE_DIR}/m0-demo
     )
-    # The trace module is here for one type: trace::FrontEnd. The input agent is
-    # the annotation front-end, and which front-end drove a target is a fact the
-    # whole system already has one definition of. Spelling it a second time here
-    # is how the two would come to disagree, so the agent stamps its results
-    # lines with trace's own value and trace's own wire name.
     target_link_libraries(${M0_DEMO_LIBRARY}
         PUBLIC
-            ${PROJECT_NAME}_controller
-            ${PROJECT_NAME}_trace
+            ${INPUT_AGENT_LIBRARY}
             ${PROJECT_NAME}_vision
         PRIVATE
             ${PROJECT_NAME}_image
             advapi32
-            ntdll
             user32
     )
     target_compile_features(${M0_DEMO_LIBRARY} PUBLIC cxx_std_23)

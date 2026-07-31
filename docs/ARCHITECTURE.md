@@ -12,7 +12,8 @@ independently. This boundary was fixed by developer decision on 2026-07-28.
 
 ```text
 entry/${PROJECT_NAME}       -> core, engine, task; + controller (Windows adapters)
-entry/m0-demo (Windows)     -> controller, vision, image (frozen M0 substrate demo)
+entry/input-agent (Windows) -> controller, trace, image (umbra-input-agent)
+entry/m0-demo (Windows)     -> entry/input-agent, vision, image (frozen M0 substrate demo)
 entry/workbench (Windows)   -> annotation, image (authoring backend library only)
 entry/authoring (Windows)   -> entry/workbench, entry/cli, image (umbra-authoring)
 domain                -> core
@@ -60,8 +61,17 @@ not declare link dependencies. `scripts/check_modules.py` enforces both rules.
 - `entry/`: executable targets and composition roots. `cli/` is the product
   entry `umbra-flow`; its `run` subcommand composes engine ports over the
   controller (WGC frame source, lease-forwarding click sink, JSONL trace).
-  `m0-demo/` is the frozen M0 substrate demo kept as the real-machine
-  acceptance reference. The Windows-only `workbench/` is the annotation
+  `input-agent/` is the `umbra-input-agent` annotation front-end: it serves one
+  authoring session's command queue against a raw window, and it is the third
+  `trace::FrontEnd`. It also owns the entry-level substrate it shares with the
+  demo below -- frame PNG output, path confinement, target selection and
+  capture-session setup, JSON string escaping, error text, and the
+  command-line parsing primitives. `m0-demo/` is the frozen M0 substrate demo
+  kept as the real-machine acceptance reference: the fixed
+  home -> result -> reset loop and the `capture` diagnostic, and nothing else
+  since the front-end left it on 2026-07-31. The demo links the front-end's
+  library and never the reverse, so retiring the demo is a delete rather than
+  another extraction. The Windows-only `workbench/` is the annotation
   authoring backend library (`${PROJECT_NAME}_workbench_support`): the editing
   layer, the falsification matrix in `preview.*`, source ingestion, and
   publication of validated authoring projects through a narrow platform

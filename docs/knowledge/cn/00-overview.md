@@ -62,7 +62,8 @@ entry/workbench      -> annotation（外加 image）
 | `umbra-authoring` | 在命令行上标注项目，外加测量帧 | 目前唯一的标注工具（2026-07-30） |
 | `umbra-flow run` | 加载已发布项目，运行 `--task NAME` 指名的 Luau 任务 | P0 单任务 runner |
 | `umbra-flow drive` | 加载同样的项目，执行 `--queue` 里操作者送来的 JSON 行命令 | P0 操作者前端（2026-07-30） |
-| `m0-demo` | 验证 WGC 捕获和严格后台输入；服务标注会话的命令队列 | 作为产品路径已冻结，但 `input-agent` 是标注前端，仍在改（2026-07-31） |
+| `umbra-input-agent` | 对一个裸窗口服务标注会话的命令队列 | 标注前端；2026-07-31 离开 `m0-demo` |
+| `m0-demo` | 验证 WGC 捕获和严格后台输入 | 已冻结；固定循环加 `capture` 诊断，仅此而已 |
 
 > 更正（2026-07-31）：这张表原来第一行是第五个入口 `umbra-workbench`，写着「A1 标注工具」。
 > `b57b67b` 把它归档了，外壳留在 git 历史里。它的后端仍然被链接，只是改由
@@ -80,7 +81,7 @@ entry/workbench      -> annotation（外加 image）
   操作者前端绑定的是受信任 Luau framework 绑定的那批私有原语，继承同样的拒绝。它是同级的
   第二个消费者，不是通往 Luau 的口子——没有 chunk、没有源码、没有任何字符串会变成代码。
 - **`trace::FrontEnd` 有第三个值，而它不是那张能力面的第三个消费者**（2026-07-31）。
-  `annotation` 就是 `m0-demo input-agent`：标注会话为了量一个裸窗口而驱动它，没有项目、
+  `annotation` 就是 `umbra-input-agent`：标注会话为了量一个裸窗口而驱动它，没有项目、
   没有 generation、也没有能力面。把它写进同一个枚举，是因为「是谁驱动了这个目标」是一个问题、
   一套答案，而在此之前标注会话的点击与抓帧事后根本归不了属。它不写 `umbraflow-trace/v1` 的行
   ——该 schema 每一行都带 `runId` 与 `generationId`，而它两者皆无——所以它用同一个值、
@@ -241,6 +242,7 @@ controller 或 `entry/` 的平台目录。
 | 标注工具的编辑、预览和发布流程 | [`entry-workbench.md`](entry-workbench.md) |
 | 色键、模板 mask 与带 mask 的匹配器 | [`module-annotation.md`](module-annotation.md)、[`module-vision-image.md`](module-vision-image.md) |
 | 产品命令行、操作者 `drive` 协议和 Windows 组合流程 | [`entry-cli.md`](entry-cli.md) |
+| 对裸窗口服务标注会话的队列 | [`entry-input-agent.md`](entry-input-agent.md) |
 | 冻结的真机验收链路 | [`entry-m0-demo.md`](entry-m0-demo.md) |
 
 ## 验证范围

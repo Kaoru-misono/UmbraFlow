@@ -66,7 +66,8 @@ fake ports.
 | `umbra-authoring` | Author annotation projects from a command line, plus measure frames | The only authoring tool (2026-07-30) |
 | `umbra-flow run` | Load a published project and run the Luau task named by `--task NAME` | P0 single-task runner |
 | `umbra-flow drive` | Load the same project and execute operator JSON-line commands from `--queue` | P0 operator front-end (2026-07-30) |
-| `m0-demo` | Verify WGC capture and strict-background input; serve an annotation session's command queue | Frozen as a product path, but `input-agent` is the annotation front-end and is worked on (2026-07-31) |
+| `umbra-input-agent` | Serve an annotation session's command queue against a raw window | The annotation front-end; left `m0-demo` on 2026-07-31 |
+| `m0-demo` | Verify WGC capture and strict-background input | Frozen; the fixed loop and the `capture` diagnostic, nothing else |
 
 > Corrected 2026-07-31: a fifth entry point, the `umbra-workbench` GUI, stood at
 > the top of this table as "A1 annotation tool". `b57b67b` archived it; git
@@ -89,7 +90,7 @@ These paths must not be mixed:
   refusals. It is a sibling consumer, not a hole into Luau — no chunk, no source, no string that
   becomes code.
 - **`trace::FrontEnd` has a third value, and it is not a third consumer of that surface**
-  (2026-07-31). `annotation` is the `m0-demo input-agent`: an authoring session driving a raw window
+  (2026-07-31). `annotation` is `umbra-input-agent`: an authoring session driving a raw window
   to measure it, with no project, no generation and no capability surface. It is named in the same
   enum because "who drove this target" is one question with one set of answers, and an annotation
   session's clicks and captures were otherwise unattributable after the fact. It writes no
@@ -279,6 +280,7 @@ because a delivered keystroke changes the screen exactly as a click does.
 | Editing, preview, and publication in the annotation tool | [`entry-workbench.md`](entry-workbench.md) |
 | Colour keys, the template mask, and the masked matcher | [`module-annotation.md`](module-annotation.md), [`module-vision-image.md`](module-vision-image.md) |
 | Product CLI, the operator `drive` protocol, and Windows composition | [`entry-cli.md`](entry-cli.md) |
+| Serving an annotation session's queue against a raw window | [`entry-input-agent.md`](entry-input-agent.md) |
 | Frozen on-hardware acceptance path | [`entry-m0-demo.md`](entry-m0-demo.md) |
 
 ## Verification scope

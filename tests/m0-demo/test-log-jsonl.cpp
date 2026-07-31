@@ -57,35 +57,6 @@ namespace uf::m0_demo
         };
     }
 
-    TEST_CASE("m0 automation error detail keeps the kind, context, and origin")
-    {
-        auto failure = fail(
-            AutomationErrorKind::StaleObservation,
-            "frame lease expired"
-        );
-        failure.error().addContext("click compensation failed");
-
-        auto const formatted = formatAutomationError(failure.error());
-        CHECK(formatted.starts_with("StaleObservation: frame lease expired"));
-        CHECK(formatted.contains("| click compensation failed"));
-        CHECK(formatted.contains("| at test-log-jsonl.cpp:"));
-    }
-
-    TEST_CASE("m0 automation error detail names the native category and value")
-    {
-        auto const native = std::error_code{5, std::system_category()};
-        auto const failure = fail(
-            AutomationErrorKind::IoFailure,
-            "cannot write the trace",
-            native
-        );
-
-        auto const formatted = formatAutomationError(failure.error());
-        CHECK(formatted.contains(native.category().name()));
-        CHECK(formatted.contains("5"));
-        CHECK(formatted.contains(native.message()));
-    }
-
     TEST_CASE("m0 JSONL serialization carries every field in schema order")
     {
         auto const line = LogLine{"action", "home_click"}

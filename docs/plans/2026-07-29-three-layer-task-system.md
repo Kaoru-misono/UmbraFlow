@@ -909,7 +909,8 @@ task.native_call         序号 / 原语 / 入参身份 / outcome / error kind /
 >   行上——没有任何发射方能忘掉它,也没有谁能冒领另一个前端的活。
 >
 >   > **更正(2026-07-31):枚举有第三个值 `"annotation"`,但 trace 行上仍然只可能看到前两个。**
->   > 第三个是 `m0-demo input-agent`——标注会话为了量一个裸窗口而驱动它。它够不到项目,
+>   > 第三个是 `umbra-input-agent`(2026-07-31 前拼作 `m0-demo input-agent`)——标注会话
+>   > 为了量一个裸窗口而驱动它。它够不到项目,
 >   > 于是没有 generation、没有能力面,也**写不出这个 schema 的任何一行**:每一行都带
 >   > `runId` 与 `generationId`,而它两者皆无。它把同一个值盖在自己的 results 文件上,
 >   > 拼写来自新公开的 `trace::frontEndWireName`。把它放进同一个枚举而不是另造一个词,

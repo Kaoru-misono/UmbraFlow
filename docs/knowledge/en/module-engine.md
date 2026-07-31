@@ -273,13 +273,13 @@ produced it are one fact rather than two that have to agree.
 
 **The enum has three values, and only two of them reach `TaskHost`** (2026-07-31). `"task"` and
 `"operator"` are the two consumers of the capability surface, and the latch makes them mutually
-exclusive per generation. `"annotation"` is the m0-demo input agent — an authoring session driving a
+exclusive per generation. `"annotation"` is `umbra-input-agent` — an authoring session driving a
 raw window to measure it. It reaches no project, so it has no generation to latch and no capability
 surface to consume, and it therefore writes no `umbraflow-trace/v1` line at all: every line of that
 schema carries a `runId` and a `generationId`, and an annotation session has neither. What it stamps
 is its own results file, using this enum's value and `trace::frontEndWireName`'s spelling, so the
 day it joins the host the attribution a reader already knows does not change. See
-[`entry-m0-demo.md`](entry-m0-demo.md).
+[`entry-input-agent.md`](entry-input-agent.md).
 
 `trace::frontEndWireName` is public for the same reason: `task::TaskHost` names the front-end that
 already holds a generation when it refuses the other, and the input agent names its own. A second

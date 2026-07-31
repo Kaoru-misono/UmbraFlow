@@ -231,8 +231,9 @@ m0-demo 退役。
   验收时的 `鍗″巹` mojibake 是我把 `卡厄` 先按 GBK 重解释再传入所致,工具忠实搜了错字符串。
   无需改动。
 - **提权模型**:Phase 3 以整体提权单进程跑真机;若 UIPI 实测仍拦
-  (游戏窗口完整性更高),再把 m0-demo 的 input-agent 协议语义复制进 runner
-  适配层。届时是复制不是链接。**2026-07-25 实测**:WGC 绑定(`SetPropW`)确实被 UIPI 拦
+  (游戏窗口完整性更高),再把 `umbra-input-agent` 的协议语义复制进 runner
+  适配层。届时是复制不是链接。(2026-07-31:该协议已从 `entry/m0-demo` 搬到
+  `entry/input-agent`,并有自己的二进制。)**2026-07-25 实测**:WGC 绑定(`SetPropW`)确实被 UIPI 拦
   (Win32 error 5),capture 侧需与目标同完整性级别提权;而 `PostMessage` 投递不提权也过——
   两者完整性要求不同。
 - **project.toml** 读取(项目级 fingerprint 权威)推后:P0 fingerprint 以

@@ -115,7 +115,7 @@ adapter，并把它们装进 `task::TaskRunConfig` 交给 `task::TaskHost`。CLI
 - `--project DIR`、`--selector TITLE-SUBSTRING`、`--queue PATH`、`--results PATH` 是
   **`drive` 的**必填项。
 - `--idle-timeout S` 默认 120 秒，命令队列安静下来就结束会话，免得操作者走开、或驱动进程
-  已经死了，会话还一直占着捕获设备和一个绑定目标。这个数与 m0-demo input agent 自己的
+  已经死了，会话还一直占着捕获设备和一个绑定目标。这个数与 `umbra-input-agent` 自己的
   idle timeout 一致——它遵循的就是那套协议。
 
 `DriveArgs` 上**有意没有任何 timeout、轮询间隔或重试默认值**。那些是 policy；每个便利命令
@@ -138,13 +138,13 @@ config 字段一起删除；今天它们会被上面那条未知 flag 规则**�
 `entry/cli/drive-protocol.{hpp,cpp}` 定义线协议，`entry/cli/drive.{hpp,cpp}` 跑循环。命令以
 **JSON 行追加进 `--queue`**，**每条命令有且只有一行 JSON 结果追加进 `--results` 并立即 flush**，
 因此读文件的操作者在下一条命令执行之前就能看到上一条的回答。`k_maxDriveCommandBytes` 把单行
-封顶在 64 KiB，与 m0-demo input agent 的上限一致：一条命令是几个标量，接近这个数的只可能是
+封顶在 64 KiB，与 `umbra-input-agent` 的上限一致：一条命令是几个标量，接近这个数的只可能是
 畸形行而不是大行。
 
 **IPC 路径上的三条拒绝，由 `validateDriveIpcPaths` 在触碰桌面之前完成。** 队列必须已经存在，
 因为由会话创建它会与正在追加的操作者相竞争；两个路径必须不同，因为读自己 results 的会话会把
 它们重新执行一遍；而**results 路径必须不存在**——操作者的输出永远是一个新文件，于是上一次会话
-留下的旧 results 绝不会被当成这一次的，也不会被静默追加或覆盖。最后这条是 m0-demo input agent
+留下的旧 results 绝不会被当成这一次的，也不会被静默追加或覆盖。最后这条是 `umbra-input-agent`
 的守卫，有意照搬过来：它抓到过两次真实的操作者失误。
 
 **队列按字节偏移读。** `QueueReader` 持有会话自己的偏移量，因此无论轮询多少次，一行只执行一次；
@@ -494,8 +494,9 @@ CLI adapter 的安全语义由下游测试分层固定：
   `waitForPage` 于 2026-07-29(`8b16f2d`)删除，弹窗现在由受信任 Luau framework 的
   interrupt 注册表处理（`task.interrupt` 声明，`ctx:wait_for_page` 每轮匹配）。这一条
   对 CLI 的结论不变：它仍然不该塞进窗口发现或 argument parsing。
-- P0-C 若 UIPI 真机验证要求分进程提权，计划要求把 m0-demo input-agent 的协议
-  语义复制到 runner adapter 层，而不是链接已经冻结的 m0-demo。
+- P0-C 若 UIPI 真机验证要求分进程提权，计划要求把 `umbra-input-agent` 的协议
+  语义复制到 runner adapter 层，而不是链接 `entry/input-agent`
+  （见 [`entry-input-agent.md`](entry-input-agent.md)）。
 
 `drive` 前端不改变这条权威：它是同一张 `TaskHost` 表面的第二个消费者，所以除
 `startOperatorSession` 之外没有新增任何 host 动词。操作者想要而 task 做不到的东西，属于

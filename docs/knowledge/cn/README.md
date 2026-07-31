@@ -19,7 +19,9 @@
 9. [`entry-workbench.md`](entry-workbench.md) — 标注后端：编辑、预览/证伪、编译和发布。
    **自 2026-07-31 起 DIRTY**——它写的那个 GUI 已归档，标注模型也变了，先读它的 banner。
 10. [`entry-cli.md`](entry-cli.md) — 参数解析、离线加载、Windows 适配和退出码。
-11. [`entry-m0-demo.md`](entry-m0-demo.md) — 已冻结的真机验收程序，以及它和产品代码的边界。
+11. [`entry-input-agent.md`](entry-input-agent.md) — `umbra-input-agent`，标注前端：队列协议、
+    cursor、路径围栏，以及 drive/annotation 拆分。
+12. [`entry-m0-demo.md`](entry-m0-demo.md) — 已冻结的真机验收程序，以及它和产品代码的边界。
 
 ## 待补的页（2026-07-29；2026-07-31 又加了一页）
 
@@ -67,7 +69,7 @@ policy 整个搬进这两层之后，engine 页与 CLI 页已经在替它们解�
   （`run.*` / `engine.*`（含 `engine.key_delivered`）/ `task.native_call`，以及 3d 起的八条
   `framework.*`）、字段顺序与 golden 比较的规则、非 golden 字段集、`ITraceSink` 的同步可失败
   契约与失败优先级、`frontEnd` 这个盖章字段（`"task"` / `"operator"` / `"annotation"`，最后一个
-  没有 run 也没有 generation，因此根本到不了 trace 行——见 `entry-m0-demo.md`；它属于盖章而不
+  没有 run 也没有 generation，因此根本到不了 trace 行——见 `entry-input-agent.md`；它属于盖章而不
   属于事件本身，而且同时是一条协议规则——校验器在除 task 之外的任何流上拒绝 `framework.*`）、
   `frontEndWireName` 作为这个闭集的唯一拼写，
   以及「审计日志而非重放日志」这条定位。**3d 之后还必须写清校验状态机**：

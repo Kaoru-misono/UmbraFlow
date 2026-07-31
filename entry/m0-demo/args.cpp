@@ -1,5 +1,7 @@
 #include "args.hpp"
 
+#include <arg-parsing.hpp>
+
 #include <core/numeric/checked-cast.hpp>
 #include <core/types/integer.hpp>
 #include <domain/error.hpp>
@@ -25,6 +27,11 @@ namespace uf::m0_demo
 {
     namespace
     {
+        using input_agent::detail::invalid;
+        using input_agent::detail::parseInteger;
+        using input_agent::detail::parseWindowHandle;
+        using input_agent::detail::require;
+
         constexpr auto k_maximumAveragePixelSad = uint64{255};
 
         [[nodiscard]]
@@ -81,92 +88,6 @@ namespace uf::m0_demo
         }
 
         [[nodiscard]]
-        auto isInputAgentValueFlag(std::string_view flag) noexcept -> bool
-        {
-            auto constexpr flags = std::array<std::string_view, 6>{
-                "--hwnd",
-                "--queue",
-                "--results",
-                "--output-dir",
-                "--idle-timeout-s",
-                "--queue-start",
-            };
-            return std::ranges::find(flags, flag) != flags.end();
-        }
-
-        [[nodiscard]]
-        auto invalid(std::string message) -> std::unexpected<Error>
-        {
-            return fail(
-                AutomationErrorKind::InvalidResource,
-                std::move(message)
-            );
-        }
-
-        template <std::integral Value>
-        [[nodiscard]]
-        auto parseInteger(
-            std::string_view value,
-            std::string_view flag,
-            int base = 10
-        ) -> Result<Value>
-        {
-            auto const supplied = value;
-            if (value.starts_with('+'))
-            {
-                value.remove_prefix(1);
-            }
-            auto parsed = Value{};
-            auto const* const begin = std::to_address(value.begin());
-            auto const* const end = std::to_address(value.end());
-            auto const result = std::from_chars(
-                begin,
-                end,
-                parsed,
-                base
-            );
-            if (result.ec != std::errc{} || result.ptr != end)
-            {
-                return invalid(
-                    std::format(
-                        "{} expects an integer, got \"{}\"",
-                        flag,
-                        supplied
-                    )
-                );
-            }
-
-            return parsed;
-        }
-
-        [[nodiscard]]
-        auto parseWindowHandle(
-            std::string_view value,
-            std::string_view flag
-        ) -> Result<intptr>
-        {
-            auto base = 10;
-            if (value.starts_with("0x") || value.starts_with("0X"))
-            {
-                value.remove_prefix(2);
-                base = 16;
-            }
-
-            UF_TRY_VALUE(parsed, parseInteger<int64>(value, flag, base));
-            auto const converted = checkedCast<intptr>(parsed);
-            if (!converted)
-            {
-                return invalid(
-                    std::format(
-                        "{} window handle is outside the machine-word range",
-                        flag
-                    )
-                );
-            }
-            return *converted;
-        }
-
-        [[nodiscard]]
         auto parseSelectorValue(
             SelectorArgs& selector,
             std::string_view flag,
@@ -218,40 +139,6 @@ namespace uf::m0_demo
             );
         }
 
-        struct QueueStartName final
-        {
-            std::string_view     name{};
-            InputAgentQueueStart value{};
-        };
-
-        [[nodiscard]]
-        auto parseQueueStart(
-            std::string_view value
-        ) -> Result<InputAgentQueueStart>
-        {
-            auto constexpr names = std::array<QueueStartName, 3>{{
-                {.name = "refuse", .value = InputAgentQueueStart::Refuse},
-                {.name = "beginning", .value = InputAgentQueueStart::Beginning},
-                {.name = "end", .value = InputAgentQueueStart::End},
-            }};
-            auto const found = std::ranges::find(
-                names,
-                value,
-                &QueueStartName::name
-            );
-            if (found == names.end())
-            {
-                return invalid(
-                    std::format(
-                        "--queue-start expects 'refuse', 'beginning', or "
-                        "'end', got \"{}\"",
-                        value
-                    )
-                );
-            }
-            return found->value;
-        }
-
         [[nodiscard]]
         auto parseMilliseconds(
             std::string_view value,
@@ -295,36 +182,6 @@ namespace uf::m0_demo
                 );
             }
             return duration;
-        }
-
-        [[nodiscard]]
-        auto parsePositiveSeconds(
-            std::string_view value,
-            std::string_view flag
-        ) -> Result<MonotonicInstant::Duration>
-        {
-            UF_TRY_VALUE(seconds, parseInteger<uint64>(value, flag));
-            if (seconds == 0U)
-            {
-                return invalid(
-                    std::format("{} must be a positive second count", flag)
-                );
-            }
-
-            using Seconds = std::chrono::seconds;
-            using Duration = MonotonicInstant::Duration;
-            auto const maximum = std::chrono::duration_cast<Seconds>(Duration::max());
-            auto const maximumCount = checkedCast<uint64>(maximum.count());
-            if (!maximumCount || seconds > *maximumCount)
-            {
-                return invalid(std::format("{} second count is too large", flag));
-            }
-            auto const count = checkedCast<Seconds::rep>(seconds);
-            if (!count)
-            {
-                return invalid(std::format("{} second count is too large", flag));
-            }
-            return std::chrono::duration_cast<Duration>(Seconds{*count});
         }
 
         [[nodiscard]]
@@ -441,19 +298,6 @@ namespace uf::m0_demo
             );
         }
 
-        template <typename Value>
-        [[nodiscard]]
-        auto require(
-            std::optional<Value> value,
-            std::string_view flag
-        ) -> Result<Value>
-        {
-            if (!value)
-            {
-                return invalid(std::format("missing required argument {}", flag));
-            }
-            return *std::move(value);
-        }
     }
 
     auto parseArguments(std::span<std::string const> raw) -> Result<Args>
@@ -683,93 +527,6 @@ namespace uf::m0_demo
         };
     }
 
-    auto parseInputAgentArguments(
-        std::span<std::string const> raw
-    ) -> Result<InputAgentArgs>
-    {
-        auto windowHandle    = std::optional<intptr>{};
-        auto queue           = std::optional<std::filesystem::path>{};
-        auto results         = std::optional<std::filesystem::path>{};
-        auto outputDirectory = std::optional<std::filesystem::path>{};
-        auto idleTimeout     = k_defaultInputAgentIdleTimeout;
-        auto queueStart      = InputAgentQueueStart::Refuse;
-
-        auto index = std::size_t{0};
-        while (index < raw.size())
-        {
-            auto const& flag = raw[index];
-            if (!isInputAgentValueFlag(flag))
-            {
-                return invalid(
-                    std::format("unknown input-agent argument \"{}\"", flag)
-                );
-            }
-            if (index + 1U >= raw.size())
-            {
-                return invalid(std::format("missing value for {}", flag));
-            }
-            auto const& value = raw[index + 1U];
-
-            if (flag == "--hwnd")
-            {
-                UF_TRY_VALUE(parsed, parseWindowHandle(value, flag));
-                windowHandle = parsed;
-            }
-            else if (flag == "--queue")
-            {
-                queue = std::filesystem::path{value};
-            }
-            else if (flag == "--results")
-            {
-                results = std::filesystem::path{value};
-            }
-            else if (flag == "--output-dir")
-            {
-                outputDirectory = std::filesystem::path{value};
-            }
-            else if (flag == "--idle-timeout-s")
-            {
-                UF_TRY_VALUE(parsed, parsePositiveSeconds(value, flag));
-                idleTimeout = parsed;
-            }
-            else if (flag == "--queue-start")
-            {
-                UF_TRY_VALUE(parsed, parseQueueStart(value));
-                queueStart = parsed;
-            }
-            index += 2U;
-        }
-
-        UF_TRY_VALUE(requiredWindowHandle, require(windowHandle, "--hwnd"));
-        UF_TRY_VALUE(requiredQueue, require(std::move(queue), "--queue"));
-        UF_TRY_VALUE(requiredResults, require(std::move(results), "--results"));
-        UF_TRY_VALUE(
-            requiredOutputDirectory,
-            require(std::move(outputDirectory), "--output-dir")
-        );
-        if (requiredQueue.empty())
-        {
-            return invalid("--queue must not be empty");
-        }
-        if (requiredResults.empty())
-        {
-            return invalid("--results must not be empty");
-        }
-        if (requiredOutputDirectory.empty())
-        {
-            return invalid("--output-dir must not be empty");
-        }
-
-        return InputAgentArgs{
-            .windowHandle    = requiredWindowHandle,
-            .queue           = std::move(requiredQueue),
-            .results         = std::move(requiredResults),
-            .outputDirectory = std::move(requiredOutputDirectory),
-            .idleTimeout     = idleTimeout,
-            .queueStart      = queueStart,
-        };
-    }
-
     auto usageText() noexcept -> std::string_view
     {
         return
@@ -808,23 +565,5 @@ namespace uf::m0_demo
             "  --frames N                   Default: 1; must be at least 1\n"
             "  --interval-ms N              Default: 0; delay between frames\n"
             "  --log PATH                   Write JSONL to a file instead of stdout\n";
-    }
-
-    auto inputAgentUsageText() noexcept -> std::string_view
-    {
-        return
-            "Usage: m0-demo input-agent --hwnd N|0xHEX --queue PATH "
-            "--results PATH --output-dir DIR [options]\n"
-            "\n"
-            "The agent records how far it has consumed the queue in a\n"
-            "<queue>.cursor file and resumes there, so a restart never\n"
-            "re-delivers commands the target has already seen.\n"
-            "\n"
-            "Options:\n"
-            "  --idle-timeout-s N           Default: 120; must be positive\n"
-            "  --queue-start MODE           refuse|beginning|end; default:\n"
-            "                               refuse. Read only when no cursor\n"
-            "                               exists yet and the queue is not\n"
-            "                               empty; a cursor always wins\n";
     }
 }

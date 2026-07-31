@@ -27,7 +27,9 @@ responsibilities, key entry points, and tests. Module dependencies are governed 
    was written about was archived and the annotation model changed; read its banner first.
 10. [`entry-cli.md`](entry-cli.md) — Argument parsing, offline loading, Windows adapters, and exit
     codes.
-11. [`entry-m0-demo.md`](entry-m0-demo.md) — The frozen on-hardware acceptance program and its
+11. [`entry-input-agent.md`](entry-input-agent.md) — `umbra-input-agent`, the annotation front-end:
+    the queue protocol, the cursor, path confinement, and the drive/annotation split.
+12. [`entry-m0-demo.md`](entry-m0-demo.md) — The frozen on-hardware acceptance program and its
     boundary with product code.
 
 ## Pages still missing (2026-07-29; a third was added 2026-07-31)
@@ -85,7 +87,7 @@ The suggested scope:
   events from 3d on); field ordering and the rules for golden comparison; the documented non-golden
   field set; `ITraceSink`'s synchronous fallible contract and the failure-precedence rules; the
   `frontEnd` stamp (`"task"`, `"operator"` or `"annotation"`, the last of which reaches no trace line
-  because it has no run and no generation — see `entry-m0-demo.md`), which is part of the stamp
+  because it has no run and no generation — see `entry-input-agent.md`), which is part of the stamp
   rather than of the event and is also a protocol rule — the validator refuses `framework.*` on any
   stream but the task one; `frontEndWireName` as the single spelling of that closed set; and the
   "audit log, not a replay log" positioning. **Since 3d it must also cover the validation state machine**: why

@@ -381,8 +381,10 @@ one-shot authoring source capture and then hands the `Frame` to source ingestion
 visible/non-iconic and "first title substring match" policy belongs to workbench, not to controller's
 resolution contract.
 
-`entry/m0-demo/` uses the target, capture, and input surfaces directly and is now frozen as a
-real-machine acceptance reference; the product path is superseded by the engine/CLI composition. The
+`entry/input-agent/` and `entry/m0-demo/` use the target, capture, and input surfaces directly.
+The agent is the annotation front-end (see [`entry-input-agent.md`](entry-input-agent.md)); the demo
+is frozen as a real-machine acceptance reference, and its product path is superseded by the
+engine/CLI composition. The
 low-level `AuditLog` records Win32 message attempts, while the engine `ITraceSink` records product
 events such as observe/authorize/deliver; the two serve different purposes and cannot substitute for
 each other.

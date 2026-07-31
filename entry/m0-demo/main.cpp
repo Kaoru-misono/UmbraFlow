@@ -1,10 +1,12 @@
 #include "args.hpp"
 #include "capture-mode.hpp"
 #include "guard.hpp"
-#include "input-agent.hpp"
 #include "log-jsonl.hpp"
 #include "pipeline.hpp"
 #include "shutdown.hpp"
+
+#include <error-text.hpp>
+#include <target-setup.hpp>
 
 #include <controller/capture.hpp>
 #include <controller/discovery.hpp>
@@ -32,6 +34,12 @@
 
 namespace uf::m0_demo
 {
+    // Borrowed from the input agent, which owns the shared entry substrate
+    // this frozen demo was split away from.
+    using input_agent::buildSelector;
+    using input_agent::createCaptureSession;
+    using input_agent::formatAutomationError;
+
     namespace
     {
         [[nodiscard]]
@@ -302,17 +310,18 @@ auto main(int argumentCount, char const* const* p_arguments) -> int
         }
         if (!raw.empty() && raw.front() == "input-agent")
         {
-            auto const agentRaw = std::span<std::string const>{raw}.subspan(1);
-            auto const outcome = uf::m0_demo::runInputAgent(agentRaw);
-            if (!outcome)
-            {
-                std::cerr
-                    << "m0-demo input-agent error: "
-                    << uf::m0_demo::formatAutomationError(outcome.error())
-                    << '\n';
-                return EXIT_FAILURE;
-            }
-            return EXIT_SUCCESS;
+            // The annotation front-end left this binary on 2026-07-31. The
+            // spelling survives only to say where it went, because recorded
+            // procedures and session scripts still reach for it here; without
+            // this branch the demo parser would answer "unknown argument" and
+            // a reader would take that for a broken build.
+            std::cerr
+                << "m0-demo no longer serves the input agent; it is its own "
+                   "program now.\n"
+                   "Run umbra-input-agent with the same arguments:\n"
+                   "  umbra-input-agent --hwnd N|0xHEX --queue PATH "
+                   "--results PATH --output-dir DIR\n";
+            return EXIT_FAILURE;
         }
 
         auto const outcome = uf::m0_demo::run(raw);

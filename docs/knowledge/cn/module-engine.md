@@ -179,12 +179,12 @@ run 持有一个值并盖到每一行上，没有任何发射方能忘掉它，�
 而不是两件必须彼此吻合的事。
 
 **这个枚举有三个值，其中只有两个会走到 `TaskHost`**（2026-07-31）。`"task"` 与 `"operator"`
-是能力面的两个消费者，闩使它们按 generation 互斥。`"annotation"` 是 m0-demo 的 input agent
+是能力面的两个消费者，闩使它们按 generation 互斥。`"annotation"` 就是 `umbra-input-agent`
 ——标注会话为了「量」一个裸窗口而驱动它。它够不到任何项目，因此没有 generation 可闩、
 也没有能力面可消费，于是它**根本不写 `umbraflow-trace/v1` 的行**：该 schema 的每一行都带
 `runId` 与 `generationId`，而标注会话两者皆无。它盖章的是自己的 results 文件，用的是这个枚举的
 值和 `trace::frontEndWireName` 的拼写——这样将来它接进宿主时，读者已经认识的那条归属不会变。
-见 [`entry-m0-demo.md`](entry-m0-demo.md)。
+见 [`entry-input-agent.md`](entry-input-agent.md)。
 
 `trace::frontEndWireName` 之所以公开也是同一个理由：`task::TaskHost` 在拒绝第二个前端时要点名
 已经占住 generation 的那一个，input agent 要点名自己。一个闭集有两处拼写，正是「第三个值被报成

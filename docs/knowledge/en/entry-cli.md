@@ -134,7 +134,7 @@ replaces `--task` is the pair of IPC files:
   **for `drive`**.
 - `--idle-timeout S` defaults to 120 s and ends a session whose command queue has gone quiet, so an
   operator who walks away, or a driving process that died, does not leave a session holding a
-  capture device and a bound target indefinitely. The figure matches the m0-demo input agent's own
+  capture device and a bound target indefinitely. The figure matches `umbra-input-agent`'s own
   idle timeout, which is the protocol this one follows.
 
 There are deliberately **no timeout, poll-interval or retry defaults on `DriveArgs`**. Those are
@@ -163,7 +163,7 @@ page wait.
 the loop. Commands arrive as **JSON lines appended to `--queue`**, and **one JSON result line per
 command is appended to `--results` and flushed immediately**, so an operator that reads the file
 sees a command's answer before the next command is executed. `k_maxDriveCommandBytes` caps one line
-at 64 KiB, matching the m0-demo input agent's ceiling; a command is a handful of scalars, so
+at 64 KiB, matching `umbra-input-agent`'s ceiling; a command is a handful of scalars, so
 anything near it is a malformed line rather than a large one.
 
 **Three refusals on the IPC paths, checked by `validateDriveIpcPaths` before the desktop is touched
@@ -171,7 +171,7 @@ at all.** The queue must already exist, because a session that created it would 
 appending to it. The two paths must be distinct, because a session reading its own results would
 re-execute them. And **the results path must not already exist**, so a stale results file from an
 earlier session can never be mistaken for this one's and nothing is silently appended to or
-clobbered. That last guard is the m0-demo input agent's, carried over deliberately — it caught two
+clobbered. That last guard is `umbra-input-agent`'s, carried over deliberately — it caught two
 real operator mistakes.
 
 **The queue is read by byte offset.** `QueueReader` keeps the session's own offset into the file, so
@@ -564,8 +564,8 @@ composition itself, and lists the following seams:
   `ctx:wait_for_page`). The conclusion for the CLI is unchanged: it still does not belong in window
   discovery or argument parsing.
 - P0-C: if on-hardware UIPI verification requires a separate elevated process, the plan requires
-  copying the protocol semantics of the m0-demo input-agent into the runner adapter layer, rather
-  than linking the already-frozen m0-demo.
+  copying the protocol semantics of `umbra-input-agent` into the runner adapter layer, rather
+  than linking `entry/input-agent` (see [`entry-input-agent.md`](entry-input-agent.md)).
 
 The `drive` front-end does not change that authority; it is a second consumer of the same
 `TaskHost` surface, which is why it needed no new host verb beyond `startOperatorSession`. Anything

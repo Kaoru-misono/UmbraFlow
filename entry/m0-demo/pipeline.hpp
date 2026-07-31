@@ -2,7 +2,8 @@
 
 #include "guard.hpp"
 #include "pacing.hpp"
-#include "target-setup.hpp"
+
+#include <target-setup.hpp>
 
 #include <controller/capture.hpp>
 #include <controller/discovery.hpp>
@@ -131,8 +132,6 @@ namespace uf::m0_demo
         std::string label,
         Rect<FrameSpace> roi
     ) -> Result<Template>;
-
-    [[nodiscard]] auto requireUnchangedTarget(RevalidateOutcome outcome) -> Status;
 
     [[nodiscard]]
     auto hitCenterFrame(

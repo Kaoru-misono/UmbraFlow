@@ -1,9 +1,11 @@
 #include "capture-mode.hpp"
 
-#include "capture-output.hpp"
 #include "log-jsonl.hpp"
-#include "path-validation.hpp"
-#include "target-setup.hpp"
+
+#include <capture-output.hpp>
+#include <error-text.hpp>
+#include <path-validation.hpp>
+#include <target-setup.hpp>
 
 #include <controller/capture.hpp>
 #include <controller/discovery.hpp>
@@ -28,8 +30,39 @@
 
 namespace uf::m0_demo
 {
+    // Borrowed from the input agent, which owns the shared entry substrate
+    // this frozen demo was split away from.
+    using input_agent::buildSelector;
+    using input_agent::canonicalPathsAlias;
+    using input_agent::canonicalizePathForComparison;
+    using input_agent::createCaptureSession;
+    using input_agent::formatAutomationError;
+    using input_agent::writeFramePng;
+
     namespace
     {
+        // Only this demo writes a numbered burst of frames, so the naming
+        // rule for one stayed behind when the PNG writer moved.
+        [[nodiscard]]
+        auto indexedOutputPath(
+            std::filesystem::path const& output,
+            uint32 index,
+            uint32 frameCount
+        ) -> std::filesystem::path
+        {
+            if (frameCount == 1U)
+            {
+                return output;
+            }
+
+            auto filename = output.stem();
+            filename += std::filesystem::path{
+                "-" + std::to_string(index + 1U)
+            };
+            filename += output.extension();
+            return output.parent_path() / filename;
+        }
+
         [[nodiscard]]
         auto captureFps(
             uint32 frameCount,

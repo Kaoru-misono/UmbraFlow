@@ -347,12 +347,17 @@ posted messages — none of which a hand-rolled `PostMessageW` does.
 
 ### Fix
 
-Drive input through `m0-demo input-agent`, which is the same delivery path the
+Drive input through `umbra-input-agent`, which is the same delivery path the
 product uses:
 
 ```
-m0-demo input-agent --hwnd 0xHWND --queue q.jsonl --results r.jsonl --output-dir DIR
+umbra-input-agent --hwnd 0xHWND --queue q.jsonl --results r.jsonl --output-dir DIR
 ```
+
+> Renamed 2026-07-31. This was `m0-demo input-agent` until the annotation
+> front-end moved out of the frozen demo into `entry/input-agent` and got its
+> own binary. The old spelling now prints where the program went and exits with
+> failure, so a stale script fails loudly rather than parsing as demo arguments.
 
 then append one JSON line per request. Coordinates are client pixels:
 
