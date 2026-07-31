@@ -97,8 +97,12 @@ if(TARGET ${PROJECT_NAME}_controller)
         m0-demo/guard.hpp
         m0-demo/input-agent.cpp
         m0-demo/input-agent.hpp
+        m0-demo/input-agent-annotation.cpp
+        m0-demo/input-agent-annotation.hpp
         m0-demo/input-agent-cursor.cpp
         m0-demo/input-agent-cursor.hpp
+        m0-demo/input-agent-drive.cpp
+        m0-demo/input-agent-drive.hpp
         m0-demo/input-agent-loop.cpp
         m0-demo/input-agent-loop.hpp
         m0-demo/input-agent-protocol.cpp
@@ -133,9 +137,15 @@ if(TARGET ${PROJECT_NAME}_controller)
         PUBLIC
             ${CMAKE_CURRENT_SOURCE_DIR}/m0-demo
     )
+    # The trace module is here for one type: trace::FrontEnd. The input agent is
+    # the annotation front-end, and which front-end drove a target is a fact the
+    # whole system already has one definition of. Spelling it a second time here
+    # is how the two would come to disagree, so the agent stamps its results
+    # lines with trace's own value and trace's own wire name.
     target_link_libraries(${M0_DEMO_LIBRARY}
         PUBLIC
             ${PROJECT_NAME}_controller
+            ${PROJECT_NAME}_trace
             ${PROJECT_NAME}_vision
         PRIVATE
             ${PROJECT_NAME}_image

@@ -78,20 +78,21 @@ namespace uf::trace
     // written by nothing.
     // Which front-end drove the run this line belongs to.
     //
-    // It exists because the capability surface has two consumers at the same
-    // level -- the trusted Luau framework a task runs on, and an operator sending
-    // commands from outside -- and without the attribution no reader of a trace
-    // can answer "did the task do this, or did the operator". That question is
-    // asked of every line, so the answer is part of the STAMP rather than of the
-    // event: TraceRecorder carries one value for the whole run and writes it onto
-    // every line, so no emitter can forget it and none can claim the other
-    // front-end's work.
+    // It exists because more than one thing drives a target at the same level --
+    // the trusted Luau framework a task runs on, an operator sending commands
+    // from outside, and an annotation session measuring the screen -- and without
+    // the attribution no reader of the evidence can answer "which of them did
+    // this". That question is asked of every line, so the answer is part of the
+    // STAMP rather than of the event: TraceRecorder carries one value for the
+    // whole run and writes it onto every line, so no emitter can forget it and
+    // none can claim another front-end's work.
     //
-    // It is also what makes the two mutually exclusive rather than merely
-    // documented. TaskHost latches one of these per generation the first time a
-    // front-end drives it and refuses the other, and the latched value is what it
-    // hands the recorder -- so a stream's attribution and the exclusion that
-    // produced it are the same fact and cannot disagree.
+    // For the two that reach the capability surface it is also what makes them
+    // mutually exclusive rather than merely documented. TaskHost latches one of
+    // these per generation the first time a front-end drives it and refuses the
+    // other, and the latched value is what it hands the recorder -- so a stream's
+    // attribution and the exclusion that produced it are the same fact and cannot
+    // disagree.
     enum class FrontEnd : uint8
     {
         // A project task running on the trusted Luau framework, driven by
@@ -101,7 +102,28 @@ namespace uf::trace
         // An operator sending commands from outside the process, driven by
         // `umbra-flow drive`.
         Operator,
+
+        // An authoring session driving a target in order to measure it: the
+        // m0-demo input agent serving a command queue while an author reads the
+        // frames it answers with.
+        //
+        // It reaches no project, so it has no generation for TaskHost to latch
+        // and no capability surface to consume; what it shares with the other two
+        // is exactly the question this enum answers, which is who drove the
+        // target. Until it joins the host it stamps its own answer stream rather
+        // than a trace line, and the value it stamps is this one -- so the day it
+        // does join, the attribution a reader already knows does not change.
+        Annotation,
     };
+
+    // The wire spelling of one front-end, and the only place any of the three is
+    // spelled. It is public rather than private to the serializer because a
+    // front-end has to be named outside a trace line as well: task::TaskHost
+    // names the one that already holds a generation when it refuses the other,
+    // and the m0-demo input agent stamps its own. Two spellings of one closed set
+    // is how a third value comes to be reported as the second.
+    [[nodiscard]]
+    auto frontEndWireName(FrontEnd frontEnd) noexcept -> std::string_view;
 
     enum class TraceEventKind : uint8
     {

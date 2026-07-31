@@ -66,8 +66,10 @@ policy 整个搬进这两层之后，engine 页与 CLI 页已经在替它们解�
 - **`module-trace.md`** — `umbraflow-trace/v1` 的 schema 所有权、事件族
   （`run.*` / `engine.*`（含 `engine.key_delivered`）/ `task.native_call`，以及 3d 起的八条
   `framework.*`）、字段顺序与 golden 比较的规则、非 golden 字段集、`ITraceSink` 的同步可失败
-  契约与失败优先级、`frontEnd` 这个盖章字段（`"task"` 或 `"operator"`，它属于盖章而不属于事件
-  本身，而且同时是一条协议规则——校验器在 operator 流上拒绝 `framework.*`），
+  契约与失败优先级、`frontEnd` 这个盖章字段（`"task"` / `"operator"` / `"annotation"`，最后一个
+  没有 run 也没有 generation，因此根本到不了 trace 行——见 `entry-m0-demo.md`；它属于盖章而不
+  属于事件本身，而且同时是一条协议规则——校验器在除 task 之外的任何流上拒绝 `framework.*`）、
+  `frontEndWireName` 作为这个闭集的唯一拼写，
   以及「审计日志而非重放日志」这条定位。**3d 之后还必须写清校验状态机**：
   `TraceStreamValidator` 为什么由 `TraceRecorder` 持有（recorder 是全仓唯一通向 sink 的
   路径，所以绕不过去）、两个失败 kind 的分界（Tier B `InvalidResource` 是 project 造成的

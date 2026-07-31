@@ -300,13 +300,18 @@ namespace uf::task
             {
                 return ok();
             }
+            // The holder is named through trace's own spelling rather than
+            // through a local test. A test here has to enumerate the front-ends
+            // it knows, so the first one added after it was written is reported
+            // as whichever value the test falls through to -- and a refusal that
+            // names the wrong holder sends a reader to the wrong caller.
             return fail(
                 AutomationErrorKind::UnsupportedCapability,
                 std::format(
-                    "generation {} is already driven by the {} front-end; a task run "
-                    "and an operator session must not share one generation",
+                    "generation {} is already driven by the {} front-end; two "
+                    "front-ends must not share one generation",
                     m_id.value(),
-                    *m_frontEnd == trace::FrontEnd::Task ? "task" : "operator"
+                    trace::frontEndWireName(*m_frontEnd)
                 )
             );
         }

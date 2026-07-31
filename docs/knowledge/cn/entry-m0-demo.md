@@ -231,6 +231,31 @@ releaseHeld -> session.close -> audit/summary -> log.flush
 `m0-demo input-agent`；之后非提权一侧只向 queue 追加命令并读取 results。
 提权边界因此集中在一个长期存活的 agent，而不是每次点击都触发 UAC。
 
+> **agent 已拆成 drive 层与 annotation 层**（2026-07-31，接在 `65f43d8` 给服务循环开出接缝
+> 之后）。三个文件、三种关注点，每一层都能脱离下面两层单测：
+>
+> - `input-agent-loop.{hpp,cpp}` —— `runInputAgentQueueLoop`，服务循环，也是唯一决定「一次 run
+>   如何结束」的地方，架在 `IInputAgentSession` 端口之上。`InputAgentResultWriter` 也在这里，
+>   前端盖章就盖在它上面。
+> - `input-agent-annotation.{hpp,cpp}` —— `AnnotationSession`，annotation 层：输出路径围栏、
+>   before/after 取景、PNG 编码、results 行的形状。将来标注会话长出的动词——读一块区域、
+>   由读出来的东西提议一个元素——归在这里。
+> - `input-agent-drive.{hpp,cpp}` —— `IInputAgentDrive` 与 `WindowInputAgentDrive`：把一次输入
+>   按一次观察投给窗口，再拿回一帧。它不认识文件、不编码图像、不解析命令，所以标注会话新造的
+>   东西一样都到不了它这里。
+>
+> `IInputAgentDrive` 刻意不是 `engine::IActionSink`，理由与 `IInputAgentSession` 不是它相同：
+> 那个端口说的是 engine 的词汇——针对**已标注元素**的一次已授权动作——而且住在这个可执行文件
+> 不链接的模块里。标注会话进行时什么都还没标注（量屏幕正是产出标注的过程），所以根本没有元素
+> 供那种端口点名。
+>
+> **每一条 results 行都盖着产出它的前端**：行首是 `"front_end":"annotation"`，值来自
+> `trace::FrontEnd::Annotation`，拼写来自 `trace::frontEndWireName`。`m0_demo_support` 为这一个
+> 类型链接了 `modules/trace`。agent 不写 `umbraflow-trace/v1` 的行——该 schema 每一行都带
+> `runId` 与 `generationId`，而够不到项目的标注会话两者皆无；results 文件就是它的全部证据流，
+> 盖章由 writer 而不是各个 serializer 完成，理由与「`trace::TraceRecorder` 而不是各个发射方
+> 拥有那枚章」是同一条。
+
 `entry/m0-demo/input-agent-protocol.hpp` 定义五个 variant：
 
 - `InputAgentCaptureCommand{output}`；
@@ -380,6 +405,13 @@ annotation/engine 与 M0 没有链接边。当前产品路径是
   settle 上限、path confinement、增量 line framing、queue truncation/size limit、
   handle-relative exclusive output、per-command audit 清理、client bounds 和 stale
   generation 拒绝。
+- `tests/m0-demo/test-input-agent-loop.cpp` 固定一次 run 结束的各种方式——停机命令、
+  解析不出的行、idle 超时、一次应答是否重启倒计时——以及每一条应答都带前端盖章，
+  包括循环自己写的那两条。
+- `tests/m0-demo/test-input-agent-annotation.cpp` 固定拆分买到的那道接缝：越界的输出在
+  drive 被要求观察之前就被拒；before 帧只在投递之后才编码，于是 observe->act 窗口里不放慢活；
+  窗口被换掉是唯一会结束整次 run 的失败；`delivered` 跟着 drive 的答案走，而不是会话自己
+  设的一个旗标。
 - `tests/m0-demo/test-capture-mode.cpp` 固定 log path 不得 alias 任一 output PNG。
 - `tests/m0-demo/test-log-jsonl.cpp` 固定 error kind/context/native origin、
   JSONL 字段顺序/null 表示，以及 sink open/write/flush failure。

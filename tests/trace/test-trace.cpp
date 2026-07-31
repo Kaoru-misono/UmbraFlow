@@ -18,9 +18,12 @@
 
 #include <doctest/doctest.h>
 
+#include <algorithm>
+#include <array>
 #include <charconv>
 #include <cstddef>
 #include <filesystem>
+#include <format>
 #include <fstream>
 #include <memory>
 #include <string>
@@ -300,6 +303,47 @@ namespace uf::trace
         };
 
         CHECK(goldenLine(event) == expected);
+    }
+
+    TEST_CASE("every front-end reaches the wire under a spelling of its own")
+    {
+        // The stamp is the only thing on a line that says who produced it, so two
+        // front-ends sharing a spelling would merge two streams a reader has to
+        // tell apart. The table is exhaustive by construction rather than by
+        // discipline: frontEndWireName switches with no default, so a value added
+        // without a spelling fails to compile before it can reach a line unnamed.
+        auto const spellings = std::array<std::pair<FrontEnd, std::string_view>, 3>{
+            {
+                {FrontEnd::Task, "task"},
+                {FrontEnd::Operator, "operator"},
+                {FrontEnd::Annotation, "annotation"},
+            }
+        };
+
+        auto seen = std::vector<std::string_view>{};
+        for (auto const& [frontEnd, spelling] : spellings)
+        {
+            CAPTURE(spelling);
+            CHECK(frontEndWireName(frontEnd) == spelling);
+            CHECK(std::ranges::find(seen, spelling) == seen.end());
+            seen.emplace_back(spelling);
+
+            auto run = RecordedRun{frontEnd};
+            REQUIRE(
+                run.emit(
+                       TraceEvent{
+                           .kind = TraceEventKind::EngineActionAuthorized,
+                       }
+                )
+                    .has_value()
+            );
+            REQUIRE(run.lines().size() == 1U);
+            CHECK(
+                run.lines().back().contains(
+                    std::format("\"frontEnd\":\"{}\"", spelling)
+                )
+            );
+        }
     }
 
     TEST_CASE("serializeTraceEvent escapes quotes, backslashes, and control bytes")

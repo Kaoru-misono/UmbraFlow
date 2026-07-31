@@ -201,6 +201,39 @@
 >   「先解析页面再 find」写进了脚本约定,诊断换成了新的错误种类
 >   **`PageUnresolved`**(wire `page_unresolved`)。落地细节见 A 下面的注记。
 
+> ## 标注前端成为第三个 `trace::FrontEnd`(2026-07-31 落地)
+>
+> 开发者此前的裁决是「标注前端成为第三个 `trace::FrontEnd`,有自己的动词与事件;永远不要把
+> 裸点击接到 `OperatorSession` 上」。第一步已落地,同时把 input agent 的后端拆成两层。
+>
+> **枚举加了 `FrontEnd::Annotation`,wire 名 `annotation`。** 消费者全部处理到位:
+> `frontEndName` 那个开关升级成**公开**的 `trace::frontEndWireName`,`task-host.cpp` 里
+> `*m_frontEnd == FrontEnd::Task ? "task" : "operator"` 那个三目表达式改成调它——原样留着的话,
+> 第三个值持有 generation 时那句拒绝会当场把它报成 operator。校验器的
+> `if (m_frontEnd != FrontEnd::Task)` 不用改:它写的是「不是 task 流就拒 `framework.*`」,
+> 后加的前端由构造继承。
+>
+> **它盖在哪里,以及为什么不是 trace 行。** `umbraflow-trace/v1` 的每一行都带 `runId` 与
+> `generationId`,而 `GenerationId` 的定义是「脚本层的一个已加载项目实例」。input agent 够不到
+> 项目——它经 `controller` 直接驱动裸窗口——所以给它编一个 generation 是**假归属**,正是这个
+> 仓库到处在防的那种。裁决:**agent 不写 trace 行**,它把同一个值盖在自己唯一的证据流,
+> 即 results 文件上,每行行首一个 `"front_end":"annotation"`;盖章由
+> `InputAgentResultWriter` 完成——它是每一条应答(包括循环自己写的 quit 与解析失败)唯一都要
+> 经过的地方,理由与「`TraceRecorder` 而不是各个发射方拥有那枚章」完全相同。等标注前端真的
+> 接上宿主、有了 run 与 generation,这枚章原样搬到 recorder 上,读者已经认识的那条归属不变。
+>
+> **后端拆成 drive 层与 annotation 层。** *驱动*是「把一次输入投给窗口并拿回一帧」,它不认识
+> 页面也不认识元素;*标注*是一次授权会话拿这些帧做的事。落地为
+> `IInputAgentDrive`(capture / click / scroll / key / clearAudit / close)与
+> `AnnotationSession`(路径围栏、before/after 取景、PNG 编码、results 行形状)。
+> **§四之二.7 的 `cycle_read` 那一类动词将来加在 annotation 层**,drive 层一个字都不用动——
+> 这正是这道接缝要买的东西。`IInputAgentDrive` 与上面那个 `IInputAgentSession` 一样刻意不是
+> `engine::IActionSink`:那个端口说的是「针对**已标注元素**的一次已授权动作」,而标注会话进行时
+> 什么都还没标注。
+>
+> **仍未做:** 标注前端自己的动词与事件(裁决里的「own verbs/events」)。今天它只有 drive 词汇
+> (capture / click / key / scroll),枚举值先到位,是为了让这些动词落地时归属已经存在。
+
 ## 一、为什么现在改
 
 三个问题都不是设想出来的,是 2026-07-31 标注 `chaos-super` 的 `home` 与 `sortie`

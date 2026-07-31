@@ -1,6 +1,8 @@
 #include "test-helpers.hpp"
 
+#include <input-agent-annotation.hpp>
 #include <input-agent-cursor.hpp>
+#include <input-agent-drive.hpp>
 #include <input-agent-protocol.hpp>
 #include <input-agent.hpp>
 #include <path-validation.hpp>

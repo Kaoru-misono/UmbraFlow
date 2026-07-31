@@ -63,12 +63,12 @@ namespace uf::trace
             TraceRecorder                  m_recorder;
 
         public:
-            Stream()
+            explicit Stream(FrontEnd frontEnd = FrontEnd::Task)
                 : m_recorder{
                       std::make_unique<CollectingSink>(&m_events),
                       k_runId,
                       k_generationId,
-                      FrontEnd::Task,
+                      frontEnd,
                   }
             {
             }
@@ -144,6 +144,40 @@ namespace uf::trace
             auto const kind = automationErrorKind(status.error());
             REQUIRE(kind.has_value());
             return *kind;
+        }
+
+        TEST_CASE("only the task stream may hold a framework event")
+        {
+            // The rule is stated against FrontEnd::Task, so a front-end added
+            // later inherits the refusal instead of needing to be listed. This
+            // pins that for the third one: an annotation session runs no Luau
+            // framework at all, so a framework.* line on its stream could only be
+            // a host bug attributing task structure to it.
+            auto annotation = Stream{FrontEnd::Annotation};
+            CHECK(
+                refusedKind(
+                    annotation.emit(
+                        scoped(TraceEventKind::FrameworkStepStarted, "daily")
+                    )
+                )
+                == AutomationErrorKind::InternalInvariant
+            );
+            // The refusal leaves nothing behind: no line, and no sequence spent.
+            CHECK(annotation.events().empty());
+
+            // The control, on the same stream: everything the host itself
+            // authors is still admitted, so the refusal is about the event kind
+            // and not about the stream having stopped accepting anything.
+            REQUIRE(annotation.emit(plain(TraceEventKind::RunStarted)).has_value());
+            REQUIRE(annotation.emit(nativeCall()).has_value());
+            REQUIRE(annotation.events().size() == 2U);
+            CHECK(annotation.events().front().sequence() == 1U);
+
+            auto task = Stream{FrontEnd::Task};
+            CHECK(
+                task.emit(scoped(TraceEventKind::FrameworkStepStarted, "daily"))
+                    .has_value()
+            );
         }
 
         TEST_CASE("a run bracket opens once and accepts nothing after it closes")

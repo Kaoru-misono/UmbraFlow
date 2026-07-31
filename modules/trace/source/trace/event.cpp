@@ -101,22 +101,6 @@ namespace uf::trace
             UF_UNREACHABLE_MSG("Unknown TraceEventKind value");
         }
 
-        // The wire spelling of one front-end. Lower case like every other
-        // schema-owned enumerator spelling that names a layer rather than an
-        // outcome, and independent of the enumerator name for the reason above the
-        // kind table.
-        [[nodiscard]]
-        auto frontEndName(FrontEnd frontEnd) noexcept -> std::string_view
-        {
-            switch (frontEnd)
-            {
-            case FrontEnd::Task: return "task";
-            case FrontEnd::Operator: return "operator";
-            }
-
-            UF_UNREACHABLE_MSG("Unknown FrontEnd value");
-        }
-
         [[nodiscard]]
         auto pageResolutionName(PageResolution outcome) noexcept -> std::string_view
         {
@@ -523,6 +507,21 @@ namespace uf::trace
         }
     }
 
+    // Lower case like every other schema-owned enumerator spelling that names a
+    // layer rather than an outcome, and independent of the enumerator name for
+    // the reason above the kind table.
+    auto frontEndWireName(FrontEnd frontEnd) noexcept -> std::string_view
+    {
+        switch (frontEnd)
+        {
+        case FrontEnd::Task: return "task";
+        case FrontEnd::Operator: return "operator";
+        case FrontEnd::Annotation: return "annotation";
+        }
+
+        UF_UNREACHABLE_MSG("Unknown FrontEnd value");
+    }
+
     StampedTraceEvent::StampedTraceEvent(
         TraceEvent event,
         std::vector<std::string> openSteps,
@@ -581,7 +580,7 @@ namespace uf::trace
             "generationId",
             std::format("{}", stamped.generationId().value())
         );
-        builder.addString("frontEnd", frontEndName(stamped.frontEnd()));
+        builder.addString("frontEnd", frontEndWireName(stamped.frontEnd()));
 
         // Part of the stamp, so it sits with the identity triple rather than
         // among the event's own fields. Omitted when no step is open, which is

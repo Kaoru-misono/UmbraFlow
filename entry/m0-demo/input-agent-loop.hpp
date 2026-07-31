@@ -6,6 +6,8 @@
 #include <core/error/result.hpp>
 #include <core/time/monotonic-time.hpp>
 
+#include <trace/event.hpp>
+
 #include <chrono>
 #include <filesystem>
 #include <string>
@@ -43,32 +45,31 @@ namespace uf::m0_demo
 
     [[nodiscard]] auto serializeInputAgentQuitResult() -> std::string;
 
-    // The live half of one agent run: a resolved window, its capture session,
-    // and the OS input path. It sits behind a port because a test process has
-    // none of those -- no window to resolve, no per-monitor DPI context, no
-    // Windows Graphics Capture session -- while every decision the loop makes
-    // around it can be exercised without them.
+    // What answers one queue command, and the loop's whole view of the run below
+    // it. The agent's unit of work is a whole command -- capture and its two
+    // framing outputs included -- answered as exactly one results line, which is
+    // why nothing finer appears here.
     //
-    // Deliberately not engine::IActionSink. That port speaks the engine's
-    // action vocabulary, one already-authorized click or keystroke at a time,
-    // and it belongs to a module this executable does not link. The agent's
-    // unit of work is a whole queue command, capture and its two framing
-    // outputs included, answered as exactly one results line.
-    class IInputAgentTarget
+    // It sits behind a port because a test process cannot reach what the real
+    // implementation stands on: AnnotationSession over an IInputAgentDrive over
+    // a resolved window, a per-monitor DPI context and a Windows Graphics
+    // Capture session. Every decision the loop makes around a command can be
+    // exercised without any of them.
+    class IInputAgentSession
     {
     public:
-        IInputAgentTarget() = default;
+        IInputAgentSession() = default;
 
-        IInputAgentTarget(IInputAgentTarget const&) = delete;
-        IInputAgentTarget(IInputAgentTarget&&) = delete;
-        auto operator=(IInputAgentTarget const&) -> IInputAgentTarget& = delete;
-        auto operator=(IInputAgentTarget&&) -> IInputAgentTarget& = delete;
+        IInputAgentSession(IInputAgentSession const&) = delete;
+        IInputAgentSession(IInputAgentSession&&) = delete;
+        auto operator=(IInputAgentSession const&) -> IInputAgentSession& = delete;
+        auto operator=(IInputAgentSession&&) -> IInputAgentSession& = delete;
 
-        virtual ~IInputAgentTarget() = default;
+        virtual ~IInputAgentSession() = default;
 
-        // Runs one command against the live target and answers with the results
-        // line it earned. A quit never arrives here: ending the run is the
-        // loop's own decision, not the target's.
+        // Runs one command and answers with the results line it earned. A quit
+        // never arrives here: ending the run is the loop's own decision, not the
+        // session's.
         [[nodiscard]]
         virtual auto execute(
             InputAgentCommand const& command
@@ -79,8 +80,9 @@ namespace uf::m0_demo
         // of ten thousand commands from accumulating all of their records.
         virtual auto clearCommandAudit() noexcept -> void = 0;
 
-        // Ends the capture session. Every exit the loop takes runs this, so a
-        // finished agent never leaves a session attached to a live window.
+        // Ends the session, and with it the capture session below. Every exit
+        // the loop takes runs this, so a finished agent never leaves one
+        // attached to a live window.
         [[nodiscard]] virtual auto close() -> Status = 0;
     };
 
@@ -119,14 +121,32 @@ namespace uf::m0_demo
         auto waitForNextPoll() -> void override;
     };
 
+    // The member every results line opens with, naming the front-end that
+    // produced it.
+    inline constexpr auto k_inputAgentFrontEndMember = (
+        std::string_view{"front_end"}
+    );
+
     // The results file: one line per answered command, flushed durably before
     // the queue cursor is allowed past the command that line answers.
+    //
+    // It is also where the front-end stamp goes on, for the reason
+    // trace::TraceRecorder rather than each emitter owns that stamp: this is the
+    // one place every answer passes through, including the two the loop itself
+    // authors, so no answer can reach the file without saying who produced it.
+    // Until an annotation session drives the host it has no run and no
+    // generation, so it writes no umbraflow-trace/v1 line and this file is its
+    // whole evidence stream; the value stamped here is nevertheless
+    // trace::FrontEnd's, so the day it does join the host the attribution a
+    // reader already knows does not change.
     class InputAgentResultWriter final
     {
         platform::FileWriter m_writer;
+        std::string          m_stamp;
 
-        explicit InputAgentResultWriter(
-            platform::FileWriter writer
+        InputAgentResultWriter(
+            platform::FileWriter writer,
+            std::string stamp
         ) noexcept;
 
     public:
@@ -138,11 +158,19 @@ namespace uf::m0_demo
             -> InputAgentResultWriter& = default;
         ~InputAgentResultWriter() = default;
 
+        // `frontEnd` has no default, on trace::TraceRecorder's reasoning: which
+        // front-end produced a stream is not something a construction site may
+        // leave unsaid, and a defaulted attribution would silently name one of
+        // them on every stream that forgot to choose.
         [[nodiscard]]
         static auto create(
-            std::filesystem::path const& path
+            std::filesystem::path const& path,
+            trace::FrontEnd frontEnd
         ) -> Result<InputAgentResultWriter>;
 
+        // `line` must be a JSON object carrying at least one member, which every
+        // answer this agent produces is. The stamp is inserted as its first
+        // member, so a reader meets the attribution before the answer.
         [[nodiscard]] auto write(std::string_view line) -> Status;
 
         [[nodiscard]] auto flush() -> Status;
@@ -162,7 +190,7 @@ namespace uf::m0_demo
         InputAgentQueueReader& reader,
         InputAgentQueueCursor& cursor,
         InputAgentResultWriter& results,
-        IInputAgentTarget& target,
+        IInputAgentSession& session,
         IInputAgentPollClock& clock,
         MonotonicInstant::Duration idleTimeout
     ) -> Status;

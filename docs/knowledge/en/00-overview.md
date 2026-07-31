@@ -66,7 +66,7 @@ fake ports.
 | `umbra-authoring` | Author annotation projects from a command line, plus measure frames | The only authoring tool (2026-07-30) |
 | `umbra-flow run` | Load a published project and run the Luau task named by `--task NAME` | P0 single-task runner |
 | `umbra-flow drive` | Load the same project and execute operator JSON-line commands from `--queue` | P0 operator front-end (2026-07-30) |
-| `m0-demo` | Verify WGC capture and strict-background input | Frozen; no longer carries product features |
+| `m0-demo` | Verify WGC capture and strict-background input; serve an annotation session's command queue | Frozen as a product path, but `input-agent` is the annotation front-end and is worked on (2026-07-31) |
 
 > Corrected 2026-07-31: a fifth entry point, the `umbra-workbench` GUI, stood at
 > the top of this table as "A1 annotation tool". `b57b67b` archived it; git
@@ -88,6 +88,13 @@ These paths must not be mixed:
   to the same private primitives the trusted Luau framework binds to, and inherits the same
   refusals. It is a sibling consumer, not a hole into Luau — no chunk, no source, no string that
   becomes code.
+- **`trace::FrontEnd` has a third value, and it is not a third consumer of that surface**
+  (2026-07-31). `annotation` is the `m0-demo input-agent`: an authoring session driving a raw window
+  to measure it, with no project, no generation and no capability surface. It is named in the same
+  enum because "who drove this target" is one question with one set of answers, and an annotation
+  session's clicks and captures were otherwise unattributable after the fact. It writes no
+  `umbraflow-trace/v1` line — every line of that schema carries a `runId` and a `generationId`, and
+  it has neither — so it stamps its own results file with the same value under the same spelling.
 - `m0-demo` does not use the annotation authorization stack and cannot serve as shared
   implementation for engine or CLI.
 

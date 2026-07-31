@@ -7,8 +7,11 @@
 #include "log-jsonl.hpp"
 #include "platform/windows-file-writer.hpp"
 
+#include <core/error/contracts.hpp>
 #include <core/error/result.hpp>
 #include <core/time/monotonic-time.hpp>
+
+#include <trace/event.hpp>
 
 #include <cstddef>
 #include <filesystem>
@@ -24,12 +27,12 @@ namespace uf::m0_demo
 {
     namespace
     {
-        // The two answers the loop owns, because neither needs the target: a
+        // The two answers the loop owns, because neither needs the session: a
         // line that never parsed, and the operator asking the run to end.
         [[nodiscard]]
         auto decideCommandOutcome(
             std::string_view line,
-            IInputAgentTarget& target
+            IInputAgentSession& session
         ) -> InputAgentCommandOutcome
         {
             auto command = parseInputAgentCommand(line);
@@ -49,7 +52,7 @@ namespace uf::m0_demo
                     .stopAgent  = true,
                 };
             }
-            return target.execute(*command);
+            return session.execute(*command);
         }
     }
 
@@ -79,26 +82,44 @@ namespace uf::m0_demo
     }
 
     InputAgentResultWriter::InputAgentResultWriter(
-        platform::FileWriter writer
+        platform::FileWriter writer,
+        std::string stamp
     ) noexcept
         : m_writer{std::move(writer)}
+        , m_stamp{std::move(stamp)}
     {
     }
 
     auto InputAgentResultWriter::create(
-        std::filesystem::path const& path
+        std::filesystem::path const& path,
+        trace::FrontEnd frontEnd
     ) -> Result<InputAgentResultWriter>
     {
         UF_TRY_VALUE(
             writer,
             platform::FileWriter::openAppend(path)
         );
-        return InputAgentResultWriter{std::move(writer)};
+        return InputAgentResultWriter{
+            std::move(writer),
+            std::format(
+                "{{{}:{},",
+                escapeJsonString(k_inputAgentFrontEndMember),
+                escapeJsonString(trace::frontEndWireName(frontEnd))
+            ),
+        };
     }
 
     auto InputAgentResultWriter::write(std::string_view line) -> Status
     {
-        auto record = std::string{line};
+        // Every answer this agent produces is a JSON object with at least one
+        // member, so the stamp can open the object and the answer follows from
+        // its first key. A line that is not one would make the whole file
+        // unreadable rather than one entry wrong, which is why this is checked
+        // in release too.
+        UF_CHECK(line.starts_with("{\""));
+
+        auto record = m_stamp;
+        record += line.substr(1U);
         record += '\n';
         UF_TRY(
             m_writer.write(
@@ -122,7 +143,7 @@ namespace uf::m0_demo
         InputAgentQueueReader& reader,
         InputAgentQueueCursor& cursor,
         InputAgentResultWriter& results,
-        IInputAgentTarget& target,
+        IInputAgentSession& session,
         IInputAgentPollClock& clock,
         MonotonicInstant::Duration idleTimeout
     ) -> Status
@@ -133,8 +154,8 @@ namespace uf::m0_demo
             UF_TRY_VALUE(entries, reader.readAvailable());
             for (auto const& entry : entries)
             {
-                auto const outcome = decideCommandOutcome(entry.text, target);
-                target.clearCommandAudit();
+                auto const outcome = decideCommandOutcome(entry.text, session);
+                session.clearCommandAudit();
                 UF_TRY(results.write(outcome.resultLine));
                 // Advancing after the results line is the deliberate order: a
                 // hard kill in the gap replays this one command, where the
@@ -143,7 +164,7 @@ namespace uf::m0_demo
                 UF_TRY(cursor.advance(entry.consumedBytes));
                 if (outcome.stopAgent)
                 {
-                    UF_TRY(target.close());
+                    UF_TRY(session.close());
                     UF_TRY(results.flush());
                     return ok();
                 }
@@ -156,7 +177,7 @@ namespace uf::m0_demo
                 >= idleTimeout
             )
             {
-                UF_TRY(target.close());
+                UF_TRY(session.close());
                 UF_TRY(results.flush());
                 return ok();
             }

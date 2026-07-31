@@ -171,19 +171,31 @@ trace 从第一条 `engine.observed` 开始，它已于 2026-07-29 随运行生�
 `trace::stripNonGoldenFields` 剥掉。engine 不拥有 sink：它借用 run 的 recorder，
 文件的打开、逐条写入与 flush 由 `modules/trace` 的 `FileTraceSink` 负责。
 
-**`frontEnd` 属于「盖章」而不属于事件本身**（2026-07-30，`ed38124`）。取值是 `"task"` 或
-`"operator"`，来自 `trace::FrontEnd`。它存在是因为能力面现在有两个同级消费者——task 所跑的
-受信任 Luau framework，和从进程外送命令的操作者——没有这条归属，读 trace 的人就回答不了
-「这件事是 task 做的还是操作者做的」，而这个问题对每一行都要问一次；于是一个 recorder 为整次
+**`frontEnd` 属于「盖章」而不属于事件本身**（2026-07-30，`ed38124`）。它来自
+`trace::FrontEnd`。它存在是因为同一级上不止一个东西在驱动目标——没有这条归属，读证据的人就
+回答不了「这件事是谁做的」，而这个问题对每一行都要问一次；于是一个 recorder 为整次
 run 持有一个值并盖到每一行上，没有任何发射方能忘掉它，也没有谁能冒领另一个前端的活。
 `TaskHost` 交给 recorder 的就是它闩住的那个值，所以一条流的归属与产生它的互斥是同一件事，
 而不是两件必须彼此吻合的事。
 
-它同时是一条协议规则而不只是标签：`TraceStreamValidator` 在 operator 流上**拒绝
-`framework.*` 事件**，报 `InternalInvariant`。那些事件描述的是受信任 Luau framework 自己的
-结构——哪个 step 开着、这是第几次重试、哪个 interrupt 命中了——而 operator 流上根本没有那个
-framework，所以这样一行只可能是宿主 bug 把 task 的结构安到了操作者头上。拒绝它，才使这个字段
-是权威而不是装饰。
+**这个枚举有三个值，其中只有两个会走到 `TaskHost`**（2026-07-31）。`"task"` 与 `"operator"`
+是能力面的两个消费者，闩使它们按 generation 互斥。`"annotation"` 是 m0-demo 的 input agent
+——标注会话为了「量」一个裸窗口而驱动它。它够不到任何项目，因此没有 generation 可闩、
+也没有能力面可消费，于是它**根本不写 `umbraflow-trace/v1` 的行**：该 schema 的每一行都带
+`runId` 与 `generationId`，而标注会话两者皆无。它盖章的是自己的 results 文件，用的是这个枚举的
+值和 `trace::frontEndWireName` 的拼写——这样将来它接进宿主时，读者已经认识的那条归属不会变。
+见 [`entry-m0-demo.md`](entry-m0-demo.md)。
+
+`trace::frontEndWireName` 之所以公开也是同一个理由：`task::TaskHost` 在拒绝第二个前端时要点名
+已经占住 generation 的那一个，input agent 要点名自己。一个闭集有两处拼写，正是「第三个值被报成
+第二个」的成因——`TaskHost::Generation::claimFrontEnd` 里原来那个三目表达式会一字不差地这么干。
+
+它同时是一条协议规则而不只是标签：`TraceStreamValidator` 在**除 task 之外的任何流**上**拒绝
+`framework.*` 事件**，报 `InternalInvariant`。规则写成「不是 `FrontEnd::Task` 就拒」而不是逐个
+点名其余的值，所以后加的前端由构造继承这条拒绝，而不是靠谁记得去列它。那些事件描述的是受信任
+Luau framework 自己的结构——哪个 step 开着、这是第几次重试、哪个 interrupt 命中了——而别的流上
+根本没有那个 framework，所以这样一行只可能是宿主 bug 把 task 的结构安到了别人头上。拒绝它，
+才使这个字段是权威而不是装饰。
 
 ## 必须保持的约束
 

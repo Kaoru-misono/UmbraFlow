@@ -84,8 +84,10 @@ The suggested scope:
   `engine.*` including `engine.key_delivered`, `task.native_call`, and the eight `framework.*`
   events from 3d on); field ordering and the rules for golden comparison; the documented non-golden
   field set; `ITraceSink`'s synchronous fallible contract and the failure-precedence rules; the
-  `frontEnd` stamp (`"task"` or `"operator"`), which is part of the stamp rather than of the event
-  and is also a protocol rule — the validator refuses `framework.*` on an operator stream; and the
+  `frontEnd` stamp (`"task"`, `"operator"` or `"annotation"`, the last of which reaches no trace line
+  because it has no run and no generation — see `entry-m0-demo.md`), which is part of the stamp
+  rather than of the event and is also a protocol rule — the validator refuses `framework.*` on any
+  stream but the task one; `frontEndWireName` as the single spelling of that closed set; and the
   "audit log, not a replay log" positioning. **Since 3d it must also cover the validation state machine**: why
   `TraceStreamValidator` is owned by `TraceRecorder` (the recorder is the only path to a sink in the
   codebase, so it cannot be gone around), where the two failure kinds divide (Tier B

@@ -246,6 +246,35 @@ split-process approach: the developer manually launches `m0-demo input-agent` on
 reads results. The elevation boundary is thus concentrated in a single long-lived agent, rather than
 triggering UAC on every click.
 
+> **The agent is split into a drive layer and an annotation layer** (2026-07-31, after `65f43d8`
+> gave the serving loop a seam). Three files, three concerns, and each is testable without the two
+> below it:
+>
+> - `input-agent-loop.{hpp,cpp}` — `runInputAgentQueueLoop`, the serving loop and the only place the
+>   ways a run ends are decided, over the `IInputAgentSession` port. `InputAgentResultWriter` lives
+>   here too, and it is where the front-end stamp goes on.
+> - `input-agent-annotation.{hpp,cpp}` — `AnnotationSession`, the annotation layer: output-path
+>   confinement, the before/after framing, PNG encoding, and the results-line shape. This is where a
+>   verb an authoring session grows later — reading a region, proposing an element from what was read
+>   — belongs.
+> - `input-agent-drive.{hpp,cpp}` — `IInputAgentDrive` and `WindowInputAgentDrive`: delivering one
+>   input to a window against one observation and getting a frame back. It names no file, encodes no
+>   image and parses no command, so nothing an authoring session invents reaches it.
+>
+> `IInputAgentDrive` is deliberately not `engine::IActionSink`, for the same reason
+> `IInputAgentSession` is not: that port speaks the engine's vocabulary of one already-authorized
+> action against an *annotated element*, and lives in a module this executable does not link.
+> Nothing is annotated during an annotation session — measuring the screen is what produces the
+> annotations — so there is no element for such a port to name.
+>
+> **Every results line is stamped with the front-end that produced it**: it opens with
+> `"front_end":"annotation"`, from `trace::FrontEnd::Annotation` under
+> `trace::frontEndWireName`'s spelling. `m0_demo_support` links `modules/trace` for that one type.
+> The agent writes no `umbraflow-trace/v1` line, because every line of that schema carries a `runId`
+> and a `generationId` and an annotation session — which reaches no project — has neither; the
+> results file is its whole evidence stream, and the stamp is applied by the writer rather than by
+> each serializer for the reason `trace::TraceRecorder` rather than each emitter owns that stamp.
+
 `entry/m0-demo/input-agent-protocol.hpp` defines five variants:
 
 - `InputAgentCaptureCommand{output}`;
@@ -408,6 +437,13 @@ copying the semantics at the adapter layer rather than linking `entry/m0-demo`.
 - `tests/m0-demo/test-input-agent.cpp` pins the strict JSON command grammar, UTF-8, the settle cap,
   path confinement, incremental line framing, queue truncation/size limit, handle-relative exclusive
   output, per-command audit clearing, client bounds, and stale-generation rejection.
+- `tests/m0-demo/test-input-agent-loop.cpp` pins the ways a run ends -- a stopping command, an
+  unparseable line, the idle timeout, whether an answer restarts the countdown -- and that every
+  answer carries the front-end stamp, including the two the loop itself authors.
+- `tests/m0-demo/test-input-agent-annotation.cpp` pins the seam the split bought: an unconfined
+  output is refused before the drive is asked to observe, the before-frame is encoded only after
+  delivery so the observe->act window holds nothing slow, a replaced window is the one failure that
+  ends the run, and `delivered` follows the drive's answer rather than a flag the session sets.
 - `tests/m0-demo/test-capture-mode.cpp` pins that the log path must not alias either output PNG.
 - `tests/m0-demo/test-log-jsonl.cpp` pins the error kind/context/native origin, the JSONL field
   order/null representation, and sink open/write/flush failures.

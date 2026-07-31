@@ -1,17 +1,11 @@
 #pragma once
 
-#include <controller/input.hpp>
 #include <core/error/result.hpp>
-#include <core/time/monotonic-time.hpp>
 #include <core/types/integer.hpp>
-#include <domain/detection.hpp>
-#include <domain/space.hpp>
 
 #include <filesystem>
-#include <optional>
 #include <span>
 #include <string>
-#include <string_view>
 #include <vector>
 
 namespace uf::m0_demo
@@ -66,62 +60,10 @@ namespace uf::m0_demo
         auto readAvailable() -> Result<std::vector<Entry>>;
     };
 
-    struct InputAgentFramePaths final
-    {
-        std::filesystem::path before{};
-        std::filesystem::path after{};
-
-        auto operator==(InputAgentFramePaths const&) const -> bool = default;
-    };
-
-    // One action op's outcome exactly as its results line reports it: the two
-    // frames that bracket the action, whether the input actually reached the
-    // target, and one error field. delivered is the distinction every caller
-    // depends on, so a rejected op must never report it true.
-    struct InputAgentActionResult final
-    {
-        std::optional<uint64> beforeFrame{};
-        std::optional<uint64> afterFrame{};
-        bool                  delivered{};
-        std::optional<Error>  error{};
-    };
-
-    auto clearInputAgentCommandAudit(AuditLog& audit) noexcept -> void;
-
-    // Resolves the before-frame and after-frame outputs of one action op. Both
-    // must stay inside the canonical output directory, must not alias each other
-    // or either IPC file, and must not exist yet: an input-agent output is
-    // always a fresh file, so a caller can never mistake a stale frame on disk
-    // for the one this action produced.
-    [[nodiscard]]
-    auto resolveInputAgentFramePaths(
-        std::filesystem::path const& outputBefore,
-        std::filesystem::path const& outputAfter,
-        std::filesystem::path const& canonicalOutputDirectory,
-        std::filesystem::path const& canonicalQueue,
-        std::filesystem::path const& canonicalResults,
-        std::string_view operation
-    ) -> Result<InputAgentFramePaths>;
-
-    // click, key, and scroll share this line shape, because each frames one
-    // delivered action between a before-frame and an after-frame.
-    [[nodiscard]]
-    auto serializeInputAgentActionResult(
-        std::string_view operation,
-        InputAgentActionResult const& result
-    ) -> std::string;
-
-    // The coordinate fence every pointer action passes before the target is
-    // revalidated, so a point the caller got wrong is answered as a rejected
-    // action rather than as a target that vanished.
-    [[nodiscard]]
-    auto validateInputAgentPointerAction(
-        DeliveryTarget const& target,
-        ObservationLease lease,
-        Point<ClientSpace> point,
-        MonotonicInstant now
-    ) -> Status;
-
+    // The composition root of one agent run: it validates the arguments and the
+    // three IPC paths, resolves the window, and hands a WindowInputAgentDrive to
+    // an AnnotationSession for runInputAgentQueueLoop to serve. It decides
+    // nothing about a command; every such rule lives in one of those three.
     [[nodiscard]]
     auto runInputAgent(
         std::span<std::string const> raw

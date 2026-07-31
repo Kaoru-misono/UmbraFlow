@@ -9,6 +9,8 @@
 #include <core/utility/scope-exit.hpp>
 #include <core/utility/variant-match.hpp>
 
+#include <trace/event.hpp>
+
 #include <doctest/doctest.h>
 
 #include <chrono>
@@ -35,8 +37,14 @@ namespace uf::m0_demo
             R"({"op":"quit"})"
             "\n"
         };
+        // Every line the agent answers with opens with the front-end stamp; a
+        // results file is an annotation session's whole evidence stream, so who
+        // produced it is read before what it says.
+        constexpr auto k_frontEndStamp = std::string_view{
+            R"({"front_end":"annotation",)"
+        };
         constexpr auto k_quitResultLine = std::string_view{
-            R"({"op":"quit","ok":true,"error":null})"
+            R"({"front_end":"annotation","op":"quit","ok":true,"error":null})"
         };
 
         // No case here should poll anywhere near this often. It is the last
@@ -179,11 +187,11 @@ namespace uf::m0_demo
             return files;
         }
 
-        // A target that answers from a script instead of from a window. Every
+        // A session that answers from a script instead of from a window. Every
         // line it produces reports ok:false, because the property under test is
         // what the loop does around a command's outcome rather than what a real
         // window would have made of it.
-        class ScriptedTarget final : public IInputAgentTarget
+        class ScriptedSession final : public IInputAgentSession
         {
             std::size_t m_stopAtCommand;
 
@@ -195,7 +203,7 @@ namespace uf::m0_demo
             // stopAtCommand counts from one; zero never stops. It stands in for
             // the target having been replaced under the agent, which is the one
             // failure an action op answers and then refuses to continue past.
-            explicit ScriptedTarget(std::size_t stopAtCommand) noexcept
+            explicit ScriptedSession(std::size_t stopAtCommand) noexcept
                 : m_stopAtCommand{stopAtCommand}
             {
             }
@@ -333,7 +341,7 @@ namespace uf::m0_demo
     {
         // The defect this guards: a command answered with ok:false looks like
         // work that did not happen, and a loop that declines to consume it
-        // replays it against the target on the very next poll.
+        // replays it against the session on the very next poll.
         auto const files = createAgentFiles(
             "input-agent-loop-consume",
             std::string{k_keyCommand} + std::string{k_keyCommand}
@@ -354,16 +362,19 @@ namespace uf::m0_demo
         REQUIRE(cursor.has_value());
         auto reader = InputAgentQueueReader::create(files.queue, uintmax{});
         REQUIRE(reader.has_value());
-        auto results = InputAgentResultWriter::create(files.results);
+        auto results = InputAgentResultWriter::create(
+            files.results,
+            trace::FrontEnd::Annotation
+        );
         REQUIRE(results.has_value());
 
-        auto target = ScriptedTarget{0U};
-        auto clock  = ScriptedClock{files.queue, {}, 12U};
+        auto session = ScriptedSession{0U};
+        auto clock   = ScriptedClock{files.queue, {}, 12U};
         auto const status = runInputAgentQueueLoop(
             *reader,
             *cursor,
             *results,
-            target,
+            session,
             clock,
             milliseconds(10'000U)
         );
@@ -378,13 +389,13 @@ namespace uf::m0_demo
         auto const queueBytes = std::filesystem::file_size(files.queue);
         CHECK(cursor->position().consumedCommands == uintmax{3});
         CHECK(cursor->position().consumedBytes == queueBytes);
-        CHECK(target.executed() == std::vector<std::string>{"key", "key"});
-        CHECK(target.auditClears() == 3U);
-        CHECK(target.closes() == 1U);
+        CHECK(session.executed() == std::vector<std::string>{"key", "key"});
+        CHECK(session.auditClears() == 3U);
+        CHECK(session.closes() == 1U);
         CHECK(clock.waits() == 0U);
     }
 
-    TEST_CASE("m0 input-agent loop stops where the target stopped answering")
+    TEST_CASE("m0 input-agent loop stops where the session stopped answering")
     {
         // An action op that reports the capture target instance changed has
         // seen the window it was launched against replaced. Everything queued
@@ -409,16 +420,19 @@ namespace uf::m0_demo
         REQUIRE(cursor.has_value());
         auto reader = InputAgentQueueReader::create(files.queue, uintmax{});
         REQUIRE(reader.has_value());
-        auto results = InputAgentResultWriter::create(files.results);
+        auto results = InputAgentResultWriter::create(
+            files.results,
+            trace::FrontEnd::Annotation
+        );
         REQUIRE(results.has_value());
 
-        auto target = ScriptedTarget{2U};
-        auto clock  = ScriptedClock{files.queue, {}, 12U};
+        auto session = ScriptedSession{2U};
+        auto clock   = ScriptedClock{files.queue, {}, 12U};
         auto const status = runInputAgentQueueLoop(
             *reader,
             *cursor,
             *results,
-            target,
+            session,
             clock,
             milliseconds(10'000U)
         );
@@ -430,13 +444,13 @@ namespace uf::m0_demo
         auto const lines = readLines(files.results);
         REQUIRE(lines.size() == 2U);
         CHECK(lines[1].contains(R"("index":2)"));
-        CHECK(target.executed().size() == 2U);
+        CHECK(session.executed().size() == 2U);
         CHECK(cursor->position().consumedCommands == uintmax{2});
         CHECK(
             cursor->position().consumedBytes
             == uintmax{2} * k_keyCommand.size()
         );
-        CHECK(target.closes() == 1U);
+        CHECK(session.closes() == 1U);
         CHECK(clock.waits() == 0U);
     }
 
@@ -462,16 +476,19 @@ namespace uf::m0_demo
         REQUIRE(cursor.has_value());
         auto reader = InputAgentQueueReader::create(files.queue, uintmax{});
         REQUIRE(reader.has_value());
-        auto results = InputAgentResultWriter::create(files.results);
+        auto results = InputAgentResultWriter::create(
+            files.results,
+            trace::FrontEnd::Annotation
+        );
         REQUIRE(results.has_value());
 
-        auto target = ScriptedTarget{0U};
-        auto clock  = ScriptedClock{files.queue, {}, 12U};
+        auto session = ScriptedSession{0U};
+        auto clock   = ScriptedClock{files.queue, {}, 12U};
         auto const status = runInputAgentQueueLoop(
             *reader,
             *cursor,
             *results,
-            target,
+            session,
             clock,
             milliseconds(10'000U)
         );
@@ -479,14 +496,89 @@ namespace uf::m0_demo
 
         auto const lines = readLines(files.results);
         REQUIRE(lines.size() == 3U);
-        CHECK(lines[0].starts_with(R"({"op":null,"ok":false,)"));
+        CHECK(
+            lines[0].starts_with(R"({"front_end":"annotation","op":null,"ok":false,)")
+        );
         CHECK(lines[2] == k_quitResultLine);
-        // Neither the unparseable text nor the quit is the target's business:
+        // Neither the unparseable text nor the quit is the session's business:
         // one never became a command, and ending the run is the loop's own
         // decision.
-        CHECK(target.executed() == std::vector<std::string>{"key"});
+        CHECK(session.executed() == std::vector<std::string>{"key"});
         CHECK(cursor->position().consumedCommands == uintmax{3});
-        CHECK(target.closes() == 1U);
+        CHECK(session.closes() == 1U);
+    }
+
+    TEST_CASE("m0 input-agent loop stamps every answer with its front-end")
+    {
+        // A results file is an annotation session's whole evidence stream. The
+        // session reaches no host, so it has no run and no generation and writes
+        // no umbraflow-trace/v1 line; without this stamp nothing in the file says
+        // an annotation session produced it, and the three lines below come from
+        // three different authors -- the session, the loop refusing a line that
+        // never parsed, and the loop's own quit. That is why the stamp sits where
+        // all three pass rather than in any one of them.
+        auto const files = createAgentFiles(
+            "input-agent-loop-stamp",
+            std::string{k_keyCommand} + std::string{"not a command\n"}
+                + std::string{k_quitCommand}
+        );
+        auto const cleanup = scopeExit(
+            [cleanupPath = files.directory]() noexcept
+            {
+                removeAllBestEffort(cleanupPath);
+            }
+        );
+
+        auto cursor = InputAgentQueueCursor::open(
+            inputAgentQueueCursorPath(files.queue),
+            files.queue,
+            InputAgentQueuePosition{}
+        );
+        REQUIRE(cursor.has_value());
+        auto reader = InputAgentQueueReader::create(files.queue, uintmax{});
+        REQUIRE(reader.has_value());
+        auto results = InputAgentResultWriter::create(
+            files.results,
+            trace::FrontEnd::Annotation
+        );
+        REQUIRE(results.has_value());
+
+        auto session = ScriptedSession{0U};
+        auto clock   = ScriptedClock{files.queue, {}, 12U};
+        auto const status = runInputAgentQueueLoop(
+            *reader,
+            *cursor,
+            *results,
+            session,
+            clock,
+            milliseconds(10'000U)
+        );
+        REQUIRE(status.has_value());
+
+        auto const lines = readLines(files.results);
+        REQUIRE(lines.size() == 3U);
+        for (auto const& line : lines)
+        {
+            CAPTURE(line);
+            CHECK(line.starts_with(k_frontEndStamp));
+        }
+        // The stamp opens the line and the answer follows unchanged, so a reader
+        // meets the attribution before what it attributes.
+        CHECK(lines[0].contains(R"("op":"key")"));
+        CHECK(lines[1].contains(R"("op":null)"));
+        CHECK(lines[2] == k_quitResultLine);
+
+        // It is trace's spelling of trace's value, not a local one: the same
+        // answer under another front-end says so.
+        CHECK_FALSE(lines[0].contains(R"("front_end":"operator")"));
+        CHECK(
+            lines[0].starts_with(
+                std::format(
+                    R"({{"front_end":"{}",)",
+                    trace::frontEndWireName(trace::FrontEnd::Annotation)
+                )
+            )
+        );
     }
 
     TEST_CASE("m0 input-agent loop ends a run whose queue has gone silent")
@@ -507,16 +599,19 @@ namespace uf::m0_demo
         REQUIRE(cursor.has_value());
         auto reader = InputAgentQueueReader::create(files.queue, uintmax{});
         REQUIRE(reader.has_value());
-        auto results = InputAgentResultWriter::create(files.results);
+        auto results = InputAgentResultWriter::create(
+            files.results,
+            trace::FrontEnd::Annotation
+        );
         REQUIRE(results.has_value());
 
-        auto target = ScriptedTarget{0U};
-        auto clock  = ScriptedClock{files.queue, {}, 12U};
+        auto session = ScriptedSession{0U};
+        auto clock   = ScriptedClock{files.queue, {}, 12U};
         auto const status = runInputAgentQueueLoop(
             *reader,
             *cursor,
             *results,
-            target,
+            session,
             clock,
             milliseconds(250U)
         );
@@ -528,8 +623,8 @@ namespace uf::m0_demo
         CHECK(clock.waits() == 3U);
         CHECK(readLines(files.results).empty());
         CHECK(cursor->position() == InputAgentQueuePosition{});
-        CHECK(target.executed().empty());
-        CHECK(target.closes() == 1U);
+        CHECK(session.executed().empty());
+        CHECK(session.closes() == 1U);
     }
 
     TEST_CASE("m0 input-agent loop stays alive while work keeps arriving")
@@ -554,7 +649,10 @@ namespace uf::m0_demo
         REQUIRE(cursor.has_value());
         auto reader = InputAgentQueueReader::create(files.queue, uintmax{});
         REQUIRE(reader.has_value());
-        auto results = InputAgentResultWriter::create(files.results);
+        auto results = InputAgentResultWriter::create(
+            files.results,
+            trace::FrontEnd::Annotation
+        );
         REQUIRE(results.has_value());
 
         // A command every second poll: 200 ms apart, comfortably inside a
@@ -569,22 +667,22 @@ namespace uf::m0_demo
             "",
             std::string{k_quitCommand},
         };
-        auto target = ScriptedTarget{0U};
-        auto clock  = ScriptedClock{files.queue, std::move(schedule), 20U};
+        auto session = ScriptedSession{0U};
+        auto clock   = ScriptedClock{files.queue, std::move(schedule), 20U};
         auto const status = runInputAgentQueueLoop(
             *reader,
             *cursor,
             *results,
-            target,
+            session,
             clock,
             milliseconds(250U)
         );
         REQUIRE(status.has_value());
 
         CHECK(clock.waits() == 8U);
-        CHECK(target.executed().size() == 3U);
+        CHECK(session.executed().size() == 3U);
         CHECK(readLines(files.results).size() == 4U);
         CHECK(cursor->position().consumedCommands == uintmax{4});
-        CHECK(target.closes() == 1U);
+        CHECK(session.closes() == 1U);
     }
 }

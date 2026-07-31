@@ -63,16 +63,19 @@ namespace uf::trace
     //     after run.finished, a step finish naming other than the innermost open
     //     step, a retry attempt that continues no open scope or exceeds its
     //     declared attempts, an interrupt handled that no match opened, and a
-    //     framework.* event on an operator stream. Only the framework or the host
-    //     can produce one, so it is a bug in this binary.
+    //     framework.* event on a stream no task drove. Only the framework or the
+    //     host can produce one, so it is a bug in this binary.
     //
     // The front-end is part of the protocol rather than only part of the stamp.
     // framework.* events describe the trusted Luau framework's own structure --
     // which step is open, which retry attempt this is, which interrupt matched --
-    // and on an operator stream that framework does not exist, so such a line
-    // could only ever be a host bug attributing task structure to the operator.
-    // Refusing it here is what keeps the attribution worth reading: `frontEnd`
-    // does not merely label a stream, it decides which events the stream may hold.
+    // and on any stream but the task one that framework does not exist, so such a
+    // line could only ever be a host bug attributing task structure to a
+    // front-end that runs no script. The rule is stated against FrontEnd::Task
+    // rather than against the others by name, so a front-end added later is
+    // refused by construction instead of by remembering to list it. Refusing it
+    // here is what keeps the attribution worth reading: `frontEnd` does not
+    // merely label a stream, it decides which events the stream may hold.
     //
     // NOT thread-safe: one recorder writes one run on one thread.
     class TraceStreamValidator final
@@ -98,8 +101,9 @@ namespace uf::trace
 
         [[nodiscard]] auto apply(TraceEvent const& event) -> Status;
 
-        // Refuses a framework.* event on a stream no Luau framework drove. See the
-        // class comment for why the front-end is a protocol rule.
+        // Refuses a framework.* event on any stream but the task one. See the
+        // class comment for why the front-end is a protocol rule, and why the
+        // test is against FrontEnd::Task rather than against the others.
         [[nodiscard]] auto requireFramework() const -> Status;
 
         [[nodiscard]] auto startStep(TraceEvent::Framework const& payload) -> Status;

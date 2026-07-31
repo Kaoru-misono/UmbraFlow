@@ -900,6 +900,15 @@ task.native_call         序号 / 原语 / 入参身份 / outcome / error kind /
 >   能力面现在有两个同级消费者(task 跑的受信任 Luau framework,和从进程外送命令的操作者),
 >   「这件事是谁做的」对每一行都要问一次,所以答案由 recorder 为整次 run 持有一份并写到每一
 >   行上——没有任何发射方能忘掉它,也没有谁能冒领另一个前端的活。
+>
+>   > **更正(2026-07-31):枚举有第三个值 `"annotation"`,但 trace 行上仍然只可能看到前两个。**
+>   > 第三个是 `m0-demo input-agent`——标注会话为了量一个裸窗口而驱动它。它够不到项目,
+>   > 于是没有 generation、没有能力面,也**写不出这个 schema 的任何一行**:每一行都带
+>   > `runId` 与 `generationId`,而它两者皆无。它把同一个值盖在自己的 results 文件上,
+>   > 拼写来自新公开的 `trace::frontEndWireName`。把它放进同一个枚举而不是另造一个词,
+>   > 是因为「是谁驱动了这个目标」是一个问题、一套答案;拼成两套,正是「第三个值被报成第二个」
+>   > 的成因——`TaskHost::Generation::claimFrontEnd` 原来那个三目表达式会一字不差地这么干,
+>   > 现在它调 `frontEndWireName`。
 > - **`TaskHost` 交给 recorder 的就是它闩住的那个前端值**,所以「一条流归属谁」与「产生它的
 >   互斥」是同一件事,而不是两件必须彼此吻合的事。互斥本身见本节下面的校验状态机与 §13。
 > - **`frontEnd` 同时是一条协议规则,不只是标签**:§12 的校验状态机在 operator 流上**拒绝
@@ -907,6 +916,10 @@ task.native_call         序号 / 原语 / 入参身份 / outcome / error kind /
 >   结构,而 operator 流上没有那个 framework,这样一行只可能是宿主 bug 把 task 的结构安到了
 >   操作者头上。拒绝它,这个字段才是权威而不是装饰。因此本节「两个失败 kind 的分界」那份
 >   `InternalInvariant` 清单要多读一条:operator 流上的 `framework.*`。
+>
+>   > **更正(2026-07-31):规则写的是「不是 task 流就拒」,不是「operator 流就拒」。**
+>   > 差别在第三个值出现时才显形:后加的前端由构造继承这条拒绝,而不是靠谁记得去列它。
+>   > `tests/trace/test-stream-validator.cpp` 用 `FrontEnd::Annotation` 钉住了这一点。
 
 > **补记 2026-07-29(阶段 2c `c37ee5b`)——`run.finished` 的 error kind 是真 kind 了**:
 > 在此之前,一个**没人捕获**的 Tier B 错误穿出脚本时,`script` 只知道「栈顶是个非字符串
