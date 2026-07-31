@@ -124,8 +124,8 @@ namespace uf
             return KeyInput{0x000DU, true};
         }
 
-        // Resolves a key hint as a target's own UI prints it ("E", "1", "F3")
-        // to a virtual key. Which names exist is domain::KeyName's single
+        // Resolves a key hint as a target's own UI prints it ("E", "1", "F3",
+        // "ENTER") to a virtual key. Which names exist is domain::KeyName's single
         // definition, which this routes through rather than repeating, so the
         // accepted set cannot drift between the name a project may write and the
         // name this can resolve.

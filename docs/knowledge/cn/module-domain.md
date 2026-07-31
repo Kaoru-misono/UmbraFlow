@@ -13,7 +13,7 @@
 - `modules/domain/source/domain/frame.hpp` 与 `frame.cpp` 定义带身份、捕获时间、像素所有权和坐标变换的 `Frame`。
 - `modules/domain/source/domain/detection.hpp` 与 `detection.cpp` 定义同帧 `Detection` 以及动作时效凭证 `ObservationLease`。
 - `modules/domain/source/domain/error.hpp`、`error.cpp`、`time.hpp` 和 `time.cpp` 定义自动化错误分类、恢复范围以及单调时间上的安全运算。
-- `modules/domain/source/domain/key.hpp` 与 `key.cpp` 定义 `KeyName`，即「有哪些键名存在」的唯一定义（2026-07-30，`ed38124`）。
+- `modules/domain/source/domain/key.hpp` 与 `key.cpp` 定义 `KeyName`，即「有哪些键名存在」的唯一定义（2026-07-30，`ed38124`）；2026-07-31 加入具名键族 `"ENTER"`、`"ESC"`、`"CAPS"`、`"SHIFT"`。
 
 `domain` 不负责以下工作：
 
@@ -139,9 +139,13 @@ Windows capture 在 `modules/controller/source/controller/platform/windows-captu
 
 ### `KeyName`
 
-`modules/domain/source/domain/key.hpp` 的 `KeyName` 是**「有哪些键名存在」的唯一定义**。被接受的集合是大写的 `"A".."Z"`、`"0".."9"` 与 `"F1".."F12"`——48 个名字对应 48 个互不相同的虚拟键，**没有别名**，因为一个拼错的名字绝不能解析成旁边那个键。`KeyName::create` 是造出它的唯一途径，集合之外的名字一律以 `ActionRejected` 失败：没人能解析的名字是被拒绝的动作，而不是缺失的资源。`controller::KeyInput::fromName` 走的是 `create` 而不是重写一遍判断，于是两边不会对「项目可以写哪些名字」产生分歧。
+`modules/domain/source/domain/key.hpp` 的 `KeyName` 是**「有哪些键名存在」的唯一定义**。被接受的集合有三族：`"A".."Z"`、`"0".."9"`、`"F1".."F12"`，以及 `k_namedKeys` 里的具名键 `"ENTER"`、`"ESC"`、`"CAPS"`、`"SHIFT"`——52 个名字对应 52 个互不相同的虚拟键，**没有别名**，因为一个拼错的名字绝不能解析成旁边那个键。`KeyName::create` 是造出它的唯一途径，集合之外的名字一律以 `ActionRejected` 失败：没人能解析的名字是被拒绝的动作，而不是缺失的资源。`controller::KeyInput::fromName` 走的是 `create` 而不是重写一遍判断，于是两边不会对「项目可以写哪些名字」产生分歧。
 
-它住在 `domain` 而不是 `controller`，是为了让按键能穿过 engine 的动作端口而不必让那个端口提到虚拟键——虚拟键是 Windows 的事实。名字是平台中立的：无论宿主是什么，目标印在界面上的都是 `E`，所以一路传下去的值就是名字，把它解析成虚拟键的是投递边缘的适配器。它按字节存而不是存一个码，因为落到 trace 行上、以及作者读回来的都是这个名字；类型可平凡复制、可比较，因此处处按值传。`k_maxKeyNameBytes` 是 3，即 `"F12"` 的长度。
+**具名键族是 2026-07-31 加进来的，因为没有它，目标最核心的那圈循环根本走不通。** 战斗界面自己把契约印在屏幕上：ENTER 使用卡牌、ESC 取消选择、CAPS 确认卡牌资讯，而 `SHIFT` 是同一屏右上角的锁定开关。只有字母、数字和功能键时，一次运行可以选中一张牌却永远打不出去；鼠标也不是替代路径——选中卡牌后点击目标敌人不是出牌，而是取消选择。每一个成员都是在目标上观察到的、印出来的可用操作；`TAB` 有意不收，因为没有任何观察到的界面提供它，而没观察到的名字是这个集合不做的猜测。
+
+**名字区分大小写，集合保持封闭。** `"enter"` 会被拒绝。传下去的值就是这串字节，折叠大小写要么把同一个键的第二种拼法放进 trace 和这个类型自己的逐字节比较里，要么把作者没写过的名字还给他。封闭正是 `controller::KeyInput::fromKeyName` 能是 `noexcept`、拒绝信息能把整套词汇印出来的前提；这个集合只通过「命名一个观察到的可用操作」增长，绝不通过接受虚拟键码或任何自由格式的逃生口增长。拒绝信息是 `key name must be "A"-"Z", "0"-"9", "F1"-"F12", or one of "ENTER", "ESC", "CAPS", "SHIFT", spelled in uppercase throughout, got "enter"`，由 `k_namedKeys` 渲染而来，因此不会落后于集合本身；大小写规则也从只贴在 `"A"-"Z"` 前面（那样读起来像一条只管字母的规则）改成对整套词汇成立。
+
+它住在 `domain` 而不是 `controller`，是为了让按键能穿过 engine 的动作端口而不必让那个端口提到虚拟键——虚拟键是 Windows 的事实。名字是平台中立的：无论宿主是什么，目标印在界面上的都是 `E`，所以一路传下去的值就是名字，把它解析成虚拟键的是投递边缘的适配器。它按字节存而不是存一个码，因为落到 trace 行上、以及作者读回来的都是这个名字；类型可平凡复制、可比较，因此处处按值传。`k_maxKeyNameBytes` 是 5，即 `"ENTER"` 与 `"SHIFT"` 的长度；`key.cpp` 里有一条 `static_assert`，具名键一旦超出这个长度就编译失败，因为 `create` 往这块存储里拷贝时不再复查长度。
 
 这个集合有意封闭且有意小。两个前端和端口读的都是这一份定义，这才使「目标自己的 UI 印出来的那个键」是一个事实，而不是三张必须互相吻合的表。
 

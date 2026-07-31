@@ -161,12 +161,20 @@ namespace uf::cli
         );
         CHECK(functionKey.has_value());
 
-        // Lower case, an unknown key and a key with no cycle are all refused: a
-        // keystroke posts real input, so a name that is nearly right must not be
-        // guessed at.
-        for (auto const line : std::array<std::string_view, 3>{
+        // The named family, admitted since 2026-07-31 and reaching this protocol
+        // through the same single definition the other two families do.
+        auto const namedKey = parseDriveCommand(
+            R"({"op":"key","cycle":4,"key":"ENTER"})"
+        );
+        CHECK(namedKey.has_value());
+
+        // Lower case, an unobserved key and a key with no cycle are all refused:
+        // a keystroke posts real input, so a name that is nearly right must not
+        // be guessed at.
+        for (auto const line : std::array<std::string_view, 4>{
             R"({"op":"key","cycle":4,"key":"e"})",
-            R"({"op":"key","cycle":4,"key":"ENTER"})",
+            R"({"op":"key","cycle":4,"key":"enter"})",
+            R"({"op":"key","cycle":4,"key":"TAB"})",
             R"({"op":"key","key":"E"})",
         })
         {

@@ -58,6 +58,70 @@ namespace uf
         constexpr auto k_virtualKeyF1 = uint16{0x0070U};
         constexpr auto k_functionKeyCount = uint32{12U};
 
+        struct NamedKeyCode final
+        {
+            std::string_view name{};
+            uint16           virtualKey{};
+        };
+
+        // The virtual key each name in domain::k_namedKeys resolves to. A table
+        // rather than an arithmetic rule, because these keys share no consecutive
+        // range the way VK_F1..VK_F12 do; a table rather than a comparison chain,
+        // because the set is closed and a chain would accept a new member without
+        // a branch and say nothing about it.
+        constexpr auto k_namedKeyCodes = std::array{
+            NamedKeyCode{.name = "ENTER", .virtualKey = 0x000DU},
+            NamedKeyCode{.name = "ESC", .virtualKey = 0x001BU},
+            NamedKeyCode{.name = "CAPS", .virtualKey = 0x0014U},
+            NamedKeyCode{.name = "SHIFT", .virtualKey = 0x0010U},
+        };
+
+        [[nodiscard]]
+        constexpr auto everyNamedKeyIsMapped() noexcept -> bool
+        {
+            if (k_namedKeyCodes.size() != k_namedKeys.size())
+            {
+                return false;
+            }
+            return std::ranges::all_of(
+                k_namedKeys,
+                [](std::string_view name)
+                {
+                    return std::ranges::contains(
+                        k_namedKeyCodes,
+                        name,
+                        &NamedKeyCode::name
+                    );
+                }
+            );
+        }
+
+        // fromKeyName is total, and this is what keeps it so. A name the domain
+        // set admits with no entry above would fall through to the
+        // single-character branch and trip its UF_CHECK at run time on a
+        // keystroke the author was entitled to write.
+        static_assert(
+            everyNamedKeyIsMapped(),
+            "every key name domain::KeyName admits must be mapped here"
+        );
+
+        [[nodiscard]]
+        constexpr auto namedKeyVirtualKey(
+            std::string_view name
+        ) noexcept -> std::optional<uint16>
+        {
+            auto const found = std::ranges::find(
+                k_namedKeyCodes,
+                name,
+                &NamedKeyCode::name
+            );
+            if (found == k_namedKeyCodes.end())
+            {
+                return std::nullopt;
+            }
+            return found->virtualKey;
+        }
+
         [[nodiscard]]
         constexpr auto functionKeyNumber(
             std::string_view name
@@ -177,6 +241,10 @@ namespace uf
     auto KeyInput::fromKeyName(KeyName name) noexcept -> KeyInput
     {
         auto const text = name.value();
+        if (auto const virtualKey = namedKeyVirtualKey(text))
+        {
+            return KeyInput{*virtualKey};
+        }
         if (auto const number = functionKeyNumber(text))
         {
             return KeyInput{
@@ -184,10 +252,10 @@ namespace uf
             };
         }
 
-        // KeyName admits only a function key or exactly one uppercase letter or
-        // digit, so this branch has one byte to read. VK_A..VK_Z and VK_0..VK_9
-        // are defined as the ASCII codes of the uppercase letter and of the
-        // digit, so the character is the key code.
+        // KeyName admits only a named key, a function key, or exactly one
+        // uppercase letter or digit, so this branch has one byte to read.
+        // VK_A..VK_Z and VK_0..VK_9 are defined as the ASCII codes of the
+        // uppercase letter and of the digit, so the character is the key code.
         UF_CHECK(text.size() == 1U);
         return KeyInput{static_cast<uint16>(text.front())};
     }
@@ -322,9 +390,13 @@ namespace uf::controller_detail
     ) noexcept -> PostSpec
     {
         // wParam carries the signed raw delta in its high word and the button
-        // and modifier state in its low word. Only the left button can appear
-        // there: KeyName admits no modifier key, so nothing this process can be
-        // holding would set MK_CONTROL or MK_SHIFT.
+        // and modifier state in its low word. Only the left button is reported
+        // there, and that is now a stated gap rather than a consequence of the
+        // key set: KeyName admits "SHIFT", so a held modifier has become
+        // expressible. Reaching that state still needs keyDown, which has no
+        // caller, so no wheel this project posts can be missing an MK_SHIFT it
+        // should carry. Derive one here the day keyDown acquires a caller,
+        // rather than from state nothing can currently produce.
         auto const rawDelta = static_cast<uintptr>(
             static_cast<uint16>(delta.rawUnits())
         );

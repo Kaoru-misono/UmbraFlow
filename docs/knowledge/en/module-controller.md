@@ -233,6 +233,21 @@ mapping: `KeyInput::fromName` and `KeyInput::fromKeyName` resolve one, and **whi
 repeating, so the two cannot come to disagree. The other four entry points still have no production
 caller.
 
+`fromKeyName` resolves three families, each as a rule rather than a comparison chain: the named keys
+through a `NamedKeyCode` table, `"F1".."F12"` through `VK_F1 + n - 1` since those codes are
+consecutive, and a single letter or digit through its own ASCII code, since `VK_A..VK_Z` and
+`VK_0..VK_9` are defined as exactly that. The named table is paired with `domain::k_namedKeys` by a
+`static_assert`, so a name admitted in `domain` with no virtual key here fails the build rather than
+reaching the single-character branch and tripping its `UF_CHECK` on a keystroke the author was
+entitled to write. That guard is what keeps `fromKeyName` `noexcept` and total. `"ENTER"` is
+`VK_RETURN` and **not** extended; the extended numpad Enter remains its own named factory,
+`KeyInput::numpadEnter()`.
+
+One consequence of admitting `"SHIFT"` is worth stating: `wheelSpec` still reports only the left
+button in the wheel's `wParam`, never `MK_SHIFT`. A held modifier has become expressible, but
+reaching that state needs `keyDown`, which has no production caller, so no wheel this project posts
+can be missing a modifier it should carry. Derive one there the day `keyDown` acquires a caller.
+
 `modules/controller/source/controller/detail/input-message.hpp` encodes action determinism into a
 `PostSpec`: the mouse uses only `WM_MOUSEMOVE`, `WM_LBUTTONDOWN`, and `WM_LBUTTONUP`, and the keyboard
 uses only `WM_KEYDOWN`, `WM_KEYUP`, `WM_CHAR`, and `WM_UNICHAR`. The one final system call lives in

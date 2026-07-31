@@ -215,6 +215,19 @@ extended-key 位；`inputText` 先严格解码 UTF-8，再按 UTF-16 code unit �
 `modules/domain` 里 `KeyName` 的唯一定义**，`fromName` 走的是它而不是重写一遍判断，两边因此
 不会产生分歧。另外四个入口至今没有生产调用方。
 
+`fromKeyName` 解析三个族，每一族都是一条规则而不是一串比较：具名键走 `NamedKeyCode` 表，
+`"F1".."F12"` 走 `VK_F1 + n - 1`（这些码是连续的），单个字母或数字走它自己的 ASCII 码
+（`VK_A..VK_Z` 与 `VK_0..VK_9` 的定义正是如此）。具名表由一条 `static_assert` 与
+`domain::k_namedKeys` 配对：`domain` 收了却在这里没有虚拟键的名字会编译失败，而不是掉进
+单字符分支、在一个作者本来有权写的按键上触发 `UF_CHECK`。这条保证正是 `fromKeyName` 能保持
+`noexcept` 且全函数的原因。`"ENTER"` 是 `VK_RETURN` 且**不带** extended 位；带 extended 的
+小键盘 Enter 仍然是它自己的具名工厂 `KeyInput::numpadEnter()`。
+
+收下 `"SHIFT"` 有一个后果值得写明：`wheelSpec` 在滚轮的 `wParam` 里仍然只报左键，从不报
+`MK_SHIFT`。按住修饰键这件事现在可以表达了，但要到那个状态需要 `keyDown`，而它没有生产
+调用方，所以本项目投出的滚轮消息不可能缺一个本该带上的修饰位。等 `keyDown` 有了第一个
+调用方那天，再在那里推导它。
+
 `modules/controller/source/controller/detail/input-message.hpp` 将动作确定性编码为
 `PostSpec`：鼠标只使用 `WM_MOUSEMOVE`、`WM_LBUTTONDOWN`、`WM_LBUTTONUP`，
 键盘只使用 `WM_KEYDOWN`、`WM_KEYUP`、`WM_CHAR`、`WM_UNICHAR`。最终唯一系统

@@ -25,7 +25,8 @@ It owns six groups of contracts:
 - `modules/domain/source/domain/error.hpp`, `error.cpp`, `time.hpp`, and `time.cpp` define
   automation error classification, recovery scope, and safe arithmetic over monotonic time.
 - `modules/domain/source/domain/key.hpp` and `key.cpp` define `KeyName`, the single definition of
-  which key names exist (2026-07-30, `ed38124`).
+  which key names exist (2026-07-30, `ed38124`), widened with the named family `"ENTER"`, `"ESC"`,
+  `"CAPS"`, `"SHIFT"` on 2026-07-31.
 
 `domain` deliberately does not own the following responsibilities:
 
@@ -239,19 +240,40 @@ credential a *coordinate* action needs. See `module-engine.md`.
 ### `KeyName`
 
 `KeyName` in `modules/domain/source/domain/key.hpp` is **the single definition of which key names
-exist**. The accepted set is `"A".."Z"`, `"0".."9"` and `"F1".."F12"` in uppercase — 48 names over 48
-distinct virtual keys, with **no aliases**, because a typo must not resolve to a neighbouring key.
+exist**. The accepted set has three families: `"A".."Z"`, `"0".."9"`, `"F1".."F12"`, and the named
+keys in `k_namedKeys` — `"ENTER"`, `"ESC"`, `"CAPS"`, `"SHIFT"`. That is 52 names over 52 distinct
+virtual keys, with **no aliases**, because a typo must not resolve to a neighbouring key.
 `KeyName::create` is the only way to make one and fails `ActionRejected` for anything outside that
 set: a name nobody can resolve is a rejected action, not a missing resource.
 `controller::KeyInput::fromName` routes through `create` rather than repeating the test, so the two
 cannot come to disagree about which names a project may write.
+
+**The named family arrived on 2026-07-31 because without it the target's core loop was
+unreachable.** Its battle UI prints its own contract — ENTER plays the selected card, ESC cancels the
+selection, CAPS shows the card's information — and `SHIFT` is the lock toggle printed in the same
+view. With only letters, digits and function keys a run could select a card and never play one, and
+no mouse path substitutes: clicking the target of a selected card cancels the selection instead of
+committing it. Every member is an affordance a target was observed publishing; `TAB` is deliberately
+absent because nothing observed offers it, and an unobserved name is a guess this set does not make.
+
+**Names are case-sensitive and the set stays closed.** `"enter"` is refused. The bytes are the value
+that travels, so folding case would either put a second spelling of one key into traces and into this
+type's own byte comparison, or hand an author back a name they did not write. Closure is what lets
+`controller::KeyInput::fromKeyName` be `noexcept` and lets a refusal print the whole vocabulary; the
+set grows by naming an observed affordance, never by admitting a virtual-key code or a free-form
+escape hatch. The refusal reads `key name must be "A"-"Z", "0"-"9", "F1"-"F12", or one of "ENTER",
+"ESC", "CAPS", "SHIFT", spelled in uppercase throughout, got "enter"`, rendered from `k_namedKeys`
+so it cannot fall behind the set, and stating the case rule for the whole vocabulary rather than
+leaving `uppercase` in front of `"A"-"Z"` where it read as a rule about letters.
 
 It lives in `domain` rather than in `controller` so a keystroke can cross the engine's action port
 without that port naming a virtual key, which is a Windows fact. A name is platform-neutral — the
 target prints `E` whatever the host is — so the value that travels is the name, and the adapter at
 the delivery edge is what resolves it. It stores bytes rather than a code, because the name is what
 reaches a trace line and what an author reads back, and it is trivially copyable and comparable, so
-it travels by value everywhere. `k_maxKeyNameBytes` is 3, the length of `"F12"`.
+it travels by value everywhere. `k_maxKeyNameBytes` is 5, the length of `"ENTER"` and `"SHIFT"`; a
+`static_assert` in `key.cpp` fails the build if a named key ever outgrows it, because `create` copies
+into that storage without re-checking the length.
 
 The set is deliberately closed and deliberately small. Both front-ends and the port read this one
 definition, which is what makes "the key the target's own UI prints" a single fact rather than three

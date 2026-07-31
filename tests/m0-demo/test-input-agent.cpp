@@ -274,6 +274,15 @@ namespace uf::m0_demo
             R"({"op":"key","key":"F3","out_before":"a.png","out_after":"b.png"})"
         );
         CHECK(function.key.virtualKey() == uint16{0x0072U});
+
+        // The named family, and the one that makes the target's battle loop
+        // reachable from this protocol at all: a digit selects a card and only
+        // ENTER plays it. VK_RETURN, not the extended numpad Enter.
+        auto const named = parsedKey(
+            R"({"op":"key","key":"ENTER","out_before":"a.png","out_after":"b.png"})"
+        );
+        CHECK(named.key.virtualKey() == uint16{0x000DU});
+        CHECK_FALSE(named.key.isExtended());
     }
 
     TEST_CASE("m0 input-agent parses a scroll command with its wheel delta")
@@ -391,7 +400,7 @@ namespace uf::m0_demo
             R"({"op":"key","key":"","out_before":"a.png","out_after":"b.png"})",
             R"({"op":"key","key":"e","out_before":"a.png","out_after":"b.png"})",
             R"({"op":"key","key":"F13","out_before":"a.png","out_after":"b.png"})",
-            R"({"op":"key","key":"ENTER","out_before":"a.png","out_after":"b.png"})",
+            R"({"op":"key","key":"TAB","out_before":"a.png","out_after":"b.png"})",
             R"({"op":"key","key":"E","out_before":"a.png"})",
             R"({"op":"key","key":"E","x":1,"y":2,"out_before":"a.png","out_after":"b.png"})",
             R"({"op":"key","key":"E","out":"c.png","out_before":"a.png","out_after":"b.png"})",
