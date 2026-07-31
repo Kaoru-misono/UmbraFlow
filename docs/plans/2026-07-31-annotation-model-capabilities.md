@@ -1,5 +1,13 @@
 # 标注模型重构 — 能力集合、持有关系、多形态
 
+> **归属变更(2026-07-31 深夜,开发者裁决)。** 本文的模型结论**仍然有效**:能力是集合
+> 不是种类,签名由引用派生,`identify` 的方向属于页面而非元素,外观是具名的,空外观表示
+> 由页面定位。**变的是这套模型实现在哪一层**——它上移到第二层 Luau,C++ 只保留原语。
+> 所以本文中一切关于 C++ 类型、CLI 动词、schema 键名的具体安排都是过渡态,不要据此判断
+> 目标形态。见
+> [`2026-07-31-script-owned-page-model.md`](2026-07-31-script-owned-page-model.md),
+> 该文尚未实施。
+
 > **词汇统一(2026-07-31,同日第二次改名)。** 本文正文已按新词汇改写:
 > `recognizer` → `element`,`RecognizerDefinition`/`RecognizerVariant` →
 > `CompiledElement`/`CompiledAppearance`,`uf.recognizers` → `uf.elements`,

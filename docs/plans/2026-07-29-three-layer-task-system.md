@@ -1,5 +1,13 @@
 # 三层 Task System — 目标架构与实施计划
 
+> **第一层边界已改(2026-07-31 开发者裁决)。** 三层划分本身有效,观察周期与票据账本
+> 有效。但第三节第一层清单里的 `resolvePage` 与 `findAction`、依赖方向图里的
+> `engine -> annotation`、第四节的 `cycle_page` 与 `cycle_find`,**都已作废**:
+> element 与 page 上移到第二层 Luau,C++ 只保留 `cycle_match` / `cycle_read` /
+> `cycle_click` 三个原语,外加项目文件读写。读本文这几处时以
+> [`2026-07-31-script-owned-page-model.md`](2026-07-31-script-owned-page-model.md)
+> 为准,该文尚未实施。
+
 > **词汇统一(2026-07-31)。** 本文正文已按新词汇改写:脚本能力根表
 > `uf.recognizers` 改名 `uf.elements`,trace 字段 `recognizerId` 改名 `elementId`,
 > 合并 trace schema 随之升到 `umbraflow-trace/v2`。裁决与理由见
