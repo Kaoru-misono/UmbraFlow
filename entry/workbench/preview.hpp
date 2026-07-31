@@ -295,6 +295,34 @@ namespace uf::workbench
         Appearance,
     };
 
+    // What the model declares about one row's subject on one screen -- the
+    // ground truth a measured outcome is read against.
+    //
+    // Three answers, because the model can make three statements, and the third
+    // is the one this grid used to be unable to make. A page's signature is a
+    // conjunction over the marks that identify it, never an inventory of what
+    // is on its screen, so "the page recorded for this screen does not name this
+    // element" is a different sentence from "these pixels are not there". An
+    // overlay proves it: a card-detail screen is the battle screen with a card
+    // selected, and the draw pile, discard pile and end-turn button are all
+    // still on it, merely dimmed. Reading each of those as a misfire trains an
+    // author to break a model that is correct.
+    enum class ModelCellExpectation : uint8
+    {
+        // The model states this subject matches here.
+        Match,
+        // The model states this subject does not match here.
+        Absent,
+        // The model states nothing here. Neither outcome is a defect, and the
+        // measured score is reported for its own sake.
+        Unclaimed,
+    };
+
+    // Whether a hit is what the model asks for. The one place the tri-state
+    // collapses back to the boolean the JSON surface reports.
+    [[nodiscard]]
+    auto expectsHit(ModelCellExpectation expectation) noexcept -> bool;
+
     // One (element, appearance, screen) observation in the falsification grid,
     // filed under the element id, the one name a signature, an authorisation, a
     // trace line, and the UI's own lookups all resolve. Derived from the same
@@ -332,13 +360,22 @@ namespace uf::workbench
         // has still moved the click.
         std::optional<PixelRect> matchedRect{};
 
-        // Whether this row's subject is authored to match on this screen. For an
-        // Element row: the page recorded for the screen references it, whatever
-        // capability that reference exercises. For an Appearance row: that, AND
-        // this appearance is the one the model names for this screen. This is
-        // the ground truth the colour is read against -- a hit where this is
-        // false is a misfire, a miss where it is true is a hole. Left false for
-        // a cell that was not searched or was stopped.
+        // What the model states about this row's subject on this screen.
+        //
+        // For an Element row it is the statement the page recorded for the
+        // screen makes about the element -- required, forbidden, or clicked and
+        // read, which also puts it on that screen -- and failing that, the duty
+        // another page's signature leaves resting on it. For an Appearance row
+        // it is that same statement narrowed to the appearance the model names
+        // for this screen. A hit against Absent is a misfire, a miss against
+        // Match is a hole, and against Unclaimed neither is wrong.
+        ModelCellExpectation expectation{ModelCellExpectation::Unclaimed};
+
+        // TODO(cpp-debt): restates `expectation == Match`, so that the authoring
+        // CLI's `expected_hit` field keeps compiling while entry/authoring is
+        // owned by a concurrent change -- ceiling: one expression in
+        // entry/authoring/command-runner.cpp, upgrade: call expectsHit on
+        // `expectation` there and delete this member.
         bool expectedHit{};
 
         // Why a Stopped cell stopped -- the budget or the deadline -- for the
@@ -350,14 +387,14 @@ namespace uf::workbench
     // classification is a pure value the logic-layer tests can pin.
     enum class ModelCellColor : uint8
     {
-        // The expected outcome: a hit on a screen the element is authored to
-        // match, or a clean miss on one it is not, both with room to spare.
+        // Nothing to answer for: the outcome the model asks for, with room to
+        // spare, or an outcome the model asks nothing about.
         Expected,
         // A correct-but-close margin, or a search that was stopped: worth a look
         // even though nothing is yet wrong.
         Thin,
-        // A wrong outcome: a hit on a foreign screen, or a miss on a screen the
-        // element's own page places it.
+        // A wrong outcome: a hit where the model states the subject is absent,
+        // or a miss where it states the subject matches.
         Misfire,
         // Not searched here: dim, an explicit absence rather than a verdict.
         NotSearched,
@@ -372,11 +409,13 @@ namespace uf::workbench
     inline constexpr auto k_thinMarginDenominator = uint64{100};
 
     // The colour a cell reads in, from its outcome, its measured margin, and
-    // whether the element is authored to match on its screen. Pure and total: it
+    // what the model states about its subject on its screen. Pure and total: it
     // reads only the cell, so the tests hold the whole classification without a
     // document or a GUI. Precedence is wrong-outcome (red) over stopped-or-thin
     // (amber) over clear-and-correct (green), so a misfire never hides behind a
-    // thin band.
+    // thin band. A cell the model states nothing about is never red in either
+    // direction; its margin still reads amber, because a score a frame from
+    // flipping is worth seeing whether or not the flip would be a defect.
     [[nodiscard]]
     auto classifyModelCell(ModelCheckCell const& cell) noexcept -> ModelCellColor;
 

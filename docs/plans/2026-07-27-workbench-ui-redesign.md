@@ -363,10 +363,27 @@ and tests `test-preview.cpp`, `test-model-check-view.cpp`.
   (never the derived per-page recognizer id) so the existing element-keyed
   lookups reach it. Each cell carries a `ModelCellOutcome` — `Hit` / `Miss`
   (measured, with `sadScore` and `maximumSad`), `Stopped` (with the
-  `SadSearchStopReason` for the tooltip), or `NotSearchedHere` — plus
-  `expectedHit`, whether the screen's recorded page authors the element. The
-  margins and the screen verdicts are untouched; the two current tables and
-  `findMargin` / `findScreenCheck` keep working unchanged.
+  `SadSearchStopReason` for the tooltip), or `NotSearchedHere` — plus the
+  ground truth the outcome is read against. The margins and the screen verdicts
+  are untouched; the two current tables and `findMargin` / `findScreenCheck`
+  keep working unchanged.
+
+  **Superseded 2026-07-31.** That ground truth was a `bool expectedHit`, "the
+  screen's recorded page references the element", and both halves of it were
+  wrong. It ignored the reference's `SignatureRole`, so a page that FORBIDS a
+  mark expected it to hit — a correctly absent mark read as a hole, and the
+  broken case the role exists to catch read as expected and vanished. And it
+  assumed pages occupy disjoint screens, so every element of an overlay page
+  (a card-detail screen is the battle screen with a card selected) reported a
+  misfire for being genuinely on screen. It is now a three-state
+  `ModelCellExpectation` — `Match` / `Absent` / `Unclaimed` — derived from what
+  the model actually states: the recorded page's own reference including its
+  role, and failing that, the duty another page's signature leaves resting on
+  the mark when every OTHER clause of that signature holds on the screen. A
+  signature is a conjunction, so a page kept off a foreign screen by its
+  forbidden clause demands nothing of its other members there. `expectedHit`
+  survives only as a mirror of `expectation == Match` for the authoring CLI's
+  `expected_hit` field, marked `TODO(cpp-debt)`.
 - **NotSearchedHere is explicit.** A multi-placed element on a screen whose page
   does not place it is a distinct cell state, not an empty hole. Anchors and
   single-placement elements are searched on every screen, so they never take it.

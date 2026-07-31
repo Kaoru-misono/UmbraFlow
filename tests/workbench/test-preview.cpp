@@ -1175,7 +1175,7 @@ namespace uf::workbench
             ModelCellOutcome outcome,
             uint64 score,
             uint64 maximumSad,
-            bool expectedHit
+            ModelCellExpectation expectation
         ) -> ModelCheckCell
         {
             return ModelCheckCell{
@@ -1184,12 +1184,13 @@ namespace uf::workbench
                 .outcome     = outcome,
                 .sadScore    = std::optional<uint64>{score},
                 .maximumSad  = maximumSad,
-                .expectedHit = expectedHit,
+                .expectation = expectation,
+                .expectedHit = expectsHit(expectation),
             };
         }
     }
 
-    TEST_CASE("classifyModelCell reads outcome against authored membership")
+    TEST_CASE("classifyModelCell reads outcome against what the model states")
     {
         // Not searched and stopped are fixed states, independent of any score.
         CHECK(
@@ -1213,36 +1214,105 @@ namespace uf::workbench
             == ModelCellColor::Thin
         );
 
-        // A hit where the mark is authored, clear of the threshold, is expected;
-        // barely under it is thin; on a screen it is not authored on it is a
-        // misfire regardless of how clean the score looks.
+        // A hit where the model states a match, clear of the threshold, is
+        // expected; barely under it is thin; where the model states the subject
+        // is absent it is a misfire however clean the score looks.
         CHECK(
-            classifyModelCell(measuredCell(ModelCellOutcome::Hit, 0U, 200U, true))
+            classifyModelCell(
+                measuredCell(
+                    ModelCellOutcome::Hit,
+                    0U,
+                    200U,
+                    ModelCellExpectation::Match
+                )
+            )
             == ModelCellColor::Expected
         );
         CHECK(
-            classifyModelCell(measuredCell(ModelCellOutcome::Hit, 195U, 200U, true))
+            classifyModelCell(
+                measuredCell(
+                    ModelCellOutcome::Hit,
+                    195U,
+                    200U,
+                    ModelCellExpectation::Match
+                )
+            )
             == ModelCellColor::Thin
         );
         CHECK(
-            classifyModelCell(measuredCell(ModelCellOutcome::Hit, 0U, 200U, false))
+            classifyModelCell(
+                measuredCell(
+                    ModelCellOutcome::Hit,
+                    0U,
+                    200U,
+                    ModelCellExpectation::Absent
+                )
+            )
             == ModelCellColor::Misfire
         );
 
-        // A clean miss where the mark is not authored is the expected outcome;
-        // barely over the threshold is thin; a miss where the mark IS authored is
-        // a hole in its own page.
+        // A clean miss where the model states absence is the expected outcome;
+        // barely over the threshold is thin; a miss where it states a match is a
+        // hole in the page that asked for it.
         CHECK(
-            classifyModelCell(measuredCell(ModelCellOutcome::Miss, 400U, 200U, false))
+            classifyModelCell(
+                measuredCell(
+                    ModelCellOutcome::Miss,
+                    400U,
+                    200U,
+                    ModelCellExpectation::Absent
+                )
+            )
             == ModelCellColor::Expected
         );
         CHECK(
-            classifyModelCell(measuredCell(ModelCellOutcome::Miss, 210U, 200U, false))
+            classifyModelCell(
+                measuredCell(
+                    ModelCellOutcome::Miss,
+                    210U,
+                    200U,
+                    ModelCellExpectation::Absent
+                )
+            )
             == ModelCellColor::Thin
         );
         CHECK(
-            classifyModelCell(measuredCell(ModelCellOutcome::Miss, 400U, 200U, true))
+            classifyModelCell(
+                measuredCell(
+                    ModelCellOutcome::Miss,
+                    400U,
+                    200U,
+                    ModelCellExpectation::Match
+                )
+            )
             == ModelCellColor::Misfire
+        );
+
+        // The state the grid could not previously hold: the model states
+        // nothing here, so neither outcome is a defect. An overlay screen is
+        // full of these -- elements its page never names that are genuinely on
+        // it -- and reading them as misfires is what this replaces.
+        CHECK(
+            classifyModelCell(
+                measuredCell(
+                    ModelCellOutcome::Hit,
+                    0U,
+                    200U,
+                    ModelCellExpectation::Unclaimed
+                )
+            )
+            == ModelCellColor::Expected
+        );
+        CHECK(
+            classifyModelCell(
+                measuredCell(
+                    ModelCellOutcome::Miss,
+                    400U,
+                    200U,
+                    ModelCellExpectation::Unclaimed
+                )
+            )
+            == ModelCellColor::Expected
         );
     }
 
@@ -1267,13 +1337,16 @@ namespace uf::workbench
         auto const* p_own = findCell(*check, darkId, dark);
         REQUIRE(p_own != nullptr);
         CHECK(p_own->outcome == ModelCellOutcome::Hit);
-        CHECK(p_own->expectedHit);
+        CHECK(p_own->expectation == ModelCellExpectation::Match);
         CHECK(classifyModelCell(*p_own) == ModelCellColor::Expected);
 
+        // The dark page's whole signature is this one mark, so nothing else can
+        // keep that page off the light screen: the mark itself is on the hook
+        // there, and its miss is what the model asks for.
         auto const* p_elsewhere = findCell(*check, darkId, light);
         REQUIRE(p_elsewhere != nullptr);
         CHECK(p_elsewhere->outcome == ModelCellOutcome::Miss);
-        CHECK_FALSE(p_elsewhere->expectedHit);
+        CHECK(p_elsewhere->expectation == ModelCellExpectation::Absent);
         CHECK(classifyModelCell(*p_elsewhere) == ModelCellColor::Expected);
     }
 
@@ -1298,17 +1371,21 @@ namespace uf::workbench
         auto const* p_dark = findCell(*check, fixture.menuId, fixture.darkSource);
         REQUIRE(p_dark != nullptr);
         CHECK(p_dark->outcome == ModelCellOutcome::Hit);
-        CHECK(p_dark->expectedHit);
+        CHECK(p_dark->expectation == ModelCellExpectation::Match);
 
         auto const* p_light = findCell(*check, fixture.menuId, fixture.lightSource);
         REQUIRE(p_light != nullptr);
         CHECK(p_light->outcome == ModelCellOutcome::Hit);
-        CHECK(p_light->expectedHit);
+        CHECK(p_light->expectation == ModelCellExpectation::Match);
 
+        // Measured, and stated about by nobody: the menu is only ever clicked,
+        // so it takes part in no page's signature and no page's identity ever
+        // rested on it being absent here. The score is still the answer to the
+        // question the author asked.
         auto const* p_spare = findCell(*check, fixture.menuId, fixture.spareSource);
         REQUIRE(p_spare != nullptr);
         CHECK(p_spare->outcome == ModelCellOutcome::Miss);
-        CHECK_FALSE(p_spare->expectedHit);
+        CHECK(p_spare->expectation == ModelCellExpectation::Unclaimed);
         CHECK(p_spare->sadScore.has_value());
         CHECK(classifyModelCell(*p_spare) == ModelCellColor::Expected);
     }
@@ -1603,38 +1680,42 @@ namespace uf::workbench
         {
             annotation::SourceId screen;
             std::string_view     appearance;
-            bool                 owns{};
+
+            ModelCellExpectation states{ModelCellExpectation::Unclaimed};
         };
+        // The third screen belongs to no page, so the model states nothing
+        // about either appearance there -- and a screen nothing classifies is
+        // exactly a screen nothing can be judged against.
         auto const expectations = std::array{
             Expectation{
                 .screen     = fixture.darkSource,
                 .appearance = "on_dark",
-                .owns       = true,
+                .states     = ModelCellExpectation::Match,
             },
             Expectation{
                 .screen     = fixture.darkSource,
                 .appearance = "on_light",
-                .owns       = false,
+                .states     = ModelCellExpectation::Absent,
             },
             Expectation{
                 .screen     = fixture.lightSource,
                 .appearance = "on_dark",
-                .owns       = false,
+                .states     = ModelCellExpectation::Absent,
             },
             Expectation{
                 .screen     = fixture.lightSource,
                 .appearance = "on_light",
-                .owns       = true,
+                .states     = ModelCellExpectation::Match,
             },
             Expectation{
                 .screen     = fixture.noneSource,
                 .appearance = "on_dark",
-                .owns       = false,
+                .states     = ModelCellExpectation::Unclaimed,
             },
             Expectation{
                 .screen     = fixture.noneSource,
                 .appearance = "on_light",
-                .owns       = false,
+                .states     = ModelCellExpectation::Unclaimed,
             },
         };
 
@@ -1648,9 +1729,10 @@ namespace uf::workbench
                 expectation.appearance
             );
             REQUIRE(p_cell != nullptr);
-            CHECK(p_cell->expectedHit == expectation.owns);
+            CHECK(p_cell->expectation == expectation.states);
             CHECK(
-                (p_cell->outcome == ModelCellOutcome::Hit) == expectation.owns
+                (p_cell->outcome == ModelCellOutcome::Hit)
+                == expectsHit(expectation.states)
             );
             CHECK(p_cell->sadScore.has_value());
             CHECK(classifyModelCell(*p_cell) == ModelCellColor::Expected);
@@ -1668,7 +1750,7 @@ namespace uf::workbench
         auto const* p_folded = findCell(check, fixture.backId, fixture.noneSource);
         REQUIRE(p_folded != nullptr);
         CHECK(p_folded->outcome == ModelCellOutcome::Miss);
-        CHECK_FALSE(p_folded->expectedHit);
+        CHECK(p_folded->expectation == ModelCellExpectation::Unclaimed);
         CHECK(classifyModelCell(*p_folded) == ModelCellColor::Expected);
 
         CHECK(judgeModelCheck(check).empty());
@@ -1757,7 +1839,7 @@ namespace uf::workbench
         );
         REQUIRE(p_foreign != nullptr);
         CHECK(p_foreign->outcome == ModelCellOutcome::Hit);
-        CHECK_FALSE(p_foreign->expectedHit);
+        CHECK(p_foreign->expectation == ModelCellExpectation::Absent);
         CHECK(classifyModelCell(*p_foreign) == ModelCellColor::Misfire);
 
         auto const findings = judgeModelCheck(check);
@@ -2060,7 +2142,7 @@ namespace uf::workbench
         );
         REQUIRE(p_owner != nullptr);
         CHECK(p_owner->outcome == ModelCellOutcome::Hit);
-        CHECK(p_owner->expectedHit);
+        CHECK(p_owner->expectation == ModelCellExpectation::Match);
 
         auto const* p_rival = findAppearanceCell(
             *check,
@@ -2070,7 +2152,7 @@ namespace uf::workbench
         );
         REQUIRE(p_rival != nullptr);
         CHECK(p_rival->outcome == ModelCellOutcome::Miss);
-        CHECK_FALSE(p_rival->expectedHit);
+        CHECK(p_rival->expectation == ModelCellExpectation::Absent);
 
         auto const findings = judgeModelCheck(*check);
         REQUIRE(findings.size() == 1U);
@@ -2080,6 +2162,333 @@ namespace uf::workbench
         CHECK(findings.front().appearance->value() == "on_dark");
         REQUIRE(findings.front().rival.has_value());
         CHECK(findings.front().rival->value() == "on_light");
+    }
+
+    namespace
+    {
+        constexpr auto k_battleSourceId = "00000000-0000-0000-0000-000000000406";
+        constexpr auto k_detailSourceId = "00000000-0000-0000-0000-000000000407";
+        constexpr auto k_drawId         = "00000000-0000-0000-0000-00000000041c";
+        constexpr auto k_discardId      = "00000000-0000-0000-0000-00000000041d";
+        constexpr auto k_keysId         = "00000000-0000-0000-0000-00000000041e";
+        constexpr auto k_battlePageId   = "00000000-0000-0000-0000-000000000427";
+        constexpr auto k_detailPageId   = "00000000-0000-0000-0000-000000000428";
+        constexpr auto k_battleRegId    = "00000000-0000-0000-0000-000000000436";
+        constexpr auto k_detailRegId    = "00000000-0000-0000-0000-000000000437";
+
+        struct OverlayFixture final
+        {
+            annotation::AuthoringDocument                 document;
+            std::vector<annotation::AuthoringSourceAsset> assets{};
+
+            annotation::SourceId battleSource{
+                annotation::test::sourceId(k_battleSourceId)
+            };
+            annotation::SourceId detailSource{
+                annotation::test::sourceId(k_detailSourceId)
+            };
+
+            annotation::ElementId drawId{annotation::test::elementId(k_drawId)};
+            annotation::ElementId discardId{annotation::test::elementId(k_discardId)};
+            annotation::ElementId keysId{annotation::test::elementId(k_keysId)};
+        };
+
+        // The measured overlay, in eight pixels. `card_detail` is not another
+        // screen: it is the battle screen with a card selected, so the draw pile
+        // and the discard pile are still on it, merely dimmed, and only the key
+        // rows are new. That is the shape the old expectation model could not
+        // hold, because it read "the page recorded for this screen does not name
+        // this element" as "these pixels are not here".
+        //
+        // battle = 10 20 30 40 200 210 70 80
+        // detail = 10 20 30 40  90 100 70 80
+        //
+        // battle_draw_pile    (10 20)  at 0..1 -- battle REQUIRES it, both screens
+        // battle_discard_pile (30 40)  at 2..3 -- battle CLICKS it, both screens
+        // card_detail_keys    (90 100) at 4..5 -- card_detail requires it, and it
+        //                                         is what battle forbids
+        //
+        // Two knobs, one per half of the property. Dropping the forbidden
+        // reference leaves two pages nothing separates; putting the key pixels
+        // on the battle screen breaks the forbidden clause in the pixels instead.
+        [[nodiscard]]
+        auto overlayFixture(
+            bool battleForbidsKeys,
+            bool keysOnBattleScreen
+        ) -> OverlayFixture
+        {
+            auto const fingerprint = annotation::test::fingerprint(8, 1, 96, 96);
+
+            // The last column differs so that a battle screen carrying the key
+            // pixels is still a distinct capture rather than a second copy of
+            // the detail screen.
+            auto battlePng = keysOnBattleScreen
+                ? encodedGreyRow({10, 20, 30, 40, 90, 100, 70, 81})
+                : encodedGreyRow({10, 20, 30, 40, 200, 210, 70, 80});
+            auto detailPng = encodedGreyRow({10, 20, 30, 40, 90, 100, 70, 80});
+
+            auto const battleSource = annotation::test::sourceId(k_battleSourceId);
+            auto const detailSource = annotation::test::sourceId(k_detailSourceId);
+            auto const drawId       = annotation::test::elementId(k_drawId);
+            auto const discardId    = annotation::test::elementId(k_discardId);
+            auto const keysId       = annotation::test::elementId(k_keysId);
+            auto const battlePageId = annotation::test::pageId(k_battlePageId);
+            auto const detailPageId = annotation::test::pageId(k_detailPageId);
+
+            auto references = std::vector<annotation::PageReference>{
+                annotation::test::reference(
+                    battlePageId,
+                    drawId,
+                    annotation::test::identifiesAs()
+                ),
+                annotation::test::reference(
+                    battlePageId,
+                    discardId,
+                    annotation::test::interacts()
+                ),
+                annotation::test::reference(
+                    detailPageId,
+                    keysId,
+                    annotation::test::identifiesAs()
+                ),
+            };
+            if (battleForbidsKeys)
+            {
+                references.emplace_back(
+                    annotation::test::reference(
+                        battlePageId,
+                        keysId,
+                        annotation::test::identifiesAs(
+                            annotation::SignatureRole::Forbidden
+                        ),
+                        annotation::Holding::Referenced
+                    )
+                );
+            }
+
+            auto document = annotation::AuthoringDocument::create(
+                annotation::test::projectId(),
+                fingerprint,
+                {
+                    sourceFrom(battleSource, fingerprint, battlePng),
+                    sourceFrom(detailSource, fingerprint, detailPng),
+                },
+                {
+                    test::markElement(
+                        fingerprint,
+                        drawId,
+                        "battle_draw_pile",
+                        battleSource,
+                        annotation::test::pixelRect(0, 0, 2, 1),
+                        annotation::test::pixelRect(0, 0, 2, 1)
+                    ),
+                    test::clickableElement(
+                        fingerprint,
+                        discardId,
+                        "battle_discard_pile",
+                        battleSource,
+                        annotation::test::pixelRect(2, 0, 2, 1),
+                        annotation::test::pixelRect(2, 0, 2, 1)
+                    ),
+                    test::markElement(
+                        fingerprint,
+                        keysId,
+                        "card_detail_keys",
+                        detailSource,
+                        annotation::test::pixelRect(4, 0, 2, 1),
+                        annotation::test::pixelRect(4, 0, 2, 1)
+                    ),
+                },
+                {
+                    annotation::test::page(battlePageId, "battle"),
+                    annotation::test::page(detailPageId, "card_detail"),
+                },
+                std::move(references),
+                {
+                    annotation::RegressionCase{
+                        annotation::RegressionSpec{
+                            .id       = annotation::test::regressionId(k_battleRegId),
+                            .sourceId = battleSource,
+                            .classification =
+                                annotation::RegressionClassification::Positive,
+                            .expectation = annotation::ResolvedRegression{
+                                .pageId = battlePageId,
+                            },
+                        }
+                    },
+                    annotation::RegressionCase{
+                        annotation::RegressionSpec{
+                            .id       = annotation::test::regressionId(k_detailRegId),
+                            .sourceId = detailSource,
+                            .classification =
+                                annotation::RegressionClassification::Positive,
+                            .expectation = annotation::ResolvedRegression{
+                                .pageId = detailPageId,
+                            },
+                        }
+                    },
+                }
+            );
+            REQUIRE(document.has_value());
+
+            return OverlayFixture{
+                .document = *std::move(document),
+                .assets   = {
+                    annotation::AuthoringSourceAsset{
+                        .id       = battleSource,
+                        .pngBytes = std::move(battlePng),
+                    },
+                    annotation::AuthoringSourceAsset{
+                        .id       = detailSource,
+                        .pngBytes = std::move(detailPng),
+                    },
+                },
+            };
+        }
+
+        [[nodiscard]]
+        auto overlayCheck(OverlayFixture const& fixture) -> ModelCheck
+        {
+            auto check = runModelCheck(
+                fixture.document,
+                fixture.assets,
+                {},
+                continuingPolicy(10'000)
+            );
+            REQUIRE(check.has_value());
+            return *std::move(check);
+        }
+
+        [[nodiscard]]
+        auto findScreen(
+            ModelCheck const& check,
+            annotation::SourceId screen
+        ) -> ScreenCheck const*
+        {
+            auto const found = std::ranges::find(
+                check.screens,
+                screen,
+                &ScreenCheck::sourceId
+            );
+            return found == check.screens.end() ? nullptr : &*found;
+        }
+    }
+
+    TEST_CASE("a forbidden mark absent from its page's screen is the pass")
+    {
+        // The role read the right way round. `battle` forbids the card-detail
+        // key rows, the battle screen genuinely has none, and the miss is
+        // therefore what the model asks for -- not, as the grid used to say, a
+        // hole to be repaired. Read the role as Required here and this cell
+        // becomes expected_hit with a measured miss, which is a misfire.
+        auto const fixture = overlayFixture(true, false);
+        auto const check   = overlayCheck(fixture);
+
+        auto const* p_keys = findCell(check, fixture.keysId, fixture.battleSource);
+        REQUIRE(p_keys != nullptr);
+        CHECK(p_keys->outcome == ModelCellOutcome::Miss);
+        CHECK(p_keys->expectation == ModelCellExpectation::Absent);
+        CHECK(classifyModelCell(*p_keys) == ModelCellColor::Expected);
+
+        for (auto const& screen : check.screens)
+        {
+            CHECK(screen.outcome == ScreenCheckOutcome::Correct);
+        }
+        CHECK(judgeModelCheck(check).empty());
+    }
+
+    TEST_CASE("a forbidden mark present on its page's screen is a finding")
+    {
+        // The defect the role exists to catch, and the one the old model made
+        // invisible: with expected_hit derived from ownership, a forbidden mark
+        // that IS on the screen read as "expected" and vanished. Nothing else in
+        // the grid can see it, because the mark is on the page's own screen and
+        // every other cell there is correct.
+        auto const fixture = overlayFixture(true, true);
+        auto const check   = overlayCheck(fixture);
+
+        auto const* p_keys = findCell(check, fixture.keysId, fixture.battleSource);
+        REQUIRE(p_keys != nullptr);
+        CHECK(p_keys->outcome == ModelCellOutcome::Hit);
+        CHECK(p_keys->expectation == ModelCellExpectation::Absent);
+        CHECK(classifyModelCell(*p_keys) == ModelCellColor::Misfire);
+
+        auto const findings = judgeModelCheck(check);
+        REQUIRE(findings.size() == 1U);
+        CHECK(findings.front().kind == ModelFindingKind::WrongOutcome);
+        CHECK(findings.front().elementId == fixture.keysId);
+        CHECK(findings.front().screenId == fixture.battleSource);
+    }
+
+    TEST_CASE("an overlay screen makes no demand of what its page never names")
+    {
+        // The three findings the real project reported, and none of them was a
+        // defect. Two mechanisms discharge them, and both are asserted here
+        // because either one alone would still condemn the other element.
+        //
+        // The draw pile is required by `battle`, which the detail screen does
+        // not belong to -- but battle's signature is a conjunction, and its
+        // forbidden clause already fails there because the key rows ARE on that
+        // screen. Battle cannot claim the screen whatever the draw pile does, so
+        // nothing rests on it. The discard pile is only ever clicked, so it
+        // takes part in no signature at all and no page's identity ever rested
+        // on it.
+        auto const fixture = overlayFixture(true, false);
+        auto const check   = overlayCheck(fixture);
+
+        auto const shared = std::array{fixture.drawId, fixture.discardId};
+        for (auto const& elementId : shared)
+        {
+            auto const* p_cell = findCell(check, elementId, fixture.detailSource);
+            REQUIRE(p_cell != nullptr);
+            // Genuinely on the overlay screen, and measured as such.
+            CHECK(p_cell->outcome == ModelCellOutcome::Hit);
+            CHECK(p_cell->expectation == ModelCellExpectation::Unclaimed);
+            CHECK(classifyModelCell(*p_cell) == ModelCellColor::Expected);
+        }
+
+        CHECK(judgeModelCheck(check).empty());
+    }
+
+    TEST_CASE("two pages nothing separates that both match one screen are a finding")
+    {
+        // The half the overlay rule must not cost. Drop battle's forbidden
+        // reference and nothing in the model keeps the two pages apart: the
+        // draw pile is battle's whole signature, so it is the only thing that
+        // could have kept battle off the detail screen, and it does not. Both
+        // pages match there, which the runtime reports as Ambiguous and the grid
+        // must attribute to the mark that failed to discriminate.
+        auto const fixture = overlayFixture(false, false);
+        auto const check   = overlayCheck(fixture);
+
+        auto const* p_detail = findScreen(check, fixture.detailSource);
+        REQUIRE(p_detail != nullptr);
+        CHECK(p_detail->outcome == ScreenCheckOutcome::Ambiguous);
+
+        auto const* p_draw = findCell(check, fixture.drawId, fixture.detailSource);
+        REQUIRE(p_draw != nullptr);
+        CHECK(p_draw->outcome == ModelCellOutcome::Hit);
+        CHECK(p_draw->expectation == ModelCellExpectation::Absent);
+
+        // And only the mark that failed. Nothing separates the two pages here,
+        // so the conjunction cannot discharge anything: the discard pile is
+        // spared purely because battle only CLICKS it, and no page's identity
+        // ever rested on it. Put the duty on everything a page references
+        // rather than on its signature and this cell is accused too.
+        auto const* p_discard = findCell(
+            check,
+            fixture.discardId,
+            fixture.detailSource
+        );
+        REQUIRE(p_discard != nullptr);
+        CHECK(p_discard->outcome == ModelCellOutcome::Hit);
+        CHECK(p_discard->expectation == ModelCellExpectation::Unclaimed);
+
+        auto const findings = judgeModelCheck(check);
+        REQUIRE(findings.size() == 1U);
+        CHECK(findings.front().kind == ModelFindingKind::WrongOutcome);
+        CHECK(findings.front().elementId == fixture.drawId);
+        CHECK(findings.front().screenId == fixture.detailSource);
     }
 
     TEST_CASE("runPreview rejects a source that is absent from the project")

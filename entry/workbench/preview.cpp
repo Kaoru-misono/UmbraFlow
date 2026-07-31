@@ -476,20 +476,164 @@ namespace uf::workbench
             }
         }
 
-        // Whether an element is authored to match on a page. The reference IS
-        // that relation now -- membership, authorisation, and a page's signature
-        // are all the same edge -- so one lookup answers what three used to.
-        // This is the ground truth the grid's colour reads against: a hit on a
-        // page that references the element is expected, a hit anywhere else is a
-        // misfire.
+        // What the page recorded for a screen states about one element, from
+        // its reference to it.
+        //
+        // The reference IS the statement, and the exercised capability decides
+        // which one. Identify carries a role, and the role is the whole point:
+        // Required says the element is on this page's screen, Forbidden says it
+        // is not -- the page is on screen only when the mark is absent, so a hit
+        // there is the failure and a miss is the pass. A reference that only
+        // clicks or reads the element states presence too: a button the runtime
+        // cannot find on the page's own screen cannot be clicked, and a cell it
+        // cannot locate cannot be read.
+        //
+        // Absent when that page does not reference the element -- then it
+        // states nothing about it -- or when no page is recorded for the screen.
         [[nodiscard]]
-        auto elementBelongsToPage(
+        auto pageStatementOn(
             annotation::AuthoringDocument const& document,
             annotation::ElementId elementId,
-            annotation::PageId pageId
+            std::optional<annotation::PageId> expectedPage
+        ) -> std::optional<ModelCellExpectation>
+        {
+            if (!expectedPage.has_value())
+            {
+                return std::nullopt;
+            }
+            auto const* p_reference = document.catalog().findReference(
+                *expectedPage,
+                elementId
+            );
+            if (p_reference == nullptr)
+            {
+                return std::nullopt;
+            }
+
+            auto const& identify = p_reference->exercised.identify();
+            auto const forbidden = (
+                identify.has_value()
+                && identify->role == annotation::SignatureRole::Forbidden
+            );
+            return forbidden
+                ? ModelCellExpectation::Absent
+                : ModelCellExpectation::Match;
+        }
+
+        // Whether one signature member held on this screen, read off the page
+        // evaluation's own rows. Absent when nothing measured it, which is a
+        // page the policy stopped rather than a member that failed.
+        [[nodiscard]]
+        auto anchorHeldOn(
+            std::span<PreviewAnchorRow const> anchorRows,
+            annotation::ElementId elementId
+        ) -> std::optional<bool>
+        {
+            auto const row = std::ranges::find(
+                anchorRows,
+                elementId,
+                &PreviewAnchorRow::recognizerId
+            );
+            if (row == anchorRows.end())
+            {
+                return std::nullopt;
+            }
+            return row->hit;
+        }
+
+        // Whether every clause of one page's signature EXCEPT this element
+        // holds on this screen -- so that this one mark's absence is the only
+        // thing keeping that page off a screen another page is recorded for.
+        //
+        // A signature is a conjunction, so on a foreign screen it only has to
+        // fail once. That is what makes the off-diagonal expectation a property
+        // of the whole signature rather than of each member read on its own:
+        // where a sibling clause already fails -- a forbidden mark is present,
+        // or another required mark is absent -- the page is rejected without
+        // this mark's help, and the model asks nothing of it here. Reading the
+        // conjunction one term at a time is what reported the draw pile, the
+        // discard pile and the end-turn button as misfires on an overlay screen
+        // that genuinely shows all three.
+        //
+        // A clause nothing measured settles nothing and discharges the duty
+        // too: a search the policy stopped must not convict a mark.
+        [[nodiscard]]
+        auto signatureRestsOn(
+            annotation::PageSignature const& page,
+            annotation::ElementId elementId,
+            std::span<PreviewAnchorRow const> anchorRows
         ) -> bool
         {
-            return document.catalog().findReference(pageId, elementId) != nullptr;
+            for (auto const& required : page.required())
+            {
+                if (required == elementId)
+                {
+                    continue;
+                }
+                auto const held = anchorHeldOn(anchorRows, required);
+                if (!held.has_value() || !*held)
+                {
+                    return false;
+                }
+            }
+            for (auto const& forbidden : page.forbidden())
+            {
+                auto const held = anchorHeldOn(anchorRows, forbidden);
+                if (!held.has_value() || *held)
+                {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        // The model's statement about one element on one screen: the recorded
+        // page's own reference first, and failing that the duty every other
+        // page's signature may leave resting on this mark.
+        //
+        // The second half is what keeps the off-diagonal worth measuring. A
+        // mark that identifies one page and also matches another page's screen
+        // lets the first page claim that screen, and the mark is the only thing
+        // that could have stopped it -- unless some other clause of that page
+        // already fails there, which is exactly the overlay case. Nothing else
+        // is claimed: an element referenced for interact alone takes part in no
+        // signature, so no page's identity ever rested on it and the grid makes
+        // no demand of it away from the pages that click it.
+        [[nodiscard]]
+        auto elementExpectationOn(
+            annotation::AuthoringDocument const& document,
+            annotation::ElementId elementId,
+            std::optional<annotation::PageId> expectedPage,
+            std::span<PreviewAnchorRow const> anchorRows
+        ) -> ModelCellExpectation
+        {
+            auto const stated = pageStatementOn(document, elementId, expectedPage);
+            if (stated.has_value())
+            {
+                return *stated;
+            }
+            // A screen no regression case classifies never says which page it
+            // is not, so no page is foreign to it and no duty can be derived.
+            if (!expectedPage.has_value())
+            {
+                return ModelCellExpectation::Unclaimed;
+            }
+
+            for (auto const& page : document.catalog().pages())
+            {
+                if (
+                    page.id() == *expectedPage
+                    || !std::ranges::contains(page.required(), elementId)
+                )
+                {
+                    continue;
+                }
+                if (signatureRestsOn(page, elementId, anchorRows))
+                {
+                    return ModelCellExpectation::Absent;
+                }
+            }
+            return ModelCellExpectation::Unclaimed;
         }
 
         // Which appearance the model names for one screen -- the ground truth
@@ -538,37 +682,44 @@ namespace uf::workbench
             return cutHere->name();
         }
 
-        // Whether one appearance is the one this screen is authored to be
-        // matched by. Both halves have to hold: the element belongs to the page
-        // recorded for the screen, and this appearance is the one the model
-        // names there.
+        // What the model states about one appearance on one screen.
+        //
+        // It is the element's own statement, narrowed -- and the element's
+        // decides whether there is anything to narrow: where the model says it
+        // is absent, no appearance of it may match, and where it says nothing
+        // about the element it can say nothing about which appearance answers.
+        // Only where the element is stated present does the question "which
+        // one" arise, and appearanceForScreen answers it.
         [[nodiscard]]
-        auto appearanceOwnsScreen(
+        auto appearanceExpectationOn(
             annotation::AuthoringDocument const& document,
             annotation::ElementId elementId,
             annotation::ResourceName const& appearance,
             std::optional<annotation::PageId> expectedPage,
-            annotation::SourceId screenId
-        ) -> bool
+            annotation::SourceId screenId,
+            ModelCellExpectation elementExpectation
+        ) -> ModelCellExpectation
         {
             if (
-                !expectedPage.has_value()
-                || !elementBelongsToPage(document, elementId, *expectedPage)
+                elementExpectation != ModelCellExpectation::Match
+                || !expectedPage.has_value()
             )
             {
-                return false;
+                return elementExpectation;
             }
             auto const* p_element = document.findElement(elementId);
             if (p_element == nullptr)
             {
-                return false;
+                return ModelCellExpectation::Unclaimed;
             }
             auto const named = appearanceForScreen(
                 *p_element,
                 document.catalog().findReference(*expectedPage, elementId),
                 screenId
             );
-            return named.has_value() && *named == appearance;
+            return named.has_value() && *named == appearance
+                ? ModelCellExpectation::Match
+                : ModelCellExpectation::Absent;
         }
 
         // One action search on one screen: the element to evaluate, paired with
@@ -779,6 +930,7 @@ namespace uf::workbench
             Frame const& frame,
             annotation::SourceId screenId,
             std::optional<annotation::PageId> expectedPage,
+            std::span<PreviewAnchorRow const> anchorRows,
             std::span<AppearanceSearch const> searches,
             annotation::RecognitionPolicy const& policy
         ) -> Result<std::vector<ModelCheckCell>>
@@ -828,13 +980,20 @@ namespace uf::workbench
                 cell.sadScore    = evidence.sadScore();
                 cell.maximumSad  = evidence.maximumSad();
                 cell.matchedRect = evidence.matchedRect();
-                cell.expectedHit = appearanceOwnsScreen(
+                cell.expectation = appearanceExpectationOn(
                     document,
                     search.elementId,
                     search.appearance,
                     expectedPage,
-                    screenId
+                    screenId,
+                    elementExpectationOn(
+                        document,
+                        search.elementId,
+                        expectedPage,
+                        anchorRows
+                    )
                 );
+                cell.expectedHit = expectsHit(cell.expectation);
                 cells.emplace_back(std::move(cell));
             }
             return cells;
@@ -851,7 +1010,7 @@ namespace uf::workbench
             annotation::ElementId elementId,
             annotation::SourceId screenId,
             PreviewAnchorRow const& row,
-            bool expectedHit
+            ModelCellExpectation expectation
         ) -> ModelCheckCell
         {
             return ModelCheckCell{
@@ -863,7 +1022,8 @@ namespace uf::workbench
                 .sadScore    = row.sadScore,
                 .maximumSad  = row.maximumSad,
                 .matchedRect = row.matchedRect,
-                .expectedHit = expectedHit,
+                .expectation = expectation,
+                .expectedHit = expectsHit(expectation),
             };
         }
 
@@ -889,10 +1049,14 @@ namespace uf::workbench
             ActionEvaluation const& actionEval
         ) -> std::vector<ModelCheckCell>
         {
-            auto const belongs = [&](annotation::ElementId elementId)
+            auto const expectationFor = [&](annotation::ElementId elementId)
             {
-                return expectedPage.has_value()
-                    && elementBelongsToPage(document, elementId, *expectedPage);
+                return elementExpectationOn(
+                    document,
+                    elementId,
+                    expectedPage,
+                    preview.anchorRows
+                );
             };
 
             auto cells = std::vector<ModelCheckCell>{};
@@ -908,13 +1072,14 @@ namespace uf::workbench
                 if (row != preview.anchorRows.end())
                 {
                     cells.emplace_back(
-                        foldedCell(anchorId, screenId, *row, belongs(anchorId))
+                        foldedCell(anchorId, screenId, *row, expectationFor(anchorId))
                     );
                     continue;
                 }
                 // No row and the page stopped: the anchor never got its turn. No
                 // row and the page did not stop: it is on no page and was not
                 // scored here at all.
+                auto const expectation = expectationFor(anchorId);
                 cells.emplace_back(
                     ModelCheckCell{
                         .elementId = anchorId,
@@ -923,7 +1088,8 @@ namespace uf::workbench
                         .outcome     = preview.pageStop.has_value()
                             ? ModelCellOutcome::Stopped
                             : ModelCellOutcome::NotSearchedHere,
-                        .expectedHit = belongs(anchorId),
+                        .expectation = expectation,
+                        .expectedHit = expectsHit(expectation),
                         .stopReason  = preview.pageStop.has_value()
                             ? std::optional<SadSearchStopReason>{
                                 preview.pageStop->reason
@@ -962,7 +1128,7 @@ namespace uf::workbench
                 if (row != actionEval.rows.end())
                 {
                     cells.emplace_back(
-                        foldedCell(actionId, screenId, *row, belongs(actionId))
+                        foldedCell(actionId, screenId, *row, expectationFor(actionId))
                     );
                     continue;
                 }
@@ -971,13 +1137,15 @@ namespace uf::workbench
                     actionId,
                     &ActionStop::elementId
                 );
+                auto const expectation = expectationFor(actionId);
                 cells.emplace_back(
                     ModelCheckCell{
                         .elementId   = actionId,
                         .screenId    = screenId,
                         .subject     = ModelCellSubject::Element,
                         .outcome     = ModelCellOutcome::Stopped,
-                        .expectedHit = belongs(actionId),
+                        .expectation = expectation,
+                        .expectedHit = expectsHit(expectation),
                         .stopReason  = stop != actionEval.stops.end()
                             ? std::optional<SadSearchStopReason>{stop->reason}
                             : std::nullopt,
@@ -1047,6 +1215,11 @@ namespace uf::workbench
         return scaled;
     }
 
+    auto expectsHit(ModelCellExpectation expectation) noexcept -> bool
+    {
+        return expectation == ModelCellExpectation::Match;
+    }
+
     auto classifyModelCell(ModelCheckCell const& cell) noexcept -> ModelCellColor
     {
         switch (cell.outcome)
@@ -1056,17 +1229,21 @@ namespace uf::workbench
         case ModelCellOutcome::Stopped:
             return ModelCellColor::Thin;
         case ModelCellOutcome::Hit:
-            // A hit is expected only where the element is authored to match; a
-            // hit anywhere else is the misfire the whole check exists to catch.
-            if (!cell.expectedHit)
+            // A hit only contradicts a model that states the subject is absent
+            // here -- a page that forbids the mark, or a rival page's identity
+            // resting on its absence. Where the model states nothing, a hit is
+            // information rather than a defect: the same element really is on
+            // an overlay screen its page does not name.
+            if (cell.expectation == ModelCellExpectation::Absent)
             {
                 return ModelCellColor::Misfire;
             }
             break;
         case ModelCellOutcome::Miss:
-            // A miss where the element's own page is recorded for the screen is a
-            // hole -- a mark that should identify this screen and does not.
-            if (cell.expectedHit)
+            // A miss where the model states the subject matches is a hole -- a
+            // mark that should identify this screen, or a button that should be
+            // clickable on it, and is not found.
+            if (cell.expectation == ModelCellExpectation::Match)
             {
                 return ModelCellColor::Misfire;
             }
@@ -1132,9 +1309,9 @@ namespace uf::workbench
 
         // Completeness and set rejection are one sweep, because they are one
         // question asked of two kinds of row. classifyModelCell already reads a
-        // measured outcome against what the row's subject is authored to do and
-        // reports Misfire in both directions, so the appearance rows give
-        // "each appearance matches exactly its own screens" -- off-diagonal
+        // measured outcome against what the model states about the row's
+        // subject and reports Misfire in both directions, so the appearance rows
+        // give "each appearance matches exactly its own screens" -- off-diagonal
         // included -- and the element rows give "the folded set misses every
         // screen it should reject" on the fold's own answer, where a fold bug
         // would show and the appearance rows could not see it.
@@ -1158,7 +1335,7 @@ namespace uf::workbench
         {
             if (
                 owner.subject != ModelCellSubject::Appearance
-                || !owner.expectedHit
+                || owner.expectation != ModelCellExpectation::Match
                 || owner.outcome != ModelCellOutcome::Hit
                 || !owner.appearance.has_value()
             )
@@ -1671,6 +1848,7 @@ namespace uf::workbench
                     frame,
                     asset.id,
                     expected,
+                    preview.anchorRows,
                     appearanceSearches,
                     screenPolicy
                 )
