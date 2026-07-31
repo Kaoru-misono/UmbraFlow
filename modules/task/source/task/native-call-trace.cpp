@@ -11,6 +11,7 @@
 
 #include <optional>
 #include <string>
+#include <string_view>
 #include <utility>
 
 namespace uf::task
@@ -42,6 +43,19 @@ namespace uf::task
                 .cycleOrdinal    = call.cycleOrdinal,
                 .hitCycleOrdinal = call.hitCycleOrdinal,
                 .durationMillis  = call.durationMillis,
+                .resourceName    = call.resourceName.transform(
+                    [](std::string_view name) -> std::string
+                    {
+                        return std::string{name};
+                    }
+                ),
+                .byteCount   = call.byteCount,
+                .contentHash = call.contentHash.transform(
+                    [](std::string_view hash) -> std::string
+                    {
+                        return std::string{hash};
+                    }
+                ),
             },
             .elementId = call.elementId,
             .errorKind = errorKind,

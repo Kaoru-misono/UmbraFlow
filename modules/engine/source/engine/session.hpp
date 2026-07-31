@@ -19,13 +19,19 @@
 #include <domain/key.hpp>
 #include <domain/space.hpp>
 
+#include <ocr/engine.hpp>
+
 #include <trace/event.hpp>
 #include <trace/recorder.hpp>
 
 #include <chrono>
+#include <cstddef>
 #include <memory>
 #include <optional>
+#include <span>
 #include <stop_token>
+#include <string>
+#include <string_view>
 
 namespace uf::engine
 {
@@ -35,6 +41,18 @@ namespace uf::engine
     }
 
     class EngineSession;
+
+    // The largest region one cycle_read may hand the OCR engine, in pixels.
+    //
+    // It is a ceiling on cost rather than on meaning: a read is the one engine
+    // verb whose price is set by an argument a script chose, and recognising a
+    // strip runs in single-digit milliseconds only while the strip is a strip.
+    // A script asking to read the whole screen is asking for a detector pass
+    // this adapter does not run, so the refusal is what tells it so.
+    //
+    // CALIBRATION: a 1600x900 target's widest single label measured well under
+    // this; it is deliberately far above any line and far below a full frame.
+    inline constexpr auto k_maximumReadPixels = uint64{1600} * 200U;
 
     // The longest one capture may block before observe() gives up on it. It is a
     // conservative placeholder awaiting the first real daily and a real-machine
@@ -87,6 +105,46 @@ namespace uf::engine
             -> annotation::ActionDetection const&;
 
         [[nodiscard]] auto clickPixel() const noexcept -> PixelPoint;
+    };
+
+    // Where one raw template match landed on one frame, what it scored, and the
+    // ceiling that score is read against.
+    //
+    // It carries no element and no page, because a template loaded by the script
+    // layer belongs to neither. What it does carry is the same grade of evidence
+    // an ActionFound does -- a rectangle this frame produced, a distance, and the
+    // maximum that distance could have been -- so the click that consumes it is
+    // fenced by the same same-frame, lease and fingerprint checks. Whether the
+    // score counts as a hit is the caller's judgement and deliberately not
+    // decided here.
+    struct MatchFound final
+    {
+        PixelRect  matchedRect;
+        PixelPoint clickPixel;
+
+        uint64 sadScore{};
+        uint64 maximumSad{};
+    };
+
+    // One line of text read off one frame, with where it was read and how sure
+    // the engine was.
+    //
+    // The confidence is not decoration. Reading is the one capability that fails
+    // open -- a rectangle pointed at the wrong place returns plausible text
+    // rather than nothing -- so a caller that cannot tell "there really is text
+    // here" from "the model guessed" has no way to refuse a bad read.
+    struct TextReading final
+    {
+        std::string text{};
+
+        // The region that was read, in frame pixels, as the caller asked for it.
+        // A read has no score to locate it by, so the rectangle is the whole of
+        // "where did this come from".
+        PixelRect rect;
+
+        // The model's own confidence in basis points, as ocr::TextLine reports
+        // it.
+        uint32 confidenceBp{};
     };
 
     // A single-use, move-only handle over one captured frame, vended only by
@@ -168,14 +226,23 @@ namespace uf::engine
         std::shared_ptr<detail::EngineSessionIdentity const> m_identity;
         std::unique_ptr<IFrameSource>                        m_frameSource;
         std::unique_ptr<IActionSink>                         m_actionSink;
-        trace::TraceRecorder&                                m_recorder;
-        EngineSessionConfig                                  m_config;
+
+        // Null when the composition root bound no OCR adapter, which is the
+        // normal state for every path that does not read text: the weights are
+        // tens of megabytes and loading them for a run that never reads would be
+        // a cost nobody asked for. readText refuses on its own terms when it is
+        // absent, rather than the session refusing to exist.
+        std::unique_ptr<ocr::IOcrEngine> m_ocrEngine;
+
+        trace::TraceRecorder& m_recorder;
+        EngineSessionConfig   m_config;
 
         EngineSession(
             LoadedRuntime loadedRuntime,
             std::shared_ptr<detail::EngineSessionIdentity const> identity,
             std::unique_ptr<IFrameSource> frameSource,
             std::unique_ptr<IActionSink> actionSink,
+            std::unique_ptr<ocr::IOcrEngine> ocrEngine,
             trace::TraceRecorder& recorder,
             EngineSessionConfig config
         ) noexcept;
@@ -190,6 +257,36 @@ namespace uf::engine
         [[nodiscard]]
         auto emit(trace::TraceEvent const& event) -> Status;
 
+        // The two gates every verb taking an existing observation opens with: the
+        // handle came from this session, and it has not been consumed or moved
+        // from. `verb` names the caller so the refusal still reads as that verb's
+        // own, which is why these stayed spelled out per verb until there were
+        // five of them.
+        [[nodiscard]]
+        auto ensureUsable(
+            Observation const& observation,
+            std::string_view verb
+        ) const -> Status;
+
+        // What one OCR call produced, before readText decides whether it is a
+        // reading or only a trace line. It is nested and private because nothing
+        // names it except readText: the trace line has to carry the engine
+        // identity and the duration even when no text was found, so the two
+        // cannot be folded into the optional reading itself.
+        struct ReadAttempt final
+        {
+            std::optional<TextReading> line{};
+
+            std::string engineId{};
+            uint64      durationMicros{};
+        };
+
+        [[nodiscard]]
+        auto readTextOnFrame(
+            Frame const& frame,
+            PixelRect rect
+        ) const -> Result<ReadAttempt>;
+
     public:
         EngineSession(EngineSession const&) = delete;
         EngineSession(EngineSession&&) noexcept = default;
@@ -198,13 +295,17 @@ namespace uf::engine
 
         ~EngineSession() = default;
 
+        // `ocrEngine` is optional and defaults to none, so every composition root
+        // that never reads text is unchanged and pays nothing. A session built
+        // without one refuses readText rather than pretending to read.
         [[nodiscard]]
         static auto create(
             LoadedRuntime loadedRuntime,
             std::unique_ptr<IFrameSource> frameSource,
             std::unique_ptr<IActionSink> actionSink,
             trace::TraceRecorder& recorder,
-            EngineSessionConfig config
+            EngineSessionConfig config,
+            std::unique_ptr<ocr::IOcrEngine> ocrEngine = nullptr
         ) -> Result<EngineSession>;
 
         [[nodiscard]]
@@ -236,11 +337,66 @@ namespace uf::engine
             annotation::ElementId elementId
         ) -> Result<std::optional<ActionFound>>;
 
+        // Searches `searchRoi` of the frame `observation` holds for
+        // `templateImage`, reporting the best position it found or nothing when
+        // the region could hold no candidate at all.
+        //
+        // It is the raw half of findAction, and the difference is what the
+        // script-owned page model needs: no catalog lookup, no page, no
+        // appearance, no threshold. A control stop -- the comparison budget, the
+        // recognition deadline, a requested cancel -- is a FAILURE and never a
+        // miss, because a search that stopped looking has not established that
+        // the template is absent.
+        [[nodiscard]]
+        auto matchTemplate(
+            Observation const& observation,
+            annotation::GrayTemplateImage const& templateImage,
+            PixelRect searchRoi
+        ) -> Result<std::optional<MatchFound>>;
+
+        // Reads the text in `rect` of the frame `observation` holds.
+        //
+        // The region is asserted by the caller to hold ONE line: detection is the
+        // expensive stage and the adapter this project ships does not run it, so
+        // a caller that does not know the line count gets a refusal rather than a
+        // silent single-line read of several lines. Finding no text is an empty
+        // optional, which is an ordinary answer about the screen; a failure here
+        // means the read could not be attempted.
+        [[nodiscard]]
+        auto readText(
+            Observation const& observation,
+            PixelRect rect
+        ) -> Result<std::optional<TextReading>>;
+
         [[nodiscard]]
         auto act(
             Observation&& observation,
             annotation::ResolvedPage const& page,
             ActionFound const& action
+        ) -> Result<ActReceipt>;
+
+        // Delivers one click at `point`, spending `observation`, with no
+        // annotation evidence behind the coordinate.
+        //
+        // WHAT IT STILL ENFORCES, and what it deliberately does not. It keeps
+        // every guarantee act() keeps that does not mention the catalog: a
+        // requested stop refuses before any sink call, a foreign handle is an
+        // InternalInvariant, a consumed handle is StaleObservation, the live
+        // fingerprint must match the project's, the observation's lease must
+        // still be valid at delivery, the bound target instance is revalidated
+        // immediately before the post, and the observation is spent so one frame
+        // delivers at most one input.
+        //
+        // What it drops is the one requirement that moved out of C++: that a
+        // resolved page reference the element being clicked. There is no element
+        // here to reference. That is why this is a SEPARATE verb rather than an
+        // optional page on act() -- the privilege of naming a bare coordinate is
+        // held by the trusted framework layer and never handed to a business
+        // script, and two spellings keep which one a caller reached for visible.
+        [[nodiscard]]
+        auto clickPoint(
+            Observation&& observation,
+            PixelPoint point
         ) -> Result<ActReceipt>;
 
         // Delivers one keystroke, spending `observation`.

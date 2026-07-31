@@ -465,7 +465,8 @@ namespace uf::task
                     .recognitionTimeout      = config.recognitionTimeout,
                     .maxActionFrameAge       = config.maxActionFrameAge,
                     .cancellation            = p_generation->cancellation(),
-                }
+                },
+                std::move(config.ocrEngine)
             )
         );
 
@@ -479,8 +480,10 @@ namespace uf::task
             std::move(session),
             *recorder,
             TaskContextConfig{
-                .cancellation = p_generation->cancellation(),
-                .randomSeed   = seed,
+                .cancellation         = p_generation->cancellation(),
+                .randomSeed           = seed,
+                .projectRoot          = p_generation->projectRoot(),
+                .maximumReadsPerCycle = config.maximumReadsPerCycle,
             },
         };
 

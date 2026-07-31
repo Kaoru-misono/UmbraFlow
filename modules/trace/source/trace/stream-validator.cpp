@@ -186,6 +186,7 @@ namespace uf::trace
         case TraceEventKind::EngineObserved:
         case TraceEventKind::EnginePageResolved:
         case TraceEventKind::EngineActionFound:
+        case TraceEventKind::EngineTextRead:
         case TraceEventKind::EngineActionAuthorized:
         case TraceEventKind::EngineActionRejected:
         case TraceEventKind::EngineActionDelivered:

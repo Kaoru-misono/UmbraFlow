@@ -2,16 +2,20 @@
 
 #include <task/cycle-ledger.hpp>
 #include <task/deterministic.hpp>
+#include <task/project-files.hpp>
+#include <task/template-store.hpp>
 
 #include <core/error/result.hpp>
 #include <core/time/monotonic-time.hpp>
 #include <core/types/integer.hpp>
 
+#include <annotation/content-hash.hpp>
 #include <annotation/resource.hpp>
 #include <annotation/recognition.hpp>
 
 #include <domain/error.hpp>
 #include <domain/key.hpp>
+#include <domain/space.hpp>
 
 #include <engine/session.hpp>
 
@@ -19,8 +23,13 @@
 #include <trace/recorder.hpp>
 
 #include <chrono>
+#include <cstddef>
+#include <filesystem>
 #include <optional>
+#include <span>
 #include <stop_token>
+#include <string_view>
+#include <vector>
 
 namespace uf::task
 {
@@ -61,6 +70,25 @@ namespace uf::task
         std::chrono::milliseconds{10}
     };
 
+    // How many text reads one observation cycle may charge before the host
+    // refuses the next one.
+    //
+    // OCR GETS ITS OWN BUDGET DIMENSION, and this is it. The pixel-comparison
+    // budget the matcher spends is a single shared pool drawn down anchor by
+    // anchor, and folding reads into it would let one read-heavy page quietly
+    // starve template matching and then blame whichever anchor happened to be
+    // searching when the pool ran dry. The two units are not comparable -- a SAD
+    // comparison is nanoseconds, a line read is 2-13 milliseconds -- so one
+    // number covering both describes neither.
+    //
+    // CALIBRATION: eight is a conservative placeholder awaiting the first real
+    // daily. It is above every reading pattern measured so far -- the widest is
+    // "read each of the candidate slots on this page once and pick one" -- and
+    // low enough that a wait loop reading once per poll cannot turn a cycle into
+    // a tenth of a second of inference. Raise it here, or per run through
+    // TaskContextConfig, once a real page needs more.
+    inline constexpr auto k_defaultMaximumReadsPerCycle = uint32{8};
+
     // Host-side configuration for one TaskContext: the single cancellation
     // source shared with the owned EngineSession and the VM interrupt, plus this
     // run's RNG seed. A default-constructed stop token never requests a stop, so
@@ -81,6 +109,17 @@ namespace uf::task
         // TaskHost::startTask, which draws it and records it in run.started so
         // the run reproduces on replay. See k_defaultRandomSeed.
         uint64          randomSeed{k_defaultRandomSeed};
+
+        // The directory project_read and project_write are confined to, which is
+        // the generation's own project root. Empty leaves the context with no
+        // project files at all, and both verbs then refuse -- which is the right
+        // answer for a context built by a test or a fake that has no project on
+        // disk, rather than a context that would reach the working directory.
+        std::filesystem::path projectRoot{};
+
+        // See k_defaultMaximumReadsPerCycle for why this is a dimension of its
+        // own rather than a share of the pixel-comparison pool.
+        uint32 maximumReadsPerCycle{k_defaultMaximumReadsPerCycle};
     };
 
     // Host-owned bridge between one task VM and one EngineSession. It owns the
@@ -108,12 +147,30 @@ namespace uf::task
     // task.native_call and the engine.* events it caused into one ordered stream.
     class TaskContext final
     {
+    public:
+        // What one loadTemplate produced: the ticket the script holds and the
+        // content hash of the blob it came from.
+        //
+        // The hash is returned rather than looked up again because the caller's
+        // trace line needs it and the store already computed it; recomputing a
+        // SHA-256 over the same megabyte to write one line would be the kind of
+        // duplicate truth this codebase keeps refusing.
+        struct LoadedTemplate final
+        {
+            TemplateTicket ticket{};
+
+            annotation::ContentHash hash;
+        };
+
+    private:
         engine::EngineSession m_session;
         TaskContextConfig     m_config;
         DeterministicRng      m_rng;
         trace::TraceRecorder& m_recorder;
 
-        CycleLedger m_cycles{};
+        CycleLedger      m_cycles{};
+        TemplateStore    m_templates{};
+        ProjectFileStore m_projectFiles;
 
         std::optional<AutomationErrorKind> m_terminal{};
 
@@ -176,6 +233,59 @@ namespace uf::task
             annotation::ElementId elementId
         ) -> Result<std::optional<engine::ActionFound>>;
 
+        // Searches `searchRoi` of the frame `ticket`'s cycle retains for the
+        // template `templateTicket` names. An empty optional is a completed
+        // search with no candidate position; a budget, deadline or cancel stop is
+        // a FAILURE, never a miss.
+        //
+        // It requires no resolved page. Everything cycleFind reads off a page's
+        // reference row -- the refined region, the pinned appearance, the
+        // interact edge -- is supplied here by the caller instead, because in the
+        // script-owned model the caller is the layer that owns those facts.
+        [[nodiscard]]
+        auto cycleMatch(
+            CycleTicket ticket,
+            TemplateTicket templateTicket,
+            PixelRect searchRoi
+        ) -> Result<std::optional<engine::MatchFound>>;
+
+        // Reads the text in `rect` of the frame `ticket`'s cycle retains. An
+        // empty optional is a completed read that found no text.
+        //
+        // The read is charged against this cycle's own read budget BEFORE the
+        // engine is reached, and a cycle that has spent it fails
+        // RecognitionIncomplete -- the kind an exhausted comparison budget
+        // already uses, and for the same reason: the host stopped looking, so
+        // nothing has been established about the screen. Reporting it as "no
+        // text" would be a fail-open answer on the one capability that has no
+        // score to contradict it.
+        [[nodiscard]]
+        auto cycleRead(
+            CycleTicket ticket,
+            PixelRect rect
+        ) -> Result<std::optional<engine::TextReading>>;
+
+        // Decodes one template PNG into this generation's template store and
+        // returns the ticket naming it, with the content hash of the blob for
+        // the caller's trace line. Identical bytes yield the same ticket.
+        [[nodiscard]]
+        auto loadTemplate(
+            std::span<std::byte const> pngBytes
+        ) -> Result<LoadedTemplate>;
+
+        // Reads and writes one file inside the generation's project directory.
+        // Neither is cycle-scoped: a page model is loaded before any observation
+        // and written after one, and tying either to an open cycle would make a
+        // frame a precondition for touching the disk.
+        [[nodiscard]]
+        auto projectRead(std::string_view name) -> Result<std::vector<std::byte>>;
+
+        [[nodiscard]]
+        auto projectWrite(
+            std::string_view name,
+            std::span<std::byte const> bytes
+        ) -> Status;
+
         // Spends the cycle `ticket` names and delivers the click.
         //
         // It takes no page. The authorization evidence is the page that cycle
@@ -197,6 +307,31 @@ namespace uf::task
             CycleTicket ticket,
             uint64 hitCycleOrdinal,
             engine::ActionFound const& action
+        ) -> Result<engine::ActReceipt>;
+
+        // Spends the cycle `ticket` names and delivers a click at `point`, with
+        // no annotation evidence behind the coordinate.
+        //
+        // WHO MAY REACH THIS. It is the layer-two-held privilege: the trusted
+        // Luau framework binds it as a closure upvalue and the environment a
+        // business task runs in never names it. That is where "a task only
+        // clicks annotated elements" is now enforced, because the element and the
+        // page moved up with the model. What C++ still enforces is the rest of
+        // the four: the frame is this ticket's, the observation's lease is still
+        // fresh, the live fingerprint matches the project, and the cycle is spent
+        // exactly once.
+        //
+        // `hitCycleOrdinal` is the ordinal a match handle carries, or empty when
+        // the caller named a bare point and there is no handle to check. When
+        // present it must be the open cycle's own; anything else names a cycle
+        // that no longer exists and fails StaleObservation, which is what makes
+        // "the hit came from THIS frame" a check the caller cannot skip by
+        // reaching for the point spelling with a stale match in hand.
+        [[nodiscard]]
+        auto cycleClickPoint(
+            CycleTicket ticket,
+            std::optional<uint64> hitCycleOrdinal,
+            PixelPoint point
         ) -> Result<engine::ActReceipt>;
 
         // Spends the cycle `ticket` names and delivers one keystroke.

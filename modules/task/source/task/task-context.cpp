@@ -1,6 +1,8 @@
 #include <task/task-context.hpp>
 
 #include <task/cycle-ledger.hpp>
+#include <task/project-files.hpp>
+#include <task/template-store.hpp>
 
 #include <core/error/contracts.hpp>
 #include <core/error/result.hpp>
@@ -8,20 +10,27 @@
 #include <core/time/poll-sleep.hpp>
 #include <core/types/integer.hpp>
 
+#include <annotation/content-hash.hpp>
 #include <annotation/resource.hpp>
 #include <annotation/recognition.hpp>
 
 #include <domain/error.hpp>
 #include <domain/key.hpp>
+#include <domain/space.hpp>
 
 #include <engine/session.hpp>
 
 #include <trace/event.hpp>
 #include <trace/recorder.hpp>
 
+#include <cstddef>
+#include <format>
 #include <optional>
+#include <span>
+#include <string_view>
 #include <utility>
 #include <variant>
+#include <vector>
 
 namespace uf::task
 {
@@ -34,6 +43,7 @@ namespace uf::task
         , m_config{std::move(config)}
         , m_rng{m_config.randomSeed}
         , m_recorder{recorder}
+        , m_projectFiles{m_config.projectRoot}
     {
     }
 
@@ -126,6 +136,83 @@ namespace uf::task
         return m_session.findAction(m_cycles.observation(), *pageId, elementId);
     }
 
+    auto TaskContext::cycleMatch(
+        CycleTicket ticket,
+        TemplateTicket templateTicket,
+        PixelRect searchRoi
+    ) -> Result<std::optional<engine::MatchFound>>
+    {
+        UF_TRY(m_cycles.requireOpen(ticket));
+
+        auto const* p_template = m_templates.find(templateTicket);
+        if (p_template == nullptr)
+        {
+            return fail(
+                AutomationErrorKind::InvalidResource,
+                "this template handle names no template of this generation; "
+                "load it with template_load first"
+            );
+        }
+        return m_session.matchTemplate(
+            m_cycles.observation(),
+            *p_template,
+            searchRoi
+        );
+    }
+
+    auto TaskContext::cycleRead(
+        CycleTicket ticket,
+        PixelRect rect
+    ) -> Result<std::optional<engine::TextReading>>
+    {
+        UF_TRY(m_cycles.requireOpen(ticket));
+
+        // Charged before the engine is reached, so an exhausted budget costs no
+        // inference. RecognitionIncomplete rather than an empty optional: the
+        // host stopped looking, and a miss would claim the region was inspected.
+        if (m_cycles.readsCharged() >= m_config.maximumReadsPerCycle)
+        {
+            return fail(
+                AutomationErrorKind::RecognitionIncomplete,
+                std::format(
+                    "this observation cycle has already spent its budget of {} "
+                    "text reads; open a new cycle to read again",
+                    m_config.maximumReadsPerCycle
+                )
+            );
+        }
+        m_cycles.chargeRead();
+        return m_session.readText(m_cycles.observation(), rect);
+    }
+
+    auto TaskContext::loadTemplate(
+        std::span<std::byte const> pngBytes
+    ) -> Result<LoadedTemplate>
+    {
+        UF_TRY_VALUE(ticket, m_templates.load(pngBytes));
+        auto const* p_template = m_templates.find(ticket);
+        UF_CHECK(p_template != nullptr);
+        return LoadedTemplate{
+            .ticket = ticket,
+            .hash   = p_template->hash,
+        };
+    }
+
+    auto TaskContext::projectRead(
+        std::string_view name
+    ) -> Result<std::vector<std::byte>>
+    {
+        return m_projectFiles.read(name);
+    }
+
+    auto TaskContext::projectWrite(
+        std::string_view name,
+        std::span<std::byte const> bytes
+    ) -> Status
+    {
+        return m_projectFiles.write(name, bytes);
+    }
+
     auto TaskContext::cycleClick(
         CycleTicket ticket,
         uint64 hitCycleOrdinal,
@@ -148,6 +235,30 @@ namespace uf::task
             consumed.page,
             action
         );
+    }
+
+    auto TaskContext::cycleClickPoint(
+        CycleTicket ticket,
+        std::optional<uint64> hitCycleOrdinal,
+        PixelPoint point
+    ) -> Result<engine::ActReceipt>
+    {
+        // Both the ticket and, when one was supplied, the match's ordinal are
+        // checked against the one open cycle before it is spent, so a stale match
+        // leaves the cycle open for the framework to close rather than destroying
+        // a frame the script still has a live ticket for.
+        UF_TRY(m_cycles.requireOpen(ticket));
+        if (hitCycleOrdinal.has_value())
+        {
+            UF_TRY(m_cycles.requireOpenOrdinal(*hitCycleOrdinal));
+        }
+
+        // spend rather than consume: the resolved page that consume demands is
+        // the evidence for an ELEMENT, and there is no element here. The rest of
+        // the fence -- fingerprint, lease, single delivery -- is the engine's,
+        // where it is shared with act().
+        UF_TRY_VALUE(observation, m_cycles.spend(ticket));
+        return m_session.clickPoint(std::move(observation), point);
     }
 
     auto TaskContext::cycleKey(CycleTicket ticket, KeyName key) -> Status

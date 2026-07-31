@@ -17,30 +17,23 @@
 
 namespace uf::task
 {
-    namespace
+    // Atomic because two hosts on two threads may each build a generation, even
+    // though one store is confined to its own VM's thread afterwards.
+    auto mintHandleGeneration() noexcept -> uint64
     {
-        // The process-wide source of ledger generation stamps. Every ledger
-        // takes one at construction, so two ledgers never share a stamp and a
-        // ticket is only ever valid in the ledger that minted it. Atomic because
-        // two hosts on two threads may each build a generation, even though one
-        // ledger is confined to its own VM's thread afterwards.
-        [[nodiscard]]
-        auto mintGeneration() noexcept -> uint64
-        {
-            static auto s_next = std::atomic<uint64>{1};
-            auto const  stamp  = s_next.fetch_add(uint64{1}, std::memory_order_relaxed);
+        static auto s_next = std::atomic<uint64>{1};
+        auto const  stamp  = s_next.fetch_add(uint64{1}, std::memory_order_relaxed);
 
-            // A wrapped stamp would hand a ticket from a spent generation back
-            // its validity, which is the exact hazard the stamp closes, so
-            // exhaustion stops the process instead of silently reusing one.
-            // Reaching it takes 2^64 VM generations in a single process.
-            UF_CHECK(stamp != std::numeric_limits<uint64>::max());
-            return stamp;
-        }
+        // A wrapped stamp would hand a handle from a spent generation back its
+        // validity, which is the exact hazard the stamp closes, so exhaustion
+        // stops the process instead of silently reusing one. Reaching it takes
+        // 2^64 VM generations in a single process.
+        UF_CHECK(stamp != std::numeric_limits<uint64>::max());
+        return stamp;
     }
 
     CycleLedger::CycleLedger() noexcept
-        : m_generation{mintGeneration()}
+        : m_generation{mintHandleGeneration()}
     {
     }
 
@@ -131,6 +124,18 @@ namespace uf::task
     {
         UF_ASSERT(m_open.has_value());
         m_open->page = std::move(page);
+    }
+
+    auto CycleLedger::readsCharged() const noexcept -> uint32
+    {
+        UF_ASSERT(m_open.has_value());
+        return m_open->reads;
+    }
+
+    auto CycleLedger::chargeRead() noexcept -> void
+    {
+        UF_ASSERT(m_open.has_value());
+        ++m_open->reads;
     }
 
     auto CycleLedger::resolvedPageId() const noexcept -> std::optional<annotation::PageId>

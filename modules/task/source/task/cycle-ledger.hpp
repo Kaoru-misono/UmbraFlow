@@ -12,6 +12,16 @@
 
 namespace uf::task
 {
+    // Draws the next process-wide stamp for one family of host-minted handles.
+    //
+    // Every store that hands a script a name for something the host keeps takes
+    // one of these at construction, so a handle carries the identity of the
+    // store that minted it and a handle left over from a spent generation is
+    // rejected instead of colliding with a live ordinal in the next one. One
+    // counter serves all of them: the stamp only has to be unique, and a second
+    // counter would be a second thing to reason about for no extra property.
+    [[nodiscard]] auto mintHandleGeneration() noexcept -> uint64;
+
     // All a script ever holds of an open observation cycle: a ticket, never the
     // frame. The frame stays in the host's ledger, so the moment its several
     // megabytes are released is a host decision rather than whatever the Lua
@@ -56,6 +66,14 @@ namespace uf::task
             engine::Observation                     observation;
             uint64                                  ordinal{};
             std::optional<annotation::ResolvedPage> page{};
+
+            // How many text reads have already been charged to this cycle.
+            //
+            // It lives on the cycle rather than on the run because that is the
+            // scope the budget is stated in: a wait loop that reads once per
+            // poll is normal, and a bound spanning the whole run would either
+            // stop that loop or be so large it stops nothing.
+            uint32 reads{};
         };
 
         uint64                   m_generation;
@@ -127,6 +145,16 @@ namespace uf::task
         // precondition as observation(): the caller has already validated its
         // ticket against this ledger.
         auto rememberPage(annotation::ResolvedPage page) -> void;
+
+        // How many text reads the open cycle has already spent, and the charge
+        // for one more. Same precondition as observation().
+        //
+        // The count is the ledger's rather than the caller's because the ledger
+        // is what a cycle IS: a counter kept beside it would have to be reset by
+        // whoever noticed the cycle changed, and nothing would check that it was.
+        [[nodiscard]] auto readsCharged() const noexcept -> uint32;
+
+        auto chargeRead() noexcept -> void;
 
         // The page the open cycle resolved, or empty when it has resolved none.
         // Same precondition as observation().

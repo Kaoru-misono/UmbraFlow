@@ -379,6 +379,11 @@ namespace uf::ocr
             std::string m_inputName;
             std::string m_outputName;
 
+            // "onnxruntime/<recognition model file name>". The runtime and the
+            // weights together are what decides how a line decodes, so a trace
+            // that names only one of them still cannot explain a changed result.
+            std::string m_identity;
+
             [[nodiscard]]
             auto recognizeLine(
                 BgraImage const& image,
@@ -468,7 +473,8 @@ namespace uf::ocr
                 Ort::Session recognition,
                 std::vector<std::string> characters,
                 std::string inputName,
-                std::string outputName
+                std::string outputName,
+                std::string identity
             ) noexcept
                 : m_environment{std::move(environment)}
                 , m_sessionOptions{std::move(sessionOptions)}
@@ -476,7 +482,14 @@ namespace uf::ocr
                 , m_characters{std::move(characters)}
                 , m_inputName{std::move(inputName)}
                 , m_outputName{std::move(outputName)}
+                , m_identity{std::move(identity)}
             {
+            }
+
+            [[nodiscard]]
+            auto identity() const noexcept -> std::string_view override
+            {
+                return m_identity;
             }
 
             [[nodiscard]]
@@ -589,7 +602,8 @@ namespace uf::ocr
                 std::move(session),
                 std::move(characters),
                 std::move(inputName),
-                std::move(outputName)
+                std::move(outputName),
+                "onnxruntime/" + config.recognitionModel.filename().string()
             );
         }
         catch (Ort::Exception const& error)

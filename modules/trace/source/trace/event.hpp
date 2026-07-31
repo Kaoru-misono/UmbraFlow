@@ -139,6 +139,7 @@ namespace uf::trace
         EngineObserved,
         EnginePageResolved,
         EngineActionFound,
+        EngineTextRead,
         EngineActionAuthorized,
         EngineActionRejected,
         EngineActionDelivered,
@@ -252,6 +253,34 @@ namespace uf::trace
             std::optional<PixelRect> matchedRect{};
         };
 
+        // What one text read produced.
+        //
+        // Every member is load-bearing evidence rather than colour, because
+        // reading is the one capability with no score to explain itself: the
+        // rectangle is the only "where", the text is what was decoded, the
+        // confidence is how a later reader tells a real line from a guess, the
+        // engine identity is what makes an old run reproducible after the model
+        // changes, and the duration is what the millisecond-scale budget is spent
+        // against. See the annotation-model plan, section 4.2.7.
+        struct Reading final
+        {
+            std::string text{};
+
+            PixelRect rect;
+
+            uint32 confidenceBp{};
+
+            // Which recogniser produced the text, engine and model together. A
+            // different model spells the same pixels differently, so a line that
+            // does not name it cannot be replayed.
+            std::string engineId{};
+
+            // Microseconds rather than milliseconds: a single-line read measured
+            // 2-13 ms, so whole milliseconds would round most reads to one or two
+            // distinct values and lose the distribution the budget is set from.
+            uint64 durationMicros{};
+        };
+
         // What this run is: the addressed task, the bytes it was compiled from,
         // the trusted framework and Luau compiler those bytes ran on, and the seed
         // its RNG draws from. Every member is always supplied together on
@@ -314,6 +343,22 @@ namespace uf::trace
             // a detail: a run that paused two seconds and one that paused ten are
             // different runs. Absent on every other verb.
             std::optional<uint64> durationMillis{};
+
+            // The project file a project_read or project_write named, as the
+            // script spelled it. It is the confined relative name and never the
+            // resolved absolute path: the path is the host's own layout, while
+            // the name is what the script asked for and therefore what a refusal
+            // is about.
+            std::optional<std::string> resourceName{};
+
+            // How many bytes the call read or wrote, and the SHA-256 of those
+            // bytes. Together they are what makes a run replayable across a
+            // project file that changed underneath it: the same task over
+            // different bytes is a different run, and nothing else in the stream
+            // would say so. Present on project_read, project_write and
+            // template_load.
+            std::optional<uint64>      byteCount{};
+            std::optional<std::string> contentHash{};
         };
 
         // One framework semantic event's payload. The framework asks for these
@@ -357,6 +402,7 @@ namespace uf::trace
 
         std::optional<Page>       page{};
         std::optional<Action>     action{};
+        std::optional<Reading>    reading{};
         std::optional<Run>        run{};
         std::optional<Resources>  resources{};
         std::optional<NativeCall> nativeCall{};
@@ -367,11 +413,17 @@ namespace uf::trace
         // search stopped early; how the run ended; and the failure detail any
         // event may carry.
         std::optional<annotation::ElementId> elementId{};
-        std::optional<SadSearchStopReason>   stopReason{};
-        std::optional<RunOutcome>            runOutcome{};
-        std::optional<AutomationErrorKind>   errorKind{};
-        std::optional<std::string>           message{};
-        std::optional<Point<ClientSpace>>    clickClient{};
+
+        // The SHA-256 of the template a raw match searched for. It replaces
+        // elementId on that path: a template the script layer loaded belongs to
+        // no catalog element, so its content hash is the only name it has.
+        std::optional<std::string> templateHash{};
+
+        std::optional<SadSearchStopReason> stopReason{};
+        std::optional<RunOutcome>          runOutcome{};
+        std::optional<AutomationErrorKind> errorKind{};
+        std::optional<std::string>         message{};
+        std::optional<Point<ClientSpace>>  clickClient{};
 
         // The key one engine.key_delivered posted, as the target's UI prints it.
         // It is the whole content of that event: a keystroke names no coordinate,

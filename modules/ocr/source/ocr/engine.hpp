@@ -3,11 +3,13 @@
 #include "text.hpp"
 
 #include <core/error/result.hpp>
+#include <core/safety/annotations.hpp>
 #include <core/types/integer.hpp>
 
 #include <domain/space.hpp>
 
 #include <optional>
+#include <string_view>
 
 namespace uf
 {
@@ -72,6 +74,18 @@ namespace uf::ocr
         auto operator=(IOcrEngine&&) -> IOcrEngine& = delete;
 
         virtual ~IOcrEngine() = default;
+
+        // What produced the text: the runtime and the model together, in one
+        // stable string.
+        //
+        // It is on the port rather than left to the caller because only the
+        // adapter knows which weights it loaded, and a trace line that does not
+        // name them cannot be replayed once the model changes -- the same pixels
+        // decode differently and nothing else in the stream would say why. The
+        // view is valid for the engine's lifetime, which is the only borrow an
+        // engine hands out.
+        [[nodiscard]]
+        virtual auto identity() const noexcept UF_LIFETIME_BOUND -> std::string_view = 0;
 
         // Reads `spec`'s region of `image`.
         //

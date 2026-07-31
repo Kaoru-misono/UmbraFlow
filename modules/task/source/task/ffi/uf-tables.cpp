@@ -2,6 +2,7 @@
 #include <task/cycle-ledger.hpp>
 #include <task/native-call-trace.hpp>
 #include <task/task-context.hpp>
+#include <task/template-store.hpp>
 
 #include <core/error/error.hpp>
 #include <core/error/result.hpp>
@@ -11,11 +12,13 @@
 #include <core/types/enum-reflection.hpp>
 #include <core/types/integer.hpp>
 
+#include <annotation/content-hash.hpp>
 #include <annotation/resource.hpp>
 #include <annotation/recognition.hpp>
 
 #include <domain/error.hpp>
 #include <domain/key.hpp>
+#include <domain/space.hpp>
 
 #include <engine/session.hpp>
 
@@ -28,6 +31,7 @@
 #include <memory>
 #include <optional>
 #include <ratio>
+#include <span>
 #include <string>
 #include <string_view>
 #include <type_traits>
@@ -78,8 +82,18 @@ namespace uf::task
         constexpr auto k_cycleType        = "uf.cycle";
         constexpr auto k_resolvedPageType = "uf.resolved_page";
         constexpr auto k_hitType          = "uf.hit";
+        constexpr auto k_templateType     = "uf.template";
         constexpr auto k_deadlineType     = "uf.deadline";
         constexpr auto k_errorType        = "uf.error";
+
+        // The two kinds that carry READABLE fields, and so cannot share a
+        // registered metatable: the score a match reports and the text a read
+        // produces are per instance, and the design restricts __index to a table,
+        // so each instance needs its own metatable exactly as a Tier B error
+        // carrier does. Their identity to C++ is a userdata tag rather than a
+        // registry entry, for the same reason.
+        constexpr auto k_matchType   = "uf.match";
+        constexpr auto k_readingType = "uf.reading";
 
         // The single global name the DATA installer registers, and therefore the
         // one host name the project environment whitelists. Spelled once here so
@@ -113,6 +127,16 @@ namespace uf::task
         constexpr auto k_errorUserdataTag = 1;
         static_assert(k_errorUserdataTag > 0 && k_errorUserdataTag < LUA_UTAG_LIMIT);
 
+        // The tags the two field-carrying handle kinds are minted under, on the
+        // same reasoning as the error carrier's: a tag is VM state that a script
+        // cannot copy onto a value it built, so it is the whole of how C++
+        // recognizes a match handed back to cycle_click.
+        constexpr auto k_matchUserdataTag = 2;
+        static_assert(k_matchUserdataTag > 0 && k_matchUserdataTag < LUA_UTAG_LIMIT);
+
+        constexpr auto k_readingUserdataTag = 3;
+        static_assert(k_readingUserdataTag > 0 && k_readingUserdataTag < LUA_UTAG_LIMIT);
+
         // Pushes an error kind's wire spelling as a Lua string. The domain returns
         // a view rather than a C string, so push it with its length instead of
         // relying on the literal's terminator.
@@ -145,6 +169,21 @@ namespace uf::task
             uint64              cycleOrdinal{};
             engine::ActionFound action;
         };
+
+        // What a match handle carries, on the same reasoning as HitBox: the
+        // ordinal of the cycle that produced it plus the position C++ will
+        // deliver to. The score and the ceiling ALSO reach the script, through
+        // the handle's frozen fields, because judging a score is the trusted
+        // framework's job now and it cannot judge what it cannot read.
+        //
+        // Trivially destructible, which is what lets it be a tagged userdata and
+        // therefore recognizable to C++ by tag rather than by metatable.
+        struct MatchBox final
+        {
+            uint64             cycleOrdinal{};
+            engine::MatchFound found;
+        };
+        static_assert(std::is_trivially_destructible_v<MatchBox>);
 
         // Runs at VM garbage collection to destroy the value placement-constructed
         // into a handle by pushBoxed.
@@ -458,6 +497,82 @@ namespace uf::task
             raiseTierB(state, kind, std::string{error.message()});
         }
 
+        // Starts one field-carrying handle: mints a tagged userdata holding
+        // `value` and pushes an empty field table above it. The caller fills the
+        // fields with scalars and then calls finishFieldHandle.
+        //
+        // It is split in two because the fields differ per kind while the
+        // freezing and the metatable shape do not, and that shape is the part
+        // that must not be reinvented: __index a table and never a function, a
+        // __metatable label, and frozen before anything wears it.
+        template <typename T>
+        auto beginFieldHandle(lua_State* state, T value, int tag) -> void
+        {
+            // SAFETY: lua_newuserdatatagged allocates sizeof(T) VM-owned bytes,
+            // aligned as lua_newuserdatadtor's blocks are (see pushBoxed), and T
+            // is trivially destructible here, so no destructor has to be
+            // registered for the tag and nothing leaks when the VM frees the
+            // block. No Lua allocation runs between the allocation and the
+            // construction, so a collection can never see the block
+            // uninitialised.
+            static_assert(std::is_trivially_destructible_v<T>);
+            static_assert(alignof(T) <= 16);
+            void* storage = lua_newuserdatatagged(state, sizeof(T), tag);
+            std::construct_at(static_cast<T*>(storage), std::move(value));
+
+            lua_createtable(state, 0, 8);
+        }
+
+        // Freezes the field table on the stack top into a per-instance metatable,
+        // attaches it to the carrier beneath, and leaves only the carrier.
+        auto finishFieldHandle(
+            lua_State* state,
+            TaskContext* context,
+            char const* label
+        ) -> void
+        {
+            int const fields  = lua_gettop(state);
+            int const carrier = fields - 1;
+
+            lua_createtable(state, 0, 4);
+            int const metatable = lua_gettop(state);
+
+            lua_pushvalue(state, fields);
+            lua_setfield(state, metatable, "__index");
+
+            lua_pushcfunction(state, &denyWrite, "uf_handle_newindex");
+            lua_setfield(state, metatable, "__newindex");
+
+            lua_pushstring(state, label);
+            lua_pushcclosure(state, &handleToString, "uf_handle_tostring", 1);
+            lua_setfield(state, metatable, "__tostring");
+
+            lua_pushstring(state, label);
+            lua_setfield(state, metatable, "__metatable");
+
+            if (!script::deepFreezeMetatable(state, metatable))
+            {
+                // Unreachable while the metatable is the one built directly
+                // above: it carries __metatable and a table __index by
+                // construction. Handing a script a half-frozen object that
+                // answers to a host label would be worse than failing.
+                raiseInvariant(
+                    state,
+                    context,
+                    "a host data handle could not be frozen"
+                );
+            }
+            lua_setmetatable(state, carrier);
+            lua_settop(state, carrier);
+        }
+
+        // Adds one whole-number field to the field table on the stack top.
+        auto addNumberField(lua_State* state, char const* name, uint64 value) -> void
+        {
+            lua_pushnumber(state, static_cast<double>(value));
+            lua_setfield(state, -2, name);
+        }
+
         // Refuses the call outright when a prior verb already latched the
         // generation terminal, so a script that swallowed what was raised cannot
         // drive one more engine verb before the host tears the generation down.
@@ -543,6 +658,114 @@ namespace uf::task
         {
             recordNativeCallFailure(*context, call, error);
             raiseFromError(state, context, error);
+        }
+
+        // Reads a required string argument at `index` as a view into the VM's own
+        // storage. Tier B rather than an invariant failure: every string a
+        // primitive takes -- a project file name, a template blob -- comes from a
+        // project's own data, so a wrong type is an author error to catch.
+        [[nodiscard]]
+        auto checkText(
+            lua_State* state,
+            int index,
+            std::string const& what
+        ) -> std::string_view
+        {
+            if (lua_type(state, index) != LUA_TSTRING)
+            {
+                raiseTierB(
+                    state,
+                    AutomationErrorKind::InvalidResource,
+                    what + " requires a string"
+                );
+            }
+
+            // SAFETY: the value was just confirmed to be a string, so
+            // lua_tolstring performs no conversion and returns the VM-owned bytes
+            // with their length. It stays on the stack for the whole call, so the
+            // view is taken from live storage and never outlives it.
+            std::size_t length = 0;
+            char const* p_text = lua_tolstring(state, index, &length);
+            return std::string_view{p_text, length};
+        }
+
+        // Reads one whole pixel coordinate or extent at `index`.
+        [[nodiscard]]
+        auto checkPixelExtent(
+            lua_State* state,
+            int index,
+            std::string const& what
+        ) -> uint32
+        {
+            if (lua_type(state, index) != LUA_TNUMBER)
+            {
+                raiseTierB(
+                    state,
+                    AutomationErrorKind::InvalidResource,
+                    what + " requires a number"
+                );
+            }
+            auto const value = checkedIntegralCast<uint32>(lua_tonumber(state, index));
+            if (!value)
+            {
+                raiseTierB(
+                    state,
+                    AutomationErrorKind::InvalidResource,
+                    what + " must be a whole, non-negative pixel count within range"
+                );
+            }
+            return *value;
+        }
+
+        // Reads four numbers starting at `first` as one rectangle.
+        //
+        // Four scalars rather than one table, because section 5's second
+        // invariant admits only host-minted handles and scalars as primitive
+        // arguments and a Luau table is neither. The trusted framework wraps this
+        // back into whatever shape its own callers want.
+        [[nodiscard]]
+        auto checkPixelRect(
+            lua_State* state,
+            int first,
+            std::string const& what
+        ) -> PixelRect
+        {
+            auto const x      = checkPixelExtent(state, first, what + " x");
+            auto const y      = checkPixelExtent(state, first + 1, what + " y");
+            auto const width  = checkPixelExtent(state, first + 2, what + " width");
+            auto const height = checkPixelExtent(state, first + 3, what + " height");
+
+            auto const rect = PixelRect::create(x, y, width, height);
+            if (!rect)
+            {
+                raiseTierB(
+                    state,
+                    kindOf(rect.error()),
+                    std::string{rect.error().message()}
+                );
+            }
+            return *rect;
+        }
+
+        // The match handle at `index`, or null when that value is not one. The
+        // test is the userdata tag and nothing else, exactly as for a Tier B
+        // error carrier: a script-built look-alike carrying the same fields is
+        // not a match here however faithfully it copies one.
+        [[nodiscard]]
+        auto matchBoxAt(lua_State* state, int index) -> MatchBox const*
+        {
+            if (lua_type(state, index) != LUA_TUSERDATA)
+            {
+                return nullptr;
+            }
+            if (lua_userdatatag(state, index) != k_matchUserdataTag)
+            {
+                return nullptr;
+            }
+            // SAFETY: the tag is stamped by the VM at creation and cannot be set
+            // from script, and cycle_match below is the only place that stamps
+            // this one, so the block holds exactly one live MatchBox.
+            return static_cast<MatchBox const*>(lua_touserdata(state, index));
         }
 
         // Every primitive below is a plain function of the private capability
@@ -703,7 +926,295 @@ namespace uf::task
             return 1;
         }
 
-        // cycle_click(ticket, hit) -> (). Consumes the cycle and delivers
+        // template_load(blob) -> template handle. Decodes one template PNG once
+        // and names the result for the rest of this generation.
+        //
+        // Handle-based rather than decode-per-match, and that is a decision
+        // rather than an optimisation: a wait loop matching one template per poll
+        // would otherwise pay a PNG decode per poll, and since decoding is
+        // deterministic, repeating it can only cost time and never change an
+        // answer. Loading the same bytes twice returns the same handle, so a
+        // script's load order cannot change what it ends up holding.
+        auto templateLoadFn(lua_State* state) -> int
+        {
+            auto* context = boundContext(state);
+            guardFatal(state, context);
+
+            auto const blob  = checkText(state, 1, "template_load");
+            auto const bytes = std::as_bytes(std::span{blob});
+
+            auto result = context->loadTemplate(bytes);
+            if (!result)
+            {
+                auto const failed = NativeCallIdentity{
+                    .verb      = "template_load",
+                    .byteCount = static_cast<uint64>(bytes.size()),
+                };
+                traceHostCallFailure(state, context, failed, result.error());
+            }
+
+            auto const hashText = result->hash.toString();
+            auto const call     = NativeCallIdentity{
+                .verb        = "template_load",
+                .byteCount   = static_cast<uint64>(bytes.size()),
+                .contentHash = hashText,
+            };
+            traceHostCall(state, context, call, trace::NativeCallOutcome::Succeeded);
+            pushBoxed<TemplateTicket>(
+                state,
+                result->ticket,
+                &destroyBox<TemplateTicket>,
+                k_templateType
+            );
+            return 1;
+        }
+
+        // cycle_match(ticket, template, x, y, width, height) -> match handle, or
+        // nil when the region held no candidate position at all.
+        //
+        // It reports the distance and the ceiling and judges NEITHER. Whether a
+        // score counts as a hit is the trusted framework's, which is the whole
+        // content of "scores stay in layer one, judging moves to layer two"; the
+        // handle carries `score` and `maximum` so the framework has something to
+        // judge with. A budget, deadline or cancel stop RAISES rather than
+        // returning nil: a search that stopped looking has established nothing.
+        auto cycleMatchFn(lua_State* state) -> int
+        {
+            auto* context = boundContext(state);
+            guardFatal(state, context);
+
+            auto* ticket = checkBox<CycleTicket>(state, 1, k_cycleType, "cycle");
+            auto* templateTicket =
+                checkBox<TemplateTicket>(state, 2, k_templateType, "template");
+            auto const searchRoi = checkPixelRect(state, 3, "cycle_match region");
+
+            auto const call = NativeCallIdentity{
+                .verb         = "cycle_match",
+                .cycleOrdinal = ticket->ordinal,
+            };
+
+            auto result = context->cycleMatch(*ticket, *templateTicket, searchRoi);
+            if (!result)
+            {
+                traceHostCallFailure(state, context, call, result.error());
+            }
+
+            auto const found = *result;
+            if (!found.has_value())
+            {
+                traceHostCall(state, context, call, trace::NativeCallOutcome::Empty);
+                lua_pushnil(state);
+                return 1;
+            }
+            traceHostCall(state, context, call, trace::NativeCallOutcome::Succeeded);
+
+            beginFieldHandle<MatchBox>(
+                state,
+                MatchBox{
+                    .cycleOrdinal = ticket->ordinal,
+                    .found        = *found,
+                },
+                k_matchUserdataTag
+            );
+            addNumberField(state, "x", found->matchedRect.x());
+            addNumberField(state, "y", found->matchedRect.y());
+            addNumberField(state, "width", found->matchedRect.width());
+            addNumberField(state, "height", found->matchedRect.height());
+            addNumberField(state, "click_x", found->clickPixel.x());
+            addNumberField(state, "click_y", found->clickPixel.y());
+            addNumberField(state, "score", found->sadScore);
+            addNumberField(state, "maximum", found->maximumSad);
+            finishFieldHandle(state, context, k_matchType);
+            return 1;
+        }
+
+        // cycle_read(ticket, x, y, width, height) -> reading handle, or nil when
+        // the region held no text.
+        //
+        // It takes no expected text. Whether a reading matches what a page model
+        // hoped for -- full width against half width, traditional against
+        // simplified, contains against equals -- is policy, and a wrong answer
+        // there only picks a different already-authorised target. The host owns
+        // no part of that rule, so there is no parameter for it.
+        //
+        // The handle carries `confidence` beside `text` because reading is the
+        // one capability that fails OPEN: a rectangle pointed at the wrong place
+        // returns plausible text rather than nothing, and without a confidence a
+        // script cannot tell a real line from a guess.
+        auto cycleReadFn(lua_State* state) -> int
+        {
+            auto* context = boundContext(state);
+            guardFatal(state, context);
+
+            auto* ticket   = checkBox<CycleTicket>(state, 1, k_cycleType, "cycle");
+            auto const rect = checkPixelRect(state, 2, "cycle_read region");
+
+            auto const call = NativeCallIdentity{
+                .verb         = "cycle_read",
+                .cycleOrdinal = ticket->ordinal,
+            };
+
+            auto result = context->cycleRead(*ticket, rect);
+            if (!result)
+            {
+                traceHostCallFailure(state, context, call, result.error());
+            }
+
+            auto reading = *std::move(result);
+            if (!reading.has_value())
+            {
+                traceHostCall(state, context, call, trace::NativeCallOutcome::Empty);
+                lua_pushnil(state);
+                return 1;
+            }
+            traceHostCall(state, context, call, trace::NativeCallOutcome::Succeeded);
+
+            // The carrier holds no payload: nothing in C++ ever reads a reading
+            // back, so the fields below are the whole of it. A single byte is the
+            // smallest block the VM will hand out.
+            beginFieldHandle<uint8>(state, uint8{0}, k_readingUserdataTag);
+            lua_pushlstring(state, reading->text.data(), reading->text.size());
+            lua_setfield(state, -2, "text");
+            addNumberField(state, "confidence", reading->confidenceBp);
+            addNumberField(state, "x", reading->rect.x());
+            addNumberField(state, "y", reading->rect.y());
+            addNumberField(state, "width", reading->rect.width());
+            addNumberField(state, "height", reading->rect.height());
+            finishFieldHandle(state, context, k_readingType);
+            return 1;
+        }
+
+        // project_read(name) -> blob. Reads one file from the generation's own
+        // project directory.
+        //
+        // It is NOT cycle-scoped, and deliberately so: a page model is loaded
+        // before any observation exists, and requiring an open cycle would make a
+        // captured frame a precondition for reading a file. Confinement to the
+        // project directory is ProjectFileStore's, and it is the whole of what
+        // keeps `name` from reaching the rest of the disk.
+        auto projectReadFn(lua_State* state) -> int
+        {
+            auto* context = boundContext(state);
+            guardFatal(state, context);
+
+            auto const name = checkText(state, 1, "project_read");
+
+            auto result = context->projectRead(name);
+            if (!result)
+            {
+                auto const failed = NativeCallIdentity{
+                    .verb         = "project_read",
+                    .resourceName = name,
+                };
+                traceHostCallFailure(state, context, failed, result.error());
+            }
+
+            auto const hash = annotation::sha256(*result);
+            if (!hash)
+            {
+                raiseInvariant(
+                    state,
+                    context,
+                    "the bytes read from a project file could not be hashed"
+                );
+            }
+            auto const hashText = hash->toString();
+            auto const call     = NativeCallIdentity{
+                .verb         = "project_read",
+                .resourceName = name,
+                .byteCount    = static_cast<uint64>(result->size()),
+                .contentHash  = hashText,
+            };
+            traceHostCall(state, context, call, trace::NativeCallOutcome::Succeeded);
+
+            // SAFETY: reinterpreting the byte buffer as characters for one
+            // lua_pushlstring call. Lua copies the bytes into VM-owned string
+            // storage before returning, so no view survives this statement.
+            auto const* p_chars = reinterpret_cast<char const*>(result->data());
+            lua_pushlstring(state, p_chars, result->size());
+            return 1;
+        }
+
+        // project_write(name, blob) -> (). Writes one file into the generation's
+        // own project directory, replacing it if it is already there.
+        //
+        // Replacing rather than refusing an existing file is the difference from
+        // the input agent's output confinement, which shares this shape: an agent
+        // capture must be a file that does not exist yet, while a page model is
+        // rewritten every time it changes.
+        auto projectWriteFn(lua_State* state) -> int
+        {
+            auto* context = boundContext(state);
+            guardFatal(state, context);
+
+            auto const name  = checkText(state, 1, "project_write");
+            auto const blob  = checkText(state, 2, "project_write contents");
+            auto const bytes = std::as_bytes(std::span{blob});
+
+            auto const hash = annotation::sha256(bytes);
+            if (!hash)
+            {
+                raiseInvariant(
+                    state,
+                    context,
+                    "the bytes handed to a project write could not be hashed"
+                );
+            }
+            auto const hashText = hash->toString();
+            auto const call     = NativeCallIdentity{
+                .verb         = "project_write",
+                .resourceName = name,
+                .byteCount    = static_cast<uint64>(bytes.size()),
+                .contentHash  = hashText,
+            };
+
+            auto const status = context->projectWrite(name, bytes);
+            if (!status)
+            {
+                traceHostCallFailure(state, context, call, status.error());
+            }
+            traceHostCall(state, context, call, trace::NativeCallOutcome::Succeeded);
+            return 0;
+        }
+
+        // cycle_click_point(ticket, x, y) -> (). Consumes the cycle and delivers
+        // a click at a bare coordinate.
+        //
+        // THIS IS THE PRIVILEGE THE FRAMEWORK HOLDS AND A PROJECT NEVER SEES. It
+        // is a separate primitive rather than an argument shape on cycle_click
+        // because the trusted framework gates it: the business environment is
+        // handed wrappers that click an annotated element, and this name is not
+        // on anything a project can reach. What C++ still enforces is the rest of
+        // the fence -- this ticket's frame, the observation's lease, the project
+        // fingerprint, and one delivery per cycle.
+        auto cycleClickPointFn(lua_State* state) -> int
+        {
+            auto* context = boundContext(state);
+            guardFatal(state, context);
+
+            auto* ticket = checkBox<CycleTicket>(state, 1, k_cycleType, "cycle");
+            auto const x = checkPixelExtent(state, 2, "cycle_click_point x");
+            auto const y = checkPixelExtent(state, 3, "cycle_click_point y");
+
+            auto const call = NativeCallIdentity{
+                .verb         = "cycle_click_point",
+                .cycleOrdinal = ticket->ordinal,
+            };
+
+            auto result = context->cycleClickPoint(
+                *ticket,
+                std::nullopt,
+                PixelPoint{x, y}
+            );
+            if (!result)
+            {
+                traceHostCallFailure(state, context, call, result.error());
+            }
+            traceHostCall(state, context, call, trace::NativeCallOutcome::Succeeded);
+            return 0;
+        }
+
+        // cycle_click(ticket, hit | match) -> (). Consumes the cycle and delivers
         // the click.
         //
         // There is deliberately NO page argument. The host requires that this
@@ -715,6 +1226,13 @@ namespace uf::task
         // than a refusal on the merits; ActionRejected stays for a page that DID
         // resolve and does not authorise the element.
         //
+        // A MATCH is accepted beside a hit, and takes the point path instead: a
+        // template loaded by the script layer belongs to no catalog element, so
+        // there is no page reference to authorise and no element to name. The
+        // other three requisites are unchanged, including the same-frame ordinal
+        // check -- which is why a match from a spent cycle is refused here rather
+        // than delivered.
+        //
         // Both ordinals reach the wire: they agree on every delivered click, and
         // differ exactly when a hit from a spent cycle was refused.
         auto cycleClickFn(lua_State* state) -> int
@@ -723,7 +1241,33 @@ namespace uf::task
             guardFatal(state, context);
 
             auto* ticket = checkBox<CycleTicket>(state, 1, k_cycleType, "cycle");
-            auto* hit    = checkBox<HitBox>(state, 2, k_hitType, "hit");
+
+            if (auto const* p_match = matchBoxAt(state, 2))
+            {
+                auto const matchCall = NativeCallIdentity{
+                    .verb            = "cycle_click",
+                    .cycleOrdinal    = ticket->ordinal,
+                    .hitCycleOrdinal = p_match->cycleOrdinal,
+                };
+                auto matched = context->cycleClickPoint(
+                    *ticket,
+                    p_match->cycleOrdinal,
+                    p_match->found.clickPixel
+                );
+                if (!matched)
+                {
+                    traceHostCallFailure(state, context, matchCall, matched.error());
+                }
+                traceHostCall(
+                    state,
+                    context,
+                    matchCall,
+                    trace::NativeCallOutcome::Succeeded
+                );
+                return 0;
+            }
+
+            auto* hit = checkBox<HitBox>(state, 2, k_hitType, "hit or match");
 
             auto const call = NativeCallIdentity{
                 .verb              = "cycle_click",
@@ -1505,7 +2049,9 @@ namespace uf::task
         // The Tier B error carrier is absent on purpose. Its metatable is per
         // instance -- it holds that error's own kind, message and retryable
         // behind a table __index -- so there is nothing shared to register here,
-        // and its identity is the userdata tag rather than a registry entry.
+        // and its identity is the userdata tag rather than a registry entry. The
+        // match and reading handles are absent for exactly that reason too: both
+        // carry per-instance fields, so both wear a metatable of their own.
         //
         // Only the resolved page carries a method. A ticket and a hit are pure
         // names the host hands back to itself, so every operation on a cycle is a
@@ -1518,6 +2064,9 @@ namespace uf::task
 
             beginMetatable(state, k_hitType);
             UF_TRY(finishMetatable(state, k_hitType));
+
+            beginMetatable(state, k_templateType);
+            UF_TRY(finishMetatable(state, k_templateType));
 
             beginMetatable(state, k_deadlineType);
             UF_TRY(finishMetatable(state, k_deadlineType));
@@ -1680,9 +2229,57 @@ namespace uf::task
             installPrimitive(
                 state,
                 surface,
+                "cycle_match",
+                &cycleMatchFn,
+                "uf_cycle_match",
+                context
+            );
+            installPrimitive(
+                state,
+                surface,
+                "cycle_read",
+                &cycleReadFn,
+                "uf_cycle_read",
+                context
+            );
+            installPrimitive(
+                state,
+                surface,
                 "cycle_click",
                 &cycleClickFn,
                 "uf_cycle_click",
+                context
+            );
+            installPrimitive(
+                state,
+                surface,
+                "cycle_click_point",
+                &cycleClickPointFn,
+                "uf_cycle_click_point",
+                context
+            );
+            installPrimitive(
+                state,
+                surface,
+                "template_load",
+                &templateLoadFn,
+                "uf_template_load",
+                context
+            );
+            installPrimitive(
+                state,
+                surface,
+                "project_read",
+                &projectReadFn,
+                "uf_project_read",
+                context
+            );
+            installPrimitive(
+                state,
+                surface,
+                "project_write",
+                &projectWriteFn,
+                "uf_project_write",
                 context
             );
             installPrimitive(state, surface, "key", &keyFn, "uf_key", context);

@@ -149,6 +149,7 @@ if(TARGET ${PROJECT_NAME}_task)
             task/test-framework-context.cpp
             task/test-framework-surface.cpp
             task/test-operator-front-end.cpp
+            task/test-script-owned-primitives.cpp
             task/test-semantic-events.cpp
             task/test-veto-blocking.cpp
             task/test-task-loader.cpp

@@ -12,6 +12,10 @@
 
 #include <engine/ports.hpp>
 
+#include <ocr/engine.hpp>
+
+#include <task/task-context.hpp>
+
 #include <trace/event.hpp>
 
 #include <filesystem>
@@ -78,11 +82,22 @@ namespace uf::task
         std::unique_ptr<engine::IFrameSource> frameSource{};
         std::unique_ptr<engine::IActionSink>  actionSink{};
 
+        // The OCR adapter cycle_read runs on, or null for a run that never reads
+        // text. It is null by default because the weights are tens of megabytes:
+        // a run that reads nothing must not pay for them, and cycle_read refuses
+        // on its own terms rather than the run refusing to start.
+        std::unique_ptr<ocr::IOcrEngine> ocrEngine{};
+
         annotation::ProjectFingerprint liveFingerprint;
 
         uint64                     maximumPixelComparisons{};
         MonotonicInstant::Duration recognitionTimeout{};
         MonotonicInstant::Duration maxActionFrameAge{k_defaultMaxActionFrameAge};
+
+        // The per-cycle text-read budget. It is a separate dimension from
+        // maximumPixelComparisons on purpose; see k_defaultMaximumReadsPerCycle
+        // in task/task-context.hpp for why the two cannot share a pool.
+        uint32 maximumReadsPerCycle{k_defaultMaximumReadsPerCycle};
 
         // There is no page-wait budget here. How long a task waits for a page
         // and how often it re-observes are decided by the task, in Luau, where

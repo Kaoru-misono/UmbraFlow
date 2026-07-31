@@ -2,6 +2,9 @@
 
 #include <core/error/contracts.hpp>
 #include <core/error/result.hpp>
+#include <core/numeric/checked-arithmetic.hpp>
+#include <core/numeric/checked-cast.hpp>
+#include <core/safety/checked-access.hpp>
 #include <core/time/monotonic-time.hpp>
 #include <core/types/integer.hpp>
 
@@ -17,12 +20,23 @@
 #include <domain/key.hpp>
 #include <domain/space.hpp>
 
+#include <ocr/engine.hpp>
+
 #include <trace/event.hpp>
 #include <trace/recorder.hpp>
 
+#include <vision/bgra-image.hpp>
+#include <vision/sad.hpp>
+
+#include <algorithm>
+#include <chrono>
+#include <cstddef>
 #include <format>
+#include <functional>
 #include <optional>
 #include <string>
+#include <string_view>
+#include <type_traits>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -52,6 +66,91 @@ namespace uf::engine
                 .kind  = kind,
                 .frame = identity,
             };
+        }
+
+        // Hands `continuation` the frame's pixels as a BGRA8 view, widening a
+        // Gray8 frame into a buffer that lives on this stack frame for the whole
+        // synchronous call. It mirrors annotation's withGrayFrame, and for the
+        // same reason: the view must not outlive the storage behind it, and a
+        // continuation is the only shape that says so structurally.
+        //
+        // A Gray8 frame is widened rather than refused because the recognition
+        // path already accepts one, and an OCR read that worked on a colour
+        // capture but not on a grey one would be a difference nothing in the
+        // model explains.
+        template <typename Continuation>
+        [[nodiscard]]
+        auto withBgraFrame(
+            Frame const& frame,
+            Continuation const& continuation
+        ) -> std::invoke_result_t<Continuation const&, BgraImage const&>
+        {
+            auto const p_pixels = frame.pixels();
+            UF_CHECK(p_pixels != nullptr);
+            switch (frame.pixelFormat())
+            {
+            case PixelFormat::Bgra8:
+            {
+                UF_TRY_VALUE(
+                    image,
+                    BgraImage::create(
+                        p_pixels->bytes(),
+                        frame.width(),
+                        frame.height(),
+                        frame.stride()
+                    )
+                );
+                return std::invoke(continuation, image);
+            }
+            case PixelFormat::Gray8:
+            {
+                auto const source     = p_pixels->bytes();
+                auto const widthSize  = checkedCast<std::size_t>(frame.width());
+                auto const heightSize = checkedCast<std::size_t>(frame.height());
+                UF_CHECK(widthSize.has_value() && heightSize.has_value());
+                auto const rowBytes = checkedMultiply(*widthSize, std::size_t{4});
+                UF_CHECK(rowBytes.has_value());
+                auto const total = checkedMultiply(*rowBytes, *heightSize);
+                UF_CHECK(total.has_value());
+
+                auto widened = std::vector<std::byte>(*total, std::byte{0});
+                for (auto row = std::size_t{0}; row < *heightSize; ++row)
+                {
+                    auto const sourceRow = checkedMultiply(row, frame.stride());
+                    UF_CHECK(sourceRow.has_value());
+                    for (auto column = std::size_t{0}; column < *widthSize; ++column)
+                    {
+                        auto const* p_level = tryAt(source, *sourceRow + column);
+                        if (p_level == nullptr)
+                        {
+                            return fail(
+                                AutomationErrorKind::InvalidResource,
+                                "the frame's Gray8 buffer is shorter than its "
+                                "own geometry"
+                            );
+                        }
+                        auto const base = (row * *rowBytes) + (column * 4U);
+                        checkedAt(widened, base)      = *p_level;
+                        checkedAt(widened, base + 1U) = *p_level;
+                        checkedAt(widened, base + 2U) = *p_level;
+                        checkedAt(widened, base + 3U) = std::byte{255};
+                    }
+                }
+
+                UF_TRY_VALUE(
+                    image,
+                    BgraImage::create(
+                        widened,
+                        frame.width(),
+                        frame.height(),
+                        *rowBytes
+                    )
+                );
+                return std::invoke(continuation, image);
+            }
+            }
+
+            UF_UNREACHABLE_MSG("Unknown PixelFormat value");
         }
 
         // The required anchor of `evaluation` that scored worst against its own
@@ -187,6 +286,7 @@ namespace uf::engine
         std::shared_ptr<detail::EngineSessionIdentity const> identity,
         std::unique_ptr<IFrameSource> frameSource,
         std::unique_ptr<IActionSink> actionSink,
+        std::unique_ptr<ocr::IOcrEngine> ocrEngine,
         trace::TraceRecorder& recorder,
         EngineSessionConfig config
     ) noexcept
@@ -194,9 +294,111 @@ namespace uf::engine
         , m_identity{std::move(identity)}
         , m_frameSource{std::move(frameSource)}
         , m_actionSink{std::move(actionSink)}
+        , m_ocrEngine{std::move(ocrEngine)}
         , m_recorder{recorder}
         , m_config{std::move(config)}
     {
+    }
+
+    auto EngineSession::ensureUsable(
+        Observation const& observation,
+        std::string_view verb
+    ) const -> Status
+    {
+        if (observation.m_sessionIdentity != m_identity)
+        {
+            return fail(
+                AutomationErrorKind::InternalInvariant,
+                "observation belongs to a different session"
+            );
+        }
+        if (observation.m_invalidated)
+        {
+            return fail(
+                AutomationErrorKind::StaleObservation,
+                std::format("{} called on an invalidated observation", verb)
+            );
+        }
+        return ok();
+    }
+
+    auto EngineSession::readTextOnFrame(
+        Frame const& frame,
+        PixelRect rect
+    ) const -> Result<ReadAttempt>
+    {
+        if (m_ocrEngine == nullptr)
+        {
+            return fail(
+                AutomationErrorKind::UnsupportedCapability,
+                "this engine session was built without an OCR adapter, so it "
+                "cannot read text"
+            );
+        }
+
+        auto const area = checkedMultiply(
+            static_cast<uint64>(rect.width()),
+            static_cast<uint64>(rect.height())
+        );
+        if (!area || *area == 0U || *area > k_maximumReadPixels)
+        {
+            return fail(
+                AutomationErrorKind::InvalidResource,
+                std::format(
+                    "a read region of {}x{} is empty or beyond the host's "
+                    "single-line read ceiling of {} pixels",
+                    rect.width(),
+                    rect.height(),
+                    k_maximumReadPixels
+                )
+            );
+        }
+
+        auto const started = MonotonicInstant::now();
+        auto       readout = withBgraFrame(
+            frame,
+            [this, rect](BgraImage const& image) -> Result<ocr::Readout>
+            {
+                // SingleLine and never Block. The adapter this project ships
+                // refuses Block because it runs no detector, and the refusal is
+                // the honest answer: the caller asserted the region holds one
+                // line, so asking for detection here would be working around a
+                // contract rather than honouring it.
+                return m_ocrEngine->read(
+                    image,
+                    ocr::ReadSpec{
+                        .rect   = rect,
+                        .layout = ocr::TextLayout::SingleLine,
+                    }
+                );
+            }
+        );
+        auto const elapsed = MonotonicInstant::now().saturatingDurationSince(started);
+        auto const micros  = std::chrono::duration_cast<std::chrono::microseconds>(
+            elapsed
+        ).count();
+        if (!readout)
+        {
+            return std::unexpected{std::move(readout).error()};
+        }
+
+        auto attempt = ReadAttempt{
+            .engineId       = std::string{m_ocrEngine->identity()},
+            .durationMicros = static_cast<uint64>(std::max(micros, int64{0})),
+        };
+        if (!readout->lines.empty())
+        {
+            // The first line, and under SingleLine there is at most one: the
+            // ordering is a contract, so "the first" is the same line on every
+            // run over the same pixels.
+            auto& line   = readout->lines.front();
+            attempt.line = TextReading{
+                .text         = std::move(line.text),
+                .rect         = rect,
+                .confidenceBp = line.confidenceBp,
+            };
+        }
+        return attempt;
     }
 
     auto EngineSession::catalog() const noexcept -> annotation::RecognitionCatalog const&
@@ -230,7 +432,8 @@ namespace uf::engine
         std::unique_ptr<IFrameSource> frameSource,
         std::unique_ptr<IActionSink> actionSink,
         trace::TraceRecorder& recorder,
-        EngineSessionConfig config
+        EngineSessionConfig config,
+        std::unique_ptr<ocr::IOcrEngine> ocrEngine
     ) -> Result<EngineSession>
     {
         if (frameSource == nullptr || actionSink == nullptr)
@@ -246,6 +449,7 @@ namespace uf::engine
             std::make_shared<detail::EngineSessionIdentity>(),
             std::move(frameSource),
             std::move(actionSink),
+            std::move(ocrEngine),
             recorder,
             std::move(config),
         };
@@ -307,20 +511,7 @@ namespace uf::engine
         Observation const& observation
     ) -> Result<annotation::PageOutcome>
     {
-        if (observation.m_sessionIdentity != m_identity)
-        {
-            return fail(
-                AutomationErrorKind::InternalInvariant,
-                "observation belongs to a different session"
-            );
-        }
-        if (observation.m_invalidated)
-        {
-            return fail(
-                AutomationErrorKind::StaleObservation,
-                "resolvePage called on an invalidated observation"
-            );
-        }
+        UF_TRY(ensureUsable(observation, "resolvePage"));
 
         auto const& frame    = observation.m_frame;
         auto const identity = annotation::FrameIdentity::fromFrame(frame);
@@ -408,20 +599,7 @@ namespace uf::engine
         annotation::ElementId elementId
     ) -> Result<std::optional<ActionFound>>
     {
-        if (observation.m_sessionIdentity != m_identity)
-        {
-            return fail(
-                AutomationErrorKind::InternalInvariant,
-                "observation belongs to a different session"
-            );
-        }
-        if (observation.m_invalidated)
-        {
-            return fail(
-                AutomationErrorKind::StaleObservation,
-                "findAction called on an invalidated observation"
-            );
-        }
+        UF_TRY(ensureUsable(observation, "findAction"));
 
         auto const& frame    = observation.m_frame;
         auto const identity = annotation::FrameIdentity::fromFrame(frame);
@@ -530,6 +708,149 @@ namespace uf::engine
         };
     }
 
+    auto EngineSession::matchTemplate(
+        Observation const& observation,
+        annotation::GrayTemplateImage const& templateImage,
+        PixelRect searchRoi
+    ) -> Result<std::optional<MatchFound>>
+    {
+        UF_TRY(ensureUsable(observation, "matchTemplate"));
+
+        auto const& frame    = observation.m_frame;
+        auto const  identity = annotation::FrameIdentity::fromFrame(frame);
+        auto const  hashText = templateImage.hash.toString();
+
+        // The compatibility gate a catalog-driven search gets from inside
+        // evaluateActionTarget. A raw match reaches no catalog entry point, so it
+        // asks for itself rather than being the one search that runs on a frame
+        // the project may not be compared against.
+        auto compatible = m_loadedRuntime.runtime.ensureCompatibleFrame(
+            frame,
+            m_config.liveFingerprint
+        );
+        auto attempt = compatible
+            ? annotation::matchTemplateOnFrame(
+                  frame,
+                  templateImage,
+                  searchRoi,
+                  makeRecognitionPolicy()
+              )
+            : Result<annotation::TemplateMatchAttempt>{
+                  std::unexpected{std::move(compatible).error()}
+              };
+
+        // Every exit writes one engine.action_found whose outcome names how the
+        // search ended, exactly as findAction does; the template hash stands in
+        // for the element id a raw template does not have.
+        if (!attempt)
+        {
+            auto event   = identityEvent(trace::TraceEventKind::EngineActionFound, identity);
+            event.action = trace::TraceEvent::Action{
+                .outcome = trace::ActionSearch::Failed,
+            };
+            event.templateHash = hashText;
+            event.errorKind    = automationErrorKind(attempt.error());
+            event.message      = std::string{attempt.error().message()};
+            UF_TRY(emit(event));
+            return std::unexpected{std::move(attempt).error()};
+        }
+
+        if (
+            auto const* p_stop = std::get_if<SadSearchStopReason>(&attempt->result)
+        )
+        {
+            auto event   = identityEvent(trace::TraceEventKind::EngineActionFound, identity);
+            event.action = trace::TraceEvent::Action{
+                .outcome = trace::ActionSearch::Stopped,
+            };
+            event.templateHash = hashText;
+            event.stopReason   = *p_stop;
+            UF_TRY(emit(event));
+            return fail(
+                annotation::searchStopKind(*p_stop),
+                std::format(
+                    "template match stopped: {}",
+                    annotation::searchStopDescription(*p_stop)
+                )
+            );
+        }
+
+        auto const& match = std::get<std::optional<annotation::TemplateMatch>>(
+            attempt->result
+        );
+        if (!match)
+        {
+            auto event   = identityEvent(trace::TraceEventKind::EngineActionFound, identity);
+            event.action = trace::TraceEvent::Action{
+                .outcome = trace::ActionSearch::Absent,
+            };
+            event.templateHash = hashText;
+            UF_TRY(emit(event));
+            return std::optional<MatchFound>{std::nullopt};
+        }
+
+        // Integer division truncates, so the centre is one reproducible pixel for
+        // both even and odd extents. There is no click offset to add: an offset
+        // is authored on a catalog element, and this template has none.
+        auto const centerX = match->matchedRect.x() + match->matchedRect.width() / 2U;
+        auto const centerY = match->matchedRect.y() + match->matchedRect.height() / 2U;
+
+        auto event   = identityEvent(trace::TraceEventKind::EngineActionFound, identity);
+        event.action = trace::TraceEvent::Action{
+            .outcome     = trace::ActionSearch::Found,
+            .sadScore    = match->sadScore,
+            .maximumSad  = match->maximumSad,
+            .matchedRect = match->matchedRect,
+        };
+        event.templateHash = hashText;
+        UF_TRY(emit(event));
+
+        return std::optional<MatchFound>{
+            MatchFound{
+                .matchedRect = match->matchedRect,
+                .clickPixel  = PixelPoint{centerX, centerY},
+                .sadScore    = match->sadScore,
+                .maximumSad  = match->maximumSad,
+            }
+        };
+    }
+
+    auto EngineSession::readText(
+        Observation const& observation,
+        PixelRect rect
+    ) -> Result<std::optional<TextReading>>
+    {
+        UF_TRY(ensureUsable(observation, "readText"));
+
+        auto const& frame    = observation.m_frame;
+        auto const  identity = annotation::FrameIdentity::fromFrame(frame);
+        auto        reading  = readTextOnFrame(frame, rect);
+        if (!reading)
+        {
+            auto event      = identityEvent(trace::TraceEventKind::EngineTextRead, identity);
+            event.errorKind = automationErrorKind(reading.error());
+            event.message   = std::string{reading.error().message()};
+            UF_TRY(emit(event));
+            return std::unexpected{std::move(reading).error()};
+        }
+
+        auto event     = identityEvent(trace::TraceEventKind::EngineTextRead, identity);
+        event.reading  = trace::TraceEvent::Reading{
+            .text           = reading->line ? reading->line->text : std::string{},
+            .rect           = rect,
+            .confidenceBp   = reading->line ? reading->line->confidenceBp : uint32{0},
+            .engineId       = std::string{reading->engineId},
+            .durationMicros = reading->durationMicros,
+        };
+        UF_TRY(emit(event));
+
+        if (!reading->line)
+        {
+            return std::optional<TextReading>{std::nullopt};
+        }
+        return std::optional<TextReading>{*std::move(reading->line)};
+    }
+
     auto EngineSession::act(
         Observation&& observation,
         annotation::ResolvedPage const& page,
@@ -551,21 +872,8 @@ namespace uf::engine
         // D0: an observation carries the stable identity token of the session
         // that vended it. Acting on a handle from another session is a programming
         // error, so reject it before any other check touches the foreign handle.
-        if (observation.m_sessionIdentity != m_identity)
-        {
-            return fail(
-                AutomationErrorKind::InternalInvariant,
-                "observation belongs to a different session"
-            );
-        }
-
-        if (observation.m_invalidated)
-        {
-            return fail(
-                AutomationErrorKind::StaleObservation,
-                "act called on an invalidated observation"
-            );
-        }
+        // A consumed or moved-from handle is dead on the same terms.
+        UF_TRY(ensureUsable(observation, "act"));
 
         auto const identity = observation.m_frameIdentity;
         auto const delivery = annotation::ActionDeliveryState{
@@ -645,6 +953,101 @@ namespace uf::engine
         };
     }
 
+    auto EngineSession::clickPoint(
+        Observation&& observation,
+        PixelPoint point
+    ) -> Result<ActReceipt>
+    {
+        // The same three fail-closed gates act() opens with, in the same order
+        // and for the same reasons.
+        if (m_config.cancellation.stop_requested())
+        {
+            return fail(
+                AutomationErrorKind::Cancelled,
+                "cancelled before delivery"
+            );
+        }
+        UF_TRY(ensureUsable(observation, "clickPoint"));
+
+        auto const identity = observation.m_frameIdentity;
+
+        // What survives of the coordinate authorization once the element and the
+        // page have moved up a layer: the target must still be the geometry this
+        // project was authored against, and the frame the coordinate was derived
+        // from must still be within its lease. Both are refused here, with zero
+        // sink calls, exactly as authorizeCoordinateAction refuses them.
+        if (m_config.liveFingerprint != catalog().fingerprint())
+        {
+            auto event      = identityEvent(trace::TraceEventKind::EngineActionRejected, identity);
+            event.errorKind = AutomationErrorKind::TargetCompatibilityUnverified;
+            event.message   = std::string{
+                "live size or DPI does not match the annotation project fingerprint"
+            };
+            UF_TRY(emit(event));
+            return fail(
+                AutomationErrorKind::TargetCompatibilityUnverified,
+                "live size or DPI does not match the annotation project fingerprint"
+            );
+        }
+
+        auto lease = observation.m_lease.validate(
+            identity.sessionId(),
+            identity.targetGeneration(),
+            identity.frameId(),
+            MonotonicInstant::now()
+        );
+        if (!lease)
+        {
+            auto event      = identityEvent(trace::TraceEventKind::EngineActionRejected, identity);
+            event.errorKind = automationErrorKind(lease.error());
+            event.message   = std::string{lease.error().message()};
+            UF_TRY(emit(event));
+            return std::unexpected{std::move(lease).error()};
+        }
+
+        UF_TRY(emit(identityEvent(trace::TraceEventKind::EngineActionAuthorized, identity)));
+
+        UF_TRY_VALUE(framePoint, pixelPointToFramePoint(point));
+        auto const clientPoint = observation.m_frame.transform().frameToClient(framePoint);
+
+        auto revalidation = m_frameSource->validateTargetInstance();
+        if (!revalidation)
+        {
+            auto event      = identityEvent(trace::TraceEventKind::EngineActionRejected, identity);
+            event.errorKind = automationErrorKind(revalidation.error());
+            event.message   = std::string{revalidation.error().message()};
+            UF_TRY(emit(event));
+            return std::unexpected{std::move(revalidation).error()};
+        }
+
+        UF_TRY(m_actionSink->click(clientPoint, observation.m_lease));
+
+        // D0/D1: the click has landed, so the handle dies before any fallible
+        // post-click emit, exactly as in act().
+        observation.m_invalidated = true;
+
+        auto clickEvent = identityEvent(
+            trace::TraceEventKind::EngineActionDelivered,
+            identity
+        );
+        clickEvent.clickClient = clientPoint;
+        UF_TRY(emit(clickEvent));
+
+        UF_TRY(
+            emit(
+                identityEvent(
+                    trace::TraceEventKind::EngineObservationInvalidated,
+                    identity
+                )
+            )
+        );
+
+        return ActReceipt{
+            .frameId    = identity.frameId(),
+            .clickPoint = clientPoint,
+        };
+    }
+
     auto EngineSession::pressKey(
         Observation&& observation,
         KeyName key
@@ -661,20 +1064,7 @@ namespace uf::engine
                 "cancelled before key delivery"
             );
         }
-        if (observation.m_sessionIdentity != m_identity)
-        {
-            return fail(
-                AutomationErrorKind::InternalInvariant,
-                "observation belongs to a different session"
-            );
-        }
-        if (observation.m_invalidated)
-        {
-            return fail(
-                AutomationErrorKind::StaleObservation,
-                "pressKey called on an invalidated observation"
-            );
-        }
+        UF_TRY(ensureUsable(observation, "pressKey"));
 
         auto const identity = observation.m_frameIdentity;
 

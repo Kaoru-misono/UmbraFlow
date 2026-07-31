@@ -617,6 +617,41 @@ function ctx:cycle_click(ticket, hit)
     return native.cycle_click(ticket, hit)
 end
 
+-- The script-owned page model's primitives. They forward and decide nothing,
+-- like the block they sit in: the element and page vocabulary that will be built
+-- on top of them is a later change, and putting a policy here now would fix its
+-- shape before anything has used them.
+--
+-- The rectangle is four numbers rather than a table because the private surface
+-- takes only host-minted handles and scalars, and a Luau table is neither.
+function ctx:template_load(blob)
+    return native.template_load(blob)
+end
+
+function ctx:cycle_match(ticket, template, x, y, width, height)
+    return native.cycle_match(ticket, template, x, y, width, height)
+end
+
+function ctx:cycle_read(ticket, x, y, width, height)
+    return native.cycle_read(ticket, x, y, width, height)
+end
+
+-- Clicking a bare coordinate is the framework's privilege and never a project's.
+-- This forward exists so the host's contract can be driven directly, exactly as
+-- the block's other forwards are; the project environment reaches `ctx` but the
+-- wrappers a business task is meant to use are the ones that name an element.
+function ctx:cycle_click_point(ticket, x, y)
+    return native.cycle_click_point(ticket, x, y)
+end
+
+function ctx:project_read(name)
+    return native.project_read(name)
+end
+
+function ctx:project_write(name, blob)
+    return native.project_write(name, blob)
+end
+
 -- Named `key` rather than `cycle_key` because that is the primitive's name on the
 -- private surface, and this block forwards each primitive under its own name. It
 -- takes a ticket like every cycle verb does; what it does not take is a hit.

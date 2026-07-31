@@ -6,5 +6,8 @@ version = 0.1.0
 [build]
 unity_build = false
 
+# ocr is public because the session's constructor names IOcrEngine: reading text
+# off an observation is an engine verb, and the engine binds the port its caller
+# supplies exactly as it binds the frame source and the action sink.
 [dependencies]
-public = core domain annotation trace
+public = core domain annotation ocr trace

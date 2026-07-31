@@ -58,6 +58,18 @@ namespace uf::task
         // before the engine is reached produces no engine line at all and the name
         // is what the refusal was about.
         std::optional<KeyName> key{};
+
+        // The project file a project_read or project_write named, and how many
+        // bytes crossed. Views, like `verb`: the struct never outlives the call
+        // that builds it, and both spellings live on that call's stack.
+        std::optional<std::string_view> resourceName{};
+        std::optional<uint64>           byteCount{};
+
+        // The SHA-256 the call is about: the bytes a project verb moved, the blob
+        // a template_load decoded, or the template a cycle_match searched for. It
+        // is one field rather than three because a line carries at most one of
+        // them and the verb already says which.
+        std::optional<std::string_view> contentHash{};
     };
 
     [[nodiscard]]

@@ -78,6 +78,7 @@ namespace uf::trace
             case TraceEventKind::EngineObserved: return "engine.observed";
             case TraceEventKind::EnginePageResolved: return "engine.page_resolved";
             case TraceEventKind::EngineActionFound: return "engine.action_found";
+            case TraceEventKind::EngineTextRead: return "engine.text_read";
             case TraceEventKind::EngineActionAuthorized: return "engine.action_authorized";
             case TraceEventKind::EngineActionRejected: return "engine.action_rejected";
             case TraceEventKind::EngineActionDelivered: return "engine.action_delivered";
@@ -338,6 +339,24 @@ namespace uf::trace
             {
                 builder.addLiteral("pageScores", serializePageScores(page.scores));
             }
+        }
+
+        auto addReading(
+            TraceLineBuilder& builder,
+            TraceEvent::Reading const& reading
+        ) -> void
+        {
+            builder.addString("text", reading.text);
+            builder.addLiteral("readRect", serializePixelRect(reading.rect));
+            builder.addLiteral(
+                "confidenceBp",
+                std::format("{}", reading.confidenceBp)
+            );
+            builder.addString("ocrEngine", reading.engineId);
+            builder.addLiteral(
+                "readMicros",
+                std::format("{}", reading.durationMicros)
+            );
         }
 
         auto addAction(
@@ -605,6 +624,11 @@ namespace uf::trace
             addAction(builder, *event.action);
         }
 
+        if (event.reading.has_value())
+        {
+            addReading(builder, *event.reading);
+        }
+
         if (event.run.has_value())
         {
             addRun(builder, *event.run);
@@ -643,6 +667,21 @@ namespace uf::trace
                     std::format("{}", *event.nativeCall->durationMillis)
                 );
             }
+            if (event.nativeCall->resourceName.has_value())
+            {
+                builder.addString("resourceName", *event.nativeCall->resourceName);
+            }
+            if (event.nativeCall->byteCount.has_value())
+            {
+                builder.addLiteral(
+                    "byteCount",
+                    std::format("{}", *event.nativeCall->byteCount)
+                );
+            }
+            if (event.nativeCall->contentHash.has_value())
+            {
+                builder.addString("contentHash", *event.nativeCall->contentHash);
+            }
             builder.addString("outcome", nativeCallOutcomeName(event.nativeCall->outcome));
         }
 
@@ -675,6 +714,11 @@ namespace uf::trace
         if (event.elementId.has_value())
         {
             builder.addString("elementId", event.elementId->value().toString());
+        }
+
+        if (event.templateHash.has_value())
+        {
+            builder.addString("templateHash", *event.templateHash);
         }
 
         if (event.stopReason.has_value())
