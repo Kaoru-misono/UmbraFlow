@@ -233,6 +233,11 @@ namespace uf::task
             // page there is no reference to locate it by and no hit to click
             // with. The refusal spends nothing, which the successful click on the
             // very same ticket afterwards proves.
+            //
+            // The kind a script reads is page_unresolved and NOT action_rejected:
+            // the find attempted nothing, so a script can tell "I skipped a step"
+            // from "this page does not authorise this element" and repair the
+            // right one.
             auto built = buildBinding(resolvingFrames(FrameId{19}));
             REQUIRE(built.session.has_value());
             TaskContext context{*std::move(built.session), *built.recorder};
@@ -244,7 +249,10 @@ namespace uf::task
                     return ctx:cycle_find(cycle, uf.recognizers.action_target)
                 end)
                 if ok then return 0 end
-                if err.kind ~= 'action_rejected' then return 0 end
+                if err.kind ~= 'page_unresolved' then return 0 end
+                if err.kind == uf.errors.action_rejected then return 0 end
+                if uf.errors[err.kind] ~= err.kind then return 0 end
+                if err.retryable ~= false then return 0 end
                 if getmetatable(err) ~= 'uf.error' then return 0 end
 
                 -- Resolving the page gives the cycle its evidence, and the very
@@ -259,6 +267,76 @@ namespace uf::task
 
             CHECK(runBound(context, built, source) == doctest::Approx(1.0));
             CHECK(built.clicks->clickCount() == 1);
+        }
+
+        TEST_CASE("A cycle with no page names the skipped step and says why it exists")
+        {
+            // The diagnostic itself, driven through the primitives rather than a
+            // VM because a script only ever sees the kind -- the sentence reaches
+            // an author through the CLI and the trace, and this is where it can be
+            // read back.
+            //
+            // What the message must carry is not "resolve the page first" on its
+            // own, which reads as ceremony an author will look for a way around.
+            // It has to name the three things that live on the page's reference to
+            // the element, because they are the whole reason a find cannot run
+            // without one.
+            auto built = buildBinding(resolvingFrames(FrameId{31}));
+            REQUIRE(built.session.has_value());
+            TaskContext context{*std::move(built.session), *built.recorder};
+
+            auto const elementId = anno::test::elementId(k_actionId);
+
+            auto const first = context.openCycle();
+            REQUIRE(first.has_value());
+
+            auto const refused = context.cycleFind(*first, elementId);
+            REQUIRE_FALSE(refused.has_value());
+            CHECK(
+                automationErrorKind(refused.error())
+                == AutomationErrorKind::PageUnresolved
+            );
+
+            auto const findMessage = refused.error().message();
+            INFO("find message: ", findMessage);
+            CHECK(findMessage.contains("has not resolved a page"));
+            CHECK(findMessage.contains("refined search region"));
+            CHECK(findMessage.contains("pinned appearance"));
+            CHECK(findMessage.contains("interact authorisation"));
+            CHECK(findMessage.contains("Resolve this cycle's page first"));
+
+            // The control for both halves: the one thing missing was the page, so
+            // the very same ticket finds once it has one.
+            auto const page = context.cyclePage(*first);
+            REQUIRE(page.has_value());
+            REQUIRE(page->has_value());
+            auto const found = context.cycleFind(*first, elementId);
+            REQUIRE(found.has_value());
+            REQUIRE(found->has_value());
+            auto const action = **found;
+            CHECK(context.closeCycle(*first));
+
+            // The ledger's click-side guard, which no script can reach: a hit
+            // cannot exist without the page that produced it, so carrying one
+            // across to an unresolved cycle takes C++. It is the same skipped
+            // step, so it carries the same kind -- the click never reached the
+            // authorization that could have rejected it, and nothing was
+            // delivered.
+            auto const second = context.openCycle();
+            REQUIRE(second.has_value());
+            auto const clicked = context.cycleClick(*second, second->ordinal, action);
+            REQUIRE_FALSE(clicked.has_value());
+            CHECK(
+                automationErrorKind(clicked.error())
+                == AutomationErrorKind::PageUnresolved
+            );
+
+            auto const clickMessage = clicked.error().message();
+            INFO("click message: ", clickMessage);
+            CHECK(clickMessage.contains("has not resolved a page"));
+            CHECK(clickMessage.contains("authorization evidence"));
+            CHECK(built.clicks->clickCount() == 0);
+            CHECK(context.closeCycle(*second));
         }
 
         TEST_CASE("The task binding fails every operation on a consumed or closed cycle")

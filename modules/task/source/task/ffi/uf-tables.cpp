@@ -658,6 +658,11 @@ namespace uf::task
         // cycle_find(ticket, recognizer) -> hit handle, or nil for a
         // completed miss (Tier A). A non-recognizer argument is a Tier B
         // InvalidResource.
+        //
+        // It requires the ticket's cycle to have resolved a page already, and
+        // does not resolve one itself; a cycle with none fails Tier B
+        // PageUnresolved. See TaskContext::cycleFind for why the ordering is the
+        // script's to keep rather than the host's to hide.
         auto cycleFindFn(lua_State* state) -> int
         {
             auto* context = boundContext(state);
@@ -706,7 +711,9 @@ namespace uf::task
         // evidence, so a script cannot hand over evidence from another frame:
         // there is no parameter to hand it through, and with at most one cycle
         // open there is no other frame to take it from. A cycle that never
-        // resolved a page fails ActionRejected.
+        // resolved a page fails PageUnresolved, which is the skipped step rather
+        // than a refusal on the merits; ActionRejected stays for a page that DID
+        // resolve and does not authorise the element.
         //
         // Both ordinals reach the wire: they agree on every delivered click, and
         // differ exactly when a hit from a spent cycle was refused.

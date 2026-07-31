@@ -86,6 +86,12 @@ namespace uf
         // count depends on the frame's own pixels, so a later frame can complete
         // where this one ran out.
         case AutomationErrorKind::RecognitionIncomplete: return FailureResponse::Retry;
+        // StepFailed rather than Retry, even though a later frame may well
+        // resolve the page this one did not: the page is resolved ONTO a cycle,
+        // so repeating this same call against this same cycle can never
+        // succeed. Reaching a page means observing again, which is the step
+        // starting over rather than this operation being retried.
+        case AutomationErrorKind::PageUnresolved: return FailureResponse::StepFailed;
         case AutomationErrorKind::ActionRejected: return FailureResponse::StepFailed;
         case AutomationErrorKind::Timeout: return FailureResponse::Abort;
         case AutomationErrorKind::InvalidResource: return FailureResponse::Abort;
@@ -127,6 +133,7 @@ namespace uf
         case AutomationErrorKind::CaptureStalled:                return "capture_stalled";
         case AutomationErrorKind::RecognitionIncomplete:         return "recognition_incomplete";
         case AutomationErrorKind::StaleObservation:              return "stale_observation";
+        case AutomationErrorKind::PageUnresolved:                return "page_unresolved";
         case AutomationErrorKind::ActionRejected:                return "action_rejected";
         case AutomationErrorKind::ControllerDisconnected:        return "controller_disconnected";
         case AutomationErrorKind::InternalInvariant:             return "internal_invariant";

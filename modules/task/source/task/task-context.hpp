@@ -161,6 +161,15 @@ namespace uf::task
         // Searches the frame `ticket`'s cycle retains for one action target. An
         // empty optional is a completed miss (the caller maps it to nil), not a
         // failure.
+        //
+        // RESOLVE THE PAGE BEFORE YOU FIND. The search runs against the page
+        // THIS cycle resolved, because everything a find needs is on the page's
+        // reference to the element -- the refined search region, the pinned
+        // appearance, and the interact authorisation -- so a cycle with no page
+        // fails PageUnresolved. The page is deliberately not resolved on the
+        // caller's behalf: resolution walks the whole anchor order and is the
+        // most expensive part of a cycle, and hiding it here would report a page
+        // that would not resolve as a find that failed.
         [[nodiscard]]
         auto cycleFind(
             CycleTicket ticket,
@@ -174,8 +183,10 @@ namespace uf::task
         // page drawn from another frame: there is no parameter to supply one
         // through, and under the one-cycle rule there is no other frame to draw
         // one from. The four-requisite authorization is therefore satisfied by
-        // construction rather than checked. A cycle that resolved no page has no
-        // evidence and fails ActionRejected.
+        // construction rather than checked. A cycle that has resolved no page
+        // has no evidence and fails PageUnresolved -- the same skipped step
+        // cycleFind names, and not ActionRejected, because a click refused here
+        // never reached the authorization that could have rejected it.
         //
         // `hitCycleOrdinal` is the ordinal the hit handle carries and must be the
         // open cycle's own; anything else names a cycle that no longer exists and

@@ -83,6 +83,7 @@ namespace uf::cli
         case AutomationErrorKind::CaptureStalled:
         case AutomationErrorKind::RecognitionIncomplete:
         case AutomationErrorKind::StaleObservation:
+        case AutomationErrorKind::PageUnresolved:
         case AutomationErrorKind::ActionRejected:
         case AutomationErrorKind::ControllerDisconnected:
         case AutomationErrorKind::InternalInvariant:

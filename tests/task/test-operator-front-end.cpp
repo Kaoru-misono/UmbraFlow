@@ -256,8 +256,10 @@ namespace uf::task
         //
         // The refusal lands on the find rather than the click: authorisation IS
         // the page's reference to the element, so with no page there is no
-        // reference to locate it by. The kind is unchanged, and so is the point --
-        // one ledger, one answer, whichever front end asked.
+        // reference to locate it by. The kind is PageUnresolved rather than
+        // ActionRejected because neither path attempted anything -- a find only
+        // looks -- and the point is unchanged: one ledger, one answer, whichever
+        // front end asked.
         auto const taskKind = [&]
         {
             auto side = buildTaskSide(resolvingFrames(FrameId{31}), lenientFrameAge());
@@ -291,7 +293,8 @@ namespace uf::task
             return automationErrorKind(found.error());
         }();
 
-        CHECK(taskKind == AutomationErrorKind::ActionRejected);
+        CHECK(taskKind == AutomationErrorKind::PageUnresolved);
+        CHECK(taskKind != AutomationErrorKind::ActionRejected);
         CHECK(operatorKind == taskKind);
     }
 

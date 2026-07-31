@@ -151,8 +151,10 @@ Windows capture 在 `modules/controller/source/controller/platform/windows-captu
 
 - `Cancelled` → `Cancelled`；
 - `CaptureStalled`、`StaleObservation`、`RecognitionIncomplete` → `Retry`；
-- `ActionRejected` → `StepFailed`；
+- `PageUnresolved`、`ActionRejected` → `StepFailed`；
 - 其余 kind → `Abort`。
+
+`PageUnresolved` 与 `ActionRejected` 展开范围相同，却有意是两个 kind，因为它们要求的修法相反。`PageUnresolved` 表示一个页面相关的动词跑在了**还没有解析出页面**的观察周期上——脚本漏了 `cycle:page()`，或者在它返回 nil 之后仍然继续——而且**什么都没有被尝试**：find 只是定位，在那里被拒的 click 根本没有走到那条能拒绝它的授权检查。`ActionRejected` 表示页面**确实**解析出来了，而它不授权这个元素，那是标注项目里的建模问题。合用一个 kind，脚本就分不出「改我的调用顺序」和「改我的标注」。它的 response 是 `StepFailed` 而不是 `Retry`，即使换一帧很可能就能解析出这一帧没解析出的页面：页面是解析到**周期上**的，所以拿同一个周期重复同一次调用永远不会成功，而要拿到页面就得重新观察——那是这一步从头再来，不是这次操作被重试。
 
 `RecognitionIncomplete` 有意不叫“识别失败”。识别跑完却没匹配上根本不是错误——那是 `UnknownPage` 或空命中，不带任何 error kind。这个 kind 只表示比较预算在搜索结束前就耗尽了，调用方对屏幕一无所知。所以它的响应是 `Retry` 而不是 `StepFailed`：调用方必须在自己的预算内重新观察，而不能当成“该页已被排除”去分支；又因为比较次数取决于帧自身的像素，这一帧耗尽的搜索在后一帧可能跑完。
 

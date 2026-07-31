@@ -69,6 +69,11 @@ TEST_CASE("all automation error kinds survive the generic result channel")
             uf::FailureResponse::Retry
         },
         ErrorCase{
+            uf::AutomationErrorKind::PageUnresolved,
+            "PageUnresolved",
+            uf::FailureResponse::StepFailed
+        },
+        ErrorCase{
             uf::AutomationErrorKind::ActionRejected,
             "ActionRejected",
             uf::FailureResponse::StepFailed

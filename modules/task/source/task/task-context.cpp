@@ -104,14 +104,23 @@ namespace uf::task
         // A cycle that resolved none has nothing to search against. Refusing
         // here rather than reporting an absence keeps "the search looked and
         // found nothing" distinct from "the search could not run".
+        //
+        // The message names the missing STEP rather than a refused action,
+        // because that is what happened: nothing was attempted here. The kind
+        // says the same thing, which is why it is PageUnresolved and not
+        // ActionRejected -- the latter is reserved for a page that resolved and
+        // then did not authorise the element, which is a different repair.
         auto const pageId = m_cycles.resolvedPageId();
         if (!pageId)
         {
             return fail(
-                AutomationErrorKind::ActionRejected,
-                "this observation cycle resolved no page, so there is no page "
-                "reference to locate the element by; resolve the cycle's page "
-                "first"
+                AutomationErrorKind::PageUnresolved,
+                "this observation cycle has not resolved a page, and finding an "
+                "element is page-scoped: the refined search region, the pinned "
+                "appearance and the interact authorisation all live on the "
+                "page's reference to the element, so a find has nothing to work "
+                "from until a page resolves. Resolve this cycle's page first, "
+                "then find"
             );
         }
         return m_session.findAction(m_cycles.observation(), *pageId, elementId);

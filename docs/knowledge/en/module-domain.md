@@ -264,8 +264,19 @@ outward. The exhaustive switch of `failureResponse(AutomationErrorKind)` current
 
 - `Cancelled` → `Cancelled`;
 - `CaptureStalled`, `StaleObservation`, `RecognitionIncomplete` → `Retry`;
-- `ActionRejected` → `StepFailed`;
+- `PageUnresolved`, `ActionRejected` → `StepFailed`;
 - all other kinds → `Abort`.
+
+`PageUnresolved` and `ActionRejected` share an unwind scope but are deliberately two kinds, because
+they call for opposite repairs. `PageUnresolved` means a page-scoped verb ran on an observation cycle
+that has resolved no page — the script skipped `cycle:page()`, or called on after it returned nil —
+and nothing was attempted: a find only locates, and a click refused there never reached the
+authorization that could have rejected it. `ActionRejected` means a page DID resolve and does not
+authorise the element, which is a modelling fault to fix in the annotation project. Under one kind a
+script could not tell "fix my ordering" from "fix my annotations". Its response is `StepFailed`
+rather than `Retry` even though a later frame may well resolve the page this one did not: the page is
+resolved onto a cycle, so repeating the same call against the same cycle can never succeed, and
+reaching a page means observing again — the step starting over, not this operation being retried.
 
 `RecognitionIncomplete` is deliberately not named for a failed recognition. A recognition that
 completes and matches nothing is not an error at all — it is `UnknownPage`, or a nil hit, and it

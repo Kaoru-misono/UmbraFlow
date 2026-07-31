@@ -141,9 +141,12 @@ namespace uf::task
         // Spends the cycle `ticket` names: the frame leaves the ledger and the
         // ticket dies here, before the click that follows can do anything with
         // the frame. Fails StaleObservation for a ticket that names no open
-        // cycle, and ActionRejected when the cycle resolved no page, because
-        // then the click has no authorization evidence and no script can supply
-        // any.
+        // cycle, and PageUnresolved when the cycle has resolved no page,
+        // because then the click has no authorization evidence and no script
+        // can supply any. PageUnresolved rather than ActionRejected: the click
+        // never reached the authorization check, so nothing about it was
+        // judged, and a script has to be able to tell a skipped step from a
+        // page that genuinely does not authorise the element.
         [[nodiscard]] auto consume(CycleTicket ticket) -> Result<Consumed>;
 
         // Spends the cycle `ticket` names without demanding a resolved page, for

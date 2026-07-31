@@ -147,14 +147,35 @@
 >   (§四之二.5)。编译器现在**每个元素只产出一个 recognizer**,用元素自己的 id。
 > - **§四 的三个动词已收敛。** `page add-anchor` / `add-target` / `add-info` 变成
 >   `page add ROOT PAGE NAME --capability C... <draw>`,`--shared` 退掉;
->   `page reference ROOT PAGE ELEMENT [--search-roi x,y,w,h]` 已落地——就是 §三 那条
->   「必须在删 `shared` 之前或同时落地」的硬前置。`match` 增加了 `--page`。
+>   `page reference ROOT PAGE ELEMENT [--capability C...] [--search-roi x,y,w,h]`
+>   已落地——就是 §三 那条「必须在删 `shared` 之前或同时落地」的硬前置。`match` 增加了
+>   `--page`。
+> - **`page reference` 的 `--capability` 已补齐(2026-07-31,本条之后)。** 此前这个动词
+>   只能继承「放置自带的那几种用法」(interact / read),于是 §2.4 那个例子——同一个元素在
+>   A 页认页、在 B 页只能点、在 C 页必须缺席——**在 CLI 上表达不出来**,`SignatureRole`
+>   的一半是不可达的。现在 `--capability identify:required|:forbidden` 就是第二个页面把
+>   已有标记收进自己签名的入口,`interact` / `read` 同一套词汇;不给标志仍然是继承,
+>   identify 永远不继承(哪一面证据是引用侧的事实,元素答不出来)。
+>   同一次改动修掉一个会让上面那条永远失败的 bug:`page reference` 过去在缺省时把**元素
+>   自己的 ROI 复制到引用行上**,于是每一行引用都在「细化 ROI」,而行使 identify 的引用
+>   恰恰不许细化——缺省现在写成 `nullopt`,运行时照旧回退到元素的 ROI
+>   (`recognition-runtime.cpp` 的 `value_or`)。「identify + `--search-roi`」改为在**解析期**
+>   就拒绝,消息点名这两个标志。
 > - **§四之二.1 的 GUI 弃用已执行**(`b57b67b`)。`entry/workbench/app/`、ImGui + D3D11
 >   外壳、文件对话框、一次性抓帧源、imgui submodule 与 ASan smoke fixture 都已归档;
 >   `entry/workbench` 剩下的是 `umbra-authoring` 链接的标注后端。三个前置条件里,
 >   `placeExisting`(经 `page reference`)与按页 `searchRoi` 已补上;**证伪矩阵仍然只有
 >   `entry/workbench/preview.*` 里的 `ModelCheckCell` / `classifyModelCell`,没有 CLI 动词,
 >   也还没有 variant 维度**——§2.3 的 P1–P4 与 R1–R4 一条都还没落地。
+> - **裁决记录第 1 条的后半句从未落地,而且照字面落地会自相矛盾——需要开发者裁决。**
+>   原话是「`Owned` 是作者声明『这个元素只属于这一页』,工具据此在别处引用时拒绝」,
+>   `catalog.hpp:98-100` 的注释也照抄了这句(「the editing tools refuse to reference them
+>   elsewhere」)。**代码里没有任何一处这样拒绝**,而且不能有:画出来的元素一律是它那一页的
+>   `Owned`(`runAddElement` 写死),所以「Owned 的元素不得在别处引用」等于「`page reference`
+>   永远失败」,§2.4 那个 `back` 被两页引用的例子首当其冲。今天真正被守住的是
+>   `catalog.cpp:826-850` 的**唯一所有者**:同一个元素最多有一行 `Owned`,第二行必须是
+>   `Referenced`。两种读法要选一个:要么把 `Owned` 读成「家在这一页」(现状,注释要改),
+>   要么给作者一个显式的「独占」声明(新字段或新标志,`page add` 上加),不能两者都不选。
 > - **仍未开始:** §三 第 4 步之后的 variant 作者入口(CLI 没有画 variant 的动词)、
 >   第 5 步的 `read` 动词与 OCR 接线(`cycle_read` 尚不存在)、§2.3 更正里点名要先修的
 >   `pitfalls/colour-key-annotation.md` 机制段(已于 2026-07-31 修正)。

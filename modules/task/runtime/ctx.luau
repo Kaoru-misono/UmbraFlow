@@ -151,6 +151,37 @@ local function newCycleView(state)
         return state.page
     end
 
+    -- RESOLVE THE PAGE BEFORE YOU FIND. `cycle:find` requires that THIS cycle
+    -- has already resolved a page, and it does not resolve one for you: a cycle
+    -- with none raises `uf.errors.page_unresolved`.
+    --
+    -- The reason is that a find has nothing to work from without a page. What it
+    -- searches with lives on the PAGE'S REFERENCE to the element, not on the
+    -- element: the refined search region, the appearance this page pins, and the
+    -- interact authorisation are all properties of "page P uses element E", so
+    -- until a page is known there is no row to read them from.
+    --
+    -- Two ways to satisfy it, and the second is the ordinary one:
+    --
+    --     ctx:cycle(function(cycle)
+    --         local page = cycle:page()       -- REQUIRED before find
+    --         if page == nil then return end  -- Unknown/Ambiguous: no page
+    --         local hit = cycle:find(uf.recognizers.back)
+    --     end)
+    --
+    --     ctx:wait_for_page(uf.pages.home, nil, function(cycle)
+    --         local hit = cycle:find(uf.recognizers.back)   -- already resolved
+    --     end)
+    --
+    -- `ctx:wait_for_page` and an interrupt handler both hand over a cycle whose
+    -- page is already resolved, so neither needs the extra line. `ctx:cycle`
+    -- resolves nothing, because a cycle is not always opened to identify a page.
+    --
+    -- Resolving is not done for you on purpose. It walks the whole anchor order
+    -- and is the most expensive thing a cycle does, so a `find` that silently
+    -- paid for it would hide the cost of the loop it sits in; and a screen that
+    -- resolves to no page would then surface as a FIND that failed, which is a
+    -- worse sentence to debug than the one above.
     function view:find(recognizer)
         requireLive(state)
         return native.cycle_find(state.ticket, recognizer)
@@ -356,6 +387,13 @@ end
 -- structural rather than conventional: a cycle cannot escape the block, so
 -- "always closed" and "at most one open" are properties of the API rather than
 -- of the author's discipline.
+--
+-- IT DOES NOT RESOLVE THE PAGE. The cycle it hands over has captured a frame and
+-- nothing more, so a block that goes straight to `cycle:find` raises
+-- `uf.errors.page_unresolved`; call `cycle:page()` first, and check it for nil.
+-- That is deliberate rather than an omission -- not every cycle is opened to
+-- identify a page, a keystroke needs none at all, and the full argument is at
+-- `view:find` above. `ctx:wait_for_page` is the shape that resolves for you.
 --
 -- The block's own failure outranks a failure from the close, so an author is
 -- told why their work failed rather than being handed the second-order
@@ -568,6 +606,9 @@ function ctx:cycle_page(ticket)
     return native.cycle_page(ticket)
 end
 
+-- Same ordering rule as view:find, and it is easier to break here because
+-- nothing above this line resolves anything: cycle_page on the ticket first, or
+-- this raises uf.errors.page_unresolved.
 function ctx:cycle_find(ticket, recognizer)
     return native.cycle_find(ticket, recognizer)
 end
