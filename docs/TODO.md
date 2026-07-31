@@ -56,18 +56,37 @@
 
 权威是[页面模型上移到脚本层](plans/2026-07-31-script-owned-page-model.md)。四张工单:
 
-- **工单 1 — 第一层原语面(§四)。** `cycle_match` / `cycle_read` / `template_load`、项目文件
-  读写(`project_read` / `project_write`,带路径 confinement),以及 `cycle_page` / `cycle_find`
-  的退役。**进行中(2026-08-01)。**
-- **工单 2 — 第二层 Luau 的 element / page / appearance 模型。**
-  **卡点:页面图的形状未定**(§十.1——边至少有三种触发方式,而且「盖上去」和「走过去」是两种
-  边),**待开发者讨论**后才动工。
+- **工单 1 — 第一层原语面(§四)。已落地(2026-08-01,`1e71fb8` + `3118423`)。**
+  `template_load` / `cycle_match` / `cycle_read` / `cycle_click_point`(裸点,仅第二层持有)/
+  `project_read` / `project_write`(路径 confinement);`cycle_click` 接受本票据的 match 当
+  受祝福证据;OCR 独立预算(每周期 8 次,耗尽是 `RecognitionIncomplete` 不是 miss);trace 走
+  加法(`engine.text_read` + 可缺席字段)。CLI 经 `--ocr-models` 接入 OCR(run 与 drive 都有)。
+  `cycle_page` / `cycle_find` 的退役归工单 4,原样活着。
+- **工单 2 — 第二层 Luau 的 element / page / appearance 模型。无卡点半区已落地
+  (2026-08-01,`bf471f3`)**:`model.luau` / `observe.luau` / `project.luau`
+  (`umbraflow-project/l2-v1`,未知键逐字节保留,`extra` 保留子表),已入框架发布名单。
+  **仍卡:页面图的形状**(§十.1——边至少有三种触发方式,「盖上去」和「走过去」是两种边),
+  **待开发者讨论**;`Page.new` 留了显式接缝。
 - **工单 3 — 证伪矩阵迁到新基座(§七)。** 分数留 C++,判分归第二层 Luau,入口仍是 CLI 动词。
-  **前置:工单 2。**
+  **前置:工单 2。** 追加范围(2026-08-01,工单 2 发现):`observe.find` 不再结构性要求本票据
+  先解析页面,「同帧页面证据」降级成了约定——执法手段(层 2 账本或 click 前置检查)在此工单定。
 - **工单 4 — §九 退役清单执行。** `modules/annotation` 的模型层、`modules/task` 的
   `CapabilitySurface`、`preview.*` 的判分部分与 `entry/authoring` 的 page/element 绘制动词、
   `engine` 的 `resolvePage` 与 `findAction`;依赖图上的 `engine -> annotation` 随之去掉。
   **前置:工单 2 与工单 3 落地。**
+
+迁移配套(2026-08-01 夜):
+
+- **chaos-v14 已按 v4 重放重建**(`E:\umbraflow-projects\chaos-v14`,3 页 22 元素,全命中,
+  `check` 92 格零发现;翻译脚本 `session-0731/author-*-v4.ps1`)。两个真实行为变化记录在案:
+  interact/read 的模板走 `element appearance`(`page add` 只为 identify 铸 appearance);
+  deploy_danger 合并单元素后 read 路径改用实测的 9900 bp 阈值,比旧 info 元素严。
+- **真机只读验证(release + chaos-v14 + `--ocr-models`)**:机制层全通——绑窗、抓帧、页面解析、
+  live 帧 `cycle_read`、`engine.text_read` 证据、置信度守门(实测 2.7–4.1ms/次)。内容层
+  (读出真实文字)待游戏停在有字的画面上再补——当晚游戏停在无字 CG,空读零置信是正确行为。
+- **release bin 缺 onnxruntime.dll 随附**:PATH 上的旧 1.17.1 被加载进程崩溃(API 28 不符),
+  当晚手工拷贝 `build/wo1b-debug/bin/onnxruntime*.dll` 过去。TODO(cpp-debt):给可执行目标加
+  DLL 部署步。
 
 长期挂着的阻塞(不属于任何一张工单):
 
