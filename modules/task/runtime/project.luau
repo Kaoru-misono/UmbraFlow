@@ -1,0 +1,802 @@
+--!strict
+-- project: the project file this layer owns, reads and writes.
+--
+-- The format is layer two's, including its schema version
+-- (docs/plans/2026-07-31-script-owned-page-model.md 4 and 8). Layer one hands
+-- over bytes for a name inside the project directory and nothing else, so
+-- everything about what those bytes MEAN is here.
+--
+-- WHY A TOML SUBSET AND NOT A LUAU TABLE. The file is written by an agent, read
+-- by a human reviewing a diff, and diffed by git. A line-oriented format with
+-- one field per line makes a one-field change a one-line diff; a serialised
+-- Luau table makes it a re-indented block. The subset is deliberately small
+-- enough to parse in a page of code and to refuse everything it does not
+-- support by name rather than by guessing.
+--
+-- TWO RULES CARRY THE WHOLE FORWARD-COMPATIBILITY STORY, and both are here
+-- because a file outlives the build that wrote it:
+--
+--   1. A PROJECT'S OWN FIELDS LIVE UNDER `extra`. This layer owns every key
+--      that is not under an `extra` subtable, so it can add one next year
+--      without silently colliding with a project that invented the same name.
+--   2. AN UNKNOWN KEY SURVIVES A REWRITE, BYTE FOR BYTE. A file written by a
+--      newer build, opened and saved by an older one, must come back whole.
+--      The alternative is not an error -- it is a silent deletion, which is the
+--      worst failure a persistence layer has. Every line this parser did not
+--      consume is carried on the object it belonged to as `residual` and
+--      written back verbatim.
+--
+-- WHAT ROUND-TRIPPING GUARANTEES, EXACTLY. `save(load(bytes)) == bytes` holds
+-- for bytes already in canonical form. For any other input the known keys come
+-- back canonical -- sections grouped and sorted by name, fields in a fixed
+-- order -- while unknown lines come back with their own bytes intact, moved to
+-- the end of the section they were found in. Blank lines are structural and are
+-- regenerated rather than preserved.
+--
+-- ORDER IS NOT ALWAYS SORTED, AND THE EXCEPTIONS ARE SEMANTIC. Elements and
+-- pages are written sorted by name, because their order means nothing.
+-- Appearances within an element and references within a page keep their
+-- declared order, because it does: declaration order is what breaks a tie
+-- between two appearances, and sorting them would quietly change which pixels a
+-- click lands on.
+--
+-- LOAD ORDER. `project` sorts after `model` and `observe`, so it can name both.
+
+local k_schema   = "umbraflow-project/l2-v1"
+local k_fileName = "page-model.toml"
+
+local k_sectionKinds: { [string]: boolean } = {
+    element    = true,
+    appearance = true,
+    page       = true,
+    reference  = true,
+}
+
+-- Which section kinds carry a parsed `[<kind>.extra]` subtable. An appearance
+-- does NOT: it is a row of one element's ordered list rather than a thing a
+-- project addresses, and the model has nowhere to hold its extra. Leaving it out
+-- of this set is what routes an `[appearance.extra]` block into the raw residual
+-- path instead, so a project that wrote one still gets those bytes back --
+-- parsing it into a field nothing writes out would be exactly the silent
+-- deletion this file exists to prevent.
+local k_extraOwners: { [string]: boolean } = {
+    element   = true,
+    page      = true,
+    reference = true,
+}
+
+local k_sectionFields: { [string]: { [string]: boolean } } = {
+    element = {
+        name          = true,
+        capabilities  = true,
+        rect          = true,
+        expected_text = true,
+    },
+    appearance = {
+        element   = true,
+        name      = true,
+        source    = true,
+        threshold = true,
+    },
+    page = {
+        name = true,
+    },
+    reference = {
+        page              = true,
+        element           = true,
+        holding           = true,
+        exercised         = true,
+        identify          = true,
+        pinned_appearance = true,
+        rect_override     = true,
+    },
+}
+
+-- Everything `load_project` hands back. The element and page entries are the
+-- frozen tables `model` minted, spelled `any` here because a chunk loaded under
+-- the framework environment cannot name another chunk's exported types -- there
+-- is no module resolver in this VM, only a global binding. The definitions on
+-- both sides are written to be correct the day one exists; today they are the
+-- shape documentation a `--!strict` reader works from.
+export type Model = {
+    schema: string,
+    elements: { any },
+    element_by_name: { [string]: any },
+    pages: { any },
+    page_by_name: { [string]: any },
+    residual: {
+        preamble: { string },
+        sections: { { string } },
+    },
+}
+
+local project = {}
+
+project.schema    = k_schema
+project.file_name = k_fileName
+
+local function trim(text: string): string
+    return (string.gsub(text, "^%s*(.-)%s*$", "%1"))
+end
+
+-- ---------------------------------------------------------------- rendering
+
+local function renderString(value: string): string
+    local out = string.gsub(value, "[\\\"\n\t]", {
+        ["\\"] = "\\\\",
+        ['"']  = '\\"',
+        ["\n"] = "\\n",
+        ["\t"] = "\\t",
+    })
+    -- Anything else below space would survive the write and come back as a
+    -- different byte or not at all, so it is refused where it can still be
+    -- attributed to a field rather than discovered in a diff months later.
+    if string.find(out, "%c") ~= nil then
+        error(
+            "a project file value contains a control character this format "
+                .. "cannot carry",
+            0
+        )
+    end
+    return '"' .. out .. '"'
+end
+
+local function renderNumber(value: number): string
+    if value % 1 ~= 0 then
+        error("a project file value must be a whole number, got " .. tostring(value), 0)
+    end
+    return string.format("%d", value)
+end
+
+local function renderValue(value: any): string
+    local kind = type(value)
+    if kind == "string" then
+        return renderString(value)
+    end
+    if kind == "number" then
+        return renderNumber(value)
+    end
+    if kind == "boolean" then
+        return if value then "true" else "false"
+    end
+    if kind == "table" then
+        local parts: { string } = {}
+        local list = value :: { any }
+        for index = 1, #list do
+            local entry = list[index]
+            if type(entry) == "table" then
+                error("a project file array cannot contain another array", 0)
+            end
+            parts[index] = renderValue(entry)
+        end
+        return "[" .. table.concat(parts, ", ") .. "]"
+    end
+    error("a project file cannot carry a value of type " .. kind, 0)
+end
+
+local function sortedKeys(map: { [string]: any }): { string }
+    local keys: { string } = {}
+    for key in map do
+        if type(key) ~= "string" then
+            error("an extra subtable may only have string keys", 0)
+        end
+        table.insert(keys, key)
+    end
+    table.sort(keys)
+    return keys
+end
+
+local function pushExtra(lines: { string }, header: string, extra: { [string]: any })
+    local keys = sortedKeys(extra)
+    if #keys == 0 then
+        return
+    end
+    table.insert(lines, "")
+    table.insert(lines, header)
+    for _, key in keys do
+        table.insert(lines, key .. " = " .. renderValue(extra[key]))
+    end
+end
+
+local function pushResidual(lines: { string }, residual: { string })
+    for _, line in residual do
+        table.insert(lines, line)
+    end
+end
+
+local function capabilityList(set: any): { string }
+    local names: { string } = {}
+    for _, capability in model.capability_order() do
+        if set[capability] then
+            table.insert(names, capability)
+        end
+    end
+    return names
+end
+
+local function rectList(rect: any): { number }
+    return { rect.x, rect.y, rect.width, rect.height }
+end
+
+-- project.encode(model) -> the file's text.
+function project.encode(built: any): string
+    if type(built) ~= "table" then
+        error("project.encode needs the model to write", 2)
+    end
+
+    local lines: { string } = {}
+    table.insert(lines, "schema = " .. renderString(k_schema))
+    if built.residual ~= nil then
+        pushResidual(lines, built.residual.preamble or {})
+    end
+
+    local elements: { any } = table.clone(built.elements)
+    table.sort(elements, function(left, right)
+        return left.name < right.name
+    end)
+
+    for _, element in elements do
+        table.insert(lines, "")
+        table.insert(lines, "[[element]]")
+        table.insert(lines, "name = " .. renderString(element.name))
+        table.insert(
+            lines,
+            "capabilities = " .. renderValue(capabilityList(element.capabilities))
+        )
+        table.insert(lines, "rect = " .. renderValue(rectList(element.rect)))
+        if element.expected_text ~= nil then
+            table.insert(
+                lines,
+                "expected_text = " .. renderString(element.expected_text)
+            )
+        end
+        pushResidual(lines, element.residual)
+        pushExtra(lines, "[element.extra]", element.extra)
+
+        for _, appearance in element.appearances do
+            table.insert(lines, "")
+            table.insert(lines, "[[appearance]]")
+            table.insert(lines, "element = " .. renderString(element.name))
+            if appearance.name ~= nil then
+                table.insert(lines, "name = " .. renderString(appearance.name))
+            end
+            table.insert(lines, "source = " .. renderString(appearance.source))
+            table.insert(lines, "threshold = " .. renderNumber(appearance.threshold))
+            pushResidual(lines, appearance.residual)
+        end
+    end
+
+    local pages: { any } = table.clone(built.pages)
+    table.sort(pages, function(left, right)
+        return left.name < right.name
+    end)
+
+    for _, page in pages do
+        table.insert(lines, "")
+        table.insert(lines, "[[page]]")
+        table.insert(lines, "name = " .. renderString(page.name))
+        pushResidual(lines, page.residual)
+        pushExtra(lines, "[page.extra]", page.extra)
+
+        for _, reference in page.references do
+            table.insert(lines, "")
+            table.insert(lines, "[[reference]]")
+            table.insert(lines, "page = " .. renderString(page.name))
+            table.insert(lines, "element = " .. renderString(reference.element.name))
+            table.insert(lines, "holding = " .. renderString(reference.holding))
+            table.insert(
+                lines,
+                "exercised = " .. renderValue(capabilityList(reference.exercised))
+            )
+            if reference.identify ~= nil then
+                table.insert(lines, "identify = " .. renderString(reference.identify))
+            end
+            if reference.pinned_appearance ~= nil then
+                table.insert(
+                    lines,
+                    "pinned_appearance = " .. renderString(reference.pinned_appearance)
+                )
+            end
+            if reference.rect_override ~= nil then
+                table.insert(
+                    lines,
+                    "rect_override = " .. renderValue(rectList(reference.rect_override))
+                )
+            end
+            pushResidual(lines, reference.residual)
+            pushExtra(lines, "[reference.extra]", reference.extra)
+        end
+    end
+
+    if built.residual ~= nil then
+        for _, block in built.residual.sections or {} do
+            table.insert(lines, "")
+            pushResidual(lines, block)
+        end
+    end
+
+    return table.concat(lines, "\n") .. "\n"
+end
+
+-- ------------------------------------------------------------------ parsing
+
+local function parseString(text: string, lineNumber: number): (string, string)
+    local out: { string } = {}
+    local index = 2
+    local length = #text
+    while index <= length do
+        local character = string.sub(text, index, index)
+        if character == '"' then
+            return table.concat(out), string.sub(text, index + 1)
+        end
+        if character == "\\" then
+            local escaped = string.sub(text, index + 1, index + 1)
+            if escaped == "n" then
+                table.insert(out, "\n")
+            elseif escaped == "t" then
+                table.insert(out, "\t")
+            elseif escaped == '"' then
+                table.insert(out, '"')
+            elseif escaped == "\\" then
+                table.insert(out, "\\")
+            else
+                error(
+                    "line "
+                        .. tostring(lineNumber)
+                        .. ': "\\'
+                        .. escaped
+                        .. '" is not an escape this format supports; it has '
+                        .. '\\\\, \\", \\n and \\t',
+                    0
+                )
+            end
+            index += 2
+        else
+            table.insert(out, character)
+            index += 1
+        end
+    end
+    error(
+        "line " .. tostring(lineNumber) .. ": a quoted value is never closed",
+        0
+    )
+end
+
+local parseValue
+
+local function parseArray(text: string, lineNumber: number): (any, string)
+    local list: { any } = {}
+    local rest = trim(string.sub(text, 2))
+    if string.sub(rest, 1, 1) == "]" then
+        return list, string.sub(rest, 2)
+    end
+    while true do
+        local value: any
+        value, rest = parseValue(rest, lineNumber)
+        table.insert(list, value)
+        rest = trim(rest)
+        local head = string.sub(rest, 1, 1)
+        if head == "]" then
+            return list, string.sub(rest, 2)
+        end
+        if head ~= "," then
+            error(
+                "line "
+                    .. tostring(lineNumber)
+                    .. ": an array needs a comma between values and a ] at the "
+                    .. "end",
+                0
+            )
+        end
+        rest = trim(string.sub(rest, 2))
+    end
+end
+
+function parseValue(text: string, lineNumber: number): (any, string)
+    local body = trim(text)
+    local head = string.sub(body, 1, 1)
+    if head == '"' then
+        return parseString(body, lineNumber)
+    end
+    if head == "[" then
+        return parseArray(body, lineNumber)
+    end
+    local word = string.match(body, "^[%w%-%+%.]+")
+    if word == nil then
+        error(
+            "line " .. tostring(lineNumber) .. ": there is no value after the =",
+            0
+        )
+    end
+    local rest = string.sub(body, #word + 1)
+    if word == "true" then
+        return true, rest
+    end
+    if word == "false" then
+        return false, rest
+    end
+    if string.match(word, "^%-?%d+$") ~= nil then
+        return tonumber(word), rest
+    end
+    error(
+        "line "
+            .. tostring(lineNumber)
+            .. ': "'
+            .. word
+            .. '" is not a value this format supports; it has quoted strings, '
+            .. "whole numbers, true, false, and arrays of those",
+        0
+    )
+end
+
+local function parseAssignment(line: string, lineNumber: number): (string?, any)
+    local key, remainder = string.match(line, "^([%w_%-]+)%s*=%s*(.*)$")
+    if key == nil then
+        return nil, nil
+    end
+    local value, rest = parseValue(remainder :: string, lineNumber)
+    if trim(rest) ~= "" then
+        error(
+            "line "
+                .. tostring(lineNumber)
+                .. ": there is more than one value on this line",
+            0
+        )
+    end
+    return key, value
+end
+
+-- project.parse(text) -> the document behind the text.
+--
+-- The result is deliberately NOT a model: it has no host handles, so it is pure
+-- and a test can round-trip it without a VM that owns a session. `project.build`
+-- turns one into a model by loading each appearance's template through ctx.
+function project.parse(text: string): any
+    if type(text) ~= "string" then
+        error("project.parse needs the file's text", 2)
+    end
+
+    local document = {
+        schema   = nil :: string?,
+        sections = {} :: { any },
+        preamble = {} :: { string },
+        blocks   = {} :: { { string } },
+    }
+
+    local current: any        = nil
+    local rawTarget: { string }? = nil
+    local inExtra             = false
+    local lineNumber          = 0
+
+    local function residualTarget(): { string }
+        if current ~= nil then
+            return current.residual
+        end
+        return document.preamble
+    end
+
+    for line in string.gmatch(text .. "\n", "([^\n]*)\n") do
+        lineNumber += 1
+        local body = trim(line)
+
+        local sectionName = string.match(body, "^%[%[([%w_%-]+)%]%]$")
+        if sectionName ~= nil then
+            rawTarget = nil
+            inExtra   = false
+            if k_sectionKinds[sectionName] then
+                current = {
+                    kind     = sectionName,
+                    fields   = {} :: { [string]: any },
+                    extra    = {} :: { [string]: any },
+                    residual = {} :: { string },
+                    line     = lineNumber,
+                }
+                table.insert(document.sections, current)
+            else
+                -- A whole section kind this build does not know. It is kept as
+                -- raw lines and written back at the end of the file, so a
+                -- newer build's section survives an older build's save.
+                current   = nil
+                rawTarget = { line }
+                table.insert(document.blocks, rawTarget)
+            end
+        else
+            local subName = string.match(body, "^%[([%w_%-%.]+)%]$")
+            if subName ~= nil then
+                inExtra = false
+                if
+                    current ~= nil
+                    and k_extraOwners[current.kind]
+                    and subName == current.kind .. ".extra"
+                then
+                    inExtra   = true
+                    rawTarget = nil
+                else
+                    rawTarget = residualTarget()
+                    table.insert(rawTarget :: { string }, line)
+                end
+            elseif body == "" then
+                -- Blank lines are structure, and the writer regenerates them.
+            elseif string.sub(body, 1, 1) == "#" then
+                table.insert(rawTarget or residualTarget(), line)
+            elseif rawTarget ~= nil then
+                table.insert(rawTarget, line)
+            else
+                local key, value = parseAssignment(body, lineNumber)
+                if key == nil then
+                    error(
+                        "line "
+                            .. tostring(lineNumber)
+                            .. ": this is not a section header, a comment, or a "
+                            .. "key = value line",
+                        0
+                    )
+                elseif current == nil then
+                    if key == "schema" then
+                        document.schema = value
+                    else
+                        table.insert(document.preamble, line)
+                    end
+                elseif inExtra then
+                    current.extra[key] = value
+                elseif k_sectionFields[current.kind][key] then
+                    current.fields[key] = value
+                else
+                    table.insert(current.residual, line)
+                end
+            end
+        end
+    end
+
+    if document.schema == nil then
+        error(
+            'this project file has no schema line; the first line should be '
+                .. "schema = "
+                .. renderString(k_schema),
+            2
+        )
+    end
+    if document.schema ~= k_schema then
+        error(
+            "this project file is schema '"
+                .. tostring(document.schema)
+                .. "' and this build reads '"
+                .. k_schema
+                .. "'",
+            2
+        )
+    end
+
+    return document
+end
+
+-- ----------------------------------------------------------------- building
+
+local function requireField(section: any, key: string): any
+    local value = section.fields[key]
+    if value == nil then
+        error(
+            "the [["
+                .. section.kind
+                .. "]] starting at line "
+                .. tostring(section.line)
+                .. " has no "
+                .. key,
+            0
+        )
+    end
+    return value
+end
+
+local function rectOf(section: any, key: string, value: any): any
+    if type(value) ~= "table" or #value ~= 4 then
+        error(
+            "the [["
+                .. section.kind
+                .. "]] starting at line "
+                .. tostring(section.line)
+                .. " needs "
+                .. key
+                .. " = [x, y, width, height]",
+            0
+        )
+    end
+    return {
+        x      = value[1],
+        y      = value[2],
+        width  = value[3],
+        height = value[4],
+    }
+end
+
+-- project.build(ctx, document) -> the model.
+--
+-- Every appearance's template blob is read from the project directory and
+-- decoded here, which is the only thing in this file that touches the host.
+-- Loading the same blob twice returns the same handle, so the cache below saves
+-- a read rather than changing an answer.
+function project.build(ctx: any, document: any): any
+    if type(ctx) ~= "table" then
+        error("project.build needs the ctx it should load templates through", 2)
+    end
+
+    local elementSections: { any }            = {}
+    local appearancesFor: { [string]: { any } } = {}
+    local pageSections: { any }               = {}
+    local referencesFor: { [string]: { any } } = {}
+
+    for _, section in document.sections do
+        if section.kind == "element" then
+            table.insert(elementSections, section)
+        elseif section.kind == "appearance" then
+            local owner = requireField(section, "element")
+            local list  = appearancesFor[owner]
+            if list == nil then
+                list = {}
+                appearancesFor[owner] = list
+            end
+            table.insert(list, section)
+        elseif section.kind == "page" then
+            table.insert(pageSections, section)
+        else
+            local owner = requireField(section, "page")
+            local list  = referencesFor[owner]
+            if list == nil then
+                list = {}
+                referencesFor[owner] = list
+            end
+            table.insert(list, section)
+        end
+    end
+
+    local templates: { [string]: any } = {}
+    local function templateOf(source: string): any
+        local handle = templates[source]
+        if handle == nil then
+            handle = ctx:template_load(ctx:project_read(source))
+            templates[source] = handle
+        end
+        return handle
+    end
+
+    local elements: { any }             = {}
+    local elementByName: { [string]: any } = {}
+    for _, section in elementSections do
+        local name        = requireField(section, "name")
+        local appearances = {}
+        for index, appearanceSection in appearancesFor[name] or {} do
+            local source = requireField(appearanceSection, "source")
+            appearances[index] = {
+                name      = appearanceSection.fields.name,
+                source    = source,
+                template  = templateOf(source),
+                threshold = requireField(appearanceSection, "threshold"),
+                residual  = appearanceSection.residual,
+            }
+        end
+
+        local element = model.Element.new({
+            name          = name,
+            capabilities  = requireField(section, "capabilities"),
+            rect          = rectOf(section, "rect", requireField(section, "rect")),
+            appearances   = appearances,
+            expected_text = section.fields.expected_text,
+            extra         = section.extra,
+            residual      = section.residual,
+        })
+        if elementByName[name] ~= nil then
+            error("this project file declares element '" .. name .. "' twice", 0)
+        end
+        elementByName[name] = element
+        table.insert(elements, element)
+    end
+
+    -- One element has AT MOST ONE owning page. Holding is not exclusivity --
+    -- other pages may reference it freely -- it answers "where does this element
+    -- live", and two answers to that is a model with no home for its own pixels
+    -- (docs/plans/2026-07-31-annotation-model-capabilities.md 5.4).
+    local ownedBy: { [string]: string } = {}
+
+    local pages: { any }              = {}
+    local pageByName: { [string]: any } = {}
+    for _, section in pageSections do
+        local name       = requireField(section, "name")
+        local references = {}
+        for index, referenceSection in referencesFor[name] or {} do
+            local elementName = requireField(referenceSection, "element")
+            local element     = elementByName[elementName]
+            if element == nil then
+                error(
+                    "page '"
+                        .. name
+                        .. "' references element '"
+                        .. elementName
+                        .. "', which this project file does not declare",
+                    0
+                )
+            end
+            local holding = requireField(referenceSection, "holding")
+            if holding == "owned" then
+                local previous = ownedBy[elementName]
+                if previous ~= nil then
+                    error(
+                        "element '"
+                            .. elementName
+                            .. "' is owned by page '"
+                            .. previous
+                            .. "' and again by page '"
+                            .. name
+                            .. "'; an element has one home",
+                        0
+                    )
+                end
+                ownedBy[elementName] = name
+            end
+
+            local overrideValue = referenceSection.fields.rect_override
+            references[index] = {
+                element           = element,
+                holding           = holding,
+                exercised         = requireField(referenceSection, "exercised"),
+                identify          = referenceSection.fields.identify,
+                pinned_appearance = referenceSection.fields.pinned_appearance,
+                rect_override     = if overrideValue ~= nil
+                    then rectOf(referenceSection, "rect_override", overrideValue)
+                    else nil,
+                extra             = referenceSection.extra,
+                residual          = referenceSection.residual,
+            }
+        end
+
+        local page = model.Page.new({
+            name       = name,
+            references = references,
+            extra      = section.extra,
+            residual   = section.residual,
+        })
+        if pageByName[name] ~= nil then
+            error("this project file declares page '" .. name .. "' twice", 0)
+        end
+        pageByName[name] = page
+        table.insert(pages, page)
+    end
+
+    return {
+        schema          = document.schema,
+        elements        = elements,
+        element_by_name = elementByName,
+        pages           = pages,
+        page_by_name    = pageByName,
+        residual        = {
+            preamble = document.preamble,
+            sections = document.blocks,
+        },
+    }
+end
+
+-- project.load_project(ctx) -> the model in the generation's project directory.
+--
+-- The file name is a constant of the schema rather than a parameter, for the
+-- same reason the schema string is: a project whose model lives under a name
+-- this layer does not know is a project this layer cannot open. It is exported
+-- as `project.file_name` so nothing has to spell it twice.
+function project.load_project(ctx: any): any
+    if type(ctx) ~= "table" then
+        error("project.load_project needs the ctx to read the file through", 2)
+    end
+    return project.build(ctx, project.parse(ctx:project_read(k_fileName)))
+end
+
+-- project.save_project(ctx, model) -> ()
+--
+-- Writes the model back over the file it came from. Everything the parser did
+-- not understand rides along on the objects and is written out again, so this
+-- build saving a newer build's file loses nothing.
+function project.save_project(ctx: any, built: any)
+    if type(ctx) ~= "table" then
+        error("project.save_project needs the ctx to write the file through", 2)
+    end
+    ctx:project_write(k_fileName, project.encode(built))
+end
+
+return project

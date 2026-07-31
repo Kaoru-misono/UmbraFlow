@@ -36,7 +36,13 @@ namespace uf::task
         auto const published = frameworkProjectGlobals();
         CHECK(
             published
-            == std::vector<std::string>{std::string{"ctx"}, std::string{"task"}}
+            == std::vector<std::string>{
+                std::string{"ctx"},
+                std::string{"task"},
+                std::string{"model"},
+                std::string{"observe"},
+                std::string{"project"},
+            }
         );
 
         for (auto const& name : published)
