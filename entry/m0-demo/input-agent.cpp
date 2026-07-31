@@ -3,6 +3,7 @@
 #include "args.hpp"
 #include "capture-output.hpp"
 #include "input-agent-cursor.hpp"
+#include "input-agent-loop.hpp"
 #include "input-agent-protocol.hpp"
 #include "json-string.hpp"
 #include "log-jsonl.hpp"
@@ -51,7 +52,6 @@ namespace uf::m0_demo
 {
     namespace
     {
-        constexpr auto k_inputAgentPollInterval = std::chrono::milliseconds{100};
         constexpr auto k_queueReadBytesPerPoll = std::size_t{64} * 1024U;
         constexpr auto k_maximumPendingQueueBytes = std::size_t{1024} * 1024U;
 
@@ -252,59 +252,6 @@ namespace uf::m0_demo
 
     namespace
     {
-        class ResultWriter final
-        {
-            platform::FileWriter m_writer;
-
-            explicit ResultWriter(
-                platform::FileWriter writer
-            ) noexcept
-                : m_writer{std::move(writer)}
-            {
-            }
-
-        public:
-            ResultWriter(ResultWriter const&) = delete;
-            auto operator=(ResultWriter const&) -> ResultWriter& = delete;
-            ResultWriter(ResultWriter&&) noexcept = default;
-            auto operator=(ResultWriter&&) noexcept -> ResultWriter& = default;
-            ~ResultWriter() = default;
-
-            [[nodiscard]]
-            static auto create(
-                std::filesystem::path const& path
-            ) -> Result<ResultWriter>
-            {
-                UF_TRY_VALUE(
-                    writer,
-                    platform::FileWriter::openAppend(path)
-                );
-                return ResultWriter{std::move(writer)};
-            }
-
-            [[nodiscard]] auto write(std::string_view line) -> Status
-            {
-                auto record = std::string{line};
-                record += '\n';
-                UF_TRY(
-                    m_writer.write(
-                        std::as_bytes(
-                            std::span<char const>{
-                                record.data(),
-                                record.size()
-                            }
-                        )
-                    )
-                );
-                return flush();
-            }
-
-            [[nodiscard]] auto flush() -> Status
-            {
-                return m_writer.flushDurably();
-            }
-        };
-
         struct OutputFile final
         {
             std::filesystem::path path{};
@@ -370,17 +317,6 @@ namespace uf::m0_demo
         }
 
         [[nodiscard]]
-        auto serializeInvalidCommand(Error const& error) -> std::string
-        {
-            return std::format(
-                "{{\"op\":null,\"ok\":false,\"error\":{}}}",
-                escapeJsonString(
-                    formatAutomationError(error)
-                )
-            );
-        }
-
-        [[nodiscard]]
         auto serializeCaptureError(Error const& error) -> std::string
         {
             return std::format(
@@ -422,28 +358,17 @@ namespace uf::m0_demo
             );
         }
 
-        struct CommandExecution final
-        {
-            std::string resultLine{};
-            bool        stopAgent{};
-        };
-
         [[nodiscard]]
         auto finishAction(
             std::string_view operation,
             InputAgentActionResult const& result,
             bool stopAgent = false
-        ) -> CommandExecution
+        ) -> InputAgentCommandOutcome
         {
-            return CommandExecution{
+            return InputAgentCommandOutcome{
                 .resultLine = serializeInputAgentActionResult(operation, result),
                 .stopAgent  = stopAgent,
             };
-        }
-
-        [[nodiscard]] auto serializeQuit() -> std::string
-        {
-            return "{\"op\":\"quit\",\"ok\":true,\"error\":null}";
         }
 
         [[nodiscard]]
@@ -710,7 +635,7 @@ namespace uf::m0_demo
             std::filesystem::path const& canonicalOutputDirectory,
             std::filesystem::path const& canonicalQueue,
             std::filesystem::path const& canonicalResults
-        ) -> CommandExecution
+        ) -> InputAgentCommandOutcome
         {
             auto constexpr operation = std::string_view{"click"};
             auto result = InputAgentActionResult{};
@@ -830,7 +755,7 @@ namespace uf::m0_demo
             std::filesystem::path const& canonicalOutputDirectory,
             std::filesystem::path const& canonicalQueue,
             std::filesystem::path const& canonicalResults
-        ) -> CommandExecution
+        ) -> InputAgentCommandOutcome
         {
             auto constexpr operation = std::string_view{"scroll"};
             auto result = InputAgentActionResult{};
@@ -950,7 +875,7 @@ namespace uf::m0_demo
             std::filesystem::path const& canonicalOutputDirectory,
             std::filesystem::path const& canonicalQueue,
             std::filesystem::path const& canonicalResults
-        ) -> CommandExecution
+        ) -> InputAgentCommandOutcome
         {
             auto constexpr operation = std::string_view{"key"};
             auto result = InputAgentActionResult{};
@@ -1033,6 +958,169 @@ namespace uf::m0_demo
             }
             result.afterFrame = after->id().value();
             return finishAction(operation, result);
+        }
+
+        // The live half of one agent run, behind the port the serving loop
+        // drives. It owns the resolved target and its capture session rather
+        // than borrowing them, so nothing here can outlive the window it acts
+        // on, and the per-target input bookkeeping every action op threads
+        // through -- the held inputs and the audit log -- lives beside them.
+        class WindowInputAgentTarget final : public IInputAgentTarget
+        {
+            std::filesystem::path m_outputDirectory;
+            std::filesystem::path m_queue;
+            std::filesystem::path m_results;
+
+            ResolvedTarget    m_resolved;
+            WgcCaptureSession m_session;
+            DeliveryTarget    m_delivery;
+            ClientSize        m_client;
+
+            HeldInputs m_held{};
+            AuditLog   m_audit{};
+
+            // One overload per command the target can run, so adding an
+            // alternative to InputAgentCommand fails to compile here instead of
+            // slipping through a chain of tests nobody extended.
+            [[nodiscard]]
+            auto run(
+                InputAgentCaptureCommand const& command
+            ) -> InputAgentCommandOutcome;
+            [[nodiscard]]
+            auto run(
+                InputAgentClickCommand const& command
+            ) -> InputAgentCommandOutcome;
+            [[nodiscard]]
+            auto run(
+                InputAgentKeyCommand const& command
+            ) -> InputAgentCommandOutcome;
+            [[nodiscard]]
+            auto run(
+                InputAgentScrollCommand const& command
+            ) -> InputAgentCommandOutcome;
+            [[nodiscard]]
+            auto run(InputAgentQuitCommand const&) -> InputAgentCommandOutcome;
+
+        public:
+            WindowInputAgentTarget(
+                ResolvedTarget resolved,
+                WgcCaptureSession session,
+                DeliveryTarget delivery,
+                ClientSize client,
+                std::filesystem::path canonicalOutputDirectory,
+                std::filesystem::path canonicalQueue,
+                std::filesystem::path canonicalResults
+            )
+                : m_outputDirectory{std::move(canonicalOutputDirectory)}
+                , m_queue{std::move(canonicalQueue)}
+                , m_results{std::move(canonicalResults)}
+                , m_resolved{std::move(resolved)}
+                , m_session{std::move(session)}
+                , m_delivery{delivery}
+                , m_client{client}
+            {
+            }
+
+            [[nodiscard]]
+            auto execute(
+                InputAgentCommand const& command
+            ) -> InputAgentCommandOutcome override
+            {
+                return std::visit(
+                    [this](auto const& specific) -> InputAgentCommandOutcome
+                    {
+                        return run(specific);
+                    },
+                    command
+                );
+            }
+
+            auto clearCommandAudit() noexcept -> void override
+            {
+                clearInputAgentCommandAudit(m_audit);
+            }
+
+            [[nodiscard]] auto close() -> Status override
+            {
+                return m_session.close();
+            }
+        };
+
+        auto WindowInputAgentTarget::run(
+            InputAgentCaptureCommand const& command
+        ) -> InputAgentCommandOutcome
+        {
+            return InputAgentCommandOutcome{
+                .resultLine = executeCapture(
+                    command,
+                    m_session,
+                    m_client,
+                    m_outputDirectory,
+                    m_queue,
+                    m_results
+                ),
+                .stopAgent = false,
+            };
+        }
+
+        auto WindowInputAgentTarget::run(
+            InputAgentClickCommand const& command
+        ) -> InputAgentCommandOutcome
+        {
+            return executeClick(
+                command,
+                m_resolved,
+                m_session,
+                m_delivery,
+                m_held,
+                m_audit,
+                m_outputDirectory,
+                m_queue,
+                m_results
+            );
+        }
+
+        auto WindowInputAgentTarget::run(
+            InputAgentKeyCommand const& command
+        ) -> InputAgentCommandOutcome
+        {
+            return executeKey(
+                command,
+                m_resolved,
+                m_session,
+                m_delivery,
+                m_held,
+                m_audit,
+                m_outputDirectory,
+                m_queue,
+                m_results
+            );
+        }
+
+        auto WindowInputAgentTarget::run(
+            InputAgentScrollCommand const& command
+        ) -> InputAgentCommandOutcome
+        {
+            return executeScroll(
+                command,
+                m_resolved,
+                m_session,
+                m_delivery,
+                m_held,
+                m_audit,
+                m_outputDirectory,
+                m_queue,
+                m_results
+            );
+        }
+
+        auto WindowInputAgentTarget::run(
+            InputAgentQuitCommand const&
+        ) -> InputAgentCommandOutcome
+        {
+            UF_UNREACHABLE_MSG(
+                "input-agent quit never reaches the target: the loop answers it"
+            );
         }
     }
 
@@ -1244,7 +1332,10 @@ namespace uf::m0_demo
                 startPosition.consumedBytes
             )
         );
-        UF_TRY_VALUE(writer, ResultWriter::create(canonicalResults));
+        UF_TRY_VALUE(
+            writer,
+            InputAgentResultWriter::create(canonicalResults)
+        );
         UF_TRY(ensurePerMonitorAwareV2());
 
         UF_TRY_VALUE(candidates, enumerateCandidates());
@@ -1276,134 +1367,23 @@ namespace uf::m0_demo
             )
         );
 
-        auto held         = HeldInputs{};
-        auto audit        = AuditLog{};
-        auto lastActivity = MonotonicInstant::now();
-        while (true)
-        {
-            UF_TRY_VALUE(entries, reader.readAvailable());
-            for (auto const& entry : entries)
-            {
-                auto command = parseInputAgentCommand(entry.text);
-                if (!command)
-                {
-                    clearInputAgentCommandAudit(audit);
-                    UF_TRY(writer.write(serializeInvalidCommand(command.error())));
-                    UF_TRY(cursor.advance(entry.consumedBytes));
-                    lastActivity = MonotonicInstant::now();
-                    continue;
-                }
-
-                if (std::holds_alternative<InputAgentQuitCommand>(*command))
-                {
-                    clearInputAgentCommandAudit(audit);
-                    UF_TRY(writer.write(serializeQuit()));
-                    UF_TRY(cursor.advance(entry.consumedBytes));
-                    UF_TRY(session.close());
-                    UF_TRY(writer.flush());
-                    return ok();
-                }
-
-                auto resultLine = std::string{};
-                auto stopAgent  = false;
-                if (auto const* capture = std::get_if<InputAgentCaptureCommand>(&*command))
-                {
-                    resultLine = executeCapture(
-                        *capture,
-                        session,
-                        client,
-                        canonicalOutputDirectory,
-                        canonicalQueue,
-                        canonicalResults
-                    );
-                }
-                else if (auto const* clickCommand = std::get_if<InputAgentClickCommand>(
-                    &*command
-                ))
-                {
-                    auto execution = executeClick(
-                        *clickCommand,
-                        resolved,
-                        session,
-                        delivery,
-                        held,
-                        audit,
-                        canonicalOutputDirectory,
-                        canonicalQueue,
-                        canonicalResults
-                    );
-                    resultLine = std::move(execution.resultLine);
-                    stopAgent  = execution.stopAgent;
-                }
-                else if (auto const* keyCommand = std::get_if<InputAgentKeyCommand>(
-                    &*command
-                ))
-                {
-                    auto execution = executeKey(
-                        *keyCommand,
-                        resolved,
-                        session,
-                        delivery,
-                        held,
-                        audit,
-                        canonicalOutputDirectory,
-                        canonicalQueue,
-                        canonicalResults
-                    );
-                    resultLine = std::move(execution.resultLine);
-                    stopAgent  = execution.stopAgent;
-                }
-                else if (auto const* scrollCommand = std::get_if<InputAgentScrollCommand>(
-                    &*command
-                ))
-                {
-                    auto execution = executeScroll(
-                        *scrollCommand,
-                        resolved,
-                        session,
-                        delivery,
-                        held,
-                        audit,
-                        canonicalOutputDirectory,
-                        canonicalQueue,
-                        canonicalResults
-                    );
-                    resultLine = std::move(execution.resultLine);
-                    stopAgent  = execution.stopAgent;
-                }
-                else
-                {
-                    UF_UNREACHABLE_MSG(
-                        "input-agent parsed an unsupported command variant"
-                    );
-                }
-                clearInputAgentCommandAudit(audit);
-                UF_TRY(writer.write(resultLine));
-                // Advancing after the results line is the deliberate order: a
-                // hard kill in the gap replays this one command, where the
-                // reverse order would silently skip an action whose delivery
-                // nobody can still observe.
-                UF_TRY(cursor.advance(entry.consumedBytes));
-                if (stopAgent)
-                {
-                    UF_TRY(session.close());
-                    UF_TRY(writer.flush());
-                    return ok();
-                }
-                lastActivity = MonotonicInstant::now();
-            }
-
-            auto const now = MonotonicInstant::now();
-            if (
-                now.saturatingDurationSince(lastActivity)
-                >= args.idleTimeout
-            )
-            {
-                UF_TRY(session.close());
-                UF_TRY(writer.flush());
-                return ok();
-            }
-            std::this_thread::sleep_for(k_inputAgentPollInterval);
-        }
+        auto target = WindowInputAgentTarget{
+            std::move(resolved),
+            std::move(session),
+            delivery,
+            client,
+            canonicalOutputDirectory,
+            canonicalQueue,
+            canonicalResults,
+        };
+        auto clock = SystemInputAgentPollClock{};
+        return runInputAgentQueueLoop(
+            reader,
+            cursor,
+            writer,
+            target,
+            clock,
+            args.idleTimeout
+        );
     }
 }

@@ -190,6 +190,7 @@ if(TARGET ${PROJECT_NAME}_m0_demo_support)
             m0-demo/test-capture-mode.cpp
             m0-demo/test-guard.cpp
             m0-demo/test-input-agent.cpp
+            m0-demo/test-input-agent-loop.cpp
             m0-demo/test-log-jsonl.cpp
             m0-demo/test-pacing.cpp
             m0-demo/test-pipeline.cpp

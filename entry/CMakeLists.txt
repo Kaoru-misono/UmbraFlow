@@ -99,6 +99,8 @@ if(TARGET ${PROJECT_NAME}_controller)
         m0-demo/input-agent.hpp
         m0-demo/input-agent-cursor.cpp
         m0-demo/input-agent-cursor.hpp
+        m0-demo/input-agent-loop.cpp
+        m0-demo/input-agent-loop.hpp
         m0-demo/input-agent-protocol.cpp
         m0-demo/input-agent-protocol.hpp
         m0-demo/json-string.cpp
