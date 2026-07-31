@@ -7,6 +7,11 @@
 > 目标形态。见
 > [`2026-07-31-script-owned-page-model.md`](2026-07-31-script-owned-page-model.md),
 > 该文尚未实施。
+>
+> **裁决链(读到 §四之二 之后按这个顺序往下读)**:归属上移见
+> [`2026-07-31-script-owned-page-model.md`](2026-07-31-script-owned-page-model.md);
+> 顶层形态与 2026-08-01 的融合裁决见
+> [`2026-08-01-three-layers-and-agent-operator.md`](2026-08-01-three-layers-and-agent-operator.md)。
 
 > **词汇统一(2026-07-31,同日第二次改名)。** 本文正文已按新词汇改写:
 > `recognizer` → `element`,`RecognizerDefinition`/`RecognizerVariant` →
@@ -805,6 +810,11 @@ end
 点了另一个同样被授权的目标。宿主不拥有这条规则,`cycle_read` 因此**不收** `expected`
 参数。
 
+> **补充(2026-08-01)**:**期待文字本身可以作为数据写进项目文件**——「这一格是出击」
+> 是关于 UI 的事实,写下来才可证伪、可重放。这与本条并立,不冲突:数据住在标注里,
+> 核对逻辑仍归 Luau,`cycle_read` 仍然不收 `expected`。见
+> [三层系统与 Agent 操作者](2026-08-01-three-layers-and-agent-operator.md) §五-4。
+
 ### 4. 三种「一个元素多种形态」,是三件不同的事
 
 开发者给出三个实例,它们不能共用一套机械:
@@ -868,6 +878,11 @@ bug,不是安全问题。
 
 这条边界同时**关闭 §五 开放问题 1**:「暗色可点、亮色是禁用态」是**状态**,按 (a)
 处理——有名字的 appearance,脚本读命中身份自己决定点不点。appearance 不需要携带能力差异。
+
+> **确认(2026-08-01)**:状态读出沿用本条 (a) 的**有名字的 appearance** 机制;同日一度
+> 提过的替代方案——把互斥状态拆成各自独立的元素(`speed_1x` / `speed_2x` / `speed_3x`
+> 各成一个元素)——**已否决**。见
+> [三层系统与 Agent 操作者](2026-08-01-three-layers-and-agent-operator.md) §六。
 
 ### 5. `RecognizerId` 改名 `ElementId`
 
