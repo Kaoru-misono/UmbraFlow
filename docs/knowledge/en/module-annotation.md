@@ -304,13 +304,14 @@ mask under a threshold sized for 920 pixels hits every frame and measures nothin
 hits every state it is meant to distinguish is worse than no element, because it looks green. A
 colour-keyed template therefore needs a far tighter threshold than an opaque one — 9000 basis points
 gave three false-positive recognizers out of nine on the live game, and re-authoring at 9900 gave
-7/7 on an unseen frame and 0/7 on a UI-free one. There is no authoring-time check for either
-failure; `umbra-authoring frames probe` and its `fully_selected_pixels` are the only guard. See
-`docs/pitfalls/colour-key-annotation.md`.
+7/7 on an unseen frame and 0/7 on a UI-free one. The model itself still refuses neither failure:
+`page create` and `page add` measure the mask they drew and *warn* under `authored.mask.warning`
+when it selects fewer than 50 pixels or at least half the rectangle, and `umbra-authoring check` is
+the gate that decides. See `docs/pitfalls/colour-key-annotation.md`.
 
-A key that selects *no* pixels is accepted at authoring time and aborts at match time with
-`InternalInvariant`, which reads as "the program is broken" when the truth is "this key matches
-nothing inside that rectangle".
+A key that selects *no* pixels is still accepted at authoring time — the warning is not a refusal —
+and aborts at match time with `InternalInvariant`, which reads as "the program is broken" when the
+truth is "this key matches nothing inside that rectangle".
 
 The equality hit is part of the contract. `AnchorEvaluation::fromSadOutcome` lives in
 `modules/annotation/source/annotation/recognition.cpp`; it checks that the matcher's returned

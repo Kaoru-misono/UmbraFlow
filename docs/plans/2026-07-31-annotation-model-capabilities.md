@@ -132,6 +132,23 @@
 > 换句话说:**P0 想守的东西已经由证伪矩阵守住了**——那正是 §2.3 自己说「这是最大的
 > 风险」的地方,现在有了工具。将来若要硬闸门,它该量**结构**而不是**计数**;但那需要
 > 先定义结构怎么量,而目前只有三个数据点,不足以把一个没验过的公式钉进构造函数。
+>
+> > **落地(2026-07-31,同日实现):第 1 条已做,而且带了两条判据而不是一条。**
+> > `page create` / `page add` 在 `authored.mask` 下报出 `rect_pixels`、
+> > `fully_selected_pixels`、`selected_fraction`,并在下面两种情况附上 `warning`:
+> > **全选像素 < 50**,或**占矩形 ≥ 50%**。`ok` 仍为 true,元素照常写盘——它是提醒不是
+> > 闸门,闸门仍是 `umbra-authoring check`。
+> >
+> > 加第二条判据正是本节自己的论证要求的:一条「≥50」的下限会放过 68% 的橙底。上限取
+> > **一半**,因为它说的是「键选中的是图形还是底」这件事,是比例而不是计数;项目实测把它
+> > 夹得很宽——通过跨页证伪的元素占比 6.6%–25.8%,而三个已知的均匀掩码是 63%、68%、75%。
+> >
+> > 测量走 `probeColour`(`frames probe` 用的同一个函数),不在 CLI 里另写一份计数;绘制
+> > 动词只有一帧,所以同一个 view 传两次——选择只读 frames[0],两个 spread 归零,这也正是
+> > 警告只用计数、不用 spread 的原因。红证与实现见
+> > `entry/authoring/command-runner.cpp` 的 `maskWarning` 与
+> > `tests/authoring/test-authoring-cli.cpp`,以及
+> > `docs/pitfalls/colour-key-annotation.md` 新增的「另一个极端」一节。
 
 > ## 落地进度(2026-07-31 晚,doc-drift 扫描时记录)
 >

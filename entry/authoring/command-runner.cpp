@@ -846,6 +846,228 @@ namespace uf::authoring
             return exercised;
         }
 
+        // A count against the total it was measured over. PixelRect::create
+        // refuses an empty rectangle, so the guard is for a zero that cannot
+        // arrive rather than one that does.
+        [[nodiscard]]
+        auto fractionOf(uint64 part, uint64 whole) noexcept -> float
+        {
+            if (whole == 0)
+            {
+                return 0.0F;
+            }
+            return static_cast<float>(
+                static_cast<double>(part) / static_cast<double>(whole)
+            );
+        }
+
+        // The two ends of one question about a colour key an author just drew:
+        // does the mask it produces select a FIGURE out of the rectangle? Below
+        // the floor there is not enough of one to locate anything. At or above
+        // the share limit the key took the rectangle's ground instead, and
+        // whatever the rectangle was drawn around is in the holes, where a
+        // masked comparison never looks.
+        //
+        // Neither number is a gate and neither may become one. `check` is the
+        // gate: it searches the element against the screens it must NOT match
+        // and answers from measurement, where these two answer only from shape.
+        //
+        // Under the floor, a match is the lowest score anywhere in the search
+        // region with an exact-match early exit (`vision/sad.cpp`), so a handful
+        // of saturated pixels never has to survive where the glyph was -- it
+        // only has to find SOME offset where all of them land on that colour,
+        // and a busy screen always offers one. Measured on this project: masks
+        // of 27, 30 and 35 pixels each scored zero on frames whose content had
+        // visibly changed.
+        //
+        // At or above half the rectangle, every selected pixel is within
+        // tolerance of one colour by construction, so a mask that large is a
+        // solid patch of that colour and any patch of it the same size matches.
+        // Measured on this project: an orange button fill at 68%, a white info
+        // disc at 63% and a disabled grey button at 75% all measure beautifully
+        // and distinguish nothing, while every element that survived cross-page
+        // falsification selects between 6.6% and 25.8% of its rectangle.
+        constexpr auto k_minimumMaskPixels  = uint64{50};
+        constexpr auto k_maximumMaskPercent = uint64{50};
+
+        // The mask the compiler is about to bake, measured on the frame it was
+        // drawn from. It goes through probeColour -- the function `frames probe`
+        // answers with -- rather than counting here, so the number this warning
+        // fires on and the number an author checks it against cannot become two
+        // different numbers.
+        //
+        // probeColour requires two frames because its two spread figures are
+        // across-frame measurements, and a drawing verb has exactly one frame.
+        // The same view is handed to it twice: selection reads frames[0], which
+        // ColourProbeReport documents, so the counts are exactly what the probe
+        // would report for this rectangle and key, and both spreads come back
+        // zero. That is the truth about one frame, and it is why the warning
+        // below is built on counts alone.
+        [[nodiscard]]
+        auto measureDrawnMask(
+            std::span<annotation::AuthoringSourceAsset const> assets,
+            annotation::SourceId sourceId,
+            PixelRect const& templateRect,
+            annotation::ColourKey const& key
+        ) -> Result<ColourProbeReport>
+        {
+            auto const found = std::ranges::find(
+                assets,
+                sourceId,
+                &annotation::AuthoringSourceAsset::id
+            );
+            if (found == assets.end())
+            {
+                return invalid(
+                    "the screen this rectangle was drawn on is not loaded"
+                );
+            }
+
+            UF_TRY_VALUE(
+                decoded,
+                image::decodePng(found->pngBytes, "authoring source")
+            );
+            UF_TRY_VALUE(bgra, image::rgba8ToBgra8(std::move(decoded.pixels)));
+
+            auto const width = checkedCast<std::size_t>(decoded.width);
+            UF_CHECK(width.has_value());
+            auto const stride = checkedMultiply(
+                width.value_or(std::size_t{0}),
+                bytesPerPixel(PixelFormat::Bgra8)
+            );
+            UF_CHECK(stride.has_value());
+
+            UF_TRY_VALUE(
+                view,
+                BgraImage::create(
+                    bgra,
+                    decoded.width,
+                    decoded.height,
+                    stride.value_or(std::size_t{0})
+                )
+            );
+
+            auto const frames = std::array{view, view};
+            return probeColour(
+                frames,
+                ColourProbeSpec{
+                    .rect      = templateRect,
+                    .keyRed    = key.red(),
+                    .keyGreen  = key.green(),
+                    .keyBlue   = key.blue(),
+                    .tolerance = key.tolerance(),
+                }
+            );
+        }
+
+        // Absent when the mask has a figure in it, which is the ordinary case
+        // and must stay the ordinary case: a warning an author sees on good work
+        // is one they stop reading. The floor is answered first because it is
+        // the more specific diagnosis -- a small rectangle can be under both.
+        [[nodiscard]]
+        auto maskWarning(
+            ColourProbeReport const& report
+        ) -> std::optional<std::string>
+        {
+            if (report.fullySelectedPixels < k_minimumMaskPixels)
+            {
+                return std::format(
+                    "this key selects {} of the rectangle's {} pixels, under "
+                    "the {} a mask needs to measure anything. A match is the "
+                    "lowest score anywhere in the search region, so a mask this "
+                    "small never has to survive where the glyph is -- it only "
+                    "has to find some offset where every selected pixel lands "
+                    "on that colour, and a busy screen always offers one. Widen "
+                    "the rectangle, loosen --tolerance, or key a different "
+                    "feature. This is a hint; `check` is what decides.",
+                    report.fullySelectedPixels,
+                    report.rectPixels,
+                    k_minimumMaskPixels
+                );
+            }
+            // Cross-multiplied rather than divided, so the comparison is exact
+            // at every rectangle size. Neither side can overflow: a rectangle is
+            // bounded by the largest decodable image.
+            auto const selectedHundredths = report.fullySelectedPixels * 100U;
+            auto const limitHundredths    = report.rectPixels * k_maximumMaskPercent;
+            if (selectedHundredths >= limitHundredths)
+            {
+                return std::format(
+                    "this key selects {} of the rectangle's {} pixels, {}% of "
+                    "it: at half the rectangle or more the key has taken the "
+                    "fill rather than the figure drawn on it. Every selected "
+                    "pixel is within tolerance of one colour, so a mask this "
+                    "large is a solid patch of that colour and any patch of it "
+                    "the same size matches, while the glyph-shaped holes carry "
+                    "no weight. Key the glyph instead. This is a hint; `check` "
+                    "is what decides.",
+                    report.fullySelectedPixels,
+                    report.rectPixels,
+                    report.fullySelectedPixels * 100U / report.rectPixels
+                );
+            }
+            return {};
+        }
+
+        // What the drawn key keeps, said at the moment it is drawn rather than
+        // at a match that fails much later or never fails at all. Null when the
+        // draw carries no key: an unkeyed template compares every pixel of the
+        // rectangle, so there is no mask, and "the key selected the wrong thing"
+        // is not a question that can be asked of it.
+        [[nodiscard]]
+        auto maskJson(
+            std::span<annotation::AuthoringSourceAsset const> assets,
+            annotation::SourceId sourceId,
+            ElementDraw const& draw
+        ) -> Result<std::string>
+        {
+            if (!draw.colourKey)
+            {
+                return jsonNull();
+            }
+
+            UF_TRY_VALUE(
+                report,
+                measureDrawnMask(
+                    assets,
+                    sourceId,
+                    draw.templateRect,
+                    *draw.colourKey
+                )
+            );
+            auto const warning = maskWarning(report);
+            auto warningValue  = jsonNull();
+            if (warning)
+            {
+                warningValue = jsonString(*warning);
+            }
+
+            // The two counts carry the names `frames probe` gives them, because
+            // they are the same two numbers from the same function and an author
+            // comparing the two documents must not have to translate.
+            auto const members = std::array{
+                JsonMember{
+                    .key   = "rect_pixels",
+                    .value = jsonUnsigned(report.rectPixels),
+                },
+                JsonMember{
+                    .key   = "fully_selected_pixels",
+                    .value = jsonUnsigned(report.fullySelectedPixels),
+                },
+                JsonMember{
+                    .key   = "selected_fraction",
+                    .value = jsonNumber(
+                        fractionOf(report.fullySelectedPixels, report.rectPixels)
+                    ),
+                },
+                JsonMember{
+                    .key   = "warning",
+                    .value = std::move(warningValue),
+                },
+            };
+            return jsonObject(members);
+        }
+
         [[nodiscard]]
         auto searchRoiOf(
             ElementDraw const& draw,
@@ -867,11 +1089,15 @@ namespace uf::authoring
             );
         }
 
+        // `mask` is an already-encoded value from maskJson, not a second thing
+        // to measure here: the measurement needs the source bytes, which the
+        // session owns and the saved document does not.
         [[nodiscard]]
         auto drawJson(
             annotation::AuthoringDocument const& document,
             annotation::ElementId id,
-            bool ingested
+            bool ingested,
+            std::string mask
         ) -> Result<std::string>
         {
             auto const* p_element = document.findElement(id);
@@ -885,6 +1111,7 @@ namespace uf::authoring
                     .key   = "source_ingested",
                     .value = jsonBoolean(ingested),
                 },
+                JsonMember{.key = "mask", .value = std::move(mask)},
             };
             return jsonObject(members);
         }
@@ -1451,11 +1678,16 @@ namespace uf::authoring
             session.draft = std::move(keyed);
             UF_TRY_VALUE(document, commitSession(command.root, session));
             UF_TRY_VALUE(
+                mask,
+                maskJson(session.assets, resolved.id, command.anchor)
+            );
+            UF_TRY_VALUE(
                 drawn,
                 drawJson(
                     document,
                     annotation::ElementId{anchorId},
-                    resolved.ingested
+                    resolved.ingested,
+                    std::move(mask)
                 )
             );
 
@@ -1531,7 +1763,19 @@ namespace uf::authoring
             );
 
             UF_TRY_VALUE(document, commitSession(command.root, session));
-            UF_TRY_VALUE(drawn, drawJson(document, elementId, resolved.ingested));
+            UF_TRY_VALUE(
+                mask,
+                maskJson(session.assets, resolved.id, command.draw)
+            );
+            UF_TRY_VALUE(
+                drawn,
+                drawJson(
+                    document,
+                    elementId,
+                    resolved.ingested,
+                    std::move(mask)
+                )
+            );
 
             auto const members = std::array{
                 JsonMember{.key = "page", .value = jsonString(command.page)},
@@ -2252,21 +2496,6 @@ namespace uf::authoring
             // question about the whole screen rather than about a rectangle the
             // author does not have yet. The first frame sets the extent.
             return PixelRect::create(0, 0, first.width(), first.height());
-        }
-
-        // A count against the total it was measured over. PixelRect::create
-        // refuses an empty rectangle, so the guard is for a zero that cannot
-        // arrive rather than one that does.
-        [[nodiscard]]
-        auto fractionOf(uint64 part, uint64 whole) noexcept -> float
-        {
-            if (whole == 0)
-            {
-                return 0.0F;
-            }
-            return static_cast<float>(
-                static_cast<double>(part) / static_cast<double>(whole)
-            );
         }
 
         [[nodiscard]]

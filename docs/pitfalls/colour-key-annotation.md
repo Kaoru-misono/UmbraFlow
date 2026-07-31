@@ -53,8 +53,16 @@ giving 0.274 over 211 pixels.
 ### Regression check
 
 Before saving, run `umbra-authoring frames probe` with the same rectangle and key
-and read `fully_selected_pixels`. Zero means this failure. There is no code-level
-guard yet: authoring-time rejection does not exist, so the probe is the only check.
+and read `fully_selected_pixels`. Zero means this failure.
+
+> **2026-07-31: the drawing verbs now say it themselves.** `page create` and
+> `page add` measure the mask they just drew and report it under
+> `authored.mask`, in the same two counts `frames probe` uses and out of the same
+> `probeColour` call, so the two documents cannot disagree. Zero selected pixels
+> lands under the floor below and comes back with a `warning`. It is a hint and
+> not a refusal — the element is still authored and `ok` stays true — so the
+> probe remains worth running, and this failure is now visible at the moment it
+> is made rather than at a match much later.
 
 ## A mask with too few selected pixels passes everything and measures nothing
 
@@ -114,19 +122,66 @@ the action was available. An `80x80` unkeyed template over that same icon, added
 specifically to tell the two states apart, scored 7534-11322 on one state and
 9698 on the other against a 16320 threshold, hitting both.
 
+### The same failure at the other extreme, and why the count alone is the wrong test
+
+> Added 2026-07-31, measured on `session-0731-round2\frames` with
+> `umbra-authoring frames probe`.
+
+A key that takes almost the whole rectangle fails for the same reason a tiny one
+does, and it passes any pixel floor with room to spare. The masked comparison
+only reads the *values* of the selected pixels, and a colour key selects pixels
+within tolerance of one colour by construction — so a mask that covers most of
+the rectangle is a solid patch of that colour, any patch of it the same size
+matches, and the glyph-shaped holes carry no weight at all.
+
+The `繼續進行` button, one rectangle `1268,795,315,58`, three keys:
+
+| key | fully selected | share | verdict |
+|---|---|---|---|
+| the button's orange fill `250,131,50` tol 40 | 12421 of 18270 | **68.0%** | flat: no structure |
+| **the white glyph `255,255,255` tol 12** | **154** | 0.8% | glyph-shaped, works |
+| the white glyph, rect narrowed to the text | 30 | 0.2% | under the floor |
+
+Selection reads the first frame given, so the middle row measures 179 rather than
+154 on a different capture of the same screen. Neither number changes the verdict,
+and that is the point: the two failure modes bracket the answer. The rectangle has
+to stay wide enough to hold enough glyph pixels, and the key has to pick the glyph
+rather than the fill. Two more of the same disease, both proposed as anchors and both
+rejected: the map/node info icon `1512,124,44,44` keyed white takes 1250 of 1936
+pixels (64.6%) and is one white disc, and the `確認` button in its disabled state
+is 75% uniform grey.
+
+Against those, every element in `chaos-super` that survived cross-page
+falsification selects between **6.6% and 25.8%** of its rectangle — 89, 136, 152,
+198, 227, 240, 251, 316, 339, 367, 386, 439, 638 and 707 pixels. A discriminating
+mask is a *figure* carved out of the rectangle: big enough to constrain a search,
+and small enough that what got selected is the figure rather than the ground.
+
 ### Fix
 
-Check `fully_selected_pixels` from `frames probe` and treat anything under
-roughly 50 as measuring nothing. Widen the rectangle, loosen the tolerance, or
-pick a different feature.
+Check `fully_selected_pixels` from `frames probe` against **both** ends. Under
+roughly 50 it measures nothing; at half the rectangle or more it distinguishes
+nothing. Widen the rectangle, loosen the tolerance, key the glyph instead of the
+fill, or pick a different feature.
 
-> 2026-07-31:
-> [the capability plan](../plans/2026-07-31-annotation-model-capabilities.md)
-> §2.3 P0 rules that this ~50-pixel floor should become a construction-time
-> refusal in `Variant::create`, because adding a variant is cheaper for an author
-> than fixing a rectangle and so makes this rule easier to violate. It has not
-> landed: `Variant::create` today checks only that the threshold has a computable
-> SAD ceiling, so `frames probe` is still the only check.
+> **2026-07-31: landed as a warning on the drawing verbs, not as a refusal.**
+> `page create` and `page add` measure the mask and attach
+> `authored.mask.warning` when the count is under 50 or the share is at or above
+> half. Deciding artifact: `maskWarning` in
+> `entry/authoring/command-runner.cpp`, and the case
+> `the drawing verbs warn about a mask that cannot measure anything` in
+> `tests/authoring/test-authoring-cli.cpp`, whose third subcase exists to keep
+> the warning off the good masks above.
+>
+> [The capability plan](../plans/2026-07-31-annotation-model-capabilities.md)
+> §2.3 P0 originally wanted this floor as a construction-time refusal in
+> `Variant::create`. That was **demoted to a warning** (see the plan's
+> "两条实现期裁决" B), for two reasons this section is the evidence for: a
+> variant carries a `sourceId` and no pixels, so that layer cannot count
+> anything; and a pixel count is the wrong measure on its own, since it waves the
+> 68% orange fill straight through. **The gate stays the falsification matrix**,
+> `umbra-authoring check` — that measures whether the element hits a screen it
+> must not, where these two numbers only guess from shape.
 
 The general rule this taught, which is the part worth carrying: **an element that
 hits every state it is meant to distinguish is worse than no element, because it

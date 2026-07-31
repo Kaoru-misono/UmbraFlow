@@ -234,12 +234,13 @@ hit    = sadScore <= maxSad
 的 mask 对着按 920 像素定的阈值，每一帧都命中，什么也没测出来。一个在它本该区分的每种状态下
 都命中的元素，比没有这个元素更糟，因为它看起来是绿的。所以带色键的模板需要比不带的严得多的
 阈值——真机上 9000 基点让九个 recognizer 里三个假阳性，改标到 9900 后，七个标签在一张没见过的
-帧上 7/7、在一张无 UI 的帧上 0/7。这两种失败编辑期都没有检查；
-`umbra-authoring frames probe` 和它的 `fully_selected_pixels` 是唯一的守卫。见
+帧上 7/7、在一张无 UI 的帧上 0/7。模型本身仍然两种失败都不拒绝：`page create` 与 `page add`
+会量出自己刚画的 mask，在选中像素少于 50、或占矩形一半以上时于 `authored.mask.warning`
+**给出警告**，而真正的闸门是 `umbra-authoring check`。见
 `docs/pitfalls/colour-key-annotation.md`。
 
-一个**什么都选不中**的键在编辑期被接受，到匹配时以 `InternalInvariant` 中止——它读起来像
-「程序坏了」，而真相是「这个键在那个矩形里什么都没匹配上」。
+一个**什么都选不中**的键在编辑期依然被接受——警告不是拒绝——到匹配时以 `InternalInvariant`
+中止，它读起来像「程序坏了」，而真相是「这个键在那个矩形里什么都没匹配上」。
 
 等号命中是契约的一部分。`AnchorEvaluation::fromSadOutcome` 位于
 `modules/annotation/source/annotation/recognition.cpp`，它检查 matcher 返回矩形仍在 `searchRoi`

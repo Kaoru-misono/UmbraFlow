@@ -268,6 +268,16 @@ namespace uf::authoring
             return json.substr(at);
         }
 
+        // The mask object on its own, so a count read out of it cannot be
+        // answered by the rectangle the element echoes above it.
+        [[nodiscard]]
+        auto maskSection(std::string const& json) -> std::string
+        {
+            auto const at = json.find("\"mask\":");
+            REQUIRE(at != std::string::npos);
+            return json.substr(at);
+        }
+
         // The whole of the crop, as every subcommand that takes a rectangle
         // spells it.
         [[nodiscard]]
@@ -1424,6 +1434,187 @@ namespace uf::authoring
         );
         CHECK_FALSE(matched.ok);
         CHECK(matched.message.contains("is only read"));
+    }
+
+    // A colour key has to select a FIGURE out of the rectangle it was drawn on.
+    // The two ways it fails to are opposite in size and identical in effect, and
+    // neither shows up at authoring time without this: too few pixels and the
+    // mask matches any patch of that colour anywhere in the search region, too
+    // many and it IS a patch of that colour. Both are warnings and not
+    // refusals -- every element below is authored, saved and answers ok.
+    TEST_CASE("the drawing verbs warn about a mask that cannot measure anything")
+    {
+        auto const project = TemporaryProject{"mask-warning"};
+        auto const frames  = writeCrops(project);
+
+        requireOk(
+            run(
+                "project",
+                "init",
+                project.text(),
+                "--project-id",
+                "personal.mask_warning",
+                "--resolution",
+                std::format("{}x{}", fixture::k_width, fixture::k_height)
+            )
+        );
+
+        auto const glyph = run(
+            "page",
+            "create",
+            project.text(),
+            "menu",
+            "glyph",
+            "--source",
+            frames.blueFrame.string(),
+            "--rect",
+            wholeCropRect(),
+            "--key",
+            "255,255,255",
+            "--tolerance",
+            std::format("{}", k_tolerance)
+        );
+        requireOk(glyph);
+        auto const glyphMask = maskSection(glyph.json);
+
+        SUBCASE("the mask is the number frames probe reports for the same key")
+        {
+            // Not a golden constant on either side: the point is that the two
+            // documents cannot disagree, because the drawing verb answers out
+            // of the function the probe answers out of. A second count written
+            // here would be exactly the drift this asserts against.
+            auto const probe = run(
+                "frames",
+                "probe",
+                frames.blueFrame.string(),
+                frames.purpleFrame.string(),
+                "--rect",
+                wholeCropRect(),
+                "--key",
+                "255,255,255",
+                "--tolerance",
+                std::format("{}", k_tolerance)
+            );
+            requireOk(probe);
+            CHECK(
+                unsignedField(glyphMask, "fully_selected_pixels")
+                == unsignedField(probe.json, "fully_selected_pixels")
+            );
+            CHECK(
+                unsignedField(glyphMask, "rect_pixels")
+                == unsignedField(probe.json, "rect_pixels")
+            );
+        }
+
+        SUBCASE("white menu text over artwork draws no warning")
+        {
+            // The shape every element in the author's real project has: a few
+            // hundred glyph pixels carved out of a rectangle that is mostly
+            // artwork. A warning that fires here is one an author stops
+            // reading, which costs more than no warning at all.
+            CHECK(unsignedField(glyphMask, "fully_selected_pixels") > 50U);
+            CHECK(numberField(glyphMask, "selected_fraction") < 0.5);
+            CHECK(glyphMask.contains("\"warning\":null"));
+        }
+
+        SUBCASE("a key that selects a handful of pixels warns")
+        {
+            // Twenty white pixels of one glyph's edge, measured on this crop.
+            // It is stable, it is well keyed, and it locates nothing.
+            auto const tiny = run(
+                "page",
+                "add",
+                project.text(),
+                "menu",
+                "tiny",
+                "--capability",
+                "interact",
+                "--source",
+                frames.blueFrame.string(),
+                "--rect",
+                "16,0,24,20",
+                "--key",
+                "255,255,255",
+                "--tolerance",
+                std::format("{}", k_tolerance)
+            );
+            requireOk(tiny);
+
+            auto const mask = maskSection(tiny.json);
+            CHECK(unsignedField(mask, "fully_selected_pixels") < 50U);
+
+            // Under the floor by count while far under the share limit, so the
+            // only rule that can be speaking here is the floor.
+            CHECK(numberField(mask, "selected_fraction") < 0.5);
+            CHECK(mask.contains("a mask this small"));
+
+            // Authored, not refused. The gate is `check`, which measures this
+            // element against screens it must not match; this verb only says
+            // what it drew.
+            auto const loaded = workbench::loadAuthoringProject(project.path());
+            REQUIRE(loaded.has_value());
+            CHECK(elementNamed(loaded->document, "tiny") != nullptr);
+        }
+
+        SUBCASE("a key that takes most of the rectangle warns")
+        {
+            // The artwork under the glyphs rather than the glyphs: 2944 of the
+            // crop's 4000 pixels, all within tolerance of one navy. Every count
+            // reads as excellent and the glyph-shaped holes carry no weight, so
+            // any patch of that navy the same size matches it.
+            auto const fill = run(
+                "page",
+                "add",
+                project.text(),
+                "menu",
+                "fill",
+                "--capability",
+                "interact",
+                "--source",
+                frames.blueFrame.string(),
+                "--rect",
+                wholeCropRect(),
+                "--key",
+                "26,39,73",
+                "--tolerance",
+                "30"
+            );
+            requireOk(fill);
+
+            auto const mask = maskSection(fill.json);
+
+            // Far above the floor, so the only rule that can be speaking here
+            // is the share limit.
+            CHECK(unsignedField(mask, "fully_selected_pixels") > 50U);
+            CHECK(numberField(mask, "selected_fraction") > 0.5);
+            CHECK(mask.contains("a mask this large"));
+
+            auto const loaded = workbench::loadAuthoringProject(project.path());
+            REQUIRE(loaded.has_value());
+            CHECK(elementNamed(loaded->document, "fill") != nullptr);
+        }
+
+        SUBCASE("an unkeyed rectangle has no mask to measure")
+        {
+            // Every pixel counts, so a share of 1.0 is what an unkeyed template
+            // means rather than a mask that took the whole rectangle. Reporting
+            // one would warn about every unkeyed element in the project.
+            auto const plain = run(
+                "page",
+                "add",
+                project.text(),
+                "menu",
+                "plain",
+                "--capability",
+                "interact",
+                "--source",
+                frames.blueFrame.string(),
+                "--rect",
+                wholeCropRect()
+            );
+            requireOk(plain);
+            CHECK(maskSection(plain.json).starts_with("\"mask\":null"));
+        }
     }
 
     TEST_CASE("authoring CLI publishes a runtime manifest that parses and matches the compile")
