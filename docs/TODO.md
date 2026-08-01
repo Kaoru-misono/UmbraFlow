@@ -86,6 +86,11 @@
   `check` 92 格零发现;翻译脚本 `session-0731/author-*-v4.ps1`)。两个真实行为变化记录在案:
   interact/read 的模板走 `element appearance`(`page add` 只为 identify 铸 appearance);
   deploy_danger 合并单元素后 read 路径改用实测的 9900 bp 阈值,比旧 info 元素严。
+- **chaos-v14 的 l2 页面模型已落成(2026-08-01)**:`page-model.toml`(l2-v1,22 元素 /
+  3 页 / 2 边 / 4 屏 / 70 期望),期望从 v4 实测格转录并加严,`umbra-flow check`
+  首跑 `accepted=true` 零发现。已知缺口在该文件的产出报告与 §gaps:sortie_alt 屏
+  整体 unclaimed(上游无 regression 行)、回边(back/sortie_home)未断言待走边验证、
+  regress 暂不吃 reference 的 rect_override(汉堡以 v4 `match --page` 补验过)。
 - **真机只读验证(release + chaos-v14 + `--ocr-models`)已两层全通(2026-08-01)**:
   机制层——绑窗、抓帧、live 帧 `cycle_read`、`engine.text_read` 证据、置信度守门
   (2.7–4.1ms/次);内容层——菜单唤醒后 12 个连续周期页面 Resolved,「故事」矩形
