@@ -472,6 +472,18 @@ function ctx:key(ticket, name)
     return native.key(ticket, name)
 end
 
+-- One wheel scroll of `notches` detents, positive away from the reader and
+-- negative toward them. It consumes the cycle for the reason ctx:key does: the
+-- screen moved, so the frame this ticket names no longer describes it.
+--
+-- It takes no region, and that absence is current rather than permanent:
+-- whether a scroll should be anchored to an annotated area is open question 5 of
+-- docs/plans/2026-08-01-three-layers-and-agent-operator.md, and this forwards
+-- the raw verb until it is answered.
+function ctx:cycle_scroll(ticket, notches)
+    return native.cycle_scroll(ticket, notches)
+end
+
 -- There is no ctx:now: a script reads no clock, so the only shapes waiting can
 -- take are a host-minted deadline polled by ctx:wait, and the declarative
 -- ctx:settle.

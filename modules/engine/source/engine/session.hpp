@@ -214,6 +214,16 @@ namespace uf::engine
         KeyName key;
     };
 
+    // The record of one delivered wheel scroll: the frame whose observation it
+    // spent and the detent count posted to the sink. It carries no point for the
+    // reason KeyReceipt carries none -- the verb named none -- and the count is
+    // signed because the direction is half of what was delivered.
+    struct ScrollReceipt final
+    {
+        FrameId frameId;
+        int32   notches{};
+    };
+
     // The recognition and action pipeline over one bound capture target.
     //
     // Trace lifetime contract: the session does NOT own its trace sink. It stores
@@ -435,5 +445,27 @@ namespace uf::engine
             Observation&& observation,
             KeyName key
         ) -> Result<KeyReceipt>;
+
+        // Delivers one wheel scroll of `notches` detents, spending `observation`.
+        //
+        // ITS AUTHORIZATION CONTRACT IS pressKey()'s, not clickPoint()'s, and the
+        // reason is the same one: the verb names no screen position. A requested
+        // stop refuses before any sink call, an observation from another session is
+        // an InternalInvariant and an invalidated one is StaleObservation, the bound
+        // target instance is revalidated immediately before the post, and the
+        // observation is spent -- a delivered scroll changes the screen, so the
+        // frame that survived it would describe a target that no longer exists.
+        // Equally deliberately absent: the fingerprint check and the lease-age
+        // refusal, neither of which has a coordinate here to be about.
+        //
+        // The observation's lease still travels to the sink, and that is a delivery
+        // requirement rather than an authorization one -- see IActionSink::scroll,
+        // which is where the difference is spelled out and where the open question
+        // about aiming a scroll is recorded.
+        [[nodiscard]]
+        auto scroll(
+            Observation&& observation,
+            int32 notches
+        ) -> Result<ScrollReceipt>;
     };
 }

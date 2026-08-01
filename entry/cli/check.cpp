@@ -117,6 +117,18 @@ return #verdict.findings
                     "a falsification check measures screens and presses no key"
                 );
             }
+
+            [[nodiscard]]
+            auto scroll(
+                int32 /*notches*/,
+                ObservationLease const& /*lease*/
+            ) -> Status override
+            {
+                return fail(
+                    AutomationErrorKind::UnsupportedCapability,
+                    "a falsification check measures screens and scrolls nothing"
+                );
+            }
         };
     }
 

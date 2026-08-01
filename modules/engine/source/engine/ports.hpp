@@ -2,6 +2,7 @@
 
 #include <core/error/result.hpp>
 #include <core/time/monotonic-time.hpp>
+#include <core/types/integer.hpp>
 
 #include <domain/detection.hpp>
 #include <domain/frame.hpp>
@@ -104,6 +105,42 @@ namespace uf::engine
         virtual auto pressKey(
             KeyName key,
             TargetGeneration actionGeneration
+        ) -> Status = 0;
+
+        // Delivers one wheel scroll of `notches` detents to the bound target,
+        // positive away from the operator and negative toward them.
+        //
+        // WHY IT TAKES A LEASE WHERE pressKey() TAKES A BARE GENERATION, and why
+        // that is not the authorization difference it looks like. The verb above
+        // this port names no coordinate and the engine enforces none: no
+        // fingerprint check and no lease age, because there is no rectangle whose
+        // meaning either could invalidate. That is the keystroke's contract and a
+        // scroll shares it. What a scroll does not share is its DELIVERY: a wheel
+        // message is posted at a position on every target this project drives, so
+        // an implementation has to choose one and has to be able to refuse a
+        // position it can no longer aim at. The lease is that material, and
+        // dropping it would remove the controller's D0 injection-layer fence
+        // exactly as dropping it from click() would.
+        //
+        // WHICH position a scroll should be aimed at is deliberately open
+        // (docs/plans/2026-08-01-three-layers-and-agent-operator.md section 9 item
+        // 5 -- anchoring one to an annotated region). Until that is settled an
+        // implementation aims at the bound target itself and no annotated region
+        // takes part; when it is settled the point arrives here as a parameter and
+        // nothing about the lease changes.
+        //
+        // `notches` crosses as a plain count because its bound is not
+        // platform-neutral: Windows carries the delta in a signed 16-bit word, so
+        // the implementation owns the unit conversion, the refusal of a count that
+        // does not fit that word, and the refusal of zero -- a wheel message that
+        // moves nothing is a mistyped command rather than a no-op worth posting.
+        // The implementation MUST forward the lease to the delivery layer, MUST
+        // deliver strictly in the background, and MUST never steal focus or
+        // activate the target window.
+        [[nodiscard]]
+        virtual auto scroll(
+            int32 notches,
+            ObservationLease const& lease
         ) -> Status = 0;
     };
 }

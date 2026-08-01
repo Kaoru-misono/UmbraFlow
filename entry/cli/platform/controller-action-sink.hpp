@@ -2,6 +2,7 @@
 
 #include <controller/input.hpp>
 #include <core/error/result.hpp>
+#include <core/types/integer.hpp>
 
 #include <domain/detection.hpp>
 #include <domain/ids.hpp>
@@ -47,6 +48,21 @@ namespace uf::cli::platform
         auto pressKey(
             KeyName key,
             TargetGeneration actionGeneration
+        ) -> Status override;
+
+        // Turns the port's detent count into the controller's WheelDelta -- which
+        // is where "not zero" and "small enough for the word the wheel message
+        // encodes it in" are decided -- and posts it through controller::scroll,
+        // forwarding the lease so the same injection-layer fence a click gets runs
+        // at delivery time.
+        //
+        // It supplies the position controller::scroll needs, because the port's
+        // verb names none: see the definition for which position and why that
+        // choice leaves the anchoring question open rather than answering it.
+        [[nodiscard]]
+        auto scroll(
+            int32 notches,
+            ObservationLease const& lease
         ) -> Status override;
     };
 }

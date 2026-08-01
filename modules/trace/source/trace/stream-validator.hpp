@@ -125,6 +125,14 @@ namespace uf::trace
         [[nodiscard]]
         auto requireAnnotationPayload(TraceEvent const& event) const -> Status;
 
+        // The same "an empty line is worse evidence than a refused one" rule for
+        // engine.scroll_delivered, whose whole content is the detent count. It is
+        // stated where the annotation payload rules are because it is the same
+        // rule; it is stated at all because a scroll, unlike a click, has no
+        // coordinate on the line to fall back on.
+        [[nodiscard]]
+        static auto requireScrollPayload(TraceEvent const& event) -> Status;
+
         [[nodiscard]] auto startStep(TraceEvent::Framework const& payload) -> Status;
         [[nodiscard]] auto finishStep(TraceEvent::Framework const& payload) -> Status;
         [[nodiscard]] auto retryAttempt(TraceEvent::Framework const& payload) -> Status;

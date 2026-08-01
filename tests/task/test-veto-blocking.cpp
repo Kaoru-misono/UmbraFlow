@@ -267,6 +267,17 @@ namespace uf::task
                 m_gate->blockOn(m_gate->token());
                 return ok();
             }
+
+            // And for a blocked scroll, which reaches the same port again.
+            [[nodiscard]]
+            auto scroll(
+                int32 /*notches*/,
+                ObservationLease const& /*lease*/
+            ) -> Status override
+            {
+                m_gate->blockOn(m_gate->token());
+                return ok();
+            }
         };
 
         // Blocks inside emit(), on the first event matching its target.

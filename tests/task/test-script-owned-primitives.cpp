@@ -724,6 +724,177 @@ namespace uf::task
             }
         }
 
+        TEST_CASE("A scroll spends its cycle and needs no hit to deliver")
+        {
+            auto built = buildHarness(matchableFrames(), HarnessSpec{});
+            REQUIRE(built.session.has_value());
+            auto* const p_clicks = built.clicks;
+            TaskContext context{*std::move(built.session), *built.recorder};
+
+            // No template loaded, no match found, no page resolved: a scroll names
+            // no screen position, so an open cycle is the whole of what it needs.
+            auto const ticket = context.openCycle();
+            REQUIRE(ticket.has_value());
+            REQUIRE(context.cycleScroll(*ticket, int32{-3}).has_value());
+            REQUIRE(p_clicks->scrolls().size() == 1U);
+            CHECK(p_clicks->scrolls().front() == int32{-3});
+
+            // The cycle is spent, exactly as a keystroke spends it: the screen
+            // moved, so the frame this ticket named no longer describes it. Drop
+            // the spend in TaskContext::cycleScroll and one frame delivers as many
+            // wheel messages as a script asks for, so this goes red.
+            CHECK_FALSE(context.hasOpenCycle());
+            auto const again = context.cycleScroll(*ticket, int32{-3});
+            REQUIRE_FALSE(again.has_value());
+            CHECK(
+                kindOfError(again.error()) == AutomationErrorKind::StaleObservation
+            );
+            CHECK(p_clicks->scrolls().size() == 1U);
+        }
+
+        TEST_CASE("cycle_scroll refuses every ticket that names no open cycle")
+        {
+            auto built = buildHarness(matchableFrames(), HarnessSpec{});
+            REQUIRE(built.session.has_value());
+            auto* const p_clicks = built.clicks;
+            TaskContext context{*std::move(built.session), *built.recorder};
+
+            SUBCASE("with no cycle ever opened")
+            {
+                auto const never = context.cycleScroll(
+                    CycleTicket{.generation = 0, .ordinal = 1},
+                    int32{1}
+                );
+                REQUIRE_FALSE(never.has_value());
+                CHECK(
+                    kindOfError(never.error())
+                    == AutomationErrorKind::StaleObservation
+                );
+            }
+
+            SUBCASE("on a cycle the caller already closed")
+            {
+                auto const ticket = context.openCycle();
+                REQUIRE(ticket.has_value());
+                CHECK(context.closeCycle(*ticket));
+
+                auto const closed = context.cycleScroll(*ticket, int32{1});
+                REQUIRE_FALSE(closed.has_value());
+                CHECK(
+                    kindOfError(closed.error())
+                    == AutomationErrorKind::StaleObservation
+                );
+            }
+
+            SUBCASE("on a ticket minted by another generation's ledger")
+            {
+                auto const ticket = context.openCycle();
+                REQUIRE(ticket.has_value());
+
+                // The live cycle's ordinal under a stamp this ledger never minted:
+                // a ticket left over from a spent generation must be rejected
+                // rather than collide with the ordinal that is open now.
+                auto const foreign = context.cycleScroll(
+                    CycleTicket{
+                        .generation = ticket->generation + 1,
+                        .ordinal    = ticket->ordinal,
+                    },
+                    int32{1}
+                );
+                REQUIRE_FALSE(foreign.has_value());
+                CHECK(
+                    kindOfError(foreign.error())
+                    == AutomationErrorKind::StaleObservation
+                );
+
+                // And the refusal left the frame where it was, so the framework's
+                // own close still has a cycle to close.
+                CHECK(context.hasOpenCycle());
+            }
+
+            // Every refusal above is fail-closed: no wheel message escaped.
+            CHECK(p_clicks->scrolls().empty());
+        }
+
+        TEST_CASE("cycle_scroll is on the run surface and the exploration surface")
+        {
+            // Decision (b) of the capability split, and the only place it is
+            // observable: scrolling a list too long to fit is ordinary business
+            // work, so unlike cycle_crop and probe this primitive is bound on both
+            // surfaces. Move its installation inside buildPrivateSurface's
+            // Exploration branch and the first half goes red.
+            constexpr std::string_view source = R"lua(
+                local cycle = ctx:cycle_open()
+                ctx:cycle_scroll(cycle, -2)
+                return 1
+            )lua";
+
+            SUBCASE("a run VM reaches it")
+            {
+                auto built = buildHarness(matchableFrames(), HarnessSpec{});
+                REQUIRE(built.session.has_value());
+                auto* const p_clicks = built.clicks;
+                TaskContext context{*std::move(built.session), *built.recorder};
+
+                auto engineVm = script::Engine::create(taskVmConfig(context));
+                REQUIRE(engineVm.has_value());
+                auto const result = engineVm->runNumber(source, "cycle-scroll-run");
+                REQUIRE(result.has_value());
+                CHECK(*result == 1.0);
+                REQUIRE(p_clicks->scrolls().size() == 1U);
+                CHECK(p_clicks->scrolls().front() == int32{-2});
+                CHECK_FALSE(context.hasOpenCycle());
+            }
+
+            SUBCASE("an exploration VM reaches the same one")
+            {
+                auto built = buildHarness(matchableFrames(), HarnessSpec{});
+                REQUIRE(built.session.has_value());
+                auto* const p_clicks = built.clicks;
+                TaskContext context{*std::move(built.session), *built.recorder};
+
+                auto engineVm = script::Engine::create(explorationVmConfig(context));
+                REQUIRE(engineVm.has_value());
+                auto const result = engineVm->runNumber(
+                    source,
+                    "cycle-scroll-exploration"
+                );
+                REQUIRE(result.has_value());
+                CHECK(*result == 1.0);
+                REQUIRE(p_clicks->scrolls().size() == 1U);
+                CHECK(p_clicks->scrolls().front() == int32{-2});
+            }
+        }
+
+        TEST_CASE("cycle_scroll refuses a notch count that is not a whole number")
+        {
+            // Refused before the cycle is spent, which is what makes it worth
+            // checking here rather than leaving to the delivery layer: a script
+            // that passed a string or a fraction still holds its frame.
+            auto built = buildHarness(matchableFrames(), HarnessSpec{});
+            REQUIRE(built.session.has_value());
+            auto* const p_clicks = built.clicks;
+            TaskContext context{*std::move(built.session), *built.recorder};
+
+            constexpr std::string_view source = R"lua(
+                local cycle = ctx:cycle_open()
+                local ok = pcall(function() ctx:cycle_scroll(cycle, 1.5) end)
+                if ok then return 0 end
+                local typed = pcall(function() ctx:cycle_scroll(cycle, "down") end)
+                if typed then return 0 end
+                ctx:cycle_scroll(cycle, 1)
+                return 1
+            )lua";
+
+            auto engineVm = script::Engine::create(taskVmConfig(context));
+            REQUIRE(engineVm.has_value());
+            auto const result = engineVm->runNumber(source, "cycle-scroll-typing");
+            REQUIRE(result.has_value());
+            CHECK(*result == 1.0);
+            REQUIRE(p_clicks->scrolls().size() == 1U);
+            CHECK(p_clicks->scrolls().front() == int32{1});
+        }
+
         TEST_CASE("Project file I/O round trips inside the project directory")
         {
             auto const directory = TemporaryDirectory{"uf-project-files-roundtrip"};

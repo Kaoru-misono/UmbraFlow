@@ -307,6 +307,10 @@ namespace uf::engine
             std::optional<KeyName>          m_lastKey{};
             std::optional<TargetGeneration> m_lastKeyGeneration{};
 
+            uint32                          m_scrollCount{0};
+            std::optional<int32>            m_lastNotches{};
+            std::optional<ObservationLease> m_lastScrollLease{};
+
         public:
             [[nodiscard]]
             auto click(
@@ -332,6 +336,21 @@ namespace uf::engine
                 ++m_keyCount;
                 m_lastKey           = key;
                 m_lastKeyGeneration = actionGeneration;
+                return ok();
+            }
+
+            // A scroll carries the lease and no coordinate, so this records both
+            // halves: that a wheel message was asked for at all, and that the
+            // lease reaching the delivery layer is still the observation's own.
+            [[nodiscard]]
+            auto scroll(
+                int32 notches,
+                ObservationLease const& lease
+            ) -> Status override
+            {
+                ++m_scrollCount;
+                m_lastNotches     = notches;
+                m_lastScrollLease = lease;
                 return ok();
             }
 
@@ -366,6 +385,22 @@ namespace uf::engine
             auto lastKeyGeneration() const noexcept -> std::optional<TargetGeneration>
             {
                 return m_lastKeyGeneration;
+            }
+
+            [[nodiscard]] auto scrollCount() const noexcept -> uint32
+            {
+                return m_scrollCount;
+            }
+
+            [[nodiscard]] auto lastNotches() const noexcept -> std::optional<int32>
+            {
+                return m_lastNotches;
+            }
+
+            [[nodiscard]]
+            auto lastScrollLease() const noexcept -> std::optional<ObservationLease>
+            {
+                return m_lastScrollLease;
             }
         };
 
@@ -1038,6 +1073,174 @@ namespace uf::engine
         REQUIRE_FALSE(retry.has_value());
         requireErrorKind(retry.error(), AutomationErrorKind::StaleObservation);
         CHECK(under.clicks->keyCount() == 1);
+    }
+
+    TEST_CASE("engine session delivers a scroll and spends the observation")
+    {
+        auto const fingerprint = fingerprintOf(3, 1, 96);
+        auto under = matchingSession(fingerprint, baseConfig(fingerprint));
+        REQUIRE(under.session.has_value());
+        auto& session = *under.session;
+
+        auto observation = session.observe();
+        REQUIRE(observation.has_value());
+
+        auto handle        = *std::move(observation);
+        auto const receipt = session.scroll(std::move(handle), int32{-2});
+        REQUIRE(receipt.has_value());
+        CHECK(under.clicks->scrollCount() == 1);
+        CHECK(receipt->frameId == FrameId{17});
+        CHECK(receipt->notches == int32{-2});
+        REQUIRE(under.clicks->lastNotches().has_value());
+        CHECK(*under.clicks->lastNotches() == int32{-2});
+
+        // The lease reaching the sink is still this observation's own, which is
+        // what keeps the controller's delivery-time fence in the loop: the verb
+        // enforces no lease here, but it must not swallow one either.
+        REQUIRE(under.clicks->lastScrollLease().has_value());
+        CHECK(under.clicks->lastScrollLease()->frameId() == FrameId{17});
+
+        // A delivered scroll moves the screen exactly as a keystroke does, so the
+        // observation is spent and a second delivery on the same handle is
+        // refused. Remove the invalidation in EngineSession::scroll and one frame
+        // delivers two wheel messages, so this goes red.
+        auto const retry = session.scroll(std::move(handle), int32{-2});
+        REQUIRE_FALSE(retry.has_value());
+        requireErrorKind(retry.error(), AutomationErrorKind::StaleObservation);
+        CHECK(under.clicks->scrollCount() == 1);
+
+        auto const kinds = kindsOf(under.traces->events());
+        CHECK(
+            std::ranges::count(kinds, trace::TraceEventKind::EngineScrollDelivered)
+            == 1
+        );
+
+        // The delta on the line is the delta that was delivered, sign included.
+        // Nothing downstream of this could notice a scroll recorded upward that
+        // went downward, because the wheel leaves no other trace of itself.
+        auto const* p_scroll = findEvent(
+            under.traces->events(),
+            trace::TraceEventKind::EngineScrollDelivered
+        );
+        REQUIRE(p_scroll != nullptr);
+        REQUIRE(p_scroll->wheelNotches.has_value());
+        CHECK(*p_scroll->wheelNotches == int32{-2});
+    }
+
+    TEST_CASE("engine session revalidates the target instance before a scroll")
+    {
+        auto const fingerprint = fingerprintOf(3, 1, 96);
+        auto under = matchingSession(fingerprint, baseConfig(fingerprint));
+        REQUIRE(under.session.has_value());
+        auto& session = *under.session;
+
+        auto observation = session.observe();
+        REQUIRE(observation.has_value());
+
+        // The bound target passed validation during observe and is switched to
+        // fail before delivery, modeling an HWND reused between the two. Remove
+        // the revalidation in EngineSession::scroll and the wheel reaches whatever
+        // now owns that handle, so this goes red.
+        under.source->invalidateTargetInstance();
+
+        auto const receipt = session.scroll(std::move(*observation), int32{1});
+        REQUIRE_FALSE(receipt.has_value());
+        requireErrorKind(receipt.error(), AutomationErrorKind::TargetUnavailable);
+        CHECK(under.clicks->scrollCount() == 0);
+    }
+
+    TEST_CASE("engine session refuses a scroll on an observation it did not vend")
+    {
+        auto const fingerprint = fingerprintOf(3, 1, 96);
+        auto underA = matchingSession(fingerprint, baseConfig(fingerprint));
+        REQUIRE(underA.session.has_value());
+
+        auto framesB = std::vector<Frame>{};
+        framesB.emplace_back(
+            grayFrame(fingerprint, matchingPixels(), FrameId{18}, MonotonicInstant::now())
+        );
+        auto underB = makeSession(std::move(framesB), baseConfig(fingerprint));
+        REQUIRE(underB.session.has_value());
+
+        auto observation = underA.session->observe();
+        REQUIRE(observation.has_value());
+
+        auto const receipt = underB.session->scroll(
+            std::move(*observation),
+            int32{1}
+        );
+        REQUIRE_FALSE(receipt.has_value());
+        requireErrorKind(receipt.error(), AutomationErrorKind::InternalInvariant);
+        CHECK(underB.clicks->scrollCount() == 0);
+    }
+
+    TEST_CASE("engine session cancels a scroll requested after the observation")
+    {
+        auto const fingerprint = fingerprintOf(3, 1, 96);
+        auto cancellation   = std::stop_source{};
+        auto config         = baseConfig(fingerprint);
+        config.cancellation = cancellation.get_token();
+        auto under          = matchingSession(fingerprint, std::move(config));
+        REQUIRE(under.session.has_value());
+        auto& session = *under.session;
+
+        auto observation = session.observe();
+        REQUIRE(observation.has_value());
+        cancellation.request_stop();
+
+        auto const receipt = session.scroll(std::move(*observation), int32{1});
+        REQUIRE_FALSE(receipt.has_value());
+        requireErrorKind(receipt.error(), AutomationErrorKind::Cancelled);
+        CHECK(under.clicks->scrollCount() == 0);
+    }
+
+    TEST_CASE("engine session scrolls without the fences a coordinate needs")
+    {
+        // The decided contract, and the half a test has to pin because nothing
+        // else can: a scroll names no screen position, so the engine applies
+        // NEITHER the project-fingerprint check nor the observation's lease --
+        // both of which ask whether a coordinate still means what it meant. Add
+        // either to EngineSession::scroll and one of these two goes red.
+        //
+        // This is the engine's contract only. The delivery layer still receives
+        // the lease and fences the position it chooses on it; what is asserted
+        // here is that the refusal does not happen a layer too early, where it
+        // would refuse a wheel for a reason that cannot apply to it.
+        auto const fingerprint = fingerprintOf(3, 1, 96);
+
+        SUBCASE("a mismatched fingerprint does not refuse a scroll")
+        {
+            auto config            = baseConfig(fingerprint);
+            config.liveFingerprint = fingerprintOf(3, 1, 120);
+            auto under             = matchingSession(fingerprint, std::move(config));
+            REQUIRE(under.session.has_value());
+
+            auto observation = under.session->observe();
+            REQUIRE(observation.has_value());
+            auto const receipt = under.session->scroll(
+                std::move(*observation),
+                int32{1}
+            );
+            REQUIRE(receipt.has_value());
+            CHECK(under.clicks->scrollCount() == 1);
+        }
+
+        SUBCASE("an expired lease does not refuse a scroll")
+        {
+            auto config              = baseConfig(fingerprint);
+            config.maxActionFrameAge = MonotonicInstant::Duration::zero();
+            auto under               = matchingSession(fingerprint, std::move(config));
+            REQUIRE(under.session.has_value());
+
+            auto observation = under.session->observe();
+            REQUIRE(observation.has_value());
+            auto const receipt = under.session->scroll(
+                std::move(*observation),
+                int32{1}
+            );
+            REQUIRE(receipt.has_value());
+            CHECK(under.clicks->scrollCount() == 1);
+        }
     }
 
     TEST_CASE("engine session cancels a click requested after the observation")

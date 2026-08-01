@@ -56,6 +56,12 @@ namespace uf::task
         // is what the refusal was about.
         std::optional<KeyName> key{};
 
+        // The detent count a `cycle_scroll` call was handed, recorded on the same
+        // reasoning `key` is: a scroll the host refuses before the engine is
+        // reached produces no engine line at all, and the count is what the
+        // refusal was about.
+        std::optional<int32> wheelNotches{};
+
         // The project file a project_read or project_write named, and how many
         // bytes crossed. Views, like `verb`: the struct never outlives the call
         // that builds it, and both spellings live on that call's stack.

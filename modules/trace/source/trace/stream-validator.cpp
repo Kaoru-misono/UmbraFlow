@@ -169,6 +169,21 @@ namespace uf::trace
         return ok();
     }
 
+    auto TraceStreamValidator::requireScrollPayload(
+        TraceEvent const& event
+    ) -> Status
+    {
+        if (!event.wheelNotches.has_value())
+        {
+            return fail(
+                AutomationErrorKind::InternalInvariant,
+                "engine.scroll_delivered carries no wheel delta, which is the "
+                "whole of what it records"
+            );
+        }
+        return ok();
+    }
+
     auto TraceStreamValidator::admit(
         TraceEvent const& event
     ) -> Result<std::vector<std::string>>
@@ -252,6 +267,13 @@ namespace uf::trace
             // wrong one -- which is a bug in this binary and not something a
             // reader should have to notice for themselves.
             return refuseAnnotationVocabularyClash();
+
+        case TraceEventKind::EngineScrollDelivered:
+            // Host-authored like the engine lines below, so the run bracket is the
+            // only structural rule that binds it -- but a scroll whose delta is
+            // missing says only that something was delivered, and the delta is the
+            // whole of what distinguishes one from another.
+            return requireScrollPayload(event);
 
         case TraceEventKind::AnnotationClickDelivered:
         case TraceEventKind::AnnotationRegionSaved:

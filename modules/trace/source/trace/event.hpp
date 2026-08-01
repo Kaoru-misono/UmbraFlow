@@ -148,6 +148,17 @@ namespace uf::trace
         EngineActionRejected,
         EngineActionDelivered,
         EngineKeyDelivered,
+
+        // One delivered wheel scroll. It is its own kind rather than an
+        // engine.action_delivered carrying a delta, for the reason
+        // engine.key_delivered is: that spelling records a click, and a reader
+        // counting delivered clicks must not have to subtract the lines that
+        // turn out to be something else. Additive to umbraflow-trace/v3 -- a v3
+        // reader that does not know the name meets it under the same rule it
+        // meets any unknown kind, where REMOVING a member is what forced the last
+        // version bump.
+        EngineScrollDelivered,
+
         EngineObservationInvalidated,
         TaskNativeCall,
         FrameworkStepStarted,
@@ -422,6 +433,14 @@ namespace uf::trace
         // so there is no clickClient to record and the name is the only thing that
         // distinguishes one delivered key from another.
         std::optional<KeyName> key{};
+
+        // The detent count one engine.scroll_delivered posted, positive away from
+        // the operator and negative toward them. It is that event's whole content
+        // on the same reasoning `key` is engine.key_delivered's: a scroll names no
+        // coordinate the verb chose, so the signed count is the only thing that
+        // distinguishes one delivered scroll from another, and a line without it
+        // records that something happened without saying what.
+        std::optional<int32> wheelNotches{};
     };
 
     // A TraceEvent with the run identity stamped onto it. Only TraceRecorder can

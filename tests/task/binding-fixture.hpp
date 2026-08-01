@@ -242,6 +242,7 @@ namespace uf::task
     {
         uint32               m_clickCount{0};
         std::vector<KeyName> m_keys{};
+        std::vector<int32>   m_scrolls{};
 
     public:
         [[nodiscard]]
@@ -264,6 +265,16 @@ namespace uf::task
             return ok();
         }
 
+        [[nodiscard]]
+        auto scroll(
+            int32 notches,
+            ObservationLease const& /*lease*/
+        ) -> Status override
+        {
+            m_scrolls.emplace_back(notches);
+            return ok();
+        }
+
         [[nodiscard]] auto clickCount() const noexcept -> uint32
         {
             return m_clickCount;
@@ -276,6 +287,16 @@ namespace uf::task
             -> std::vector<KeyName> const&
         {
             return m_keys;
+        }
+
+        // The detent counts this sink was asked to deliver, in order. A refusal
+        // that still posted a wheel message would be a weaker guarantee than the
+        // one under test, which is why the cases read the deliveries rather than
+        // only the returned error.
+        [[nodiscard]] auto scrolls() const noexcept UF_LIFETIME_BOUND
+            -> std::vector<int32> const&
+        {
+            return m_scrolls;
         }
     };
 
@@ -301,6 +322,15 @@ namespace uf::task
         auto pressKey(
             KeyName /*key*/,
             TargetGeneration /*actionGeneration*/
+        ) -> Status override
+        {
+            return ok();
+        }
+
+        [[nodiscard]]
+        auto scroll(
+            int32 /*notches*/,
+            ObservationLease const& /*lease*/
         ) -> Status override
         {
             return ok();

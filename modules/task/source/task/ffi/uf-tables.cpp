@@ -1418,6 +1418,79 @@ namespace uf::task
             return 0;
         }
 
+        // cycle_scroll(ticket, notches) -> (). Consumes the cycle and delivers one
+        // wheel scroll of `notches` detents, positive away from the operator and
+        // negative toward them.
+        //
+        // Its authorization contract is `key`'s rather than a click's, and the full
+        // reasoning is at TaskContext::cycleScroll and EngineSession::scroll. In one
+        // sentence: it requires an open cycle and nothing else, because the verb
+        // names no screen position -- so there is no hit to be same-frame with and
+        // no coordinate whose shelf life a lease could bound -- while it still
+        // consumes the cycle, because a delivered scroll moves the screen exactly as
+        // a keystroke does.
+        //
+        // IT IS ON BOTH SURFACES. Scrolling a list too long to fit is ordinary
+        // business work -- the fighter list of teaching step 4 is the instance the
+        // verb roster cites -- and nothing about it hands a script pixels or a bare
+        // coordinate, which is what the two exploration privileges are.
+        //
+        // ANCHORING ONE TO AN ANNOTATED REGION IS DELIBERATELY NOT HERE. That is
+        // open question 5 of docs/plans/2026-08-01-three-layers-and-agent-operator
+        // .md; the raw verb ships with no anchoring rule rather than with an
+        // invented one, and when the question is settled the region arrives as an
+        // argument rather than as a reinterpretation of this one.
+        //
+        // The count is checked here only for the shape a Luau number can be wrong
+        // in -- not a number, not whole, or beyond what the port carries. What a
+        // deliverable count IS belongs to the delivery layer: the bound comes from
+        // the word the platform's wheel message encodes it in, and zero is refused
+        // there too. Restating either here would be a second rule with nothing
+        // holding it equal to the first, and the cost of leaving it there is one
+        // spent frame on a mistyped scroll.
+        auto cycleScrollFn(lua_State* state) -> int
+        {
+            auto* context = boundContext(state);
+            guardFatal(state, context);
+
+            auto* ticket = checkBox<CycleTicket>(state, 1, k_cycleType, "cycle");
+            if (lua_type(state, 2) != LUA_TNUMBER)
+            {
+                raiseTierB(
+                    state,
+                    AutomationErrorKind::InvalidResource,
+                    "ctx:cycle_scroll needs the wheel notch count as a number"
+                );
+            }
+
+            auto const notches = checkedIntegralCast<int32>(
+                lua_tonumber(state, 2)
+            );
+            if (!notches)
+            {
+                raiseTierB(
+                    state,
+                    AutomationErrorKind::InvalidResource,
+                    "ctx:cycle_scroll needs a whole number of wheel notches "
+                    "within range"
+                );
+            }
+
+            auto const call = NativeCallIdentity{
+                .verb         = "cycle_scroll",
+                .cycleOrdinal = ticket->ordinal,
+                .wheelNotches = *notches,
+            };
+
+            auto result = context->cycleScroll(*ticket, *notches);
+            if (!result)
+            {
+                traceHostCallFailure(state, context, call, result.error());
+            }
+            traceHostCall(state, context, call, trace::NativeCallOutcome::Succeeded);
+            return 0;
+        }
+
         // Converts a script's millisecond count into the monotonic Duration the
         // host times with. `what` names the script-facing spelling the count
         // came from, because that is what the author wrote to get here.
@@ -2295,6 +2368,18 @@ namespace uf::task
                 context
             );
             installPrimitive(state, surface, "key", &keyFn, "uf_key", context);
+            // Bound outside the Exploration block, like `key` and unlike
+            // cycle_crop: a business task that scrolls a list is doing ordinary
+            // work, and the two privileges are pixels and bare coordinates rather
+            // than input in general.
+            installPrimitive(
+                state,
+                surface,
+                "cycle_scroll",
+                &cycleScrollFn,
+                "uf_cycle_scroll",
+                context
+            );
             installPrimitive(state, surface, "raise", &raiseFn, "uf_raise", context);
             installPrimitive(
                 state,

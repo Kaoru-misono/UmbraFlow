@@ -180,6 +180,36 @@ namespace uf::trace
             );
         }
 
+        TEST_CASE("a delivered scroll must say how far it scrolled")
+        {
+            // A scroll is the one delivered input whose line has nothing else on
+            // it: a click carries its client point and a key its name, while a
+            // wheel names no coordinate the verb chose. Without the delta the line
+            // says only that something was delivered, so the stream refuses it
+            // rather than record a scroll of unknown size.
+            auto stream = Stream{};
+            CHECK(
+                refusedKind(stream.emit(plain(TraceEventKind::EngineScrollDelivered)))
+                == AutomationErrorKind::InternalInvariant
+            );
+            CHECK(stream.events().empty());
+
+            // The control: the same kind with its delta is admitted, so the
+            // refusal is about the missing field and not about the kind.
+            auto delivered         = plain(TraceEventKind::EngineScrollDelivered);
+            delivered.wheelNotches = int32{-3};
+            REQUIRE(stream.emit(delivered).has_value());
+            REQUIRE(stream.events().size() == 1U);
+            CHECK(stream.events().front().sequence() == 1U);
+
+            // Zero is a delta the delivery layer refuses, but it is a stated one:
+            // the stream's rule is about evidence being present, not about the
+            // count being deliverable, and folding the two would put the wheel's
+            // wire bound in a second place.
+            delivered.wheelNotches = int32{0};
+            CHECK(stream.emit(delivered).has_value());
+        }
+
         TEST_CASE("a run bracket opens once and accepts nothing after it closes")
         {
             auto stream = Stream{};

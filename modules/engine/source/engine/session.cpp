@@ -821,4 +821,84 @@ namespace uf::engine
             .key     = key,
         };
     }
+
+    auto EngineSession::scroll(
+        Observation&& observation,
+        int32 notches
+    ) -> Result<ScrollReceipt>
+    {
+        // pressKey's gates, in pressKey's order, for pressKey's reasons: a
+        // requested stop outranks every other outcome, a foreign handle is
+        // rejected before anything else touches it, and a consumed or moved-from
+        // handle is dead.
+        if (m_config.cancellation.stop_requested())
+        {
+            return fail(
+                AutomationErrorKind::Cancelled,
+                "cancelled before scroll delivery"
+            );
+        }
+        UF_TRY(ensureUsable(observation, "scroll"));
+
+        auto const identity = observation.m_frameIdentity;
+
+        // The bound target instance is revalidated immediately before the post,
+        // which is the whole of what stands in for a coordinate authorization
+        // here: the wheel must reach the target instance the observation came
+        // from, and a window replaced since then is refused with zero sink calls.
+        auto revalidation = m_frameSource->validateTargetInstance();
+        if (!revalidation)
+        {
+            auto event          = identityEvent(
+                trace::TraceEventKind::EngineActionRejected,
+                identity
+            );
+            event.wheelNotches = notches;
+            event.errorKind    = automationErrorKind(revalidation.error());
+            event.message      = std::string{revalidation.error().message()};
+            UF_TRY(emit(event));
+            return std::unexpected{std::move(revalidation).error()};
+        }
+
+        auto delivered = m_actionSink->scroll(notches, observation.m_lease);
+        if (!delivered)
+        {
+            auto event          = identityEvent(
+                trace::TraceEventKind::EngineActionRejected,
+                identity
+            );
+            event.wheelNotches = notches;
+            event.errorKind    = automationErrorKind(delivered.error());
+            event.message      = std::string{delivered.error().message()};
+            UF_TRY(emit(event));
+            return std::unexpected{std::move(delivered).error()};
+        }
+
+        // The scroll has landed, so the handle dies before any fallible
+        // post-delivery emit -- the ordering clickPoint and pressKey both use, and
+        // for the same reason: a retry over a surviving alias must find the handle
+        // already dead rather than deliver twice.
+        observation.m_invalidated = true;
+
+        auto scrollEvent         = identityEvent(
+            trace::TraceEventKind::EngineScrollDelivered,
+            identity
+        );
+        scrollEvent.wheelNotches = notches;
+        UF_TRY(emit(scrollEvent));
+
+        UF_TRY(
+            emit(
+                identityEvent(
+                    trace::TraceEventKind::EngineObservationInvalidated,
+                    identity
+                )
+            )
+        );
+
+        return ScrollReceipt{
+            .frameId = identity.frameId(),
+            .notches = notches,
+        };
+    }
 }

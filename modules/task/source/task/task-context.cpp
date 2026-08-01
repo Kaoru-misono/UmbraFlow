@@ -257,6 +257,20 @@ namespace uf::task
         return ok();
     }
 
+    auto TaskContext::cycleScroll(CycleTicket ticket, int32 notches) -> Status
+    {
+        // The ledger's half of the fence is cycleKey's: the ticket is checked
+        // against the one open cycle, and the frame leaves the ledger here so a
+        // stale ticket is refused before anything is delivered.
+        UF_TRY_VALUE(observation, m_cycles.spend(ticket));
+
+        // scroll consumes the frame by rvalue, so the cycle is spent whatever the
+        // outcome; spend already dropped the ledger entry, which is what makes
+        // every later use of this ticket fail StaleObservation.
+        UF_TRY(m_session.scroll(std::move(observation), notches));
+        return ok();
+    }
+
     auto TaskContext::waitUntil(
         MonotonicInstant deadline,
         MonotonicInstant::Duration interval

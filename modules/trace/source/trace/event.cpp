@@ -82,6 +82,7 @@ namespace uf::trace
             case TraceEventKind::EngineActionRejected: return "engine.action_rejected";
             case TraceEventKind::EngineActionDelivered: return "engine.action_delivered";
             case TraceEventKind::EngineKeyDelivered: return "engine.key_delivered";
+            case TraceEventKind::EngineScrollDelivered: return "engine.scroll_delivered";
             case TraceEventKind::EngineObservationInvalidated:
                 return "engine.observation_invalidated";
             case TraceEventKind::TaskNativeCall: return "task.native_call";
@@ -705,6 +706,14 @@ namespace uf::trace
         if (event.key.has_value())
         {
             builder.addString("key", event.key->value());
+        }
+
+        // A literal rather than a string: the count is a signed number the reader
+        // compares and sums, and quoting it would make every consumer parse it
+        // back out.
+        if (event.wheelNotches.has_value())
+        {
+            builder.addLiteral("wheelNotches", std::format("{}", *event.wheelNotches));
         }
 
         // The non-golden member goes last, so a reader scanning a line meets the

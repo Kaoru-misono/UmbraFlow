@@ -57,8 +57,9 @@ namespace uf::task
                     }
                 ),
             },
-            .errorKind = errorKind,
-            .key       = call.key,
+            .errorKind    = errorKind,
+            .key          = call.key,
+            .wheelNotches = call.wheelNotches,
         };
     }
 

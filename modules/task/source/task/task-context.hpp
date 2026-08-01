@@ -381,6 +381,31 @@ namespace uf::task
         // rule than the click alone needed.
         [[nodiscard]] auto cycleKey(CycleTicket ticket, KeyName key) -> Status;
 
+        // Spends the cycle `ticket` names and delivers one wheel scroll of
+        // `notches` detents, positive away from the operator and negative toward
+        // them.
+        //
+        // IT IS cycleKey's CONTRACT, not cycleClickPoint's, and every clause of it
+        // for the same reason. It requires the ticket to name the generation's
+        // OPEN cycle and requires nothing else: there is no hit ordinal because
+        // there is no hit, and no fingerprint check because the verb names no
+        // coordinate for a geometry to invalidate. It CONSUMES the cycle, because
+        // a delivered scroll moves what is on the screen exactly as a keystroke
+        // does, and a frame that survived it would describe a target that has
+        // moved underneath it.
+        //
+        // Requiring the open cycle is what puts the scroll in the
+        // single-open-cycle ordering with the observations around it and gives its
+        // trace line a cycle ordinal to join on -- so a reader can see which frame
+        // the caller was looking at when it scrolled.
+        //
+        // WHO MAY REACH THIS: both environments. A business task legitimately
+        // scrolls a list it cannot see all of, so this is not one of the
+        // exploration privileges; nothing about it hands a script pixels or a bare
+        // coordinate (docs/plans/2026-08-01-three-layers-and-agent-operator.md
+        // section 7 lists it under the run-mode action verbs).
+        [[nodiscard]] auto cycleScroll(CycleTicket ticket, int32 notches) -> Status;
+
         // Sleeps until `deadline`, or for `interval`, whichever comes first, and
         // reports whether budget remains afterwards -- false means the deadline
         // has passed and the caller's wait loop is over. It backs the `wait`

@@ -576,6 +576,35 @@ namespace uf::trace
         );
     }
 
+    TEST_CASE("engine.scroll_delivered pins its wire kind name and its delta")
+    {
+        // The delta reaches the wire as a signed literal rather than a string,
+        // because a reader sums and compares it. Both directions are pinned: a
+        // sign dropped anywhere between the verb and this line would turn every
+        // scroll up into a scroll down with nothing to notice it.
+        auto event = TraceEvent{
+            .kind  = TraceEventKind::EngineScrollDelivered,
+            .frame = FrameIdentity{
+                CaptureSessionId{uint64{7}},
+                TargetGeneration::fromValue(3),
+                FrameId{uint64{17}},
+            },
+        };
+        event.wheelNotches = int32{-2};
+
+        CHECK(
+            goldenLine(event)
+            == "{\"schema\":\"umbraflow-trace/v3\""
+               ",\"kind\":\"engine.scroll_delivered\""
+               ",\"seq\":1,\"runId\":7,\"generationId\":3,\"frontEnd\":\"task\""
+               ",\"frameId\":17,\"sessionId\":7,\"targetGeneration\":3"
+               ",\"wheelNotches\":-2}"
+        );
+
+        event.wheelNotches = int32{3};
+        CHECK(goldenLine(event).find("\"wheelNotches\":3}") != std::string::npos);
+    }
+
     TEST_CASE("engine.action_found keeps every outcome the old kinds distinguished")
     {
         auto const frame = FrameIdentity{
