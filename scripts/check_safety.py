@@ -134,11 +134,21 @@ def mask_deleted_special_members(line: str) -> str:
 #
 # Line comments are masked here; `has_safety_comment` reads the ORIGINAL
 # lines, so `// SAFETY:` justifications are still found.
+#
+# The digit separator is the same hole from the other side, and it HID
+# violations for as long as the one above did: `1'000` is not a character
+# literal, but the character-literal branch reads its apostrophe as an opening
+# quote and blanks everything up to the next apostrophe in the file -- which,
+# in a test full of `R"lua(` blocks, was thousands of lines including the raw
+# strings' own openers. It is matched first, before the branch that would
+# misread it, and blanked like every other non-code byte because a separator
+# carries no meaning any rule below asks about.
 NON_CODE_PATTERN = re.compile(
     r'R"([^\s()\\]{0,16})\(.*?\)\1"'  # raw string, may contain anything
     r"|/\*.*?\*/"  # block comment
     r"|//[^\n]*"  # line comment
     r'|"(?:\\.|[^"\\])*"'  # string literal
+    r"|(?<=[0-9a-fA-F])'(?=[0-9a-fA-F])"  # digit separator, not a literal
     r"|'(?:\\.|[^'\\])*'",  # character literal
     re.DOTALL,
 )

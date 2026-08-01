@@ -50,6 +50,32 @@ class SafetyRuleTests(unittest.TestCase):
         )
         self.assertIn("new", check_safety.mask_non_code(source))
 
+    def test_digit_separators_do_not_hide_a_raw_allocation(self) -> None:
+        # The same failure as the case above from the other side, and it hid
+        # real violations: `1'000` is a digit separator, the character-literal
+        # branch read its apostrophe as an opening quote, and everything up to
+        # the NEXT apostrophe in the file went blank.
+        #
+        # TWO separators are what makes this falsifiable, and the placement is
+        # the whole test. A lone separator opens a character literal that never
+        # closes, so the branch does not match and nothing is hidden; a
+        # violation AFTER the second separator is outside the swallowed span.
+        # The allocation has to sit BETWEEN them, which is where the thousands
+        # of swallowed lines in the real test file were. Remove the separator
+        # branch from NON_CODE_PATTERN and this goes red -- verified by hand.
+        source = (
+            "namespace uf::probe\n"
+            "{\n"
+            "    auto low = uint64{1'000};\n"
+            "    auto leak() -> int*\n"
+            "    {\n"
+            "        return new int{7};\n"
+            "    }\n"
+            "    auto high = uint64{2'000};\n"
+            "}\n"
+        )
+        self.assertIn("new", check_safety.mask_non_code(source))
+
     def test_masking_still_blinds_the_rules_to_non_code(self) -> None:
         # The control for the case above: widening what the rules can see must
         # not let a mention of `new` inside a literal or a comment count.
