@@ -33,7 +33,7 @@
   [`2026-07-29-three-layer-task-system.md`](plans/2026-07-29-three-layer-task-system.md) §17):
   地基、观察周期 + 两个环境 + `uf` 根 + Tier B userdata + 对抗套件、framework 承接 task policy。
   一票否决第 6 条的阻塞套件在 `1fb41a7` 进 CI,弹窗-长等待缺口在 `d1a0685` 关闭。
-  该文的阶段 4「第一个真日常」即下面的 P0-C。
+  该文的阶段 4「第一个真日常」即下面的 P0-C——那一格现在是**一局出擊**,不是日常。
 - **色键遮罩端到端**(`c392161`):vision 的带 mask SAD overload,`ColourKey` 烘进模板 PNG 的
   alpha 通道。阈值是掩码相对的,真正的驱动因素是掩码大小对 ROI 大小,见
   [`pitfalls/colour-key-annotation.md`](pitfalls/colour-key-annotation.md)。
@@ -171,6 +171,27 @@
   形状:**chunk 之间是天然的回收点**——每个 chunk 是一段独立程序,除工程文件外不该
   有东西跨过它存活,在那里做一次完整 GC 既便宜又有边界;顺带把当前堆用量报进结果行
   或 trace,让 Agent 看得见自己在逼近上限。
+- **色键蒙版没有接进标注通道**(2026-08-01 真机撞上,开发者裁决:记入代办)。
+  `scribe.author_element` 只会把裁剪原样存成模板,而颜色键烘进模板 alpha 的那套机制
+  (见 `pitfalls/colour-key-annotation.md`)在 v4 标注线删除时失去了唯一的调用方。
+  **代价是可测的**:目标的小地图把节点画成深色网格上的小亮块,84×58 的框里图标只占
+  一小部分,于是分数被背景主导——同一张模板对「亮节点/暗节点/空格子」打出
+  8885 / 8549 / 8582,三者分不开;而右侧那面又大又饱和、几乎填满裁剪框的旗子,
+  战斗 9297–9998 对未知 8451–8557,中间有八百基点的空档。
+  也就是说**能不能用模板,取决于图标占裁剪框的比例**,而色键正是把这个比例从
+  「图标 vs 整框」变成「图标 vs 图标」的那一步。接上之后小地图那条路才成立——
+  它比看旗子强,因为一次能看清整层有什么,而不只是最像的那一个。
+- **多 appearance 的折叠搜索在大搜索区域上买不起**(2026-08-01 标注一局出擊时撞上)。
+  `find` 对一个元素的每个 appearance 各搜一遍,代价是 **appearance 数 × 搜索区域
+  面积**,两个因子都在标注期定死、在调用处看不见。实测:两个 appearance 铺在
+  300×850 上,连**十秒**的动作帧租约都跑不完。当天的出路是**拆元素**——一个类型
+  一个元素、各自一个小矩形——立刻就通了,说明主导项是面积不是个数。
+  代价是这条出路和模型裁决**相反**:同一矩形上互斥的状态本该是**一个**元素带命名
+  appearance 列表(见[标注模型重构](plans/2026-07-31-annotation-model-capabilities.md)
+  §四之二.4(a) 与[三层系统与 Agent 操作者](plans/2026-08-01-three-layers-and-agent-operator.md) §六)。
+  裁决没有错,它只是**只在小矩形上付得起**;大搜索区域上今天没有第二条路,也没有
+  任何东西在标注期把这个代价说给作者听。规则那一半记在
+  [`pitfalls/element-choice-and-thresholds.md`](pitfalls/element-choice-and-thresholds.md)。
 
 标注通道的三处缺口已补(2026-08-01):
 
@@ -193,14 +214,35 @@
   `script error: (non-string error value)` 的根因是 `lua_tostring` 不走元方法,
   已由 `script::RaisedError` 把宿主自己那句话带到边界上。
 
-## P0-C — 卡厄斯梦境完整每日
+## P0-C — 卡厄思梦境一局出擊
 
-- [ ] 分解签到、每日面板、逐项前往、战斗、等结算、领奖、回主界面的真实流程与接管起点。
-- [ ] 用 P0-A 制作全部页面、控件和信息区域资产;文字读取确实阻塞时才提前引入 OCR。
-- [ ] 用 Luau 写完整每日;P0 用**最小 D6 弹窗清扫**(观察周期边界 + 每个长 `wait` 内)+ 同文件复制,
-      不建 D6 重机制 / D7 跨文件复用(留 P1)。
-- [ ] 全程后台、不抢焦点;Unknown/Ambiguous/StaleObservation 均 fail-closed 并留下可诊断 trace。
-- [ ] 整套每日连续稳定跑完一轮,Ctrl-C 500ms 内退出,单轮 10–20 分钟。
+这一节原本写的是签到 / 每日面板 / 逐项前往 / 领奖那条日常,**没有人在做那条流程**,
+整节按实际在建的东西重写:**一局出擊**——Agent 经探索通道逐页标注,第三层
+dispatcher 一次认一页、做那一页要做的一件事,把这一局走完。
+
+工程在 `E:\umbraflow-projects\chaos-daily`,目标自身的行为记在它自己的 `PITFALLS.md`。
+可复用的标注手艺进主仓库:
+[`pitfalls/element-choice-and-thresholds.md`](pitfalls/element-choice-and-thresholds.md)
+(标什么、阈值怎么定)与
+[`pitfalls/page-modeling-and-multi-step.md`](pitfalls/page-modeling-and-multi-step.md)
+(浮层与候选页排序、动作是否落地、护栏)。
+
+- [x] **逐页标注已完成(2026-08-01,Agent 自己做完)**:`page-model.toml`(l2-v1)
+      27 页 / 102 元素 / 17 appearance / 122 引用 / 10 边 / 29 屏 / 81 条期望,
+      20 张模板。102 个元素只有 17 个 appearance——**识别以读文字为主,模板只留给
+      没字的图标**,这是这一轮最大的形状变化。
+- [x] **第三层 dispatcher 在跑**:`explore-0801-daily/verbs/`。`step.luau` 是
+      「认出一页、做那一页要做的一件事」,`whereami.luau` 是丢线之后的全量回退;
+      候选页的排序纪律(浮层先问、共享锚点最后问)写在 `step.luau` 的 `ORDER` 上,
+      理由在 pitfall 里。
+- [x] **量不出区分度的元素已经换掉或改法**:角落交叉双剑(真假阳性只差 88 基点)
+      换成填满裁剪框的徽记,10000 命中;極限开关的阈值改由真机连采定(存帧 9993,
+      真机 9401);手牌区改成整块读,位置从帧里来,不从矩形里来。
+- [ ] **整局连续跑通**:未达成。逐页、逐步都验证过,一局从头到尾还没有落地过。
+- [ ] **小地图那条路仍然不通**:节点图标分不开(亮/暗/空 8885 / 8549 / 8582),
+      卡在下面「色键蒙版没有接进标注通道」那条阻塞上。
+- [ ] 全程后台、不抢焦点;Unknown / StaleObservation 均 fail-closed 并留下可诊断 trace。
+- [ ] 一局连续稳定跑完,Ctrl-C 500ms 内退出,单轮时长实测。
 
 ## P1–P3 后续
 
