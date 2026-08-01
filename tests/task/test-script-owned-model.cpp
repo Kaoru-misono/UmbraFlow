@@ -119,7 +119,8 @@ namespace uf::task
         // is what makes template_load reachable from a script at all.
         auto seedTemplates(std::filesystem::path const& root) -> void
         {
-            for (auto const gray : {uint8{2}, uint8{3}, uint8{5}, uint8{20}})
+            for (auto const gray :
+                 {uint8{2}, uint8{3}, uint8{5}, uint8{20}, uint8{40}})
             {
                 auto const blob = encodedTemplate(gray).pngBytes;
                 writeFile(
@@ -248,20 +249,27 @@ namespace uf::task
             };
         }
 
-        // The VM a layer-three script would boot, plus the three framework
-        // modules this work order added, published under their own names.
+        // The VM a layer-three script would boot, plus the framework modules the
+        // script-owned page model added, published under their own names.
         //
         // They are published HERE rather than in frameworkProjectGlobals()
         // because wiring them into every task VM is a host decision that belongs
         // with whoever lands the layer-three loader; the modules themselves are
         // in the bundle already, and a test that publishes them is exactly what
         // a project environment will do once that wiring exists.
+        //
+        // `mint` is deliberately NOT among them. It is the spec-checking toolkit
+        // the constructors share, so every one of its functions is reachable
+        // through a constructor that already calls it; publishing it would put a
+        // second, unchecked way to shape a model in front of a project script
+        // for no gain.
         [[nodiscard]]
         auto modelVmConfig(CapabilitySurface const& surface, TaskContext& context)
             -> script::EngineConfig
         {
             auto config = taskVmConfig(surface, context);
             config.frameworkProjectGlobals.emplace_back("model");
+            config.frameworkProjectGlobals.emplace_back("navigation");
             config.frameworkProjectGlobals.emplace_back("observe");
             config.frameworkProjectGlobals.emplace_back("project");
             return config;
@@ -734,6 +742,28 @@ namespace uf::task
                         }
                     )lua",
                     .fragment = "extra = { my_page_kind",
+                },
+                Refusal{
+                    .label = "an overlay flag that is not a boolean",
+                    .body  = R"lua(
+                        return model.Page.new{
+                            name = "battle",
+                            references = { anchorRow({}) },
+                            overlay = "yes",
+                        }
+                    )lua",
+                    .fragment = "overlay must be true or false",
+                },
+                Refusal{
+                    .label = "an interrupt flag that is not a boolean",
+                    .body  = R"lua(
+                        return model.Page.new{
+                            name = "battle",
+                            references = { anchorRow({}) },
+                            interrupt = 1,
+                        }
+                    )lua",
+                    .fragment = "interrupt must be true or false",
                 },
             };
         }
@@ -1729,6 +1759,1191 @@ namespace uf::task
             CHECK(*result == doctest::Approx(1.0));
         }
 
+        // ------------------------------------------------------ the page graph
+
+        // Five pages over five one-by-one greys, which is the smallest model the
+        // 2026-08-01 graph ruling can be exercised against: a base screen, an
+        // overlay over it, a second overlay over that, a popup that can appear
+        // over anything, and a screen the game can jump to on its own.
+        //
+        // Each page is recognised by one grey, so a three-pixel frame decides
+        // exactly which of them are on screen. `pixels(2, 20, 0)` carries the
+        // base marker AND the overlay marker at once, which is not an accident:
+        // an overlay COVERS the page underneath rather than replacing it, and the
+        // page underneath is still recognisable and still clickable while it is
+        // up (docs/plans/2026-07-31-script-owned-page-model.md 1).
+        constexpr std::string_view k_graphModel = R"lua(
+            local function marker(name, source)
+                return model.Element.new{
+                    name = name,
+                    capabilities = { "identify", "interact" },
+                    rect = { x = 0, y = 0, width = 3, height = 1 },
+                    appearances = {
+                        {
+                            name = "lit",
+                            source = source,
+                            template = template(source),
+                            threshold = 10000,
+                        },
+                    },
+                }
+            end
+            local mark_base   = marker("mark_base", "gray2.png")
+            local mark_over   = marker("mark_over", "gray20.png")
+            local mark_zoom   = marker("mark_zoom", "gray40.png")
+            local mark_alert  = marker("mark_alert", "gray5.png")
+            local mark_result = marker("mark_result", "gray3.png")
+
+            local function pageOn(name, element, flags)
+                local spec = {
+                    name = name,
+                    references = {
+                        {
+                            element = element,
+                            holding = "owned",
+                            exercised = { "identify", "interact" },
+                            identify = "required",
+                        },
+                    },
+                }
+                for key, value in flags do
+                    spec[key] = value
+                end
+                return model.Page.new(spec)
+            end
+
+            local base   = pageOn("base", mark_base, {})
+            local detail = pageOn("detail", mark_over, { overlay = true })
+            local zoom   = pageOn("zoom", mark_zoom, { overlay = true })
+            local alert  =
+                pageOn("alert", mark_alert, { overlay = true, interrupt = true })
+            local result = pageOn("result", mark_result, {})
+
+            local open_detail = navigation.Edge.new{
+                from = base,
+                to = { detail },
+                via = "click",
+                via_element = mark_base,
+                kind = "push",
+            }
+            local end_turn = navigation.Edge.new{
+                from = base,
+                to = { base },
+                via = "key",
+                via_key = "E",
+                kind = "navigate",
+            }
+            local close_detail = navigation.Edge.new{
+                from = detail,
+                via = "click",
+                via_element = mark_over,
+                kind = "pop",
+            }
+            local battle_over = navigation.Edge.new{
+                from = detail,
+                to = { result },
+                via = "spontaneous",
+                kind = "navigate",
+            }
+            local zoom_in = navigation.Edge.new{
+                from = detail,
+                to = { zoom },
+                via = "key",
+                via_key = "Z",
+                kind = "push",
+            }
+            local zoom_out = navigation.Edge.new{
+                from = zoom,
+                via = "click",
+                via_element = mark_zoom,
+                kind = "pop",
+            }
+            local graph = navigation.Graph.new{
+                pages = { base, detail, zoom, alert, result },
+                edges = {
+                    open_detail,
+                    end_turn,
+                    close_detail,
+                    battle_over,
+                    zoom_in,
+                    zoom_out,
+                },
+            }
+        )lua";
+
+        [[nodiscard]]
+        auto graphScript(std::string_view body) -> std::string
+        {
+            return script(std::string{k_graphModel} + std::string{body});
+        }
+
+        // The pages an edge refusal needs and nothing more: a base page that
+        // exercises interact on its marker, an overlay, a plain page, and a page
+        // that references the base marker WITHOUT interact so an edge can try to
+        // leave by clicking something it may only look at.
+        constexpr std::string_view k_edgePrelude = R"lua(
+            local mark_base = model.Element.new{
+                name = "mark_base",
+                capabilities = { "identify", "interact" },
+                rect = { x = 0, y = 0, width = 3, height = 1 },
+                appearances = {
+                    {
+                        name = "lit",
+                        source = "gray2.png",
+                        template = template("gray2.png"),
+                        threshold = 10000,
+                    },
+                },
+            }
+            local mark_over = model.Element.new{
+                name = "mark_over",
+                capabilities = { "identify", "interact" },
+                rect = { x = 0, y = 0, width = 3, height = 1 },
+                appearances = {
+                    {
+                        name = "lit",
+                        source = "gray20.png",
+                        template = template("gray20.png"),
+                        threshold = 10000,
+                    },
+                },
+            }
+            local function pageOn(name, element, holding, exercised, flags)
+                local spec = {
+                    name = name,
+                    references = {
+                        {
+                            element = element,
+                            holding = holding,
+                            exercised = exercised,
+                            identify = "required",
+                        },
+                    },
+                }
+                for key, value in flags do
+                    spec[key] = value
+                end
+                return model.Page.new(spec)
+            end
+            local base =
+                pageOn("base", mark_base, "owned", { "identify", "interact" }, {})
+            local detail = pageOn(
+                "detail", mark_over, "owned", { "identify", "interact" },
+                { overlay = true }
+            )
+            local watch =
+                pageOn("watch", mark_base, "referenced", { "identify" }, {})
+        )lua";
+
+        // Edge.new's rulings, one row each. Every row is otherwise a valid edge,
+        // so exactly one check can be the one that fires: delete that check and
+        // the row's call succeeds and the row goes red.
+        [[nodiscard]]
+        auto edgeRefusals() -> std::vector<Refusal>
+        {
+            return {
+                Refusal{
+                    .label = "an edge leaving a table nobody minted",
+                    .body  = R"lua(
+                        return navigation.Edge.new{
+                            from = { name = "base", references = {} },
+                            to = { detail },
+                            via = "spontaneous",
+                            kind = "navigate",
+                        }
+                    )lua",
+                    .fragment = "from = the page it leaves",
+                },
+                Refusal{
+                    .label = "an edge field this layer does not own",
+                    .body  = R"lua(
+                        return navigation.Edge.new{
+                            from = base,
+                            to = { detail },
+                            via = "click",
+                            via_element = mark_base,
+                            kind = "push",
+                            my_edge_weight = 3,
+                        }
+                    )lua",
+                    .fragment = "extra = { my_edge_weight",
+                },
+                Refusal{
+                    .label = "a trigger that is not one of the three",
+                    .body  = R"lua(
+                        return navigation.Edge.new{
+                            from = base,
+                            to = { detail },
+                            via = "scroll",
+                            kind = "push",
+                        }
+                    )lua",
+                    .fragment = "three ways a screen changes",
+                },
+                Refusal{
+                    .label = "a kind that is not one of the three",
+                    .body  = R"lua(
+                        return navigation.Edge.new{
+                            from = base,
+                            to = { detail },
+                            via = "spontaneous",
+                            kind = "cover",
+                        }
+                    )lua",
+                    .fragment = "three different things to believe afterwards",
+                },
+                Refusal{
+                    .label = "a click edge naming no element",
+                    .body  = R"lua(
+                        return navigation.Edge.new{
+                            from = base,
+                            to = { detail },
+                            via = "click",
+                            kind = "push",
+                        }
+                    )lua",
+                    .fragment = "needs via_element =",
+                },
+                Refusal{
+                    .label = "a click edge naming an element the page never declared",
+                    .body  = R"lua(
+                        return navigation.Edge.new{
+                            from = base,
+                            to = { detail },
+                            via = "click",
+                            via_element = mark_over,
+                            kind = "push",
+                        }
+                    )lua",
+                    .fragment = "which page 'base' does not reference",
+                },
+                Refusal{
+                    .label = "a click edge leaving by an element the page may not click",
+                    .body  = R"lua(
+                        return navigation.Edge.new{
+                            from = watch,
+                            to = { detail },
+                            via = "click",
+                            via_element = mark_base,
+                            kind = "push",
+                        }
+                    )lua",
+                    .fragment = "references without exercising interact",
+                },
+                Refusal{
+                    .label = "a click edge that also names a key",
+                    .body  = R"lua(
+                        return navigation.Edge.new{
+                            from = base,
+                            to = { detail },
+                            via = "click",
+                            via_element = mark_base,
+                            via_key = "E",
+                            kind = "push",
+                        }
+                    )lua",
+                    .fragment = "cannot also name a key",
+                },
+                Refusal{
+                    .label = "a key edge naming no key",
+                    .body  = R"lua(
+                        return navigation.Edge.new{
+                            from = base,
+                            to = { detail },
+                            via = "key",
+                            kind = "push",
+                        }
+                    )lua",
+                    .fragment = "needs via_key =",
+                },
+                Refusal{
+                    .label = "a key edge that also names an element",
+                    .body  = R"lua(
+                        return navigation.Edge.new{
+                            from = base,
+                            to = { detail },
+                            via = "key",
+                            via_key = "E",
+                            via_element = mark_base,
+                            kind = "push",
+                        }
+                    )lua",
+                    .fragment = "cannot also name an element",
+                },
+                Refusal{
+                    .label = "a spontaneous edge that names a trigger anyway",
+                    .body  = R"lua(
+                        return navigation.Edge.new{
+                            from = base,
+                            to = { detail },
+                            via = "spontaneous",
+                            via_key = "E",
+                            kind = "push",
+                        }
+                    )lua",
+                    .fragment = "names neither an element to click nor a key",
+                },
+                Refusal{
+                    .label = "a pop the game is supposed to take on its own",
+                    .body  = R"lua(
+                        return navigation.Edge.new{
+                            from = detail,
+                            via = "spontaneous",
+                            kind = "pop",
+                        }
+                    )lua",
+                    .fragment = "there is no instance to design it against",
+                },
+                Refusal{
+                    .label = "a pop that writes down where it lands",
+                    .body  = R"lua(
+                        return navigation.Edge.new{
+                            from = detail,
+                            to = { base },
+                            via = "click",
+                            via_element = mark_over,
+                            kind = "pop",
+                        }
+                    )lua",
+                    .fragment = "pops, so it declares no to",
+                },
+                Refusal{
+                    .label = "an edge that is not a pop and names nowhere to land",
+                    .body  = R"lua(
+                        return navigation.Edge.new{
+                            from = base,
+                            via = "click",
+                            via_element = mark_base,
+                            kind = "push",
+                        }
+                    )lua",
+                    .fragment = "needs to = { page, ... }",
+                },
+                Refusal{
+                    .label = "an edge whose destination set is empty",
+                    .body  = R"lua(
+                        return navigation.Edge.new{
+                            from = base,
+                            to = {},
+                            via = "click",
+                            via_element = mark_base,
+                            kind = "push",
+                        }
+                    )lua",
+                    .fragment = "has an empty to",
+                },
+                Refusal{
+                    .label = "a destination that is not a page",
+                    .body  = R"lua(
+                        return navigation.Edge.new{
+                            from = base,
+                            to = { detail, { name = "ghost" } },
+                            via = "click",
+                            via_element = mark_base,
+                            kind = "push",
+                        }
+                    )lua",
+                    .fragment = "destination 2 is not a page built by Page.new",
+                },
+                Refusal{
+                    .label = "one destination named twice",
+                    .body  = R"lua(
+                        return navigation.Edge.new{
+                            from = base,
+                            to = { detail, detail },
+                            via = "click",
+                            via_element = mark_base,
+                            kind = "push",
+                        }
+                    )lua",
+                    .fragment = "twice; to is a set",
+                },
+                Refusal{
+                    .label = "a push onto a page that replaces the screen",
+                    .body  = R"lua(
+                        return navigation.Edge.new{
+                            from = watch,
+                            to = { base },
+                            via = "spontaneous",
+                            kind = "push",
+                        }
+                    )lua",
+                    .fragment = "is not declared overlay = true",
+                },
+                Refusal{
+                    .label = "a navigate onto a page that only covers the screen",
+                    .body  = R"lua(
+                        return navigation.Edge.new{
+                            from = base,
+                            to = { detail },
+                            via = "click",
+                            via_element = mark_base,
+                            kind = "navigate",
+                        }
+                    )lua",
+                    .fragment = "push it instead",
+                },
+            };
+        }
+
+        // Graph.new's rulings: the ones a single Edge.new cannot see because they
+        // are about the edges and pages TOGETHER.
+        [[nodiscard]]
+        auto graphRefusals() -> std::vector<Refusal>
+        {
+            return {
+                Refusal{
+                    .label = "a graph with no edge list at all",
+                    .body  = R"lua(
+                        return navigation.Graph.new{ pages = { base, detail } }
+                    )lua",
+                    .fragment = "a project that has drawn none passes an empty list",
+                },
+                Refusal{
+                    .label = "one page named twice",
+                    .body  = R"lua(
+                        return navigation.Graph.new{
+                            pages = { base, detail, base },
+                            edges = {},
+                        }
+                    )lua",
+                    .fragment = "a graph names each page once",
+                },
+                Refusal{
+                    .label = "a table in the edge list that nobody minted",
+                    .body  = R"lua(
+                        return navigation.Graph.new{
+                            pages = { base, detail },
+                            edges = { { from = base, to = { detail } } },
+                        }
+                    )lua",
+                    .fragment = "edge 1 is not an edge built by Edge.new",
+                },
+                Refusal{
+                    .label = "an edge leaving a page the graph never declared",
+                    .body  = R"lua(
+                        local stray = navigation.Edge.new{
+                            from = watch,
+                            to = { detail },
+                            via = "spontaneous",
+                            kind = "push",
+                        }
+                        return navigation.Graph.new{
+                            pages = { base, detail },
+                            edges = { stray },
+                        }
+                    )lua",
+                    .fragment = "names page 'watch', which this graph does not declare",
+                },
+                Refusal{
+                    .label = "an edge into a page the graph never declared",
+                    .body  = R"lua(
+                        local stray = navigation.Edge.new{
+                            from = base,
+                            to = { detail },
+                            via = "spontaneous",
+                            kind = "push",
+                        }
+                        return navigation.Graph.new{
+                            pages = { base, watch },
+                            edges = { stray },
+                        }
+                    )lua",
+                    .fragment = "names page 'detail', which this graph does not declare",
+                },
+                Refusal{
+                    .label = "two edges racing to describe one click",
+                    .body  = R"lua(
+                        local first = navigation.Edge.new{
+                            from = base,
+                            to = { detail },
+                            via = "click",
+                            via_element = mark_base,
+                            kind = "push",
+                        }
+                        local second = navigation.Edge.new{
+                            from = base,
+                            to = { detail },
+                            via = "click",
+                            via_element = mark_base,
+                            kind = "push",
+                        }
+                        return navigation.Graph.new{
+                            pages = { base, detail },
+                            edges = { first, second },
+                        }
+                    )lua",
+                    .fragment = "repeats a trigger page 'base' already leaves by",
+                },
+            };
+        }
+
+        // Runs a table of refusal rows over a shared Luau prelude, one fresh
+        // session each, and requires every row to raise for its own reason.
+        auto checkRefusals(
+            std::string_view              label,
+            std::string_view              directory,
+            std::string_view              prelude,
+            std::vector<Refusal> const&   rows
+        ) -> void
+        {
+            auto const root = TemporaryDirectory{directory};
+            seedTemplates(root.path());
+
+            for (auto const& refusal : rows)
+            {
+                auto built = refusalHarness(root.path());
+                REQUIRE(built.session.has_value());
+                TaskContext context{
+                    *std::move(built.session),
+                    *built.recorder,
+                    TaskContextConfig{.projectRoot = root.path()},
+                };
+
+                INFO(label, " refuses ", refusal.label);
+                auto const body =
+                    std::string{prelude} + std::string{refusal.body};
+                auto const result =
+                    runModel(context, built, refusalScript(body, refusal.fragment));
+                REQUIRE(result.has_value());
+                CHECK(*result == doctest::Approx(1.0));
+            }
+        }
+
+        TEST_CASE("Edge.new refuses every malformed edge by name")
+        {
+            checkRefusals(
+                "Edge.new",
+                "uf-model-edge-refusals",
+                k_edgePrelude,
+                edgeRefusals()
+            );
+        }
+
+        TEST_CASE("Graph.new refuses every inconsistent graph by name")
+        {
+            checkRefusals(
+                "Graph.new",
+                "uf-model-graph-refusals",
+                k_edgePrelude,
+                graphRefusals()
+            );
+        }
+
+        TEST_CASE("A page stack is an explicit object with a required ceiling")
+        {
+            auto const directory = TemporaryDirectory{"uf-model-stack-shape"};
+            seedTemplates(directory.path());
+            auto built = refusalHarness(directory.path());
+            REQUIRE(built.session.has_value());
+            TaskContext context{
+                *std::move(built.session),
+                *built.recorder,
+                TaskContextConfig{.projectRoot = directory.path()},
+            };
+
+            // Every refusal here is about the STACK rather than about pixels, so
+            // one script covers them all without a frame in sight: no graph, no
+            // ceiling, a ceiling that is not a whole count, a page from another
+            // model, and the empty stack a fresh one starts as.
+            auto const result = runModel(context, built, graphScript(R"lua(
+                local function refused(fragment, fn)
+                    local ok, err = pcall(fn)
+                    if ok then return false end
+                    if type(err) ~= "string" then return false end
+                    return string.find(err, fragment, 1, true) ~= nil
+                end
+
+                if not refused("needs graph =", function()
+                    return navigation.stack_new{ max_depth = 4 }
+                end) then return 0 end
+
+                if not refused("needs max_depth =", function()
+                    return navigation.stack_new{ graph = graph }
+                end) then return 0 end
+
+                if not refused("needs max_depth =", function()
+                    return navigation.stack_new{ graph = graph, max_depth = 0 }
+                end) then return 0 end
+
+                if not refused("does not have a field named", function()
+                    return navigation.stack_new{
+                        graph = graph, max_depth = 4, start = base,
+                    }
+                end) then return 0 end
+
+                local stack = navigation.stack_new{ graph = graph, max_depth = 4 }
+                if navigation.stack_depth(stack) ~= 0 then return 0 end
+                if navigation.stack_top(stack) ~= nil then return 0 end
+
+                -- A page from a model this stack is not a stack of.
+                local elsewhere = model.Page.new{
+                    name = "elsewhere",
+                    references = {
+                        {
+                            element = mark_base,
+                            holding = "referenced",
+                            exercised = { "identify" },
+                            identify = "required",
+                        },
+                    },
+                }
+                if not refused("is not in the graph this stack", function()
+                    navigation.stack_reset(stack, elsewhere)
+                end) then return 0 end
+
+                navigation.stack_reset(stack, base)
+                if navigation.stack_depth(stack) ~= 1 then return 0 end
+                if navigation.stack_top(stack).name ~= "base" then return 0 end
+
+                -- The copy is a copy: truncating it cannot truncate the belief.
+                local pages = navigation.stack_pages(stack)
+                table.remove(pages)
+                if navigation.stack_depth(stack) ~= 1 then return 0 end
+
+                -- A stack from one graph refuses an edge from another.
+                local other = navigation.Graph.new{
+                    pages = { base, detail },
+                    edges = {},
+                }
+                local lonely = navigation.stack_new{ graph = other, max_depth = 4 }
+                navigation.stack_reset(lonely, base)
+                if not refused("not in the graph this stack was built over", function()
+                    return observe.walk_edge(ctx, lonely, open_detail, {
+                        consecutive = 1, timeout_ms = 0, interval_ms = 0,
+                    })
+                end) then return 0 end
+
+                if not refused("needs the page stack", function()
+                    return observe.walk_edge(ctx, { entries = {} }, open_detail, {
+                        consecutive = 1, timeout_ms = 0, interval_ms = 0,
+                    })
+                end) then return 0 end
+
+                return 1
+            )lua"));
+            REQUIRE(result.has_value());
+            CHECK(*result == doctest::Approx(1.0));
+            CHECK(built.clicks->clickCount() == 0U);
+        }
+
+        TEST_CASE("walk_edge performs the trigger the edge declared and nothing else")
+        {
+            auto const directory = TemporaryDirectory{"uf-model-walk-via"};
+            seedTemplates(directory.path());
+
+            SUBCASE("a click edge clicks through the page's own authorisation")
+            {
+                auto built = buildHarness(
+                    HarnessSpec{
+                        .framePixels = {pixels(2, 0, 0), pixels(2, 20, 0)},
+                        .projectRoot = directory.path(),
+                    }
+                );
+                REQUIRE(built.session.has_value());
+                auto* const p_clicks = built.clicks;
+                TaskContext context{
+                    *std::move(built.session),
+                    *built.recorder,
+                    TaskContextConfig{.projectRoot = directory.path()},
+                };
+
+                auto const result = runModel(context, built, graphScript(R"lua(
+                    local stack = navigation.stack_new{ graph = graph, max_depth = 4 }
+                    navigation.stack_reset(stack, base)
+                    local outcome = observe.walk_edge(ctx, stack, open_detail, {
+                        consecutive = 1, timeout_ms = 2000, interval_ms = 0,
+                    })
+                    if outcome.outcome ~= "arrived" then return 0 end
+                    if outcome.page.name ~= "detail" then return 0 end
+                    if navigation.stack_depth(stack) ~= 2 then return 0 end
+                    if navigation.stack_top(stack).name ~= "detail" then return 0 end
+                    return 1
+                )lua"));
+                REQUIRE(result.has_value());
+                CHECK(*result == doctest::Approx(1.0));
+                CHECK(p_clicks->clickCount() == 1U);
+                CHECK(p_clicks->keys().empty());
+            }
+
+            SUBCASE("a key edge presses the key and clicks nothing")
+            {
+                auto built = buildHarness(
+                    HarnessSpec{
+                        .framePixels = {pixels(2, 0, 0)},
+                        .projectRoot = directory.path(),
+                    }
+                );
+                REQUIRE(built.session.has_value());
+                auto* const p_clicks = built.clicks;
+                TaskContext context{
+                    *std::move(built.session),
+                    *built.recorder,
+                    TaskContextConfig{.projectRoot = directory.path()},
+                };
+
+                auto const result = runModel(context, built, graphScript(R"lua(
+                    local stack = navigation.stack_new{ graph = graph, max_depth = 4 }
+                    navigation.stack_reset(stack, base)
+                    local outcome = observe.walk_edge(ctx, stack, end_turn, {
+                        consecutive = 1, timeout_ms = 2000, interval_ms = 0,
+                    })
+                    if outcome.outcome ~= "arrived" then return 0 end
+                    if outcome.page.name ~= "base" then return 0 end
+                    if navigation.stack_depth(stack) ~= 1 then return 0 end
+                    return 1
+                )lua"));
+                REQUIRE(result.has_value());
+                CHECK(*result == doctest::Approx(1.0));
+                CHECK(p_clicks->clickCount() == 0U);
+                REQUIRE(p_clicks->keys().size() == 1U);
+                CHECK(p_clicks->keys().front().value() == "E");
+            }
+
+            SUBCASE("a spontaneous edge delivers no input at all")
+            {
+                // The whole of a spontaneous walk is the wait, so this is also
+                // the case that pins the capture count: one observation, no
+                // trigger cycle before it.
+                auto built = buildHarness(
+                    HarnessSpec{
+                        .framePixels = {pixels(3, 0, 0)},
+                        .projectRoot = directory.path(),
+                    }
+                );
+                REQUIRE(built.session.has_value());
+                auto* const p_clicks = built.clicks;
+                auto* const p_frames = built.frames;
+                TaskContext context{
+                    *std::move(built.session),
+                    *built.recorder,
+                    TaskContextConfig{.projectRoot = directory.path()},
+                };
+
+                auto const result = runModel(context, built, graphScript(R"lua(
+                    local stack = navigation.stack_new{ graph = graph, max_depth = 4 }
+                    navigation.stack_reset(stack, base)
+                    local outcome = observe.walk_edge(ctx, stack, battle_over, {
+                        consecutive = 1, timeout_ms = 2000, interval_ms = 0,
+                    })
+                    if outcome.outcome ~= "arrived" then return 0 end
+                    if outcome.page.name ~= "result" then return 0 end
+                    return 1
+                )lua"));
+                REQUIRE(result.has_value());
+                CHECK(*result == doctest::Approx(1.0));
+                CHECK(p_clicks->clickCount() == 0U);
+                CHECK(p_clicks->keys().empty());
+                CHECK(p_frames->captureCount() == 1U);
+            }
+
+            SUBCASE("a click edge whose element is not on screen refuses to walk")
+            {
+                // Fail closed BEFORE the wait: nothing was clicked, so nothing
+                // can have moved, and the sentence names the element rather than
+                // reporting a timeout on a destination that was never triggered.
+                auto built = buildHarness(
+                    HarnessSpec{
+                        .framePixels = {pixels(0, 0, 0)},
+                        .projectRoot = directory.path(),
+                    }
+                );
+                REQUIRE(built.session.has_value());
+                auto* const p_clicks = built.clicks;
+                TaskContext context{
+                    *std::move(built.session),
+                    *built.recorder,
+                    TaskContextConfig{.projectRoot = directory.path()},
+                };
+
+                auto const result = runModel(context, built, graphScript(R"lua(
+                    local stack = navigation.stack_new{ graph = graph, max_depth = 4 }
+                    navigation.stack_reset(stack, base)
+                    local ok, err = pcall(function()
+                        return observe.walk_edge(ctx, stack, open_detail, {
+                            consecutive = 1, timeout_ms = 0, interval_ms = 0,
+                        })
+                    end)
+                    if ok then return 0 end
+                    if type(err) ~= "string" then return 0 end
+                    if string.find(err, "nothing on this frame matched it", 1, true) == nil then
+                        return 0
+                    end
+                    if navigation.stack_depth(stack) ~= 1 then return 0 end
+                    return 1
+                )lua"));
+                REQUIRE(result.has_value());
+                CHECK(*result == doctest::Approx(1.0));
+                CHECK(p_clicks->clickCount() == 0U);
+            }
+        }
+
+        TEST_CASE("push and pop keep the page underneath and give it back")
+        {
+            // The first touchstone the ruling named: open an overlay, open a
+            // second one over it, close that one, and land back where the stack
+            // said you were. The destination of each pop is never written in the
+            // model -- it is read off the stack at walk time -- so replacing the
+            // pop branch with the edge's own `to` cannot even compile a
+            // destination, and dropping the entry the pop removes lands the run
+            // one page too shallow.
+            auto const directory = TemporaryDirectory{"uf-model-push-pop"};
+            seedTemplates(directory.path());
+            auto built = buildHarness(
+                HarnessSpec{
+                    .framePixels = {
+                        pixels(2, 0, 0),   // click mark_base on the base page
+                        pixels(2, 20, 0),  // detail resolves, over the base
+                        pixels(20, 40, 0), // the Z keystroke's own cycle
+                        pixels(20, 40, 0), // zoom resolves, over the detail
+                        pixels(20, 40, 0), // click mark_zoom to close it
+                        pixels(20, 20, 0), // detail resolves again underneath
+                    },
+                    .projectRoot = directory.path(),
+                }
+            );
+            REQUIRE(built.session.has_value());
+            auto* const p_clicks = built.clicks;
+            TaskContext context{
+                *std::move(built.session),
+                *built.recorder,
+                TaskContextConfig{.projectRoot = directory.path()},
+            };
+
+            auto const result = runModel(context, built, graphScript(R"lua(
+                local stack = navigation.stack_new{ graph = graph, max_depth = 4 }
+                navigation.stack_reset(stack, base)
+
+                local opened = observe.walk_edge(ctx, stack, open_detail, {
+                    consecutive = 1, timeout_ms = 2000, interval_ms = 0,
+                })
+                if opened.page.name ~= "detail" then return 0 end
+                if navigation.stack_depth(stack) ~= 2 then return 0 end
+
+                local zoomed = observe.walk_edge(ctx, stack, zoom_in, {
+                    consecutive = 1, timeout_ms = 2000, interval_ms = 0,
+                })
+                if zoomed.page.name ~= "zoom" then return 0 end
+                if navigation.stack_depth(stack) ~= 3 then return 0 end
+
+                -- The pop names no destination. What it waits for is the page
+                -- the stack has underneath the zoom, which is the detail overlay
+                -- and NOT the base page at the bottom.
+                local closed = observe.walk_edge(ctx, stack, zoom_out, {
+                    consecutive = 1, timeout_ms = 2000, interval_ms = 0,
+                })
+                if closed.outcome ~= "arrived" then return 0 end
+                if closed.page.name ~= "detail" then return 0 end
+                if navigation.stack_depth(stack) ~= 2 then return 0 end
+                if navigation.stack_top(stack).name ~= "detail" then return 0 end
+
+                local remembered = navigation.stack_pages(stack)
+                if remembered[1].name ~= "base" then return 0 end
+                if remembered[2].name ~= "detail" then return 0 end
+                return 1
+            )lua"));
+            REQUIRE(result.has_value());
+            CHECK(*result == doctest::Approx(1.0));
+            CHECK(p_clicks->clickCount() == 2U);
+            REQUIRE(p_clicks->keys().size() == 1U);
+            CHECK(p_clicks->keys().front().value() == "Z");
+        }
+
+        TEST_CASE("A pop with nothing underneath is refused rather than guessed at")
+        {
+            auto const directory = TemporaryDirectory{"uf-model-pop-floor"};
+            seedTemplates(directory.path());
+            auto built = buildHarness(
+                HarnessSpec{
+                    .framePixels = {pixels(2, 20, 0)},
+                    .projectRoot = directory.path(),
+                }
+            );
+            REQUIRE(built.session.has_value());
+            auto* const p_clicks = built.clicks;
+            TaskContext context{
+                *std::move(built.session),
+                *built.recorder,
+                TaskContextConfig{.projectRoot = directory.path()},
+            };
+
+            auto const result = runModel(context, built, graphScript(R"lua(
+                local stack = navigation.stack_new{ graph = graph, max_depth = 4 }
+                navigation.stack_reset(stack, detail)
+                local ok, err = pcall(function()
+                    return observe.walk_edge(ctx, stack, close_detail, {
+                        consecutive = 1, timeout_ms = 0, interval_ms = 0,
+                    })
+                end)
+                if ok then return 0 end
+                if type(err) ~= "string" then return 0 end
+                if string.find(err, "needs a page underneath", 1, true) == nil then
+                    return 0
+                end
+                return 1
+            )lua"));
+            REQUIRE(result.has_value());
+            CHECK(*result == doctest::Approx(1.0));
+            CHECK(p_clicks->clickCount() == 0U);
+        }
+
+        TEST_CASE("A base page that resolves resets the stack, whatever it believed")
+        {
+            // The ruling's own instance, made mechanical: a run standing in a
+            // battle with the card detail open, when the battle ends and the game
+            // jumps to the result screen on its own. The overlay AND the page it
+            // covered are gone together, so belief has to be thrown away rather
+            // than popped once.
+            //
+            // Make the arrival always push instead and the stack ends three deep;
+            // make it always pop and it ends two deep with the wrong base. Both
+            // go red here.
+            auto const directory = TemporaryDirectory{"uf-model-belief-reset"};
+            seedTemplates(directory.path());
+            auto built = buildHarness(
+                HarnessSpec{
+                    .framePixels = {
+                        pixels(2, 0, 0),
+                        pixels(2, 20, 0),
+                        pixels(3, 0, 0),
+                    },
+                    .projectRoot = directory.path(),
+                }
+            );
+            REQUIRE(built.session.has_value());
+            TaskContext context{
+                *std::move(built.session),
+                *built.recorder,
+                TaskContextConfig{.projectRoot = directory.path()},
+            };
+
+            auto const result = runModel(context, built, graphScript(R"lua(
+                local stack = navigation.stack_new{ graph = graph, max_depth = 4 }
+                navigation.stack_reset(stack, base)
+                observe.walk_edge(ctx, stack, open_detail, {
+                    consecutive = 1, timeout_ms = 2000, interval_ms = 0,
+                })
+                if navigation.stack_depth(stack) ~= 2 then return 0 end
+
+                local ended = observe.walk_edge(ctx, stack, battle_over, {
+                    consecutive = 1, timeout_ms = 2000, interval_ms = 0,
+                })
+                if ended.page.name ~= "result" then return 0 end
+                if navigation.stack_depth(stack) ~= 1 then return 0 end
+                if navigation.stack_top(stack).name ~= "result" then return 0 end
+                return 1
+            )lua"));
+            REQUIRE(result.has_value());
+            CHECK(*result == doctest::Approx(1.0));
+        }
+
+        TEST_CASE("The depth cap refuses the push before the input is delivered")
+        {
+            // A runaway push is a script bug, so the cap raises a plain Luau
+            // error rather than a Tier B automation failure -- nothing about the
+            // target went wrong.
+            //
+            // The ORDER is the other half of the case. Move the check to the
+            // moment the belief is applied and the keystroke is delivered first:
+            // the target moves, and only then does the run refuse to reason about
+            // where it is. The key count below is what goes red.
+            auto const directory = TemporaryDirectory{"uf-model-depth-cap"};
+            seedTemplates(directory.path());
+            auto built = buildHarness(
+                HarnessSpec{
+                    .framePixels = {pixels(2, 0, 0), pixels(2, 20, 0)},
+                    .projectRoot = directory.path(),
+                }
+            );
+            REQUIRE(built.session.has_value());
+            auto* const p_clicks = built.clicks;
+            TaskContext context{
+                *std::move(built.session),
+                *built.recorder,
+                TaskContextConfig{.projectRoot = directory.path()},
+            };
+
+            auto const result = runModel(context, built, graphScript(R"lua(
+                local stack = navigation.stack_new{ graph = graph, max_depth = 2 }
+                navigation.stack_reset(stack, base)
+                observe.walk_edge(ctx, stack, open_detail, {
+                    consecutive = 1, timeout_ms = 2000, interval_ms = 0,
+                })
+                if navigation.stack_depth(stack) ~= 2 then return 0 end
+
+                local ok, err = pcall(function()
+                    return observe.walk_edge(ctx, stack, zoom_in, {
+                        consecutive = 1, timeout_ms = 2000, interval_ms = 0,
+                    })
+                end)
+                if ok then return 0 end
+                if type(err) ~= "string" then return 0 end
+                if string.find(err, "past the max_depth of 2", 1, true) == nil then
+                    return 0
+                end
+                if navigation.stack_depth(stack) ~= 2 then return 0 end
+                return 1
+            )lua"));
+            REQUIRE(result.has_value());
+            CHECK(*result == doctest::Approx(1.0));
+            CHECK(p_clicks->clickCount() == 1U);
+            CHECK(p_clicks->keys().empty());
+        }
+
+        TEST_CASE("A walk that times out reports the interrupt page it found instead")
+        {
+            auto const directory = TemporaryDirectory{"uf-model-interrupt"};
+            seedTemplates(directory.path());
+
+            SUBCASE("an interrupt page on screen becomes the walk's outcome")
+            {
+                // The popup is declared ONCE, as a flag on its own page, and is
+                // reached by no inbound edge at all. Delete the interrupt sweep
+                // and this walk raises a timeout instead, which is the whole
+                // difference the flag buys: a sentence naming what is actually on
+                // screen rather than one naming what is not.
+                //
+                // The walk does not dismiss it. Closing a popup is a policy some
+                // projects answer differently, so the framework's job ends at
+                // handing the page over -- and at recording that an overlay went
+                // onto the stack, because that is what was observed.
+                auto built = buildHarness(
+                    HarnessSpec{
+                        .framePixels = {pixels(2, 5, 0)},
+                        .projectRoot = directory.path(),
+                    }
+                );
+                REQUIRE(built.session.has_value());
+                auto* const p_clicks = built.clicks;
+                TaskContext context{
+                    *std::move(built.session),
+                    *built.recorder,
+                    TaskContextConfig{.projectRoot = directory.path()},
+                };
+
+                auto const result = runModel(context, built, graphScript(R"lua(
+                    local stack = navigation.stack_new{ graph = graph, max_depth = 4 }
+                    navigation.stack_reset(stack, base)
+                    local outcome = observe.walk_edge(ctx, stack, open_detail, {
+                        consecutive = 1, timeout_ms = 0, interval_ms = 0,
+                    })
+                    if outcome.outcome ~= "interrupted" then return 0 end
+                    if outcome.page.name ~= "alert" then return 0 end
+                    if navigation.stack_depth(stack) ~= 2 then return 0 end
+                    if navigation.stack_top(stack).name ~= "alert" then return 0 end
+                    return 1
+                )lua"));
+                REQUIRE(result.has_value());
+                CHECK(*result == doctest::Approx(1.0));
+                CHECK(p_clicks->clickCount() == 1U);
+            }
+
+            SUBCASE("with no interrupt page on screen the walk raises a timeout")
+            {
+                // A control error and never a "no": nothing that ran out of time
+                // learned anything about the screen, so the run gets the same
+                // host-minted Tier B error every other automation failure gets.
+                auto built = buildHarness(
+                    HarnessSpec{
+                        .framePixels = {pixels(2, 0, 0)},
+                        .projectRoot = directory.path(),
+                    }
+                );
+                REQUIRE(built.session.has_value());
+                TaskContext context{
+                    *std::move(built.session),
+                    *built.recorder,
+                    TaskContextConfig{.projectRoot = directory.path()},
+                };
+
+                auto const result = runModel(context, built, graphScript(R"lua(
+                    local stack = navigation.stack_new{ graph = graph, max_depth = 4 }
+                    navigation.stack_reset(stack, base)
+                    local ok, err = ctx:try(function()
+                        return observe.walk_edge(ctx, stack, open_detail, {
+                            consecutive = 1, timeout_ms = 0, interval_ms = 0,
+                        })
+                    end)
+                    if ok ~= false then return 0 end
+                    if type(err) ~= 'userdata' then return 0 end
+                    if err.kind ~= uf.errors.timeout then return 0 end
+
+                    -- The belief was never updated, and the wait left no cycle
+                    -- open behind it.
+                    if navigation.stack_depth(stack) ~= 1 then return 0 end
+                    local ticket = ctx:cycle_open()
+                    ctx:cycle_close(ticket)
+                    return 1
+                )lua"));
+                REQUIRE(result.has_value());
+                CHECK(*result == doctest::Approx(1.0));
+                CHECK_FALSE(context.hasOpenCycle());
+            }
+        }
+
+        TEST_CASE("A destination set settles on one page rather than on any of them")
+        {
+            // `to` is a set because an outcome can be uncertain, and the streak
+            // has to be about ONE of them: seeing the base page once and the
+            // result page once is two observations of a screen in motion, not two
+            // agreeing observations of anything.
+            //
+            // Count the streak per walk instead of per page and the wait below
+            // returns on the second frame with whichever page it happened to see
+            // last, so the arrival name goes red.
+            auto const directory = TemporaryDirectory{"uf-model-destination-set"};
+            seedTemplates(directory.path());
+            auto built = buildHarness(
+                HarnessSpec{
+                    .framePixels = {
+                        pixels(2, 0, 0),
+                        pixels(3, 0, 0),
+                        pixels(2, 0, 0),
+                        pixels(2, 0, 0),
+                    },
+                    .projectRoot = directory.path(),
+                }
+            );
+            REQUIRE(built.session.has_value());
+            auto* const p_frames = built.frames;
+            TaskContext context{
+                *std::move(built.session),
+                *built.recorder,
+                TaskContextConfig{.projectRoot = directory.path()},
+            };
+
+            auto const result = runModel(context, built, graphScript(R"lua(
+                local either = navigation.Edge.new{
+                    from = detail,
+                    to = { result, base },
+                    via = "spontaneous",
+                    kind = "navigate",
+                }
+                local wider = navigation.Graph.new{
+                    pages = { base, detail, zoom, alert, result },
+                    edges = { either },
+                }
+                local stack = navigation.stack_new{ graph = wider, max_depth = 4 }
+                navigation.stack_reset(stack, base)
+
+                local outcome = observe.walk_edge(ctx, stack, either, {
+                    consecutive = 2, timeout_ms = 2000, interval_ms = 0,
+                })
+                if outcome.page.name ~= "base" then return 0 end
+
+                -- The set is sorted, so the file and this list agree whatever
+                -- order the author wrote them in.
+                if either.to[1].name ~= "base" then return 0 end
+                if either.to[2].name ~= "result" then return 0 end
+                if navigation.Edge.leads_to(either, result) ~= true then return 0 end
+                if navigation.Edge.leads_to(either, zoom) ~= false then return 0 end
+                return 1
+            )lua"));
+            REQUIRE(result.has_value());
+            CHECK(*result == doctest::Approx(1.0));
+            CHECK(p_frames->captureCount() == 4U);
+        }
+
         // The canonical project file, in exactly the form project.encode writes.
         //
         // It carries three things a naive writer would destroy: a key inside
@@ -1927,6 +3142,348 @@ namespace uf::task
             CHECK(*result == doctest::Approx(1.0));
 
             CHECK(readFileText(modelPath) == std::string{k_canonicalProject});
+        }
+
+        // The graph half of the file format, canonical. Three edges, both page
+        // flags, one key inside [[edge]] this schema version does not know, and
+        // an [edge.extra] subtable that belongs to the project rather than to
+        // this layer.
+        //
+        // The pop edge is the shape worth looking at twice: it carries no `to`
+        // line at all, because where a pop lands is the run's page stack rather
+        // than anything a file can state.
+        constexpr std::string_view k_canonicalGraphProject =
+            "schema = \"umbraflow-project/l2-v1\"\n"
+            "\n"
+            "[[element]]\n"
+            "name = \"mark_base\"\n"
+            "capabilities = [\"identify\", \"interact\"]\n"
+            "rect = [0, 0, 3, 1]\n"
+            "\n"
+            "[[appearance]]\n"
+            "element = \"mark_base\"\n"
+            "name = \"lit\"\n"
+            "source = \"gray2.png\"\n"
+            "threshold = 10000\n"
+            "\n"
+            "[[element]]\n"
+            "name = \"mark_over\"\n"
+            "capabilities = [\"identify\", \"interact\"]\n"
+            "rect = [0, 0, 3, 1]\n"
+            "\n"
+            "[[appearance]]\n"
+            "element = \"mark_over\"\n"
+            "name = \"lit\"\n"
+            "source = \"gray20.png\"\n"
+            "threshold = 10000\n"
+            "\n"
+            "[[page]]\n"
+            "name = \"alert\"\n"
+            "overlay = true\n"
+            "interrupt = true\n"
+            "\n"
+            "[[reference]]\n"
+            "page = \"alert\"\n"
+            "element = \"mark_base\"\n"
+            "holding = \"referenced\"\n"
+            "exercised = [\"identify\"]\n"
+            "identify = \"required\"\n"
+            "\n"
+            "[[page]]\n"
+            "name = \"base\"\n"
+            "\n"
+            "[[reference]]\n"
+            "page = \"base\"\n"
+            "element = \"mark_base\"\n"
+            "holding = \"owned\"\n"
+            "exercised = [\"identify\", \"interact\"]\n"
+            "identify = \"required\"\n"
+            "\n"
+            "[[page]]\n"
+            "name = \"detail\"\n"
+            "overlay = true\n"
+            "\n"
+            "[[reference]]\n"
+            "page = \"detail\"\n"
+            "element = \"mark_over\"\n"
+            "holding = \"owned\"\n"
+            "exercised = [\"identify\", \"interact\"]\n"
+            "identify = \"required\"\n"
+            "\n"
+            "[[edge]]\n"
+            "from = \"base\"\n"
+            "to = [\"detail\"]\n"
+            "via = \"click\"\n"
+            "via_element = \"mark_base\"\n"
+            "kind = \"push\"\n"
+            "future_edge_field = 9\n"
+            "\n"
+            "[edge.extra]\n"
+            "my_edge_weight = 3\n"
+            "\n"
+            "[[edge]]\n"
+            "from = \"detail\"\n"
+            "via = \"click\"\n"
+            "via_element = \"mark_over\"\n"
+            "kind = \"pop\"\n"
+            "\n"
+            "[[edge]]\n"
+            "from = \"detail\"\n"
+            "to = [\"base\"]\n"
+            "via = \"key\"\n"
+            "via_key = \"Z\"\n"
+            "kind = \"navigate\"\n";
+
+        // The same model as a hand edit leaves it: pages out of order, edges
+        // written before the pages they name, and the three edges in the reverse
+        // of the order a save puts them in. A save that never ran would leave
+        // these bytes on disk and the comparison against the canonical form
+        // would fail.
+        constexpr std::string_view k_unsortedGraphProject =
+            "schema = \"umbraflow-project/l2-v1\"\n"
+            "\n"
+            "[[edge]]\n"
+            "from = \"detail\"\n"
+            "to = [\"base\"]\n"
+            "via = \"key\"\n"
+            "via_key = \"Z\"\n"
+            "kind = \"navigate\"\n"
+            "\n"
+            "[[edge]]\n"
+            "from = \"detail\"\n"
+            "via = \"click\"\n"
+            "via_element = \"mark_over\"\n"
+            "kind = \"pop\"\n"
+            "\n"
+            "[[edge]]\n"
+            "from = \"base\"\n"
+            "to = [\"detail\"]\n"
+            "via = \"click\"\n"
+            "via_element = \"mark_base\"\n"
+            "kind = \"push\"\n"
+            "future_edge_field = 9\n"
+            "\n"
+            "[edge.extra]\n"
+            "my_edge_weight = 3\n"
+            "\n"
+            "[[page]]\n"
+            "name = \"detail\"\n"
+            "overlay = true\n"
+            "\n"
+            "[[reference]]\n"
+            "page = \"detail\"\n"
+            "element = \"mark_over\"\n"
+            "holding = \"owned\"\n"
+            "exercised = [\"identify\", \"interact\"]\n"
+            "identify = \"required\"\n"
+            "\n"
+            "[[page]]\n"
+            "name = \"base\"\n"
+            "\n"
+            "[[reference]]\n"
+            "page = \"base\"\n"
+            "element = \"mark_base\"\n"
+            "holding = \"owned\"\n"
+            "exercised = [\"interact\", \"identify\"]\n"
+            "identify = \"required\"\n"
+            "\n"
+            "[[page]]\n"
+            "name = \"alert\"\n"
+            "interrupt = true\n"
+            "overlay = true\n"
+            "\n"
+            "[[reference]]\n"
+            "page = \"alert\"\n"
+            "element = \"mark_base\"\n"
+            "holding = \"referenced\"\n"
+            "exercised = [\"identify\"]\n"
+            "identify = \"required\"\n"
+            "\n"
+            "[[element]]\n"
+            "name = \"mark_over\"\n"
+            "capabilities = [\"identify\", \"interact\"]\n"
+            "rect = [0, 0, 3, 1]\n"
+            "\n"
+            "[[appearance]]\n"
+            "element = \"mark_over\"\n"
+            "name = \"lit\"\n"
+            "source = \"gray20.png\"\n"
+            "threshold = 10000\n"
+            "\n"
+            "[[element]]\n"
+            "name = \"mark_base\"\n"
+            "capabilities = [\"identify\", \"interact\"]\n"
+            "rect = [0, 0, 3, 1]\n"
+            "\n"
+            "[[appearance]]\n"
+            "element = \"mark_base\"\n"
+            "name = \"lit\"\n"
+            "source = \"gray2.png\"\n"
+            "threshold = 10000\n";
+
+        TEST_CASE("A project file carries the page graph and round trips it too")
+        {
+            // The persistence half of the graph ruling. Edges are DATA, so they
+            // have to survive a load and a save the same way an element does --
+            // including the parts this schema version does not understand.
+            //
+            // Stop writing [[edge]] sections and the rewritten file loses the
+            // whole graph. Stop writing the page flags and `detail` comes back as
+            // an ordinary page, which makes the push edge that leads to it
+            // unbuildable on the next load. Drop the edge residual and
+            // `future_edge_field = 9` is silently deleted. Each of those turns
+            // the byte comparison below red.
+            auto const directory = TemporaryDirectory{"uf-model-graph-roundtrip"};
+            seedTemplates(directory.path());
+            auto const modelPath = directory.path() / "page-model.toml";
+            REQUIRE(k_unsortedGraphProject != k_canonicalGraphProject);
+            writeFile(modelPath, std::as_bytes(std::span{k_unsortedGraphProject}));
+
+            auto built = buildHarness(
+                HarnessSpec{
+                    .framePixels = {pixels(2, 20, 0)},
+                    .projectRoot = directory.path(),
+                }
+            );
+            REQUIRE(built.session.has_value());
+            TaskContext context{
+                *std::move(built.session),
+                *built.recorder,
+                TaskContextConfig{.projectRoot = directory.path()},
+            };
+
+            auto const result = runModel(context, built, R"lua(
+                local loaded = project.load_project(ctx)
+                local graph = loaded.graph
+                if graph == nil then return 0 end
+                if #graph.edges ~= 3 then return 0 end
+
+                -- The flags came back as flags rather than as unknown keys.
+                if loaded.page_by_name.base.overlay ~= false then return 0 end
+                if loaded.page_by_name.base.interrupt ~= false then return 0 end
+                if loaded.page_by_name.detail.overlay ~= true then return 0 end
+                if loaded.page_by_name.detail.interrupt ~= false then return 0 end
+                if loaded.page_by_name.alert.interrupt ~= true then return 0 end
+
+                -- An interrupt page is found by its flag and by nothing else:
+                -- no edge in this file leads to it.
+                if #graph.interrupts ~= 1 then return 0 end
+                if graph.interrupts[1].name ~= "alert" then return 0 end
+
+                local outgoing =
+                    navigation.Graph.edges_from(graph, loaded.page_by_name.base)
+                if #outgoing ~= 1 then return 0 end
+                local push = outgoing[1]
+                if push.kind ~= "push" then return 0 end
+                if push.via ~= "click" then return 0 end
+                if push.via_element.name ~= "mark_base" then return 0 end
+                if push.via_reference == nil then return 0 end
+                if push.via_reference.exercised.interact ~= true then return 0 end
+                if #push.to ~= 1 then return 0 end
+                if push.to[1].name ~= "detail" then return 0 end
+
+                -- A project's own field lives under extra and NOWHERE else, and
+                -- a key of this layer's own section that this build does not
+                -- know is carried verbatim rather than mistaken for one.
+                if push.extra.my_edge_weight ~= 3 then return 0 end
+                if rawget(push, "my_edge_weight") ~= nil then return 0 end
+                if #push.residual ~= 1 then return 0 end
+                if push.residual[1] ~= "future_edge_field = 9" then return 0 end
+                if push.extra.future_edge_field ~= nil then return 0 end
+
+                -- The pop declares no destination at all.
+                local fromDetail =
+                    navigation.Graph.edges_from(graph, loaded.page_by_name.detail)
+                if #fromDetail ~= 2 then return 0 end
+                local pop = nil
+                for _, edge in fromDetail do
+                    if edge.kind == "pop" then pop = edge end
+                end
+                if pop == nil then return 0 end
+                if pop.to ~= nil then return 0 end
+                if pop.via_element.name ~= "mark_over" then return 0 end
+
+                project.save_project(ctx, loaded)
+
+                -- Loading what was just written and writing it again is the
+                -- fixpoint half: the first save normalises a hand-edited file,
+                -- and the second must change nothing at all.
+                project.save_project(ctx, project.load_project(ctx))
+                return 1
+            )lua");
+            REQUIRE(result.has_value());
+            CHECK(*result == doctest::Approx(1.0));
+
+            CHECK(readFileText(modelPath) == std::string{k_canonicalGraphProject});
+        }
+
+        TEST_CASE("A project file whose edge names something it never declared is refused")
+        {
+            auto const directory = TemporaryDirectory{"uf-model-edge-dangling"};
+            seedTemplates(directory.path());
+            constexpr std::string_view dangling =
+                "schema = \"umbraflow-project/l2-v1\"\n"
+                "\n"
+                "[[element]]\n"
+                "name = \"mark_base\"\n"
+                "capabilities = [\"identify\", \"interact\"]\n"
+                "rect = [0, 0, 3, 1]\n"
+                "\n"
+                "[[appearance]]\n"
+                "element = \"mark_base\"\n"
+                "name = \"lit\"\n"
+                "source = \"gray2.png\"\n"
+                "threshold = 10000\n"
+                "\n"
+                "[[page]]\n"
+                "name = \"base\"\n"
+                "\n"
+                "[[reference]]\n"
+                "page = \"base\"\n"
+                "element = \"mark_base\"\n"
+                "holding = \"owned\"\n"
+                "exercised = [\"identify\", \"interact\"]\n"
+                "identify = \"required\"\n"
+                "\n"
+                "[[edge]]\n"
+                "from = \"base\"\n"
+                "to = [\"nowhere\"]\n"
+                "via = \"click\"\n"
+                "via_element = \"mark_base\"\n"
+                "kind = \"navigate\"\n";
+            writeFile(
+                directory.path() / "page-model.toml",
+                std::as_bytes(std::span{dangling})
+            );
+
+            auto built = buildHarness(
+                HarnessSpec{
+                    .framePixels = {pixels(2, 0, 0)},
+                    .projectRoot = directory.path(),
+                }
+            );
+            REQUIRE(built.session.has_value());
+            TaskContext context{
+                *std::move(built.session),
+                *built.recorder,
+                TaskContextConfig{.projectRoot = directory.path()},
+            };
+
+            auto const result = runModel(context, built, R"lua(
+                local ok, err = pcall(function()
+                    return project.load_project(ctx)
+                end)
+                if ok then return 0 end
+                if string.find(err, "names page 'nowhere'", 1, true) == nil then
+                    return 0
+                end
+                -- The line number is what makes it fixable, and it is the [[edge]]
+                -- section's own rather than the file's first.
+                if string.find(err, "line 24", 1, true) == nil then return 0 end
+                return 1
+            )lua");
+            REQUIRE(result.has_value());
+            CHECK(*result == doctest::Approx(1.0));
         }
 
         TEST_CASE("A project file this build cannot read is refused by name")

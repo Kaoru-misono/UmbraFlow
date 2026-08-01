@@ -40,7 +40,10 @@
 -- between two appearances, and sorting them would quietly change which pixels a
 -- click lands on.
 --
--- LOAD ORDER. `project` sorts after `model` and `observe`, so it can name both.
+-- LOAD ORDER. `project` sorts after `mint`, `model`, `navigation` and
+-- `observe`, so it can name all four. It names three of them: the constructors
+-- in `model` and `navigation`, and nothing from `observe` at all -- parsing and
+-- writing a file costs no capture.
 
 local k_schema   = "umbraflow-project/l2-v1"
 local k_fileName = "page-model.toml"
@@ -50,6 +53,7 @@ local k_sectionKinds: { [string]: boolean } = {
     appearance = true,
     page       = true,
     reference  = true,
+    edge       = true,
 }
 
 -- Which section kinds carry a parsed `[<kind>.extra]` subtable. An appearance
@@ -63,6 +67,7 @@ local k_extraOwners: { [string]: boolean } = {
     element   = true,
     page      = true,
     reference = true,
+    edge      = true,
 }
 
 local k_sectionFields: { [string]: { [string]: boolean } } = {
@@ -79,7 +84,9 @@ local k_sectionFields: { [string]: { [string]: boolean } } = {
         threshold = true,
     },
     page = {
-        name = true,
+        name      = true,
+        overlay   = true,
+        interrupt = true,
     },
     reference = {
         page              = true,
@@ -89,6 +96,20 @@ local k_sectionFields: { [string]: { [string]: boolean } } = {
         identify          = true,
         pinned_appearance = true,
         rect_override     = true,
+    },
+    -- An edge is a top-level section rather than a subtable of its from page,
+    -- because it is a fact about a PAIR of pages and a trigger: filing it under
+    -- one end would make the other end's block depend on which page was written
+    -- first, and a `to` set spanning three pages would have no single owner at
+    -- all. `via_element` names an element on the from page and `via_key` names a
+    -- key; a pop writes no `to`, because where it lands is the run's business.
+    edge = {
+        from        = true,
+        to          = true,
+        via         = true,
+        via_element = true,
+        via_key     = true,
+        kind        = true,
     },
 }
 
@@ -104,6 +125,7 @@ export type Model = {
     element_by_name: { [string]: any },
     pages: { any },
     page_by_name: { [string]: any },
+    graph: any,
     residual: {
         preamble: { string },
         sections: { { string } },
@@ -275,6 +297,15 @@ function project.encode(built: any): string
         table.insert(lines, "")
         table.insert(lines, "[[page]]")
         table.insert(lines, "name = " .. renderString(page.name))
+        -- A flag is written only when it is true. False is the absence of a
+        -- refinement rather than a value with something to say, and writing it
+        -- out would put two lines nobody reads on every ordinary page.
+        if page.overlay then
+            table.insert(lines, "overlay = true")
+        end
+        if page.interrupt then
+            table.insert(lines, "interrupt = true")
+        end
         pushResidual(lines, page.residual)
         pushExtra(lines, "[page.extra]", page.extra)
 
@@ -306,6 +337,46 @@ function project.encode(built: any): string
             pushResidual(lines, reference.residual)
             pushExtra(lines, "[reference.extra]", reference.extra)
         end
+    end
+
+    -- Edges come after every page, because each one names two of them and a
+    -- reader following an edge should already have read both ends. A model
+    -- assembled by hand with no graph at all writes none, which loses nothing:
+    -- it never had any.
+    local edges: { any } = if built.graph ~= nil
+        then table.clone(built.graph.edges)
+        else {}
+    table.sort(edges, function(left, right)
+        if left.from.name ~= right.from.name then
+            return left.from.name < right.from.name
+        end
+        return navigation.Edge.trigger_key(left) < navigation.Edge.trigger_key(right)
+    end)
+
+    for _, edge in edges do
+        table.insert(lines, "")
+        table.insert(lines, "[[edge]]")
+        table.insert(lines, "from = " .. renderString(edge.from.name))
+        if edge.to ~= nil then
+            local names: { string } = {}
+            for index, target in edge.to do
+                names[index] = target.name
+            end
+            table.insert(lines, "to = " .. renderValue(names))
+        end
+        table.insert(lines, "via = " .. renderString(edge.via))
+        if edge.via_element ~= nil then
+            table.insert(
+                lines,
+                "via_element = " .. renderString(edge.via_element.name)
+            )
+        end
+        if edge.via_key ~= nil then
+            table.insert(lines, "via_key = " .. renderString(edge.via_key))
+        end
+        table.insert(lines, "kind = " .. renderString(edge.kind))
+        pushResidual(lines, edge.residual)
+        pushExtra(lines, "[edge.extra]", edge.extra)
     end
 
     if built.residual ~= nil then
@@ -624,6 +695,7 @@ function project.build(ctx: any, document: any): any
     local appearancesFor: { [string]: { any } } = {}
     local pageSections: { any }               = {}
     local referencesFor: { [string]: { any } } = {}
+    local edgeSections: { any }               = {}
 
     for _, section in document.sections do
         if section.kind == "element" then
@@ -638,6 +710,8 @@ function project.build(ctx: any, document: any): any
             table.insert(list, section)
         elseif section.kind == "page" then
             table.insert(pageSections, section)
+        elseif section.kind == "edge" then
+            table.insert(edgeSections, section)
         else
             local owner = requireField(section, "page")
             local list  = referencesFor[owner]
@@ -750,6 +824,8 @@ function project.build(ctx: any, document: any): any
 
         local page = model.Page.new({
             name       = name,
+            overlay    = section.fields.overlay,
+            interrupt  = section.fields.interrupt,
             references = references,
             extra      = section.extra,
             residual   = section.residual,
@@ -761,12 +837,86 @@ function project.build(ctx: any, document: any): any
         table.insert(pages, page)
     end
 
+    -- A page an edge names has to be one this file declares, and saying so here
+    -- rather than inside Edge.new is what gives the message a LINE NUMBER: the
+    -- graph is what knows every page, and the section is what knows where the
+    -- author wrote it.
+    local function pageOf(section: any, key: string, name: any): any
+        local page = pageByName[name]
+        if page == nil then
+            error(
+                "the [[edge]] starting at line "
+                    .. tostring(section.line)
+                    .. " names page '"
+                    .. tostring(name)
+                    .. "' as its "
+                    .. key
+                    .. ", which this project file does not declare",
+                0
+            )
+        end
+        return page
+    end
+
+    local edges: { any } = {}
+    for _, section in edgeSections do
+        local from = pageOf(section, "from", requireField(section, "from"))
+
+        local destinations: { any }? = nil
+        local declared = section.fields.to
+        if declared ~= nil then
+            if type(declared) ~= "table" then
+                error(
+                    "the [[edge]] starting at line "
+                        .. tostring(section.line)
+                        .. ' needs to = ["page", ...]',
+                    0
+                )
+            end
+            destinations = {}
+            for index, name in declared :: { any } do
+                (destinations :: { any })[index] = pageOf(section, "to", name)
+            end
+        end
+
+        local viaElement: any = nil
+        local elementName     = section.fields.via_element
+        if elementName ~= nil then
+            viaElement = elementByName[elementName]
+            if viaElement == nil then
+                error(
+                    "the [[edge]] starting at line "
+                        .. tostring(section.line)
+                        .. " is taken by clicking element '"
+                        .. tostring(elementName)
+                        .. "', which this project file does not declare",
+                    0
+                )
+            end
+        end
+
+        table.insert(
+            edges,
+            navigation.Edge.new({
+                from        = from,
+                to          = destinations,
+                via         = requireField(section, "via"),
+                via_element = viaElement,
+                via_key     = section.fields.via_key,
+                kind        = requireField(section, "kind"),
+                extra       = section.extra,
+                residual    = section.residual,
+            })
+        )
+    end
+
     return {
         schema          = document.schema,
         elements        = elements,
         element_by_name = elementByName,
         pages           = pages,
         page_by_name    = pageByName,
+        graph           = navigation.Graph.new({ pages = pages, edges = edges }),
         residual        = {
             preamble = document.preamble,
             sections = document.blocks,

@@ -42,6 +42,7 @@ namespace uf::task
                 std::string{"model"},
                 std::string{"observe"},
                 std::string{"project"},
+                std::string{"navigation"},
             }
         );
 

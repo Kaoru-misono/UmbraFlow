@@ -25,6 +25,10 @@ namespace uf::task
         constexpr auto k_modelModule   = "model";
         constexpr auto k_observeModule = "observe";
         constexpr auto k_projectModule = "project";
+        // navigation carries Edge/Graph/stack for layer-three scripts. mint is
+        // deliberately NOT here: it is model/navigation's shared internals and
+        // every function on it is reachable through a published constructor.
+        constexpr auto k_navigationModule = "navigation";
     }
 
     auto frameworkScriptModules() -> std::vector<script::FrameworkModule>
@@ -53,6 +57,7 @@ namespace uf::task
             std::string{k_modelModule},
             std::string{k_observeModule},
             std::string{k_projectModule},
+            std::string{k_navigationModule},
         };
     }
 }

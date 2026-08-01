@@ -2,11 +2,17 @@
 -- observe: the verbs that turn a model plus one observation into a fact or an
 -- action.
 --
--- `model` owns the nouns; this file owns everything that costs a capture. Both
--- halves used to be C++ verbs -- `cycle_page` and `cycle_find` -- and both are
--- gone from the host surface: they are rebuilt here on `cycle_match`,
+-- `model` owns the nouns and `navigation` owns the page graph and the belief
+-- rules for the page stack; this file owns everything that COSTS A CAPTURE.
+-- Both halves used to be C++ verbs -- `cycle_page` and `cycle_find` -- and both
+-- are gone from the host surface: they are rebuilt here on `cycle_match`,
 -- `cycle_read` and `cycle_click`, which is what
 -- docs/plans/2026-07-31-script-owned-page-model.md 4 replaced them with.
+--
+-- THE SPLIT WITH `navigation` IS THAT LINE AND NOTHING ELSE. `walk_edge` is here
+-- because it delivers a trigger and waits on frames; the stack it updates, the
+-- depth cap it honours and the rule that a base page resets belief are there,
+-- because none of them looks at a pixel.
 --
 -- THE PRIMITIVES ARRIVE AS A PARAMETER. Every verb below takes `ctx` first and
 -- reaches the host only through it. Nothing here closes over the private
@@ -72,6 +78,21 @@ export type Reading = {
     height: number,
     expected: string?,
     matches: boolean?,
+}
+
+-- What `observe.walk_edge` returns.
+--
+-- "arrived" carries WHICH page resolved, because an edge's `to` is a set: an
+-- edge that can land on the result page or on an error page has told the caller
+-- something real only when it says which one happened.
+--
+-- "interrupted" carries the interrupt page that resolved instead. Dismissing it
+-- is the caller's policy and never this layer's -- some popups are closed, some
+-- are waited out, some end the run -- so the framework's whole job is to name it
+-- rather than to time out with nothing to say.
+export type WalkOutcome = {
+    outcome: string,
+    page: any,
 }
 
 -- Whether a match clears an appearance's threshold.
@@ -481,6 +502,7 @@ function observe.click(ctx: any, ticket: any, hit: any)
 end
 
 local function requireWholeAtLeast(
+    verb: string,
     options: any,
     key: string,
     floor: number,
@@ -489,7 +511,8 @@ local function requireWholeAtLeast(
     local value = options[key]
     if type(value) ~= "number" or value % 1 ~= 0 or value < floor then
         error(
-            "observe.wait_until needs "
+            verb
+                .. " needs "
                 .. key
                 .. " = "
                 .. what
@@ -513,10 +536,28 @@ local function holdsNow(ctx: any, ticket: any, page: any, element: any): boolean
     return observe.find(ctx, ticket, page, element) ~= nil
 end
 
--- observe.wait_until(ctx, options) -> true
+-- One observation, opened and closed whatever `probe` did.
 --
--- Observes until the target holds on `consecutive` observations in a row, or
--- raises `uf.errors.timeout` when the budget runs out.
+-- The observation's own failure outranks a failure from the close, so the caller
+-- is told why the work failed rather than being handed the second-order
+-- consequence of it. Both waits below go through here, so neither can leave a
+-- cycle open on a raise.
+local function observeOnce(ctx: any, probe: any): any
+    local ticket             = ctx:cycle_open()
+    local ok, found          = pcall(probe, ctx, ticket)
+    local closed, closeError = pcall(ctx.cycle_close, ctx, ticket)
+
+    if not ok then
+        error(found, 0)
+    end
+    if not closed then
+        error(closeError, 0)
+    end
+    return found
+end
+
+-- Observes until `probe` returns the SAME page `consecutive` times in a row, and
+-- returns it; returns nil when the budget ran out first.
 --
 -- CONSECUTIVE IS THE WHOLE POINT, AND IT REPLACES WAITING FOR A STILL FRAME.
 -- The obvious primitive -- wait until the screen stops changing -- cannot work
@@ -529,6 +570,51 @@ end
 --
 -- A streak is broken by one disagreeing observation, not decremented: two
 -- agreements separated by a disagreement are not evidence of a settled screen.
+-- Two agreements about DIFFERENT pages are not either, which is why the streak
+-- is per-page rather than per-hit -- an edge whose `to` names three pages must
+-- not settle by seeing each of them once.
+--
+-- Returning nil rather than raising is deliberate: `wait_until` turns an
+-- exhausted budget into a Tier B timeout and `walk_edge` looks for an interrupt
+-- page first, and neither policy belongs in the loop that counts the frames.
+local function waitForStreak(
+    ctx: any,
+    probe: any,
+    consecutive: number,
+    timeoutMillis: number,
+    intervalMillis: number
+): any
+    local deadline = ctx:deadline(timeoutMillis)
+    local held: any = nil
+    local streak    = 0
+
+    while true do
+        local found = observeOnce(ctx, probe)
+
+        if found == nil then
+            held   = nil
+            streak = 0
+        elseif held ~= nil and held.name == found.name then
+            streak += 1
+        else
+            held   = found
+            streak = 1
+        end
+
+        if streak >= consecutive then
+            return held
+        end
+
+        if not ctx:wait(deadline, intervalMillis) then
+            return nil
+        end
+    end
+end
+
+-- observe.wait_until(ctx, options) -> true
+--
+-- Observes until the target holds on `consecutive` observations in a row, or
+-- raises `uf.errors.timeout` when the budget runs out.
 --
 -- The timeout is a HOST-MINTED Tier B error rather than a Luau string, so a
 -- project can catch it, a retry policy can name it, and the host classifies it
@@ -560,51 +646,218 @@ function observe.wait_until(ctx: any, options: any): boolean
         error("observe.wait_until element must be built by Element.new", 2)
     end
 
-    local consecutive =
-        requireWholeAtLeast(options, "consecutive", 1, "a whole number of agreeing observations, at least one")
-    local timeoutMillis =
-        requireWholeAtLeast(options, "timeout_ms", 0, "a whole number of milliseconds")
-    local intervalMillis =
-        requireWholeAtLeast(options, "interval_ms", 0, "a whole number of milliseconds")
+    local verb = "observe.wait_until"
+    local consecutive = requireWholeAtLeast(
+        verb,
+        options,
+        "consecutive",
+        1,
+        "a whole number of agreeing observations, at least one"
+    )
+    local timeoutMillis = requireWholeAtLeast(
+        verb,
+        options,
+        "timeout_ms",
+        0,
+        "a whole number of milliseconds"
+    )
+    local intervalMillis = requireWholeAtLeast(
+        verb,
+        options,
+        "interval_ms",
+        0,
+        "a whole number of milliseconds"
+    )
 
-    local deadline = ctx:deadline(timeoutMillis)
-    local streak   = 0
-
-    while true do
-        local ticket = ctx:cycle_open()
-        local ok, held           = pcall(holdsNow, ctx, ticket, options.page, options.element)
-        local closed, closeError = pcall(ctx.cycle_close, ctx, ticket)
-
-        -- The observation's own failure outranks a failure from the close, so
-        -- the caller is told why the work failed rather than being handed the
-        -- second-order consequence of it.
-        if not ok then
-            error(held, 0)
+    local page    = options.page
+    local element = options.element
+    local reached = waitForStreak(ctx, function(inner: any, ticket: any): any
+        if holdsNow(inner, ticket, page, element) then
+            return page
         end
-        if not closed then
-            error(closeError, 0)
-        end
+        return nil
+    end, consecutive, timeoutMillis, intervalMillis)
 
-        if held then
-            streak += 1
-            if streak >= consecutive then
-                return true
-            end
-        else
-            streak = 0
-        end
+    if reached == nil then
+        native.raise(
+            "timeout",
+            "waiting for page '"
+                .. page.name
+                .. "' to hold "
+                .. tostring(consecutive)
+                .. " observations in a row ran out of budget"
+        )
+    end
+    return true
+end
 
-        if not ctx:wait(deadline, intervalMillis) then
-            native.raise(
-                "timeout",
-                "waiting for page '"
-                    .. options.page.name
-                    .. "' to hold "
-                    .. tostring(consecutive)
-                    .. " observations in a row ran out of budget"
-            )
+-- The first of `pages` that resolves on the frame behind `ticket`, or nil.
+local function resolveAny(ctx: any, ticket: any, pages: any): any
+    for index = 1, #pages do
+        if observe.resolve_page(ctx, ticket, pages[index]) then
+            return pages[index]
         end
     end
+    return nil
+end
+
+-- observe.walk_edge(ctx, stack, edge, options) -> WalkOutcome
+--
+-- Performs the edge's trigger, waits for somewhere it can land, and updates what
+-- the run believes about the pages underneath.
+--
+-- IT DOES NOT PATHFIND AND IT DOES NOT CHOOSE. One edge is handed in and one
+-- edge is walked. Which edge to walk is strategy and lives in layer three; where
+-- an edge leads is fact and lives in the project file.
+--
+-- IT DOES NOT RE-RESOLVE THE PAGE IT LEAVES, for the same reason `observe.find`
+-- does not: the caller named the page, so the ordering requirement is an
+-- ordinary script convention rather than a cost this verb imposes. It also must
+-- not: the stack's top is not always the page an edge leaves. Standing on a
+-- battle screen with a card-detail overlay open, the end-turn button underneath
+-- is still there and still clickable, and an edge leaving the battle page is
+-- exactly the right thing to walk.
+--
+-- THE CLICK GOES THROUGH `observe.click`, so the interact authorisation is
+-- enforced by the one place that enforces it. The key goes through the ctx
+-- forward, which spends the cycle the same way a click does. A spontaneous edge
+-- does nothing at all and the wait below is the whole of the walk.
+--
+-- A TIMEOUT LOOKS FOR AN INTERRUPT PAGE BEFORE IT GIVES UP. Popups are declared
+-- once, as a flag on the page, rather than as an inbound edge from everywhere
+-- they can appear; when the destination never came and one of them is on screen
+-- instead, the walk says so and hands the page over. What to do about it --
+-- close it, wait it out, end the run -- is the caller's policy, and a framework
+-- that dismissed it would be deciding that for every project at once.
+--
+-- options.consecutive  how many agreeing observations in a row (required, >= 1)
+-- options.timeout_ms   the whole budget for the destination (required, >= 0)
+-- options.interval_ms  the pause between observations (required, >= 0)
+function observe.walk_edge(
+    ctx: any,
+    stack: any,
+    edge: any,
+    options: any
+): WalkOutcome
+    requireCtx(ctx, "observe.walk_edge")
+    if not navigation.is_stack(stack) then
+        error(
+            "observe.walk_edge needs the page stack navigation.stack_new "
+                .. "returned; a table nobody minted carries no depth cap and no "
+                .. "graph, so the runaway push the cap exists to catch would go "
+                .. "uncaught",
+            2
+        )
+    end
+    if not navigation.is_edge(edge) then
+        error("observe.walk_edge needs an edge built by Edge.new", 2)
+    end
+    if not navigation.Graph.has_edge(stack.graph, edge) then
+        error(
+            "observe.walk_edge was given an edge that is not in the graph this "
+                .. "stack was built over; the interrupt pages a timed-out walk "
+                .. "falls back on come from that graph, so walking a stranger's "
+                .. "edge would fall back on the wrong list",
+            2
+        )
+    end
+    if type(options) ~= "table" then
+        error("observe.walk_edge needs an options table", 2)
+    end
+
+    local verb = "observe.walk_edge"
+    local consecutive = requireWholeAtLeast(
+        verb,
+        options,
+        "consecutive",
+        1,
+        "a whole number of agreeing observations, at least one"
+    )
+    local timeoutMillis = requireWholeAtLeast(
+        verb,
+        options,
+        "timeout_ms",
+        0,
+        "a whole number of milliseconds"
+    )
+    local intervalMillis = requireWholeAtLeast(
+        verb,
+        options,
+        "interval_ms",
+        0,
+        "a whole number of milliseconds"
+    )
+
+    -- Both of these read the stack and neither costs a capture, so both live in
+    -- `navigation` with the rest of the belief rules. The ORDER is what matters
+    -- here: a push whose belief has nowhere to go is refused before its trigger
+    -- is delivered, because a click that landed on a screen this run then
+    -- refuses to reason about is worse than no click at all.
+    local destinations: { any } = if edge.kind == "pop"
+        then { navigation.pop_destination(stack, edge) }
+        else edge.to
+    navigation.require_push_room(stack, edge)
+
+    if edge.via == "click" then
+        local element = edge.via_element
+        observeOnce(ctx, function(inner: any, ticket: any)
+            local hit = observe.find(inner, ticket, edge.from, element)
+            if hit == nil then
+                error(
+                    "walking the edge leaving page '"
+                        .. edge.from.name
+                        .. "' means clicking element '"
+                        .. element.name
+                        .. "', and nothing on this frame matched it",
+                    0
+                )
+            end
+            observe.click(inner, ticket, hit)
+            return nil
+        end)
+    elseif edge.via == "key" then
+        observeOnce(ctx, function(inner: any, ticket: any)
+            inner:key(ticket, edge.via_key)
+            return nil
+        end)
+    end
+
+    local reached = waitForStreak(ctx, function(inner: any, ticket: any): any
+        return resolveAny(inner, ticket, destinations)
+    end, consecutive, timeoutMillis, intervalMillis)
+
+    if reached ~= nil then
+        navigation.believe_arrival(stack, reached, edge.kind == "pop")
+        return table.freeze({ outcome = "arrived", page = reached })
+    end
+
+    local interrupts = stack.graph.interrupts
+    if #interrupts > 0 then
+        local found = observeOnce(ctx, function(inner: any, ticket: any): any
+            return resolveAny(inner, ticket, interrupts)
+        end)
+        if found ~= nil then
+            navigation.believe_arrival(stack, found, false)
+            return table.freeze({ outcome = "interrupted", page = found })
+        end
+    end
+
+    local names: { string } = {}
+    for index = 1, #destinations do
+        names[index] = "'" .. destinations[index].name .. "'"
+    end
+    native.raise(
+        "timeout",
+        "walking the edge leaving page '"
+            .. edge.from.name
+            .. "' ran out of budget waiting for "
+            .. table.concat(names, " or ")
+            .. ", and no interrupt page was on screen either"
+    )
+    -- Unreachable: native.raise never returns. The return keeps the strict-mode
+    -- reading of this function honest rather than leaving a path that falls off
+    -- the end with no value.
+    return table.freeze({ outcome = "interrupted", page = nil })
 end
 
 return observe

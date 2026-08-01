@@ -24,11 +24,17 @@
 -- constructors below accept an element derived that way, so an extension does
 -- not have to re-mint its base; what they refuse is a table nobody minted.
 --
+-- THE PAGE GRAPH IS NEXT DOOR, IN `navigation`. Edges, the collection that
+-- checks them against each other, and the runtime page stack are a second
+-- vocabulary built on this one, and they are a file of their own rather than
+-- more of this one. See `Page.new` for why the two page FLAGS are here while
+-- the edges are not.
+--
 -- LOAD ORDER. Framework modules load in bundle order, which is the sorted
 -- order of their file names, and each module's frozen exports are bound in the
 -- framework environment under its own name. `model` sorts after `ctx` and
--- before `observe` and `project`, which is what lets those two name it. This
--- module names nothing but the standard library.
+-- `mint` and before `navigation`, `observe` and `project`, which is what lets
+-- those three name it. The only module it names itself is `mint`.
 
 -- Every capability an element can declare, in the one canonical order the
 -- project file writes them in. Serialising a set needs an order, and taking it
@@ -78,6 +84,8 @@ local k_appearanceKeys: { [string]: boolean } = {
 
 local k_pageKeys: { [string]: boolean } = {
     name       = true,
+    overlay    = true,
+    interrupt  = true,
     references = true,
     extra      = true,
     residual   = true,
@@ -171,8 +179,27 @@ export type Reference = {
     residual: { string },
 }
 
+-- `overlay` says this page COVERS the screen it appeared over instead of
+-- replacing it, which is the fact the runtime stack is built on: closing an
+-- overlay returns you to where you were, and that is a stack rather than an edge
+-- (docs/plans/2026-07-31-script-owned-page-model.md 10). It is a property of the
+-- page and not of the edge that reaches it, because the same overlay opened from
+-- three screens covers all three.
+--
+-- `interrupt` says this page can appear over ANYTHING -- a network error box, a
+-- daily-reward popup -- so it is declared once here rather than as an inbound
+-- edge from every page it can interrupt. `observe.walk_edge` consults the flag
+-- when a walk runs out of budget; what to do about the page it found is the
+-- caller's policy and never this layer's.
+--
+-- Both default to false and both are refinements: an ordinary page states
+-- neither. That is not a hidden policy default -- it is the reading of an absent
+-- fact, the same way an element with no `expected_text` is an element with no
+-- expected text.
 export type Page = {
     name: string,
+    overlay: boolean,
+    interrupt: boolean,
     references: { Reference },
     extra: { [string]: any },
     residual: { string },
@@ -193,25 +220,12 @@ local mintedReferences: { [any]: boolean } = {}
 
 local model = {}
 
--- Whether `value` is one of `registry`'s tables, or inherits from one through a
--- chain of `__index` metatables. The walk is bounded because a cyclic chain is
--- a table a script can build, and this must answer rather than hang.
-local function mintedOrDerived(value: any, registry: { [any]: boolean }): boolean
-    local current = value
-    local depth   = 0
-    while type(current) == "table" and depth <= 8 do
-        if registry[current] then
-            return true
-        end
-        local meta = getmetatable(current)
-        if type(meta) ~= "table" then
-            return false
-        end
-        current = meta.__index
-        depth  += 1
-    end
-    return false
-end
+-- The bounded inheritance walk is `mint`'s, so `navigation` asks the same
+-- question of its own registries through the same code rather than a second copy
+-- of it. The registries above stay private and are reachable only as the
+-- PREDICATES below, because a script that could write to one could mint
+-- anything.
+local mintedOrDerived = mint.derives_from
 
 function model.is_element(value: any): boolean
     return mintedOrDerived(value, mintedElements)
@@ -239,10 +253,15 @@ end
 -- constructor can raise once, at level 2, and the author reads their own call
 -- site instead of a line of this file. The sentences say what is wrong in plain
 -- language and name the field, because a model is authored by an agent reading
--- the message and trying again.
-local function wholeNumber(value: any): boolean
-    return type(value) == "number" and value % 1 == 0
-end
+-- the message and trying again. The four every constructor in this framework
+-- repeats -- unknown keys, extra, residual, and the mint walk -- are in `mint`,
+-- because `navigation` asks them of its own spec tables too.
+local wholeNumber      = mint.whole_number
+local checkExtra       = mint.check_extra
+local frozenExtra      = mint.frozen_extra
+local checkResidual    = mint.check_residual
+local frozenResidual   = mint.frozen_residual
+local checkUnknownKeys = mint.unknown_key
 
 local function checkRect(what: string, value: any): string?
     if type(value) ~= "table" then
@@ -308,91 +327,6 @@ local function capabilitySet(
         flags[name] = true
     end
     return table.freeze(set), nil
-end
-
-local function checkExtra(what: string, value: any): string?
-    if value == nil then
-        return nil
-    end
-    if type(value) ~= "table" then
-        return what .. ".extra must be a table of the project's own fields"
-    end
-    if getmetatable(value) ~= nil then
-        return what .. ".extra must be a plain table with no metatable"
-    end
-    return nil
-end
-
-local function frozenExtra(value: any): { [string]: any }
-    if value == nil then
-        return table.freeze({})
-    end
-    local copy: { [string]: any } = {}
-    for key, entry in value :: { [string]: any } do
-        copy[key] = entry
-    end
-    return table.freeze(copy)
-end
-
--- The raw file lines this schema version did not understand, carried on the
--- object so a rewrite cannot drop them
--- (docs/plans/2026-07-31-script-owned-page-model.md 8: a newer file opened and
--- saved by an older build must not lose the newer build's keys, least of all
--- without saying so). A model built in code carries an empty list.
-local function checkResidual(what: string, value: any): string?
-    if value == nil then
-        return nil
-    end
-    if type(value) ~= "table" then
-        return what .. ".residual must be a list of raw file lines"
-    end
-    local list = value :: { any }
-    for index = 1, #list do
-        if type(list[index]) ~= "string" then
-            return what
-                .. ".residual entry "
-                .. tostring(index)
-                .. " must be a raw file line"
-        end
-    end
-    return nil
-end
-
-local function frozenResidual(value: any): { string }
-    if value == nil then
-        return table.freeze({})
-    end
-    local copy: { string } = {}
-    local list = value :: { string }
-    for index = 1, #list do
-        copy[index] = list[index]
-    end
-    return table.freeze(copy)
-end
-
-local function checkUnknownKeys(
-    what: string,
-    spec: { [string]: any },
-    known: { [string]: boolean },
-    hasExtra: boolean
-): string?
-    for key in spec do
-        if type(key) ~= "string" then
-            return what .. " takes named fields only"
-        end
-        if not known[key] then
-            if hasExtra then
-                return what
-                    .. ' does not have a field named "'
-                    .. key
-                    .. '"; a field this project owns goes under extra = { '
-                    .. key
-                    .. " = ... }"
-            end
-            return what .. ' does not have a field named "' .. key .. '"'
-        end
-    end
-    return nil
 end
 
 local Element = {}
@@ -609,25 +543,24 @@ end
 local Page = {}
 model.Page = Page
 
--- THE TRANSITION GRAPH IS DELIBERATELY ABSENT, AND THIS IS THE SEAM.
+-- THE TRANSITION GRAPH LANDED BESIDE THIS TABLE RATHER THAN INSIDE IT.
 --
--- A page here is a set of references and nothing else: what has to be on screen
--- for this to be that page, and what this page lets a script do. There is no
--- edge, no target page, no "click this to get there".
+-- A page is still a set of references plus two flags: what has to be on screen
+-- for this to be that page, what this page lets a script do, and whether it
+-- covers the screen or can appear over anything. It carries no outbound edge and
+-- no target page.
 --
--- That is not an omission to be filled in by whoever needs it first. The shape
--- of the graph is an open developer question
--- (docs/plans/2026-07-31-script-owned-page-model.md 10, first item), and the
--- two things known about it rule out the obvious answer: an edge has at least
--- three triggers (click an element, press a key, the game moving on its own),
--- and covering a page with an overlay is not the same kind of edge as walking
--- to another page -- closing the overlay returns you to where you were, which
--- is a STACK and not an edge.
+-- That is the shape the 2026-08-01 ruling settled on
+-- (docs/plans/2026-07-31-script-owned-page-model.md 10). Edges are their own
+-- objects collected by `Graph.new`, for a reason worth stating where a reader
+-- looking for `page.edges` will find it: an edge is a fact about a PAIR of pages
+-- and a trigger, so hanging it off one end makes the other end's model depend on
+-- the order the two were built in, and a `to` set spanning three pages would
+-- have no single owner at all.
 --
--- So when the graph lands it arrives as its own field on this table, built by
--- its own constructor, and nothing written before it has to move. Anything that
--- needs "what happens after I click this" today writes it in the layer-three
--- script, where a wrong guess costs one script rather than one schema.
+-- The two flags ARE on the page, and by the same test: "this screen covers the
+-- one underneath" and "this screen can appear over anything" are properties of
+-- the page itself, true of every way of reaching it.
 --
 -- Page.new{ ... } -> a frozen page.
 function Page.new(spec: { [string]: any }): Page
@@ -644,6 +577,27 @@ function Page.new(spec: { [string]: any }): Page
         error("a page needs a non-empty name", 2)
     end
     local name = spec.name :: string
+
+    if spec.overlay ~= nil and type(spec.overlay) ~= "boolean" then
+        error(
+            "page '"
+                .. name
+                .. "' overlay must be true or false; it says whether this page "
+                .. "COVERS the screen it appeared over instead of replacing it, "
+                .. "and a run's page stack is built entirely on that answer",
+            2
+        )
+    end
+    if spec.interrupt ~= nil and type(spec.interrupt) ~= "boolean" then
+        error(
+            "page '"
+                .. name
+                .. "' interrupt must be true or false; it says whether this page "
+                .. "can appear over anything, which is declared once here instead "
+                .. "of as an inbound edge from every page it can interrupt",
+            2
+        )
+    end
 
     if type(spec.references) ~= "table" then
         error("page '" .. name .. "' needs references = { ... }", 2)
@@ -849,6 +803,8 @@ function Page.new(spec: { [string]: any }): Page
 
     local page = table.freeze({
         name       = name,
+        overlay    = spec.overlay == true,
+        interrupt  = spec.interrupt == true,
         references = table.freeze(references),
         extra      = frozenExtra(spec.extra),
         residual   = frozenResidual(spec.residual),
