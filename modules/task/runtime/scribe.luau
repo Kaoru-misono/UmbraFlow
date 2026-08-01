@@ -19,16 +19,24 @@
 -- which is not a judgement: a template asset is named by the hash of its own
 -- bytes so that "which pixels" and "which file" cannot disagree.
 --
--- WHAT IT DOES NOT DO, DELIBERATELY. It does not add a page reference and it
--- does not draw an edge. Both are real parts of a finished annotation and both
--- would mean rebuilding a frozen page and remapping every edge that names it --
--- a second body of work with its own failure modes, and one the plan's authoring
--- chain does not list. An agent that has authored an element with this module
--- still has to have its page reference written for it. See the work order's
--- report for that gap.
+-- A PAGE IS FROZEN, SO WRITING ON ONE REBUILDS IT. `add_reference` does not
+-- append a row to a page's reference list -- it cannot, and it should not want
+-- to: `Page.new` is where a second row for one element, an exercised capability
+-- the element does not declare, and a page left with no required identify are
+-- all caught, and appending behind its back would skip every one of them. So the
+-- page is built again from its own rows plus the new one.
 --
--- LOAD ORDER. `scribe` sorts after `explore`, `model`, `observe`, `oracle` and
--- `project`, which is the order it needs: it names all five. It sorts before
+-- AND THEN EVERY EDGE THAT NAMED IT IS BUILT AGAIN TOO. That half is the one
+-- that is easy to skip and hard to notice, because skipping it breaks nothing
+-- that looks broken: a stale edge still carries the page's NAME, so `Graph.new`
+-- accepts it and the file it saves is correct in every byte. What is wrong is
+-- only visible by identity -- `observe.walk_edge` resolves `edge.from` itself,
+-- so it would go on resolving the superseded page, the one missing the reference
+-- the agent just wrote, and looking for a row that is not there. The remap is
+-- therefore not tidiness; it is the whole of what makes the new row reachable.
+--
+-- LOAD ORDER. `scribe` sorts after `explore`, `model`, `navigation`, `oracle`
+-- and `project`, which is the order it needs: it names all five. It sorts before
 -- `task`, which it does not name.
 
 local k_templateDirectory = "assets/templates/"
@@ -231,6 +239,318 @@ function scribe.add_element(built: any, element: any)
 
     table.insert(built.elements, element)
     built.element_by_name[element.name] = element
+end
+
+-- The two verbs below rewrite the page graph, so both need the whole loaded
+-- model rather than a table with a page list on it: they read the element index
+-- to refuse a row nothing declares, and they hand the page list back to
+-- `Graph.new`.
+local function requireModel(built: any, verb: string)
+    if
+        type(built) ~= "table"
+        or type(built.pages) ~= "table"
+        or type(built.page_by_name) ~= "table"
+        or type(built.element_by_name) ~= "table"
+        or not navigation.is_graph(built.graph)
+    then
+        error(verb .. " needs the model project.load_project returned", 3)
+    end
+end
+
+-- A mutable copy of a caller's spec table.
+--
+-- The copy exists so a verb can write the object it resolved over the name it
+-- was handed while every OTHER key rides through to the constructor untouched --
+-- including one the constructor does not own, which is how it gets refused with
+-- the model's own sentence instead of quietly dropped. That is the same
+-- reservation `extra` rests on, and a spec this file filtered key by key would
+-- be a second place it could be lost.
+local function specCopy(spec: { [string]: any }): { [string]: any }
+    local copy: { [string]: any } = {}
+    for key, value in spec do
+        copy[key] = value
+    end
+    return copy
+end
+
+-- One of a page's frozen reference rows, turned back into the spec table
+-- `Page.new` accepts. It is exactly what the constructor did, undone: the `page`
+-- stamp comes off, because stamping it is the constructor's job and handing it
+-- back would be an unknown key, and the capability SET becomes the capability
+-- LIST the constructor reads. Everything else -- including `extra` and the raw
+-- `residual` lines a newer schema wrote -- is passed straight through, because a
+-- rebuild that dropped them would be the silent deletion the file format exists
+-- to prevent.
+local function referenceSpec(reference: any): { [string]: any }
+    local exercised: { string } = {}
+    for _, capability in model.capability_order() do
+        if (reference.exercised :: any)[capability] then
+            table.insert(exercised, capability)
+        end
+    end
+    return {
+        element           = reference.element,
+        holding           = reference.holding,
+        exercised         = exercised,
+        identify          = reference.identify,
+        pinned_appearance = reference.pinned_appearance,
+        rect_override     = reference.rect_override,
+        extra             = reference.extra,
+        residual          = reference.residual,
+    }
+end
+
+-- `edge`, rebuilt against `replacement` wherever it named the page called
+-- `pageName`, and the SAME edge back when it named neither end.
+--
+-- Returning the identical table matters: `navigation.Graph.has_edge` and
+-- `observe.walk_edge` ask whether this exact edge belongs to this exact graph,
+-- so minting a new one for an edge nothing happened to would invalidate a handle
+-- the caller is entitled to keep holding.
+--
+-- Rebuilding goes through `Edge.new` rather than through a field swap, which is
+-- what re-resolves a click edge's `via_reference` against the page that now
+-- holds the rows.
+local function remappedEdge(edge: any, pageName: string, replacement: any): any
+    local leaves  = edge.from.name == pageName
+    local arrives = false
+
+    local destinations: { any }? = nil
+    if edge.to ~= nil then
+        local list: { any } = {}
+        for index, target in edge.to do
+            if target.name == pageName then
+                arrives     = true
+                list[index] = replacement
+            else
+                list[index] = target
+            end
+        end
+        destinations = list
+    end
+
+    if not leaves and not arrives then
+        return edge
+    end
+
+    return navigation.Edge.new({
+        from        = if leaves then replacement else edge.from,
+        to          = destinations,
+        via         = edge.via,
+        via_element = edge.via_element,
+        via_key     = edge.via_key,
+        kind        = edge.kind,
+        extra       = edge.extra,
+        residual    = edge.residual,
+    })
+end
+
+-- scribe.add_reference(built, page_name, element, spec) -> the rebuilt page
+--
+-- Writes one row on one page: what THIS page does with this element.
+--
+-- `spec` carries the row's own fields under the model's own names -- holding,
+-- exercised, the identify polarity, an optional pinned appearance and rect
+-- override -- because the spec IS the row. It is handed to `Page.new` as
+-- written, so every ruling that constructor makes is made here in its own words:
+-- exercised is a subset of what the element declares, identify carries a
+-- polarity, a pin belongs to a click, and an identify row does not refine the
+-- search rectangle. Nothing is defaulted on the way, and nothing is filtered.
+--
+-- THE PAGE COMES BACK BECAUSE THE OLD ONE IS GONE. The model's own copies are
+-- all replaced -- the page list, the name index, and every edge that named it --
+-- but a page an agent left in a variable is not something this can reach, so the
+-- replacement is returned rather than left to be discovered later by an edge
+-- that will not resolve.
+--
+-- Nothing on the model is touched until every constructor has agreed, so a row
+-- this refuses leaves the project exactly as it was.
+function scribe.add_reference(
+    built: any,
+    pageName: string,
+    element: any,
+    spec: { [string]: any }
+): any
+    requireModel(built, "scribe.add_reference")
+    if type(spec) ~= "table" then
+        error("scribe.add_reference needs a table of fields", 2)
+    end
+    if spec.element ~= nil then
+        error(
+            "scribe.add_reference takes the element as its own argument, so the "
+                .. "spec does not name a second one",
+            2
+        )
+    end
+    if not model.is_element(element) then
+        error(
+            "scribe.add_reference needs an element built by model.Element.new",
+            2
+        )
+    end
+
+    local page = built.page_by_name[pageName]
+    if page == nil then
+        error(
+            "this project holds no page named '"
+                .. tostring(pageName)
+                .. "'; a reference is a row ON a page, so there is nowhere to "
+                .. "write one",
+            2
+        )
+    end
+    if built.element_by_name[element.name] == nil then
+        error(
+            "this project declares no element named '"
+                .. element.name
+                .. "'; a row naming an element the file does not carry saves a "
+                .. "project that will not open again, so add the element first",
+            2
+        )
+    end
+    if model.Page.reference_for(page, element) ~= nil then
+        error(
+            "page '"
+                .. page.name
+                .. "' already references element '"
+                .. element.name
+                .. "'; one page uses one element in one way, and a second row "
+                .. "would be two answers to what these pixels are for here",
+            2
+        )
+    end
+
+    local references: { any } = {}
+    for index, existing in page.references do
+        references[index] = referenceSpec(existing)
+    end
+    local row   = specCopy(spec)
+    row.element = element
+    table.insert(references, row)
+
+    local rebuilt = model.Page.new({
+        name       = page.name,
+        overlay    = page.overlay,
+        interrupt  = page.interrupt,
+        references = references,
+        extra      = page.extra,
+        residual   = page.residual,
+    })
+
+    local pages: { any } = {}
+    for index, existing in built.pages do
+        pages[index] = if existing.name == page.name then rebuilt else existing
+    end
+    local edges: { any } = {}
+    for index, edge in built.graph.edges do
+        edges[index] = remappedEdge(edge, page.name, rebuilt)
+    end
+    local graph = navigation.Graph.new({ pages = pages, edges = edges })
+
+    built.pages = pages
+    built.page_by_name[page.name] = rebuilt
+    built.graph = graph
+    return rebuilt
+end
+
+-- The page this project declares under `name`, for a field of an edge spec.
+local function pageNamed(built: any, name: any, field: string): any
+    if type(name) ~= "string" then
+        error(
+            "scribe.add_edge needs "
+                .. field
+                .. " = the NAME of a page this project declares; writing a "
+                .. "reference REBUILDS a page, so a page an agent is holding can "
+                .. "already be one the model no longer has, and a name is what "
+                .. "always resolves to the one it does",
+            3
+        )
+    end
+    local page = built.page_by_name[name]
+    if page == nil then
+        error(
+            "this project holds no page named '"
+                .. name
+                .. "', so no edge can name it as its "
+                .. field,
+            3
+        )
+    end
+    return page
+end
+
+-- scribe.add_edge(built, spec) -> the new edge
+--
+-- Draws one edge: the page it leaves, the trigger that takes it, the pages it
+-- can land on, and what the run should believe afterwards.
+--
+-- EVERY END IS NAMED RATHER THAN HELD, which is the one place this spec differs
+-- from `Edge.new`'s. `from`, `to` and `via_element` are the names the project
+-- file spells, and the reason is `add_reference` directly above: writing a row
+-- rebuilds a page, so a page an agent put in a variable three lines ago may
+-- already be superseded, and an edge drawn from that one would leave a page the
+-- model no longer holds. A name cannot go stale.
+--
+-- Everything else is `Edge.new`'s and is not repeated here: which triggers
+-- exist, which kinds exist, that a click names an element the from page already
+-- references AND exercises interact on, that a push only leads to an overlay,
+-- that a pop declares no destination. `Graph.new` then checks the edge against
+-- the model it is joining, which is where two edges leaving one page by one
+-- trigger are caught.
+function scribe.add_edge(built: any, spec: { [string]: any }): any
+    requireModel(built, "scribe.add_edge")
+    if type(spec) ~= "table" then
+        error("scribe.add_edge needs a table of fields", 2)
+    end
+
+    local entry = specCopy(spec)
+    entry.from  = pageNamed(built, spec.from, "from")
+
+    if spec.to ~= nil then
+        if type(spec.to) ~= "table" then
+            error(
+                'scribe.add_edge needs to = { "page", ... }, the names of the '
+                    .. "pages this edge can land on",
+                2
+            )
+        end
+        local destinations: { any } = {}
+        for index, name in spec.to :: { any } do
+            destinations[index] = pageNamed(built, name, "to")
+        end
+        entry.to = destinations
+    end
+
+    if spec.via_element ~= nil then
+        if type(spec.via_element) ~= "string" then
+            error(
+                "scribe.add_edge needs via_element = the NAME of the element "
+                    .. "this edge is taken by clicking",
+                2
+            )
+        end
+        local element = built.element_by_name[spec.via_element]
+        if element == nil then
+            error(
+                "this project declares no element named '"
+                    .. spec.via_element
+                    .. "', so no edge can be taken by clicking it",
+                2
+            )
+        end
+        entry.via_element = element
+    end
+
+    local edge = navigation.Edge.new(entry)
+
+    local edges: { any } = {}
+    for index, existing in built.graph.edges do
+        edges[index] = existing
+    end
+    table.insert(edges, edge)
+
+    built.graph = navigation.Graph.new({ pages = built.pages, edges = edges })
+    return edge
 end
 
 -- scribe.claim(built, screen_name, element, state, appearance?) -> ()

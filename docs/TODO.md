@@ -96,7 +96,13 @@
   白键探针(29140 像素中 8901 全选)→ OCR「進入」92.8% → `scribe` 写入新元素
   `sortie_enter_button`(interact+read,阈值 9000)→ 重载确认 → 手工补引用与四条期望 →
   `umbra-flow check` 100 格 `accepted=true` 零发现。
-  **仍缺**:`scribe` 不会写页面引用与边(本次手工补),补齐后才做删除波。
+  **`scribe` 的引用与边动词已补齐**:`add_reference` / `add_edge` 重建冻结的页面与图
+  并按身份重映射每条指向旧页面的边(该性质只能靠身份断言证明——保存出的字节两种写法
+  一样);12 突变 12 红。
+  **§三 第二条验收线已通过(2026-08-01,真机)**:Agent 经探索通道写出
+  `sortie --click(sortie_enter_button)--> deploy` 这条边并落盘,`walk-agent-edge`
+  任务走它,授权点击 (801,817),画面从出擊页跳到戰鬥員配置页。整条链——量像素、定键、
+  写元素、写边、走边——全部由 Agent 自己完成。
 - **工单 4c — §九 删除波。未开始。** 前置:`scribe` 的引用/边动词。删 v4 标注生产线
   (`entry/authoring` 绘制动词与 v4 `check`、`entry/workbench` 标注后端、
   `modules/annotation` 模型层与 recognition 栈、两个旧 schema 读写路径、
