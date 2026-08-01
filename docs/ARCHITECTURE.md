@@ -12,7 +12,7 @@ independently. This boundary was fixed by developer decision on 2026-07-28.
 
 ```text
 entry/${PROJECT_NAME}       -> core, engine, task; + controller (Windows adapters)
-entry/input-agent (Windows) -> controller, trace, image (umbra-input-agent)
+entry/input-agent (Windows) -> controller, ocr, trace, image (umbra-input-agent)
 entry/m0-demo (Windows)     -> entry/input-agent, vision, image (frozen M0 substrate demo)
 entry/workbench (Windows)   -> annotation, image (authoring backend library only)
 entry/authoring (Windows)   -> entry/workbench, entry/cli, image (umbra-authoring)
@@ -20,8 +20,11 @@ domain                -> core
 vision                -> core, domain
 image                 -> core, domain
 annotation            -> core, domain, vision, image
-engine                -> core, domain, annotation
+ocr                   -> core, domain, vision
+trace                 -> core, domain, annotation, vision
+engine                -> core, domain, annotation, ocr, trace
 script                -> core, domain
+task                  -> core, domain, annotation, engine, script, trace
 controller (Windows)  -> core, domain
 tests                 -> modules under test
 ```
@@ -63,11 +66,36 @@ not declare link dependencies. `scripts/check_modules.py` enforces both rules.
 - `modules/annotation/`: platform-free annotation catalog validation, page
   resolution evidence, action-authorization contracts, canonical authoring and
   runtime documents, and deterministic template compilation.
-- `modules/engine/`: platform-free automation engine — capture/input/trace
-  ports, the runtime manifest loader, a versioned JSONL trace vocabulary, and
-  the Observation-handle session API (observe once, query the same frame, and
-  any coordinate action authorizes, delivers with lease fencing, and
-  invalidates the observation).
+- `modules/trace/`: the single JSONL evidence stream every layer writes into,
+  schema `umbraflow-trace/v2` — `TraceRecorder` stamps a run's sequence, run
+  id, generation id, wall clock and open framework-step scope onto every event
+  before a sink sees it; `TraceStreamValidator` enforces the stream protocol,
+  including which stages may request a `framework.*` event; `FrontEnd` records
+  which front-end (task, operator, or annotation session) drove the run; and
+  `FileTraceSink` appends one line per event and flushes after each write.
+- `modules/engine/`: platform-free automation engine — the `IFrameSource` and
+  `IActionSink` ports over one bound capture target, the runtime manifest
+  loader, and the Observation-handle session API (observe once, query the same
+  frame, and any coordinate action authorizes, delivers with lease and
+  target-generation fencing, and invalidates the observation). It borrows its
+  caller's `trace::TraceRecorder` rather than owning a trace vocabulary of its
+  own; the vocabulary itself now lives in `modules/trace/`.
+- `modules/script/`: the sandboxed Luau VM boundary — `script::Engine` owns
+  one embedded VM per task generation over a whitelisted-stdlib project
+  environment; the host-table and private-capability installer seams let a
+  caller hang tables on that sandbox before it freezes, and a raised-error
+  classifier seam lets it turn an uncaught script value into its own
+  automation-error vocabulary rather than a bare `InvalidResource`. Luau
+  itself stays behind an FFI boundary this header never names.
+- `modules/task/`: the trusted Luau task layer — `TaskHost` owns one run's
+  whole lifecycle (project and generation identity, the trace recorder, the
+  engine session, the task context and the VM) so the same run is reachable
+  from a CLI, a resident host, or a test; the capability surface exposes a
+  project's recognition catalog to scripts as `uf.elements.*` / `uf.pages.*`
+  handles and gates every engine call behind an observation-cycle ledger
+  (`cycle_open` / `cycle_find` / `cycle_click` / `cycle_close`); and
+  `OperatorSession` is the same capability surface's front-end for a driver
+  sending commands from outside the process.
 - `modules/controller/`: Windows-only discovery, target lifecycle, Windows
   Graphics Capture sessions, and strict-background input.
 - `entry/`: executable targets and composition roots. `cli/` is the product
