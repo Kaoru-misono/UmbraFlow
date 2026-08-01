@@ -41,21 +41,23 @@
 -- than at load.
 local native = ...
 
--- The hits this module minted. `observe.click` refuses anything else, which is
--- what makes the authorisation carried on a hit unforgeable from layer three:
--- a script cannot hand `click` a table claiming interact on an element the page
--- never authorised. C++ still checks the ticket, the lease and the fingerprint
--- underneath; what lives here is the rule those four cannot express any more
--- now that pages are Luau
--- (docs/plans/2026-08-01-three-layers-and-agent-operator.md 2).
-local mintedHits: { [any]: boolean } = {}
-
--- The receipts `observe.resolve_page` minted, held by identity for the same
--- reason the hits are: a table a script wrote is not evidence of anything.
-local mintedReceipts: { [any]: boolean } = {}
-
 local observe = {}
 
+-- One thing this module located on one frame, and what a click on it would be
+-- authorised by. `evidence` owns which frame it is about and who may mint one.
+--
+-- `positioned_by` says where the position came from, and it has three values.
+-- "pixels" is a template match, whose rectangle C++ can still re-check at the
+-- click edge. "page" is an element with no template, whose rectangle is the
+-- model's own and whose whole claim to a position is that the page resolved.
+-- "text" is a line `read_lines` found INSIDE an annotated region: the region is
+-- authored and the line's place in it is not, so the frame is the only thing
+-- that ever said where it is.
+--
+-- `text` and `confidence` are present exactly on a "text" hit, because that is
+-- the only kind whose identity is what it SAYS. A caller that ignores the
+-- confidence on one has thrown away the only evidence that would let it notice
+-- a region the recogniser guessed at.
 export type Hit = {
     element: any,
     page: string,
@@ -71,29 +73,13 @@ export type Hit = {
     click_y: number,
     score: number?,
     maximum: number?,
+    text: string?,
+    confidence: number?,
 }
 
 -- What `observe.resolve_page` hands back when the frame behind a ticket IS the
--- page it was asked about.
---
--- WHY THE SUCCESSFUL OUTCOME IS AN OBJECT RATHER THAN `true`. A click is only
--- authorised by the page the SAME frame resolved. While the page model was C++
--- that held by construction -- the ledger recorded the resolution against the
--- cycle and `cycle_click` read it back -- and moving the model into Luau
--- dissolved it: `resolve_page` returned a boolean, and a boolean carries no
--- trace of which ticket produced it, so nothing stopped a script from resolving
--- on one frame and clicking on the next. Making the success an object that
--- names its own ticket is what restores the property WITHOUT hidden state: the
--- evidence travels in the value the caller already had to obtain, and
--- `observe.click` refuses to act without it.
---
--- IT IS EVIDENCE, NEVER A CACHE. `docs/plans/2026-07-31-script-owned-page-model.md`
--- 5 forbids caching a fingerprint, an observation lease or a ticket identity in
--- a Luau table to make anything faster, and this is not that: nothing below
--- reads the ticket to SKIP a host check. C++ still validates the ticket, the
--- lease, the fingerprint and the single consumption on every click, unchanged.
--- The ticket is held here only so that two Luau values can be compared for
--- having come from one cycle, which is a question C++ is never asked.
+-- page it was asked about. `evidence.mint_receipt` is where it comes from and
+-- why it is an object rather than a boolean.
 export type Receipt = {
     page: any,
     ticket: any,
@@ -160,8 +146,45 @@ function observe.better(candidate: any, incumbent: any): boolean
         < incumbent.score * candidate.maximum
 end
 
+-- Leading and trailing whitespace, removed. It belongs to the ENGINE rather than
+-- to the screen: a single-line read of a padded rectangle comes back with the
+-- padding, and a project file that had to spell " 出擊 " to match would be
+-- recording an artefact of where the rectangle was drawn instead of a fact about
+-- the UI. `%s` is the ASCII class, which is what the engine emits around a line;
+-- a full-width space INSIDE the text is content and is left alone.
+local function trimmed(text: string): string
+    return (string.gsub(text, "^%s*(.-)%s*$", "%1"))
+end
+
+-- Whether a reading counts as the text the model expects.
+--
+-- IT IS EQUALITY AND NOT CONTAINMENT, and on this target the difference decides
+-- which page a run thinks it is on. Every screen prints its own name in the same
+-- top-left box, and "出擊" is a prefix of "出擊紀錄": a contains rule would
+-- resolve the second screen as the first and then click the first one's buttons
+-- on it. What it does forgive is whitespace at the ends, on both sides, for the
+-- reason above.
+--
+-- It remains the comparison a caller PASSES rather than one this module applies
+-- behind them -- `read_element` still takes it as an argument with no default --
+-- because whether full width equals half width and whether traditional equals
+-- simplified are rules this layer owns and a project may replace. What changed
+-- on 2026-08-01 is only that identify-by-text calls this one itself, since a
+-- page signature is not a place a project gets to relax the rule per call site.
 function observe.exact_text(actual: string, expected: string): boolean
-    return actual == expected
+    return trimmed(actual) == trimmed(expected)
+end
+
+-- Whether a reading is sure enough to be evidence, judged against the floor its
+-- element declared (`model.Element.read_floor`).
+--
+-- The split is `observe.matched`'s exactly: the number is DATA and lives in the
+-- model where it can be argued with, the comparison is a judgement and lives
+-- here. Reading is the one capability that fails open -- a rectangle aimed at
+-- the wrong place returns plausible text rather than nothing -- so this is the
+-- only thing standing between a guess and a page identity.
+function observe.confident(reading: any, floor: number): boolean
+    return reading.confidence >= floor
 end
 
 local function requireCtx(ctx: any, verb: string)
@@ -175,6 +198,42 @@ local function searchRect(reference: any, element: any): any
         return reference.rect_override
     end
     return element.rect
+end
+
+-- What a read verb was pointed at: the page row when the caller passed one, and
+-- the element either way.
+--
+-- Extracted because both read verbs take the same either-shape and refuse on the
+-- same two grounds, and two copies of "which of these did I get, and may it be
+-- read" is exactly where the two would come to disagree about what `read` means.
+--
+-- The refusals blame level 3 rather than 2: level 1 is this function, level 2 is
+-- the verb that called it, and the caller a wrong argument belongs to is one
+-- further out again.
+local function readTarget(verb: string, value: any): (any, any)
+    local reference: any = nil
+    local element: any   = value
+    if model.is_reference(value) then
+        reference = value
+        element   = reference.element
+    elseif not model.is_element(value) then
+        error(
+            verb
+                .. " needs an element built by Element.new, or the page "
+                .. "reference row that says what that element reads on one page",
+            3
+        )
+    end
+    if not element.capabilities.read then
+        error(
+            "element '"
+                .. element.name
+                .. "' does not declare the read capability, so nothing may ask "
+                .. "it for text",
+            3
+        )
+    end
+    return reference, element
 end
 
 -- The pixel a rectangle is clicked at when nothing matched inside it: the
@@ -227,15 +286,60 @@ local function foldAppearances(
     return bestAppearance, bestMatch
 end
 
--- Whether `value` is a receipt this module minted for `ticket`.
+-- Reads one rectangle and says whether it read the text the model expects, plus
+-- the phrase a refusal sentence uses to report what it read instead.
 --
--- Both halves are checked here rather than at each call site, because a receipt
--- from another cycle and a table nobody minted are the same failure -- "this is
--- not evidence about the frame in front of you" -- and splitting them invites a
--- caller to check one and forget the other.
-function observe.is_receipt_for(value: any, ticket: any): boolean
-    return mintedReceipts[value] == true and rawequal(value.ticket, ticket)
+-- IT COSTS A READ OUT OF THE CYCLE'S BUDGET, which is why it is only ever
+-- reached for an element with no appearances: an element with a template
+-- identifies by its pixels and never pays for this.
+--
+-- A READING BELOW THE FLOOR IS NOT A MATCH, AND IT IS NOT AN ERROR EITHER. The
+-- engine returns plausible text for any rectangle it is given, so a low
+-- confidence means "this is a guess" and a guess is not evidence -- but neither
+-- is it a failure of the run: the commonest reason a title reads badly is that
+-- the screen in front of the run is not the screen being asked about, which is
+-- the answer "no, this is not that page" and not a fault. So it comes back as
+-- "did not match", and a `forbidden` clause is satisfied by it, because that
+-- clause asks for the absence of this evidence rather than for evidence of an
+-- absence.
+--
+-- The read is NOT wrapped: `cycle_read` raises when the cycle's read budget is
+-- spent, and a read that never happened has established nothing, exactly as a
+-- stopped search has not. Turning it into "the page is not this page" would make
+-- an identity a function of a configuration number.
+local function readsExpected(
+    ctx: any,
+    ticket: any,
+    element: any,
+    rect: any,
+    expected: string
+): (boolean, string)
+    local reading =
+        ctx:cycle_read(ticket, rect.x, rect.y, rect.width, rect.height)
+    if reading == nil then
+        return false, "nothing at all"
+    end
+
+    local floor = model.Element.read_floor(element)
+    if not observe.confident(reading, floor) then
+        return false,
+            '"'
+                .. reading.text
+                .. '" at only '
+                .. tostring(reading.confidence)
+                .. " basis points of confidence, under the "
+                .. tostring(floor)
+                .. " this element needs before a reading counts as evidence"
+    end
+
+    return observe.exact_text(reading.text, expected), '"' .. reading.text .. '"'
 end
+
+-- Whether `value` is a receipt this framework minted for `ticket`. Published
+-- here rather than reimplemented, because `evidence` is not a name any script
+-- can reach and this is the question a layer-three caller legitimately asks
+-- before it commits to a branch that ends in a click.
+observe.is_receipt_for = evidence.is_receipt_for
 
 -- observe.resolve_page(ctx, ticket, page) -> (Receipt?, string?)
 --
@@ -251,6 +355,21 @@ end
 -- The signature is strictly conjunctive: every required reference must match
 -- and every forbidden one must not. Evaluation stops at the first clause that
 -- fails, so the cost of rejecting a page is one search rather than all of them.
+--
+-- THERE ARE TWO KINDS OF EVIDENCE, AND THE ELEMENT DECIDES WHICH. An element
+-- with appearances identifies by its pixels, which is every page signature this
+-- model has ever had and is unchanged in every byte. An element with none
+-- identifies by the TEXT its rectangle reads, checked against what this page
+-- said it should read there (2026-08-01, closing open question 8 of
+-- docs/plans/2026-08-01-three-layers-and-agent-operator.md). The second exists
+-- because the target prints its own name in one box on every screen: one drawn
+-- rectangle, one `read` capability, and a row per page saying which name belongs
+-- to it -- against a template per page, each of which would have to be cut,
+-- thresholded and falsified separately for a fact the screen states in words.
+--
+-- BOTH POLARITIES WORK ON BOTH KINDS. `required` demands the match, `forbidden`
+-- demands its absence, and a reading the engine was not sure enough about is an
+-- absence rather than a match (see `readsExpected`).
 --
 -- IDENTIFY FOLDS ACROSS EVERY APPEARANCE, INCLUDING A PINNED ONE. The pin on a
 -- reference is honoured by `find` and ignored here, because an identify sweep
@@ -273,37 +392,77 @@ function observe.resolve_page(ctx: any, ticket: any, page: any): (Receipt?, stri
         local reference = page.references[index]
         if reference.exercised.identify then
             local element = reference.element
-            local appearance, found = foldAppearances(
-                ctx,
-                ticket,
-                element,
-                element.rect,
-                nil
-            )
-            if reference.identify == "required" and found == nil then
-                return nil,
-                    "page '"
-                        .. page.name
-                        .. "' requires element '"
-                        .. element.name
-                        .. "' and none of its appearances matched"
-            end
-            if reference.identify == "forbidden" and found ~= nil then
-                return nil,
-                    "page '"
-                        .. page.name
-                        .. "' forbids element '"
-                        .. element.name
-                        .. "' and appearance '"
-                        .. (appearance.name or "unnamed")
-                        .. "' matched"
+            if #element.appearances == 0 then
+                -- The text clause. `Page.new` has already refused an identify
+                -- row that would arrive here with nothing to check, so the
+                -- expected text is present by construction and the cast says so.
+                --
+                -- It reads the ELEMENT's rectangle, like the fold below and for
+                -- the same reason: an identify sweep runs before the page is
+                -- known, so a page's refinement is not available to it -- which
+                -- is why `Page.new` refuses a rect_override on an identify row
+                -- rather than leaving one here to be quietly ignored.
+                local expected =
+                    model.Reference.expected_text(reference) :: string
+                local matched, actual = readsExpected(
+                    ctx,
+                    ticket,
+                    element,
+                    element.rect,
+                    expected
+                )
+                if reference.identify == "required" and not matched then
+                    return nil,
+                        "page '"
+                            .. page.name
+                            .. "' requires element '"
+                            .. element.name
+                            .. '\' to read "'
+                            .. expected
+                            .. '" and the region read '
+                            .. actual
+                end
+                if reference.identify == "forbidden" and matched then
+                    return nil,
+                        "page '"
+                            .. page.name
+                            .. "' forbids element '"
+                            .. element.name
+                            .. '\' from reading "'
+                            .. expected
+                            .. '" and the region read exactly that'
+                end
+            else
+                local appearance, found = foldAppearances(
+                    ctx,
+                    ticket,
+                    element,
+                    element.rect,
+                    nil
+                )
+                if reference.identify == "required" and found == nil then
+                    return nil,
+                        "page '"
+                            .. page.name
+                            .. "' requires element '"
+                            .. element.name
+                            .. "' and none of its appearances matched"
+                end
+                if reference.identify == "forbidden" and found ~= nil then
+                    return nil,
+                        "page '"
+                            .. page.name
+                            .. "' forbids element '"
+                            .. element.name
+                            .. "' and appearance '"
+                            .. (appearance.name or "unnamed")
+                            .. "' matched"
+                end
             end
         end
     end
 
-    local receipt = table.freeze({ page = page, ticket = ticket })
-    mintedReceipts[receipt] = true
-    return receipt, nil
+    return evidence.mint_receipt(page, ticket), nil
 end
 
 -- observe.find(ctx, ticket, page_or_reference, element) -> Hit?
@@ -392,7 +551,7 @@ function observe.find(
 
     if #target.appearances == 0 then
         local clickX, clickY = centrePixel(rect)
-        local hit = table.freeze({
+        local hit = evidence.mint_hit({
             element       = target,
             page          = reference.page,
             appearance    = nil,
@@ -407,8 +566,7 @@ function observe.find(
             click_y       = clickY,
             score         = nil,
             maximum       = nil,
-        })
-        mintedHits[hit] = true
+        }, ticket)
         return hit
     end
 
@@ -420,7 +578,7 @@ function observe.find(
         return nil
     end
 
-    local hit = table.freeze({
+    local hit = evidence.mint_hit({
         element       = target,
         page          = reference.page,
         appearance    = appearance.name,
@@ -435,15 +593,28 @@ function observe.find(
         click_y       = found.click_y,
         score         = found.score,
         maximum       = found.maximum,
-    })
-    mintedHits[hit] = true
+    }, ticket)
     return hit
 end
 
--- observe.read_element(ctx, ticket, element, compare) -> Reading?
+-- observe.read_element(ctx, ticket, element_or_reference, compare) -> Reading?
 --
--- Reads the element's rectangle and, when the element declared expected text,
--- says whether the reading counts as that text.
+-- Reads the element's rectangle and, when there is expected text, says whether
+-- the reading counts as that text.
+--
+-- IT TAKES EITHER AN ELEMENT OR A PAGE'S ROW, AND THE ANSWER CAN DIFFER. Handed
+-- an element it reads that element's own rectangle against that element's own
+-- expected text -- the reading of the model on its own, which is what a caller
+-- holding no page has. Handed a reference it reads what THIS page says about the
+-- same element: the row's expected text if it carries one
+-- (`model.Reference.expected_text`), and the row's `rect_override` if it carries
+-- one, because a page that refined where this element sits refined it for every
+-- use of the row and the row is what the caller passed in.
+--
+-- It takes no page-plus-element form, unlike `observe.find`. A caller holding a
+-- page reaches the row through `model.Page.reference_for`, and one explicit line
+-- there is better than a fifth argument on a verb whose fourth one is already a
+-- policy.
 --
 -- THE EXPECTED TEXT IS DATA AND THE COMPARISON IS POLICY. "This cell says 出击"
 -- is a fact about the UI, so it is written in the project file where it can be
@@ -463,33 +634,27 @@ end
 function observe.read_element(
     ctx: any,
     ticket: any,
-    element: any,
+    elementOrReference: any,
     compare: any
 ): Reading?
     requireCtx(ctx, "observe.read_element")
-    if not model.is_element(element) then
-        error("observe.read_element needs an element built by Element.new", 2)
-    end
-    if not element.capabilities.read then
-        error(
-            "element '"
-                .. element.name
-                .. "' does not declare the read capability, so nothing may ask "
-                .. "it for text",
-            2
-        )
-    end
-    if element.expected_text ~= nil and type(compare) ~= "function" then
+
+    local reference, element = readTarget("observe.read_element", elementOrReference)
+    local expected: string? = if reference ~= nil
+        then model.Reference.expected_text(reference)
+        else element.expected_text
+    if expected ~= nil and type(compare) ~= "function" then
         error(
             "reading element '"
                 .. element.name
-                .. "' needs a comparison function, because it declares expected "
-                .. "text; pass observe.exact_text for equality",
+                .. "' needs a comparison function, because there is expected "
+                .. "text to judge the reading against; pass observe.exact_text "
+                .. "for equality",
             2
         )
     end
 
-    local rect = element.rect
+    local rect = searchRect(reference, element)
     local reading =
         ctx:cycle_read(ticket, rect.x, rect.y, rect.width, rect.height)
     if reading == nil then
@@ -509,11 +674,115 @@ function observe.read_element(
         y          = reading.y,
         width      = reading.width,
         height     = reading.height,
-        expected   = element.expected_text,
-        matches    = if element.expected_text ~= nil
-            then compare(reading.text, element.expected_text) == true
+        expected   = expected,
+        matches    = if expected ~= nil
+            then compare(reading.text, expected) == true
             else nil,
     })
+end
+
+-- observe.read_lines(ctx, ticket, element_or_reference) -> { Hit }
+--
+-- Reads the element's whole region and returns one hit per line of text the
+-- FRAME found inside it, top to bottom then left to right, each carrying its own
+-- rectangle in target pixels. An empty list means the region held no text.
+--
+-- WHY THIS EXISTS AT ALL, WHICH IS THE ONLY INTERESTING QUESTION ABOUT IT. Every
+-- other verb here starts from a rectangle the model drew: `find` searches one,
+-- `read_element` reads one. That works while a thing stays where it was
+-- annotated. It stops working the moment a region SCROLLS -- the target's
+-- character grid has columns at fixed x and moves continuously in y, so dragging
+-- it once moved every name by two hundred pixels and no row ever snapped back.
+-- A rectangle per name is not a model of that; it is a model of one frame. So
+-- the region is annotated, and what is in it is read.
+--
+-- A HIT AND NOT A READING, AND THIS IS THE DECISION THIS VERB IS ABOUT. What
+-- comes back is the same `Hit` `find` mints, with `positioned_by` "text" and the
+-- decoded string beside it -- so a line goes to `observe.click` through the same
+-- door a template match does, and every check there applies to it unchanged:
+-- minted here, the receipt is for THIS ticket, the receipt's page is the hit's
+-- page, and the page exercises interact on the element. A separate "line" type
+-- with its own click verb would have been a second door into the same delivery,
+-- and the second door is always the one that is missing a lock.
+--
+-- WHY A LINE MAY BE CLICKED AT ALL. The rule this layer keeps is that an action
+-- is authorised by the frame it is delivered against. A line satisfies it as
+-- squarely as a template match does: the region it was found in is annotated,
+-- and its position inside that region is evidence read off the very frame the
+-- click will be authorised against -- the same frame, the same cycle, the same
+-- lease. Nothing is being relaxed. What is new is only that the frame, rather
+-- than the project file, is what says where the target is; and for a list whose
+-- contents the author has never seen, the frame is the only thing that COULD
+-- say. The one thing that has to be added is the rule that this evidence does
+-- not travel: a line located on one frame is a claim about that frame, so
+-- `observe.click` refuses it on any other (see `evidence`).
+--
+-- THE ELEMENT STILL DECIDES WHETHER A CLICK IS ALLOWED. `read` is what lets the
+-- region be read; `interact` on the page's own row is what lets a line in it be
+-- clicked, exactly as for every other hit. A region annotated as readable and
+-- not as interactive is a list to look at, and the refusal for one comes from
+-- `observe.click` unchanged. Reading is allowed from a bare element too, and
+-- such a hit carries no page and no interact -- looking is free, acting needs
+-- the row.
+--
+-- AN EMPTY-TEXT LINE IS KEPT. The host reports a region the detector found and
+-- the recogniser could not read, and it is dropped nowhere on the way up:
+-- that is a frame saying "there is something here I cannot spell", which is
+-- worth seeing, and a text comparison simply never accepts it.
+--
+-- IT COSTS the cycle's read budget -- one for locating plus one per line found
+-- -- and does NOT consume the cycle, so the same frame goes on to click. A
+-- region holding more lines than the cycle can pay for RAISES rather than
+-- returning the first few; the read is not wrapped, for the reason no read here
+-- is: a region nobody finished looking at has established nothing about the
+-- lines nobody looked at.
+--
+-- PICKING one of the lines out and AIMING beside it are `hits.matching` and
+-- `hits.offset`. Neither costs a capture, which is why neither is here.
+function observe.read_lines(ctx: any, ticket: any, elementOrReference: any): { Hit }
+    requireCtx(ctx, "observe.read_lines")
+
+    local reference, element = readTarget("observe.read_lines", elementOrReference)
+    local rect  = searchRect(reference, element)
+    local found =
+        ctx:cycle_read_lines(ticket, rect.x, rect.y, rect.width, rect.height)
+
+    -- `located` rather than `hits`, which is the name of a published framework
+    -- module: shadowing it inside the one verb whose results that module
+    -- operates on is exactly the confusion nobody would enjoy discovering.
+    local located: { Hit } = {}
+    for index = 1, #found do
+        local line = found[index]
+        local lineRect = {
+            x      = line.x,
+            y      = line.y,
+            width  = line.width,
+            height = line.height,
+        }
+        local clickX, clickY = centrePixel(lineRect)
+        local hit = evidence.mint_hit({
+            element       = element,
+            page          = if reference ~= nil then reference.page else nil,
+            appearance    = nil,
+            positioned_by = "text",
+            interact      = if reference ~= nil
+                then reference.exercised.interact
+                else false,
+            match         = nil,
+            x             = line.x,
+            y             = line.y,
+            width         = line.width,
+            height        = line.height,
+            click_x       = clickX,
+            click_y       = clickY,
+            score         = nil,
+            maximum       = nil,
+            text          = line.text,
+            confidence    = line.confidence,
+        }, ticket)
+        located[index] = hit
+    end
+    return table.freeze(located)
 end
 
 -- observe.click(ctx, ticket, receipt, hit) -> ()
@@ -548,7 +817,7 @@ end
 -- said no" and "resolve_page was never called" the same refusal here.
 function observe.click(ctx: any, ticket: any, receipt: any, hit: any)
     requireCtx(ctx, "observe.click")
-    if not mintedReceipts[receipt] then
+    if not evidence.is_receipt(receipt) then
         error(
             "observe.click needs the receipt observe.resolve_page returned for "
                 .. "the page this element belongs to; a resolution that failed "
@@ -567,10 +836,27 @@ function observe.click(ctx: any, ticket: any, receipt: any, hit: any)
             2
         )
     end
-    if not mintedHits[hit] then
+    if evidence.hit_ticket(hit) == nil then
         error(
             "observe.click takes a hit that observe.find returned on this "
                 .. "cycle, and nothing else",
+            2
+        )
+    end
+    -- THE SIXTH REQUISITE, and the one a located line made necessary. A hit is
+    -- evidence about the frame it was minted on: a template match is a rectangle
+    -- that frame produced, and a line is a position that frame read. Neither is
+    -- a claim about the next frame. C++ enforces this for a template hit through
+    -- the match handle's cycle ordinal and cannot enforce it for a line, which
+    -- reaches the host as a bare coordinate with no handle to check -- so it is
+    -- enforced here, for every kind of hit alike rather than for the one kind
+    -- that would otherwise escape.
+    if not rawequal(evidence.hit_ticket(hit), ticket) then
+        error(
+            "observe.click was given a hit located on another observation "
+                .. "cycle; where a thing was on an earlier frame is not where it "
+                .. "is on this one, and a click authorised by this frame has to "
+                .. "be aimed by it too",
             2
         )
     end

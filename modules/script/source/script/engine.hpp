@@ -51,8 +51,23 @@ namespace uf::script
     // whose capability argument is a stray value.
     using PrivateCapabilityInstaller = std::function<Status(lua_State* state)>;
 
-    // Reads the automation kind out of the raised value at stack `index` of the
-    // thread that failed, or nullopt when that value is not one the host minted.
+    // What the host minted a raised value as: the kind the failure is reported
+    // under, and the sentence it was raised with.
+    //
+    // The message travels with the kind because it is lost otherwise. A host
+    // carrier is a userdata, and `lua_tostring` does not run a metamethod, so the
+    // runner's fallback renders it "(non-string error value)" -- which is what an
+    // agent's result line said when the host refused a project write, naming
+    // neither the path nor the reason.
+    struct RaisedError final
+    {
+        AutomationErrorKind kind;
+
+        std::string message{};
+    };
+
+    // Reads the raised value at stack `index` of the thread that failed, or
+    // nullopt when that value is not one the host minted.
     //
     // The script module cannot answer that question itself: it owns no error
     // vocabulary of its own, and the carrier is minted by modules/task, which
@@ -64,13 +79,15 @@ namespace uf::script
     // The classifier must decide by the carrier's host tag, never by reading
     // fields off the value: a project script can build a table with any fields
     // it likes, and duck-typing here would let it choose the kind its own
-    // failure is reported under.
+    // failure is reported under. Once the tag has answered, the message may be
+    // read off the carrier, because by then the value is one the host built.
     //
     // It runs on the thread that failed, so it must leave that thread's stack as
-    // it found it. The runner grows the stack before the call, because a thread
-    // unwound by an error has no spare slots of its own.
+    // it found it, and it must reach nothing that can raise -- there is no
+    // protected frame left to catch one. The runner grows the stack before the
+    // call, because a thread unwound by an error has no spare slots of its own.
     using RaisedErrorClassifier =
-        std::function<std::optional<AutomationErrorKind>(lua_State* state, int index)>;
+        std::function<std::optional<RaisedError>(lua_State* state, int index)>;
 
     // Recursively marks the table at stack `index`, every table reachable from
     // its values, and every metatable on the way, read-only, and enforces the

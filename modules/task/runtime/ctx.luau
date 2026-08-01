@@ -440,6 +440,14 @@ function ctx:cycle_read(ticket, x, y, width, height)
     return native.cycle_read(ticket, x, y, width, height)
 end
 
+-- The block read: every line the frame holds inside the region, each with its
+-- own rectangle in target pixels. It forwards and decides nothing like the rest
+-- of this block; `observe.read_lines` is where an element's region, its
+-- capabilities and the authorisation a click needs are added on top.
+function ctx:cycle_read_lines(ticket, x, y, width, height)
+    return native.cycle_read_lines(ticket, x, y, width, height)
+end
+
 -- THERE IS NO ctx:cycle_click_point, AND ITS ABSENCE IS THE POINT.
 --
 -- There was one, and it was a hole. `ctx` is published into every project

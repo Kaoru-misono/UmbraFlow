@@ -26,6 +26,7 @@
 
 #include <doctest/doctest.h>
 
+#include <algorithm>
 #include <chrono>
 #include <cstddef>
 #include <filesystem>
@@ -133,13 +134,41 @@ namespace uf::task
         // A fake OCR adapter that answers one line, so the read verb has
         // something to compare against. It refuses Block exactly as the shipped
         // adapter does, so a host that quietly asked for Block fails here too.
+        //
+        // IT CAN ANSWER A DIFFERENT LINE EACH TIME IT IS CALLED, in the order
+        // the readouts were given, repeating the last one once they run out.
+        // That is what lets a case put two screens in front of the falsification
+        // matrix and have the same region read something different on each: the
+        // matrix opens one observation per screen and reads once per claimed
+        // cell, so call order IS screen order there. A single-readout engine
+        // behaves exactly as it did before -- one entry never runs out.
         class FakeOcrEngine final : public ocr::IOcrEngine
         {
-            ocr::Readout m_readout;
+            std::vector<ocr::Readout> m_readouts;
+            ocr::Readout              m_block{};
+            std::size_t               m_next{0};
+            bool                      m_answersBlock{false};
 
         public:
-            explicit FakeOcrEngine(ocr::Readout readout) noexcept
-                : m_readout{std::move(readout)}
+            explicit FakeOcrEngine(ocr::Readout readout)
+                : m_readouts{std::move(readout)}
+            {
+            }
+
+            explicit FakeOcrEngine(std::vector<ocr::Readout> readouts)
+                : m_readouts{std::move(readouts)}
+            {
+                REQUIRE(!m_readouts.empty());
+            }
+
+            // The block-reading fake. `block` is what every Block read answers
+            // with, and supplying one is what makes this engine claim to have a
+            // detector at all; the single-line sequence is untouched, so a case
+            // can use both layouts on one engine.
+            FakeOcrEngine(ocr::Readout readout, ocr::Readout block)
+                : m_readouts{std::move(readout)}
+                , m_block{std::move(block)}
+                , m_answersBlock{true}
             {
             }
 
@@ -155,12 +184,18 @@ namespace uf::task
             {
                 if (spec.layout == ocr::TextLayout::Block)
                 {
-                    return fail(
-                        AutomationErrorKind::UnsupportedCapability,
-                        "this adapter does not run the detection model"
-                    );
+                    if (!m_answersBlock)
+                    {
+                        return fail(
+                            AutomationErrorKind::UnsupportedCapability,
+                            "this adapter does not run the detection model"
+                        );
+                    }
+                    return m_block;
                 }
-                return m_readout;
+                auto const index = std::min(m_next, m_readouts.size() - 1U);
+                ++m_next;
+                return m_readouts[index];
             }
         };
 
@@ -264,6 +299,7 @@ namespace uf::task
             config.frameworkProjectGlobals.emplace_back("navigation");
             config.frameworkProjectGlobals.emplace_back("observe");
             config.frameworkProjectGlobals.emplace_back("project");
+            config.frameworkProjectGlobals.emplace_back("hits");
             return config;
         }
 
@@ -302,7 +338,7 @@ namespace uf::task
             return std::string{k_prelude} + std::string{body};
         }
 
-        // A constructor refusal, expressed as the smallest script that proves it:
+        // A constructor refusal, expressed as the smallest body that proves it:
         // the call raises, and the sentence it raised names the thing that is
         // wrong. Returning 1 only on both counts is what keeps a refusal for the
         // WRONG reason from passing.
@@ -310,20 +346,30 @@ namespace uf::task
         // The fragment goes in a long-bracket literal because the sentences under
         // test quote the field names they are about, so half of them carry a
         // quote character of one kind or the other.
+        //
+        // It is the BODY rather than the whole script, because a refusal list
+        // whose subject needs its own fixture -- a screen and three elements, say
+        // -- puts that fixture between the prelude and this.
         [[nodiscard]]
-        auto refusalScript(std::string_view body, std::string_view fragment)
+        auto refusalBody(std::string_view body, std::string_view fragment)
             -> std::string
         {
-            return script(
-                std::string{"local ok, err = pcall(function()\n"} + std::string{body}
+            return std::string{"local ok, err = pcall(function()\n"}
+                + std::string{body}
                 + "\nend)\n"
                   "if ok then return 0 end\n"
                   "if type(err) ~= 'string' then return 0 end\n"
                   "if string.find(err, [==["
                 + std::string{fragment}
                 + "]==], 1, true) == nil then return 0 end\n"
-                  "return 1\n"
-            );
+                  "return 1\n";
+        }
+
+        [[nodiscard]]
+        auto refusalScript(std::string_view body, std::string_view fragment)
+            -> std::string
+        {
+            return script(refusalBody(body, fragment));
         }
 
         struct Refusal final
@@ -408,7 +454,7 @@ namespace uf::task
                     .fragment = "at least one pixel wide",
                 },
                 Refusal{
-                    .label = "identify with no appearances to identify by",
+                    .label = "identify with neither pixels nor a way to read",
                     .body  = R"lua(
                         return model.Element.new{
                             name = "slot",
@@ -418,6 +464,30 @@ namespace uf::task
                         }
                     )lua",
                     .fragment = "declares identify with no appearances",
+                },
+                Refusal{
+                    .label = "a read floor outside basis points",
+                    .body  = R"lua(
+                        return model.Element.new{
+                            name = "title",
+                            capabilities = { "read" },
+                            rect = { x = 0, y = 0, width = 3, height = 1 },
+                            read_floor = 10001,
+                        }
+                    )lua",
+                    .fragment = "read_floor must be a whole number",
+                },
+                Refusal{
+                    .label = "a read floor on an element nothing may read",
+                    .body  = R"lua(
+                        return model.Element.new{
+                            name = "title",
+                            capabilities = { "interact" },
+                            rect = { x = 0, y = 0, width = 3, height = 1 },
+                            read_floor = 9000,
+                        }
+                    )lua",
+                    .fragment = "has a read_floor but does not declare",
                 },
                 Refusal{
                     .label = "two verification sources at once",
@@ -552,6 +622,13 @@ namespace uf::task
                 capabilities = { "interact", "read" },
                 rect = { x = 0, y = 0, width = 3, height = 1 },
                 expected_text = "battle",
+            }
+            -- The shared title box: no template of its own, and no text of its
+            -- own either, because what it reads is the page's business.
+            local title = model.Element.new{
+                name = "title",
+                capabilities = { "identify", "read" },
+                rect = { x = 0, y = 0, width = 3, height = 1 },
             }
             local function anchorRow(overrides)
                 local row = {
@@ -692,6 +769,51 @@ namespace uf::task
                         }
                     )lua",
                     .fragment = "which element 'anchor' does not have",
+                },
+                Refusal{
+                    .label = "expected text on a row whose element nothing may read",
+                    .body  = R"lua(
+                        return model.Page.new{
+                            name = "battle",
+                            references = { anchorRow({ expected_text = "battle" }) },
+                        }
+                    )lua",
+                    .fragment = "carries expected_text but element 'anchor'",
+                },
+                Refusal{
+                    .label = "expected text that says nothing",
+                    .body  = R"lua(
+                        return model.Page.new{
+                            name = "battle",
+                            references = {
+                                {
+                                    element = title,
+                                    holding = "owned",
+                                    exercised = { "identify" },
+                                    identify = "required",
+                                    expected_text = "",
+                                },
+                            },
+                        }
+                    )lua",
+                    .fragment = "expected_text must be the text this page's copy",
+                },
+                Refusal{
+                    .label = "identifying by a region nobody said what reads",
+                    .body  = R"lua(
+                        return model.Page.new{
+                            name = "battle",
+                            references = {
+                                {
+                                    element = title,
+                                    holding = "owned",
+                                    exercised = { "identify" },
+                                    identify = "required",
+                                },
+                            },
+                        }
+                    )lua",
+                    .fragment = "no appearances and no expected text here",
                 },
                 Refusal{
                     .label = "an identify reference refining the search rectangle",
@@ -1766,6 +1888,888 @@ namespace uf::task
                 REQUIRE(result.has_value());
                 CHECK(*result == doctest::Approx(1.0));
             }
+        }
+
+        // The model the identify-by-text cases are written against.
+        //
+        // `title` is the shared box every page in the target prints its own name
+        // in: one rectangle, no template, and nothing said here about what it
+        // reads, because that is different on every page. `anchor` keeps its
+        // template, so a case can put a forbidden text clause on a page that
+        // still has a required clause of the older kind.
+        constexpr std::string_view k_titleModel = R"lua(
+            local title = model.Element.new{
+                name = "title",
+                capabilities = { "identify", "read" },
+                rect = { x = 0, y = 0, width = 3, height = 1 },
+            }
+            local anchor = model.Element.new{
+                name = "anchor",
+                capabilities = { "identify" },
+                rect = { x = 0, y = 0, width = 3, height = 1 },
+                appearances = {
+                    {
+                        name = "on_dark",
+                        source = "gray2.png",
+                        template = template("gray2.png"),
+                        threshold = 10000,
+                    },
+                },
+            }
+            local function titleRow(overrides)
+                local row = {
+                    element = title,
+                    holding = "referenced",
+                    exercised = { "identify" },
+                    identify = "required",
+                }
+                for key, value in overrides do
+                    row[key] = value
+                end
+                return row
+            end
+            local function anchorRow()
+                return {
+                    element = anchor,
+                    holding = "owned",
+                    exercised = { "identify" },
+                    identify = "required",
+                }
+            end
+        )lua";
+
+        [[nodiscard]]
+        auto titleScript(std::string_view body) -> std::string
+        {
+            return script(std::string{k_titleModel} + std::string{body});
+        }
+
+        TEST_CASE("A page is identified by the text its own title box reads")
+        {
+            auto const directory = TemporaryDirectory{"uf-model-identify-text"};
+            seedTemplates(directory.path());
+
+            SUBCASE("the page whose name is in the box resolves")
+            {
+                // The reading arrives padded because a single-line read of a
+                // drawn rectangle does. Drop the trim from observe.exact_text and
+                // this goes red, which is the whole reason the trim is in the
+                // comparison rather than in the project file's data.
+                auto built = buildHarness(
+                    HarnessSpec{
+                        .framePixels = {pixels(2, 5, 0)},
+                        .ocrEngine   = std::make_unique<FakeOcrEngine>(
+                            oneLineReadout("  battle  ", 9'000)
+                        ),
+                        .projectRoot = directory.path(),
+                    }
+                );
+                REQUIRE(built.session.has_value());
+                TaskContext context{
+                    *std::move(built.session),
+                    *built.recorder,
+                    TaskContextConfig{.projectRoot = directory.path()},
+                };
+
+                auto const result = runModel(context, built, titleScript(R"lua(
+                    local page = model.Page.new{
+                        name = "sortie",
+                        references = { titleRow({ expected_text = "battle" }) },
+                    }
+                    local ticket = ctx:cycle_open()
+                    local receipt, why = observe.resolve_page(ctx, ticket, page)
+                    ctx:cycle_close(ticket)
+                    if receipt == nil then return 0 end
+                    if why ~= nil then return 0 end
+                    if receipt.page ~= page then return 0 end
+                    return 1
+                )lua"));
+                REQUIRE(result.has_value());
+                CHECK(*result == doctest::Approx(1.0));
+            }
+
+            SUBCASE("a longer name that merely starts with it is another page")
+            {
+                // The case the whole comparison rule exists for. Every screen
+                // prints its name in this box, and one name is a prefix of
+                // another; make the comparison a `string.find` and this page
+                // resolves on the wrong screen with nothing downstream noticing.
+                auto built = buildHarness(
+                    HarnessSpec{
+                        .framePixels = {pixels(2, 5, 0)},
+                        .ocrEngine   = std::make_unique<FakeOcrEngine>(
+                            oneLineReadout("battle log", 9'000)
+                        ),
+                        .projectRoot = directory.path(),
+                    }
+                );
+                REQUIRE(built.session.has_value());
+                TaskContext context{
+                    *std::move(built.session),
+                    *built.recorder,
+                    TaskContextConfig{.projectRoot = directory.path()},
+                };
+
+                auto const result = runModel(context, built, titleScript(R"lua(
+                    local page = model.Page.new{
+                        name = "sortie",
+                        references = { titleRow({ expected_text = "battle" }) },
+                    }
+                    local ticket = ctx:cycle_open()
+                    local receipt, why = observe.resolve_page(ctx, ticket, page)
+                    ctx:cycle_close(ticket)
+                    if receipt ~= nil then return 0 end
+                    if string.find(why, [[requires element 'title']], 1, true) == nil then
+                        return 0
+                    end
+                    if string.find(why, [[to read "battle"]], 1, true) == nil then
+                        return 0
+                    end
+                    if string.find(why, [[the region read "battle log"]], 1, true) == nil then
+                        return 0
+                    end
+                    return 1
+                )lua"));
+                REQUIRE(result.has_value());
+                CHECK(*result == doctest::Approx(1.0));
+            }
+
+            SUBCASE("a reading the engine was unsure of is not evidence either way")
+            {
+                // Reading fails OPEN: the engine returns plausible text for any
+                // rectangle, so the confidence is the only thing separating a
+                // reading from a guess. Below the floor the clause is NOT
+                // satisfied and the text is not "found" either -- which is why
+                // the forbidden page below resolves on the same frame.
+                //
+                // Delete the floor check and the required page resolves on a
+                // guess; make a low reading a match instead and the forbidden
+                // page stops resolving. Either way one of the two halves is red.
+                auto built = buildHarness(
+                    HarnessSpec{
+                        .framePixels = {pixels(2, 5, 0)},
+                        .ocrEngine   = std::make_unique<FakeOcrEngine>(
+                            oneLineReadout("battle", 7'000)
+                        ),
+                        .projectRoot = directory.path(),
+                    }
+                );
+                REQUIRE(built.session.has_value());
+                TaskContext context{
+                    *std::move(built.session),
+                    *built.recorder,
+                    TaskContextConfig{.projectRoot = directory.path()},
+                };
+
+                auto const result = runModel(context, built, titleScript(R"lua(
+                    local required = model.Page.new{
+                        name = "sortie",
+                        references = { titleRow({ expected_text = "battle" }) },
+                    }
+                    local elsewhere = model.Page.new{
+                        name = "elsewhere",
+                        references = {
+                            anchorRow(),
+                            titleRow({
+                                identify = "forbidden",
+                                expected_text = "battle",
+                            }),
+                        },
+                    }
+                    local ticket = ctx:cycle_open()
+                    local receipt, why = observe.resolve_page(ctx, ticket, required)
+                    local other = observe.resolve_page(ctx, ticket, elsewhere)
+                    ctx:cycle_close(ticket)
+                    if receipt ~= nil then return 0 end
+                    if string.find(why, "only 7000 basis points", 1, true) == nil then
+                        return 0
+                    end
+                    if string.find(why, "under the 8000", 1, true) == nil then
+                        return 0
+                    end
+                    if other == nil then return 0 end
+                    return 1
+                )lua"));
+                REQUIRE(result.has_value());
+                CHECK(*result == doctest::Approx(1.0));
+            }
+
+            SUBCASE("an element that states its own floor is judged at that one")
+            {
+                // 9000 clears the framework's 8000 and not this element's 9500,
+                // so the same reading that resolves a page above refuses one
+                // here. Read the constant instead of the element's field and
+                // this goes red.
+                auto built = buildHarness(
+                    HarnessSpec{
+                        .framePixels = {pixels(2, 5, 0)},
+                        .ocrEngine   = std::make_unique<FakeOcrEngine>(
+                            oneLineReadout("battle", 9'000)
+                        ),
+                        .projectRoot = directory.path(),
+                    }
+                );
+                REQUIRE(built.session.has_value());
+                TaskContext context{
+                    *std::move(built.session),
+                    *built.recorder,
+                    TaskContextConfig{.projectRoot = directory.path()},
+                };
+
+                auto const result = runModel(context, built, titleScript(R"lua(
+                    local strict = model.Element.new{
+                        name = "strict_title",
+                        capabilities = { "identify", "read" },
+                        rect = { x = 0, y = 0, width = 3, height = 1 },
+                        read_floor = 9500,
+                    }
+                    if model.Element.read_floor(strict) ~= 9500 then return 0 end
+                    if model.Element.read_floor(title) ~= 8000 then return 0 end
+
+                    local page = model.Page.new{
+                        name = "sortie",
+                        references = {
+                            {
+                                element = strict,
+                                holding = "owned",
+                                exercised = { "identify" },
+                                identify = "required",
+                                expected_text = "battle",
+                            },
+                        },
+                    }
+                    local ticket = ctx:cycle_open()
+                    local receipt, why = observe.resolve_page(ctx, ticket, page)
+                    ctx:cycle_close(ticket)
+                    if receipt ~= nil then return 0 end
+                    if string.find(why, "under the 9500", 1, true) == nil then
+                        return 0
+                    end
+                    return 1
+                )lua"));
+                REQUIRE(result.has_value());
+                CHECK(*result == doctest::Approx(1.0));
+            }
+
+            SUBCASE("a forbidden clause fires on the text it forbids and not otherwise")
+            {
+                // Both polarities on one frame and one reading. Implement only
+                // the required half and the first page below resolves; implement
+                // only the forbidden half and the second one does not.
+                auto built = buildHarness(
+                    HarnessSpec{
+                        .framePixels = {pixels(2, 5, 0)},
+                        .ocrEngine   = std::make_unique<FakeOcrEngine>(
+                            oneLineReadout("battle", 9'000)
+                        ),
+                        .projectRoot = directory.path(),
+                    }
+                );
+                REQUIRE(built.session.has_value());
+                TaskContext context{
+                    *std::move(built.session),
+                    *built.recorder,
+                    TaskContextConfig{.projectRoot = directory.path()},
+                };
+
+                auto const result = runModel(context, built, titleScript(R"lua(
+                    local notBattle = model.Page.new{
+                        name = "not_battle",
+                        references = {
+                            anchorRow(),
+                            titleRow({
+                                identify = "forbidden",
+                                expected_text = "battle",
+                            }),
+                        },
+                    }
+                    local notMenu = model.Page.new{
+                        name = "not_menu",
+                        references = {
+                            anchorRow(),
+                            titleRow({
+                                identify = "forbidden",
+                                expected_text = "menu",
+                            }),
+                        },
+                    }
+                    local ticket = ctx:cycle_open()
+                    local refused, why = observe.resolve_page(ctx, ticket, notBattle)
+                    local allowed = observe.resolve_page(ctx, ticket, notMenu)
+                    ctx:cycle_close(ticket)
+                    if refused ~= nil then return 0 end
+                    if string.find(why, [[forbids element 'title']], 1, true) == nil then
+                        return 0
+                    end
+                    if string.find(why, [[from reading "battle"]], 1, true) == nil then
+                        return 0
+                    end
+                    if allowed == nil then return 0 end
+                    return 1
+                )lua"));
+                REQUIRE(result.has_value());
+                CHECK(*result == doctest::Approx(1.0));
+            }
+        }
+
+        TEST_CASE("The row's expected text outranks the element's")
+        {
+            // The precedence, in both directions on one frame: the page that
+            // states the text resolves, and the page that leaves it to the
+            // element is judged by the element's. Read the element's field first
+            // and the first page fails; forget the fallback and the second one
+            // stops being able to explain itself.
+            auto const directory = TemporaryDirectory{"uf-model-text-precedence"};
+            seedTemplates(directory.path());
+            auto built = buildHarness(
+                HarnessSpec{
+                    .framePixels = {pixels(2, 5, 0)},
+                    .ocrEngine   = std::make_unique<FakeOcrEngine>(
+                        oneLineReadout("battle", 9'000)
+                    ),
+                    .projectRoot = directory.path(),
+                }
+            );
+            REQUIRE(built.session.has_value());
+            TaskContext context{
+                *std::move(built.session),
+                *built.recorder,
+                TaskContextConfig{.projectRoot = directory.path()},
+            };
+
+            auto const result = runModel(context, built, script(R"lua(
+                local heading = model.Element.new{
+                    name = "heading",
+                    capabilities = { "identify", "read" },
+                    rect = { x = 0, y = 0, width = 3, height = 1 },
+                    expected_text = "menu",
+                }
+                local function row(overrides)
+                    local entry = {
+                        element = heading,
+                        holding = "referenced",
+                        exercised = { "identify" },
+                        identify = "required",
+                    }
+                    for key, value in overrides do
+                        entry[key] = value
+                    end
+                    return entry
+                end
+
+                local stated = model.Page.new{
+                    name = "sortie",
+                    references = { row({ expected_text = "battle" }) },
+                }
+                local inherited = model.Page.new{
+                    name = "home",
+                    references = { row({}) },
+                }
+                if model.Reference.expected_text(stated.references[1]) ~= "battle" then
+                    return 0
+                end
+                if model.Reference.expected_text(inherited.references[1]) ~= "menu" then
+                    return 0
+                end
+
+                local ticket = ctx:cycle_open()
+                local here = observe.resolve_page(ctx, ticket, stated)
+                local there, why = observe.resolve_page(ctx, ticket, inherited)
+                ctx:cycle_close(ticket)
+                if here == nil then return 0 end
+                if there ~= nil then return 0 end
+                if string.find(why, [[to read "menu"]], 1, true) == nil then
+                    return 0
+                end
+                return 1
+            )lua"));
+            REQUIRE(result.has_value());
+            CHECK(*result == doctest::Approx(1.0));
+        }
+
+        TEST_CASE("An element with a template identifies by pixels whatever its row reads")
+        {
+            // The older path, unchanged. This page's row says the region reads
+            // "battle" and the engine reads something else entirely, and the
+            // page still resolves -- because an element that HAS pixels
+            // identifies by them, and a row's text is a fact about a reading
+            // rather than a second identity clause.
+            //
+            // Let the text path run whenever a row carries expected text and
+            // this goes red immediately.
+            auto const directory = TemporaryDirectory{"uf-model-pixels-win"};
+            seedTemplates(directory.path());
+            auto built = buildHarness(
+                HarnessSpec{
+                    .framePixels = {pixels(2, 5, 0)},
+                    .ocrEngine   = std::make_unique<FakeOcrEngine>(
+                        oneLineReadout("not the title", 9'000)
+                    ),
+                    .projectRoot = directory.path(),
+                }
+            );
+            REQUIRE(built.session.has_value());
+            TaskContext context{
+                *std::move(built.session),
+                *built.recorder,
+                TaskContextConfig{.projectRoot = directory.path()},
+            };
+
+            auto const result = runModel(context, built, script(R"lua(
+                local anchor = model.Element.new{
+                    name = "anchor",
+                    capabilities = { "identify", "read" },
+                    rect = { x = 0, y = 0, width = 3, height = 1 },
+                    appearances = {
+                        {
+                            name = "on_dark",
+                            source = "gray2.png",
+                            template = template("gray2.png"),
+                            threshold = 10000,
+                        },
+                    },
+                }
+                local page = model.Page.new{
+                    name = "battle",
+                    references = {
+                        {
+                            element = anchor,
+                            holding = "owned",
+                            exercised = { "identify", "read" },
+                            identify = "required",
+                            expected_text = "battle",
+                        },
+                    },
+                }
+
+                local ticket = ctx:cycle_open()
+                local receipt = observe.resolve_page(ctx, ticket, page)
+                if receipt == nil then return 0 end
+
+                -- And the same row's text is exactly what a READ of it compares
+                -- against, which is the other half of why it is allowed here.
+                local reading = observe.read_element(
+                    ctx, ticket, page.references[1], observe.exact_text
+                )
+                ctx:cycle_close(ticket)
+                if reading.expected ~= "battle" then return 0 end
+                if reading.matches ~= false then return 0 end
+                return 1
+            )lua"));
+            REQUIRE(result.has_value());
+            CHECK(*result == doctest::Approx(1.0));
+        }
+
+        TEST_CASE("read_element reads what the page's own row says about the element")
+        {
+            // One element, two answers, and both are right: on its own it reads
+            // its own rectangle against its own expected text, and through a
+            // page's row it reads what THAT page refined -- the text and the
+            // rectangle both.
+            //
+            // Ignore the row's expected text and the first pair goes red; read
+            // the element's rectangle instead of the row's and the width checks
+            // do.
+            auto const directory = TemporaryDirectory{"uf-model-read-row"};
+            seedTemplates(directory.path());
+            auto built = buildHarness(
+                HarnessSpec{
+                    .framePixels = {pixels(2, 5, 0)},
+                    .ocrEngine   = std::make_unique<FakeOcrEngine>(
+                        oneLineReadout("battle", 9'000)
+                    ),
+                    .projectRoot = directory.path(),
+                }
+            );
+            REQUIRE(built.session.has_value());
+            TaskContext context{
+                *std::move(built.session),
+                *built.recorder,
+                TaskContextConfig{.projectRoot = directory.path()},
+            };
+
+            auto const result = runModel(context, built, script(R"lua(
+                local anchor = model.Element.new{
+                    name = "anchor",
+                    capabilities = { "identify" },
+                    rect = { x = 0, y = 0, width = 3, height = 1 },
+                    appearances = {
+                        {
+                            name = "on_dark",
+                            source = "gray2.png",
+                            template = template("gray2.png"),
+                            threshold = 10000,
+                        },
+                    },
+                }
+                local slot = model.Element.new{
+                    name = "slot",
+                    capabilities = { "interact", "read" },
+                    rect = { x = 0, y = 0, width = 3, height = 1 },
+                    expected_text = "menu",
+                }
+                local page = model.Page.new{
+                    name = "battle",
+                    references = {
+                        {
+                            element = anchor,
+                            holding = "owned",
+                            exercised = { "identify" },
+                            identify = "required",
+                        },
+                        {
+                            element = slot,
+                            holding = "owned",
+                            exercised = { "read" },
+                            expected_text = "battle",
+                            rect_override = { x = 1, y = 0, width = 2, height = 1 },
+                        },
+                    },
+                }
+
+                local row = model.Page.reference_for(page, slot)
+                local ticket = ctx:cycle_open()
+                local viaRow = observe.read_element(ctx, ticket, row, observe.exact_text)
+                local viaElement =
+                    observe.read_element(ctx, ticket, slot, observe.exact_text)
+                ctx:cycle_close(ticket)
+
+                if viaRow == nil or viaElement == nil then return 0 end
+                if viaRow.expected ~= "battle" then return 0 end
+                if viaRow.matches ~= true then return 0 end
+                if viaRow.x ~= 1 or viaRow.width ~= 2 then return 0 end
+                if viaElement.expected ~= "menu" then return 0 end
+                if viaElement.matches ~= false then return 0 end
+                if viaElement.x ~= 0 or viaElement.width ~= 3 then return 0 end
+                return 1
+            )lua"));
+            REQUIRE(result.has_value());
+            CHECK(*result == doctest::Approx(1.0));
+        }
+
+        // Three lines wherever the block-reading fake is asked for one, each at
+        // its own place in the fixture frame's only row. They are what a
+        // scrolling grid gives a run: text the project file never named, at
+        // positions the frame alone knows.
+        [[nodiscard]]
+        auto rosterReadout() -> ocr::Readout
+        {
+            auto readout = ocr::Readout{};
+            readout.lines.emplace_back(
+                ocr::TextLine{
+                    .text   = "battle",
+                    .bounds = test::pixelRect(0, 0, 1, 1),
+                    .confidenceBp = 9'000,
+                }
+            );
+            readout.lines.emplace_back(
+                ocr::TextLine{
+                    .text   = "rest",
+                    .bounds = test::pixelRect(1, 0, 1, 1),
+                    .confidenceBp = 9'500,
+                }
+            );
+            readout.lines.emplace_back(
+                ocr::TextLine{
+                    .text   = "shop",
+                    .bounds = test::pixelRect(2, 0, 1, 1),
+                    .confidenceBp = 8'000,
+                }
+            );
+            return readout;
+        }
+
+        TEST_CASE("read_lines locates the text a page never named and clicks it")
+        {
+            // The whole shape of the feature in one script: resolve the page,
+            // read the annotated region, pick the line by what it says, and
+            // click THAT line -- through the same observe.click a template hit
+            // goes through, on the same ticket, with the receipt that ticket
+            // minted.
+            auto const directory = TemporaryDirectory{"uf-model-read-lines"};
+            seedTemplates(directory.path());
+            auto built = buildHarness(
+                HarnessSpec{
+                    .framePixels = {pixels(2, 5, 0)},
+                    .ocrEngine   = std::make_unique<FakeOcrEngine>(
+                        oneLineReadout("battle", 9'000),
+                        rosterReadout()
+                    ),
+                    .projectRoot = directory.path(),
+                }
+            );
+            REQUIRE(built.session.has_value());
+            auto* const p_clicks = built.clicks;
+            TaskContext context{
+                *std::move(built.session),
+                *built.recorder,
+                TaskContextConfig{.projectRoot = directory.path()},
+            };
+
+            auto const result = runModel(context, built, battleScript(R"lua(
+                local ticket = ctx:cycle_open()
+                local receipt = observe.resolve_page(ctx, ticket, battle)
+                if receipt == nil then return 0 end
+
+                local row = model.Page.reference_for(battle, slot)
+                local lines = observe.read_lines(ctx, ticket, row)
+                if #lines ~= 3 then return 0 end
+
+                -- Every line carries its own place, its own text and its own
+                -- confidence, and says the frame is what positioned it.
+                if lines[1].text ~= "battle" then return 0 end
+                if lines[2].x ~= 1 or lines[2].width ~= 1 then return 0 end
+                if lines[2].confidence ~= 9500 then return 0 end
+                if lines[2].positioned_by ~= "text" then return 0 end
+                if lines[2].page ~= "battle" then return 0 end
+                if lines[2].interact ~= true then return 0 end
+                if lines[2].click_x ~= 1 or lines[2].click_y ~= 0 then return 0 end
+
+                local wanted = hits.matching(lines, "rest", observe.exact_text)
+                if wanted == nil then return 0 end
+                if wanted ~= lines[2] then return 0 end
+
+                observe.click(ctx, ticket, receipt, wanted)
+                return 1
+            )lua"));
+            REQUIRE(result.has_value());
+            CHECK(*result == doctest::Approx(1.0));
+            CHECK(p_clicks->clickCount() == 1U);
+        }
+
+        TEST_CASE("A line located on one frame cannot authorise a click on another")
+        {
+            // THE RULE THE FEATURE TURNS ON. A line's position is read off one
+            // frame and is true of that frame alone -- there is no match handle
+            // for C++ to re-check, because the click reaches the host as a bare
+            // coordinate. Remove the ticket comparison in observe.click and the
+            // click below is delivered at where the text used to be.
+            auto const directory = TemporaryDirectory{"uf-model-read-lines-stale"};
+            seedTemplates(directory.path());
+            auto built = buildHarness(
+                HarnessSpec{
+                    .framePixels = {pixels(2, 5, 0), pixels(2, 5, 0)},
+                    .ocrEngine   = std::make_unique<FakeOcrEngine>(
+                        oneLineReadout("battle", 9'000),
+                        rosterReadout()
+                    ),
+                    .projectRoot = directory.path(),
+                }
+            );
+            REQUIRE(built.session.has_value());
+            auto* const p_clicks = built.clicks;
+            TaskContext context{
+                *std::move(built.session),
+                *built.recorder,
+                TaskContextConfig{.projectRoot = directory.path()},
+            };
+
+            auto const result = runModel(context, built, battleScript(R"lua(
+                local first = ctx:cycle_open()
+                local row = model.Page.reference_for(battle, slot)
+                local stale = observe.read_lines(ctx, first, row)[2]
+                ctx:cycle_close(first)
+
+                -- A fresh frame, freshly resolved, so the receipt is beyond
+                -- reproach and the line is the only stale thing in the call.
+                local second = ctx:cycle_open()
+                local receipt = observe.resolve_page(ctx, second, battle)
+                if receipt == nil then return 0 end
+
+                local ok, err = pcall(function()
+                    observe.click(ctx, second, receipt, stale)
+                end)
+                if ok then return 0 end
+                if string.find(err, "located on another observation", 1, true) == nil then
+                    return 0
+                end
+                return 1
+            )lua"));
+            REQUIRE(result.has_value());
+            CHECK(*result == doctest::Approx(1.0));
+            CHECK(p_clicks->clickCount() == 0U);
+        }
+
+        TEST_CASE("A read region that does not exercise interact is looked at only")
+        {
+            // The capability model is unchanged by the ruling that a located
+            // line may be clicked: `read` is what lets the region be read, and
+            // `interact` on the page's own row is still what lets anything in it
+            // be clicked. Add interact to the row below and the refusal goes.
+            auto const directory = TemporaryDirectory{"uf-model-read-lines-nointeract"};
+            seedTemplates(directory.path());
+            auto built = buildHarness(
+                HarnessSpec{
+                    .framePixels = {pixels(2, 5, 0)},
+                    .ocrEngine   = std::make_unique<FakeOcrEngine>(
+                        oneLineReadout("battle", 9'000),
+                        rosterReadout()
+                    ),
+                    .projectRoot = directory.path(),
+                }
+            );
+            REQUIRE(built.session.has_value());
+            auto* const p_clicks = built.clicks;
+            TaskContext context{
+                *std::move(built.session),
+                *built.recorder,
+                TaskContextConfig{.projectRoot = directory.path()},
+            };
+
+            auto const result = runModel(context, built, battleScript(R"lua(
+                local list = model.Element.new{
+                    name = "list",
+                    capabilities = { "read" },
+                    rect = { x = 0, y = 0, width = 3, height = 1 },
+                }
+                local listing = model.Page.new{
+                    name = "listing",
+                    references = {
+                        {
+                            element = anchor,
+                            holding = "owned",
+                            exercised = { "identify" },
+                            identify = "required",
+                        },
+                        {
+                            element = list,
+                            holding = "owned",
+                            exercised = { "read" },
+                        },
+                    },
+                }
+
+                local ticket = ctx:cycle_open()
+                local receipt = observe.resolve_page(ctx, ticket, listing)
+                if receipt == nil then return 0 end
+
+                local row = model.Page.reference_for(listing, list)
+                local lines = observe.read_lines(ctx, ticket, row)
+                if #lines ~= 3 then return 0 end
+                if lines[1].interact ~= false then return 0 end
+
+                local ok, err = pcall(function()
+                    observe.click(ctx, ticket, receipt, lines[1])
+                end)
+                if ok then return 0 end
+                if string.find(err, "does not exercise interact", 1, true) == nil then
+                    return 0
+                end
+                return 1
+            )lua"));
+            REQUIRE(result.has_value());
+            CHECK(*result == doctest::Approx(1.0));
+            CHECK(p_clicks->clickCount() == 0U);
+        }
+
+        TEST_CASE("hits.offset aims beside the line that authorised the click")
+        {
+            // The card a name sits in. The offset is the caller's number and the
+            // derived hit keeps the line's own rectangle, its page and its
+            // cycle, so every check in observe.click still applies to it.
+            auto const directory = TemporaryDirectory{"uf-model-offset-hit"};
+            seedTemplates(directory.path());
+            auto built = buildHarness(
+                HarnessSpec{
+                    .framePixels = {pixels(2, 5, 0)},
+                    .ocrEngine   = std::make_unique<FakeOcrEngine>(
+                        oneLineReadout("battle", 9'000),
+                        rosterReadout()
+                    ),
+                    .projectRoot = directory.path(),
+                }
+            );
+            REQUIRE(built.session.has_value());
+            auto* const p_clicks = built.clicks;
+            TaskContext context{
+                *std::move(built.session),
+                *built.recorder,
+                TaskContextConfig{.projectRoot = directory.path()},
+            };
+
+            auto const result = runModel(context, built, battleScript(R"lua(
+                local ticket = ctx:cycle_open()
+                local receipt = observe.resolve_page(ctx, ticket, battle)
+                if receipt == nil then return 0 end
+
+                local row = model.Page.reference_for(battle, slot)
+                local lines = observe.read_lines(ctx, ticket, row)
+                local name = hits.matching(lines, "battle", observe.exact_text)
+                if name == nil then return 0 end
+
+                local card = hits.offset(name, 2, 0)
+                if card.click_x ~= name.click_x + 2 then return 0 end
+                if card.click_y ~= name.click_y then return 0 end
+                -- The rectangle is still the evidence's: nothing here located a
+                -- card, so nothing here claims a rectangle for one.
+                if card.x ~= name.x or card.width ~= name.width then return 0 end
+                if card.text ~= "battle" then return 0 end
+
+                -- A table nobody minted is refused, and so is an offset that is
+                -- not a whole number of pixels.
+                local forged = { click_x = 0, click_y = 0 }
+                if pcall(function() return hits.offset(forged, 1, 1) end) then
+                    return 0
+                end
+                if pcall(function() return hits.offset(name, 0.5, 0) end) then
+                    return 0
+                end
+
+                observe.click(ctx, ticket, receipt, card)
+                return 1
+            )lua"));
+            REQUIRE(result.has_value());
+            CHECK(*result == doctest::Approx(1.0));
+            CHECK(p_clicks->clickCount() == 1U);
+        }
+
+        TEST_CASE("An offset hit made on an earlier frame is refused like the line was")
+        {
+            // The derived hit inherits its source's cycle, so offsetting is not
+            // a way to launder a stale line into a fresh click. Mint the derived
+            // hit against no ticket and the refusal below goes.
+            auto const directory = TemporaryDirectory{"uf-model-offset-stale"};
+            seedTemplates(directory.path());
+            auto built = buildHarness(
+                HarnessSpec{
+                    .framePixels = {pixels(2, 5, 0), pixels(2, 5, 0)},
+                    .ocrEngine   = std::make_unique<FakeOcrEngine>(
+                        oneLineReadout("battle", 9'000),
+                        rosterReadout()
+                    ),
+                    .projectRoot = directory.path(),
+                }
+            );
+            REQUIRE(built.session.has_value());
+            auto* const p_clicks = built.clicks;
+            TaskContext context{
+                *std::move(built.session),
+                *built.recorder,
+                TaskContextConfig{.projectRoot = directory.path()},
+            };
+
+            auto const result = runModel(context, built, battleScript(R"lua(
+                local first = ctx:cycle_open()
+                local row = model.Page.reference_for(battle, slot)
+                local stale = hits.offset(observe.read_lines(ctx, first, row)[1], 2, 0)
+                ctx:cycle_close(first)
+
+                local second = ctx:cycle_open()
+                local receipt = observe.resolve_page(ctx, second, battle)
+                if receipt == nil then return 0 end
+
+                local ok, err = pcall(function()
+                    observe.click(ctx, second, receipt, stale)
+                end)
+                if ok then return 0 end
+                if string.find(err, "located on another observation", 1, true) == nil then
+                    return 0
+                end
+                return 1
+            )lua"));
+            REQUIRE(result.has_value());
+            CHECK(*result == doctest::Approx(1.0));
+            CHECK(p_clicks->clickCount() == 0U);
         }
 
         TEST_CASE("wait_until needs K agreeing observations in a row")
@@ -3225,6 +4229,7 @@ namespace uf::task
             "capabilities = [\"interact\", \"read\"]\n"
             "rect = [0, 0, 3, 1]\n"
             "expected_text = \"battle\"\n"
+            "read_floor = 9500\n"
             "future_field = 7\n"
             "\n"
             "[element.extra]\n"
@@ -3246,6 +4251,7 @@ namespace uf::task
             "element = \"slot\"\n"
             "holding = \"owned\"\n"
             "exercised = [\"interact\", \"read\"]\n"
+            "expected_text = \"sortie\"\n"
             "\n"
             "[[gadget]]\n"
             "name = \"not mine\"\n"
@@ -3266,6 +4272,7 @@ namespace uf::task
             "name = \"slot\"\n"
             "capabilities = [\"read\", \"interact\"]\n"
             "rect = [0, 0, 3, 1]\n"
+            "read_floor = 9500\n"
             "expected_text = \"battle\"\n"
             "future_field = 7\n"
             "\n"
@@ -3311,6 +4318,7 @@ namespace uf::task
             "page = \"battle\"\n"
             "element = \"slot\"\n"
             "holding = \"owned\"\n"
+            "expected_text = \"sortie\"\n"
             "exercised = [\"interact\", \"read\"]\n";
 
         TEST_CASE("A project file round trips byte for byte and keeps what it does not know")
@@ -3351,6 +4359,15 @@ namespace uf::task
                 if slot == nil then return 0 end
                 if slot.expected_text ~= "battle" then return 0 end
 
+                -- The floor an element states survives the file, and the one it
+                -- does not state is answered by the framework rather than by a
+                -- nil a caller would compare a confidence against.
+                if slot.read_floor ~= 9500 then return 0 end
+                if model.Element.read_floor(slot) ~= 9500 then return 0 end
+                local anchorElement = built.element_by_name.anchor
+                if anchorElement.read_floor ~= nil then return 0 end
+                if model.Element.read_floor(anchorElement) ~= 8000 then return 0 end
+
                 -- A project's own field lives under extra and NOWHERE else.
                 if slot.extra.my_grid_stride ~= 5 then return 0 end
                 if rawget(slot, "my_grid_stride") ~= nil then return 0 end
@@ -3375,6 +4392,16 @@ namespace uf::task
                 if #battle.references ~= 2 then return 0 end
                 if battle.references[1].pinned_appearance ~= "on_dark" then return 0 end
                 if battle.references[1].element.appearances[2].name ~= "on_light" then
+                    return 0
+                end
+
+                -- What one page says its copy of a shared region reads is a row
+                -- field, and it outranks the element's own.
+                if battle.references[2].expected_text ~= "sortie" then return 0 end
+                if model.Reference.expected_text(battle.references[2]) ~= "sortie" then
+                    return 0
+                end
+                if model.Reference.expected_text(battle.references[1]) ~= nil then
                     return 0
                 end
 
@@ -3734,6 +4761,83 @@ namespace uf::task
             CHECK(*result == doctest::Approx(1.0));
         }
 
+        TEST_CASE("A project file whose screen names a page it never declared is refused")
+        {
+            // ONE OF THE TWO DOORS. `oracle.Screen.new` is handed a screen's own
+            // two facts and can see no pages, so the name a screen declares is
+            // checked by whoever CAN see them -- here, while the line the author
+            // wrote is still known. The other door is `scribe.add_screen`, in
+            // tests/task/test-annotation-routines.cpp.
+            //
+            // What gets through an unguarded door is the one state this field
+            // must never reach: a declaration `recognition` has no page to
+            // resolve, so the screen's own claim cannot be measured at all.
+            auto const directory = TemporaryDirectory{"uf-model-screen-dangling"};
+            seedTemplates(directory.path());
+            constexpr std::string_view dangling =
+                "schema = \"umbraflow-project/l2-v1\"\n"
+                "\n"
+                "[[element]]\n"
+                "name = \"mark_base\"\n"
+                "capabilities = [\"identify\"]\n"
+                "rect = [0, 0, 3, 1]\n"
+                "\n"
+                "[[appearance]]\n"
+                "element = \"mark_base\"\n"
+                "name = \"lit\"\n"
+                "source = \"gray2.png\"\n"
+                "threshold = 10000\n"
+                "\n"
+                "[[page]]\n"
+                "name = \"base\"\n"
+                "\n"
+                "[[reference]]\n"
+                "page = \"base\"\n"
+                "element = \"mark_base\"\n"
+                "holding = \"owned\"\n"
+                "exercised = [\"identify\"]\n"
+                "identify = \"required\"\n"
+                "\n"
+                "[[screen]]\n"
+                "name = \"capture\"\n"
+                "hash = \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"\n"
+                "page = \"nowhere\"\n";
+            writeFile(
+                directory.path() / "page-model.toml",
+                std::as_bytes(std::span{dangling})
+            );
+
+            auto built = buildHarness(
+                HarnessSpec{
+                    .framePixels = {pixels(2, 0, 0)},
+                    .projectRoot = directory.path(),
+                }
+            );
+            REQUIRE(built.session.has_value());
+            TaskContext context{
+                *std::move(built.session),
+                *built.recorder,
+                TaskContextConfig{.projectRoot = directory.path()},
+            };
+
+            auto const result = runModel(context, built, R"lua(
+                local ok, err = pcall(function()
+                    return project.load_project(ctx)
+                end)
+                if ok then return 0 end
+                if string.find(err, "says it is page 'nowhere'", 1, true) == nil then
+                    return 0
+                end
+                -- The [[screen]] section's own line, which is what makes it
+                -- fixable without reading the whole file.
+                if string.find(err, "line 24", 1, true) == nil then return 0 end
+                return 1
+            )lua");
+            REQUIRE(result.has_value());
+            CHECK(*result == doctest::Approx(1.0));
+        }
+
         TEST_CASE("A project file this build cannot read is refused by name")
         {
             auto const directory = TemporaryDirectory{"uf-model-project-schema"};
@@ -3839,6 +4943,1324 @@ namespace uf::task
             )lua");
             REQUIRE(result.has_value());
             CHECK(*result == doctest::Approx(1.0));
+        }
+
+        // ------------------------------------------------------------------
+        // The falsification matrix over a cell no template can answer.
+        // ------------------------------------------------------------------
+
+        // Two screen files, written under the content hashes the matrix derives
+        // their paths from, handed back in the order the walk will visit them.
+        //
+        // THE SORT IS THE CONTRACT AND NOT A TIDINESS. `regress.check` opens one
+        // observation per screen in CONTENT-HASH order, and each claimed text
+        // cell spends one read of that observation -- so the Nth readout the fake
+        // engine answers with belongs to the Nth hash here. A case that assumed
+        // declaration order instead would pass or fail according to which grey
+        // happened to hash lower.
+        [[nodiscard]]
+        auto seedScreens(std::filesystem::path const& root)
+            -> std::vector<std::string>
+        {
+            auto error = std::error_code{};
+            std::filesystem::create_directories(
+                root / "assets" / "screens",
+                error
+            );
+
+            auto hashes = std::vector<std::string>{};
+            for (auto const gray : {uint8{20}, uint8{40}})
+            {
+                auto const screen = encodedTemplate(gray);
+                auto const hex    = screen.hash.hex();
+                writeFile(
+                    root / "assets" / "screens" / (hex + ".png"),
+                    std::span<std::byte const>{screen.pngBytes}
+                );
+                hashes.emplace_back(hex);
+            }
+            std::ranges::sort(hashes);
+            return hashes;
+        }
+
+        // One shared title box with no pixels of its own, two screens, and a
+        // `matrix` helper that walks whatever claims a case hands it. The model
+        // is assembled in memory rather than loaded from a file, because what is
+        // under test is the walk and the judging; the file is round-tripped by
+        // its own case below.
+        constexpr std::string_view k_matrixPreludeHead = R"lua(
+            local title = model.Element.new{
+                name = "title",
+                capabilities = { "identify", "read" },
+                rect = { x = 0, y = 0, width = 3, height = 1 },
+            }
+            local hashOne = ")lua";
+
+        constexpr std::string_view k_matrixPreludeMiddle = R"lua("
+            local hashTwo = ")lua";
+
+        constexpr std::string_view k_matrixPreludeTail = R"lua("
+            local first  = oracle.Screen.new{ name = "battle", hash = hashOne }
+            local second = oracle.Screen.new{ name = "battle_log", hash = hashTwo }
+            local function matrix(expectations, elements)
+                return regress.check(ctx, {
+                    elements = elements or { title },
+                    claims   = oracle.Claims.new{
+                        screens      = { first, second },
+                        expectations = expectations,
+                    },
+                })
+            end
+
+            -- The same walk over screens that say which PAGE they are of, which
+            -- is the only thing in the model that can say two pictures are two
+            -- views of one page. `page_by_name` is what a loaded model carries
+            -- and what `recognition` resolves a declaration through.
+            local function pageMatrix(expectations, screens, pages)
+                local byName = {}
+                for _, page in pages do byName[page.name] = page end
+                return regress.check(ctx, {
+                    elements     = { title },
+                    pages        = pages,
+                    page_by_name = byName,
+                    claims       = oracle.Claims.new{
+                        screens      = screens,
+                        expectations = expectations,
+                    },
+                })
+            end
+
+            -- A page whose whole signature is the shared title box reading one
+            -- name: the shape the real project has, and the one a template per
+            -- page would have to be cut and thresholded for.
+            local function titledPage(name, reads)
+                return model.Page.new{
+                    name = name,
+                    references = {
+                        {
+                            element = title,
+                            holding = "referenced",
+                            exercised = { "identify" },
+                            identify = "required",
+                            expected_text = reads,
+                        },
+                    },
+                }
+            end
+
+            local function screenOf(name, hash, page)
+                return oracle.Screen.new{
+                    name = name,
+                    hash = hash,
+                    page = page,
+                }
+            end
+
+            local function claimsText(screen, text)
+                return oracle.Expectation.new{
+                    screen = screen,
+                    element = title,
+                    text = text,
+                    state = "match",
+                }
+            end
+        )lua";
+
+        [[nodiscard]]
+        auto matrixScript(
+            std::vector<std::string> const& hashes,
+            std::string_view body
+        ) -> std::string
+        {
+            REQUIRE(hashes.size() == 2U);
+            auto source = std::string{k_matrixPreludeHead};
+            source += hashes[0];
+            source += k_matrixPreludeMiddle;
+            source += hashes[1];
+            source += k_matrixPreludeTail;
+            source += body;
+            return source;
+        }
+
+        // One matrix case: the readings the engine answers with, in screen
+        // order, and the script that claims something about them.
+        [[nodiscard]]
+        auto runMatrix(
+            std::filesystem::path const& root,
+            std::vector<std::string> const& hashes,
+            std::vector<ocr::Readout> readouts,
+            std::string_view body
+        ) -> Result<double>
+        {
+            auto built = buildHarness(
+                HarnessSpec{
+                    .framePixels = {pixels(2, 5, 0), pixels(2, 5, 0)},
+                    .ocrEngine   = std::make_unique<FakeOcrEngine>(
+                        std::move(readouts)
+                    ),
+                    .projectRoot = root,
+                }
+            );
+            REQUIRE(built.session.has_value());
+            TaskContext context{
+                *std::move(built.session),
+                *built.recorder,
+                TaskContextConfig{.projectRoot = root},
+            };
+            return runModel(context, built, matrixScript(hashes, body));
+        }
+
+        TEST_CASE("The matrix judges a cell by what its region reads")
+        {
+            // THE HALF OF THE MODEL THE MATRIX USED TO BE SILENT ABOUT. An
+            // element with no templates identifies by the text its rectangle
+            // reads, and until this existed `Expectation.new` refused to claim
+            // one at all -- so every page identified that way was outside the one
+            // guard in this repository that has ever caught anything real.
+            //
+            // Confidence is what makes it measurable: a reading is a match when
+            // it says the claimed text AND clears the element's read floor, which
+            // is exactly a score against a threshold.
+            auto const directory = TemporaryDirectory{"uf-model-matrix-text"};
+            seedTemplates(directory.path());
+            auto const hashes = seedScreens(directory.path());
+
+            SUBCASE("a region reading its claimed text is a match and the row shows it")
+            {
+                auto const result = runMatrix(
+                    directory.path(),
+                    hashes,
+                    {
+                        oneLineReadout("  battle  ", 9'000),
+                        oneLineReadout("battle log", 9'000),
+                    },
+                    R"lua(
+                    local verdict = matrix({
+                        oracle.Expectation.new{
+                            screen = first,
+                            element = title,
+                            text = "battle",
+                            state = "match",
+                        },
+                        oracle.Expectation.new{
+                            screen = second,
+                            element = title,
+                            text = "battle",
+                            state = "absent",
+                        },
+                    })
+                    if not verdict.accepted then return 0 end
+                    if #verdict.findings ~= 0 then return 0 end
+                    if #verdict.cells ~= 2 then return 0 end
+
+                    -- The reading arrives padded, because a single-line read of a
+                    -- drawn rectangle does. The trim lives in observe.exact_text,
+                    -- which this reaches rather than reimplements.
+                    local hit = verdict.cells[1]
+                    if hit.screen ~= "battle" then return 0 end
+                    if hit.subject ~= "element" then return 0 end
+                    if hit.outcome ~= "hit" then return 0 end
+                    if hit.verdict ~= "expected" then return 0 end
+                    if hit.expected_text ~= "battle" then return 0 end
+                    if hit.text ~= "  battle  " then return 0 end
+                    if hit.confidence ~= 9000 then return 0 end
+                    -- A text row carries no score and no rectangle: there was no
+                    -- template and nothing landed anywhere.
+                    if hit.score ~= nil then return 0 end
+                    if hit.appearance ~= nil then return 0 end
+                    if hit.x ~= nil then return 0 end
+
+                    -- "battle" is a prefix of "battle log", and the screen that
+                    -- reads the longer name is the screen the file says this text
+                    -- is absent from. Make the comparison a `find` and this cell
+                    -- becomes a misfire.
+                    local elsewhere = verdict.cells[2]
+                    if elsewhere.screen ~= "battle_log" then return 0 end
+                    if elsewhere.outcome ~= "miss" then return 0 end
+                    if elsewhere.verdict ~= "expected" then return 0 end
+                    if elsewhere.text ~= "battle log" then return 0 end
+                    if elsewhere.confidence ~= 9000 then return 0 end
+
+                    -- EVERY TEXT CELL REPORTS ITS MARGIN, the way a template cell
+                    -- reports its score, so a reader sees how close it was rather
+                    -- than only which way it went.
+                    local rendered = regress.render(verdict)
+                    if string.find(rendered, '"confidence":9000', 1, true) == nil then
+                        return 0
+                    end
+                    if string.find(rendered, '"expected_text":"battle"', 1, true) == nil then
+                        return 0
+                    end
+                    if string.find(rendered, '"text":"battle log"', 1, true) == nil then
+                        return 0
+                    end
+                    return 1
+                )lua"
+                );
+                REQUIRE(result.has_value());
+                CHECK(*result == doctest::Approx(1.0));
+            }
+
+            SUBCASE("a region reading something else where the file says match is a hole")
+            {
+                auto const result = runMatrix(
+                    directory.path(),
+                    hashes,
+                    {
+                        oneLineReadout("battle log", 9'000),
+                        oneLineReadout("menu", 9'000),
+                    },
+                    R"lua(
+                    local verdict = matrix({
+                        oracle.Expectation.new{
+                            screen = first,
+                            element = title,
+                            text = "battle",
+                            state = "match",
+                        },
+                    })
+                    if verdict.accepted then return 0 end
+                    if #verdict.findings ~= 1 then return 0 end
+
+                    local finding = verdict.findings[1]
+                    if finding.kind ~= "hole" then return 0 end
+                    if finding.screen ~= "battle" then return 0 end
+                    if finding.element ~= "title" then return 0 end
+                    if string.find(finding.detail, [[reads "battle"]], 1, true) == nil then
+                        return 0
+                    end
+                    if string.find(finding.detail, [[it read "battle log"]], 1, true) == nil then
+                        return 0
+                    end
+
+                    -- The unclaimed screen is measured by nothing at all, so its
+                    -- reading never happened and its row says as much.
+                    if verdict.cells[2].outcome ~= "no_pixels" then return 0 end
+                    if verdict.cells[2].text ~= nil then return 0 end
+                    return 1
+                )lua"
+                );
+                REQUIRE(result.has_value());
+                CHECK(*result == doctest::Approx(1.0));
+            }
+
+            SUBCASE("a reading under the floor is an absence and never a match")
+            {
+                // THE RULE THAT MAKES CONFIDENCE A SCORE AND NOT DECORATION, and
+                // both halves of it on ONE reading. The engine spells the claimed
+                // word and is not sure enough to be believed, so the screen that
+                // claims a match has a hole and the screen that claims an absence
+                // is satisfied -- a reading nobody is sure of is not evidence of
+                // presence and it is not evidence of absence either.
+                //
+                // Drop observe.confident from reading.measure and the first
+                // becomes a match and the second a misfire; both assertions
+                // below go red, in opposite directions.
+                auto const result = runMatrix(
+                    directory.path(),
+                    hashes,
+                    {
+                        oneLineReadout("battle", 7'000),
+                        oneLineReadout("battle", 7'000),
+                    },
+                    R"lua(
+                    local verdict = matrix({
+                        oracle.Expectation.new{
+                            screen = first,
+                            element = title,
+                            text = "battle",
+                            state = "match",
+                        },
+                        oracle.Expectation.new{
+                            screen = second,
+                            element = title,
+                            text = "battle",
+                            state = "absent",
+                        },
+                    })
+                    if verdict.accepted then return 0 end
+                    if #verdict.findings ~= 1 then return 0 end
+                    if verdict.findings[1].kind ~= "hole" then return 0 end
+                    if verdict.findings[1].screen ~= "battle" then return 0 end
+
+                    -- The margin is in the sentence, because a cell that read the
+                    -- right words and still missed looks like a defect in the
+                    -- matrix until the number is in front of the reader.
+                    local why = verdict.findings[1].detail
+                    if string.find(why, "at 7000 basis points", 1, true) == nil then
+                        return 0
+                    end
+
+                    local guess = verdict.cells[1]
+                    if guess.outcome ~= "miss" then return 0 end
+                    if guess.text ~= "battle" then return 0 end
+                    if guess.confidence ~= 7000 then return 0 end
+
+                    -- The same guess, on the screen that claims the absence.
+                    if verdict.cells[2].verdict ~= "expected" then return 0 end
+                    if verdict.cells[2].outcome ~= "miss" then return 0 end
+                    return 1
+                )lua"
+                );
+                REQUIRE(result.has_value());
+                CHECK(*result == doctest::Approx(1.0));
+            }
+
+            SUBCASE("two screens claiming one region reads one text cannot be told apart")
+            {
+                // THE RULE THIS WHOLE HALF IS WORTH BUILDING FOR, and the text
+                // analogue of "no two appearances of one element may hit one
+                // screen". EVERY recorded expectation below holds: the region
+                // reads "battle" on both screens and the file says match on both.
+                // Only a rule that looks at the claims themselves can see that
+                // this element separates nothing, and that a page signature
+                // resting on it resolves on whichever screen is in front.
+                auto const result = runMatrix(
+                    directory.path(),
+                    hashes,
+                    {
+                        oneLineReadout("battle", 9'000),
+                        oneLineReadout("battle", 9'000),
+                    },
+                    R"lua(
+                    local verdict = matrix({
+                        oracle.Expectation.new{
+                            screen = first,
+                            element = title,
+                            text = "battle",
+                            state = "match",
+                        },
+                        oracle.Expectation.new{
+                            screen = second,
+                            element = title,
+                            text = "battle",
+                            state = "match",
+                        },
+                    })
+                    -- Both cells are satisfied, which is exactly what makes the
+                    -- rule the only thing that can reject this model.
+                    if verdict.cells[1].verdict ~= "expected" then return 0 end
+                    if verdict.cells[2].verdict ~= "expected" then return 0 end
+
+                    if verdict.accepted then return 0 end
+                    if #verdict.findings ~= 1 then return 0 end
+                    local finding = verdict.findings[1]
+                    if finding.kind ~= "ambiguous_text" then return 0 end
+                    if finding.element ~= "title" then return 0 end
+                    if finding.screen ~= "battle" then return 0 end
+                    if finding.rival ~= "battle_log" then return 0 end
+                    if finding.appearance ~= nil then return 0 end
+                    local phrase = "cannot tell those two apart"
+                    if string.find(finding.detail, phrase, 1, true) == nil then
+                        return 0
+                    end
+                    return 1
+                )lua"
+                );
+                REQUIRE(result.has_value());
+                CHECK(*result == doctest::Approx(1.0));
+            }
+
+            SUBCASE("one region reading two different names on two screens is accepted")
+            {
+                // The control for the rule above. Same element, same two screens,
+                // same two matches -- and the texts differ, which is the whole
+                // point of one title box serving every page. Without this, the
+                // rule could be rejecting every text element in every project and
+                // the case above would still pass.
+                auto const result = runMatrix(
+                    directory.path(),
+                    hashes,
+                    {
+                        oneLineReadout("battle", 9'000),
+                        oneLineReadout("battle log", 9'000),
+                    },
+                    R"lua(
+                    local verdict = matrix({
+                        oracle.Expectation.new{
+                            screen = first,
+                            element = title,
+                            text = "battle",
+                            state = "match",
+                        },
+                        oracle.Expectation.new{
+                            screen = second,
+                            element = title,
+                            text = "battle log",
+                            state = "match",
+                        },
+                    })
+                    if not verdict.accepted then return 0 end
+                    if #verdict.findings ~= 0 then return 0 end
+                    if verdict.matches ~= 2 then return 0 end
+                    return 1
+                )lua"
+                );
+                REQUIRE(result.has_value());
+                CHECK(*result == doctest::Approx(1.0));
+            }
+        }
+
+        TEST_CASE("A screen says which page it is and both rules read the word")
+        {
+            // THE FALSE POSITIVE THIS FIELD EXISTS FOR. A real project captured
+            // ONE page at two scroll positions -- a scrolling grid, with the
+            // page's anchors deliberately outside the scrolling area -- and both
+            // captures legitimately read the same name in the same title box.
+            // `reading.confusions` reported the property being verified as two
+            // defects and the check exited 1. The rule was right and had no way
+            // to know the two screens were one page, because a screen carried a
+            // name and a hash and nothing else.
+            //
+            // THE READOUTS COME IN THE ORDER THE WALK SPENDS THEM, and the walk
+            // measures a screen's own declaration BEFORE its cells -- so a screen
+            // that declares a page and claims a text costs two readings of the
+            // same box, and a screen that declares nothing costs one.
+            auto const directory = TemporaryDirectory{"uf-model-matrix-page"};
+            seedTemplates(directory.path());
+            auto const hashes = seedScreens(directory.path());
+
+            SUBCASE("two screens of one page are not a confusion")
+            {
+                auto const result = runMatrix(
+                    directory.path(),
+                    hashes,
+                    {
+                        oneLineReadout("roster", 9'000),
+                        oneLineReadout("roster", 9'000),
+                        oneLineReadout("roster", 9'000),
+                        oneLineReadout("roster", 9'000),
+                    },
+                    R"lua(
+                    local roster = titledPage("roster", "roster")
+                    local top    = screenOf("battle", hashOne, "roster")
+                    local down   = screenOf("battle_log", hashTwo, "roster")
+                    local verdict = pageMatrix(
+                        { claimsText(top, "roster"), claimsText(down, "roster") },
+                        { top, down },
+                        { roster }
+                    )
+
+                    -- Every cell holds, exactly as it did when this was reported
+                    -- as two defects.
+                    if verdict.cells[1].verdict ~= "expected" then return 0 end
+                    if verdict.cells[2].verdict ~= "expected" then return 0 end
+                    if verdict.matches ~= 2 then return 0 end
+
+                    -- And the model is accepted: the repeated text is one page
+                    -- read twice, and the declaration that says so is itself
+                    -- paid for -- the page resolved on both screens.
+                    if not verdict.accepted then return 0 end
+                    if #verdict.findings ~= 0 then return 0 end
+                    return 1
+                )lua"
+                );
+                REQUIRE(result.has_value());
+                CHECK(*result == doctest::Approx(1.0));
+            }
+
+            SUBCASE("two screens of two pages still are")
+            {
+                // The control, and the model that really is broken: two pages
+                // resting on one word. Both resolve, both cells hold, and the
+                // only thing that can reject it is the rule that reads the
+                // claims -- unchanged, because these two screens are two pages.
+                auto const result = runMatrix(
+                    directory.path(),
+                    hashes,
+                    {
+                        oneLineReadout("roster", 9'000),
+                        oneLineReadout("roster", 9'000),
+                        oneLineReadout("roster", 9'000),
+                        oneLineReadout("roster", 9'000),
+                    },
+                    R"lua(
+                    local roster = titledPage("roster", "roster")
+                    local squad  = titledPage("squad", "roster")
+                    local top    = screenOf("battle", hashOne, "roster")
+                    local down   = screenOf("battle_log", hashTwo, "squad")
+                    local verdict = pageMatrix(
+                        { claimsText(top, "roster"), claimsText(down, "roster") },
+                        { top, down },
+                        { roster, squad }
+                    )
+                    if verdict.accepted then return 0 end
+                    if #verdict.findings ~= 1 then return 0 end
+
+                    local finding = verdict.findings[1]
+                    if finding.kind ~= "ambiguous_text" then return 0 end
+                    if finding.screen ~= "battle" then return 0 end
+                    if finding.rival ~= "battle_log" then return 0 end
+                    local phrase = "does not declare those two to be one page"
+                    if string.find(finding.detail, phrase, 1, true) == nil then
+                        return 0
+                    end
+                    return 1
+                )lua"
+                );
+                REQUIRE(result.has_value());
+                CHECK(*result == doctest::Approx(1.0));
+            }
+
+            SUBCASE("a screen that declares nothing is never assumed to be another")
+            {
+                // THE THIRD CASE AND THE RULING ON IT. One screen says which page
+                // it is and the other says nothing, so nothing in the file says
+                // they are one page -- and silence is not a fact. The rule fires,
+                // and the way to clear it is to write down something true, which
+                // the matrix then measures.
+                //
+                // Three readouts and not four: the undeclared screen has no page
+                // to resolve, so it spends only its cell's read.
+                auto const result = runMatrix(
+                    directory.path(),
+                    hashes,
+                    {
+                        oneLineReadout("roster", 9'000),
+                        oneLineReadout("roster", 9'000),
+                        oneLineReadout("roster", 9'000),
+                    },
+                    R"lua(
+                    local roster  = titledPage("roster", "roster")
+                    local top     = screenOf("battle", hashOne, "roster")
+                    local unknown = screenOf("battle_log", hashTwo)
+                    local verdict = pageMatrix(
+                        {
+                            claimsText(top, "roster"),
+                            claimsText(unknown, "roster"),
+                        },
+                        { top, unknown },
+                        { roster }
+                    )
+                    if unknown.page ~= nil then return 0 end
+                    if verdict.accepted then return 0 end
+                    if #verdict.findings ~= 1 then return 0 end
+                    if verdict.findings[1].kind ~= "ambiguous_text" then
+                        return 0
+                    end
+                    return 1
+                )lua"
+                );
+                REQUIRE(result.has_value());
+                CHECK(*result == doctest::Approx(1.0));
+            }
+
+            SUBCASE("a declared page that does not resolve is its own finding")
+            {
+                // THE FREE STRENGTHENING. A declaration is a claim, and this is
+                // the only cell of the matrix that measures a whole page
+                // signature rather than one element: the page says its title box
+                // reads "roster" and the box reads something else, so the model
+                // holds a page that resolves on nothing.
+                //
+                // Nothing is CLAIMED here, so the one reading spent on the first
+                // screen is the resolution's own -- which is what makes the
+                // finding below attributable to the declaration alone.
+                auto const result = runMatrix(
+                    directory.path(),
+                    hashes,
+                    {
+                        oneLineReadout("battle log", 9'000),
+                    },
+                    R"lua(
+                    local roster = titledPage("roster", "roster")
+                    local top    = screenOf("battle", hashOne, "roster")
+                    local down   = screenOf("battle_log", hashTwo)
+                    local verdict = pageMatrix({}, { top, down }, { roster })
+                    if verdict.accepted then return 0 end
+                    if #verdict.findings ~= 1 then return 0 end
+
+                    local finding = verdict.findings[1]
+                    if finding.kind ~= "unresolved_page" then return 0 end
+                    if finding.screen ~= "battle" then return 0 end
+                    if finding.page ~= "roster" then return 0 end
+                    -- Not a cell: this one is about a signature, so it names no
+                    -- element and no appearance.
+                    if finding.element ~= nil then return 0 end
+                    if finding.appearance ~= nil then return 0 end
+
+                    -- The sentence names the screen, the page, and the reason
+                    -- observe.resolve_page gave -- which is the clause a run
+                    -- would have failed on, not a second sentence about it.
+                    local detail = finding.detail
+                    if string.find(detail, "screen 'battle'", 1, true) == nil then
+                        return 0
+                    end
+                    if string.find(detail, "is page 'roster'", 1, true) == nil then
+                        return 0
+                    end
+                    local why = [[requires element 'title' to read "roster"]]
+                    if string.find(detail, why, 1, true) == nil then return 0 end
+                    if string.find(detail, "battle log", 1, true) == nil then
+                        return 0
+                    end
+
+                    -- The page a finding is about is a field of its own, so a
+                    -- reader filtering the report by element never picks it up.
+                    local rendered = regress.render(verdict)
+                    if string.find(rendered, '"page":"roster"', 1, true) == nil then
+                        return 0
+                    end
+                    return 1
+                )lua"
+                );
+                REQUIRE(result.has_value());
+                CHECK(*result == doctest::Approx(1.0));
+            }
+
+            SUBCASE("a page that is not a name is refused where it was written")
+            {
+                // The shape check `Screen.new` CAN make, beside the one it
+                // cannot: an empty string is not a page name any project
+                // declares, and it would otherwise sit in the file as a
+                // declaration nothing can resolve.
+                auto const result = runMatrix(
+                    directory.path(),
+                    hashes,
+                    {
+                        oneLineReadout("roster", 9'000),
+                    },
+                    R"lua(
+                    local ok, err = pcall(function()
+                        return screenOf("battle", hashOne, "")
+                    end)
+                    if ok then return 0 end
+                    local phrase = "page must be the NAME of a page"
+                    if string.find(tostring(err), phrase, 1, true) == nil then
+                        return 0
+                    end
+
+                    -- A screen that says nothing is not malformed: it is a
+                    -- picture nobody has annotated yet, which is what an agent
+                    -- captures first.
+                    if screenOf("battle", hashOne).page ~= nil then return 0 end
+                    return 1
+                )lua"
+                );
+                REQUIRE(result.has_value());
+                CHECK(*result == doctest::Approx(1.0));
+            }
+
+            SUBCASE("a page the model does not hold is a raise and not a finding")
+            {
+                // A construction error filed under evidence about the target
+                // would be a finding that no measurement produced. Both doors
+                // into a model refuse this already, so reaching the walk with one
+                // means the model was assembled past them.
+                auto const result = runMatrix(
+                    directory.path(),
+                    hashes,
+                    {
+                        oneLineReadout("roster", 9'000),
+                    },
+                    R"lua(
+                    local roster = titledPage("roster", "roster")
+                    local top    = screenOf("battle", hashOne, "ghost")
+                    local down   = screenOf("battle_log", hashTwo)
+                    local ok, err = pcall(function()
+                        return pageMatrix({}, { top, down }, { roster })
+                    end)
+                    if ok then return 0 end
+                    local phrase = "which this model does not declare"
+                    if string.find(tostring(err), phrase, 1, true) == nil then
+                        return 0
+                    end
+                    return 1
+                )lua"
+                );
+                REQUIRE(result.has_value());
+                CHECK(*result == doctest::Approx(1.0));
+            }
+        }
+
+        TEST_CASE("A declared page spends the same observation's read budget")
+        {
+            // THE ARITHMETIC entry/cli/check.cpp SIZES A RUN FROM. One screen
+            // costs at most two reads per element the project declares: once for
+            // the element's own cell, and once more for the page the screen says
+            // it is, whose identify rows are elements of the same file. Both
+            // halves are spent on ONE observation, because the frames come from a
+            // directory served one file per capture and a re-opened cycle would
+            // be the next screen's pixels.
+            //
+            // A budget that covered only the cells would not report a smaller
+            // matrix -- it would end the run part-way through with a
+            // RecognitionIncomplete, which says truly what stopped and nothing
+            // about why.
+            auto const directory = TemporaryDirectory{"uf-model-page-budget"};
+            seedTemplates(directory.path());
+            auto const hashes = seedScreens(directory.path());
+
+            // One screen that both declares a page and claims a text about the
+            // element that page identifies by, so the two reads are of one region
+            // on one observation.
+            constexpr std::string_view walk = R"lua(
+                local function walk()
+                    local roster = titledPage("roster", "roster")
+                    local top    = screenOf("battle", hashOne, "roster")
+                    local down   = screenOf("battle_log", hashTwo)
+                    return pageMatrix(
+                        { claimsText(top, "roster") },
+                        { top, down },
+                        { roster }
+                    )
+                end
+            )lua";
+
+            SUBCASE("one read per element is one read short")
+            {
+                auto built = buildHarness(
+                    HarnessSpec{
+                        .framePixels = {pixels(2, 5, 0), pixels(2, 5, 0)},
+                        .ocrEngine   = std::make_unique<FakeOcrEngine>(
+                            oneLineReadout("roster", 9'000)
+                        ),
+                        .projectRoot = directory.path(),
+                    }
+                );
+                REQUIRE(built.session.has_value());
+                TaskContext context{
+                    *std::move(built.session),
+                    *built.recorder,
+                    TaskContextConfig{
+                        .projectRoot          = directory.path(),
+                        .maximumReadsPerCycle = 1,
+                    },
+                };
+
+                auto const result = runModel(
+                    context,
+                    built,
+                    matrixScript(
+                        hashes,
+                        std::string{walk} + R"lua(
+                        local ok, err = pcall(walk)
+                        if ok then return 0 end
+                        local spent = "spent its budget of"
+                        if string.find(tostring(err), spent, 1, true) == nil then
+                            return 0
+                        end
+                        return 1
+                    )lua"
+                    )
+                );
+                REQUIRE(result.has_value());
+                CHECK(*result == doctest::Approx(1.0));
+            }
+
+            SUBCASE("two reads per element is exactly enough")
+            {
+                auto built = buildHarness(
+                    HarnessSpec{
+                        .framePixels = {pixels(2, 5, 0), pixels(2, 5, 0)},
+                        .ocrEngine   = std::make_unique<FakeOcrEngine>(
+                            oneLineReadout("roster", 9'000)
+                        ),
+                        .projectRoot = directory.path(),
+                    }
+                );
+                REQUIRE(built.session.has_value());
+                TaskContext context{
+                    *std::move(built.session),
+                    *built.recorder,
+                    TaskContextConfig{
+                        .projectRoot          = directory.path(),
+                        .maximumReadsPerCycle = 2,
+                    },
+                };
+
+                auto const result = runModel(
+                    context,
+                    built,
+                    matrixScript(
+                        hashes,
+                        std::string{walk} + R"lua(
+                        local verdict = walk()
+                        if not verdict.accepted then return 0 end
+                        if #verdict.findings ~= 0 then return 0 end
+                        return 1
+                    )lua"
+                    )
+                );
+                REQUIRE(result.has_value());
+                CHECK(*result == doctest::Approx(1.0));
+            }
+        }
+
+        TEST_CASE("A text cell nobody claimed is measured by nothing at all")
+        {
+            // A reading needs something to be read AGAINST, and only a claim says
+            // what that is on THIS screen -- so an unclaimed text cell is not a
+            // cell the matrix declined to measure, it is a cell with no question
+            // in it. The falsification pressure the template half gets from
+            // unclaimed cells, this half gets from the two-screens rule instead.
+            //
+            // THE SESSION HAS NO OCR ENGINE, which is what turns "it read anyway"
+            // from an invisible cost into a red case: cycle_read raises on a host
+            // with nothing to read through, so a walk that read an unclaimed cell
+            // could not finish.
+            auto const directory = TemporaryDirectory{"uf-model-matrix-unclaimed"};
+            seedTemplates(directory.path());
+            auto const hashes = seedScreens(directory.path());
+
+            auto built = buildHarness(
+                HarnessSpec{
+                    .framePixels = {pixels(2, 5, 0), pixels(2, 5, 0)},
+                    .projectRoot = directory.path(),
+                }
+            );
+            REQUIRE(built.session.has_value());
+            TaskContext context{
+                *std::move(built.session),
+                *built.recorder,
+                TaskContextConfig{.projectRoot = directory.path()},
+            };
+
+            auto const result = runModel(context, built, matrixScript(hashes, R"lua(
+                local verdict = matrix({})
+                if not verdict.accepted then return 0 end
+                if #verdict.cells ~= 2 then return 0 end
+                if verdict.unclaimed ~= 2 then return 0 end
+                for _, cell in verdict.cells do
+                    if cell.outcome ~= "no_pixels" then return 0 end
+                    if cell.expected ~= "unclaimed" then return 0 end
+                    if cell.verdict ~= "unclaimed" then return 0 end
+                    if cell.expected_text ~= nil then return 0 end
+                    if cell.text ~= nil then return 0 end
+                    if cell.confidence ~= nil then return 0 end
+                end
+                return 1
+            )lua"));
+            REQUIRE(result.has_value());
+            CHECK(*result == doctest::Approx(1.0));
+        }
+
+        // A screen and three elements that differ in exactly one thing each --
+        // one verified by pixels, one by what it reads, one that may not be read
+        // at all -- so every refusal row below differs from a legal claim in a
+        // single field.
+        constexpr std::string_view k_claimPrelude = R"lua(
+            local screen = oracle.Screen.new{
+                name = "battle",
+                hash = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                    .. "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            }
+            local marked = model.Element.new{
+                name = "marked",
+                capabilities = { "identify" },
+                rect = { x = 0, y = 0, width = 3, height = 1 },
+                appearances = {
+                    {
+                        name = "lit",
+                        source = "gray2.png",
+                        template = template("gray2.png"),
+                        threshold = 10000,
+                    },
+                },
+            }
+            local title = model.Element.new{
+                name = "title",
+                capabilities = { "identify", "read" },
+                rect = { x = 0, y = 0, width = 3, height = 1 },
+            }
+            local mute = model.Element.new{
+                name = "mute",
+                capabilities = { "interact" },
+                rect = { x = 0, y = 0, width = 3, height = 1 },
+            }
+        )lua";
+
+        [[nodiscard]]
+        auto claimRefusals() -> std::vector<Refusal>
+        {
+            return {
+                Refusal{
+                    .label = "a cell claiming both a template and a text",
+                    .body  = R"lua(
+                        return oracle.Expectation.new{
+                            screen = screen,
+                            element = marked,
+                            appearance = "lit",
+                            text = "battle",
+                            state = "match",
+                        }
+                    )lua",
+                    .fragment = "names both an appearance and a text",
+                },
+                Refusal{
+                    .label = "a text claimed of an element that has pixels",
+                    .body  = R"lua(
+                        return oracle.Expectation.new{
+                            screen = screen,
+                            element = marked,
+                            text = "battle",
+                            state = "match",
+                        }
+                    )lua",
+                    .fragment = "verifies itself by its template pixels",
+                },
+                Refusal{
+                    .label = "an element with no pixels and no text claimed",
+                    .body  = R"lua(
+                        return oracle.Expectation.new{
+                            screen = screen,
+                            element = title,
+                            state = "match",
+                        }
+                    )lua",
+                    .fragment = "no measurement this claim could ever be read against",
+                },
+                Refusal{
+                    .label = "an appearance named on an element that declares none",
+                    .body  = R"lua(
+                        return oracle.Expectation.new{
+                            screen = screen,
+                            element = title,
+                            appearance = "lit",
+                            state = "match",
+                        }
+                    )lua",
+                    .fragment = "no measurement this claim could ever be read against",
+                },
+                Refusal{
+                    .label = "a text claimed of an element nothing may read",
+                    .body  = R"lua(
+                        return oracle.Expectation.new{
+                            screen = screen,
+                            element = mute,
+                            text = "battle",
+                            state = "match",
+                        }
+                    )lua",
+                    .fragment = "does not declare the read capability",
+                },
+                Refusal{
+                    .label = "an empty text",
+                    .body  = R"lua(
+                        return oracle.Expectation.new{
+                            screen = screen,
+                            element = title,
+                            text = "",
+                            state = "match",
+                        }
+                    )lua",
+                    .fragment = "text must be the text this element's region reads",
+                },
+            };
+        }
+
+        TEST_CASE("Expectation.new refuses every malformed claim by name")
+        {
+            auto const directory = TemporaryDirectory{"uf-model-claim-refusals"};
+            seedTemplates(directory.path());
+            auto built = buildHarness(
+                HarnessSpec{
+                    .framePixels = {pixels(2, 5, 0)},
+                    .projectRoot = directory.path(),
+                }
+            );
+            REQUIRE(built.session.has_value());
+            TaskContext context{
+                *std::move(built.session),
+                *built.recorder,
+                TaskContextConfig{.projectRoot = directory.path()},
+            };
+
+            for (auto const& refusal : claimRefusals())
+            {
+                CAPTURE(refusal.label);
+                auto const result = runModel(
+                    context,
+                    built,
+                    script(
+                        std::string{k_claimPrelude}
+                        + refusalBody(refusal.body, refusal.fragment)
+                    )
+                );
+                REQUIRE(result.has_value());
+                CHECK(*result == doctest::Approx(1.0));
+            }
+
+            // The control every refusal list needs: the shape they each differ
+            // from in one field is itself legal, so the rows above are failing on
+            // the field they name rather than on the shape.
+            auto const legal = runModel(
+                context,
+                built,
+                script(std::string{k_claimPrelude} + R"lua(
+                local claim = oracle.Expectation.new{
+                    screen = screen,
+                    element = title,
+                    text = "battle",
+                    state = "match",
+                }
+                if claim.text ~= "battle" then return 0 end
+                if claim.appearance ~= nil then return 0 end
+
+                local claims = oracle.Claims.new{
+                    screens = { screen },
+                    expectations = { claim },
+                }
+                if oracle.Claims.text_for(claims, "battle", "title") ~= "battle" then
+                    return 0
+                end
+                if oracle.Claims.text_for(claims, "battle", "marked") ~= nil then
+                    return 0
+                end
+                if not oracle.Claims.reads_text(claims) then return 0 end
+
+                -- A project claiming nothing about any reading needs no engine,
+                -- and says so, which is what the composition root asks before it
+                -- refuses a check for a missing flag.
+                local pixelsOnly = oracle.Claims.new{
+                    screens = { screen },
+                    expectations = {
+                        oracle.Expectation.new{
+                            screen = screen,
+                            element = marked,
+                            state = "match",
+                        },
+                    },
+                }
+                if oracle.Claims.reads_text(pixelsOnly) then return 0 end
+                return 1
+            )lua")
+            );
+            REQUIRE(legal.has_value());
+            CHECK(*legal == doctest::Approx(1.0));
+        }
+
+        // The claims half of the file format, canonical: two screens, a cell
+        // measured by a template, and two cells measured by what one shared
+        // region reads.
+        constexpr std::string_view k_canonicalClaimsProject =
+            "schema = \"umbraflow-project/l2-v1\"\n"
+            "\n"
+            "[[element]]\n"
+            "name = \"mark\"\n"
+            "capabilities = [\"identify\"]\n"
+            "rect = [0, 0, 3, 1]\n"
+            "\n"
+            "[[appearance]]\n"
+            "element = \"mark\"\n"
+            "name = \"lit\"\n"
+            "source = \"gray2.png\"\n"
+            "threshold = 10000\n"
+            "\n"
+            "[[element]]\n"
+            "name = \"title\"\n"
+            "capabilities = [\"identify\", \"read\"]\n"
+            "rect = [0, 0, 3, 1]\n"
+            "\n"
+            "[[page]]\n"
+            "name = \"battle\"\n"
+            "\n"
+            "[[reference]]\n"
+            "page = \"battle\"\n"
+            "element = \"mark\"\n"
+            "holding = \"owned\"\n"
+            "exercised = [\"identify\"]\n"
+            "identify = \"required\"\n"
+            "\n"
+            "[[reference]]\n"
+            "page = \"battle\"\n"
+            "element = \"title\"\n"
+            "holding = \"owned\"\n"
+            "exercised = [\"identify\"]\n"
+            "identify = \"required\"\n"
+            "expected_text = \"battle\"\n"
+            "\n"
+            "[[screen]]\n"
+            "name = \"log_screen\"\n"
+            "hash = \"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+            "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\"\n"
+            "\n"
+            "[[screen]]\n"
+            "name = \"sortie_screen\"\n"
+            "hash = \"cccccccccccccccccccccccccccccccc"
+            "cccccccccccccccccccccccccccccccc\"\n"
+            "page = \"battle\"\n"
+            "\n"
+            "[[expect]]\n"
+            "screen = \"log_screen\"\n"
+            "element = \"title\"\n"
+            "text = \"battle log\"\n"
+            "state = \"match\"\n"
+            "\n"
+            "[[expect]]\n"
+            "screen = \"sortie_screen\"\n"
+            "element = \"mark\"\n"
+            "state = \"match\"\n"
+            "\n"
+            "[[expect]]\n"
+            "screen = \"sortie_screen\"\n"
+            "element = \"title\"\n"
+            "text = \"battle\"\n"
+            "state = \"match\"\n"
+            "future_expect_field = 4\n"
+            "\n"
+            "[expect.extra]\n"
+            "my_note = \"transcribed from the v4 grid\"\n";
+
+        // The same claims as a hand edit leaves them: the screens after the
+        // expectations that name them, the expectations in the reverse of the
+        // order a save puts them in, and the text written after the state it
+        // qualifies.
+        constexpr std::string_view k_unsortedClaimsProject =
+            "schema = \"umbraflow-project/l2-v1\"\n"
+            "\n"
+            "[[element]]\n"
+            "name = \"mark\"\n"
+            "capabilities = [\"identify\"]\n"
+            "rect = [0, 0, 3, 1]\n"
+            "\n"
+            "[[appearance]]\n"
+            "element = \"mark\"\n"
+            "name = \"lit\"\n"
+            "source = \"gray2.png\"\n"
+            "threshold = 10000\n"
+            "\n"
+            "[[element]]\n"
+            "name = \"title\"\n"
+            "capabilities = [\"identify\", \"read\"]\n"
+            "rect = [0, 0, 3, 1]\n"
+            "\n"
+            "[[page]]\n"
+            "name = \"battle\"\n"
+            "\n"
+            "[[reference]]\n"
+            "page = \"battle\"\n"
+            "element = \"mark\"\n"
+            "holding = \"owned\"\n"
+            "exercised = [\"identify\"]\n"
+            "identify = \"required\"\n"
+            "\n"
+            "[[reference]]\n"
+            "page = \"battle\"\n"
+            "element = \"title\"\n"
+            "holding = \"owned\"\n"
+            "exercised = [\"identify\"]\n"
+            "expected_text = \"battle\"\n"
+            "identify = \"required\"\n"
+            "\n"
+            "[[expect]]\n"
+            "screen = \"sortie_screen\"\n"
+            "element = \"title\"\n"
+            "state = \"match\"\n"
+            "text = \"battle\"\n"
+            "future_expect_field = 4\n"
+            "\n"
+            "[expect.extra]\n"
+            "my_note = \"transcribed from the v4 grid\"\n"
+            "\n"
+            "[[expect]]\n"
+            "screen = \"sortie_screen\"\n"
+            "element = \"mark\"\n"
+            "state = \"match\"\n"
+            "\n"
+            "[[expect]]\n"
+            "screen = \"log_screen\"\n"
+            "element = \"title\"\n"
+            "text = \"battle log\"\n"
+            "state = \"match\"\n"
+            "\n"
+            "[[screen]]\n"
+            "name = \"sortie_screen\"\n"
+            "page = \"battle\"\n"
+            "hash = \"cccccccccccccccccccccccccccccccc"
+            "cccccccccccccccccccccccccccccccc\"\n"
+            "\n"
+            "[[screen]]\n"
+            "name = \"log_screen\"\n"
+            "hash = \"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+            "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\"\n";
+
+        TEST_CASE("A claim about what a region reads round trips byte for byte")
+        {
+            // The text a cell claims is DATA, and data that does not survive a
+            // save is data a second session invents again. Stop writing the
+            // `text` line and this file does not merely lose a field: it comes
+            // back as a claim about an element with no pixels and no text, which
+            // `Expectation.new` refuses -- so the reload fails outright and the
+            // byte comparison never happens.
+            auto const directory = TemporaryDirectory{"uf-model-claims-roundtrip"};
+            seedTemplates(directory.path());
+            auto const modelPath = directory.path() / "page-model.toml";
+            REQUIRE(k_unsortedClaimsProject != k_canonicalClaimsProject);
+            writeFile(modelPath, std::as_bytes(std::span{k_unsortedClaimsProject}));
+
+            auto built = buildHarness(
+                HarnessSpec{
+                    .framePixels = {pixels(2, 5, 0)},
+                    .projectRoot = directory.path(),
+                }
+            );
+            REQUIRE(built.session.has_value());
+            TaskContext context{
+                *std::move(built.session),
+                *built.recorder,
+                TaskContextConfig{.projectRoot = directory.path()},
+            };
+
+            auto const result = runModel(context, built, R"lua(
+                local built  = project.load_project(ctx)
+                local claims = built.claims
+                if #claims.screens ~= 2 then return 0 end
+                if #claims.expectations ~= 3 then return 0 end
+
+                -- The text came back on the claim, and the claim about a template
+                -- has none: one cell, one verification source.
+                if oracle.Claims.text_for(claims, "sortie_screen", "title") ~= "battle" then
+                    return 0
+                end
+                if oracle.Claims.text_for(claims, "log_screen", "title") ~= "battle log" then
+                    return 0
+                end
+                if oracle.Claims.text_for(claims, "sortie_screen", "mark") ~= nil then
+                    return 0
+                end
+                if not oracle.Claims.reads_text(claims) then return 0 end
+
+                -- The screen came back knowing which page it is, and the screen
+                -- that said nothing came back saying nothing. Stop writing the
+                -- `page` line and the rule that reads it goes quiet on the next
+                -- session over this same file -- silently, because every cell
+                -- still holds.
+                if claims.screen_by_name["sortie_screen"].page ~= "battle" then
+                    return 0
+                end
+                if claims.screen_by_name["log_screen"].page ~= nil then return 0 end
+
+                -- And the declaration is what the composition root asks about
+                -- before it refuses a check for a missing engine: page `battle`
+                -- is identified by what the title box reads.
+                if not recognition.needs_engine(built) then return 0 end
+
+                -- A project's own field lives under extra and an unknown key of
+                -- this layer's own section is carried verbatim, on a claim as on
+                -- everything else.
+                local carried = nil
+                for _, expectation in claims.expectations do
+                    if expectation.text == "battle" then carried = expectation end
+                end
+                if carried == nil then return 0 end
+                if carried.extra.my_note ~= "transcribed from the v4 grid" then
+                    return 0
+                end
+                if #carried.residual ~= 1 then return 0 end
+                if carried.residual[1] ~= "future_expect_field = 4" then return 0 end
+
+                project.save_project(ctx, built)
+
+                -- The fixpoint half: the first save normalises a hand edit, and
+                -- the second must change nothing at all.
+                project.save_project(ctx, project.load_project(ctx))
+                return 1
+            )lua");
+            REQUIRE(result.has_value());
+            CHECK(*result == doctest::Approx(1.0));
+
+            CHECK(readFileText(modelPath) == std::string{k_canonicalClaimsProject});
         }
 
         TEST_CASE("The three model modules are in the framework bundle")

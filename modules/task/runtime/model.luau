@@ -58,6 +58,25 @@ local k_polarityKnown: { [string]: boolean } = {
     forbidden = true,
 }
 
+-- How sure the engine has to be, in basis points, before a reading of a region
+-- counts as evidence about it -- for an element that does not say.
+--
+-- WHY THERE IS A FLOOR AT ALL. Reading is the one capability that fails OPEN. A
+-- template search on the wrong screen returns nothing; a text read on the wrong
+-- screen returns plausible text, because the engine is built to find letters in
+-- whatever it is given and will find some. A page identified by what a rectangle
+-- reads therefore has to ask two questions rather than one -- does it say what
+-- we expect, and was the engine reading rather than guessing -- and the second
+-- one has no answer at all without a number to compare the confidence against.
+--
+-- WHY 8000. The engine this project ships reads the target's own page titles at
+-- 9600 basis points and above, so a floor of 8000 sits well below every reading
+-- the model is built on and well above the range a guess off a title lands in.
+-- An element may raise it where the glyphs are small or lower it where the font
+-- is hostile; what no element may do is leave the question unasked, which is why
+-- an absent `read_floor` reads as this number rather than as zero.
+local k_defaultReadFloor = 8000
+
 -- The keys each constructor owns. Anything else in a spec table is refused and
 -- the author is pointed at `extra`, which is the reserved subtable a project
 -- may put its own fields under (docs/plans/2026-07-31-script-owned-page-model.md
@@ -70,6 +89,7 @@ local k_elementKeys: { [string]: boolean } = {
     rect          = true,
     appearances   = true,
     expected_text = true,
+    read_floor    = true,
     extra         = true,
     residual      = true,
 }
@@ -96,6 +116,7 @@ local k_referenceKeys: { [string]: boolean } = {
     holding           = true,
     exercised         = true,
     identify          = true,
+    expected_text     = true,
     pinned_appearance = true,
     rect_override     = true,
     extra             = true,
@@ -142,12 +163,20 @@ export type Appearance = {
     residual: { string },
 }
 
+-- `expected_text` is what this region should read wherever the element is used,
+-- and `read_floor` is how sure the engine has to be before a reading of it is
+-- worth anything. Both are absent on most elements: the first because the
+-- element verifies itself by pixels or because the text differs from page to
+-- page (see `Reference`), the second because the project's own floor is right
+-- until an element proves otherwise. `Element.read_floor` is how the second one
+-- is asked, so nothing outside has to know the default.
 export type Element = {
     name: string,
     capabilities: CapabilitySet,
     rect: Rect,
     appearances: { Appearance },
     expected_text: string?,
+    read_floor: number?,
     extra: { [string]: any },
     residual: { string },
 }
@@ -169,6 +198,16 @@ export type Element = {
 -- identify ignores it, rather than refusing, so an element that is both a page
 -- anchor and a click target can still pin the appearance its click needs.
 --
+-- `expected_text` is what THIS page's copy of the region should read, and it is
+-- the field that lets one drawn rectangle serve every page in the game. The
+-- target prints its own name in the same top-left box on every screen, so the
+-- element carries the geometry and the read capability while the fact that this
+-- box says "出擊" here and "戰鬥員配置" next door is a property of the pairing --
+-- the same reasoning that put `holding`, `exercised` and `rect_override` here
+-- (docs/plans/2026-07-31-annotation-model-capabilities.md 2.2). The row wins over
+-- the element, and `Reference.expected_text` is the one place that precedence is
+-- written down.
+--
 -- `page` is the NAME of the page that declared this row. It is not a field an
 -- author writes -- `Page.new` stamps it, and the file already spells it as the
 -- `[[reference]]` section's own `page` key -- and it exists so a row can answer
@@ -182,6 +221,7 @@ export type Reference = {
     holding: string,
     exercised: CapabilitySet,
     identify: string?,
+    expected_text: string?,
     pinned_appearance: string?,
     rect_override: Rect?,
     extra: { [string]: any },
@@ -350,10 +390,19 @@ model.Element = Element
 -- Two invariants here are not shape checks but rulings, and both fail closed:
 --
 --   * An element with no appearances is positioned BY THE PAGE, not by its own
---     pixels, so it cannot be identity evidence and identify is refused
---     (docs/plans/2026-07-31-annotation-model-capabilities.md 4-2.2). This is
---     the one rule that covers both a read-only region and a click target whose
---     content is decided at runtime.
+--     pixels, so before it may identify it has to offer some OTHER evidence.
+--     Until 2026-08-01 there was none and identify was refused outright
+--     (docs/plans/2026-07-31-annotation-model-capabilities.md 4-2.2); the text a
+--     region reads is now the second kind, so what is refused here is an element
+--     with neither -- no appearances and no `read` capability, which cannot
+--     produce pixels or a reading and therefore cannot produce evidence at all.
+--
+--     WHAT the region should read is NOT asked here, and that split is the whole
+--     design. The case this exists for is one title rectangle shared by every
+--     page in the game, reading a different name on each: only the page knows
+--     which name, so `Page.new` is where an identify row is made to say it. An
+--     element that reads the same text everywhere may still state it here, and
+--     every row inherits it.
 --   * An element declares ONE verification source: template appearances, or
 --     expected text (docs/plans/2026-08-01-three-layers-and-agent-operator.md
 --     5-4). Both at once is not a stronger element, it is two answers to "did I
@@ -502,14 +551,48 @@ function Element.new(spec: { [string]: any }): Element
         end
     end
 
-    if #appearances == 0 and (capabilities :: CapabilitySet).identify then
+    if spec.read_floor ~= nil then
+        if
+            not wholeNumber(spec.read_floor)
+            or spec.read_floor < 0
+            or spec.read_floor > 10000
+        then
+            error(
+                "element '"
+                    .. name
+                    .. "' read_floor must be a whole number of basis points "
+                    .. "between 0 and 10000; it is how sure the engine has to be "
+                    .. "before a reading of this region counts as evidence about "
+                    .. "it",
+                2
+            )
+        end
+        if not (capabilities :: CapabilitySet).read then
+            error(
+                "element '"
+                    .. name
+                    .. "' has a read_floor but does not declare the read "
+                    .. "capability; the floor judges a reading, and nothing may "
+                    .. "ask this element for one",
+                2
+            )
+        end
+    end
+
+    if
+        #appearances == 0
+        and (capabilities :: CapabilitySet).identify
+        and not (capabilities :: CapabilitySet).read
+    then
         error(
             "element '"
                 .. name
-                .. "' declares identify with no appearances; an element with no "
-                .. "template of its own is positioned BY the page that was "
-                .. "recognised, so it has no pixels to offer as evidence that "
-                .. "the page IS that page",
+                .. "' declares identify with no appearances and no read "
+                .. "capability; an element with no template of its own is "
+                .. "positioned BY the page that was recognised, so it has no "
+                .. 'pixels to offer as evidence that the page IS that page -- add '
+                .. '"read" and the text this region should show, and the reading '
+                .. "becomes the evidence instead",
             2
         )
     end
@@ -530,11 +613,27 @@ function Element.new(spec: { [string]: any }): Element
         rect          = frozenRect(spec.rect :: Rect),
         appearances   = table.freeze(appearances),
         expected_text = spec.expected_text,
+        read_floor    = spec.read_floor,
         extra         = frozenExtra(spec.extra),
         residual      = frozenResidual(spec.residual),
     })
     mintedElements[element] = true
     return element
+end
+
+-- How sure a reading of this element has to be before it counts as evidence, in
+-- basis points.
+--
+-- It is a question asked OF an element rather than a field read off one, because
+-- the field is absent on almost every element and the answer never is: an
+-- element that states no floor is judged at `k_defaultReadFloor`, whose reasons
+-- are written where the constant is. Reading `element.read_floor` directly is
+-- how a caller ends up comparing a confidence against nil.
+function Element.read_floor(element: Element): number
+    if element.read_floor ~= nil then
+        return element.read_floor :: number
+    end
+    return k_defaultReadFloor
 end
 
 -- The appearance on `element` carrying `name`, or nil. Declaration order is
@@ -693,6 +792,42 @@ function Page.new(spec: { [string]: any }): Page
             end
         end
 
+        -- The per-page refinement of what a shared region says. It is checked
+        -- before the identify clause below because that clause consults it.
+        --
+        -- IT IS ALLOWED BESIDE APPEARANCES, WHICH THE ELEMENT-LEVEL FIELD IS
+        -- NOT, and the two rules do not contradict each other. The element-level
+        -- ban exists because an element declares ONE verification source
+        -- (docs/plans/2026-08-01-three-layers-and-agent-operator.md 5-4), and
+        -- identify never consults this field on an element that HAS pixels --
+        -- the template fold runs then, unchanged. Here the text says what the
+        -- region should READ on this page, which is a fact worth writing down
+        -- for a click that picks between authorised targets; it becomes identity
+        -- evidence only for the element that has nothing else to offer.
+        if entry.expected_text ~= nil then
+            if
+                type(entry.expected_text) ~= "string"
+                or entry.expected_text == ""
+            then
+                error(
+                    what
+                        .. " expected_text must be the text this page's copy of "
+                        .. "the region should read",
+                    2
+                )
+            end
+            if not (element.capabilities :: any).read then
+                error(
+                    what
+                        .. " carries expected_text but element '"
+                        .. element.name
+                        .. "' does not declare the read capability; a page cannot "
+                        .. "refine a reading of something nothing may read",
+                    2
+                )
+            end
+        end
+
         if (exercised :: CapabilitySet).identify then
             if
                 type(entry.identify) ~= "string"
@@ -708,6 +843,30 @@ function Page.new(spec: { [string]: any }): Page
             end
             if entry.identify == "required" then
                 requiredCount += 1
+            end
+            -- The half of the identify ruling `Element.new` cannot make. An
+            -- element with no template identifies by what its rectangle READS,
+            -- and on the shared title element that text is different on every
+            -- page, so the row is the only thing that can state it. Refusing
+            -- here is what keeps "identify with neither pixels nor text"
+            -- impossible while the shared element stays legal to build.
+            if
+                #element.appearances == 0
+                and entry.expected_text == nil
+                and element.expected_text == nil
+            then
+                error(
+                    what
+                        .. " identifies by element '"
+                        .. element.name
+                        .. "', which has no appearances and no expected text "
+                        .. "here; an element with no template of its own is "
+                        .. "positioned BY the page that was recognised, so it has "
+                        .. "no pixels to offer as evidence -- say what this region "
+                        .. 'should read on this page with expected_text = "...", '
+                        .. "or give the element one of its own",
+                    2
+                )
             end
             if entry.rect_override ~= nil then
                 error(
@@ -780,6 +939,7 @@ function Page.new(spec: { [string]: any }): Page
             holding           = entry.holding,
             exercised         = exercised :: CapabilitySet,
             identify          = entry.identify,
+            expected_text     = entry.expected_text,
             pinned_appearance = entry.pinned_appearance,
             rect_override     = if entry.rect_override ~= nil
                 then frozenRect(entry.rect_override :: Rect)
@@ -835,6 +995,34 @@ function Page.reference_for(page: Page, element: Element): Reference?
         end
     end
     return nil
+end
+
+local Reference = {}
+model.Reference = Reference
+
+-- What this row expects its element's region to read, or nil when neither the
+-- row nor the element says anything about it.
+--
+-- THE ROW WINS, AND THE PRECEDENCE IS WRITTEN DOWN HERE. Two callers ask it of a
+-- finished row -- the identify clause in `observe.resolve_page` and a caller's
+-- own read through `observe.read_element` -- and two copies of "the reference's,
+-- else the element's" is where they would come to disagree about a page's
+-- identity, which is a disagreement nothing downstream could notice.
+--
+-- `Page.new` asks a related question of the SPEC, where the row does not exist
+-- yet and so cannot be passed in. That one is deliberately the weaker form: it
+-- asks whether EITHER source has text at all, never which of them wins, so it
+-- has nothing to disagree with this function about.
+--
+-- It is a namespace of its own rather than a member of `Page` because it is a
+-- question about ONE row, and a row answers it without its page. There is no
+-- Reference.new for it to sit beside, for the reason stated at the type: a
+-- reference exists only as part of the page that declared it.
+function Reference.expected_text(reference: Reference): string?
+    if reference.expected_text ~= nil then
+        return reference.expected_text
+    end
+    return reference.element.expected_text
 end
 
 return model

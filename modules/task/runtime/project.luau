@@ -80,6 +80,7 @@ local k_sectionFields: { [string]: { [string]: boolean } } = {
         capabilities  = true,
         rect          = true,
         expected_text = true,
+        read_floor    = true,
     },
     appearance = {
         element   = true,
@@ -92,12 +93,18 @@ local k_sectionFields: { [string]: { [string]: boolean } } = {
         overlay   = true,
         interrupt = true,
     },
+    -- `expected_text` on a row is the per-page half of the element of the same
+    -- name: what the shared region reads on THIS page. It is written between the
+    -- identify polarity and the interact refinements below because that is what
+    -- it belongs to -- an identify row on an element with no template is checked
+    -- against it.
     reference = {
         page              = true,
         element           = true,
         holding           = true,
         exercised         = true,
         identify          = true,
+        expected_text     = true,
         pinned_appearance = true,
         rect_override     = true,
     },
@@ -118,18 +125,31 @@ local k_sectionFields: { [string]: { [string]: boolean } } = {
     -- A screen carries a name and the content hash of its PNG, and no path: the
     -- path is `assets/screens/<hash>.png` by construction, so a project cannot
     -- come to hold two facts about one picture that disagree.
+    --
+    -- `page` is the optional third: which page this picture is OF. It is written
+    -- last of the three because it is the only one that names something ELSE in
+    -- this file, and a reader scanning a screen block should have its identity in
+    -- hand before its relations.
     screen = {
         name = true,
         hash = true,
+        page = true,
     },
     -- What the model states about one cell of the falsification matrix. It is a
     -- top-level section rather than a subtable of either end for the reason an
     -- edge is: it is a fact about a PAIR, and filing it under the element would
     -- make the screen's block depend on which was written first.
+    --
+    -- `appearance` and `text` name the two things a cell can be measured by --
+    -- one template searched alone, or what the region reads on this screen --
+    -- and a cell carries at most one of them. They are written next to each
+    -- other, before the state they qualify, because a reader scanning a claim
+    -- needs to know what was measured before what was expected of it.
     expect = {
         screen     = true,
         element    = true,
         appearance = true,
+        text       = true,
         state      = true,
     },
 }
@@ -301,6 +321,16 @@ function project.encode(built: any): string
                 "expected_text = " .. renderString(element.expected_text)
             )
         end
+        -- Written only when the element stated one, for the reason a page flag
+        -- is written only when true: the framework's own floor is the reading of
+        -- an absent line, so materialising it here would put a number nobody
+        -- chose into every file and make it look chosen.
+        if element.read_floor ~= nil then
+            table.insert(
+                lines,
+                "read_floor = " .. renderNumber(element.read_floor)
+            )
+        end
         pushResidual(lines, element.residual)
         pushExtra(lines, "[element.extra]", element.extra)
 
@@ -350,6 +380,12 @@ function project.encode(built: any): string
             )
             if reference.identify ~= nil then
                 table.insert(lines, "identify = " .. renderString(reference.identify))
+            end
+            if reference.expected_text ~= nil then
+                table.insert(
+                    lines,
+                    "expected_text = " .. renderString(reference.expected_text)
+                )
             end
             if reference.pinned_appearance ~= nil then
                 table.insert(
@@ -423,6 +459,13 @@ function project.encode(built: any): string
         table.insert(lines, "[[screen]]")
         table.insert(lines, "name = " .. renderString(screen.name))
         table.insert(lines, "hash = " .. renderString(screen.hash))
+        -- Written only when the screen said one, for the reason a page flag and
+        -- an element's `read_floor` are: an absent line is a screen nobody has
+        -- annotated yet, and materialising a name for it would be this layer
+        -- inventing a claim the matrix then measures.
+        if screen.page ~= nil then
+            table.insert(lines, "page = " .. renderString(screen.page))
+        end
         pushResidual(lines, screen.residual)
         pushExtra(lines, "[screen.extra]", screen.extra)
     end
@@ -450,6 +493,9 @@ function project.encode(built: any): string
                 lines,
                 "appearance = " .. renderString(expectation.appearance)
             )
+        end
+        if expectation.text ~= nil then
+            table.insert(lines, "text = " .. renderString(expectation.text))
         end
         table.insert(lines, "state = " .. renderString(expectation.state))
         pushResidual(lines, expectation.residual)
@@ -838,6 +884,7 @@ function project.build(ctx: any, document: any): any
             rect          = rectOf(section, "rect", requireField(section, "rect")),
             appearances   = appearances,
             expected_text = section.fields.expected_text,
+            read_floor    = section.fields.read_floor,
             extra         = section.extra,
             residual      = section.residual,
         })
@@ -896,6 +943,7 @@ function project.build(ctx: any, document: any): any
                 holding           = holding,
                 exercised         = requireField(referenceSection, "exercised"),
                 identify          = referenceSection.fields.identify,
+                expected_text     = referenceSection.fields.expected_text,
                 pinned_appearance = referenceSection.fields.pinned_appearance,
                 rect_override     = if overrideValue ~= nil
                     then rectOf(referenceSection, "rect_override", overrideValue)
@@ -996,9 +1044,29 @@ function project.build(ctx: any, document: any): any
     local screens: { any }                = {}
     local screenByName: { [string]: any } = {}
     for _, section in screenSections do
+        -- A page a screen names has to be one this file declares, and saying so
+        -- HERE is the same ruling `pageOf` above makes for an edge, for the same
+        -- two reasons. `Screen.new` cannot make it -- it is handed one screen's
+        -- own facts and can see no pages -- and this loop can also say WHERE the
+        -- author wrote it. It runs before the constructor rather than after, so a
+        -- file naming a page nothing declares is refused rather than minted and
+        -- then thrown away.
+        local declaredPage = section.fields.page
+        if declaredPage ~= nil and pageByName[declaredPage] == nil then
+            error(
+                "the [[screen]] starting at line "
+                    .. tostring(section.line)
+                    .. " says it is page '"
+                    .. tostring(declaredPage)
+                    .. "', which this project file does not declare",
+                0
+            )
+        end
+
         local screen = oracle.Screen.new({
             name     = requireField(section, "name"),
             hash     = requireField(section, "hash"),
+            page     = declaredPage,
             extra    = section.extra,
             residual = section.residual,
         })
@@ -1038,6 +1106,7 @@ function project.build(ctx: any, document: any): any
                 screen     = screen,
                 element    = element,
                 appearance = section.fields.appearance,
+                text       = section.fields.text,
                 state      = requireField(section, "state"),
                 extra      = section.extra,
                 residual   = section.residual,

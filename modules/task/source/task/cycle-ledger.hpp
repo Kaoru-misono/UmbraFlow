@@ -143,14 +143,18 @@ namespace uf::task
             -> engine::Observation const&;
 
         // How many text reads the open cycle has already spent, and the charge
-        // for one more. Same precondition as observation().
+        // for more. Same precondition as observation().
         //
         // The count is the ledger's rather than the caller's because the ledger
         // is what a cycle IS: a counter kept beside it would have to be reset by
         // whoever noticed the cycle changed, and nothing would check that it was.
+        //
+        // The charge takes a count rather than being a "charge one" verb because
+        // a block read costs one recognition per line it located, and a caller
+        // that had to loop to say so would be describing the same fact twice.
         [[nodiscard]] auto readsCharged() const noexcept -> uint32;
 
-        auto chargeRead() noexcept -> void;
+        auto chargeReads(uint32 count) noexcept -> void;
 
         // The same pair for the crop budget. Same precondition, same reason the
         // count belongs to the ledger rather than to a caller.

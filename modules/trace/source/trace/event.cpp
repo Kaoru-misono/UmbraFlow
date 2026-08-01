@@ -285,6 +285,34 @@ namespace uf::trace
                 "readMicros",
                 std::format("{}", reading.durationMicros)
             );
+            if (reading.lines.empty())
+            {
+                return;
+            }
+
+            // Built here rather than through a builder method because it is the
+            // schema's only array of objects and a general one would have to
+            // invent a nested-builder protocol for one caller. The order is the
+            // order ocr::Readout promises -- top to bottom, then left to right
+            // -- so the same pixels write the same line every time.
+            auto array = std::string{"["};
+            auto first = true;
+            for (auto const& line : reading.lines)
+            {
+                if (!first)
+                {
+                    array += ',';
+                }
+                first = false;
+                array += std::format(
+                    "{{\"text\":{},\"rect\":{},\"confidenceBp\":{}}}",
+                    escapeJsonString(line.text),
+                    serializePixelRect(line.rect),
+                    line.confidenceBp
+                );
+            }
+            array += ']';
+            builder.addLiteral("readLines", array);
         }
 
         auto addAction(

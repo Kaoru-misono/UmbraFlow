@@ -28,6 +28,7 @@
 #include <stop_token>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace uf::engine
 {
@@ -49,6 +50,22 @@ namespace uf::engine
     // CALIBRATION: a 1600x900 target's widest single label measured well under
     // this; it is deliberately far above any line and far below a full frame.
     inline constexpr auto k_maximumReadPixels = uint64{1600} * 200U;
+
+    // The largest region one block read may hand the OCR engine, in pixels.
+    //
+    // It is a SEPARATE ceiling because the two verbs are bounded by different
+    // things. A single-line read is capped near a line's area because a caller
+    // asking to read a whole panel as one line is asking for nonsense; a block
+    // read is asked about a panel on purpose, and the ceiling it needs is only
+    // "not more than a frame". Detection resizes its input down to a 960-pixel
+    // longest side before the model sees it, so the cost of a block read grows
+    // with the number of LINES the region holds rather than with its area --
+    // which is what the caller's own line budget bounds.
+    //
+    // CALIBRATION: 4096x4096 is above every desktop this project binds to and
+    // below any region a capture could produce by accident. It exists to refuse
+    // an arithmetic mistake, not to tune anything.
+    inline constexpr auto k_maximumBlockReadPixels = uint64{4096} * 4096U;
 
     // The longest one capture may block before observe() gives up on it. It is a
     // conservative placeholder awaiting the first real daily and a real-machine
@@ -294,11 +311,30 @@ namespace uf::engine
             uint64      durationMicros{};
         };
 
+        // readTextLines' equivalent, and a separate type rather than a vector
+        // bolted onto the one above: a single-line read has at most one answer
+        // by contract, and folding the two into a container would make every
+        // reader of the single-line path ask how many elements it can have.
+        struct BlockReadAttempt final
+        {
+            std::vector<TextReading> lines{};
+
+            std::string engineId{};
+            uint64      durationMicros{};
+        };
+
         [[nodiscard]]
         auto readTextOnFrame(
             Frame const& frame,
             PixelRect rect
         ) const -> Result<ReadAttempt>;
+
+        [[nodiscard]]
+        auto readTextLinesOnFrame(
+            Frame const& frame,
+            PixelRect rect,
+            uint32 maximumLines
+        ) const -> Result<BlockReadAttempt>;
 
     public:
         EngineSession(EngineSession const&) = delete;
@@ -353,6 +389,41 @@ namespace uf::engine
             Observation const& observation,
             PixelRect rect
         ) -> Result<std::optional<TextReading>>;
+
+        // Finds every line of text inside `rect` on the frame `observation`
+        // holds and reads each one, with its own rectangle in FRAME pixels.
+        //
+        // IT IS A SECOND LAYOUT AND NOT A REPLACEMENT. readText above stays the
+        // right verb wherever the caller drew the rectangle: it skips detection
+        // entirely, which is both cheaper and immune to a detector that splits
+        // one label in two. This one exists for the region nobody can draw a
+        // rectangle inside -- a grid that scrolls continuously, where a name's
+        // position is a fact about the frame rather than about the model, and
+        // the only way to find one is to read the whole region and see where the
+        // text landed.
+        //
+        // `maximumLines` is how many lines this call may recognise. A region
+        // holding more FAILS with RecognitionIncomplete and reads none of them,
+        // because a caller handed the first n lines of a region would conclude
+        // that what it was looking for is absent from a region nobody finished
+        // looking at. The refusal costs one detection pass rather than one
+        // recognition per line; see ocr::ReadSpec::maximumLines.
+        //
+        // Finding no lines is an empty vector, which is an ordinary answer about
+        // the screen. A failure means the read could not be attempted or could
+        // not be finished.
+        //
+        // A returned line may carry EMPTY text. That is the detector saying
+        // there is text at this rectangle and the recogniser failing to read it,
+        // which is a fact about the frame worth having rather than one to hide;
+        // it also makes the returned count equal to the recognitions the call
+        // performed, which is what a caller charging a budget needs.
+        [[nodiscard]]
+        auto readTextLines(
+            Observation const& observation,
+            PixelRect rect,
+            uint32 maximumLines
+        ) -> Result<std::vector<TextReading>>;
 
         // Copies `rect` of the frame `observation` holds and hands the pixels
         // back.

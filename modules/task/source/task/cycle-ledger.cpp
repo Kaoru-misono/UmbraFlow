@@ -8,6 +8,7 @@
 
 #include <engine/session.hpp>
 
+#include <algorithm>
 #include <atomic>
 #include <limits>
 #include <optional>
@@ -124,10 +125,16 @@ namespace uf::task
         return m_open->reads;
     }
 
-    auto CycleLedger::chargeRead() noexcept -> void
+    auto CycleLedger::chargeReads(uint32 count) noexcept -> void
     {
         UF_ASSERT(m_open.has_value());
-        ++m_open->reads;
+
+        // Saturating rather than wrapping. Every caller refuses before it
+        // charges, so the sum cannot reach this in practice; what a wrap WOULD
+        // do is hand a spent cycle a fresh budget, which is the one arithmetic
+        // mistake a budget must not be able to make.
+        auto const headroom = std::numeric_limits<uint32>::max() - m_open->reads;
+        m_open->reads += std::min(count, headroom);
     }
 
     auto CycleLedger::cropsCharged() const noexcept -> uint32

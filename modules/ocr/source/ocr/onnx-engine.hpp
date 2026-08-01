@@ -35,6 +35,26 @@ namespace uf::ocr
         std::filesystem::path recognitionModel{};
         std::filesystem::path recognitionConfig{};
 
+        // The detection model, or an empty path for an engine that only
+        // recognises lines a caller has already located.
+        //
+        // OPTIONAL RATHER THAN REQUIRED, because the two halves have different
+        // costs and different callers. Recognition is what a single-line read
+        // needs and it is the cheaper file; detection adds ten megabytes and an
+        // inference over a whole region, and a product that only ever reads
+        // labels it drew rectangles around must not pay for it. An engine built
+        // without it refuses TextLayout::Block by name, which is the honest
+        // answer -- it cannot find lines, so it must not pretend the region held
+        // none.
+        //
+        // It carries no config path of its own. The detection post-processing
+        // constants live in the adapter with the file and key each was copied
+        // from; see ffi/onnx-engine.cpp. Only the character dictionary is read
+        // off disk, because only the dictionary is identity-critical: the wrong
+        // one spells every output wrong while failing nothing, where a wrong
+        // threshold finds too many boxes or too few and says so.
+        std::filesystem::path detectionModel{};
+
         uint32 threadCount{k_defaultOcrThreadCount};
     };
 

@@ -43,8 +43,11 @@ namespace uf::task
                 std::string{"model"},
                 std::string{"observe"},
                 std::string{"project"},
+                std::string{"hits"},
                 std::string{"navigation"},
                 std::string{"oracle"},
+                std::string{"reading"},
+                std::string{"recognition"},
                 std::string{"regress"},
             }
         );

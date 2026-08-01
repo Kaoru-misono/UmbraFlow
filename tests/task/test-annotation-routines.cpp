@@ -308,6 +308,39 @@ namespace uf::task
             );
         }
 
+        // A project that says which schema it is and nothing else: no element,
+        // no page, no screen. It is the file a target nobody has annotated yet
+        // starts life as, and it is the one the exploration channel used to have
+        // no way into -- `add_reference` writes a row ON a page, so a project
+        // with no page refused every row, and no verb made the first one.
+        //
+        // The single line is also the round-trip baseline. Everything the case
+        // below compares against came out of the agent's own save.
+        //
+        // The empty template directory is not part of the model and is here for
+        // the host's rule rather than the schema's: `project_write` refuses a
+        // name whose parent directory does not exist, because proving a write
+        // stays inside the project means canonicalising a parent that is really
+        // there. Laying out the skeleton is therefore the CLI's job, and a
+        // project directory with no `assets/templates` in it is one no authored
+        // element could ever store its pixels in.
+        auto seedEmptyProject(std::filesystem::path const& root) -> void
+        {
+            auto error = std::error_code{};
+            std::filesystem::create_directories(
+                root / "assets" / "templates",
+                error
+            );
+
+            auto const model =
+                std::string{"schema = \"umbraflow-project/l2-v1\"\n"};
+
+            writeFile(
+                root / "page-model.toml",
+                std::as_bytes(std::span{std::string_view{model}})
+            );
+        }
+
         // A session over the fixture frame, on an ANNOTATION stream because a
         // crop writes an annotation.* line and no other stream may hold one.
         struct Harness final
@@ -596,6 +629,301 @@ namespace uf::task
             CHECK(*result == doctest::Approx(1.0));
         }
 
+        // THE HOLE THIS PAIR OF CASES CLOSES: A CAPTURED SCREEN WITH NOWHERE TO
+        // REGISTER ITSELF.
+        //
+        // Every screen in every project used to come out of the file by hand, so
+        // pixels a capture had already written to `assets/screens/<hash>.png`
+        // were invisible to `claim`/`claim_text` until somebody typed a
+        // `[[screen]]` block in by hand -- the same hole `add_page` closed for
+        // pages, one size smaller. `scribe.add_screen` is the verb that turns a
+        // name and the hash a capture already wrote into a screen the rest of
+        // this module can address.
+        TEST_CASE("An agent registers a captured screen and claims text about it")
+        {
+            auto const directory  = TemporaryDirectory{"uf-scribe-add-screen"};
+            auto const screenHash = seedScreen(directory.path());
+            seedEmptyProject(directory.path());
+
+            auto harness = buildHarness();
+            REQUIRE(harness.session.has_value());
+            TaskContext context{
+                *std::move(harness.session),
+                *harness.recorder,
+                TaskContextConfig{.projectRoot = directory.path()},
+            };
+
+            // The hash is spliced in as a Lua local up front, so the rest of the
+            // chunk below reads exactly as an agent would write it against a
+            // hash `explore.crop` or a full-frame capture handed back.
+            auto const author = std::string{"local screenHash = \""} + screenHash
+                + "\"\n" + R"lua(
+                local built = project.load_project(ctx)
+                if #built.claims.screens ~= 0 then return 0 end
+
+                -- No measurement and no ctx: this element verifies itself by
+                -- what it reads, so there is nothing to cut out of the frame.
+                local title = scribe.author_text_element({
+                    name         = "title",
+                    capabilities = { "identify", "read" },
+                    rect         = { x = 0, y = 0, width = 2, height = 1 },
+                })
+                scribe.add_element(built, title)
+
+                local screen = scribe.add_screen(built, {
+                    name = "captured",
+                    hash = screenHash,
+                })
+                if screen.name ~= "captured" then return 0 end
+                if screen.hash ~= screenHash then return 0 end
+                if screen.path ~= "assets/screens/" .. screenHash .. ".png" then
+                    return 0
+                end
+                if built.claims.screen_by_name["captured"] ~= screen then
+                    return 0
+                end
+                if #built.claims.screens ~= 1 then return 0 end
+
+                scribe.claim_text(built, "captured", title, "match", "Sortie")
+                if #built.claims.expectations ~= 1 then return 0 end
+
+                scribe.save(ctx, built)
+                return 1
+            )lua";
+
+            auto const authored = runExploration(context, author);
+            REQUIRE(authored.has_value());
+            CHECK(*authored == doctest::Approx(1.0));
+
+            // A FRESH VM over a FRESH session: everything below comes off disk.
+            auto reloadHarness = buildHarness();
+            REQUIRE(reloadHarness.session.has_value());
+            TaskContext reloaded{
+                *std::move(reloadHarness.session),
+                *reloadHarness.recorder,
+                TaskContextConfig{.projectRoot = directory.path()},
+            };
+
+            auto const verify = std::string{"local screenHash = \""} + screenHash
+                + "\"\n" + R"lua(
+                local built = project.load_project(ctx)
+
+                -- Byte-stable: what the agent saved is what this build writes
+                -- again from what it read back.
+                if project.encode(built) ~= ctx:project_read(project.file_name) then
+                    return 0
+                end
+
+                local screen = built.claims.screen_by_name["captured"]
+                if screen == nil then return 0 end
+                if screen.hash ~= screenHash then return 0 end
+
+                if oracle.Claims.text_for(built.claims, "captured", "title")
+                    ~= "Sortie"
+                then
+                    return 0
+                end
+                if
+                    oracle.Claims.state_for(built.claims, "captured", "title")
+                    ~= oracle.state_match
+                then
+                    return 0
+                end
+                return 1
+            )lua";
+
+            auto const verified = runExploration(reloaded, verify);
+            REQUIRE(verified.has_value());
+            CHECK(*verified == doctest::Approx(1.0));
+        }
+
+        TEST_CASE("A duplicate screen name is refused before anything is touched")
+        {
+            auto const directory  = TemporaryDirectory{"uf-scribe-screen-refusal"};
+            auto const screenHash = seedScreen(directory.path());
+            seedGraphProject(directory.path(), screenHash);
+
+            auto harness = buildHarness();
+            REQUIRE(harness.session.has_value());
+            TaskContext context{
+                *std::move(harness.session),
+                *harness.recorder,
+                TaskContextConfig{.projectRoot = directory.path()},
+            };
+
+            constexpr std::string_view source = R"lua(
+                local built = project.load_project(ctx)
+                local claims = built.claims
+
+                -- `home_screen` is the fixture's own, refused here while the
+                -- caller can still choose another name -- `Claims.new` would
+                -- catch it too, but only as a complaint about a list.
+                local ok, err = pcall(function()
+                    scribe.add_screen(built, {
+                        name = "home_screen",
+                        hash = string.rep("0", 64),
+                    })
+                end)
+                if ok then return 0 end
+                local taken = "already declares a screen named 'home_screen'"
+                if string.find(tostring(err), taken, 1, true) == nil then
+                    return 0
+                end
+
+                -- Nothing changed: the refusal lands before the model is
+                -- touched, so the object the caller is holding is still current.
+                if built.claims ~= claims then return 0 end
+                if #built.claims.screens ~= 1 then return 0 end
+                return 1
+            )lua";
+
+            auto const result = runExploration(context, source);
+            REQUIRE(result.has_value());
+            CHECK(*result == doctest::Approx(1.0));
+        }
+
+        // THE OTHER DOOR INTO A MODEL, and the same refusal as the one
+        // `project.build` makes for a hand-edited file.
+        //
+        // `oracle.Screen.new` is handed a screen's own two facts and can see no
+        // pages at all, so it cannot ask whether the page a screen says it is of
+        // exists. Guarding only the file would leave a hole in the exact shape of
+        // this verb, and what fits through it is the one state the field must
+        // never reach: a declaration `recognition` has no page to resolve, so the
+        // screen's own claim cannot be measured at all -- while every cell of the
+        // matrix still passes.
+        TEST_CASE("A screen naming a page the project does not declare is refused")
+        {
+            auto const directory  = TemporaryDirectory{"uf-scribe-screen-page"};
+            auto const screenHash = seedScreen(directory.path());
+            seedGraphProject(directory.path(), screenHash);
+
+            auto harness = buildHarness();
+            REQUIRE(harness.session.has_value());
+            TaskContext context{
+                *std::move(harness.session),
+                *harness.recorder,
+                TaskContextConfig{.projectRoot = directory.path()},
+            };
+
+            constexpr std::string_view source = R"lua(
+                local built = project.load_project(ctx)
+                local claims = built.claims
+
+                local ok, err = pcall(function()
+                    scribe.add_screen(built, {
+                        name = "captured",
+                        hash = string.rep("1", 64),
+                        page = "no_such_page",
+                    })
+                end)
+                if ok then return 0 end
+                local missing = "declares no page named 'no_such_page'"
+                if string.find(tostring(err), missing, 1, true) == nil then
+                    return 0
+                end
+                -- The sentence tells an agent what to do, and it is holding the
+                -- session that can do it.
+                if string.find(tostring(err), "add the page first", 1, true) == nil then
+                    return 0
+                end
+
+                -- Nothing changed: the refusal lands before the model is
+                -- touched, so the object the caller is holding is still current.
+                if built.claims ~= claims then return 0 end
+
+                -- The same call naming a page the file DOES carry is accepted,
+                -- and the screen comes back holding the name rather than the
+                -- page: writing a reference rebuilds a page, and a name is what
+                -- always resolves to the one the model holds.
+                local screen = scribe.add_screen(built, {
+                    name = "captured",
+                    hash = string.rep("1", 64),
+                    page = "home",
+                })
+                if screen.page ~= "home" then return 0 end
+                if built.claims.screen_by_name["captured"].page ~= "home" then
+                    return 0
+                end
+
+                -- And a screen that says nothing about its page is still a
+                -- screen: a capture of a page nobody has annotated yet is the
+                -- first thing a session obtains.
+                local plain = scribe.add_screen(built, {
+                    name = "unlabelled",
+                    hash = string.rep("2", 64),
+                })
+                if plain.page ~= nil then return 0 end
+                if #built.claims.screens ~= 3 then return 0 end
+                return 1
+            )lua";
+
+            auto const result = runExploration(context, source);
+            REQUIRE(result.has_value());
+            CHECK(*result == doctest::Approx(1.0));
+        }
+
+        // THE DECISION THIS CASE PINS DOWN: `add_screen` DOES NOT READ THE PNG.
+        //
+        // `Screen.new` checks the hash's SHAPE and says so in its own comment --
+        // a malformed hash otherwise "surfaces as a capture that ran out of
+        // frames" rather than as a refusal at construction -- and a hand-edited
+        // `[[screen]]` block is trusted the same way by `project.build`. Reading
+        // the file inside `add_screen` too would make a screen's measurability
+        // depend on HOW it was declared, and `regress.check` still has to
+        // re-check on every walk regardless, because a file present today can be
+        // deleted before the next one. So a screen with no backing file is
+        // registered without complaint here, and is refused the first time
+        // anything tries to MEASURE it -- by the walk's own existence proof, in
+        // `regress.luau`, which reads every declared screen's file before it
+        // opens a cycle for it.
+        TEST_CASE("A screen with no captured PNG is refused when the walk measures it")
+        {
+            auto const directory  = TemporaryDirectory{"uf-scribe-screen-no-png"};
+            auto const screenHash = seedScreen(directory.path());
+            seedGraphProject(directory.path(), screenHash);
+
+            auto harness = buildHarness();
+            REQUIRE(harness.session.has_value());
+            TaskContext context{
+                *std::move(harness.session),
+                *harness.recorder,
+                TaskContextConfig{.projectRoot = directory.path()},
+            };
+
+            constexpr std::string_view source = R"lua(
+                local built = project.load_project(ctx)
+
+                -- Shaped like a real content hash, but no capture ever wrote
+                -- these bytes. add_screen restates none of Screen.new's
+                -- rulings, and Screen.new checks only the hash's SHAPE, so this
+                -- call succeeds: registering a screen nothing backs is
+                -- deliberately not this file's refusal to make.
+                scribe.add_screen(built, {
+                    name = "ghost",
+                    hash = string.rep("0", 64),
+                })
+
+                -- Uncaught on purpose: the missing file is refused by the WALK,
+                -- the one place already responsible for reading it, and this
+                -- case is about which of the two verbs says so.
+                regress.check(ctx, built)
+                return 0
+            )lua";
+
+            auto const result = runExploration(context, source);
+            REQUIRE_FALSE(result.has_value());
+
+            // Not "assets/screens/" with a forward slash: the store reports the
+            // resolved OS path, so the separator is platform-native. "screens"
+            // and the hash itself are what stay stable across platforms.
+            auto const message = std::string{result.error().message()};
+            CAPTURE(message);
+            CHECK(message.find("screens") != std::string::npos);
+            CHECK(message.find(std::string(64, '0')) != std::string::npos);
+            CHECK(message.find("cannot inspect project file") != std::string::npos);
+        }
+
         // THE REMAP IS THE PROPERTY THIS CASE EXISTS FOR.
         //
         // A page is frozen, so writing a reference rebuilds it, and every edge
@@ -793,6 +1121,188 @@ namespace uf::task
                 if rebuilt.extra.hint ~= "the tile" then return 0 end
                 if #rebuilt.residual ~= 1 then return 0 end
                 if rebuilt.residual[1] ~= "depth = 2" then return 0 end
+                return 1
+            )lua";
+
+            auto const verified = runExploration(reloaded, verify);
+            REQUIRE(verified.has_value());
+            CHECK(*verified == doctest::Approx(1.0));
+        }
+
+        // THE PAGE WHOSE ONLY SIGNATURE IS ITS OWN PRINTED NAME.
+        //
+        // Every screen in this target writes its name in the same top-left box,
+        // so the cheapest honest annotation of a new page is one shared element
+        // with no template at all plus a row per page saying what that box reads
+        // there. This is the authoring half of it: no crop, no threshold, no
+        // asset -- and then a SECOND row written onto the same page, because
+        // that is what rebuilds every row already on it and is therefore where
+        // the first row's own text would quietly be lost.
+        TEST_CASE("An agent annotates a page by the name its title box reads")
+        {
+            auto const directory  = TemporaryDirectory{"uf-scribe-text-identify"};
+            auto const screenHash = seedScreen(directory.path());
+            seedGraphProject(directory.path(), screenHash);
+
+            auto harness = buildHarness();
+            REQUIRE(harness.session.has_value());
+            TaskContext context{
+                *std::move(harness.session),
+                *harness.recorder,
+                TaskContextConfig{.projectRoot = directory.path()},
+            };
+
+            constexpr std::string_view author = R"lua(
+                local built = project.load_project(ctx)
+
+                -- No measurement and no ctx: there is nothing to cut out of the
+                -- frame, because this element's evidence is what it reads.
+                local title = scribe.author_text_element({
+                    name         = "title",
+                    capabilities = { "identify", "read" },
+                    rect         = { x = 0, y = 0, width = 2, height = 1 },
+                })
+                if #title.appearances ~= 0 then return 0 end
+                if not title.capabilities.identify then return 0 end
+                scribe.add_element(built, title)
+
+                -- An element that searches for pixels is a different verb, and
+                -- saying so at the call site beats a mode flag nobody reads.
+                local ok = pcall(function()
+                    return scribe.author_text_element({
+                        name         = "wrong",
+                        capabilities = { "identify", "read" },
+                        rect         = { x = 0, y = 0, width = 1, height = 1 },
+                        appearances  = {},
+                    })
+                end)
+                if ok then return 0 end
+
+                scribe.add_reference(built, "detail", title, {
+                    holding       = "owned",
+                    exercised     = { "identify" },
+                    identify      = "required",
+                    expected_text = "Detail",
+                })
+
+                -- The second row, which rebuilds the first one.
+                scribe.add_reference(built, "detail", built.element_by_name["anchor"], {
+                    holding   = "referenced",
+                    exercised = { "identify" },
+                    identify  = "required",
+                })
+
+                local page = built.page_by_name["detail"]
+                local row  = model.Page.reference_for(page, title)
+                if row == nil then return 0 end
+                if row.expected_text ~= "Detail" then return 0 end
+
+                -- THE LAST STEP, AND THE ONE THIS ELEMENT COULD NOT TAKE. A
+                -- claim is what the matrix contradicts, and a region verified by
+                -- what it reads is claimed by the reading rather than by a
+                -- template score -- so the verb says which, exactly as
+                -- `author_text_element` did at the other end of the session.
+                scribe.claim_text(built, "home_screen", title, "match", "出擊")
+
+                -- The template verb on the same element says nothing measurable:
+                -- there is no template to search for and no score to be read
+                -- against, so the model refuses it rather than filing a cell that
+                -- is permanently green.
+                local plainOk, plainErr = pcall(function()
+                    scribe.claim(built, "home_screen", title, "match")
+                end)
+                if plainOk then return 0 end
+                local unmeasurable = "no measurement this claim could ever be read against"
+                if string.find(tostring(plainErr), unmeasurable, 1, true) == nil then
+                    return 0
+                end
+
+                -- And the reading verb on an element that HAS pixels is refused
+                -- from the other side, so neither verb is a superset of the other.
+                local anchor = built.element_by_name["anchor"]
+                local textOk, textErr = pcall(function()
+                    scribe.claim_text(built, "home_screen", anchor, "match", "Detail")
+                end)
+                if textOk then return 0 end
+                local byPixels = "verifies itself by its template pixels"
+                if string.find(tostring(textErr), byPixels, 1, true) == nil then
+                    return 0
+                end
+
+                -- A screen nobody captured is nothing to measure against, and the
+                -- refusal is this file's own because only the model holds the
+                -- screen inventory.
+                local screenOk, screenErr = pcall(function()
+                    scribe.claim_text(built, "nowhere", title, "match", "Detail")
+                end)
+                if screenOk then return 0 end
+                if string.find(tostring(screenErr), "no screen named", 1, true) == nil then
+                    return 0
+                end
+
+                -- Three refusals and one claim: the collection holds exactly the
+                -- one that was accepted, because a rejected claim is rebuilt from
+                -- nothing and never half applied.
+                if #built.claims.expectations ~= 2 then return 0 end
+
+                scribe.save(ctx, built)
+                return 1
+            )lua";
+
+            auto const authored = runExploration(context, author);
+            REQUIRE(authored.has_value());
+            CHECK(*authored == doctest::Approx(1.0));
+
+            // A FRESH VM over a FRESH session: everything below comes off disk.
+            auto reloadHarness = buildHarness();
+            REQUIRE(reloadHarness.session.has_value());
+            TaskContext reloaded{
+                *std::move(reloadHarness.session),
+                *reloadHarness.recorder,
+                TaskContextConfig{.projectRoot = directory.path()},
+            };
+
+            constexpr std::string_view verify = R"lua(
+                local built = project.load_project(ctx)
+
+                if project.encode(built) ~= ctx:project_read(project.file_name) then
+                    return 0
+                end
+
+                local title = built.element_by_name["title"]
+                if title == nil then return 0 end
+                if #title.appearances ~= 0 then return 0 end
+                if not title.capabilities.read then return 0 end
+                if title.expected_text ~= nil then return 0 end
+
+                local row = model.Page.reference_for(
+                    built.page_by_name["detail"],
+                    title
+                )
+                if row == nil then return 0 end
+                if row.identify ~= "required" then return 0 end
+                if row.expected_text ~= "Detail" then return 0 end
+                if model.Reference.expected_text(row) ~= "Detail" then return 0 end
+
+                -- The claim came back off disk under the cell the walk reads,
+                -- with the multi-byte text the target actually prints intact.
+                if oracle.Claims.text_for(built.claims, "home_screen", "title")
+                    ~= "出擊"
+                then
+                    return 0
+                end
+                if
+                    oracle.Claims.state_for(built.claims, "home_screen", "title")
+                    ~= oracle.state_match
+                then
+                    return 0
+                end
+
+                -- And it is the widest thing one screen asks a cycle to read,
+                -- which is what a host sizes its read budget from.
+                if oracle.Claims.most_reads_on_one_screen(built.claims) ~= 1 then
+                    return 0
+                end
                 return 1
             )lua";
 
@@ -1010,6 +1520,456 @@ namespace uf::task
             auto const result = runExploration(context, source);
             REQUIRE(result.has_value());
             CHECK(*result == doctest::Approx(1.0));
+        }
+
+        // THE FIRST PAGE, WHICH NOTHING COULD WRITE BEFORE.
+        //
+        // Every page in every project used to come out of the file, so a target
+        // whose model was still one schema line could not be annotated through
+        // this channel at all. And a page is born COMPLETE -- `Page.new` refuses
+        // one with no required identify reference -- so the missing verb could
+        // not have been "make an empty page and let `add_reference` fill it in";
+        // there is no legal empty page for that sequence to start from.
+        //
+        // So the case authors a whole model from that one line: three elements,
+        // two pages born with their rows, an edge between them, and then a row
+        // written onto a page this run invented -- which is where a page that
+        // reached the model without reaching the graph, or the graph without the
+        // name index, is the difference between a green run and a red one.
+        TEST_CASE("An agent authors the first page of a project that had none")
+        {
+            auto const directory = TemporaryDirectory{"uf-scribe-first-page"};
+            seedEmptyProject(directory.path());
+
+            auto harness = buildHarness();
+            REQUIRE(harness.session.has_value());
+            TaskContext context{
+                *std::move(harness.session),
+                *harness.recorder,
+                TaskContextConfig{.projectRoot = directory.path()},
+            };
+
+            constexpr std::string_view author = R"lua(
+                local built = project.load_project(ctx)
+                if #built.elements ~= 0 then return 0 end
+                if #built.pages ~= 0 then return 0 end
+                if #built.graph.edges ~= 0 then return 0 end
+
+                local ticket   = ctx:cycle_open()
+                local measured = scribe.measure(
+                    ctx,
+                    ticket,
+                    { x = 1, y = 0, width = 1, height = 1 }
+                )
+                ctx:cycle_close(ticket)
+
+                local action = scribe.author_element(ctx, measured, {
+                    name         = "action",
+                    capabilities = { "identify", "interact" },
+                    threshold    = 10000,
+                })
+                scribe.add_element(built, action)
+
+                -- Two regions this target prints words in. Neither has pixels of
+                -- its own, so what each one says is a fact about the PAGE and
+                -- travels on the page's row rather than on the element.
+                local title = scribe.author_text_element({
+                    name         = "title",
+                    capabilities = { "identify", "read" },
+                    rect         = { x = 0, y = 0, width = 2, height = 1 },
+                })
+                local status = scribe.author_text_element({
+                    name         = "status",
+                    capabilities = { "identify", "read" },
+                    rect         = { x = 0, y = 0, width = 3, height = 1 },
+                })
+                scribe.add_element(built, title)
+                scribe.add_element(built, status)
+
+                -- The page and its whole signature in one call, because half a
+                -- signature is not a page this model will build.
+                local home = scribe.add_page(built, {
+                    name       = "home",
+                    references = {
+                        {
+                            element       = title,
+                            holding       = "owned",
+                            exercised     = { "identify" },
+                            identify      = "required",
+                            expected_text = "Sortie",
+                        },
+                        {
+                            element       = status,
+                            holding       = "owned",
+                            exercised     = { "identify" },
+                            identify      = "required",
+                            expected_text = "Ready",
+                        },
+                        {
+                            element   = action,
+                            holding   = "owned",
+                            exercised = { "interact" },
+                        },
+                    },
+                })
+
+                -- All three places a model keeps its pages hold the page that
+                -- came back, and the constructor stamped each row with it.
+                if built.page_by_name["home"] ~= home then return 0 end
+                if built.graph.page_by_name["home"] ~= home then return 0 end
+                if #built.pages ~= 1 then return 0 end
+                if #home.references ~= 3 then return 0 end
+                for _, row in home.references do
+                    if row.page ~= "home" then return 0 end
+                end
+
+                -- A second page, and `overlay` riding through this verb to the
+                -- constructor: the push below is refused unless it arrives.
+                local detail = scribe.add_page(built, {
+                    name       = "detail",
+                    overlay    = true,
+                    references = {
+                        {
+                            element       = title,
+                            holding       = "referenced",
+                            exercised     = { "identify" },
+                            identify      = "required",
+                            expected_text = "Detail",
+                        },
+                    },
+                })
+                if not detail.overlay then return 0 end
+
+                -- An edge over two pages that were invented a moment ago, taken
+                -- by clicking a row one of them authorised. A page that never
+                -- reached the name index fails at `from`, and one that never
+                -- reached the graph fails inside `Graph.new`.
+                local edge = scribe.add_edge(built, {
+                    from        = "home",
+                    to          = { "detail" },
+                    via         = "click",
+                    via_element = "action",
+                    kind        = "push",
+                })
+                if edge.from ~= built.page_by_name["home"] then return 0 end
+                if edge.to[1] ~= built.page_by_name["detail"] then return 0 end
+                if edge.via_reference ~= model.Page.reference_for(home, action) then
+                    return 0
+                end
+
+                -- A LATER row onto an invented page. It rebuilds that page, so
+                -- the edge that already lands on it has to be carried across --
+                -- the same remap the seeded projects exercise, over a page no
+                -- file ever declared.
+                local rebuilt = scribe.add_reference(built, "detail", action, {
+                    holding   = "referenced",
+                    exercised = { "interact" },
+                })
+                if rebuilt == detail then return 0 end
+                if built.page_by_name["detail"] ~= rebuilt then return 0 end
+                for _, existing in built.graph.edges do
+                    local from = built.graph.page_by_name[existing.from.name]
+                    if existing.from ~= from then return 0 end
+                    for _, target in existing.to or {} do
+                        if target ~= built.graph.page_by_name[target.name] then
+                            return 0
+                        end
+                    end
+                end
+
+                scribe.save(ctx, built)
+                return 1
+            )lua";
+
+            auto const authored = runExploration(context, author);
+            REQUIRE(authored.has_value());
+            CHECK(*authored == doctest::Approx(1.0));
+
+            // A FRESH VM over a FRESH session: everything below comes off disk.
+            auto reloadHarness = buildHarness();
+            REQUIRE(reloadHarness.session.has_value());
+            TaskContext reloaded{
+                *std::move(reloadHarness.session),
+                *reloadHarness.recorder,
+                TaskContextConfig{.projectRoot = directory.path()},
+            };
+
+            constexpr std::string_view verify = R"lua(
+                local built = project.load_project(ctx)
+
+                -- Byte-stable: what the agent saved is what this build writes
+                -- again from what it read back.
+                if project.encode(built) ~= ctx:project_read(project.file_name) then
+                    return 0
+                end
+
+                if #built.elements ~= 3 then return 0 end
+                if #built.pages ~= 2 then return 0 end
+
+                local home  = built.page_by_name["home"]
+                local title = built.element_by_name["title"]
+                if home == nil or title == nil then return 0 end
+                if #home.references ~= 3 then return 0 end
+
+                -- The row's own text came back, and the element still says
+                -- nothing: that split is what lets one drawn rectangle serve
+                -- every page in the target.
+                local titled = model.Page.reference_for(home, title)
+                if titled == nil then return 0 end
+                if titled.expected_text ~= "Sortie" then return 0 end
+                if model.Reference.expected_text(titled) ~= "Sortie" then
+                    return 0
+                end
+                if title.expected_text ~= nil then return 0 end
+
+                local ready = model.Page.reference_for(
+                    home,
+                    built.element_by_name["status"]
+                )
+                if ready == nil then return 0 end
+                if ready.expected_text ~= "Ready" then return 0 end
+
+                -- The interact row exercises what it was written with and
+                -- nothing more, and carries no polarity it never asked for.
+                local clicked = model.Page.reference_for(
+                    home,
+                    built.element_by_name["action"]
+                )
+                if clicked == nil then return 0 end
+                if not clicked.exercised.interact then return 0 end
+                if clicked.exercised.identify then return 0 end
+                if clicked.identify ~= nil then return 0 end
+
+                local detail = built.page_by_name["detail"]
+                if detail == nil then return 0 end
+                if not detail.overlay then return 0 end
+                if #detail.references ~= 2 then return 0 end
+                local elsewhere = model.Page.reference_for(detail, title)
+                if elsewhere == nil then return 0 end
+                if elsewhere.expected_text ~= "Detail" then return 0 end
+
+                if #built.graph.edges ~= 1 then return 0 end
+                local edge = built.graph.edges[1]
+                if edge.from ~= built.graph.page_by_name["home"] then return 0 end
+                if edge.to[1] ~= built.graph.page_by_name["detail"] then
+                    return 0
+                end
+                if edge.kind ~= "push" then return 0 end
+                return 1
+            )lua";
+
+            auto const verified = runExploration(reloaded, verify);
+            REQUIRE(verified.has_value());
+            CHECK(*verified == doctest::Approx(1.0));
+        }
+
+        TEST_CASE("An invented page is refused before it can join the model")
+        {
+            auto const directory  = TemporaryDirectory{"uf-scribe-page-refusal"};
+            auto const screenHash = seedScreen(directory.path());
+            seedGraphProject(directory.path(), screenHash);
+
+            auto harness = buildHarness();
+            REQUIRE(harness.session.has_value());
+            TaskContext context{
+                *std::move(harness.session),
+                *harness.recorder,
+                TaskContextConfig{.projectRoot = directory.path()},
+            };
+
+            constexpr std::string_view source = R"lua(
+                local built  = project.load_project(ctx)
+                local pages  = built.pages
+                local graph  = built.graph
+                local anchor = built.element_by_name["anchor"]
+                local action = built.element_by_name["action"]
+
+                local signature = {
+                    element   = anchor,
+                    holding   = "referenced",
+                    exercised = { "identify" },
+                    identify  = "required",
+                }
+
+                -- A name the project already declares, refused while the caller
+                -- still has the page in hand and can choose another. `Graph.new`
+                -- would catch it too, but only as a complaint about a list.
+                local ok, err = pcall(function()
+                    scribe.add_page(built, {
+                        name       = "home",
+                        references = { signature },
+                    })
+                end)
+                if ok then return 0 end
+                local taken = "already declares a page named 'home'"
+                if string.find(tostring(err), taken, 1, true) == nil then
+                    return 0
+                end
+
+                -- A row naming an element the file does not carry. It is minted,
+                -- so the constructor is satisfied; only the loaded project knows
+                -- that saving this would write a file nothing can open again.
+                local stranger = model.Element.new({
+                    name         = "stranger",
+                    capabilities = { "interact" },
+                    rect         = { x = 0, y = 0, width = 1, height = 1 },
+                })
+                local strangeOk, strangeErr = pcall(function()
+                    scribe.add_page(built, {
+                        name       = "invented",
+                        references = {
+                            signature,
+                            {
+                                element   = stranger,
+                                holding   = "owned",
+                                exercised = { "interact" },
+                            },
+                        },
+                    })
+                end)
+                if strangeOk then return 0 end
+                local missing = "declares no element named 'stranger'"
+                if string.find(tostring(strangeErr), missing, 1, true) == nil then
+                    return 0
+                end
+
+                -- A page whose rows say nothing about when it is on screen. The
+                -- refusal is the CONSTRUCTOR's, in its own words, which is the
+                -- whole reason this verb takes the rows at once.
+                local blindOk, blindErr = pcall(function()
+                    scribe.add_page(built, {
+                        name       = "unsigned",
+                        references = {
+                            {
+                                element   = action,
+                                holding   = "owned",
+                                exercised = { "interact" },
+                            },
+                        },
+                    })
+                end)
+                if blindOk then return 0 end
+                local unsigned = "has no required identify reference"
+                if string.find(tostring(blindErr), unsigned, 1, true) == nil then
+                    return 0
+                end
+
+                -- A field the constructor does not own rides through to it and
+                -- is refused there rather than dropped on the way, which is what
+                -- keeps a project's own key from vanishing into a typo.
+                local keyOk, keyErr = pcall(function()
+                    scribe.add_page(built, {
+                        name       = "typo",
+                        overlays   = true,
+                        references = { signature },
+                    })
+                end)
+                if keyOk then return 0 end
+                local stray = 'does not have a field named "overlays"'
+                if string.find(tostring(keyErr), stray, 1, true) == nil then
+                    return 0
+                end
+
+                -- Not one of the four changed anything: every refusal lands
+                -- before the model is written to.
+                if built.pages ~= pages then return 0 end
+                if built.graph ~= graph then return 0 end
+                if #built.pages ~= 2 then return 0 end
+                if built.page_by_name["invented"] ~= nil then return 0 end
+                if built.page_by_name["unsigned"] ~= nil then return 0 end
+                if built.page_by_name["typo"] ~= nil then return 0 end
+                return 1
+            )lua";
+
+            auto const result = runExploration(context, source);
+            REQUIRE(result.has_value());
+            CHECK(*result == doctest::Approx(1.0));
+        }
+
+        // THE FIRST THING AN AGENT MEETS IN A PROJECT DIRECTORY NOBODY HAS LAID
+        // OUT, and what it is told about it.
+        //
+        // The refusal itself is deliberate: proving a write stayed inside the
+        // project means canonicalizing a parent that is really there, so the
+        // store creates no directory and a missing one has to fail. What was
+        // wrong is that both halves of the sentence were lost on the way out --
+        // the store blamed canonicalization rather than the absent directory, and
+        // the carrier the host raises is a userdata, which the boundary rendered
+        // as "(non-string error value)". An agent driving the explore channel
+        // reads exactly this text on its result line and has no trace file open.
+        TEST_CASE("a write into a directory nobody laid out says which one is missing")
+        {
+            auto const directory = TemporaryDirectory{"uf-scribe-missing-parent"};
+
+            // Deliberately NOT seedEmptyProject: the point is a project
+            // directory with no assets/templates in it at all.
+            auto const model =
+                std::string{"schema = \"umbraflow-project/l2-v1\"\n"};
+            writeFile(
+                directory.path() / "page-model.toml",
+                std::as_bytes(std::span{std::string_view{model}})
+            );
+
+            auto harness = buildHarness();
+            REQUIRE(harness.session.has_value());
+            TaskContext context{
+                *std::move(harness.session),
+                *harness.recorder,
+                TaskContextConfig{.projectRoot = directory.path()},
+            };
+
+            constexpr std::string_view source = R"lua(
+                local built = project.load_project(ctx)
+
+                local ticket   = ctx:cycle_open()
+                local measured = scribe.measure(
+                    ctx,
+                    ticket,
+                    { x = 1, y = 0, width = 1, height = 1 }
+                )
+                ctx:cycle_close(ticket)
+
+                -- Uncaught on purpose: this case is about the sentence that
+                -- reaches the caller, not about what a pcall could read.
+                local element = scribe.author_element(ctx, measured, {
+                    name         = "action",
+                    capabilities = { "identify" },
+                    threshold    = 10000,
+                })
+                return #element.appearances
+            )lua";
+
+            auto const refused = runExploration(context, source);
+            REQUIRE_FALSE(refused.has_value());
+
+            auto const message = std::string{refused.error().message()};
+            CAPTURE(message);
+
+            // The three things the line has to carry: what it could not do, where,
+            // and that the where is what is missing.
+            CHECK(message.find("assets/templates") != std::string::npos);
+            CHECK(message.find("does not exist") != std::string::npos);
+            CHECK(message.find("(non-string error value)") == std::string::npos);
+
+            // Laying the directory out is the only thing that was missing, and it
+            // is what the CLI does before an exploration session starts.
+            auto error = std::error_code{};
+            REQUIRE(
+                std::filesystem::create_directories(
+                    directory.path() / "assets" / "templates",
+                    error
+                )
+            );
+
+            auto reloadHarness = buildHarness();
+            REQUIRE(reloadHarness.session.has_value());
+            TaskContext laidOut{
+                *std::move(reloadHarness.session),
+                *reloadHarness.recorder,
+                TaskContextConfig{.projectRoot = directory.path()},
+            };
+            auto const accepted = runExploration(laidOut, source);
+            CHECK(accepted.has_value());
         }
     }
 }

@@ -245,6 +245,28 @@ namespace uf::trace
         // against. See the annotation-model plan, section 4.2.7.
         struct Reading final
         {
+            // One line a BLOCK read located inside the region, with the
+            // rectangle the frame itself put it at.
+            //
+            // It exists because a block read's region and its answers are no
+            // longer the same rectangle. A single-line read is asked about a
+            // rectangle the model drew and answers about that same rectangle,
+            // so `rect` below carries both facts at once; a block read is asked
+            // about a region and answers with lines the frame located inside it,
+            // and a click aimed at one of those lines can only be audited
+            // against the line's own rectangle.
+            struct Line final
+            {
+                std::string text{};
+
+                // In frame pixels, never relative to the region, matching what
+                // ocr::TextLine promises and what the click will be delivered
+                // in.
+                PixelRect rect;
+
+                uint32 confidenceBp{};
+            };
+
             std::string text{};
 
             PixelRect rect;
@@ -259,7 +281,20 @@ namespace uf::trace
             // Microseconds rather than milliseconds: a single-line read measured
             // 2-13 ms, so whole milliseconds would round most reads to one or two
             // distinct values and lose the distribution the budget is set from.
+            //
+            // For a block read it is the WHOLE call: the detection pass plus
+            // every recognition it caused. That is why the lines below carry no
+            // duration of their own -- the recogniser reports no per-line
+            // timing, and splitting the call's cost across its lines would be a
+            // number nobody measured.
             uint64 durationMicros{};
+
+            // The lines a block read found, empty for a single-line read. Empty
+            // is not serialized at all, so a single-line read's wire bytes are
+            // exactly what they were before block reads existed; which of the
+            // two verbs was called is already on the stream's own
+            // task.native_call line.
+            std::vector<Line> lines{};
         };
 
         // What this run is: the addressed task, the bytes it was compiled from,

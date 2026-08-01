@@ -9,6 +9,19 @@
 -- line; here it is the layer that OWNS the model doing its own writing, which is
 -- the whole point of the model having moved up.
 --
+-- NOT EVERY ELEMENT IS AUTHORED FROM PIXELS. `author_text_element` writes the
+-- other kind -- a rectangle that verifies itself by the text it reads -- and it
+-- takes no measurement, because there is nothing to cut and nothing to store.
+-- The two verbs stand side by side rather than one taking a mode flag, so the
+-- verification source an agent chose is visible in the line it wrote.
+--
+-- THE CLAIM SIDE SPLITS ON THE SAME LINE, AND FOR THE SAME REASON. `claim` says
+-- what an element's TEMPLATES should do on a screen and `claim_text` says what
+-- its rectangle should READ there. An element authored by
+-- `author_text_element` can only be claimed by the second, which is not this
+-- file's ruling but `oracle.Expectation.new`'s -- so the pairing is one an agent
+-- can see rather than one it discovers from a refusal.
+--
 -- NO THRESHOLD IS DECIDED HERE, AND NONE IS DEFAULTED. `author_element` takes
 -- the threshold as a required field, exactly as the project file stores one.
 -- The measurement this module hands back says how many pixels a colour key
@@ -18,6 +31,14 @@
 -- with because nobody would see it. The one thing it does derive is a FILE NAME,
 -- which is not a judgement: a template asset is named by the hash of its own
 -- bytes so that "which pixels" and "which file" cannot disagree.
+--
+-- A PROJECT CAN BE STARTED FROM NOTHING, WHICH IS WHAT `add_page` IS FOR. Every
+-- page in every project used to come out of the file, so this channel could add
+-- rows to pages somebody else had written and could not write the first one --
+-- and a project with no page at all refuses every row, because a row is a row ON
+-- a page. The verb takes the page's ROWS and not just its name, because there is
+-- no legal empty page to create and fill in afterwards: `Page.new` refuses a page
+-- with no required identify reference, so a page is born complete or not at all.
 --
 -- A PAGE IS FROZEN, SO WRITING ON ONE REBUILDS IT. `add_reference` does not
 -- append a row to a page's reference list -- it cannot, and it should not want
@@ -34,6 +55,22 @@
 -- so it would go on resolving the superseded page, the one missing the reference
 -- the agent just wrote, and looking for a row that is not there. The remap is
 -- therefore not tidiness; it is the whole of what makes the new row reachable.
+--
+-- THE SAME HOLE, ONE SIZE SMALLER, SITS ON THE CLAIM SIDE. Every screen in
+-- every project used to come out of the file by hand too, and `claim` and
+-- `claim_text` refuse a screen name they cannot resolve for the same reason
+-- `add_reference` refuses an element the file does not carry: addressing what
+-- does not exist yet is not a claim, it is a typo the file would accept and
+-- open onto nothing. `scribe.add_screen` closes it the way `add_page` closed
+-- the page side -- except a screen is a name, a content hash and at most the
+-- name of the page it is of, with no rows and no signature to be born complete
+-- or incomplete about, so there is no analogue of "born complete" to rule on
+-- here; `oracle.Screen.new` makes every ruling about the screen ITSELF, and the
+-- two this file makes are both about the rest of the project. Whether it should
+-- also read the PNG
+-- off disk before believing in it is answered at `scribe.add_screen`'s own
+-- definition rather than here, because the answer turns on how `Screen.new`
+-- and `regress.check` already split that work between them.
 --
 -- LOAD ORDER. `scribe` sorts after `explore`, `model`, `navigation`, `oracle`
 -- and `project`, which is the order it needs: it names all five. It sorts before
@@ -199,9 +236,48 @@ function scribe.author_element(
             },
         },
         expected_text = spec.expected_text,
+        read_floor    = spec.read_floor,
         extra         = spec.extra,
         residual      = spec.residual,
     })
+end
+
+-- scribe.author_text_element(spec) -> element
+--
+-- Builds the element that verifies itself by what its rectangle READS: no crop,
+-- no template asset, no threshold, and therefore no measurement and no `ctx`.
+--
+-- WHY IT IS A SECOND VERB RATHER THAN A FLAG ON THE FIRST. `author_element`
+-- takes a `Measurement` as its second argument and writes a template asset as
+-- part of its work; an element verified by text has neither, so the flag would
+-- turn half the parameters of one verb into "ignored in this mode", which is the
+-- shape a reader cannot check a call site against. Two verbs make the choice of
+-- verification source visible in the line the agent wrote
+-- (docs/plans/2026-08-01-three-layers-and-agent-operator.md 5-4: an element
+-- declares ONE source).
+--
+-- `spec` is handed to `Element.new` as written, so every ruling is made in the
+-- constructor's own words: an element that identifies with no template of its
+-- own has to declare `read`, a rectangle is required, and a `read_floor` on
+-- something nothing may read is refused. Nothing here defaults `expected_text`
+-- either, and that absence is the interesting case rather than an oversight --
+-- the shared title element states no text at all, because what it reads is
+-- different on every page and belongs on each page's reference row
+-- (`scribe.add_reference`).
+function scribe.author_text_element(spec: { [string]: any }): any
+    if type(spec) ~= "table" then
+        error("scribe.author_text_element needs a table of fields", 2)
+    end
+    if spec.appearances ~= nil then
+        error(
+            "scribe.author_text_element builds an element with no template of "
+                .. "its own; an element that searches for pixels is authored "
+                .. "from a measurement with scribe.author_element",
+            2
+        )
+    end
+
+    return model.Element.new(spec)
 end
 
 -- scribe.add_element(built, element) -> ()
@@ -241,9 +317,9 @@ function scribe.add_element(built: any, element: any)
     built.element_by_name[element.name] = element
 end
 
--- The two verbs below rewrite the page graph, so both need the whole loaded
--- model rather than a table with a page list on it: they read the element index
--- to refuse a row nothing declares, and they hand the page list back to
+-- The three verbs below rewrite the page graph, so all three need the whole
+-- loaded model rather than a table with a page list on it: they read the element
+-- index to refuse a row nothing declares, and they hand the page list back to
 -- `Graph.new`.
 local function requireModel(built: any, verb: string)
     if
@@ -254,6 +330,31 @@ local function requireModel(built: any, verb: string)
         or not navigation.is_graph(built.graph)
     then
         error(verb .. " needs the model project.load_project returned", 3)
+    end
+end
+
+-- Refuses a row naming an element this project does not declare.
+--
+-- It is one sentence rather than one per verb because the two verbs that write
+-- rows are refusing the same thing for the same reason, and two spellings of
+-- that reason are two sentences that can come to disagree about which of them
+-- meant it. The reason is that elements and rows are saved as SEPARATE sections:
+-- a row naming an element no `[[element]]` declares is a file this build writes
+-- happily and then refuses to parse, and the project it was written from is gone
+-- by then.
+--
+-- `Page.new` cannot make this ruling. It is handed elements, not the project, so
+-- the most it can ask is that the table was minted -- whether the file also
+-- carries it is a question only the loaded model can answer.
+local function requireDeclaredElement(built: any, element: any)
+    if built.element_by_name[element.name] == nil then
+        error(
+            "this project declares no element named '"
+                .. element.name
+                .. "'; a row naming an element the file does not carry saves a "
+                .. "project that will not open again, so add the element first",
+            3
+        )
     end
 end
 
@@ -281,6 +382,13 @@ end
 -- `residual` lines a newer schema wrote -- is passed straight through, because a
 -- rebuild that dropped them would be the silent deletion the file format exists
 -- to prevent.
+--
+-- `expected_text` is the field where that would hurt most, and it is worth
+-- naming for it. A row identified by text carries the whole of its page's
+-- signature in that one string, so a rebuild that let it fall out would leave a
+-- page that either refuses to build (identify with nothing to check) or, if the
+-- element happened to carry a fallback, resolves on the wrong screen. Writing
+-- ONE new row would be what broke a page nobody touched.
 local function referenceSpec(reference: any): { [string]: any }
     local exercised: { string } = {}
     for _, capability in model.capability_order() do
@@ -293,6 +401,7 @@ local function referenceSpec(reference: any): { [string]: any }
         holding           = reference.holding,
         exercised         = exercised,
         identify          = reference.identify,
+        expected_text     = reference.expected_text,
         pinned_appearance = reference.pinned_appearance,
         rect_override     = reference.rect_override,
         extra             = reference.extra,
@@ -345,17 +454,126 @@ local function remappedEdge(edge: any, pageName: string, replacement: any): any
     })
 end
 
+-- Moves the three copies of a project's page list together, around `page`.
+--
+-- A model keeps the same pages in three places, and each of the three is what
+-- something different reads: `built.pages` is the list `save` writes and the
+-- list a rebuilt graph is made from, `built.page_by_name` is the index
+-- `add_edge` resolves a name through, and `built.graph` is what
+-- `observe.walk_edge` resolves an edge against. Two of the three updated is a
+-- model that saves a correct file and walks to a page nobody can see, so the
+-- three moves are one function rather than a pattern each verb repeats.
+--
+-- The graph is built FIRST and assigned LAST, so a page list `Graph.new` refuses
+-- would leave the model exactly as it was. No caller reaches that refusal today
+-- -- both verbs rule out the duplicate name it would catch before they get here
+-- -- and the order is kept anyway, because a helper whose correctness depends on
+-- which checks its callers happen to run first is one that breaks the day a
+-- third caller arrives.
+local function installPage(
+    built: any,
+    pages: { any },
+    edges: { any },
+    page: any
+)
+    local graph = navigation.Graph.new({ pages = pages, edges = edges })
+    built.pages = pages
+    built.page_by_name[page.name] = page
+    built.graph = graph
+end
+
+-- scribe.add_page(built, spec) -> the new page
+--
+-- Declares a page the file does not have: its name, its flags, and the rows it
+-- is BORN with.
+--
+-- IT IS BORN COMPLETE, WHICH IS WHY THE ROWS ARE A FIELD AND NOT A SEQUEL.
+-- `Page.new` refuses a page with no required identify reference, so "make the
+-- page, then write its rows onto it" is not a sequence this model can be walked
+-- through -- the first step has nothing legal to build. The whole signature goes
+-- in at once, and `add_reference` is what a LATER row uses.
+--
+-- A ROW NAMES ITS ELEMENT BY THE ELEMENT, which is where this spec differs from
+-- `add_edge`'s and agrees with `add_reference`'s. An edge names its ends because
+-- writing a row REBUILDS a page, so a page an agent put in a variable may
+-- already be superseded; nothing rebuilds an element -- `add_element` files the
+-- frozen table the author built and never replaces it -- so the value
+-- `author_element` handed back a line ago is still the value the model holds. A
+-- name here would mean spelling the same element twice in three lines and
+-- letting the two spellings disagree. Everything else in a row is what
+-- `add_reference`'s spec carries, under the same names, because it IS that row.
+--
+-- TWO QUESTIONS ARE ASKED HERE AND EVERY OTHER ONE IS THE CONSTRUCTOR'S. This
+-- file refuses a page name the project already declares, while the caller can
+-- still choose another, and a row naming an element the file does not carry.
+-- Holding, exercised, the identify polarity, a pin on something nothing clicks,
+-- a second row for one element -- all of those are ruled on by `Page.new` in its
+-- own words, including the required identify that shaped this verb, which is the
+-- last rule this file would want to own a second copy of.
+--
+-- The spec goes to `Page.new` as written, so `overlay`, `interrupt`, `extra` and
+-- the raw `residual` lines ride through untouched and a key the constructor does
+-- not own is refused by it rather than dropped here.
+--
+-- Nothing on the model is touched until `Page.new` and `Graph.new` have both
+-- agreed, so a page this refuses leaves the project exactly as it was.
+function scribe.add_page(built: any, spec: { [string]: any }): any
+    requireModel(built, "scribe.add_page")
+    if type(spec) ~= "table" then
+        error("scribe.add_page needs a table of fields", 2)
+    end
+    if type(spec.name) == "string" and built.page_by_name[spec.name] ~= nil then
+        error(
+            "this project already declares a page named '"
+                .. spec.name
+                .. "'; a page name is how an edge names its ends and how a saved "
+                .. "row names the page it sits on, so two of them cannot share "
+                .. "one",
+            2
+        )
+    end
+
+    -- Only the rows this file can walk are asked the one question it alone can
+    -- answer. A `references` that is not a list, an entry that is not a table,
+    -- and an entry naming something no constructor minted all fall through to
+    -- `Page.new` untouched, because the sentence for each of those is already
+    -- written there and a second copy of it here would be a second thing to
+    -- keep in step.
+    if type(spec.references) == "table" then
+        for _, row in spec.references :: { any } do
+            if type(row) == "table" and model.is_element(row.element) then
+                requireDeclaredElement(built, row.element)
+            end
+        end
+    end
+
+    local page = model.Page.new(spec)
+
+    local pages: { any } = table.clone(built.pages)
+    table.insert(pages, page)
+    -- Every existing edge rides through unchanged: this page is new, so no edge
+    -- can already name it, and there is nothing to remap.
+    installPage(built, pages, built.graph.edges, page)
+    return page
+end
+
 -- scribe.add_reference(built, page_name, element, spec) -> the rebuilt page
 --
 -- Writes one row on one page: what THIS page does with this element.
 --
 -- `spec` carries the row's own fields under the model's own names -- holding,
--- exercised, the identify polarity, an optional pinned appearance and rect
--- override -- because the spec IS the row. It is handed to `Page.new` as
--- written, so every ruling that constructor makes is made here in its own words:
--- exercised is a subset of what the element declares, identify carries a
--- polarity, a pin belongs to a click, and an identify row does not refine the
--- search rectangle. Nothing is defaulted on the way, and nothing is filtered.
+-- exercised, the identify polarity, the expected text this page's copy of the
+-- region should read, an optional pinned appearance and rect override -- because
+-- the spec IS the row. It is handed to `Page.new` as written, so every ruling
+-- that constructor makes is made here in its own words: exercised is a subset of
+-- what the element declares, identify carries a polarity, a pin belongs to a
+-- click, an identify row does not refine the search rectangle, and an identify
+-- row on an element with no template says what that region reads HERE. Nothing
+-- is defaulted on the way, and nothing is filtered.
+--
+-- The last of those is what an agent writes when it annotates a page whose only
+-- signature is its own printed name: the title element is authored once, and
+-- each page adds `expected_text = "..."` to its own row.
 --
 -- THE PAGE COMES BACK BECAUSE THE OLD ONE IS GONE. The model's own copies are
 -- all replaced -- the page list, the name index, and every edge that named it --
@@ -399,15 +617,7 @@ function scribe.add_reference(
             2
         )
     end
-    if built.element_by_name[element.name] == nil then
-        error(
-            "this project declares no element named '"
-                .. element.name
-                .. "'; a row naming an element the file does not carry saves a "
-                .. "project that will not open again, so add the element first",
-            2
-        )
-    end
+    requireDeclaredElement(built, element)
     if model.Page.reference_for(page, element) ~= nil then
         error(
             "page '"
@@ -445,11 +655,8 @@ function scribe.add_reference(
     for index, edge in built.graph.edges do
         edges[index] = remappedEdge(edge, page.name, rebuilt)
     end
-    local graph = navigation.Graph.new({ pages = pages, edges = edges })
 
-    built.pages = pages
-    built.page_by_name[page.name] = rebuilt
-    built.graph = graph
+    installPage(built, pages, edges, rebuilt)
     return rebuilt
 end
 
@@ -553,29 +760,163 @@ function scribe.add_edge(built: any, spec: { [string]: any }): any
     return edge
 end
 
--- scribe.claim(built, screen_name, element, state, appearance?) -> ()
+-- Refuses when `built` is not (or is no longer) the model project.load_project
+-- returned, in the one sentence `add_screen`, `claim` and `claim_text` all
+-- need: each is about to read or grow `built.claims`, so there has to be a
+-- `Claims` object there to read or grow. It is `requireModel`'s twin for the
+-- other half of a loaded model -- the graph and the claims never share one
+-- check, because a caller working on pages has no reason to be told about
+-- screens, and the reverse.
 --
--- Records what the model says this element should do on one of the screens the
--- project already holds.
+-- Every caller reaches this directly from its own body, one frame from the
+-- error, the same shape `requireModel` relies on -- which is why `claim` and
+-- `claim_text` call it themselves rather than leaving it to `recordClaim`
+-- below: routing it through one more frame would make level 3 point at the
+-- wrong line for two of this helper's three callers.
+local function requireClaims(built: any, verb: string)
+    if type(built) ~= "table" or not oracle.is_claims(built.claims) then
+        error(verb .. " needs the model project.load_project returned", 3)
+    end
+end
+
+-- Rebuilds `built.claims` around `screens` and `expectations`, and installs
+-- the result.
 --
--- WHY A CLAIM IS NOT OPTIONAL WORK. A template always matches the image it was
--- cut from, at a distance of zero, so authoring one and looking at it on its own
--- screen demonstrates nothing. The claim is what turns the matrix into evidence:
--- it is the sentence the walk can contradict.
+-- `Claims.new` is where a duplicate screen name or hash, a screen an
+-- expectation names but the collection does not hold, and a second claim on
+-- one cell are all caught, so `add_screen` and `recordClaim` below both grow
+-- one of these two lists and hand BOTH back here rather than writing
+-- `built.claims` themselves -- the same reason `installPage` above exists for
+-- a page's three copies. There is only the one field to move here, unlike a
+-- page's three, because `screen_by_name`, `state_by_cell` and `text_by_cell`
+-- all live inside the one table `Claims.new` returns; a caller that grows
+-- `expectations` still has to pass `screens` through unchanged; and the
+-- reverse.
+local function installClaims(built: any, screens: { any }, expectations: { any })
+    built.claims = oracle.Claims.new({
+        screens      = screens,
+        expectations = expectations,
+    })
+end
+
+-- scribe.add_screen(built, spec) -> the new screen
 --
--- The claims object is rebuilt rather than mutated, because `Claims.new` is
--- where a duplicate cell and a screen this project does not hold are caught, and
+-- Declares a screen the project does not have yet: its name, and the content
+-- hash of the PNG a capture already wrote to `assets/screens/<hash>.png`. It
+-- is what closes the hole `claim` and `claim_text` were always going to hit --
+-- an agent that has just captured a screen through the exploration channel
+-- had pixels on disk and no way to tell the model they belonged to anything.
+--
+-- `spec` goes to `oracle.Screen.new` exactly as handed in, so the hash-shape
+-- check, the non-empty name, and the frozen `extra`/`residual` rulings are all
+-- made once, in the constructor's own words, and are not restated here. The
+-- two things this file rules on are the two things `Screen.new` cannot see, and
+-- both are questions about the rest of the project rather than about the screen:
+-- whether the NAME is already taken, in the voice `add_page` and `add_element`
+-- use for the same refusal and for the same reason -- a screen name is how a
+-- claim addresses it and how a verdict row reports it, so two of them cannot
+-- share one -- and whether the PAGE it says it is of exists.
+--
+-- THE PAGE CHECK IS HERE AND IN `project.build`, AND TWO PLACES IS THE POINT.
+-- They are not two copies of one check but the two doors into a model: a
+-- hand-edited file and an agent's session, and a screen entering through either
+-- one reaches the same matrix. Guarding one would leave a hole in the exact shape
+-- of the other, and what gets through it is the one state this field must never
+-- reach -- a declaration `recognition` has no page to resolve, so the screen's
+-- own claim cannot be measured at all. The sentences differ because what the
+-- caller can do about it differs: that one names the line the author wrote, and
+-- this one tells an agent to write the page first, which it is holding the
+-- session to do.
+--
+-- WHY THIS DOES NOT ALSO READ `assets/screens/<hash>.png`. It would be one
+-- more line: `ctx:project_read` already exists on this surface, and
+-- `regress.check` already calls exactly that, on every screen it walks, as
+-- what its own comment there calls "the existence proof". But `Screen.new`
+-- has already drawn this line on purpose, for this very hash, one call below:
+-- it checks the hash's SHAPE and says outright that a malformed one otherwise
+-- "surfaces as a capture that ran out of frames" rather than as a refusal at
+-- construction -- and `project.build` extends that same choice to every
+-- screen a hand-edited file declares, minting an `oracle.Screen` with no read
+-- of its own. Reading the file here would make a screen's measurability
+-- depend on HOW it was declared: checked once, immediately, through this
+-- verb, but merely trusted through a hand-edited file. `regress.check` still
+-- has to keep re-checking either way -- a file present today can be deleted
+-- before the next walk -- so a second check here would be an extra place that
+-- answer could drift from the one place already responsible for it, not a
+-- stronger guarantee of it. One required check, in the one place that owns
+-- it, beats two that can disagree.
+function scribe.add_screen(built: any, spec: { [string]: any }): any
+    requireClaims(built, "scribe.add_screen")
+    if type(spec) ~= "table" then
+        error("scribe.add_screen needs a table of fields", 2)
+    end
+    if
+        type(spec.name) == "string"
+        and built.claims.screen_by_name[spec.name] ~= nil
+    then
+        error(
+            "this project already declares a screen named '"
+                .. spec.name
+                .. "'; a screen name is how a claim addresses it and how a "
+                .. "verdict row reports it, so two of them cannot share one",
+            2
+        )
+    end
+    -- Only the string case is asked here. Every other shape falls through to
+    -- `Screen.new`, which already says what a page field must be, and a second
+    -- copy of that sentence would be a second thing to keep in step.
+    if type(spec.page) == "string" then
+        local pages: any = built.page_by_name
+        if type(pages) ~= "table" or pages[spec.page] == nil then
+            error(
+                "this project declares no page named '"
+                    .. spec.page
+                    .. "'; a screen that says which page it is of is measured by "
+                    .. "resolving that page on it, so a name nothing declares is "
+                    .. "a claim with nothing to measure -- add the page first",
+                2
+            )
+        end
+    end
+
+    local screen = oracle.Screen.new(spec)
+
+    local screens: { any } = table.clone(built.claims.screens)
+    table.insert(screens, screen)
+    installClaims(built, screens, built.claims.expectations)
+    return screen
+end
+
+-- The half of a claim that does not depend on what the cell is measured by:
+-- resolve the screen it names, and hand the whole expectation list back to
+-- `Claims.new` with one more on it.
+--
+-- IT DOES NOT CHECK `built.claims` ITSELF. Both callers below -- `claim` and
+-- `claim_text` -- call `requireClaims` on their own first line, before they
+-- ever reach here, in the same voice `scribe.add_screen` does; routing that
+-- check through this extra frame would only change which line an agent's
+-- error names, not whether it is checked.
+--
+-- The collection is rebuilt rather than mutated, because `Claims.new` is where a
+-- duplicate cell and a screen this project does not hold are caught, and
 -- appending behind its back would skip both checks.
-function scribe.claim(
+--
+-- `spec` rides through to `Expectation.new` with the screen OBJECT written over
+-- the name it was addressed by, and nothing else is added or removed on the way.
+-- That is what keeps the rulings a cell is subject to in one place: which state
+-- words exist, that a cell names one verification source and not two, that an
+-- element with no templates is claimed by what it reads, and that nothing may
+-- read a rectangle the element never declared `read` on.
+--
+-- The table is written on rather than copied, because both callers mint theirs
+-- at the call site out of their own arguments -- there is no caller table for
+-- the write to be visible in, and a copy would only be a second place a field
+-- could be lost.
+local function recordClaim(
     built: any,
     screenName: string,
-    element: any,
-    state: string,
-    appearance: string?
+    spec: { [string]: any }
 )
-    if type(built) ~= "table" or not oracle.is_claims(built.claims) then
-        error("scribe.claim needs the model project.load_project returned", 2)
-    end
     local screen = built.claims.screen_by_name[screenName]
     if screen == nil then
         error(
@@ -583,27 +924,82 @@ function scribe.claim(
                 .. tostring(screenName)
                 .. "'; a claim about a screen nobody captured is a claim nothing "
                 .. "can measure",
-            2
+            3
         )
     end
 
-    local expectations: { any } = {}
-    for index, existing in built.claims.expectations do
-        expectations[index] = existing
-    end
-    table.insert(
-        expectations,
-        oracle.Expectation.new({
-            screen     = screen,
-            element    = element,
-            appearance = appearance,
-            state      = state,
-        })
-    )
+    spec.screen = screen
 
-    built.claims = oracle.Claims.new({
-        screens      = built.claims.screens,
-        expectations = expectations,
+    local expectations: { any } = table.clone(built.claims.expectations)
+    table.insert(expectations, oracle.Expectation.new(spec))
+
+    installClaims(built, built.claims.screens, expectations)
+end
+
+-- scribe.claim(built, screen_name, element, state, appearance?) -> ()
+--
+-- Records what the model says this element's TEMPLATES should do on one of the
+-- screens the project already holds: the folded element when no appearance is
+-- named, or one appearance searched alone when one is.
+--
+-- WHY A CLAIM IS NOT OPTIONAL WORK. A template always matches the image it was
+-- cut from, at a distance of zero, so authoring one and looking at it on its own
+-- screen demonstrates nothing. The claim is what turns the matrix into evidence:
+-- it is the sentence the walk can contradict.
+function scribe.claim(
+    built: any,
+    screenName: string,
+    element: any,
+    state: string,
+    appearance: string?
+)
+    requireClaims(built, "scribe.claim")
+    recordClaim(built, screenName, {
+        element    = element,
+        appearance = appearance,
+        state      = state,
+    })
+end
+
+-- scribe.claim_text(built, screen_name, element, state, text) -> ()
+--
+-- Records what the model says this element's rectangle should READ on one of the
+-- screens the project already holds.
+--
+-- WHY IT IS A SECOND VERB RATHER THAN A SIXTH PARAMETER ON `claim`. It is the
+-- split `author_element` and `author_text_element` already stand on, arriving at
+-- the other end of the same session: a cell is measured by ONE verification
+-- source (docs/plans/2026-08-01-three-layers-and-agent-operator.md 5-4), and
+-- the source is the thing a reader most needs to see in the line that was
+-- written. A `text` added beside `appearance` would make the two mutually
+-- exclusive tail arguments of one call, so the common spelling of a text claim
+-- would be `scribe.claim(built, screen, element, "match", nil, "Sortie")` -- a
+-- nil whose only meaning is "not the other kind", in a position no reader can
+-- check without counting. Two verbs also put the pairing where the agent picks
+-- it: an element authored with `author_text_element` is claimed with
+-- `claim_text`, and neither name has a mode to get wrong.
+--
+-- `text` is required rather than optional, because a text claim with no text is
+-- a `claim` -- and `Expectation.new` says so, in its own words, on the cell it
+-- refuses.
+--
+-- WHAT IT DOES NOT RULE ON. Everything: that this element has no templates of
+-- its own, that it declares `read`, that the state is one of the three, that the
+-- text is a non-empty string. All of those are `Expectation.new`'s and are made
+-- there, because a second copy here would be a second sentence to keep in step
+-- with the model.
+function scribe.claim_text(
+    built: any,
+    screenName: string,
+    element: any,
+    state: string,
+    text: string
+)
+    requireClaims(built, "scribe.claim_text")
+    recordClaim(built, screenName, {
+        element = element,
+        text    = text,
+        state   = state,
     })
 end
 

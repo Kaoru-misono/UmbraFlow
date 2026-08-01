@@ -64,6 +64,10 @@ namespace uf::task
         // whose parent does not exist is a typo far more often than it is an
         // intent to lay out a new tree, and a store that silently created
         // directories would turn that typo into litter nothing later reads.
+        // Laying out a project's skeleton is therefore whoever opens the project
+        // -- the CLI, in entry/cli/project-skeleton.hpp -- and the refusal here
+        // names the directory that is missing so a caller that meets it knows
+        // which one.
         [[nodiscard]]
         auto resolve(std::string_view name) const -> Result<std::filesystem::path>;
 

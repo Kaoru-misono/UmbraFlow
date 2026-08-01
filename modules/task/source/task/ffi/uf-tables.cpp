@@ -12,6 +12,7 @@
 #include <core/time/monotonic-time.hpp>
 #include <core/types/enum-reflection.hpp>
 #include <core/types/integer.hpp>
+#include <core/utility/scope-exit.hpp>
 
 #include <domain/content-hash.hpp>
 
@@ -288,22 +289,33 @@ namespace uf::task
             AutomationErrorKind kind{};
         };
 
-        // The automation kind of the Tier B error carrier at `index`, or nullopt
-        // when that value is not one. The test is the userdata tag and nothing
-        // else: no field is read, so a script-built look-alike carrying `kind`,
-        // `message` and `retryable` is not a Tier B error here however faithfully
-        // it copies one.
+        // The Tier B error carrier at `index` read back, or nullopt when that
+        // value is not one.
+        //
+        // IDENTITY IS THE USERDATA TAG AND NOTHING ELSE, so a script-built
+        // look-alike carrying `kind`, `message` and `retryable` is not a Tier B
+        // error here however faithfully it copies one. The message is read only
+        // AFTER the tag has answered, which is the ordering that keeps that
+        // property: by then the value is one raiseTierB below built, and its
+        // shape is this file's own.
+        //
+        // Every lookup is raw and reaches no metamethod, because this runs on a
+        // thread that has already been unwound by the error -- there is no
+        // protected frame left, so a raise from a metamethod would have nowhere
+        // to go. The stack is restored on every path for the same reason: the
+        // caller is entitled to find the thread exactly as it left it.
         [[nodiscard]]
-        auto tierBErrorKind(
+        auto tierBError(
             lua_State* state,
             int index
-        ) -> std::optional<AutomationErrorKind>
+        ) -> std::optional<script::RaisedError>
         {
-            if (lua_type(state, index) != LUA_TUSERDATA)
+            auto const carrier = lua_absindex(state, index);
+            if (lua_type(state, carrier) != LUA_TUSERDATA)
             {
                 return std::nullopt;
             }
-            if (lua_userdatatag(state, index) != k_errorUserdataTag)
+            if (lua_userdatatag(state, carrier) != k_errorUserdataTag)
             {
                 return std::nullopt;
             }
@@ -311,8 +323,42 @@ namespace uf::task
             // from script, and raiseTierB below is the only place that stamps
             // this one, so the block holds exactly one live TierBError.
             auto const* p_error =
-                static_cast<TierBError const*>(lua_touserdata(state, index));
-            return p_error->kind;
+                static_cast<TierBError const*>(lua_touserdata(state, carrier));
+            auto raised = script::RaisedError{.kind = p_error->kind};
+
+            int const base  = lua_gettop(state);
+            auto stackGuard = scopeExit(
+                [state, base]() noexcept
+                {
+                    lua_settop(state, base);
+                }
+            );
+
+            // The carrier's three script-visible fields live in a frozen table
+            // behind its metatable's __index, which raiseTierB puts there and
+            // deepFreezeMetatable checks is a table. Walking it by hand is what
+            // avoids tostring(), which on a userdata would have to run the
+            // __tostring metamethod.
+            if (lua_getmetatable(state, carrier) == 0)
+            {
+                return raised;
+            }
+            lua_rawgetfield(state, -1, "__index");
+            if (lua_type(state, -1) != LUA_TTABLE)
+            {
+                return raised;
+            }
+            lua_rawgetfield(state, -1, "message");
+            if (lua_type(state, -1) == LUA_TSTRING)
+            {
+                std::size_t length = 0;
+                char const* text   = lua_tolstring(state, -1, &length);
+                if (text != nullptr)
+                {
+                    raised.message.assign(text, length);
+                }
+            }
+            return raised;
         }
 
         // Mints one Tier B error carrier and raises it. Never returns.
@@ -1017,6 +1063,102 @@ namespace uf::task
             addNumberField(state, "width", reading->rect.width());
             addNumberField(state, "height", reading->rect.height());
             finishFieldHandle(state, context, k_readingType);
+            return 1;
+        }
+
+        // cycle_read_lines(ticket, x, y, width, height) -> a frozen array of
+        // reading handles, one per line the frame holds inside the region, in
+        // top-to-bottom then left-to-right order. The array is empty when the
+        // region held no text at all.
+        //
+        // IT IS A VERB OF ITS OWN AND NOT A FLAG ON cycle_read. What comes back
+        // is different in KIND -- a list rather than a reading -- so a mode
+        // parameter would make every caller of the older verb unwrap a value
+        // whose shape depended on an argument, and this file already refuses
+        // parameters whose only meaning is "not the other kind" (see cycle_read
+        // on why it takes no expected text). The two also differ in what they
+        // ASSERT: cycle_read's caller says the rectangle holds one line, and
+        // this caller says it has no idea what is in the region, which is the
+        // whole reason the region is worth reading.
+        //
+        // WHAT IT COSTS: one read for the detection pass plus one for each line
+        // that pass located, out of the same per-cycle pool cycle_read spends.
+        // A region holding more lines than the cycle can still pay for RAISES
+        // rather than returning the first few, because a partly-read region
+        // establishes nothing about the lines nobody looked at -- the same rule
+        // a stopped template search obeys. See TaskContext::cycleReadLines.
+        //
+        // It does not consume the cycle: reading changes nothing on the target,
+        // so the same cycle goes on to click one of the lines it found.
+        //
+        // EVERY LINE COMES BACK IN TARGET PIXELS. The rectangle on a handle is
+        // where the FRAME put the text, not where the caller asked it to look,
+        // so nothing above this has an origin to add back and forget.
+        auto cycleReadLinesFn(lua_State* state) -> int
+        {
+            auto* context = boundContext(state);
+            guardFatal(state, context);
+
+            auto* ticket    = checkBox<CycleTicket>(state, 1, k_cycleType, "cycle");
+            auto const rect = checkPixelRect(state, 2, "cycle_read_lines region");
+
+            auto const call = NativeCallIdentity{
+                .verb         = "cycle_read_lines",
+                .cycleOrdinal = ticket->ordinal,
+            };
+
+            auto result = context->cycleReadLines(*ticket, rect);
+            if (!result)
+            {
+                traceHostCallFailure(state, context, call, result.error());
+            }
+
+            auto const lines = *std::move(result);
+            traceHostCall(
+                state,
+                context,
+                call,
+                lines.empty()
+                    ? trace::NativeCallOutcome::Empty
+                    : trace::NativeCallOutcome::Succeeded
+            );
+
+            lua_createtable(state, static_cast<int>(lines.size()), 0);
+            int const array = lua_gettop(state);
+            for (auto index = std::size_t{0}; index < lines.size(); ++index)
+            {
+                auto const& line = lines[index];
+
+                // The same carrier shape a single reading gets, because a line
+                // IS a reading: one region, one string, one confidence. A second
+                // shape for the same facts would be a second thing for layer two
+                // to learn.
+                beginFieldHandle<uint8>(state, uint8{0}, k_readingUserdataTag);
+                lua_pushlstring(state, line.text.data(), line.text.size());
+                lua_setfield(state, -2, "text");
+                addNumberField(state, "confidence", line.confidenceBp);
+                addNumberField(state, "x", line.rect.x());
+                addNumberField(state, "y", line.rect.y());
+                addNumberField(state, "width", line.rect.width());
+                addNumberField(state, "height", line.rect.height());
+                finishFieldHandle(state, context, k_readingType);
+
+                lua_rawseti(state, array, static_cast<int>(index) + 1);
+            }
+
+            // Frozen like every other host-minted value. The entries already are;
+            // the array around them is frozen so a framework bug cannot append a
+            // line the frame never located to a list the layer above treats as
+            // evidence.
+            if (!script::deepFreeze(state, array))
+            {
+                raiseInvariant(
+                    state,
+                    context,
+                    "the array of read lines could not be frozen"
+                );
+            }
+            lua_settop(state, array);
             return 1;
         }
 
@@ -2298,6 +2440,21 @@ namespace uf::task
                 "uf_cycle_read",
                 context
             );
+            // Bound outside the Exploration block, like cycle_read and unlike
+            // cycle_crop. It hands back text and rectangles, which is an ANSWER
+            // about the frame rather than the frame's pixels or a bare
+            // coordinate -- and those two are what the privileged verbs are. A
+            // business task reading a scrolling list it cannot draw rectangles
+            // inside is doing ordinary work, and an agent authoring that list
+            // needs the same verb under the same guarantees.
+            installPrimitive(
+                state,
+                surface,
+                "cycle_read_lines",
+                &cycleReadLinesFn,
+                "uf_cycle_read_lines",
+                context
+            );
             installPrimitive(
                 state,
                 surface,
@@ -2433,9 +2590,9 @@ namespace uf::task
 
     auto scriptRaisedErrorClassifier() -> script::RaisedErrorClassifier
     {
-        return [](lua_State* state, int index) -> std::optional<AutomationErrorKind>
+        return [](lua_State* state, int index) -> std::optional<script::RaisedError>
         {
-            return tierBErrorKind(state, index);
+            return tierBError(state, index);
         };
     }
 

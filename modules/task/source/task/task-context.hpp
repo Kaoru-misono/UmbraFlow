@@ -79,13 +79,24 @@ namespace uf::task
     // comparison is nanoseconds, a line read is 2-13 milliseconds -- so one
     // number covering both describes neither.
     //
-    // CALIBRATION: eight is a conservative placeholder awaiting the first real
-    // daily. It is above every reading pattern measured so far -- the widest is
-    // "read each of the candidate slots on this page once and pick one" -- and
-    // low enough that a wait loop reading once per poll cannot turn a cycle into
-    // a tenth of a second of inference. Raise it here, or per run through
+    // A BLOCK READ SPENDS THIS POOL TOO, one for its detection pass and one for
+    // every line that pass located, and it is the pattern the number below is
+    // now set by. It stays one pool rather than becoming a fourth dimension
+    // because the units DO compare here, which is the exact opposite of the crop
+    // budget's argument: a block read's lines go through the same recogniser at
+    // the same price as a cycle_read, so one number describes both honestly.
+    //
+    // CALIBRATION: thirty-two, raised from the eight that was set when a read
+    // meant one line the model had drawn a rectangle around. The page this verb
+    // exists for is a character grid showing on the order of twenty names at
+    // once, which is twenty-one reads for one block read, and a cycle that could
+    // not afford one would leave the verb unusable at its default. The ceiling
+    // is set by the observation lease rather than by taste: reads measured 2-13
+    // ms, so thirty-two of them is at most about 0.4 s of inference, which
+    // leaves room inside the 750 ms lease for the detection pass and for the
+    // click the cycle exists to deliver. Raise it here, or per run through
     // TaskContextConfig, once a real page needs more.
-    inline constexpr auto k_defaultMaximumReadsPerCycle = uint32{8};
+    inline constexpr auto k_defaultMaximumReadsPerCycle = uint32{32};
 
     // How many crops one observation cycle may charge before the host refuses
     // the next one.
@@ -277,6 +288,32 @@ namespace uf::task
             CycleTicket ticket,
             PixelRect rect
         ) -> Result<std::optional<engine::TextReading>>;
+
+        // Finds every line of text inside `rect` of the frame `ticket`'s cycle
+        // retains and reads each one, with its own rectangle in FRAME pixels.
+        //
+        // It is cycleRead's sibling and not its replacement. cycleRead is right
+        // wherever the caller drew the rectangle; this one is for the region
+        // nobody CAN draw a rectangle inside, because what is in it moves -- a
+        // grid that scrolls continuously, where a name's position is a fact
+        // about the frame rather than about the model.
+        //
+        // WHAT IT COSTS, which is the only budget question this verb raises: one
+        // read for the detection pass plus one for every line the detector
+        // located, out of the same pool cycleRead spends. The full reasoning is
+        // at the charge in the implementation; the consequence a caller sees is
+        // that a region holding more lines than the cycle can still pay for
+        // fails RecognitionIncomplete and reads NONE of them, rather than
+        // handing back the first few of a region nobody finished looking at.
+        //
+        // It does NOT consume the cycle. Reading changes nothing on the target,
+        // so the same cycle goes on to click one of the lines it found -- which
+        // is the whole point of the verb.
+        [[nodiscard]]
+        auto cycleReadLines(
+            CycleTicket ticket,
+            PixelRect rect
+        ) -> Result<std::vector<engine::TextReading>>;
 
         // Copies `rect` of the frame `ticket`'s cycle retains, encodes it as a
         // PNG, and hands back the bytes with their content hash.

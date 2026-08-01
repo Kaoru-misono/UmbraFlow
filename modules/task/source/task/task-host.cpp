@@ -652,6 +652,24 @@ namespace uf::task
         return p_generation->model().fingerprint;
     }
 
+    auto TaskHost::projectElementCount(
+        GenerationId generation
+    ) -> Result<std::size_t>
+    {
+        auto* const p_generation = findGeneration(generation);
+        if (p_generation == nullptr)
+        {
+            return fail(
+                AutomationErrorKind::InvalidResource,
+                std::format(
+                    "no loaded project for generation {}",
+                    generation.value()
+                )
+            );
+        }
+        return p_generation->model().elementNames.size();
+    }
+
     auto TaskHost::runFrameworkRoutine(
         GenerationId generation,
         FrameworkRoutine const& routine,

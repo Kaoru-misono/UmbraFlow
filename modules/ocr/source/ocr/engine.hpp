@@ -38,6 +38,11 @@ namespace uf::ocr
 
         // The rect may hold any number of lines anywhere in it. Runs detection
         // first, then recognises each box it found.
+        //
+        // Every line comes back with its own rectangle in the coordinate space
+        // of the image, never of the rect: a caller that had to add the origin
+        // back would eventually forget, and a click one origin away from the
+        // text it was aimed at fails nothing on the way out.
         Block,
     };
 
@@ -50,6 +55,24 @@ namespace uf::ocr
         std::optional<PixelRect> rect{};
 
         TextLayout layout{TextLayout::Block};
+
+        // The most lines a Block read may recognise, or absent for no ceiling
+        // at all.
+        //
+        // IT IS A BUDGET THE CALLER OWNS, which is why it is an argument rather
+        // than a constant here. Detection is one inference over the region and
+        // recognition is one MORE inference per line it located, so the price of
+        // a block read is set by what the screen happens to hold -- and the
+        // layer that has to keep an observation inside its lease is the only one
+        // that knows how many of those it can afford.
+        //
+        // Exceeding it FAILS, and never returns the first n lines. A caller that
+        // was handed part of a region would conclude "the name I want is not
+        // here" from a region nobody finished looking at, which is the fail-open
+        // answer this project refuses everywhere else a search can stop early.
+        // The refusal happens after detection and before any recognition, so an
+        // over-full region costs one inference rather than one per line.
+        std::optional<uint32> maximumLines{};
     };
 
     // Turns pixels into text.

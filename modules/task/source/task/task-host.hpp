@@ -17,6 +17,7 @@
 
 #include <trace/event.hpp>
 
+#include <cstddef>
 #include <filesystem>
 #include <memory>
 #include <optional>
@@ -291,6 +292,20 @@ namespace uf::task
         auto projectFingerprint(
             GenerationId generation
         ) -> Result<ProjectFingerprint>;
+
+        // How many elements `generation`'s project declares, as its page model
+        // lists them.
+        //
+        // It is here for the one caller that has to size a per-cycle budget from
+        // the FILE rather than from a policy constant: the falsification matrix
+        // opens one observation per screen and spends at most one text read per
+        // element on it, so the reads one of its cycles can need is bounded by
+        // this count and by nothing else (entry/cli/check.cpp). The host already
+        // reads the names for the pre-VM resource pass, so this asks the flat
+        // line scan nothing new -- which matters, because a second C++ reader of
+        // the page model would be a second opinion about what one means.
+        [[nodiscard]]
+        auto projectElementCount(GenerationId generation) -> Result<std::size_t>;
 
         // Runs one of the host's own trusted routines against `generation`'s
         // project and reports how it ended and what it answered.

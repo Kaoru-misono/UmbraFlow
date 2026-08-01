@@ -25,18 +25,48 @@ namespace uf::task
         constexpr auto k_modelModule   = "model";
         constexpr auto k_observeModule = "observe";
         constexpr auto k_projectModule = "project";
+        // The capture-free operations on what a capture produced: pick the line
+        // saying X out of a list of them, aim a click at a known offset from a
+        // hit. Published because a task holding the lines `observe.read_lines`
+        // returned is exactly who needs both, and because neither confers
+        // anything -- `hits.offset` mints only from a hit the framework already
+        // minted and inherits its cycle, so it can express no click a task could
+        // not already have asked for at the line itself.
+        constexpr auto k_hitsModule = "hits";
         // navigation carries Edge/Graph/stack for layer-three scripts. mint is
         // deliberately NOT here: it is model/navigation's shared internals and
         // every function on it is reachable through a published constructor.
+        // `evidence` is not here either, and for a stronger reason than mint's:
+        // it is the ledger saying which hits and receipts this framework minted
+        // and on which frame, so a project that could name it could mint a hit
+        // claiming interact on an element no page ever authorised and
+        // observe.click would accept it.
         constexpr auto k_navigationModule = "navigation";
         // The falsification matrix: `oracle` is the screens a model is measured
-        // against and what each cell is supposed to show, `regress` is the walk
-        // that measures them and the verdict it returns. Both are published for
-        // the same reason `model` is -- a project that grows its own screens or
-        // reads a verdict names them -- and the routine `umbra-flow check` runs
-        // reaches them through this list rather than through a private route.
-        constexpr auto k_oracleModule  = "oracle";
-        constexpr auto k_regressModule = "regress";
+        // against and what each cell is supposed to show, `reading` is how a
+        // cell no template can answer is measured and where two claims about
+        // one region's text collide, `recognition` is what a screen's own
+        // declaration of which PAGE it is buys and costs, and `regress` is the
+        // walk that spends all three and the verdict it returns. All four are
+        // published for the same reason `model` is -- a project that grows its
+        // own screens or reads a verdict names them -- and the routine
+        // `umbra-flow check` runs reaches them through this list rather than
+        // through a private route. That routine names `recognition` directly:
+        // it asks whether the screen declarations will need an OCR engine
+        // before the first screen is opened, exactly as it asks `oracle` whether
+        // the claims will.
+        //
+        // `reading` and `recognition` are published where `mint` is not, and the
+        // difference is what publishing would hand over. `mint` is the toolkit
+        // the constructors shape a model with, so a project holding it could
+        // shape one the constructors never saw. The other two mint nothing and
+        // confer nothing: their verbs read a region or resolve a page through
+        // the caller's own ctx and compare claims already in the file, all of
+        // which a project could already do the long way.
+        constexpr auto k_oracleModule      = "oracle";
+        constexpr auto k_readingModule     = "reading";
+        constexpr auto k_recognitionModule = "recognition";
+        constexpr auto k_regressModule     = "regress";
         // The two modules ONLY the exploration environment publishes. `explore`
         // is the forwards for the privileged primitives -- the bare-coordinate
         // click, the crop and the probe -- and `scribe` is the measure-and-author
@@ -75,8 +105,11 @@ namespace uf::task
             std::string{k_modelModule},
             std::string{k_observeModule},
             std::string{k_projectModule},
+            std::string{k_hitsModule},
             std::string{k_navigationModule},
             std::string{k_oracleModule},
+            std::string{k_readingModule},
+            std::string{k_recognitionModule},
             std::string{k_regressModule},
         };
     }

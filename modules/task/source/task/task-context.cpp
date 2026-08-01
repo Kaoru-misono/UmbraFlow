@@ -122,8 +122,58 @@ namespace uf::task
                 )
             );
         }
-        m_cycles.chargeRead();
+        m_cycles.chargeReads(1);
         return m_session.readText(m_cycles.observation(), rect);
+    }
+
+    auto TaskContext::cycleReadLines(
+        CycleTicket ticket,
+        PixelRect rect
+    ) -> Result<std::vector<engine::TextReading>>
+    {
+        UF_TRY(m_cycles.requireOpen(ticket));
+
+        auto const spent = m_cycles.readsCharged();
+        if (spent >= m_config.maximumReadsPerCycle)
+        {
+            return fail(
+                AutomationErrorKind::RecognitionIncomplete,
+                std::format(
+                    "this observation cycle has already spent its budget of {} "
+                    "text reads; open a new cycle to read again",
+                    m_config.maximumReadsPerCycle
+                )
+            );
+        }
+
+        // ONE READ FOR THE DETECTION PASS, CHARGED BEFORE IT RUNS, AND ONE MORE
+        // FOR EVERY LINE IT LOCATED. That is the whole budget rule for this
+        // verb, and the reason is what the two halves cost. Locating is one
+        // inference over the region; recognising is one MORE inference per line,
+        // at the same 2-13 ms per line a cycle_read costs -- so a block read
+        // over a twenty-name grid is twenty-one reads however it is spelled, and
+        // charging it as one would leave the budget describing nothing for the
+        // verb that spends the most. It stays the SAME pool as cycle_read rather
+        // than a dimension of its own, which is the opposite of the choice the
+        // crop budget made and for the opposite reason: a crop is an encode and
+        // a read is an inference, so those two units do not compare, while a
+        // block read's lines are recognised by the same recogniser at the same
+        // price as a single-line read. One number covers them because it is one
+        // cost.
+        //
+        // The remainder is handed DOWN so the engine can refuse a region holding
+        // more lines than this cycle can pay for, having spent one inference
+        // rather than one per line. That refusal is a failure and never a short
+        // list; see engine::EngineSession::readTextLines.
+        m_cycles.chargeReads(1);
+        auto const remaining = m_config.maximumReadsPerCycle - spent - 1U;
+
+        UF_TRY_VALUE(
+            lines,
+            m_session.readTextLines(m_cycles.observation(), rect, remaining)
+        );
+        m_cycles.chargeReads(static_cast<uint32>(lines.size()));
+        return lines;
     }
 
     auto TaskContext::cycleCrop(

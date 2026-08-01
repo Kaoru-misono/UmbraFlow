@@ -311,6 +311,85 @@ namespace uf::engine
         return attempt;
     }
 
+    auto EngineSession::readTextLinesOnFrame(
+        Frame const& frame,
+        PixelRect rect,
+        uint32 maximumLines
+    ) const -> Result<BlockReadAttempt>
+    {
+        if (m_ocrEngine == nullptr)
+        {
+            return fail(
+                AutomationErrorKind::UnsupportedCapability,
+                "this engine session was built without an OCR adapter, so it "
+                "cannot read text"
+            );
+        }
+
+        auto const area = checkedMultiply(
+            static_cast<uint64>(rect.width()),
+            static_cast<uint64>(rect.height())
+        );
+        if (!area || *area == 0U || *area > k_maximumBlockReadPixels)
+        {
+            return fail(
+                AutomationErrorKind::InvalidResource,
+                std::format(
+                    "a read region of {}x{} is empty or beyond the host's "
+                    "block read ceiling of {} pixels",
+                    rect.width(),
+                    rect.height(),
+                    k_maximumBlockReadPixels
+                )
+            );
+        }
+
+        auto const started = MonotonicInstant::now();
+        auto       readout = withBgraFrame(
+            frame,
+            [this, rect, maximumLines](BgraImage const& image) -> Result<ocr::Readout>
+            {
+                return m_ocrEngine->read(
+                    image,
+                    ocr::ReadSpec{
+                        .rect         = rect,
+                        .layout       = ocr::TextLayout::Block,
+                        .maximumLines = maximumLines,
+                    }
+                );
+            }
+        );
+        auto const elapsed = MonotonicInstant::now().saturatingDurationSince(started);
+        auto const micros  = std::chrono::duration_cast<std::chrono::microseconds>(
+            elapsed
+        ).count();
+        if (!readout)
+        {
+            return std::unexpected{std::move(readout).error()};
+        }
+
+        auto attempt = BlockReadAttempt{
+            .engineId       = std::string{m_ocrEngine->identity()},
+            .durationMicros = static_cast<uint64>(std::max(micros, int64{0})),
+        };
+        attempt.lines.reserve(readout->lines.size());
+        for (auto& line : readout->lines)
+        {
+            // The line's OWN rectangle, which is the whole point of the verb:
+            // it is where the frame found the text, not where the caller asked
+            // it to look, and it is already in frame pixels because
+            // ocr::TextLine promises that.
+            attempt.lines.emplace_back(
+                TextReading{
+                    .text         = std::move(line.text),
+                    .rect         = line.bounds,
+                    .confidenceBp = line.confidenceBp,
+                }
+            );
+        }
+        return attempt;
+    }
+
     auto EngineSession::makeRecognitionPolicy() const -> RecognitionPolicy
     {
         return RecognitionPolicy{
@@ -551,6 +630,59 @@ namespace uf::engine
             return std::optional<TextReading>{std::nullopt};
         }
         return std::optional<TextReading>{*std::move(reading->line)};
+    }
+
+    auto EngineSession::readTextLines(
+        Observation const& observation,
+        PixelRect rect,
+        uint32 maximumLines
+    ) -> Result<std::vector<TextReading>>
+    {
+        UF_TRY(ensureUsable(observation, "readTextLines"));
+
+        auto const& frame    = observation.m_frame;
+        auto const  identity = FrameIdentity::fromFrame(frame);
+        auto        reading  = readTextLinesOnFrame(frame, rect, maximumLines);
+        if (!reading)
+        {
+            auto event      = identityEvent(trace::TraceEventKind::EngineTextRead, identity);
+            event.errorKind = automationErrorKind(reading.error());
+            event.message   = std::string{reading.error().message()};
+            UF_TRY(emit(event));
+            return std::unexpected{std::move(reading).error()};
+        }
+
+        // ONE event for the call, carrying the REGION and the whole cost, with
+        // every located line inside it. One event per line would restate the
+        // region and the duration once per line and let a reader adding the
+        // durations up count the same milliseconds several times; one event with
+        // no lines in it would leave a click at a line with nothing in the
+        // stream to check it against.
+        auto lines = std::vector<trace::TraceEvent::Reading::Line>{};
+        lines.reserve(reading->lines.size());
+        for (auto const& line : reading->lines)
+        {
+            lines.emplace_back(
+                trace::TraceEvent::Reading::Line{
+                    .text         = line.text,
+                    .rect         = line.rect,
+                    .confidenceBp = line.confidenceBp,
+                }
+            );
+        }
+
+        auto event    = identityEvent(trace::TraceEventKind::EngineTextRead, identity);
+        event.reading = trace::TraceEvent::Reading{
+            .text         = std::string{},
+            .rect         = rect,
+            .confidenceBp = 0,
+            .engineId       = std::string{reading->engineId},
+            .durationMicros = reading->durationMicros,
+            .lines          = std::move(lines),
+        };
+        UF_TRY(emit(event));
+
+        return std::move(reading->lines);
     }
 
     auto EngineSession::cropRegion(

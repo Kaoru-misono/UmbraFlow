@@ -57,15 +57,21 @@ namespace uf::task
     {
         // What a fake OCR engine was asked for and what it answers.
         //
-        // The layout it records is load-bearing: the adapter this project ships
-        // refuses TextLayout::Block outright, so a host that quietly asked for
-        // Block would work against a fake and fail on the real engine.
+        // The layout it records is load-bearing: the two layouts cost different
+        // things and refuse on different terms, so a host that quietly asked for
+        // the wrong one would work against a fake and misbehave on the real
+        // engine. The line ceiling is recorded for the same reason -- a block
+        // read that did not hand its remaining budget down would let the engine
+        // recognise a region the cycle cannot pay for.
         class FakeOcrEngine final : public ocr::IOcrEngine
         {
             ocr::Readout                       m_readout;
+            ocr::Readout                       m_block{};
             std::optional<AutomationErrorKind> m_failure{};
             std::vector<ocr::TextLayout>       m_layouts{};
             std::vector<PixelRect>             m_rects{};
+            std::vector<std::optional<uint32>> m_ceilings{};
+            bool                               m_answersBlock{false};
 
         public:
             explicit FakeOcrEngine(ocr::Readout readout) noexcept
@@ -79,6 +85,16 @@ namespace uf::task
             ) noexcept
                 : m_readout{std::move(readout)}
                 , m_failure{failure}
+            {
+            }
+
+            // The two-layout fake. `block` is what a Block read answers with,
+            // and supplying one is what makes this engine claim to have a
+            // detector at all.
+            FakeOcrEngine(ocr::Readout readout, ocr::Readout block) noexcept
+                : m_readout{std::move(readout)}
+                , m_block{std::move(block)}
+                , m_answersBlock{true}
             {
             }
 
@@ -101,10 +117,25 @@ namespace uf::task
                 }
                 if (spec.layout == ocr::TextLayout::Block)
                 {
-                    return fail(
-                        AutomationErrorKind::UnsupportedCapability,
-                        "this adapter does not run the detection model"
-                    );
+                    m_ceilings.emplace_back(spec.maximumLines);
+                    if (!m_answersBlock)
+                    {
+                        return fail(
+                            AutomationErrorKind::UnsupportedCapability,
+                            "this adapter does not run the detection model"
+                        );
+                    }
+                    if (
+                        spec.maximumLines.has_value()
+                        && m_block.lines.size() > *spec.maximumLines
+                    )
+                    {
+                        return fail(
+                            AutomationErrorKind::RecognitionIncomplete,
+                            "the region holds more lines than this read may take"
+                        );
+                    }
+                    return m_block;
                 }
                 if (m_failure.has_value())
                 {
@@ -123,6 +154,12 @@ namespace uf::task
                 -> std::vector<PixelRect> const&
             {
                 return m_rects;
+            }
+
+            [[nodiscard]] auto ceilings() const noexcept UF_LIFETIME_BOUND
+                -> std::vector<std::optional<uint32>> const&
+            {
+                return m_ceilings;
             }
         };
 
@@ -149,6 +186,8 @@ namespace uf::task
             uint64                            maximumPixelComparisons{1'000};
             MonotonicInstant::Duration maxActionFrameAge{k_defaultMaxActionFrameAge};
             std::unique_ptr<ocr::IOcrEngine> ocrEngine{};
+
+            bool recordsTrace{false};
         };
 
         struct Harness final
@@ -156,6 +195,11 @@ namespace uf::task
             std::unique_ptr<trace::TraceRecorder> recorder;
             Result<engine::EngineSession>         session;
             CountingActionSink*                   clicks;
+
+            // Null unless the case asked for a recording sink. Only a case that
+            // asserts what the run WROTE needs one, and the rest would pay to
+            // keep every line of every run in memory for nobody to read.
+            RecordingTraceSink* traces;
         };
 
         [[nodiscard]]
@@ -164,8 +208,15 @@ namespace uf::task
             auto const fingerprint = fixtureFingerprint();
             auto actionSink      = std::make_unique<CountingActionSink>();
             auto* const p_clicks = actionSink.get();
+
+            auto traceSink       = std::make_unique<RecordingTraceSink>();
+            auto* const p_traces = spec.recordsTrace ? traceSink.get() : nullptr;
             auto recorder        = std::make_unique<trace::TraceRecorder>(
-                std::make_unique<DiscardingTraceSink>(),
+                spec.recordsTrace
+                    ? std::unique_ptr<trace::ITraceSink>{std::move(traceSink)}
+                    : std::unique_ptr<trace::ITraceSink>{
+                          std::make_unique<DiscardingTraceSink>()
+                      },
                 k_fixtureRunId,
                 k_fixtureGenerationId,
                 trace::FrontEnd::Task
@@ -189,6 +240,7 @@ namespace uf::task
                 .recorder = std::move(recorder),
                 .session  = std::move(session),
                 .clicks   = p_clicks,
+                .traces   = p_traces,
             };
         }
 
@@ -526,6 +578,346 @@ namespace uf::task
             auto const third = context.cycleRead(*next, rect);
             REQUIRE(third.has_value());
             CHECK(third->has_value());
+        }
+
+        // Three lines wherever a block-reading fake is asked for one, at three
+        // different places inside a 3x1 frame's only row. The rectangles differ
+        // from each other and from any region a case reads, which is what makes
+        // "every line carries its OWN place" checkable at all.
+        [[nodiscard]]
+        auto threeLineReadout() -> ocr::Readout
+        {
+            auto readout = ocr::Readout{};
+            readout.lines.emplace_back(
+                ocr::TextLine{
+                    .text   = "battle",
+                    .bounds = test::pixelRect(0, 0, 1, 1),
+                    .confidenceBp = 9'000,
+                }
+            );
+            readout.lines.emplace_back(
+                ocr::TextLine{
+                    .text   = "rest",
+                    .bounds = test::pixelRect(1, 0, 1, 1),
+                    .confidenceBp = 8'000,
+                }
+            );
+            readout.lines.emplace_back(
+                ocr::TextLine{
+                    .text   = "shop",
+                    .bounds = test::pixelRect(2, 0, 1, 1),
+                    .confidenceBp = 7'000,
+                }
+            );
+            return readout;
+        }
+
+        TEST_CASE("cycle_read_lines reports every line with its own place on the frame")
+        {
+            auto ocrEngine = std::make_unique<FakeOcrEngine>(
+                oneLineReadout("battle", 9'000),
+                threeLineReadout()
+            );
+            auto* const p_ocr = ocrEngine.get();
+            auto built = buildHarness(
+                matchableFrames(),
+                HarnessSpec{.ocrEngine = std::move(ocrEngine)}
+            );
+            REQUIRE(built.session.has_value());
+            TaskContext context{*std::move(built.session), *built.recorder};
+
+            auto const ticket = context.openCycle();
+            REQUIRE(ticket.has_value());
+            auto const lines = context.cycleReadLines(
+                *ticket,
+                test::pixelRect(0, 0, 3, 1)
+            );
+            REQUIRE(lines.has_value());
+            REQUIRE(lines->size() == 3U);
+
+            // Each line's OWN rectangle, and not the region that was read. Feed
+            // the requested rect back onto every reading instead and this goes
+            // red on the second line.
+            CHECK((*lines)[0].text == "battle");
+            CHECK((*lines)[0].rect == test::pixelRect(0, 0, 1, 1));
+            CHECK((*lines)[1].text == "rest");
+            CHECK((*lines)[1].rect == test::pixelRect(1, 0, 1, 1));
+            CHECK((*lines)[2].confidenceBp == 7'000U);
+
+            // Block and never SingleLine, with the region the caller named.
+            REQUIRE(p_ocr->layouts().size() == 1U);
+            CHECK(p_ocr->layouts().front() == ocr::TextLayout::Block);
+            REQUIRE(p_ocr->rects().size() == 1U);
+            CHECK(p_ocr->rects().front() == test::pixelRect(0, 0, 3, 1));
+        }
+
+        TEST_CASE("A block read costs one for locating and one for each line found")
+        {
+            // The budget decision, and the only place it is observable. Charge
+            // one flat read per block read instead and the second call below
+            // succeeds, so this goes red.
+            auto built = buildHarness(
+                matchableFrames(),
+                HarnessSpec{
+                    .ocrEngine = std::make_unique<FakeOcrEngine>(
+                        oneLineReadout("battle", 9'000),
+                        threeLineReadout()
+                    ),
+                }
+            );
+            REQUIRE(built.session.has_value());
+            TaskContext context{
+                *std::move(built.session),
+                *built.recorder,
+                TaskContextConfig{.maximumReadsPerCycle = 5},
+            };
+
+            auto const ticket = context.openCycle();
+            REQUIRE(ticket.has_value());
+            auto const rect = test::pixelRect(0, 0, 3, 1);
+
+            // One for the detection pass plus three lines is four of the five.
+            auto const first = context.cycleReadLines(*ticket, rect);
+            REQUIRE(first.has_value());
+            CHECK(first->size() == 3U);
+
+            // The fifth pays for the next detection pass, leaving nothing for
+            // the lines it would find -- so it refuses rather than reading some.
+            auto const second = context.cycleReadLines(*ticket, rect);
+            REQUIRE_FALSE(second.has_value());
+            CHECK(
+                kindOfError(second.error())
+                == AutomationErrorKind::RecognitionIncomplete
+            );
+
+            // And the pool is shared with the single-line verb, not a second
+            // dimension beside it.
+            auto const line = context.cycleRead(*ticket, rect);
+            REQUIRE_FALSE(line.has_value());
+            CHECK(
+                kindOfError(line.error())
+                == AutomationErrorKind::RecognitionIncomplete
+            );
+        }
+
+        TEST_CASE("A block read hands its remaining budget down to the engine")
+        {
+            // What stops a region from being recognised line by line before the
+            // budget can object: the ceiling travels with the read, so the
+            // engine refuses having located rather than having read. Stop
+            // passing `remaining` and the ceiling arrives absent, so this goes
+            // red on the recorded value.
+            auto ocrEngine = std::make_unique<FakeOcrEngine>(
+                oneLineReadout("battle", 9'000),
+                threeLineReadout()
+            );
+            auto* const p_ocr = ocrEngine.get();
+            auto built = buildHarness(
+                matchableFrames(),
+                HarnessSpec{.ocrEngine = std::move(ocrEngine)}
+            );
+            REQUIRE(built.session.has_value());
+            TaskContext context{
+                *std::move(built.session),
+                *built.recorder,
+                TaskContextConfig{.maximumReadsPerCycle = 3},
+            };
+
+            auto const ticket = context.openCycle();
+            REQUIRE(ticket.has_value());
+            auto const lines = context.cycleReadLines(
+                *ticket,
+                test::pixelRect(0, 0, 3, 1)
+            );
+
+            REQUIRE(p_ocr->ceilings().size() == 1U);
+            REQUIRE(p_ocr->ceilings().front().has_value());
+            CHECK(*p_ocr->ceilings().front() == 2U);
+
+            // Three lines against a ceiling of two is a failure and never the
+            // first two lines.
+            REQUIRE_FALSE(lines.has_value());
+            CHECK(
+                kindOfError(lines.error())
+                == AutomationErrorKind::RecognitionIncomplete
+            );
+        }
+
+        TEST_CASE("A block read writes one engine line carrying every line it found")
+        {
+            // WHAT MAKES A CLICK AT A LOCATED LINE AUDITABLE AFTERWARDS. A
+            // single-line read's region and its answer are one rectangle, so one
+            // `readRect` says both; a block read's are not, and a reader
+            // checking that a delivered click landed on text this frame actually
+            // held has only the per-line rectangles to check it against. Drop
+            // the `lines` the engine fills in and this goes red.
+            auto built = buildHarness(
+                matchableFrames(),
+                HarnessSpec{
+                    .ocrEngine = std::make_unique<FakeOcrEngine>(
+                        oneLineReadout("battle", 9'000),
+                        threeLineReadout()
+                    ),
+                    .recordsTrace = true,
+                }
+            );
+            REQUIRE(built.session.has_value());
+            auto* const p_traces = built.traces;
+            TaskContext context{*std::move(built.session), *built.recorder};
+
+            auto const ticket = context.openCycle();
+            REQUIRE(ticket.has_value());
+            REQUIRE(
+                context.cycleReadLines(*ticket, test::pixelRect(0, 0, 3, 1))
+                    .has_value()
+            );
+
+            auto const* p_read = static_cast<trace::TraceEvent const*>(nullptr);
+            for (auto const& stamped : p_traces->events())
+            {
+                if (stamped.event().kind == trace::TraceEventKind::EngineTextRead)
+                {
+                    p_read = &stamped.event();
+                }
+            }
+            REQUIRE(p_read != nullptr);
+            REQUIRE(p_read->reading.has_value());
+
+            // The region on the event itself, and each line inside it.
+            CHECK(p_read->reading->rect == test::pixelRect(0, 0, 3, 1));
+            CHECK(p_read->reading->text.empty());
+            CHECK(p_read->reading->engineId == "fake/single-line");
+            REQUIRE(p_read->reading->lines.size() == 3U);
+            CHECK(p_read->reading->lines[1].text == "rest");
+            CHECK(p_read->reading->lines[1].rect == test::pixelRect(1, 0, 1, 1));
+            CHECK(p_read->reading->lines[1].confidenceBp == 8'000U);
+        }
+
+        TEST_CASE("A single-line read still writes the line it always wrote")
+        {
+            // The control for the case above: adding a per-line list must not
+            // change what the older verb records, because a stream written
+            // before block reads existed has to keep meaning what it meant.
+            auto built = buildHarness(
+                matchableFrames(),
+                HarnessSpec{
+                    .ocrEngine = std::make_unique<FakeOcrEngine>(
+                        oneLineReadout("battle", 9'000)
+                    ),
+                    .recordsTrace = true,
+                }
+            );
+            REQUIRE(built.session.has_value());
+            auto* const p_traces = built.traces;
+            TaskContext context{*std::move(built.session), *built.recorder};
+
+            auto const ticket = context.openCycle();
+            REQUIRE(ticket.has_value());
+            REQUIRE(
+                context.cycleRead(*ticket, test::pixelRect(0, 0, 3, 1)).has_value()
+            );
+
+            auto const* p_read = static_cast<trace::TraceEvent const*>(nullptr);
+            for (auto const& stamped : p_traces->events())
+            {
+                if (stamped.event().kind == trace::TraceEventKind::EngineTextRead)
+                {
+                    p_read = &stamped.event();
+                }
+            }
+            REQUIRE(p_read != nullptr);
+            REQUIRE(p_read->reading.has_value());
+            CHECK(p_read->reading->text == "battle");
+            CHECK(p_read->reading->confidenceBp == 9'000U);
+            CHECK(p_read->reading->lines.empty());
+        }
+
+        TEST_CASE("cycle_read_lines refuses without an adapter and on a spent ticket")
+        {
+            auto built = buildHarness(matchableFrames(), HarnessSpec{});
+            REQUIRE(built.session.has_value());
+            TaskContext context{*std::move(built.session), *built.recorder};
+
+            auto const ticket = context.openCycle();
+            REQUIRE(ticket.has_value());
+            auto const rect     = test::pixelRect(0, 0, 3, 1);
+            auto const unbacked = context.cycleReadLines(*ticket, rect);
+            REQUIRE_FALSE(unbacked.has_value());
+            CHECK(
+                kindOfError(unbacked.error())
+                == AutomationErrorKind::UnsupportedCapability
+            );
+
+            CHECK(context.closeCycle(*ticket));
+            auto const stale = context.cycleReadLines(*ticket, rect);
+            REQUIRE_FALSE(stale.has_value());
+            CHECK(
+                kindOfError(stale.error()) == AutomationErrorKind::StaleObservation
+            );
+        }
+
+        TEST_CASE("cycle_read_lines hands a script a frozen array of readings")
+        {
+            // The primitive's own contract, on both surfaces. The array is
+            // frozen because the layer above treats what the host returned as
+            // evidence; drop the deepFreeze and the first half goes red.
+            constexpr std::string_view source = R"lua(
+                local cycle = ctx:cycle_open()
+                local lines = ctx:cycle_read_lines(cycle, 0, 0, 3, 1)
+                if #lines ~= 3 then return 0 end
+                if lines[1].text ~= "battle" then return 0 end
+                if lines[2].x ~= 1 then return 0 end
+                if lines[3].confidence ~= 7000 then return 0 end
+                if pcall(function() lines[4] = lines[1] end) then return 0 end
+                if pcall(function() lines[1].text = "forged" end) then return 0 end
+                ctx:cycle_close(cycle)
+                return 1
+            )lua";
+
+            SUBCASE("a run VM reaches it")
+            {
+                auto built = buildHarness(
+                    matchableFrames(),
+                    HarnessSpec{
+                        .ocrEngine = std::make_unique<FakeOcrEngine>(
+                            oneLineReadout("battle", 9'000),
+                            threeLineReadout()
+                        ),
+                    }
+                );
+                REQUIRE(built.session.has_value());
+                TaskContext context{*std::move(built.session), *built.recorder};
+
+                auto engineVm = script::Engine::create(taskVmConfig(context));
+                REQUIRE(engineVm.has_value());
+                auto const result = engineVm->runNumber(source, "read-lines-run");
+                REQUIRE(result.has_value());
+                CHECK(*result == 1.0);
+            }
+
+            SUBCASE("an exploration VM reaches the same one")
+            {
+                auto built = buildHarness(
+                    matchableFrames(),
+                    HarnessSpec{
+                        .ocrEngine = std::make_unique<FakeOcrEngine>(
+                            oneLineReadout("battle", 9'000),
+                            threeLineReadout()
+                        ),
+                    }
+                );
+                REQUIRE(built.session.has_value());
+                TaskContext context{*std::move(built.session), *built.recorder};
+
+                auto engineVm = script::Engine::create(explorationVmConfig(context));
+                REQUIRE(engineVm.has_value());
+                auto const result = engineVm->runNumber(
+                    source,
+                    "read-lines-exploration"
+                );
+                REQUIRE(result.has_value());
+                CHECK(*result == 1.0);
+            }
         }
 
         TEST_CASE("cycle_read surfaces an adapter refusal instead of reporting no text")

@@ -24,11 +24,11 @@
 -- instead of reported as a defect. Recording the measurement is the trace's
 -- job, and every `cycle_match` below already writes one line to it.
 --
--- THE TWO RULES THAT FIRE WITHOUT AN EXPECTATION are the reason this is more
--- than a table of recorded answers, and they are aimed at the failure
--- docs/pitfalls/colour-key-annotation.md documents -- a mark that hits every
--- state it was meant to tell apart, and therefore looks like the most reliable
--- mark in the project:
+-- THE FOUR RULES THAT FIRE WITHOUT AN `[[expect]]` BEING CONTRADICTED are the
+-- reason this is more than a table of recorded answers. The first three are
+-- aimed at the failure docs/pitfalls/colour-key-annotation.md documents -- a
+-- mark that hits every state it was meant to tell apart, and therefore looks
+-- like the most reliable mark in the project:
 --
 --   * NO TWO APPEARANCES OF ONE ELEMENT MAY HIT ONE SCREEN. Three speed icons
 --     differing by one digit, keyed a little too generously, match each other;
@@ -39,11 +39,37 @@
 --     screen skips exactly the half that matters).
 --   * THE WINNER MUST BEAT EVERY RIVAL BY A FACTOR. Both answers can be correct
 --     while the margin between them is a frame of drift wide.
+--   * ONE REGION MAY NOT BE CLAIMED TO READ ONE TEXT ON TWO SCREENS. The same
+--     failure from the other side, on the cells a template cannot answer; it is
+--     `reading.confusions` and the reasoning is written there. It fires only
+--     between two screens that are two PAGES, because a page captured twice
+--     reads its own name in its own box both times and that is the property
+--     rather than a defect (`recognition.same_page`).
+--
+-- The fourth is aimed at a different gap, and it is the one a screen's own
+-- declaration buys:
+--
+--   * A SCREEN MUST BE THE PAGE IT SAYS IT IS. Every rule above measures ONE
+--     element, while what a run actually asks is whether a whole page signature
+--     holds -- a conjunction over several rows, which nothing walked end to end
+--     until a screen could name the page it is of. It is `recognition.verify`,
+--     it costs the screen's own observation and no capture of its own, and the
+--     reasoning for both its direction and the direction it declines to ask is
+--     written there.
+--
+-- TWO KINDS OF CELL, BECAUSE THE MODEL HAS TWO KINDS OF EVIDENCE. An element
+-- with appearances is measured by what its templates score, which is every cell
+-- this matrix has ever held. An element with none is measured by what its
+-- rectangle READS, against the text the project file claims it reads on that
+-- screen and the confidence floor the element declares. Both halves are judged
+-- the same way -- hit or miss against what was written down -- and the text half
+-- is measured by `reading`, next door.
 --
 -- LOAD ORDER. `regress` sorts last of the framework modules, which is what lets
--- it name `model`, `observe` and `oracle`. It is the only module that walks a
--- whole model against a whole set of screens, and it holds no state of its own:
--- every verb takes the ctx it observes through and the model it walks.
+-- it name `model`, `observe`, `oracle`, `reading` and `recognition`. It is the
+-- only module that walks a whole model against a whole set of screens, and it
+-- holds no state of its own: every verb takes the ctx it observes through and
+-- the model it walks.
 
 -- How far ahead the appearance that owns a screen must be of every other
 -- appearance of the same element there.
@@ -71,8 +97,14 @@ local k_separationFactor = 4
 local k_subjectElement    = "element"
 local k_subjectAppearance = "appearance"
 
-local k_outcomeHit      = "hit"
-local k_outcomeMiss     = "miss"
+local k_outcomeHit  = "hit"
+local k_outcomeMiss = "miss"
+
+-- Nothing was measured here at all. It is the row for an element with no
+-- templates on a screen whose file claims no text for it: there are no pixels to
+-- search for, and a reading needs something to be read AGAINST, which only a
+-- claim supplies. The row is still emitted, because a reader comparing two runs
+-- needs the inventory to be the same shape.
 local k_outcomeNoPixels = "no_pixels"
 
 local k_verdictExpected  = "expected"
@@ -85,6 +117,18 @@ local regress = {}
 regress.separation_factor = k_separationFactor
 
 -- One measured cell of the matrix.
+--
+-- THE MEASUREMENT FIELDS COME IN TWO SETS AND ONE ROW CARRIES ONE OF THEM,
+-- because there are two kinds of evidence. A template row names the appearance
+-- that answered and reports `score` against `maximum` plus the rectangle it
+-- landed on. A text row names no appearance and reports the reading -- `text`
+-- and `confidence` -- beside the `expected_text` it was measured against.
+--
+-- `expected_text` is on the row rather than left in the project file for the
+-- reason `appearance` is: it is what makes the row legible ALONE. A template row
+-- says which of several marks answered; a text row has no such name, so without
+-- the claimed text a reader looking at a miss cannot tell what was expected
+-- without opening the file and finding the cell again.
 export type Cell = {
     screen: string,
     element: string,
@@ -95,6 +139,9 @@ export type Cell = {
     verdict: string,
     score: number?,
     maximum: number?,
+    expected_text: string?,
+    text: string?,
+    confidence: number?,
     x: number?,
     y: number?,
     width: number?,
@@ -122,10 +169,25 @@ export type Separation = {
 
 -- One thing the measurement says is wrong with the model. A verdict with no
 -- findings is the verdict "accepted".
+--
+-- `rival` is the OTHER side of whatever collided, and what that other side is
+-- follows the kind: another appearance of the same element for every rule about
+-- a set of marks, and another SCREEN for `ambiguous_text`, where the two things
+-- one region fails to tell apart are two screens rather than two templates. It
+-- is one field rather than two because a finding names one collision, and a
+-- reader who has the kind already knows what it collided with.
+--
+-- `element` IS ABSENT ON EXACTLY ONE KIND, and `page` is set on that same one.
+-- Every rule but `unresolved_page` is about a CELL, and a cell is a screen and an
+-- element; that one is about a whole page signature on a screen. Naming the page
+-- in a field of its own is what keeps `element` meaning the thing every other row
+-- means by it -- a borrowed field would make a reader filtering the report by
+-- element pick up a page.
 export type Finding = {
     kind: string,
     screen: string,
-    element: string,
+    element: string?,
+    page: string?,
     appearance: string?,
     rival: string?,
     detail: string,
@@ -224,43 +286,127 @@ local function pushCell(
     local match: any = if entry ~= nil then entry.match else nil
     local hit        = entry ~= nil and entry.hit
     local cell: Cell = {
-        screen     = screen.name,
-        element    = element.name,
-        appearance = appearance,
-        subject    = subject,
-        outcome    = if entry == nil
+        screen        = screen.name,
+        element       = element.name,
+        appearance    = appearance,
+        subject       = subject,
+        outcome       = if entry == nil
             then k_outcomeNoPixels
             elseif hit then k_outcomeHit
             else k_outcomeMiss,
-        expected   = expected,
-        verdict    = verdictFor(expected, hit),
-        score      = if match ~= nil then match.score else nil,
-        maximum    = if match ~= nil then match.maximum else nil,
-        x          = if match ~= nil then match.x else nil,
-        y          = if match ~= nil then match.y else nil,
-        width      = if match ~= nil then match.width else nil,
-        height     = if match ~= nil then match.height else nil,
+        expected      = expected,
+        verdict       = verdictFor(expected, hit),
+        score         = if match ~= nil then match.score else nil,
+        maximum       = if match ~= nil then match.maximum else nil,
+        expected_text = nil,
+        text          = nil,
+        confidence    = nil,
+        x             = if match ~= nil then match.x else nil,
+        y             = if match ~= nil then match.y else nil,
+        width         = if match ~= nil then match.width else nil,
+        height        = if match ~= nil then match.height else nil,
     }
     table.insert(cells, cell)
     return cell
 end
 
+-- The same row for the other kind of evidence: what the region was claimed to
+-- read, what it read, and how sure the engine was.
+--
+-- It is a second function rather than a branch inside `pushCell`, because the
+-- two share only the four fields that say WHICH cell this is. Folding them
+-- together would mean one signature carrying a match handle and a reading, with
+-- every call site passing nil for half of it.
+--
+-- The verdict is `verdictFor`'s, unshared and unconditional, so "the file said
+-- match and it did not" means the same thing on both halves of the matrix.
+local function pushTextCell(
+    cells: { Cell },
+    screen: any,
+    element: any,
+    expectedText: string,
+    measured: any,
+    expected: string
+): Cell
+    local cell: Cell = {
+        screen        = screen.name,
+        element       = element.name,
+        appearance    = nil,
+        subject       = k_subjectElement,
+        outcome       = if measured.matched then k_outcomeHit else k_outcomeMiss,
+        expected      = expected,
+        verdict       = verdictFor(expected, measured.matched),
+        score         = nil,
+        maximum       = nil,
+        expected_text = expectedText,
+        text          = measured.text,
+        confidence    = measured.confidence,
+        x             = nil,
+        y             = nil,
+        width         = nil,
+        height        = nil,
+    }
+    table.insert(cells, cell)
+    return cell
+end
+
+-- The phrase a finding about a reading uses to say what came back instead.
+--
+-- The confidence is in it even when the text was right, because that is the case
+-- a reader most needs the number for: a cell that read the claimed words and
+-- still missed missed on the floor, and a detail line saying only "it read
+-- battle" would look like a defect in the matrix rather than in the model.
+local function readingPhrase(measured: any): string
+    if measured.text == nil then
+        return "nothing at all"
+    end
+    return '"'
+        .. measured.text
+        .. '" at '
+        .. tostring(measured.confidence)
+        .. " basis points of confidence"
+end
+
+-- Findings carry NAMES rather than the objects they were read off, because one
+-- of them is about a pair of screens and is raised after the walk, where no
+-- screen is being stood on.
 local function pushFinding(
     findings: { Finding },
     kind: string,
-    screen: any,
-    element: any,
+    screen: string,
+    element: string,
     appearance: string?,
     rival: string?,
     detail: string
 )
     table.insert(findings, {
         kind       = kind,
-        screen     = screen.name,
-        element    = element.name,
+        screen     = screen,
+        element    = element,
         appearance = appearance,
         rival      = rival,
         detail     = detail,
+    })
+end
+
+-- The one finding that is not about a cell: the screen said which page it is,
+-- and that page did not resolve on its own pixels.
+--
+-- It is a second function rather than four nils in the first, for the reason
+-- `pushTextCell` is a second function beside `pushCell`: the two share `kind` and
+-- `detail` and nothing else. One names an element, an appearance and the rival it
+-- collided with, and this one names a page and has no collision in it at all.
+local function pushPageFinding(
+    findings: { Finding },
+    screen: string,
+    page: string,
+    detail: string
+)
+    table.insert(findings, {
+        kind   = "unresolved_page",
+        screen = screen,
+        page   = page,
+        detail = detail,
     })
 end
 
@@ -305,6 +451,9 @@ local function judgeAppearanceSet(
         return
     end
 
+    local screenName  = screen.name
+    local elementName = element.name
+
     -- Rule one: at most one appearance may hit. It fires on an unclaimed screen
     -- too, which is the point -- that is where an author's own testing habit
     -- leaves the hole.
@@ -319,8 +468,8 @@ local function judgeAppearanceSet(
         pushFinding(
             findings,
             "ambiguous_appearances",
-            screen,
-            element,
+            screenName,
+            elementName,
             hits[1],
             hits[2],
             "appearances "
@@ -335,8 +484,8 @@ local function judgeAppearanceSet(
         pushFinding(
             findings,
             "contradictory_claims",
-            screen,
-            element,
+            screenName,
+            elementName,
             owners[1],
             owners[2],
             "the project file claims appearances "
@@ -360,8 +509,8 @@ local function judgeAppearanceSet(
         pushFinding(
             findings,
             "wrong_appearance",
-            screen,
-            element,
+            screenName,
+            elementName,
             winnerName,
             owners[1],
             "the fold answered with '"
@@ -409,8 +558,8 @@ local function judgeAppearanceSet(
                 pushFinding(
                     findings,
                     "thin_separation",
-                    screen,
-                    element,
+                    screenName,
+                    elementName,
                     winnerName,
                     rivalName,
                     "'"
@@ -430,8 +579,105 @@ end
 
 -- ------------------------------------------------------------------- walk
 
--- Measures one screen: every element, then every appearance of the elements
--- that declare more than one.
+-- Measures one element that has no templates: it reads the region and judges
+-- what came back against the text this screen's claim says belongs there.
+--
+-- THE READ HAPPENS ONLY WHERE A CLAIM ASKED FOR IT, and that asymmetry with the
+-- template half is the point rather than an economy. A template search is
+-- defined by the element alone, so the matrix can run it on every screen and
+-- catch a mark answering where nobody thought to look. A reading is not: there
+-- is no such thing as reading a region "in general", only reading it and
+-- comparing against something, and the only thing that says what to compare
+-- against on THIS screen is the claim. An unclaimed text cell is therefore not a
+-- cell the matrix declined to measure, it is a cell with no question in it -- and
+-- the falsification pressure the template half gets from unclaimed cells, the
+-- text half gets from `reading.confusions` instead.
+local function walkTextElement(
+    ctx: any,
+    ticket: any,
+    claims: any,
+    screen: any,
+    element: any,
+    verdict: Verdict
+)
+    local expectedText =
+        oracle.Claims.text_for(claims, screen.name, element.name)
+    if expectedText == nil then
+        -- Nothing to search for and nothing claimed to read. The row is emitted
+        -- anyway, because a reader comparing two runs needs the inventory to be
+        -- the same shape.
+        pushCell(
+            verdict.cells,
+            screen,
+            element,
+            nil,
+            k_subjectElement,
+            nil,
+            oracle.state_unclaimed
+        )
+        return
+    end
+
+    local expected = oracle.Claims.state_for(
+        claims,
+        screen.name,
+        element.name,
+        nil
+    )
+    local measured = reading.measure(ctx, ticket, element, expectedText)
+    local cell     = pushTextCell(
+        verdict.cells,
+        screen,
+        element,
+        expectedText,
+        measured,
+        expected
+    )
+
+    if cell.verdict == k_verdictHole then
+        pushFinding(
+            verdict.findings,
+            k_verdictHole,
+            screen.name,
+            element.name,
+            nil,
+            nil,
+            'the project file says this region reads "'
+                .. expectedText
+                .. '" here and it read '
+                .. readingPhrase(measured)
+        )
+    elseif cell.verdict == k_verdictMisfire then
+        -- The misfire that matters most on this half. A region reading the same
+        -- words on a screen the file says it does not is one page's signature
+        -- answering for another, and it is invisible to every template rule
+        -- because there is no template in it.
+        pushFinding(
+            verdict.findings,
+            k_verdictMisfire,
+            screen.name,
+            element.name,
+            nil,
+            nil,
+            'the project file says this region does not read "'
+                .. expectedText
+                .. '" here and it read exactly that, at '
+                .. tostring(measured.confidence)
+                .. " basis points of confidence"
+        )
+    end
+end
+
+-- Measures one screen: what it says it IS, then every element, then every
+-- appearance of the elements that declare more than one.
+--
+-- THE SCREEN'S OWN CLAIM GOES FIRST because it is about the whole frame the
+-- cells are then read off, and because it is the only row here a reader can act
+-- on without reading any other: a page that does not resolve on the screen that
+-- says it is that page explains most of the cells underneath it.
+--
+-- Its reason is `observe.resolve_page`'s own sentence, spent on THIS ticket, so
+-- the finding names the same clause a run would have failed on.
 local function walkScreen(
     ctx: any,
     ticket: any,
@@ -439,23 +685,25 @@ local function walkScreen(
     screen: any,
     verdict: Verdict
 )
+    local unresolved = recognition.verify(ctx, ticket, built, screen)
+    if unresolved ~= nil then
+        pushPageFinding(
+            verdict.findings,
+            screen.name,
+            screen.page,
+            "the project file says screen '"
+                .. screen.name
+                .. "' is page '"
+                .. screen.page
+                .. "', and that page does not resolve on its own pixels: "
+                .. unresolved
+        )
+    end
+
     local claims = built.claims
     for _, element in built.elements do
         if #element.appearances == 0 then
-            -- Nothing to search for. The row is emitted anyway, because a
-            -- reader comparing two runs needs the inventory to be the same
-            -- shape; `Expectation.new` already refuses to claim one of these,
-            -- so its expectation is always "unclaimed" and its verdict always
-            -- the same.
-            pushCell(
-                verdict.cells,
-                screen,
-                element,
-                nil,
-                k_subjectElement,
-                nil,
-                oracle.state_unclaimed
-            )
+            walkTextElement(ctx, ticket, claims, screen, element, verdict)
         else
             local measured = measureElement(ctx, ticket, element)
             local folded   = foldMeasured(measured)
@@ -479,8 +727,8 @@ local function walkScreen(
                 pushFinding(
                     verdict.findings,
                     k_verdictHole,
-                    screen,
-                    element,
+                    screen.name,
+                    element.name,
                     nil,
                     nil,
                     "the project file says this element matches here and "
@@ -490,8 +738,8 @@ local function walkScreen(
                 pushFinding(
                     verdict.findings,
                     k_verdictMisfire,
-                    screen,
-                    element,
+                    screen.name,
+                    element.name,
                     elementCell.appearance,
                     nil,
                     "the project file says this element is absent here and it "
@@ -522,8 +770,8 @@ local function walkScreen(
                         pushFinding(
                             verdict.findings,
                             k_verdictHole,
-                            screen,
-                            element,
+                            screen.name,
+                            element.name,
                             name,
                             nil,
                             "the project file says this appearance matches here "
@@ -533,8 +781,8 @@ local function walkScreen(
                         pushFinding(
                             verdict.findings,
                             k_verdictMisfire,
-                            screen,
-                            element,
+                            screen.name,
+                            element.name,
                             name,
                             nil,
                             "the project file says this appearance is absent "
@@ -571,6 +819,35 @@ end
 -- whose PNG is not there" into a failure naming that screen instead of a
 -- capture that ran out of frames three screens later. It also puts each screen's
 -- content hash into the trace, so a verdict is attributable to exact bytes.
+--
+-- A TEXT CELL SPENDS THAT SAME OBSERVATION'S READ BUDGET, one read per claimed
+-- cell, and the host refuses the next read once the budget is out. That refusal
+-- is a raise and travels out of here as one: a matrix that reported the cells it
+-- could not afford as misses would be a green report with a hole in it whose
+-- size is a configuration number.
+--
+-- SO DOES THE PAGE A SCREEN DECLARES, one read per identify row of that page
+-- whose element has no template. It is the same observation and the same budget,
+-- which is why one screen can cost twice the element count and no more: each
+-- half walks the same list once.
+--
+-- WHICH IS WHY THE CEILING IS NOT THIS WALK'S TO WORK AROUND. The walk reads
+-- each element at most once per screen for its cell and at most once more for
+-- the declared page, so what a cycle here needs is a fact about the FILE -- and
+-- the caller sizes the budget from that file before the run starts
+-- (entry/cli/check.cpp). Splitting a screen across two observations
+-- to fit under a smaller ceiling is not available and would be wrong if it
+-- were: the frames come from a directory served one file per capture, so a
+-- re-opened cycle is the NEXT screen's pixels, and half the cells of screen
+-- three would be judged against screen four.
+--
+-- It also means a check over a project claiming text needs an OCR engine bound;
+-- whoever assembles the run asks `oracle.Claims.reads_text` and
+-- `recognition.needs_engine` first and refuses in its own words, because a
+-- refusal naming the missing flag is worth more than a read failing on screen
+-- three. Two questions rather than one, because a page identified by what its
+-- title box reads is read on every screen that declares it, whether or not that
+-- screen claims a text of its own.
 --
 -- The observation is closed on every path, including a raise from the walk, and
 -- the walk's own failure outranks a failure from the close.
@@ -615,6 +892,47 @@ function regress.check(ctx: any, built: any): Verdict
         end
         if not closed then
             error(closeError, 0)
+        end
+    end
+
+    -- The rule that reads the FILE rather than a screen, so it is raised once
+    -- here rather than inside the walk: it is about a pair of screens, and the
+    -- walk stands on one at a time. It costs no capture, which is why it runs
+    -- last instead of being used to refuse the run -- a reader gets the measured
+    -- evidence above it either way.
+    for _, confusion in reading.confusions(built.claims) do
+        -- A pair of screens that are two views of ONE page is not a defect and
+        -- never was: the region reads that page's own name on both because that
+        -- is what the page prints, and a signature resting on it resolving on
+        -- either of them is the right answer twice. The rule is unchanged for
+        -- every pair that is not -- including a pair where one screen or both
+        -- say nothing about which page they are, because silence is not a fact
+        -- (`recognition.same_page`).
+        if
+            not recognition.same_page(
+                built.claims,
+                confusion.screen,
+                confusion.rival
+            )
+        then
+            pushFinding(
+                verdict.findings,
+                "ambiguous_text",
+                confusion.screen,
+                confusion.element,
+                nil,
+                confusion.rival,
+                'the project file says this region reads "'
+                    .. confusion.text
+                    .. "\" on screens '"
+                    .. confusion.screen
+                    .. "' and '"
+                    .. confusion.rival
+                    .. "', and does not declare those two to be one page -- so "
+                    .. "it cannot tell those two apart and a page signature "
+                    .. "resting on it resolves on whichever one is in front of "
+                    .. "the run"
+            )
         end
     end
 
@@ -716,6 +1034,7 @@ function regress.render(verdict: Verdict): string
             { "kind", finding.kind },
             { "screen", finding.screen },
             { "element", finding.element },
+            { "page", finding.page },
             { "appearance", finding.appearance },
             { "rival", finding.rival },
             { "detail", finding.detail },
@@ -750,6 +1069,9 @@ function regress.render(verdict: Verdict): string
             { "verdict", cell.verdict },
             { "score", cell.score },
             { "maximum", cell.maximum },
+            { "expected_text", cell.expected_text },
+            { "text", cell.text },
+            { "confidence", cell.confidence },
             { "x", cell.x },
             { "y", cell.y },
             { "width", cell.width },

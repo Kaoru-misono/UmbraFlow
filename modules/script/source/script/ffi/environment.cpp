@@ -312,15 +312,26 @@ namespace uf::script
                 // existed. Growing it costs nothing on the success path, which
                 // never reaches this branch.
                 static_cast<void>(lua_checkstack(thread, LUA_MINSTACK));
-                auto kind = std::optional<AutomationErrorKind>{};
+                auto raised = std::optional<RaisedError>{};
                 if (classify != nullptr && *classify)
                 {
-                    kind = (*classify)(thread, -1);
+                    raised = (*classify)(thread, -1);
                 }
-                return fail(
-                    kind.value_or(AutomationErrorKind::InvalidResource),
-                    "script error: " + topError(thread)
-                );
+                if (raised.has_value() && !raised->message.empty())
+                {
+                    // The host's own sentence, which lua_tostring cannot reach:
+                    // the carrier is a userdata and that call runs no metamethod,
+                    // so without the classifier's copy every host refusal reads
+                    // "(non-string error value)" at this boundary and the reason
+                    // survives only in the trace.
+                    return fail(raised->kind, "script error: " + raised->message);
+                }
+                auto kind = AutomationErrorKind::InvalidResource;
+                if (raised.has_value())
+                {
+                    kind = raised->kind;
+                }
+                return fail(kind, "script error: " + topError(thread));
             }
 
             return thread;

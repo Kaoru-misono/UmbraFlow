@@ -66,6 +66,22 @@ namespace uf::task
             }
             return true;
         }
+
+        // The project-relative spelling of `relative`'s parent directory, which
+        // is what a refusal names it by: the caller wrote the name, and telling
+        // it about an absolute path it never chose is telling it about this
+        // host's disk layout instead of about its own mistake. A name that sits
+        // at the project root has no parent component, and "." is what that is.
+        [[nodiscard]]
+        auto parentSpellingOf(std::filesystem::path const& relative) -> std::string
+        {
+            auto const parent = relative.parent_path();
+            if (parent.empty())
+            {
+                return std::string{"."};
+            }
+            return parent.generic_string();
+        }
     }
 
     ProjectFileStore::ProjectFileStore(std::filesystem::path root) noexcept
@@ -146,15 +162,64 @@ namespace uf::task
             return pathFailure("canonicalize the project directory of", m_root, error);
         }
 
-        auto const candidate      = canonicalRoot / relative;
-        auto const canonicalParent = std::filesystem::canonical(
-            candidate.parent_path(),
-            error
-        );
+        auto const candidate = canonicalRoot / relative;
+
+        // The parent is inspected BEFORE it is canonicalized, because a parent
+        // that is not there is what canonicalization fails on -- and its own
+        // failure names the wrong fact. "cannot canonicalize the parent of
+        // <absolute path>: the system cannot find the path specified" reads as a
+        // broken path when what happened is that nobody has laid this directory
+        // out yet, and an agent authoring a project from nothing meets it once
+        // per directory. So the refusal below says which directory is missing,
+        // in the project-relative spelling the caller wrote, and says that this
+        // store will not create it.
+        auto const parent         = candidate.parent_path();
+        auto const parentSpelling = parentSpellingOf(relative);
+
+        error                   = std::error_code{};
+        auto const parentStatus = std::filesystem::status(parent, error);
+        if (error && error != std::errc::no_such_file_or_directory)
+        {
+            return pathFailure("inspect the parent directory of", candidate, error);
+        }
+        if (parentStatus.type() == std::filesystem::file_type::not_found)
+        {
+            return refuse(
+                std::format(
+                    "project file name {} has no directory to sit in: \"{}\" does "
+                    "not exist inside the project at {}. Proving a write stayed "
+                    "inside the project means canonicalizing a parent that is "
+                    "really there, so this store creates no directory of its own "
+                    "-- the project's skeleton has to be laid out first",
+                    name,
+                    parentSpelling,
+                    canonicalRoot.string()
+                )
+            );
+        }
+        if (!std::filesystem::is_directory(parentStatus))
+        {
+            return refuse(
+                std::format(
+                    "project file name {} has no directory to sit in: \"{}\" "
+                    "exists inside the project at {} and is not a directory",
+                    name,
+                    parentSpelling,
+                    canonicalRoot.string()
+                )
+            );
+        }
+
+        error                      = std::error_code{};
+        auto const canonicalParent = std::filesystem::canonical(parent, error);
         if (error)
         {
             return pathFailure("canonicalize the parent of", candidate, error);
         }
+        // Asked a second time, on what canonicalization actually resolved to. The
+        // check above rules on the parent as it was a moment ago; this rules on
+        // the object the write will really open, which is what a directory
+        // replaced by a file in between would otherwise slip past.
         if (!std::filesystem::is_directory(canonicalParent, error) || error)
         {
             return refuse(
