@@ -379,3 +379,35 @@ Real-machine: queue a click on a menu entry, then match that page's anchor
 against `out_before` and `out_after`. The anchor hits before and misses after,
 which is the page having changed. A bare hand-rolled sequence with a hold
 between DOWN and UP leaves the anchor hitting both.
+
+## 待机 CG 与「点击唤醒」的抓帧相关性
+
+### Symptom
+
+主菜单闲置几秒后淡出成一张无文字的全屏 CG(待机画面)。此时页面解析 Unknown、
+`cycle_read` 全部空读零置信——这是系统的正确行为,不是缺陷。要恢复菜单需要一次
+点击唤醒,但唤醒点击的成败呈现一个反直觉的相关性(2026-08-01 实测,5 次点击):
+
+- 带 `out_before`/`out_after` 抓帧的 input-agent 点击:**3/3 唤醒成功**。
+- 不带抓帧的裸点击(仅 PostMessage + settle):**2/2 毫无反应**,哪怕换坐标、
+  哪怕另一个进程(umbra-flow)正对同一窗口持有 WGC 会话。
+
+### Root cause
+
+未定论。倾向的解释:游戏对「自认为不可见」的窗口节流输入处理,而 input-agent
+自己的 WGC 抓帧会话恰好在点击前后把窗口标成「正被显示」;第三方进程的 WGC 会话
+不产生同样效果,说明判定可能绑定在发送输入的那条会话/进程上。机制层面只是假说,
+相关性本身是 5/5 的实测。
+
+### Fix
+
+要唤醒待机菜单,让 input-agent 的点击**总是带 `out_before`/`out_after`**——反正
+before/after 帧也是天然的效果证据。验证型任务(umbra-flow 循环读取)要在唤醒
+点击落地之后的清醒窗口内撞上画面:菜单一旦被唤醒并出现对话气泡,实测可保持
+至少 5 秒(12 个连续周期全部 Resolved)。
+
+### Regression check
+
+裸 CG 上先发一次不带抓帧的点击、再发一次带抓帧的点击,各自 settle 后抓帧比对:
+前者画面不变,后者菜单出现。若两者都能唤醒,说明游戏版本已改变该行为,本节可以
+降级为历史记录。

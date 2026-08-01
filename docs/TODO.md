@@ -81,9 +81,14 @@
   `check` 92 格零发现;翻译脚本 `session-0731/author-*-v4.ps1`)。两个真实行为变化记录在案:
   interact/read 的模板走 `element appearance`(`page add` 只为 identify 铸 appearance);
   deploy_danger 合并单元素后 read 路径改用实测的 9900 bp 阈值,比旧 info 元素严。
-- **真机只读验证(release + chaos-v14 + `--ocr-models`)**:机制层全通——绑窗、抓帧、页面解析、
-  live 帧 `cycle_read`、`engine.text_read` 证据、置信度守门(实测 2.7–4.1ms/次)。内容层
-  (读出真实文字)待游戏停在有字的画面上再补——当晚游戏停在无字 CG,空读零置信是正确行为。
+- **真机只读验证(release + chaos-v14 + `--ocr-models`)已两层全通(2026-08-01)**:
+  机制层——绑窗、抓帧、live 帧 `cycle_read`、`engine.text_read` 证据、置信度守门
+  (2.7–4.1ms/次);内容层——菜单唤醒后 12 个连续周期页面 Resolved,「故事」矩形
+  连读 6 次 `conf=10000bp` 全对。待机 CG 与点击唤醒的抓帧相关性记入
+  [`pitfalls/capture-and-target-selection.md`](pitfalls/capture-and-target-selection.md)。
+  顺带:出擊那格读出低置信错字——read 矩形要框纯文字,不要连图标,归 Agent 手册。
+- **两条小裁决已定(2026-08-01,开发者授权自行决定)**:deploy_danger 合并后的 9900 bp
+  阈值**认下**(量出来的数,行为变化有意为之);onnxruntime.dll 部署步**并入工单 3**。
 - **release bin 缺 onnxruntime.dll 随附**:PATH 上的旧 1.17.1 被加载进程崩溃(API 28 不符),
   当晚手工拷贝 `build/wo1b-debug/bin/onnxruntime*.dll` 过去。TODO(cpp-debt):给可执行目标加
   DLL 部署步。
