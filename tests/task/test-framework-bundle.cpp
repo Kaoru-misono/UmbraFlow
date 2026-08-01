@@ -43,6 +43,8 @@ namespace uf::task
                 std::string{"observe"},
                 std::string{"project"},
                 std::string{"navigation"},
+                std::string{"oracle"},
+                std::string{"regress"},
             }
         );
 

@@ -962,9 +962,10 @@ namespace uf::task
 
                 auto const result = runModel(context, built, battleScript(R"lua(
                     local ticket = ctx:cycle_open()
-                    local ok, why = observe.resolve_page(ctx, ticket, battle)
+                    local receipt, why = observe.resolve_page(ctx, ticket, battle)
                     ctx:cycle_close(ticket)
-                    if ok ~= true then return 0 end
+                    if receipt == nil then return 0 end
+                    if receipt.page ~= battle then return 0 end
                     if why ~= nil then return 0 end
                     return 1
                 )lua"));
@@ -989,9 +990,9 @@ namespace uf::task
 
                 auto const result = runModel(context, built, battleScript(R"lua(
                     local ticket = ctx:cycle_open()
-                    local ok, why = observe.resolve_page(ctx, ticket, battle)
+                    local receipt, why = observe.resolve_page(ctx, ticket, battle)
                     ctx:cycle_close(ticket)
-                    if ok ~= false then return 0 end
+                    if receipt ~= nil then return 0 end
                     if string.find(why, "requires element 'anchor'", 1, true) == nil then
                         return 0
                     end
@@ -1065,9 +1066,9 @@ namespace uf::task
                         },
                     }
                     local ticket = ctx:cycle_open()
-                    local ok, why = observe.resolve_page(ctx, ticket, plain)
+                    local receipt, why = observe.resolve_page(ctx, ticket, plain)
                     ctx:cycle_close(ticket)
-                    if ok ~= false then return 0 end
+                    if receipt ~= nil then return 0 end
                     if string.find(why, "forbids element 'overlay'", 1, true) == nil then
                         return 0
                     end
@@ -1105,8 +1106,7 @@ namespace uf::task
 
             auto const result = runModel(context, built, battleScript(R"lua(
                 local ticket = ctx:cycle_open()
-                local ok = observe.resolve_page(ctx, ticket, battle)
-                if ok ~= true then return 0 end
+                if observe.resolve_page(ctx, ticket, battle) == nil then return 0 end
 
                 -- The same cycle, the same pin: the CLICK path honours it, so a
                 -- find of the anchor on this frame comes back empty.
@@ -1309,13 +1309,15 @@ namespace uf::task
 
             auto const result = runModel(context, built, battleScript(R"lua(
                 local ticket = ctx:cycle_open()
-                if observe.resolve_page(ctx, ticket, battle) ~= true then return 0 end
+                local receipt = observe.resolve_page(ctx, ticket, battle)
+                if receipt == nil then return 0 end
                 local hit = observe.find(ctx, ticket, battle, slot)
                 if hit == nil then return 0 end
                 if hit.positioned_by ~= "page" then return 0 end
+                if hit.page ~= "battle" then return 0 end
                 if hit.match ~= nil then return 0 end
                 if hit.click_x ~= 1 or hit.click_y ~= 0 then return 0 end
-                observe.click(ctx, ticket, hit)
+                observe.click(ctx, ticket, receipt, hit)
                 return 1
             )lua"));
             REQUIRE(result.has_value());
@@ -1343,12 +1345,13 @@ namespace uf::task
 
             auto const result = runModel(context, built, battleScript(R"lua(
                 local ticket = ctx:cycle_open()
-                if observe.resolve_page(ctx, ticket, battle) ~= true then return 0 end
+                local receipt = observe.resolve_page(ctx, ticket, battle)
+                if receipt == nil then return 0 end
                 local hit = observe.find(ctx, ticket, battle, anchor)
                 if hit == nil then return 0 end
                 if hit.appearance ~= "on_dark" then return 0 end
                 if hit.x ~= 0 then return 0 end
-                observe.click(ctx, ticket, hit)
+                observe.click(ctx, ticket, receipt, hit)
                 return 1
             )lua"));
             REQUIRE(result.has_value());
@@ -1409,13 +1412,15 @@ namespace uf::task
                     },
                 }
                 local ticket = ctx:cycle_open()
+                local receipt = observe.resolve_page(ctx, ticket, page)
+                if receipt == nil then return 0 end
                 local hit = observe.find(ctx, ticket, page, state)
                 if hit == nil then return 0 end
                 if hit.appearance ~= "auto_on" then return 0 end
                 if hit.interact ~= false then return 0 end
 
                 local ok, err = pcall(function()
-                    observe.click(ctx, ticket, hit)
+                    observe.click(ctx, ticket, receipt, hit)
                 end)
                 ctx:cycle_close(ticket)
                 if ok then return 0 end
@@ -1449,9 +1454,12 @@ namespace uf::task
 
             auto const result = runModel(context, built, battleScript(R"lua(
                 local ticket = ctx:cycle_open()
+                local receipt = observe.resolve_page(ctx, ticket, battle)
+                if receipt == nil then return 0 end
                 local ok, err = pcall(function()
-                    observe.click(ctx, ticket, {
+                    observe.click(ctx, ticket, receipt, {
                         element = slot,
+                        page = "battle",
                         interact = true,
                         match = nil,
                         click_x = 1,
@@ -1468,6 +1476,151 @@ namespace uf::task
             REQUIRE(result.has_value());
             CHECK(*result == doctest::Approx(1.0));
             CHECK(p_clicks->clickCount() == 0U);
+        }
+
+        // The same-frame authorisation rule, which the move of the page model
+        // into Luau dissolved and the receipt restores.
+        //
+        // While the model was C++ the ledger recorded which page a cycle had
+        // resolved and `cycle_click` read it back, so "the page authorising this
+        // element resolved on THIS frame" held by construction. `resolve_page`
+        // returning a boolean carried no trace of the ticket that produced it,
+        // and nothing then stopped a script from resolving on one frame and
+        // clicking on the next. Each subcase below is a way of arriving at
+        // `observe.click` without that evidence, and each one must refuse with
+        // no click delivered. Delete the corresponding check in `observe.click`
+        // and exactly one of them goes red.
+        TEST_CASE("clicking requires this cycle's own proof of the page")
+        {
+            auto const directory = TemporaryDirectory{"uf-model-receipt"};
+            seedTemplates(directory.path());
+
+            struct ReceiptCase final
+            {
+                std::string_view label;
+                std::string_view body;
+                std::string_view fragment;
+            };
+
+            auto const cases = std::vector<ReceiptCase>{
+                ReceiptCase{
+                    .label = "a receipt no resolution minted",
+                    .body  = R"lua(
+                        local ticket = ctx:cycle_open()
+                        local hit = observe.find(ctx, ticket, battle, anchor)
+                        if hit == nil then return 0 end
+                        local forged = { page = battle, ticket = ticket }
+                        local ok, err = pcall(function()
+                            observe.click(ctx, ticket, forged, hit)
+                        end)
+                        ctx:cycle_close(ticket)
+                        if ok then return 0 end
+                        return report(err)
+                    )lua",
+                    .fragment = "needs the receipt observe.resolve_page returned",
+                },
+                ReceiptCase{
+                    .label = "no receipt at all",
+                    .body  = R"lua(
+                        local ticket = ctx:cycle_open()
+                        local hit = observe.find(ctx, ticket, battle, anchor)
+                        if hit == nil then return 0 end
+                        local ok, err = pcall(function()
+                            observe.click(ctx, ticket, nil, hit)
+                        end)
+                        ctx:cycle_close(ticket)
+                        if ok then return 0 end
+                        return report(err)
+                    )lua",
+                    .fragment = "needs the receipt observe.resolve_page returned",
+                },
+                ReceiptCase{
+                    .label = "a receipt minted on an earlier cycle",
+                    .body  = R"lua(
+                        local first = ctx:cycle_open()
+                        local stale = observe.resolve_page(ctx, first, battle)
+                        ctx:cycle_close(first)
+                        if stale == nil then return 0 end
+
+                        local second = ctx:cycle_open()
+                        local hit = observe.find(ctx, second, battle, anchor)
+                        if hit == nil then return 0 end
+                        local ok, err = pcall(function()
+                            observe.click(ctx, second, stale, hit)
+                        end)
+                        ctx:cycle_close(second)
+                        if ok then return 0 end
+                        return report(err)
+                    )lua",
+                    .fragment = "minted on another observation cycle",
+                },
+                ReceiptCase{
+                    .label = "a receipt for another page that also resolved",
+                    .body  = R"lua(
+                        local elsewhere = model.Page.new{
+                            name = "elsewhere",
+                            references = {
+                                {
+                                    element = anchor,
+                                    holding = "referenced",
+                                    exercised = { "identify" },
+                                    identify = "required",
+                                },
+                            },
+                        }
+                        local ticket = ctx:cycle_open()
+                        local other = observe.resolve_page(ctx, ticket, elsewhere)
+                        if other == nil then return 0 end
+                        local hit = observe.find(ctx, ticket, battle, anchor)
+                        if hit == nil then return 0 end
+                        local ok, err = pcall(function()
+                            observe.click(ctx, ticket, other, hit)
+                        end)
+                        ctx:cycle_close(ticket)
+                        if ok then return 0 end
+                        return report(err)
+                    )lua",
+                    .fragment = "clickable on the page that was recognised",
+                },
+            };
+
+            for (auto const& subcase : cases)
+            {
+                CAPTURE(subcase.label);
+
+                auto built = buildHarness(
+                    HarnessSpec{
+                        .framePixels = {pixels(2, 5, 0), pixels(2, 5, 0)},
+                        .projectRoot = directory.path(),
+                    }
+                );
+                REQUIRE(built.session.has_value());
+                auto* const p_clicks = built.clicks;
+                TaskContext context{
+                    *std::move(built.session),
+                    *built.recorder,
+                    TaskContextConfig{.projectRoot = directory.path()},
+                };
+
+                // The refusal has to be the RIGHT refusal: a case that failed
+                // for some unrelated reason would otherwise pass while proving
+                // nothing about the receipt.
+                auto source = std::string{
+                    "local function report(err)\n"
+                    "    if type(err) ~= 'string' then return 0 end\n"
+                    "    if string.find(err, [==["
+                };
+                source += subcase.fragment;
+                source += "]==], 1, true) == nil then return 0 end\n"
+                          "    return 1\n"
+                          "end\n";
+                source += subcase.body;
+
+                auto const result = runModel(context, built, battleScript(source));
+                REQUIRE(result.has_value());
+                CHECK(*result == doctest::Approx(1.0));
+                CHECK(p_clicks->clickCount() == 0U);
+            }
         }
 
         TEST_CASE("read_element compares the reading with the policy it was handed")
@@ -2537,11 +2690,14 @@ namespace uf::task
                 CHECK(p_frames->captureCount() == 1U);
             }
 
-            SUBCASE("a click edge whose element is not on screen refuses to walk")
+            SUBCASE("a click edge refuses to walk off a page this frame is not")
             {
-                // Fail closed BEFORE the wait: nothing was clicked, so nothing
-                // can have moved, and the sentence names the element rather than
-                // reporting a timeout on a destination that was never triggered.
+                // Fail closed BEFORE the trigger, and fail on the FIRST question
+                // rather than the second. A click is authorised by the page the
+                // frame in front of the run resolved, so walking away from a
+                // page whose own marker is absent is refused for that reason and
+                // never for the missing click target -- which is the same
+                // ordering `observe.click` enforces with its receipt.
                 auto built = buildHarness(
                     HarnessSpec{
                         .framePixels = {pixels(0, 0, 0)},
@@ -2561,6 +2717,106 @@ namespace uf::task
                     navigation.stack_reset(stack, base)
                     local ok, err = pcall(function()
                         return observe.walk_edge(ctx, stack, open_detail, {
+                            consecutive = 1, timeout_ms = 0, interval_ms = 0,
+                        })
+                    end)
+                    if ok then return 0 end
+                    if type(err) ~= "string" then return 0 end
+                    if string.find(err, "this frame is not that page", 1, true) == nil then
+                        return 0
+                    end
+                    if navigation.stack_depth(stack) ~= 1 then return 0 end
+                    return 1
+                )lua"));
+                REQUIRE(result.has_value());
+                CHECK(*result == doctest::Approx(1.0));
+                CHECK(p_clicks->clickCount() == 0U);
+            }
+
+            SUBCASE("a click edge whose element is not on screen refuses to walk")
+            {
+                // The second question, reached only once the first is answered:
+                // the page IS this page and the thing to click is not on it. The
+                // model here identifies its from page by one mark and clicks
+                // another, so the frame below resolves the page and misses the
+                // target -- which the shared graph above cannot express, since
+                // every page there is identified by the element it clicks.
+                auto built = buildHarness(
+                    HarnessSpec{
+                        .framePixels = {pixels(2, 0, 0)},
+                        .projectRoot = directory.path(),
+                    }
+                );
+                REQUIRE(built.session.has_value());
+                auto* const p_clicks = built.clicks;
+                TaskContext context{
+                    *std::move(built.session),
+                    *built.recorder,
+                    TaskContextConfig{.projectRoot = directory.path()},
+                };
+
+                auto const result = runModel(context, built, script(R"lua(
+                    local function marker(name, source)
+                        return model.Element.new{
+                            name = name,
+                            capabilities = { "identify", "interact" },
+                            rect = { x = 0, y = 0, width = 3, height = 1 },
+                            appearances = {
+                                {
+                                    name = "lit",
+                                    source = source,
+                                    template = template(source),
+                                    threshold = 10000,
+                                },
+                            },
+                        }
+                    end
+                    local sign   = marker("sign", "gray2.png")
+                    local button = marker("button", "gray5.png")
+
+                    local here = model.Page.new{
+                        name = "here",
+                        references = {
+                            {
+                                element = sign,
+                                holding = "owned",
+                                exercised = { "identify" },
+                                identify = "required",
+                            },
+                            {
+                                element = button,
+                                holding = "owned",
+                                exercised = { "interact" },
+                            },
+                        },
+                    }
+                    local there = model.Page.new{
+                        name = "there",
+                        references = {
+                            {
+                                element = button,
+                                holding = "referenced",
+                                exercised = { "identify" },
+                                identify = "required",
+                            },
+                        },
+                    }
+                    local press = navigation.Edge.new{
+                        from = here,
+                        to = { there },
+                        via = "click",
+                        via_element = button,
+                        kind = "navigate",
+                    }
+                    local graph = navigation.Graph.new{
+                        pages = { here, there },
+                        edges = { press },
+                    }
+
+                    local stack = navigation.stack_new{ graph = graph, max_depth = 4 }
+                    navigation.stack_reset(stack, here)
+                    local ok, err = pcall(function()
+                        return observe.walk_edge(ctx, stack, press, {
                             consecutive = 1, timeout_ms = 0, interval_ms = 0,
                         })
                     end)

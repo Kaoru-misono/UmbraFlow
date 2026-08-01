@@ -29,6 +29,14 @@ namespace uf::task
         // deliberately NOT here: it is model/navigation's shared internals and
         // every function on it is reachable through a published constructor.
         constexpr auto k_navigationModule = "navigation";
+        // The falsification matrix: `oracle` is the screens a model is measured
+        // against and what each cell is supposed to show, `regress` is the walk
+        // that measures them and the verdict it returns. Both are published for
+        // the same reason `model` is -- a project that grows its own screens or
+        // reads a verdict names them -- and the routine `umbra-flow check` runs
+        // reaches them through this list rather than through a private route.
+        constexpr auto k_oracleModule  = "oracle";
+        constexpr auto k_regressModule = "regress";
     }
 
     auto frameworkScriptModules() -> std::vector<script::FrameworkModule>
@@ -58,6 +66,8 @@ namespace uf::task
             std::string{k_observeModule},
             std::string{k_projectModule},
             std::string{k_navigationModule},
+            std::string{k_oracleModule},
+            std::string{k_regressModule},
         };
     }
 }

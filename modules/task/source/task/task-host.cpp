@@ -7,6 +7,8 @@
 #include "task-context.hpp"
 #include "task-loader.hpp"
 
+#include <annotation/content-hash.hpp>
+
 #include <core/error/error.hpp>
 #include <core/error/result.hpp>
 #include <core/safety/annotations.hpp>
@@ -24,11 +26,13 @@
 #include <trace/file-sink.hpp>
 #include <trace/recorder.hpp>
 
+#include <cstddef>
 #include <filesystem>
 #include <format>
 #include <memory>
 #include <optional>
 #include <random>
+#include <span>
 #include <stop_token>
 #include <string>
 #include <string_view>
@@ -326,6 +330,210 @@ namespace uf::task
         {
             m_status.lastOutcome = outcome;
         }
+
+        // The whole of one run, from the opening trace line to the closing one.
+        //
+        // It takes a loaded chunk rather than a task name because its two
+        // callers differ in exactly one thing: where the bytes came from. A
+        // project task is read from <projectRoot>/tasks/<name>.luau and one of
+        // the host's own routines is a literal in this binary; everything from
+        // here down -- the trace bracket, the seed, the engine session, the
+        // context, the VM's two environments, the two verdicts the script's
+        // return cannot express -- is identical, and one copy of it is what
+        // keeps a routine from quietly running under different guarantees.
+        [[nodiscard]]
+        auto run(
+            TaskRunId runId,
+            GenerationId generationId,
+            LoadedTask const& chunk,
+            ScriptResourceReport const& resources,
+            TaskRunConfig config
+        ) -> Result<FrameworkRoutineReport>
+        {
+            noteRunStarted(chunk.name);
+
+            // The recorder owns this run's single evidence stream, and every
+            // layer below borrows it (see the trace lifetime contracts on
+            // engine::EngineSession and TaskContext). It is declared before all
+            // of them and held through a unique_ptr, so its address is fixed for
+            // the whole run and every borrower -- all of them locals of this
+            // scope -- is destroyed before it, on the normal path and on every
+            // early return.
+            UF_TRY_VALUE(traceSink, trace::FileTraceSink::create(config.tracePath));
+            auto recorder = std::make_unique<trace::TraceRecorder>(
+                std::move(traceSink),
+                runId,
+                generationId,
+                trace::FrontEnd::Task
+            );
+
+            auto const seed = drawRunSeed();
+
+            // The run identity opens the stream before the VM exists, so every
+            // later event is attributable to this exact build -- including the
+            // framework version and bundle hash, which runStartedEvent reads
+            // from this binary rather than taking from here.
+            UF_TRY(
+                recorder->emit(
+                    runStartedEvent(
+                        RunStartSpec{
+                            .projectId  = m_projectId,
+                            .taskName   = chunk.name,
+                            .sourceHash = chunk.hash.hex(),
+                            .seed       = seed,
+                        }
+                    )
+                )
+            );
+            UF_TRY(recorder->emit(runResourcesValidatedEvent(resources)));
+
+            // The session takes the runtime by value, so the generation hands it
+            // a copy and keeps its own: a generation outlives its runs and must
+            // still have a runtime for the next one. The copy is per run, never
+            // per frame.
+            UF_TRY_VALUE(
+                session,
+                engine::EngineSession::create(
+                    m_runtime,
+                    std::move(config.frameSource),
+                    std::move(config.actionSink),
+                    *recorder,
+                    engine::EngineSessionConfig{
+                        .liveFingerprint         = config.liveFingerprint,
+                        .maximumPixelComparisons = config.maximumPixelComparisons,
+                        .recognitionTimeout      = config.recognitionTimeout,
+                        .maxActionFrameAge       = config.maxActionFrameAge,
+                        .cancellation            = cancellation(),
+                    },
+                    std::move(config.ocrEngine)
+                )
+            );
+
+            // The context owns the session and borrows the same recorder, and
+            // must outlive the VM that binds it, so it is declared before the
+            // Engine and destroyed after it. The generation's one stop token
+            // drives both the engine (which returns Cancelled) and the VM
+            // interrupt (which hard-breaks the task thread), so a cancellation
+            // is a single source and never two.
+            auto context = TaskContext{
+                std::move(session),
+                *recorder,
+                TaskContextConfig{
+                    .cancellation         = cancellation(),
+                    .randomSeed           = seed,
+                    .projectRoot          = m_projectRoot,
+                    .maximumReadsPerCycle = config.maximumReadsPerCycle,
+                },
+            };
+
+            auto outcome = FrameworkRoutineReport{
+                .run = TaskRunReport{
+                    .taskName   = chunk.name,
+                    .sourceHash = chunk.hash.hex(),
+                    .seed       = seed,
+                    .tracePath  = config.tracePath,
+                },
+            };
+
+            // The VM boots two environments. The trusted framework bundle loads
+            // under the framework environment and is handed the private
+            // capability surface as its chunk argument; the chunk below runs
+            // under a project environment that is an explicit whitelist and
+            // holds no route back to the framework's. So the script reaches the
+            // uf data tables and the framework's own modules, and no primitive
+            // by any route.
+            //
+            // A VM that cannot be built at all -- a generation already
+            // cancelled, so the interrupt breaks the framework boot, or a
+            // framework module that will not load -- ends this RUN, not this
+            // call. run.started is already in the trace by now, so the run
+            // happened and has to be described; a bare Result failure here would
+            // leave a run bracket that never closed.
+            auto vm = script::Engine::create(
+                script::EngineConfig{
+                    .cancellation      = cancellation(),
+                    .frameworkModules  = frameworkScriptModules(),
+                    .installHostTables = m_surface.installer(),
+                    .installPrivateCapabilities =
+                        CapabilitySurface::privateCapabilities(context),
+                    .projectGlobals          = CapabilitySurface::projectGlobals(),
+                    .frameworkProjectGlobals = frameworkProjectGlobals(),
+                    .classifyRaisedError     =
+                        CapabilitySurface::raisedErrorClassifier(),
+                }
+            );
+            if (!vm)
+            {
+                outcome.run.failure = std::move(vm).error();
+            }
+            else
+            {
+                // A project task's numeric return carries no success meaning of
+                // its own -- a Tier B or Tier C failure surfaces as an error
+                // here, and a clean return means the task ran to completion --
+                // so startTask discards it. A framework routine is written to
+                // answer with one, and that is the whole of why it is carried
+                // out of here rather than dropped.
+                auto runResult = vm->runNumber(chunk.source, chunk.name);
+                if (!runResult)
+                {
+                    outcome.run.failure = std::move(runResult).error();
+                }
+                else
+                {
+                    outcome.answer = *runResult;
+                }
+            }
+
+            // Two verdicts the script's own return cannot express, folded in
+            // before the closing line is built so run.finished reports the run
+            // that actually happened.
+            //
+            // A generation the host spent terminally -- a cancellation, or a
+            // framework bug the trace state machine caught -- ended there
+            // whatever the script did afterwards. Design section 9's rule 5
+            // latches that in C++ precisely so a project pcall cannot turn it
+            // into a completed run, and this is where the latch is read back.
+            //
+            // A step or an interrupt match still open at run.finished is the
+            // framework failing to close what it opened, which section 12 makes
+            // a Failed(InternalInvariant) run. Both defer to a failure the run
+            // already has: an unclosed step under a cancelled run is the
+            // cancel's consequence, not a second cause.
+            if (!outcome.run.failure)
+            {
+                auto const terminal = context.terminalKind();
+                if (terminal.has_value())
+                {
+                    outcome.run.failure = fail(
+                        *terminal,
+                        "the task generation was spent before the script returned"
+                    ).error();
+                }
+            }
+            if (!outcome.run.failure)
+            {
+                auto scopes = recorder->requireScopesClosed();
+                if (!scopes)
+                {
+                    outcome.run.failure = std::move(scopes).error();
+                }
+            }
+
+            auto finishStatus = recorder->emit(runFinishedEvent(outcome.run));
+            if (!outcome.run.failure && !finishStatus)
+            {
+                // The run itself succeeded but its closing evidence was lost,
+                // which leaves an incomplete trace and so cannot be reported as
+                // completed. The run's own failure always takes precedence over
+                // the sink's, so this only reaches the report when there was no
+                // other failure.
+                outcome.run.failure = std::move(finishStatus).error();
+            }
+
+            noteRunFinished(outcome.run.outcome());
+            return outcome;
+        }
     };
 
     TaskHost::TaskHost() = default;
@@ -411,176 +619,96 @@ namespace uf::task
                 p_generation->surface()
             )
         );
-        p_generation->noteRunStarted(loadedTask.name);
 
-        // The recorder owns this run's single evidence stream, and every layer
-        // below borrows it (see the trace lifetime contracts on
-        // engine::EngineSession and TaskContext). It is declared before all of
-        // them and held through a unique_ptr, so its address is fixed for the
-        // whole run and every borrower -- all of them locals of this scope -- is
-        // destroyed before it, on the normal path and on every early return.
-        UF_TRY_VALUE(traceSink, trace::FileTraceSink::create(config.tracePath));
         auto const runId = TaskRunId{m_nextRunValue};
         ++m_nextRunValue;
-        auto recorder = std::make_unique<trace::TraceRecorder>(
-            std::move(traceSink),
+        UF_TRY_VALUE(
+            outcome,
+            p_generation->run(
+                runId,
+                generation,
+                loadedTask,
+                resourceReport,
+                std::move(config)
+            )
+        );
+        // A task's numeric return means nothing, so only the run report leaves
+        // here; see Generation::run for why the number is carried that far.
+        return std::move(outcome.run);
+    }
+
+    auto TaskHost::projectFingerprint(
+        GenerationId generation
+    ) -> Result<annotation::ProjectFingerprint>
+    {
+        auto* const p_generation = findGeneration(generation);
+        if (p_generation == nullptr)
+        {
+            return fail(
+                AutomationErrorKind::InvalidResource,
+                std::format(
+                    "no loaded project for generation {}",
+                    generation.value()
+                )
+            );
+        }
+        return p_generation->runtime().runtime.manifest().catalog().fingerprint();
+    }
+
+    auto TaskHost::runFrameworkRoutine(
+        GenerationId generation,
+        FrameworkRoutine const& routine,
+        TaskRunConfig config
+    ) -> Result<FrameworkRoutineReport>
+    {
+        auto* const p_generation = findGeneration(generation);
+        if (p_generation == nullptr)
+        {
+            return fail(
+                AutomationErrorKind::InvalidResource,
+                std::format(
+                    "no loaded project for generation {}",
+                    generation.value()
+                )
+            );
+        }
+
+        UF_TRY(p_generation->claimFrontEnd(trace::FrontEnd::Task));
+
+        // The chunk is assembled here rather than loaded, and that is the only
+        // difference from startTask. The hash is taken over the same bytes the
+        // VM compiles, so run.started attributes the run to the exact routine
+        // this binary shipped, exactly as a task's hash attributes it to the
+        // exact file on disk.
+        auto source = std::string{routine.source};
+        UF_TRY_VALUE(
+            sourceHash,
+            annotation::sha256(std::as_bytes(std::span{source}))
+        );
+        auto const chunk = LoadedTask{
+            .name   = std::string{routine.name},
+            .source = std::move(source),
+            .hash   = sourceHash,
+        };
+
+        UF_TRY_VALUE(
+            resourceReport,
+            validateScriptResources(
+                chunk.source,
+                chunk.name,
+                p_generation->surface()
+            )
+        );
+
+        auto const runId = TaskRunId{m_nextRunValue};
+        ++m_nextRunValue;
+        return p_generation->run(
             runId,
             generation,
-            trace::FrontEnd::Task
+            chunk,
+            resourceReport,
+            std::move(config)
         );
-
-        auto const seed = drawRunSeed();
-
-        // The run identity opens the stream before the VM exists, so every later
-        // event is attributable to this exact task build -- including the
-        // framework version and bundle hash, which runStartedEvent reads from
-        // this binary rather than taking from here.
-        UF_TRY(
-            recorder->emit(
-                runStartedEvent(
-                    RunStartSpec{
-                        .projectId  = p_generation->projectId(),
-                        .taskName   = loadedTask.name,
-                        .sourceHash = loadedTask.hash.hex(),
-                        .seed       = seed,
-                    }
-                )
-            )
-        );
-        UF_TRY(recorder->emit(runResourcesValidatedEvent(resourceReport)));
-
-        // The session takes the runtime by value, so the generation hands it a
-        // copy and keeps its own: a generation outlives its runs and must still
-        // have a runtime for the next one. The copy is per run, never per frame.
-        UF_TRY_VALUE(
-            session,
-            engine::EngineSession::create(
-                p_generation->runtime(),
-                std::move(config.frameSource),
-                std::move(config.actionSink),
-                *recorder,
-                engine::EngineSessionConfig{
-                    .liveFingerprint         = config.liveFingerprint,
-                    .maximumPixelComparisons = config.maximumPixelComparisons,
-                    .recognitionTimeout      = config.recognitionTimeout,
-                    .maxActionFrameAge       = config.maxActionFrameAge,
-                    .cancellation            = p_generation->cancellation(),
-                },
-                std::move(config.ocrEngine)
-            )
-        );
-
-        // The context owns the session and borrows the same recorder, and must
-        // outlive the VM that binds it, so it is declared before the Engine and
-        // destroyed after it. The generation's one stop token drives both the
-        // engine (which returns Cancelled) and the VM interrupt (which
-        // hard-breaks the task thread), so a cancellation is a single source and
-        // never two.
-        auto context = TaskContext{
-            std::move(session),
-            *recorder,
-            TaskContextConfig{
-                .cancellation         = p_generation->cancellation(),
-                .randomSeed           = seed,
-                .projectRoot          = p_generation->projectRoot(),
-                .maximumReadsPerCycle = config.maximumReadsPerCycle,
-            },
-        };
-
-        auto report = TaskRunReport{
-            .taskName   = loadedTask.name,
-            .sourceHash = loadedTask.hash.hex(),
-            .seed       = seed,
-            .tracePath  = config.tracePath,
-        };
-
-        // The VM boots two environments. The trusted framework bundle loads
-        // under the framework environment and is handed the private capability
-        // surface as its chunk argument; the task script below runs under a
-        // project environment that is an explicit whitelist and holds no route
-        // back to the framework's. So the script reaches the uf data tables
-        // and the framework's own `ctx`, and no primitive by any route.
-        //
-        // A VM that cannot be built at all -- a generation already cancelled, so
-        // the interrupt breaks the framework boot, or a framework module that
-        // will not load -- ends this RUN, not this call. run.started is already
-        // in the trace by now, so the run happened and has to be described; a
-        // bare Result failure here would leave a run bracket that never closed.
-        auto vm = script::Engine::create(
-            script::EngineConfig{
-                .cancellation               = p_generation->cancellation(),
-                .frameworkModules           = frameworkScriptModules(),
-                .installHostTables          = p_generation->surface().installer(),
-                .installPrivateCapabilities =
-                    CapabilitySurface::privateCapabilities(context),
-                .projectGlobals          = CapabilitySurface::projectGlobals(),
-                .frameworkProjectGlobals = frameworkProjectGlobals(),
-                .classifyRaisedError     = CapabilitySurface::raisedErrorClassifier(),
-            }
-        );
-        if (!vm)
-        {
-            report.failure = std::move(vm).error();
-        }
-        else
-        {
-            // The script's numeric return carries no success meaning of its own,
-            // so it is discarded: a Tier B or Tier C failure surfaces as an error
-            // here, and a clean return means the task ran to completion.
-            auto runResult = vm->runNumber(loadedTask.source, loadedTask.name);
-            if (!runResult)
-            {
-                report.failure = std::move(runResult).error();
-            }
-        }
-
-        // Two verdicts the script's own return cannot express, folded in before
-        // the closing line is built so run.finished reports the run that actually
-        // happened.
-        //
-        // A generation the host spent terminally -- a cancellation, or a framework
-        // bug the trace state machine caught -- ended there whatever the script
-        // did afterwards. Design section 9's rule 5 latches that in C++ precisely
-        // so a project pcall cannot turn it into a completed run, and this is
-        // where the latch is read back.
-        //
-        // A step or an interrupt match still open at run.finished is the framework
-        // failing to close what it opened, which section 12 makes a
-        // Failed(InternalInvariant) run. Both defer to a failure the run already
-        // has: an unclosed step under a cancelled run is the cancel's consequence,
-        // not a second cause.
-        if (!report.failure)
-        {
-            auto const terminal = context.terminalKind();
-            if (terminal.has_value())
-            {
-                report.failure = fail(
-                    *terminal,
-                    "the task generation was spent before the script returned"
-                ).error();
-            }
-        }
-        if (!report.failure)
-        {
-            auto scopes = recorder->requireScopesClosed();
-            if (!scopes)
-            {
-                report.failure = std::move(scopes).error();
-            }
-        }
-
-        auto finishStatus = recorder->emit(runFinishedEvent(report));
-        if (!report.failure && !finishStatus)
-        {
-            // The run itself succeeded but its closing evidence was lost, which
-            // leaves an incomplete trace and so cannot be reported as completed.
-            // The run's own failure always takes precedence over the sink's, so
-            // this only reaches the report when there was no other failure.
-            report.failure = std::move(finishStatus).error();
-        }
-
-        p_generation->noteRunFinished(report.outcome());
-        return report;
     }
 
     auto TaskHost::startOperatorSession(

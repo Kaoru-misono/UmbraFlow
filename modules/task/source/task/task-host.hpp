@@ -143,6 +143,42 @@ namespace uf::task
         [[nodiscard]] auto outcome() const noexcept -> TaskRunOutcome;
     };
 
+    // One trusted routine the host itself supplies, run through the same bracket
+    // a project task runs through.
+    //
+    // WHAT MAKES IT TRUSTED, precisely: the source is a string literal in this
+    // binary rather than a file in the project, so it is not addressed as
+    // (project, name), it is never read from disk, and no project can supply,
+    // replace or shadow it. Everything else about the run is identical to a
+    // task's -- the same VM, the same private capability surface, the same
+    // trace bracket, the same generation and the same cancellation -- because a
+    // routine that ran under weaker guarantees would be measuring a system the
+    // product does not have.
+    //
+    // Lifetime contract: both views must outlive the runFrameworkRoutine call.
+    // Every caller in this repository satisfies that with a string literal.
+    struct FrameworkRoutine final
+    {
+        // Labels the run in the trace and in compile diagnostics. It goes into
+        // run.started's task name, so a routine's evidence stream is told apart
+        // from a task's by what ran rather than by which verb was called.
+        std::string_view name{};
+
+        std::string_view source{};
+    };
+
+    // What one framework routine's run produced.
+    struct FrameworkRoutineReport final
+    {
+        TaskRunReport run{};
+
+        // The number the routine's chunk returned, which for a routine -- unlike
+        // for a task -- is its answer: `umbra-flow check` returns how many things
+        // the falsification matrix found wrong. It is zero for a run that failed
+        // before returning, and the report's own failure is what says so.
+        double answer{};
+    };
+
     // What the host can say about one generation between calls. P0 runs a task
     // synchronously inside startTask, so no caller can observe a run in
     // progress: the status is what the last finished run left behind, plus
@@ -223,6 +259,43 @@ namespace uf::task
             std::string_view taskName,
             TaskRunConfig config
         ) -> Result<TaskRunReport>;
+
+        // The geometry `generation`'s project was authored at.
+        //
+        // A live front-end measures this from the window it bound and hands it
+        // back as TaskRunConfig::liveFingerprint, which is what makes the
+        // engine's compatibility check mean something. A front-end whose frames
+        // come from the project's OWN screens has no window to measure, and the
+        // project's own fingerprint is the honest answer for it: those screens
+        // were captured at that geometry, which is exactly what makes them the
+        // screens this model is about.
+        [[nodiscard]]
+        auto projectFingerprint(
+            GenerationId generation
+        ) -> Result<annotation::ProjectFingerprint>;
+
+        // Runs one of the host's own trusted routines against `generation`'s
+        // project and reports how it ended and what it answered.
+        //
+        // It is startTask with the two steps that exist to police an untrusted
+        // script replaced: the source comes from `routine` instead of from
+        // <projectRoot>/tasks/<name>.luau, and its chunk hash is taken from those
+        // bytes. Everything observable is the same -- the front-end claim, the
+        // resource closure pass, the run bracket, the seed, the engine session,
+        // the VM's two environments -- so a routine cannot quietly enjoy a wider
+        // surface than a task, and the resource pass still runs because a
+        // first-party routine obeying the uf-literal rule is worth proving rather
+        // than assuming.
+        //
+        // It claims the TASK front-end, so a generation an operator already drives
+        // refuses this exactly as it refuses startTask, and a routine and a task
+        // may share one generation in sequence.
+        [[nodiscard]]
+        auto runFrameworkRoutine(
+            GenerationId generation,
+            FrameworkRoutine const& routine,
+            TaskRunConfig config
+        ) -> Result<FrameworkRoutineReport>;
 
         // Binds `generation`'s project to an operator front-end and hands back the
         // session it drives. The operator is a SIBLING consumer of the same private

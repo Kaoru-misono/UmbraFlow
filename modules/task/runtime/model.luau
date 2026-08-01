@@ -168,8 +168,17 @@ export type Element = {
 -- The constructor accepts a pin beside an exercised identify and documents that
 -- identify ignores it, rather than refusing, so an element that is both a page
 -- anchor and a click target can still pin the appearance its click needs.
+--
+-- `page` is the NAME of the page that declared this row. It is not a field an
+-- author writes -- `Page.new` stamps it, and the file already spells it as the
+-- `[[reference]]` section's own `page` key -- and it exists so a row can answer
+-- "which page authorised me" on its own. `observe.click` is what needs that
+-- answer: it holds a receipt proving one page resolved on this frame, and it
+-- has to check that the hit in front of it belongs to THAT page rather than to
+-- some other page that happens to reference the same element.
 export type Reference = {
     element: Element,
+    page: string,
     holding: string,
     exercised: CapabilitySet,
     identify: string?,
@@ -767,6 +776,7 @@ function Page.new(spec: { [string]: any }): Page
 
         local reference = table.freeze({
             element           = element,
+            page              = name,
             holding           = entry.holding,
             exercised         = exercised :: CapabilitySet,
             identify          = entry.identify,

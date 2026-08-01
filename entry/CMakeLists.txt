@@ -16,10 +16,14 @@ set(CLI_LIBRARY ${PROJECT_NAME}_cli_support)
 add_library(${CLI_LIBRARY} STATIC
     cli/args.cpp
     cli/args.hpp
+    cli/check.cpp
+    cli/check.hpp
     cli/drive.cpp
     cli/drive.hpp
     cli/drive-protocol.cpp
     cli/drive-protocol.hpp
+    cli/file-frame-source.cpp
+    cli/file-frame-source.hpp
     cli/run.cpp
     cli/run.hpp
 )
@@ -30,11 +34,15 @@ target_include_directories(${CLI_LIBRARY}
 )
 # The exit-code boundary maps a task::TaskRunReport, so the task module is part
 # of this library's interface on every host, not only where the run composition
-# builds.
+# builds. The image module is private and is here for one consumer: the
+# file-backed frame source `check` replays a project's own screens through
+# decodes each screen's PNG.
 target_link_libraries(${CLI_LIBRARY}
     PUBLIC
         ${PROJECT_NAME}_engine
         ${PROJECT_NAME}_task
+    PRIVATE
+        ${PROJECT_NAME}_image
 )
 target_compile_features(${CLI_LIBRARY} PUBLIC cxx_std_23)
 

@@ -50,10 +50,15 @@ local native = ...
 -- (docs/plans/2026-08-01-three-layers-and-agent-operator.md 2).
 local mintedHits: { [any]: boolean } = {}
 
+-- The receipts `observe.resolve_page` minted, held by identity for the same
+-- reason the hits are: a table a script wrote is not evidence of anything.
+local mintedReceipts: { [any]: boolean } = {}
+
 local observe = {}
 
 export type Hit = {
     element: any,
+    page: string,
     appearance: string?,
     positioned_by: string,
     interact: boolean,
@@ -66,6 +71,32 @@ export type Hit = {
     click_y: number,
     score: number?,
     maximum: number?,
+}
+
+-- What `observe.resolve_page` hands back when the frame behind a ticket IS the
+-- page it was asked about.
+--
+-- WHY THE SUCCESSFUL OUTCOME IS AN OBJECT RATHER THAN `true`. A click is only
+-- authorised by the page the SAME frame resolved. While the page model was C++
+-- that held by construction -- the ledger recorded the resolution against the
+-- cycle and `cycle_click` read it back -- and moving the model into Luau
+-- dissolved it: `resolve_page` returned a boolean, and a boolean carries no
+-- trace of which ticket produced it, so nothing stopped a script from resolving
+-- on one frame and clicking on the next. Making the success an object that
+-- names its own ticket is what restores the property WITHOUT hidden state: the
+-- evidence travels in the value the caller already had to obtain, and
+-- `observe.click` refuses to act without it.
+--
+-- IT IS EVIDENCE, NEVER A CACHE. `docs/plans/2026-07-31-script-owned-page-model.md`
+-- 5 forbids caching a fingerprint, an observation lease or a ticket identity in
+-- a Luau table to make anything faster, and this is not that: nothing below
+-- reads the ticket to SKIP a host check. C++ still validates the ticket, the
+-- lease, the fingerprint and the single consumption on every click, unchanged.
+-- The ticket is held here only so that two Luau values can be compared for
+-- having come from one cycle, which is a question C++ is never asked.
+export type Receipt = {
+    page: any,
+    ticket: any,
 }
 
 export type Reading = {
@@ -196,11 +227,26 @@ local function foldAppearances(
     return bestAppearance, bestMatch
 end
 
--- observe.resolve_page(ctx, ticket, page) -> (boolean, string?)
+-- Whether `value` is a receipt this module minted for `ticket`.
+--
+-- Both halves are checked here rather than at each call site, because a receipt
+-- from another cycle and a table nobody minted are the same failure -- "this is
+-- not evidence about the frame in front of you" -- and splitting them invites a
+-- caller to check one and forget the other.
+function observe.is_receipt_for(value: any, ticket: any): boolean
+    return mintedReceipts[value] == true and rawequal(value.ticket, ticket)
+end
+
+-- observe.resolve_page(ctx, ticket, page) -> (Receipt?, string?)
 --
 -- Whether the frame behind `ticket` is this page, and when it is not, the one
 -- sentence saying why. Only references exercising identify are consulted; the
 -- rest of the page describes what a script may DO once it is here.
+--
+-- SUCCESS IS A RECEIPT AND NOT A BOOLEAN. See the Receipt type above: the
+-- receipt is the evidence `observe.click` demands that this page resolved on
+-- THIS ticket, and it is the whole of how the same-frame authorisation rule
+-- survived the model's move out of C++.
 --
 -- The signature is strictly conjunctive: every required reference must match
 -- and every forbidden one must not. Evaluation stops at the first clause that
@@ -217,7 +263,7 @@ end
 -- layer-three loop over pages it cares about, and that is the intended shape:
 -- automation knows where it just went and needs to confirm it, and searching
 -- every marker of every page is the recovery path, not the entrance.
-function observe.resolve_page(ctx: any, ticket: any, page: any): (boolean, string?)
+function observe.resolve_page(ctx: any, ticket: any, page: any): (Receipt?, string?)
     requireCtx(ctx, "observe.resolve_page")
     if not model.is_page(page) then
         error("observe.resolve_page needs a page built by Page.new", 2)
@@ -235,7 +281,7 @@ function observe.resolve_page(ctx: any, ticket: any, page: any): (boolean, strin
                 nil
             )
             if reference.identify == "required" and found == nil then
-                return false,
+                return nil,
                     "page '"
                         .. page.name
                         .. "' requires element '"
@@ -243,7 +289,7 @@ function observe.resolve_page(ctx: any, ticket: any, page: any): (boolean, strin
                         .. "' and none of its appearances matched"
             end
             if reference.identify == "forbidden" and found ~= nil then
-                return false,
+                return nil,
                     "page '"
                         .. page.name
                         .. "' forbids element '"
@@ -255,7 +301,9 @@ function observe.resolve_page(ctx: any, ticket: any, page: any): (boolean, strin
         end
     end
 
-    return true, nil
+    local receipt = table.freeze({ page = page, ticket = ticket })
+    mintedReceipts[receipt] = true
+    return receipt, nil
 end
 
 -- observe.find(ctx, ticket, page_or_reference, element) -> Hit?
@@ -281,10 +329,12 @@ end
 -- FIND DOES NOT CHECK THAT THE PAGE ACTUALLY RESOLVED ON THIS TICKET, and that
 -- is a deliberate difference from the C++ verb it replaces. `cycle_find` had to
 -- resolve first because it had no other way to learn which row to read; here the
--- caller names the page, so the ordering requirement dissolves into an ordinary
--- script convention -- call `resolve_page` first, and believe its answer. The
--- convention still matters most for a page-positioned element, whose whole claim
--- to a position is that the page was recognised.
+-- caller names the page, so a find is a question about pixels and answers it
+-- without a resolution. Looking is free; ACTING is not, and `observe.click`
+-- demands the receipt `resolve_page` mints on the same ticket. The distinction
+-- matters most for a page-positioned element, whose whole claim to a position is
+-- that the page was recognised -- so a hit on one is worth exactly the receipt
+-- that will be produced beside it, and worth nothing without one.
 function observe.find(
     ctx: any,
     ticket: any,
@@ -344,6 +394,7 @@ function observe.find(
         local clickX, clickY = centrePixel(rect)
         local hit = table.freeze({
             element       = target,
+            page          = reference.page,
             appearance    = nil,
             positioned_by = "page",
             interact      = reference.exercised.interact,
@@ -371,6 +422,7 @@ function observe.find(
 
     local hit = table.freeze({
         element       = target,
+        page          = reference.page,
         appearance    = appearance.name,
         positioned_by = "pixels",
         interact      = reference.exercised.interact,
@@ -464,7 +516,7 @@ function observe.read_element(
     })
 end
 
--- observe.click(ctx, ticket, hit) -> ()
+-- observe.click(ctx, ticket, receipt, hit) -> ()
 --
 -- Delivers the click the hit describes and spends the observation cycle.
 --
@@ -476,12 +528,60 @@ end
 -- framework enforces it, here, and the bare-point primitive it needs for a
 -- page-positioned element is reachable only from this layer
 -- (docs/plans/2026-08-01-three-layers-and-agent-operator.md 2).
-function observe.click(ctx: any, ticket: any, hit: any)
+--
+-- THE RECEIPT IS THE FIFTH REQUISITE, AND IT IS THE ONE THAT WENT MISSING. The
+-- other half of the old C++ rule was that the page authorising the element had
+-- resolved on the SAME observation. `cycle_click` could enforce it because the
+-- ledger held the resolution; once the page moved to Luau the ledger stopped
+-- knowing what a page is, and `resolve_page` returning a boolean left nothing
+-- tying an answer to the frame it was answered about. So a caller now hands
+-- over the receipt, and three things are checked against it:
+--
+--   * it is a receipt this module minted, so a table shaped like one is not
+--     evidence;
+--   * its ticket is THIS ticket, so a page resolved on an earlier frame cannot
+--     authorise a click on a later one;
+--   * its page is the page the hit's own reference row belongs to, so proving
+--     you are on page A cannot authorise a click page B declared.
+--
+-- A failed resolution mints nothing at all, which is what makes "resolve_page
+-- said no" and "resolve_page was never called" the same refusal here.
+function observe.click(ctx: any, ticket: any, receipt: any, hit: any)
     requireCtx(ctx, "observe.click")
+    if not mintedReceipts[receipt] then
+        error(
+            "observe.click needs the receipt observe.resolve_page returned for "
+                .. "the page this element belongs to; a resolution that failed "
+                .. "returns none, so there is nothing to pass and nothing to "
+                .. "click on",
+            2
+        )
+    end
+    if not rawequal(receipt.ticket, ticket) then
+        error(
+            "observe.click was given a receipt for page '"
+                .. receipt.page.name
+                .. "' minted on another observation cycle; a click is "
+                .. "authorised by the page THIS frame resolved, and evidence "
+                .. "from an earlier frame describes a screen that has moved on",
+            2
+        )
+    end
     if not mintedHits[hit] then
         error(
             "observe.click takes a hit that observe.find returned on this "
                 .. "cycle, and nothing else",
+            2
+        )
+    end
+    if receipt.page.name ~= hit.page then
+        error(
+            "observe.click holds a receipt for page '"
+                .. receipt.page.name
+                .. "' and a hit page '"
+                .. tostring(hit.page)
+                .. "' authorised; one element referenced by two pages is "
+                .. "clickable on the page that was recognised and on no other",
             2
         )
     end
@@ -526,8 +626,8 @@ end
 
 -- One turn of the wait: does the target hold on the frame behind `ticket`.
 local function holdsNow(ctx: any, ticket: any, page: any, element: any): boolean
-    local resolved = observe.resolve_page(ctx, ticket, page)
-    if not resolved then
+    local receipt = observe.resolve_page(ctx, ticket, page)
+    if receipt == nil then
         return false
     end
     if element == nil then
@@ -694,7 +794,7 @@ end
 -- The first of `pages` that resolves on the frame behind `ticket`, or nil.
 local function resolveAny(ctx: any, ticket: any, pages: any): any
     for index = 1, #pages do
-        if observe.resolve_page(ctx, ticket, pages[index]) then
+        if observe.resolve_page(ctx, ticket, pages[index]) ~= nil then
             return pages[index]
         end
     end
@@ -710,18 +810,29 @@ end
 -- edge is walked. Which edge to walk is strategy and lives in layer three; where
 -- an edge leads is fact and lives in the project file.
 --
--- IT DOES NOT RE-RESOLVE THE PAGE IT LEAVES, for the same reason `observe.find`
--- does not: the caller named the page, so the ordering requirement is an
--- ordinary script convention rather than a cost this verb imposes. It also must
--- not: the stack's top is not always the page an edge leaves. Standing on a
--- battle screen with a card-detail overlay open, the end-turn button underneath
--- is still there and still clickable, and an edge leaving the battle page is
--- exactly the right thing to walk.
+-- A CLICK EDGE RESOLVES THE PAGE IT LEAVES, ON THE FRAME THAT DELIVERS THE
+-- TRIGGER. It has to: `observe.click` is authorised by a receipt from THIS
+-- ticket, and this verb is the caller. It does not consult the page stack to
+-- get that receipt -- the stack is belief and this is evidence -- it resolves
+-- `edge.from` on the frame it just captured and walks nothing if that fails.
 --
--- THE CLICK GOES THROUGH `observe.click`, so the interact authorisation is
--- enforced by the one place that enforces it. The key goes through the ctx
--- forward, which spends the cycle the same way a click does. A spontaneous edge
--- does nothing at all and the wait below is the whole of the walk.
+-- The cost of the rule is real and is the intended one: standing on a battle
+-- screen with a card-detail overlay open, an edge leaving the battle page can
+-- no longer be walked, because the battle page does not resolve while its
+-- overlay is up (its forbidden clause fires). The end-turn button underneath is
+-- still there and a click would still land, but nothing on that frame proves
+-- the page authorising it is the page in front of the run. Reaching it means
+-- popping the overlay first, or modelling the overlaid screen as its own page
+-- with its own authorisations, which is what
+-- docs/plans/2026-07-31-annotation-model-capabilities.md 4-2.6 already says to
+-- do when a form changes what may be clicked.
+--
+-- THE CLICK GOES THROUGH `observe.click`, so the interact authorisation and the
+-- receipt are enforced by the one place that enforces them. The key goes
+-- through the ctx forward, which spends the cycle the same way a click does; it
+-- needs no receipt because a keystroke names no position and no page declares
+-- anything about keys. A spontaneous edge does nothing at all and the wait
+-- below is the whole of the walk.
 --
 -- A TIMEOUT LOOKS FOR AN INTERRUPT PAGE BEFORE IT GIVES UP. Popups are declared
 -- once, as a flag on the page, rather than as an inbound edge from everywhere
@@ -801,6 +912,17 @@ function observe.walk_edge(
     if edge.via == "click" then
         local element = edge.via_element
         observeOnce(ctx, function(inner: any, ticket: any)
+            local receipt, why = observe.resolve_page(inner, ticket, edge.from)
+            if receipt == nil then
+                error(
+                    "walking the edge leaving page '"
+                        .. edge.from.name
+                        .. "' means clicking an element that page authorises, "
+                        .. "and this frame is not that page: "
+                        .. tostring(why),
+                    0
+                )
+            end
             local hit = observe.find(inner, ticket, edge.from, element)
             if hit == nil then
                 error(
@@ -812,7 +934,7 @@ function observe.walk_edge(
                     0
                 )
             end
-            observe.click(inner, ticket, hit)
+            observe.click(inner, ticket, receipt, hit)
             return nil
         end)
     elseif edge.via == "key" then

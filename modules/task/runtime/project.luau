@@ -40,10 +40,10 @@
 -- between two appearances, and sorting them would quietly change which pixels a
 -- click lands on.
 --
--- LOAD ORDER. `project` sorts after `mint`, `model`, `navigation` and
--- `observe`, so it can name all four. It names three of them: the constructors
--- in `model` and `navigation`, and nothing from `observe` at all -- parsing and
--- writing a file costs no capture.
+-- LOAD ORDER. `project` sorts after `mint`, `model`, `navigation`, `observe`
+-- and `oracle`, so it can name all five. It names three of them: the
+-- constructors in `model`, `navigation` and `oracle`, and nothing from
+-- `observe` at all -- parsing and writing a file costs no capture.
 
 local k_schema   = "umbraflow-project/l2-v1"
 local k_fileName = "page-model.toml"
@@ -54,6 +54,8 @@ local k_sectionKinds: { [string]: boolean } = {
     page       = true,
     reference  = true,
     edge       = true,
+    screen     = true,
+    expect     = true,
 }
 
 -- Which section kinds carry a parsed `[<kind>.extra]` subtable. An appearance
@@ -68,6 +70,8 @@ local k_extraOwners: { [string]: boolean } = {
     page      = true,
     reference = true,
     edge      = true,
+    screen    = true,
+    expect    = true,
 }
 
 local k_sectionFields: { [string]: { [string]: boolean } } = {
@@ -111,6 +115,23 @@ local k_sectionFields: { [string]: { [string]: boolean } } = {
         via_key     = true,
         kind        = true,
     },
+    -- A screen carries a name and the content hash of its PNG, and no path: the
+    -- path is `assets/screens/<hash>.png` by construction, so a project cannot
+    -- come to hold two facts about one picture that disagree.
+    screen = {
+        name = true,
+        hash = true,
+    },
+    -- What the model states about one cell of the falsification matrix. It is a
+    -- top-level section rather than a subtable of either end for the reason an
+    -- edge is: it is a fact about a PAIR, and filing it under the element would
+    -- make the screen's block depend on which was written first.
+    expect = {
+        screen     = true,
+        element    = true,
+        appearance = true,
+        state      = true,
+    },
 }
 
 -- Everything `load_project` hands back. The element and page entries are the
@@ -126,6 +147,14 @@ export type Model = {
     pages: { any },
     page_by_name: { [string]: any },
     graph: any,
+    -- The screens this model is measured against and what it states about each
+    -- cell, as one `oracle.Claims`. It is here rather than beside the model in
+    -- a second file because an expectation names an element and a screen, and
+    -- two files that have to stay in step are two files that will not
+    -- (docs/plans/2026-07-31-annotation-model-capabilities.md 4-2.1: the
+    -- matrix's conclusions land in the project file, and that is what makes
+    -- them falsifiable and replayable rather than a reviewer's memory).
+    claims: any,
     residual: {
         preamble: { string },
         sections: { { string } },
@@ -377,6 +406,54 @@ function project.encode(built: any): string
         table.insert(lines, "kind = " .. renderString(edge.kind))
         pushResidual(lines, edge.residual)
         pushExtra(lines, "[edge.extra]", edge.extra)
+    end
+
+    -- The screens and what the model claims about them come last of the known
+    -- sections, because they are read AGAINST everything above: an expectation
+    -- names an element and a screen, and a reader following one should already
+    -- have both in hand.
+    local claims: any = built.claims
+    local screens: { any } = if claims ~= nil then table.clone(claims.screens) else {}
+    table.sort(screens, function(left, right)
+        return left.name < right.name
+    end)
+
+    for _, screen in screens do
+        table.insert(lines, "")
+        table.insert(lines, "[[screen]]")
+        table.insert(lines, "name = " .. renderString(screen.name))
+        table.insert(lines, "hash = " .. renderString(screen.hash))
+        pushResidual(lines, screen.residual)
+        pushExtra(lines, "[screen.extra]", screen.extra)
+    end
+
+    local expectations: { any } = if claims ~= nil
+        then table.clone(claims.expectations)
+        else {}
+    table.sort(expectations, function(left, right)
+        if left.screen ~= right.screen then
+            return left.screen < right.screen
+        end
+        if left.element ~= right.element then
+            return left.element < right.element
+        end
+        return (left.appearance or "") < (right.appearance or "")
+    end)
+
+    for _, expectation in expectations do
+        table.insert(lines, "")
+        table.insert(lines, "[[expect]]")
+        table.insert(lines, "screen = " .. renderString(expectation.screen))
+        table.insert(lines, "element = " .. renderString(expectation.element))
+        if expectation.appearance ~= nil then
+            table.insert(
+                lines,
+                "appearance = " .. renderString(expectation.appearance)
+            )
+        end
+        table.insert(lines, "state = " .. renderString(expectation.state))
+        pushResidual(lines, expectation.residual)
+        pushExtra(lines, "[expect.extra]", expectation.extra)
     end
 
     if built.residual ~= nil then
@@ -696,10 +773,16 @@ function project.build(ctx: any, document: any): any
     local pageSections: { any }               = {}
     local referencesFor: { [string]: { any } } = {}
     local edgeSections: { any }               = {}
+    local screenSections: { any }             = {}
+    local expectSections: { any }             = {}
 
     for _, section in document.sections do
         if section.kind == "element" then
             table.insert(elementSections, section)
+        elseif section.kind == "screen" then
+            table.insert(screenSections, section)
+        elseif section.kind == "expect" then
+            table.insert(expectSections, section)
         elseif section.kind == "appearance" then
             local owner = requireField(section, "element")
             local list  = appearancesFor[owner]
@@ -910,6 +993,58 @@ function project.build(ctx: any, document: any): any
         )
     end
 
+    local screens: { any }                = {}
+    local screenByName: { [string]: any } = {}
+    for _, section in screenSections do
+        local screen = oracle.Screen.new({
+            name     = requireField(section, "name"),
+            hash     = requireField(section, "hash"),
+            extra    = section.extra,
+            residual = section.residual,
+        })
+        screenByName[screen.name] = screen
+        table.insert(screens, screen)
+    end
+
+    local expectations: { any } = {}
+    for _, section in expectSections do
+        local screenName = requireField(section, "screen")
+        local screen     = screenByName[screenName]
+        if screen == nil then
+            error(
+                "the [[expect]] starting at line "
+                    .. tostring(section.line)
+                    .. " names screen '"
+                    .. tostring(screenName)
+                    .. "', which this project file does not declare",
+                0
+            )
+        end
+        local elementName = requireField(section, "element")
+        local element     = elementByName[elementName]
+        if element == nil then
+            error(
+                "the [[expect]] starting at line "
+                    .. tostring(section.line)
+                    .. " names element '"
+                    .. tostring(elementName)
+                    .. "', which this project file does not declare",
+                0
+            )
+        end
+        table.insert(
+            expectations,
+            oracle.Expectation.new({
+                screen     = screen,
+                element    = element,
+                appearance = section.fields.appearance,
+                state      = requireField(section, "state"),
+                extra      = section.extra,
+                residual   = section.residual,
+            })
+        )
+    end
+
     return {
         schema          = document.schema,
         elements        = elements,
@@ -917,6 +1052,10 @@ function project.build(ctx: any, document: any): any
         pages           = pages,
         page_by_name    = pageByName,
         graph           = navigation.Graph.new({ pages = pages, edges = edges }),
+        claims          = oracle.Claims.new({
+            screens      = screens,
+            expectations = expectations,
+        }),
         residual        = {
             preamble = document.preamble,
             sections = document.blocks,

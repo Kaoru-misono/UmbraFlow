@@ -52,6 +52,13 @@ namespace uf::cli
         "umbra-flow-trace.jsonl"
     };
 
+    // `check` writes to its own default so a falsification run does not
+    // overwrite the evidence of the last real one. An operator checking a model
+    // between two runs is the ordinary case, not the exception.
+    inline constexpr auto k_defaultCheckTracePath = std::string_view{
+        "umbra-flow-check-trace.jsonl"
+    };
+
     // Parsed inputs for the `run` subcommand. Every field carries a resolved
     // value once parsing succeeds; the optional flags fall back to the defaults
     // above so the composition never observes an unset field. A run is always a
@@ -152,7 +159,36 @@ namespace uf::cli
 
     [[nodiscard]] auto driveUsageText() noexcept -> std::string_view;
 
-    // Both usages, for the bare invocation and for an unknown subcommand: the two
-    // modes are equal citizens, so neither is the one a reader is shown by default.
+    // Parsed inputs for the `check` subcommand: the falsification matrix over a
+    // whole project.
+    //
+    // There is no --selector and there never will be. A capture from a running
+    // target contributes no column to this matrix: a frame taken to measure
+    // against is not a screen the model is authored on, and the matrix is a
+    // statement about the authored ones. The pixels come from
+    // <project>/assets/screens, which is why this subcommand binds no target,
+    // declares no DPI awareness, and runs on every host.
+    //
+    // There is no --ocr-models either. The matrix measures template distances,
+    // and reading text is the one capability with no score to falsify against.
+    struct CheckArgs final
+    {
+        std::filesystem::path project{};
+
+        uint64                     budget{k_defaultPixelComparisonBudget};
+        MonotonicInstant::Duration recognitionTimeout{k_defaultRunRecognitionTimeout};
+
+        std::filesystem::path trace{k_defaultCheckTracePath};
+
+        auto operator==(CheckArgs const&) const -> bool = default;
+    };
+
+    [[nodiscard]]
+    auto parseCheckArguments(std::span<std::string const> raw) -> Result<CheckArgs>;
+
+    [[nodiscard]] auto checkUsageText() noexcept -> std::string_view;
+
+    // Every usage, for the bare invocation and for an unknown subcommand: the
+    // modes are equal citizens, so none is the one a reader is shown by default.
     [[nodiscard]] auto usageText() -> std::string;
 }

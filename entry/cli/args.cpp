@@ -61,6 +61,22 @@ namespace uf::cli
             return std::ranges::find(flags, flag) != flags.end();
         }
 
+        // `check` names no target and reads no text, so it shares only the two
+        // bounds a search runs under. The absence of --selector and --ocr-models
+        // is the argument shape stating what the matrix is: a measurement of
+        // authored screens against authored marks, with no live frame in it.
+        [[nodiscard]]
+        auto isCheckValueFlag(std::string_view flag) noexcept -> bool
+        {
+            auto constexpr flags = std::array<std::string_view, 4>{
+                "--project",
+                "--budget",
+                "--recognition-timeout",
+                "--trace",
+            };
+            return std::ranges::find(flags, flag) != flags.end();
+        }
+
         [[nodiscard]]
         auto invalid(std::string message) -> std::unexpected<Error>
         {
@@ -325,6 +341,63 @@ namespace uf::cli
         };
     }
 
+    auto parseCheckArguments(std::span<std::string const> raw) -> Result<CheckArgs>
+    {
+        auto project = std::optional<std::filesystem::path>{};
+
+        auto budget             = k_defaultPixelComparisonBudget;
+        auto recognitionTimeout = k_defaultRunRecognitionTimeout;
+        auto trace              = std::filesystem::path{k_defaultCheckTracePath};
+
+        auto index = std::size_t{0};
+        while (index < raw.size())
+        {
+            auto const& flag = raw[index];
+            if (!isCheckValueFlag(flag))
+            {
+                return invalid(std::format("unknown argument \"{}\"", flag));
+            }
+            if (index + 1U >= raw.size())
+            {
+                return invalid(std::format("missing value for {}", flag));
+            }
+            auto const& value = raw[index + 1U];
+
+            if (flag == "--project")
+            {
+                project = std::filesystem::path{value};
+            }
+            else if (flag == "--budget")
+            {
+                UF_TRY_VALUE(parsed, parseUnsigned(value, flag));
+                budget = parsed;
+            }
+            else if (flag == "--recognition-timeout")
+            {
+                UF_TRY_VALUE(count, parseUnsigned(value, flag));
+                UF_TRY_VALUE(
+                    parsed,
+                    parseDurationCount<std::chrono::milliseconds>(count, flag)
+                );
+                recognitionTimeout = parsed;
+            }
+            else if (flag == "--trace")
+            {
+                trace = std::filesystem::path{value};
+            }
+            index += 2U;
+        }
+
+        UF_TRY_VALUE(requiredProject, require(std::move(project), "--project"));
+
+        return CheckArgs{
+            .project            = std::move(requiredProject),
+            .budget             = budget,
+            .recognitionTimeout = recognitionTimeout,
+            .trace              = std::move(trace),
+        };
+    }
+
     auto runUsageText() noexcept -> std::string_view
     {
         return
@@ -375,11 +448,37 @@ namespace uf::cli
             "                                default: no OCR engine, cycle_read refuses\n";
     }
 
+    auto checkUsageText() noexcept -> std::string_view
+    {
+        return
+            "Usage:\n"
+            "  umbra-flow check --project DIR [options]\n"
+            "\n"
+            "Measures every appearance the project's page model declares against\n"
+            "every screen it holds under assets/screens, judges each cell against\n"
+            "the expectations recorded in the project file, and writes the verdict\n"
+            "as JSON lines. Exits non-zero when the verdict is not accepted.\n"
+            "\n"
+            "It binds no target: a frame captured to measure against is not a\n"
+            "screen the model was authored on.\n"
+            "\n"
+            "Required:\n"
+            "  --project DIR                Published annotation project directory\n"
+            "\n"
+            "Options:\n"
+            "  --budget N                   Pixel comparison ceiling per search\n"
+            "  --recognition-timeout MS     Per-search deadline; default: 2000\n"
+            "  --trace PATH                 Trace JSONL path; default: "
+            "umbra-flow-check-trace.jsonl\n";
+    }
+
     auto usageText() -> std::string
     {
         auto text = std::string{runUsageText()};
         text += '\n';
         text += driveUsageText();
+        text += '\n';
+        text += checkUsageText();
         return text;
     }
 }

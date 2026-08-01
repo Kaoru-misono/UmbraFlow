@@ -1,5 +1,6 @@
 #include "args.hpp"
 #include "application-info.hpp"
+#include "check.hpp"
 #include "drive.hpp"
 #include "run.hpp"
 
@@ -89,9 +90,45 @@ namespace uf::cli
             return exitCodeForReport(*report, runCancellationRequested());
         }
 
+        [[nodiscard]]
+        auto dispatchCheck(std::span<std::string const> raw) -> ExitCode
+        {
+            auto const args = parseCheckArguments(raw);
+            if (!args)
+            {
+                std::cerr << formatRunError(args.error()) << '\n';
+                std::cerr << checkUsageText();
+                return exitCodeForError(args.error(), false);
+            }
+
+            auto const report = checkProduct(*args);
+            if (!report)
+            {
+                std::cerr << formatRunError(report.error()) << '\n';
+                return exitCodeForError(report.error(), false);
+            }
+
+            // EVERY LINE THIS SUBCOMMAND WRITES TO STANDARD OUTPUT IS JSON. The
+            // verdict is already there, written by the routine itself, so the
+            // human summary goes to standard error instead of after it -- a
+            // check is the one product verb whose output is meant to be piped
+            // into something that parses it.
+            if (report->run.failure)
+            {
+                std::cerr << formatRunError(*report->run.failure) << '\n';
+            }
+            std::cerr << std::format(
+                "check: project=\"{}\" findings={} trace=\"{}\"\n",
+                args->project.string(),
+                report->findings,
+                report->run.tracePath.string()
+            );
+            return exitCodeForCheck(*report);
+        }
+
         // The mode is chosen HERE and nowhere else, and there is exactly one choice
-        // per process: one subcommand token selects one handler, and neither handler
-        // can reach the other. That is the argument-level half of the exclusion; the
+        // per process: one subcommand token selects one handler, and no handler
+        // can reach another. That is the argument-level half of the exclusion; the
         // half that actually holds it is TaskHost's per-generation front-end claim,
         // which refuses the second front-end however it was reached.
         [[nodiscard]]
@@ -111,6 +148,10 @@ namespace uf::cli
             if (raw.front() == "drive")
             {
                 return dispatchDrive(raw.subspan(1));
+            }
+            if (raw.front() == "check")
+            {
+                return dispatchCheck(raw.subspan(1));
             }
 
             std::cerr << std::format("unknown subcommand \"{}\"\n", raw.front());

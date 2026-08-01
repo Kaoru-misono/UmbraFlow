@@ -113,6 +113,7 @@ endif()
 
 set(CLI_TEST_SOURCES
     cli/test-args.cpp
+    cli/test-check.cpp
     cli/test-drive-protocol.cpp
 )
 # selectCandidate operates on the controller's TargetCandidate and is compiled
@@ -120,12 +121,16 @@ set(CLI_TEST_SOURCES
 if(WIN32 AND TARGET ${PROJECT_NAME}_controller)
     list(APPEND CLI_TEST_SOURCES cli/test-candidate-selection.cpp)
 endif()
+# The image module is private to cli_support, but the falsification-matrix cases
+# have to write the screens and template marks a synthetic project is measured
+# from, so the test links the PNG encoder itself.
 cpp_add_test(
     NAME test-cli
     SOURCES
         ${CLI_TEST_SOURCES}
     LIBS
         ${PROJECT_NAME}_cli_support
+        ${PROJECT_NAME}_image
 )
 # cli_support links engine publicly, which links ocr publicly.
 if(TARGET ${PROJECT_NAME}_ocr_onnxruntime)
