@@ -212,8 +212,21 @@ namespace uf::cli
     // <project>/assets/screens, which is why this subcommand binds no target,
     // declares no DPI awareness, and runs on every host.
     //
-    // There is no --ocr-models either. The matrix measures template distances,
-    // and reading text is the one capability with no score to falsify against.
+    // --ocr-models IS here, and until 2026-08-01 this comment said the opposite:
+    // the matrix measured template distances, and reading text was held to be
+    // the one capability with no score to falsify against. CONFIDENCE IS THAT
+    // SCORE. An element with no templates identifies by the text its rectangle
+    // reads, so the project file can claim what a region reads on one screen,
+    // and such a cell is measured exactly as every other one is -- against a
+    // number, at or above the read floor the element declares. That made the
+    // half of the model the matrix had been silent about falsifiable, and a
+    // matrix that stayed silent about it would be reporting green over cells
+    // nobody measured.
+    //
+    // A project whose claims include text and a check started without this flag
+    // is refused by name at the top of the routine, before any screen is
+    // measured. Degrading those cells to "unclaimed" instead would be the exact
+    // failure the previous sentence describes.
     struct CheckArgs final
     {
         std::filesystem::path project{};
@@ -222,6 +235,12 @@ namespace uf::cli
         MonotonicInstant::Duration recognitionTimeout{k_defaultRunRecognitionTimeout};
 
         std::filesystem::path trace{k_defaultCheckTracePath};
+
+        // Same field, same default, same reason as RunArgs::ocrModels: the
+        // front-ends must not be able to run cycle_read under different
+        // guarantees, and a check that read text a different way would be
+        // measuring something a run does not do.
+        std::optional<std::filesystem::path> ocrModels{};
 
         auto operator==(CheckArgs const&) const -> bool = default;
     };

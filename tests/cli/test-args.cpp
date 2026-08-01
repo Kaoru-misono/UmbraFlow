@@ -195,6 +195,33 @@ namespace uf::cli
         CHECK(*withResult->ocrModels == std::filesystem::path{"models"});
     }
 
+    TEST_CASE("parseCheckArguments accepts the same optional --ocr-models flag")
+    {
+        // The matrix gained this flag on 2026-08-01, when an element with no
+        // template started identifying by the text its rectangle reads and the
+        // reading's confidence became the score such a cell is falsified
+        // against. Before that the parser refused the flag by name, so a check
+        // that accepts it and drops it would look exactly like the old build.
+        auto const withoutFlag = std::vector<std::string>{"--project", "proj"};
+        auto const withoutResult = parseCheckArguments(withoutFlag);
+        REQUIRE(withoutResult.has_value());
+        CHECK_FALSE(withoutResult->ocrModels.has_value());
+        CHECK(withoutResult->trace == k_defaultCheckTracePath);
+
+        auto withFlag = withoutFlag;
+        withFlag.emplace_back("--ocr-models");
+        withFlag.emplace_back("models");
+
+        auto const withResult = parseCheckArguments(withFlag);
+        REQUIRE(withResult.has_value());
+        REQUIRE(withResult->ocrModels.has_value());
+        CHECK(*withResult->ocrModels == std::filesystem::path{"models"});
+
+        // And the operator reading the usage is told the flag exists and when
+        // it stops being optional.
+        CHECK(checkUsageText().find("--ocr-models") != std::string_view::npos);
+    }
+
     TEST_CASE("the default comparison budget covers a page evaluation but not a full frame")
     {
         // The cost model the default is derived from, spelled once: a candidate

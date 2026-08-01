@@ -172,6 +172,12 @@ namespace uf::cli
             // size, which leaves a single candidate position and so measures the
             // boundary crossing with almost no comparison work behind it.
             uint32 rectSize{k_rectSize};
+
+            // Which page each screen says it IS, by index. An entry that is
+            // absent or empty writes no `page` line, which is a screen nobody has
+            // annotated yet rather than a defect -- so the default leaves every
+            // screen undeclared and the baseline project unchanged.
+            std::vector<std::string> screenPages{};
         };
 
         [[nodiscard]]
@@ -368,6 +374,16 @@ namespace uf::cli
                     index,
                     screenHashes[index]
                 );
+                if (
+                    index < project.screenPages.size()
+                    && !project.screenPages[index].empty()
+                )
+                {
+                    text += std::format(
+                        "page = \"{}\"\n",
+                        project.screenPages[index]
+                    );
+                }
             }
 
             for (auto index = std::size_t{0}; index < project.screens; ++index)
@@ -504,6 +520,79 @@ namespace uf::cli
         CHECK_MESSAGE(!report->run.failure.has_value(), failureText(*report));
         CHECK(report->findings == 0U);
         CHECK(exitCodeForCheck(*report) == ExitCode::Success);
+    }
+
+    TEST_CASE("a screen that says which page it is has that page resolved on it")
+    {
+        // THE CLAIM A SCREEN MAKES ABOUT ITSELF, measured end to end through the
+        // real binary: the frames come off disk in content-hash order, the page
+        // is resolved on the screen's own observation, and the budget the host
+        // sized from the file has to cover it.
+        //
+        // It is the only cell of the matrix that measures a whole page SIGNATURE
+        // rather than one element -- a conjunction over identify rows, which no
+        // element-level cell walks end to end.
+        SUBCASE("the screen its page really is stays accepted")
+        {
+            auto const directory = TemporaryDirectory{"uf-check-page-declared"};
+            auto project = twentyElementProject();
+            // Page `only` is identified by mark_00, and mark_00 owns screen0.
+            project.screenPages = {"only"};
+            layOutProject(directory.path(), project);
+
+            auto const report = checkProduct(
+                checkArgs(directory.path(), directory.path() / "trace.jsonl")
+            );
+            REQUIRE(report.has_value());
+            CHECK_MESSAGE(!report->run.failure.has_value(), failureText(*report));
+            CHECK(report->findings == 0U);
+            CHECK(exitCodeForCheck(*report) == ExitCode::Success);
+        }
+
+        SUBCASE("a screen that is not its declared page is rejected")
+        {
+            // The same declaration moved one screen along. Every cell of the
+            // matrix still holds -- nothing about the elements changed -- and the
+            // model is rejected anyway, because screen1 says it is a page whose
+            // required mark is not on it.
+            auto const directory = TemporaryDirectory{"uf-check-page-wrong"};
+            auto project        = twentyElementProject();
+            project.screenPages = {"", "only"};
+            layOutProject(directory.path(), project);
+
+            auto const report = checkProduct(
+                checkArgs(directory.path(), directory.path() / "trace.jsonl")
+            );
+            REQUIRE(report.has_value());
+            CHECK_MESSAGE(!report->run.failure.has_value(), failureText(*report));
+            CHECK(report->findings == 1U);
+            CHECK(exitCodeForCheck(*report) == ExitCode::Failure);
+        }
+
+        SUBCASE("a page the file never declared is refused before any capture")
+        {
+            auto const directory = TemporaryDirectory{"uf-check-page-ghost"};
+            auto project        = twentyElementProject();
+            project.screenPages = {"nowhere"};
+            layOutProject(directory.path(), project);
+
+            auto const report = checkProduct(
+                checkArgs(directory.path(), directory.path() / "trace.jsonl")
+            );
+            REQUIRE(report.has_value());
+            REQUIRE(report->run.failure.has_value());
+            // The FILE's own refusal, named precisely: `recognition` refuses the
+            // same declaration a second time when a model somehow reaches the
+            // walk with one, and a fragment both sentences share would pass on
+            // either. This case is about the door that closes first.
+            auto const text = failureText(*report);
+            CHECK(text.find("says it is page 'nowhere'") != std::string::npos);
+            CHECK(
+                text.find("which this project file does not declare")
+                != std::string::npos
+            );
+            CHECK(exitCodeForCheck(*report) != ExitCode::Success);
+        }
     }
 
     TEST_CASE("a mark that matches a screen the model says it is absent from is rejected")
@@ -699,6 +788,19 @@ namespace uf::cli
                             "state = \"match\"\n",
                 .fragment = "no measurement this claim could ever be read against",
             },
+            Refusal{
+                .label    = "a text claimed of an element that has pixels",
+                .appended = "\n[[expect]]\nscreen = \"screen0\"\nelement = \"mark_01\"\n"
+                            "text = \"battle\"\nstate = \"match\"\n",
+                .fragment = "verifies itself by its template pixels",
+            },
+            Refusal{
+                .label    = "a cell claiming both a template and a text",
+                .appended = "\n[[expect]]\nscreen = \"screen0\"\nelement = \"mark_01\"\n"
+                            "appearance = \"lit\"\ntext = \"battle\"\n"
+                            "state = \"match\"\n",
+                .fragment = "names both an appearance and a text",
+            },
         };
 
         for (auto const& row : rows)
@@ -714,6 +816,155 @@ namespace uf::cli
             CHECK(failureText(*report).find(row.fragment) != std::string::npos);
             CHECK(exitCodeForCheck(*report) != ExitCode::Success);
         }
+    }
+
+    TEST_CASE("a project claiming what a region reads refuses a check with no engine")
+    {
+        // THE HALF THE MATRIX MUST NOT SILENTLY SKIP. An element with no
+        // templates identifies by the text its rectangle reads, and measuring
+        // such a cell means running an OCR engine -- which is an optional
+        // binding. A check started without one over a project that holds such a
+        // claim can produce no verdict about that half of the model.
+        //
+        // Reporting those cells as "unclaimed" instead would be a green matrix
+        // over exactly the cells nobody measured, and it would look identical to
+        // a project that genuinely claimed nothing. So the routine refuses
+        // before the first screen and NAMES THE FLAG, which is the only thing an
+        // operator can act on.
+        auto const directory = TemporaryDirectory{"uf-check-text-no-engine"};
+        auto const baseline  = layOutProject(directory.path(), twentyElementProject());
+
+        constexpr auto k_textClaim = std::string_view{
+            "\n[[element]]\nname = \"title\"\n"
+            "capabilities = [\"read\"]\nrect = [0, 0, 4, 4]\n"
+            "\n[[expect]]\nscreen = \"screen0\"\nelement = \"title\"\n"
+            "text = \"battle\"\nstate = \"match\"\n"
+        };
+
+        SUBCASE("without --ocr-models the check refuses and names the flag")
+        {
+            writeText(
+                directory.path() / "page-model.toml",
+                baseline + std::string{k_textClaim}
+            );
+
+            auto const report = checkProduct(
+                checkArgs(directory.path(), directory.path() / "trace.jsonl")
+            );
+            REQUIRE(report.has_value());
+            REQUIRE(report->run.failure.has_value());
+            CHECK(failureText(*report).find("--ocr-models") != std::string::npos);
+            CHECK(exitCodeForCheck(*report) != ExitCode::Success);
+        }
+
+        SUBCASE("a project claiming no reading needs no engine and is accepted")
+        {
+            // The control. Same binary, same absent flag, and a project whose
+            // every cell is a template distance -- so the refusal above is about
+            // what the project claims rather than about the flag being missing.
+            auto const report = checkProduct(
+                checkArgs(directory.path(), directory.path() / "trace.jsonl")
+            );
+            REQUIRE(report.has_value());
+            CHECK_MESSAGE(!report->run.failure.has_value(), failureText(*report));
+            CHECK(report->findings == 0U);
+        }
+
+        SUBCASE("a page a screen declares can need the engine on its own")
+        {
+            // The claims here say nothing about any reading, so the question
+            // `oracle.Claims.reads_text` answers is "no" -- and the check needs
+            // an engine anyway, because screen0 says it is a page whose signature
+            // is what a title box READS. A routine that asked only the claims
+            // would open the first screen and fail inside a resolution, which
+            // names the missing engine and not the project that needs it.
+            auto const nested = TemporaryDirectory{"uf-check-page-text-no-engine"};
+            auto project        = twentyElementProject();
+            project.screenPages = {"only"};
+            auto const baseText = layOutProject(nested.path(), project);
+            writeText(
+                nested.path() / "page-model.toml",
+                baseText
+                    + "\n[[element]]\nname = \"title\"\n"
+                      "capabilities = [\"identify\", \"read\"]\n"
+                      "rect = [0, 0, 4, 4]\n"
+                      "\n[[reference]]\npage = \"only\"\nelement = \"title\"\n"
+                      "holding = \"referenced\"\nexercised = [\"identify\"]\n"
+                      "identify = \"required\"\nexpected_text = \"battle\"\n"
+            );
+
+            auto const report = checkProduct(
+                checkArgs(nested.path(), nested.path() / "trace.jsonl")
+            );
+            REQUIRE(report.has_value());
+            REQUIRE(report->run.failure.has_value());
+            CHECK(failureText(*report).find("--ocr-models") != std::string::npos);
+            CHECK(exitCodeForCheck(*report) != ExitCode::Success);
+        }
+
+        SUBCASE("a --ocr-models directory that will not build an engine fails first")
+        {
+            // The wiring itself, and the one case that fails if `checkProduct`
+            // accepted the flag and then ignored it: an engine is built from the
+            // directory before any screen is opened, so a directory with no
+            // model behind it ends the check before it starts rather than at the
+            // first read.
+            auto const report = checkProduct(
+                CheckArgs{
+                    .project   = directory.path(),
+                    .trace     = directory.path() / "trace.jsonl",
+                    .ocrModels = directory.path() / "no-such-models",
+                }
+            );
+            CHECK_FALSE(report.has_value());
+        }
+    }
+
+    TEST_CASE("a screen claiming more text cells than the default budget is still checkable")
+    {
+        // THE SHAPE THE REAL PROJECT HAS. One title box, drawn once and reused,
+        // reads a different name on every page -- so the box is claimed on every
+        // screen, and a project of fifteen pages claims it fifteen times. That is
+        // the normal case rather than a runaway, and the per-cycle read budget a
+        // wait loop is bounded by (eight) has nothing to do with it: the matrix
+        // opens one observation per screen and spends one read per claimed cell
+        // on it, so what a cycle here needs is a fact about the file.
+        //
+        // The check therefore takes its budget from the project's own element
+        // count, and the routine compares that budget against the widest screen
+        // BEFORE the first capture. Put the default back and this case goes red:
+        // the nine cells below exceed eight, and the run ends on the budget
+        // refusal instead of reaching the clause it should reach.
+        auto const directory = TemporaryDirectory{"uf-check-wide-text-screen"};
+        auto const baseline  = layOutProject(directory.path(), twentyElementProject());
+
+        constexpr auto k_claimedCells = 9U;
+        auto claims = std::string{};
+        for (auto index = 0U; index < k_claimedCells; ++index)
+        {
+            // Elements with no appearances of their own, which is what a region
+            // verified by what it reads is. Each is claimed once, on one screen.
+            claims += std::format(
+                "\n[[element]]\nname = \"slot_{0}\"\ncapabilities = [\"read\"]\n"
+                "rect = [0, 0, 4, 4]\n"
+                "\n[[expect]]\nscreen = \"screen0\"\nelement = \"slot_{0}\"\n"
+                "text = \"line {0}\"\nstate = \"match\"\n",
+                index
+            );
+        }
+        writeText(directory.path() / "page-model.toml", baseline + claims);
+
+        auto const report = checkProduct(
+            checkArgs(directory.path(), directory.path() / "trace.jsonl")
+        );
+        REQUIRE(report.has_value());
+        REQUIRE(report->run.failure.has_value());
+
+        // It stops on the engine it was not given, which is the clause AFTER the
+        // budget one -- so the budget covered nine cells on one screen.
+        auto const text = failureText(*report);
+        CHECK(text.find("--ocr-models") != std::string::npos);
+        CHECK(text.find("read budget of") == std::string::npos);
     }
 
     TEST_CASE("a declared screen with no pixels and a pixel file nothing declares both fail")

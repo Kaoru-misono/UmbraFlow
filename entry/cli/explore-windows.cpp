@@ -3,6 +3,7 @@
 #include "platform/ocr-engine-binding.hpp"
 #include "platform/target-binding.hpp"
 #include "platform/windows-console-cancellation.hpp"
+#include "project-skeleton.hpp"
 
 #include <core/error/result.hpp>
 
@@ -23,6 +24,16 @@ namespace uf::cli
         UF_TRY_VALUE(paths, validateExploreIpcPaths(args));
 
         UF_TRY_VALUE(cancellation, platform::ConsoleCancellation::install());
+
+        // Before the project is loaded, because an authoring session's first
+        // write is what would otherwise find the directory missing -- and the
+        // store it writes through will not create one, for the reason
+        // project-skeleton.hpp gives. `explore` is where this belongs and the
+        // other three subcommands do not do it: a check, a run and a drive
+        // session all READ a project somebody already authored, so a directory
+        // missing there is evidence about that project rather than a step nobody
+        // has taken yet.
+        UF_TRY(ensureProjectSkeleton(args.project));
 
         auto host = task::TaskHost{};
         UF_TRY_VALUE(

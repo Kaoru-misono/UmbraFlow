@@ -32,6 +32,12 @@ add_library(${CLI_LIBRARY} STATIC
     cli/file-frame-source.hpp
     cli/json-text.cpp
     cli/json-text.hpp
+    # The OCR binding's DECLARATION is platform-free: `check` composes on every
+    # host and needs an engine whenever a project claims what a region reads, so
+    # it includes this header everywhere. Only the definition is gated below.
+    cli/platform/ocr-engine-binding.hpp
+    cli/project-skeleton.cpp
+    cli/project-skeleton.hpp
     cli/run.cpp
     cli/run.hpp
 )
@@ -65,7 +71,6 @@ if(WIN32 AND TARGET ${PROJECT_NAME}_controller)
             cli/platform/controller-action-sink.cpp
             cli/platform/controller-action-sink.hpp
             cli/platform/ocr-engine-binding.cpp
-            cli/platform/ocr-engine-binding.hpp
             cli/platform/target-binding.cpp
             cli/platform/target-binding.hpp
             cli/platform/wgc-frame-source.hpp
@@ -86,6 +91,7 @@ else()
             cli/drive-unsupported.cpp
             cli/explore-unsupported.cpp
             cli/run-unsupported.cpp
+            cli/platform/ocr-engine-binding-unsupported.cpp
     )
 endif()
 
@@ -109,40 +115,51 @@ target_compile_features(${PROJECT_NAME} PRIVATE cxx_std_23)
 if(TARGET ${PROJECT_NAME}_ocr_onnxruntime)
     cpp_stage_runtime_libraries(${PROJECT_NAME} ${UF_OCR_ONNXRUNTIME_SHARED_LIBRARIES})
 
-    # What `cycle_read` stands on at runtime, staged into the runtime output
+    # What the text reads stand on at runtime, staged into the runtime output
     # directory beside the binary. It moved here from the input agent when that
     # binary was retired: this is now the only executable that reaches the OCR
     # port, so it is the only one that has to carry the payload, and a build
     # tree keeps answering `--ocr-models <bin>/models` as a release does.
     #
-    # The detection model is deliberately NOT staged. The adapter recognises an
-    # already-located line and refuses TextLayout::Block, so shipping 9.8 MB of
-    # weights nothing loads would only make the payload look complete.
+    # BOTH models are staged. The detection half used to be left out on the
+    # grounds that nothing loaded it; `cycle_read_lines` loads it, and
+    # platform::bindOcrEngine names it unconditionally, so a build tree that
+    # staged only half the payload would answer `--ocr-models <bin>/models` with
+    # a startup failure instead of a working engine.
     #
     # Named outputs rather than a bare custom target, so a 21 MB model is
     # compared once and then skipped instead of on every build.
-    set(OCR_PAYLOAD_DIRECTORY
-        "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/models/ppocr-v6-small-rec"
-    )
-    set(OCR_MODEL_ROOT
-        "${CMAKE_SOURCE_DIR}/modules/ocr/external/models/ppocr-v6-small-rec"
-    )
-
-    set(OCR_MODEL_SOURCES "")
     set(OCR_MODEL_STAGED "")
-    foreach(PAYLOAD_FILE IN ITEMS inference.onnx inference.yml)
-        list(APPEND OCR_MODEL_SOURCES "${OCR_MODEL_ROOT}/${PAYLOAD_FILE}")
-        list(APPEND OCR_MODEL_STAGED "${OCR_PAYLOAD_DIRECTORY}/${PAYLOAD_FILE}")
+    set(OCR_MODEL_COMMANDS "")
+    set(OCR_MODEL_ALL_SOURCES "")
+    foreach(OCR_MODEL_NAME IN ITEMS ppocr-v6-small-rec ppocr-v6-small-det)
+        set(OCR_PAYLOAD_DIRECTORY
+            "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/models/${OCR_MODEL_NAME}"
+        )
+        set(OCR_MODEL_ROOT
+            "${CMAKE_SOURCE_DIR}/modules/ocr/external/models/${OCR_MODEL_NAME}"
+        )
+
+        set(OCR_MODEL_SOURCES "")
+        foreach(PAYLOAD_FILE IN ITEMS inference.onnx inference.yml)
+            list(APPEND OCR_MODEL_SOURCES "${OCR_MODEL_ROOT}/${PAYLOAD_FILE}")
+            list(APPEND OCR_MODEL_STAGED "${OCR_PAYLOAD_DIRECTORY}/${PAYLOAD_FILE}")
+        endforeach()
+
+        list(APPEND OCR_MODEL_COMMANDS
+            COMMAND ${CMAKE_COMMAND} -E make_directory "${OCR_PAYLOAD_DIRECTORY}"
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                ${OCR_MODEL_SOURCES}
+                "${OCR_PAYLOAD_DIRECTORY}"
+        )
+        list(APPEND OCR_MODEL_ALL_SOURCES ${OCR_MODEL_SOURCES})
     endforeach()
 
     add_custom_command(
         OUTPUT ${OCR_MODEL_STAGED}
-        COMMAND ${CMAKE_COMMAND} -E make_directory "${OCR_PAYLOAD_DIRECTORY}"
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            ${OCR_MODEL_SOURCES}
-            "${OCR_PAYLOAD_DIRECTORY}"
-        DEPENDS ${OCR_MODEL_SOURCES}
-        COMMENT "[Payload] umbra-flow: staging the ocr recognition model"
+        ${OCR_MODEL_COMMANDS}
+        DEPENDS ${OCR_MODEL_ALL_SOURCES}
+        COMMENT "[Payload] umbra-flow: staging the ocr detection and recognition models"
         VERBATIM
     )
     add_custom_target(${PROJECT_NAME}_ocr_payload DEPENDS ${OCR_MODEL_STAGED})

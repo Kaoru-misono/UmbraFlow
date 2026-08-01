@@ -61,18 +61,24 @@ namespace uf::cli
             return std::ranges::find(flags, flag) != flags.end();
         }
 
-        // `check` names no target and reads no text, so it shares only the two
-        // bounds a search runs under. The absence of --selector and --ocr-models
-        // is the argument shape stating what the matrix is: a measurement of
-        // authored screens against authored marks, with no live frame in it.
+        // `check` names no target, and the absence of --selector is still the
+        // argument shape stating what the matrix is: a measurement of authored
+        // screens against authored marks, with no live frame in it.
+        //
+        // --ocr-models joined the list on 2026-08-01, and this comment used to
+        // say it never would -- the matrix measured template distances, and
+        // reading was the capability with no score to falsify against. The
+        // reading's confidence is that score, so a project can now claim what a
+        // region reads on one screen and the matrix measures it. See CheckArgs.
         [[nodiscard]]
         auto isCheckValueFlag(std::string_view flag) noexcept -> bool
         {
-            auto constexpr flags = std::array<std::string_view, 4>{
+            auto constexpr flags = std::array<std::string_view, 5>{
                 "--project",
                 "--budget",
                 "--recognition-timeout",
                 "--trace",
+                "--ocr-models",
             };
             return std::ranges::find(flags, flag) != flags.end();
         }
@@ -371,6 +377,7 @@ namespace uf::cli
         auto budget             = k_defaultPixelComparisonBudget;
         auto recognitionTimeout = k_defaultRunRecognitionTimeout;
         auto trace              = std::filesystem::path{k_defaultCheckTracePath};
+        auto ocrModels          = std::optional<std::filesystem::path>{};
 
         auto index = std::size_t{0};
         while (index < raw.size())
@@ -408,6 +415,10 @@ namespace uf::cli
             {
                 trace = std::filesystem::path{value};
             }
+            else if (flag == "--ocr-models")
+            {
+                ocrModels = std::filesystem::path{value};
+            }
             index += 2U;
         }
 
@@ -418,6 +429,7 @@ namespace uf::cli
             .budget             = budget,
             .recognitionTimeout = recognitionTimeout,
             .trace              = std::move(trace),
+            .ocrModels          = std::move(ocrModels),
         };
     }
 
@@ -439,8 +451,9 @@ namespace uf::cli
             "  --max-frame-age MS           Action frame age ceiling; default: 750\n"
             "  --trace PATH                 Trace JSONL path; default: "
             "umbra-flow-trace.jsonl\n"
-            "  --ocr-models DIR             \"models\" directory enabling cycle_read;\n"
-            "                                default: no OCR engine, cycle_read refuses\n";
+            "  --ocr-models DIR             \"models\" directory enabling the text\n"
+            "                                reads; default: no engine, both read verbs\n"
+            "                                refuse\n";
     }
 
     auto driveUsageText() noexcept -> std::string_view
@@ -467,8 +480,9 @@ namespace uf::cli
             "  --idle-timeout S             End after an idle queue; default: 120\n"
             "  --trace PATH                 Trace JSONL path; default: "
             "umbra-flow-trace.jsonl\n"
-            "  --ocr-models DIR             \"models\" directory enabling cycle_read;\n"
-            "                                default: no OCR engine, cycle_read refuses\n";
+            "  --ocr-models DIR             \"models\" directory enabling the text\n"
+            "                                reads; default: no engine, both read verbs\n"
+            "                                refuse\n";
     }
 
     auto exploreUsageText() noexcept -> std::string_view
@@ -497,8 +511,9 @@ namespace uf::cli
             "  --idle-timeout S             End after an idle queue; default: 120\n"
             "  --trace PATH                 Trace JSONL path; default: "
             "umbra-flow-trace.jsonl\n"
-            "  --ocr-models DIR             \"models\" directory enabling cycle_read;\n"
-            "                                default: no OCR engine, cycle_read refuses\n";
+            "  --ocr-models DIR             \"models\" directory enabling the text\n"
+            "                                reads; default: no engine, both read verbs\n"
+            "                                refuse\n";
     }
 
     auto checkUsageText() noexcept -> std::string_view
@@ -522,7 +537,10 @@ namespace uf::cli
             "  --budget N                   Pixel comparison ceiling per search\n"
             "  --recognition-timeout MS     Per-search deadline; default: 2000\n"
             "  --trace PATH                 Trace JSONL path; default: "
-            "umbra-flow-check-trace.jsonl\n";
+            "umbra-flow-check-trace.jsonl\n"
+            "  --ocr-models DIR             \"models\" directory enabling the text\n"
+            "                                reads; required when the project claims\n"
+            "                                what a region reads, refused without it\n";
     }
 
     auto usageText() -> std::string
