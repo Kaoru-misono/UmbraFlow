@@ -5,7 +5,7 @@
 #include <core/error/result.hpp>
 #include <core/types/integer.hpp>
 
-#include <annotation/content-hash.hpp>
+#include <domain/content-hash.hpp>
 
 #include <vision/template-match.hpp>
 
@@ -46,7 +46,7 @@ namespace uf::task
             );
         }
 
-        UF_TRY_VALUE(hash, annotation::sha256(pngBytes));
+        UF_TRY_VALUE(hash, sha256(pngBytes));
         auto const existing = std::ranges::find_if(
             m_entries,
             [&hash](Entry const& entry) noexcept -> bool
@@ -100,7 +100,7 @@ namespace uf::task
 
     auto TemplateStore::hashOf(
         TemplateTicket ticket
-    ) const noexcept -> annotation::ContentHash const*
+    ) const noexcept -> ContentHash const*
     {
         auto const* p_entry = findEntry(ticket);
         return p_entry == nullptr ? nullptr : &p_entry->hash;

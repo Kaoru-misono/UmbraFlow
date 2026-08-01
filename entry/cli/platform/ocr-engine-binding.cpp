@@ -15,9 +15,10 @@ namespace uf::cli::platform
 {
     namespace
     {
-        // The payload layout, spelled once here exactly as entry/input-agent's
-        // OcrTextReader spells it: a directory is not itself the model, it is
-        // the "models" root the release lays the recognition model under.
+        // The payload layout, and since the input agent retired the only place
+        // it is spelled: a directory is not itself the model, it is the "models"
+        // root the release lays the recognition model under, and the one this
+        // binary's own build step stages into.
         constexpr auto k_recognitionDirectoryName = std::string_view{
             "ppocr-v6-small-rec"
         };

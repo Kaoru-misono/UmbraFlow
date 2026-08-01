@@ -32,8 +32,8 @@
 // page is. The script-owned page model
 // (docs/plans/2026-07-31-script-owned-page-model.md 3) moved that model into
 // Luau and left these behind with no model to belong to, so they moved to the
-// module whose whole subject is pixels. annotation still uses every one of them;
-// it is now a caller rather than the owner.
+// module whose whole subject is pixels. The module they came from was itself
+// retired shortly afterwards, so this is now their only home.
 namespace uf
 {
     // The single classification of a stopped search. Recognition failures and
@@ -76,9 +76,9 @@ namespace uf
     };
 
     // Decodes one template PNG into the planes the matcher consumes, and is the
-    // single definition of that decoding: the annotation runtime's own template
-    // closure goes through it, so a template the script layer loads is the same
-    // pixels the runtime would have loaded from the same bytes.
+    // single definition of that decoding: every template the script layer loads
+    // through template_load goes through it, so the same bytes always become the
+    // same pixels whichever verb asked for them.
     [[nodiscard]]
     auto decodeTemplateImage(
         std::span<std::byte const> pngBytes,
@@ -165,9 +165,9 @@ namespace uf
     // the unmasked matcher from whether the template carries a mask.
     //
     // It is public rather than an implementation detail of matchTemplateOnFrame
-    // because annotation's per-appearance search reaches it too, and a second
-    // copy of this choice is how a script-loaded template would quietly stop
-    // honouring an alpha channel.
+    // because a caller holding an already-decoded template reaches it directly,
+    // and a second copy of this choice is how a script-loaded template would
+    // quietly stop honouring an alpha channel.
     [[nodiscard]]
     auto matchGrayTemplateImage(
         GrayImage const& grayFrame,
@@ -228,9 +228,9 @@ namespace uf
     // Both halves are here rather than at each caller because skipping either
     // one is invisible -- a search on a frame of the wrong size still returns a
     // number -- and a second copy of the comparison is a second thing that can
-    // be forgotten. It is a free function rather than a method on any model,
-    // because the two models that own a fingerprint (the annotation catalog and
-    // the script-owned page model) must be judged by the same rule.
+    // be forgotten. It is a free function rather than a method on the model that
+    // owns a fingerprint, because the engine applies the rule without naming the
+    // script-owned page model the fingerprint came out of.
     [[nodiscard]]
     auto ensureCompatibleFrame(
         Frame const& frame,

@@ -2,7 +2,7 @@
 
 #include <core/error/result.hpp>
 
-#include <annotation/resource.hpp>
+#include <domain/space.hpp>
 
 #include <engine/ports.hpp>
 
@@ -14,9 +14,10 @@ namespace uf::cli::platform
     // The ports one session drives, plus the live fingerprint the engine's
     // fail-closed compatibility check compares against the manifest.
     //
-    // liveFingerprint carries no in-class initializer because annotation's
-    // fingerprint refuses to invent one: a session that guessed the target's geometry
-    // would defeat that check, so every construction site states it.
+    // liveFingerprint carries no in-class initializer because
+    // ProjectFingerprint refuses to invent one: a session that guessed the
+    // target's geometry would defeat that check, so every construction site
+    // states it.
     struct BoundTarget final
     {
         std::unique_ptr<engine::IFrameSource> frameSource;

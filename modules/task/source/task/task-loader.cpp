@@ -2,7 +2,7 @@
 
 #include <core/error/result.hpp>
 
-#include <annotation/content-hash.hpp>
+#include <domain/content-hash.hpp>
 
 #include <domain/error.hpp>
 
@@ -233,7 +233,7 @@ namespace uf::task
         }
 
         UF_TRY_VALUE(source, readCappedFile(path, k_maximumTaskSourceBytes));
-        UF_TRY_VALUE(hash, annotation::sha256(std::as_bytes(std::span{source})));
+        UF_TRY_VALUE(hash, sha256(std::as_bytes(std::span{source})));
 
         return LoadedTask{
             .name   = std::string{taskName},

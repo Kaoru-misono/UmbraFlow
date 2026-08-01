@@ -13,7 +13,7 @@
 #include <core/types/enum-reflection.hpp>
 #include <core/types/integer.hpp>
 
-#include <annotation/content-hash.hpp>
+#include <domain/content-hash.hpp>
 
 #include <domain/error.hpp>
 #include <domain/key.hpp>
@@ -1045,7 +1045,7 @@ namespace uf::task
                 traceHostCallFailure(state, context, failed, result.error());
             }
 
-            auto const hash = annotation::sha256(*result);
+            auto const hash = sha256(*result);
             if (!hash)
             {
                 raiseInvariant(
@@ -1087,7 +1087,7 @@ namespace uf::task
             auto const blob  = checkText(state, 2, "project_write contents");
             auto const bytes = std::as_bytes(std::span{blob});
 
-            auto const hash = annotation::sha256(bytes);
+            auto const hash = sha256(bytes);
             if (!hash)
             {
                 raiseInvariant(

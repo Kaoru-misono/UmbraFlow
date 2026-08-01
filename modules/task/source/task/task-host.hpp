@@ -5,7 +5,6 @@
 #include <core/time/monotonic-time.hpp>
 #include <core/types/integer.hpp>
 
-#include <annotation/resource.hpp>
 
 #include <domain/detection.hpp>
 #include <domain/ids.hpp>
@@ -117,7 +116,7 @@ namespace uf::task
         // the wait loop now lives; a host-side fallback would be a value nothing
         // reads.
 
-        // Where this run's umbraflow-trace/v2 stream is written. One run writes
+        // Where this run's umbraflow-trace/v3 stream is written. One run writes
         // one file; the host opens it only after the task has loaded and
         // validated, so a misspelled task name leaves no evidence file behind.
         std::filesystem::path tracePath{};
@@ -254,8 +253,8 @@ namespace uf::task
         // generation. Nothing observable happens here: a bad project fails before
         // any target is bound and before any trace file is opened.
         //
-        // It reads no generated/annotations.runtime.toml. The v3 manifest still
-        // exists for the v4 authoring line, and is no longer a runtime input
+        // It reads no generated/annotations.runtime.toml. That manifest went
+        // with the v4 authoring line
         // (docs/plans/2026-07-31-script-owned-page-model.md 9); the model a run
         // works from is the one layer two loads for itself through project_read.
         [[nodiscard]]

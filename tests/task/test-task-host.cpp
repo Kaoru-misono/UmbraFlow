@@ -1,19 +1,12 @@
 #include "binding-fixture.hpp"
 
-#include "../annotation/test-helpers.hpp"
+#include "../domain/test-helpers.hpp"
 
 #include <task/exploration-session.hpp>
 #include <task/framework-bundle.hpp>
 #include <task/operator-session.hpp>
 #include <task/task-host.hpp>
 #include <task/task-loader.hpp>
-
-#include <annotation/authoring-compiler.hpp>
-#include <annotation/authoring-document.hpp>
-#include <annotation/capabilities.hpp>
-#include <annotation/content-hash.hpp>
-#include <annotation/recognition.hpp>
-#include <annotation/resource.hpp>
 
 #include <core/error/error.hpp>
 #include <core/error/result.hpp>
@@ -64,8 +57,6 @@ namespace uf::task
 
     namespace
     {
-        namespace anno = annotation;
-
         constexpr auto k_sourceId = "00000000-0000-0000-0000-000000000301";
         constexpr auto k_anchorId = "00000000-0000-0000-0000-000000000021";
         constexpr auto k_actionId = "00000000-0000-0000-0000-000000000022";
@@ -221,7 +212,7 @@ exercised = ["interact"]
         [[nodiscard]]
         auto fixtureFingerprint() -> ProjectFingerprint
         {
-            return anno::test::fingerprint(3, 2, 96, 96);
+            return test::fingerprint(3, 2, 96, 96);
         }
 
         // Publishes a project at `root`: the page model the host reads, the one
@@ -354,7 +345,7 @@ exercised = ["interact"]
         auto stampedPrefix(std::string_view kind, std::size_t sequence) -> std::string
         {
             return std::format(
-                R"({{"schema":"umbraflow-trace/v2","kind":"{}")"
+                R"({{"schema":"umbraflow-trace/v3","kind":"{}")"
                 R"(,"seq":{},"runId":1,"generationId":1,"frontEnd":"task")",
                 kind,
                 sequence
@@ -916,7 +907,7 @@ exercised = ["interact"]
         );
     }
 
-    TEST_CASE("a TaskHost run writes one ordered umbraflow-trace/v2 run bracket")
+    TEST_CASE("a TaskHost run writes one ordered umbraflow-trace/v3 run bracket")
     {
         // The acceptance criterion for the whole slice: one call drives the host
         // events, the engine's recognition and delivery events, and the script
@@ -979,7 +970,7 @@ exercised = ["interact"]
         CHECK(
             lines.front()
             == std::format(
-                R"({{"schema":"umbraflow-trace/v2","kind":"run.started")"
+                R"({{"schema":"umbraflow-trace/v3","kind":"run.started")"
                 R"(,"seq":1,"runId":1,"generationId":1,"frontEnd":"task")"
                 R"(,"projectId":"{}","taskName":"daily")"
                 R"(,"sourceHash":"{}","frameworkVersion":"{}")"
@@ -998,13 +989,13 @@ exercised = ["interact"]
         );
         CHECK(
             lines[1]
-            == R"({"schema":"umbraflow-trace/v2","kind":"run.resources_validated")"
+            == R"({"schema":"umbraflow-trace/v3","kind":"run.resources_validated")"
                R"(,"seq":2,"runId":1,"generationId":1,"frontEnd":"task")"
                R"(,"elements":["daily_button"],"pages":["home"]})"
         );
         CHECK(
             lines.back()
-            == R"({"schema":"umbraflow-trace/v2","kind":"run.finished")"
+            == R"({"schema":"umbraflow-trace/v3","kind":"run.finished")"
                R"(,"seq":13,"runId":1,"generationId":1,"frontEnd":"task","runOutcome":"Completed"})"
         );
 

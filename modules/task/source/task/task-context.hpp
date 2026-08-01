@@ -9,7 +9,7 @@
 #include <core/time/monotonic-time.hpp>
 #include <core/types/integer.hpp>
 
-#include <annotation/content-hash.hpp>
+#include <domain/content-hash.hpp>
 
 #include <domain/error.hpp>
 #include <domain/key.hpp>
@@ -183,7 +183,7 @@ namespace uf::task
         {
             TemplateTicket ticket{};
 
-            annotation::ContentHash hash;
+            ContentHash hash;
         };
 
         // What one cycleCrop produced: the PNG a script holds, and the content
@@ -200,7 +200,7 @@ namespace uf::task
         {
             std::vector<std::byte> png{};
 
-            annotation::ContentHash hash;
+            ContentHash hash;
         };
 
     private:

@@ -66,29 +66,6 @@ cpp_add_test(
 )
 
 cpp_add_test(
-    NAME test-annotation
-    SOURCES
-        annotation/test-annotation-model.cpp
-        annotation/test-appearance.cpp
-        annotation/test-authoring-compiler.cpp
-        annotation/test-authoring-document.cpp
-        annotation/test-authorization.cpp
-        annotation/test-capabilities.cpp
-        annotation/test-catalog.cpp
-        annotation/test-colour-key-join.cpp
-        annotation/test-content-hash.cpp
-        annotation/test-recognition.cpp
-        annotation/test-runtime-project.cpp
-        annotation/test-recognition-runtime.cpp
-        annotation/test-regression-runner.cpp
-        annotation/test-runtime-manifest.cpp
-        annotation/test-template-asset.cpp
-    LIBS
-        ${PROJECT_NAME}_annotation
-        ${PROJECT_NAME}_image
-)
-
-cpp_add_test(
     NAME test-trace
     SOURCES
         trace/test-trace.cpp
@@ -205,125 +182,35 @@ if(TARGET ${PROJECT_NAME}_controller)
     )
 endif()
 
-if(TARGET ${PROJECT_NAME}_input_agent_support)
+# What the OCR adapter reads off a real frame. The fixture directory holds real
+# game screenshots that are never committed, so the target is registered only
+# when a developer has created it; rerun cmake configure after adding
+# tests/assets/real-regression for it to appear. It sat inside the workbench
+# block until the annotation front-ends were retired, which was only ever where
+# the fixture directory happened to be first tested for.
+if(EXISTS ${CMAKE_SOURCE_DIR}/tests/assets/real-regression)
     cpp_add_test(
-        NAME test-input-agent
+        NAME test-ocr-real
         SOURCES
-            input-agent/test-agent.cpp
-            input-agent/test-annotation.cpp
-            input-agent/test-args.cpp
-            input-agent/test-error-text.cpp
-            input-agent/test-loop.cpp
-            input-agent/test-target-setup.cpp
+            ocr/test-ocr-real.cpp
         LIBS
-            ${PROJECT_NAME}_input_agent_support
-    )
-endif()
-
-if(TARGET ${PROJECT_NAME}_m0_demo_support)
-    cpp_add_test(
-        NAME test-m0-demo
-        SOURCES
-            m0-demo/test-args.cpp
-            m0-demo/test-capture-mode.cpp
-            m0-demo/test-guard.cpp
-            m0-demo/test-log-jsonl.cpp
-            m0-demo/test-pacing.cpp
-            m0-demo/test-pipeline.cpp
-            m0-demo/test-shutdown.cpp
-        LIBS
-            ${PROJECT_NAME}_m0_demo_support
-    )
-endif()
-
-if(TARGET ${PROJECT_NAME}_workbench_support)
-    cpp_add_test(
-        NAME test-workbench
-        SOURCES
-            workbench/test-authoring-edit.cpp
-            workbench/test-edit-page.cpp
-            workbench/test-preview.cpp
-            workbench/test-project-persistence.cpp
-            workbench/test-source-ingestion.cpp
-        LIBS
-            ${PROJECT_NAME}_workbench_support
+            ${PROJECT_NAME}_ocr
             ${PROJECT_NAME}_image
+            ${PROJECT_NAME}_vision
     )
-
-    # The AddressSanitizer smoke test drove the archived umbra-workbench GUI over
-    # a generated project to exercise the panel draw path. Both the GUI and the
-    # fixture generator went with it; git history holds them, and
-    # docs/pitfalls/workbench-authoring-ui.md keeps the prescription.
-
-    # The authoring CLI drives the same persistence and edit layer, so its test
-    # is registered beside the workbench's and reaches across to the colour-key
-    # crops that live there.
-    if(TARGET ${PROJECT_NAME}_authoring_support)
-        # The image module is private to authoring_support, but the budget cases
-        # have to write source frames at a size no committed fixture has, so the
-        # test links the PNG writer itself.
-        cpp_add_test(
-            NAME test-authoring
-            SOURCES
-                authoring/test-authoring-cli.cpp
-            LIBS
-                ${PROJECT_NAME}_authoring_support
-                ${PROJECT_NAME}_image
-        )
-        # authoring_support links cli_support, which links engine, which
-        # links ocr publicly.
-        if(TARGET ${PROJECT_NAME}_ocr_onnxruntime)
-            cpp_stage_runtime_libraries(test-authoring ${UF_OCR_ONNXRUNTIME_SHARED_LIBRARIES})
-        endif()
-    endif()
-
-    # Local-only real-screenshot regression. The fixture directory holds real
-    # game screenshots that are never committed, so the target is registered
-    # only when a developer has created it. Rerun cmake configure after adding
-    # tests/assets/real-regression for this target to appear.
-    if(EXISTS ${CMAKE_SOURCE_DIR}/tests/assets/real-regression)
-        cpp_add_test(
-            NAME test-real-regression
-            SOURCES
-                workbench/test-real-regression.cpp
-            LIBS
-                ${PROJECT_NAME}_workbench_support
-                ${PROJECT_NAME}_image
-        )
-        target_compile_definitions(test-real-regression PRIVATE
-            UF_REAL_REGRESSION_ROOT="${CMAKE_SOURCE_DIR}/tests/assets/real-regression"
-        )
-        # A distinct label keeps this out of the CI set; it must never run on CI
-        # machines, which have only synthetic fixtures.
-        set_tests_properties(test-real-regression PROPERTIES
-            LABELS "REAL"
-            TIMEOUT 600
-        )
-
-        # What the OCR adapter reads off a real frame. Local-only for the same
-        # reason as the target above, and separate from it because it is the ocr
-        # module under test rather than the workbench's regression runner.
-        cpp_add_test(
-            NAME test-ocr-real
-            SOURCES
-                ocr/test-ocr-real.cpp
-            LIBS
-                ${PROJECT_NAME}_ocr
-                ${PROJECT_NAME}_image
-                ${PROJECT_NAME}_vision
-        )
-        target_compile_definitions(test-ocr-real PRIVATE
-            UF_REAL_REGRESSION_ROOT="${CMAKE_SOURCE_DIR}/tests/assets/real-regression"
-            UF_OCR_MODEL_ROOT="${CMAKE_SOURCE_DIR}/modules/ocr/external/models"
-        )
-        # onnxruntime resolves beside the executable, so the runtime DLLs are
-        # copied rather than assumed to be on PATH; see cmake/runtime-payload.cmake.
-        cpp_stage_runtime_libraries(test-ocr-real ${UF_OCR_ONNXRUNTIME_SHARED_LIBRARIES})
-        set_tests_properties(test-ocr-real PROPERTIES
-            LABELS "REAL"
-            TIMEOUT 300
-        )
-    endif()
+    target_compile_definitions(test-ocr-real PRIVATE
+        UF_REAL_REGRESSION_ROOT="${CMAKE_SOURCE_DIR}/tests/assets/real-regression"
+        UF_OCR_MODEL_ROOT="${CMAKE_SOURCE_DIR}/modules/ocr/external/models"
+    )
+    # onnxruntime resolves beside the executable, so the runtime DLLs are copied
+    # rather than assumed to be on PATH; see cmake/runtime-payload.cmake.
+    cpp_stage_runtime_libraries(test-ocr-real ${UF_OCR_ONNXRUNTIME_SHARED_LIBRARIES})
+    # A distinct label keeps this out of the CI set; it must never run on CI
+    # machines, which have only synthetic fixtures.
+    set_tests_properties(test-ocr-real PROPERTIES
+        LABELS "REAL"
+        TIMEOUT 300
+    )
 endif()
 
 find_package(Python3 COMPONENTS Interpreter QUIET)

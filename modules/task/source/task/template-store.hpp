@@ -4,7 +4,7 @@
 #include <core/safety/annotations.hpp>
 #include <core/types/integer.hpp>
 
-#include <annotation/content-hash.hpp>
+#include <domain/content-hash.hpp>
 
 #include <vision/template-match.hpp>
 
@@ -64,9 +64,9 @@ namespace uf::task
         // is what answers "have I already decoded these".
         struct Entry final
         {
-            uint64                  ordinal{};
-            annotation::ContentHash hash;
-            GrayTemplateImage       image;
+            uint64            ordinal{};
+            ContentHash       hash;
+            GrayTemplateImage image;
         };
 
         uint64             m_generation;
@@ -107,6 +107,6 @@ namespace uf::task
         // distinct blob, so the second scan costs nothing that matters.
         [[nodiscard]]
         auto hashOf(TemplateTicket ticket) const noexcept UF_LIFETIME_BOUND
-            -> annotation::ContentHash const*;
+            -> ContentHash const*;
     };
 }

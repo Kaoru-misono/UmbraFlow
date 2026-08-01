@@ -76,7 +76,6 @@ namespace uf::trace
             case TraceEventKind::RunResourcesValidated: return "run.resources_validated";
             case TraceEventKind::RunFinished: return "run.finished";
             case TraceEventKind::EngineObserved: return "engine.observed";
-            case TraceEventKind::EnginePageResolved: return "engine.page_resolved";
             case TraceEventKind::EngineActionFound: return "engine.action_found";
             case TraceEventKind::EngineTextRead: return "engine.text_read";
             case TraceEventKind::EngineActionAuthorized: return "engine.action_authorized";
@@ -104,21 +103,6 @@ namespace uf::trace
             }
 
             UF_UNREACHABLE_MSG("Unknown TraceEventKind value");
-        }
-
-        [[nodiscard]]
-        auto pageResolutionName(PageResolution outcome) noexcept -> std::string_view
-        {
-            switch (outcome)
-            {
-            case PageResolution::Resolved: return "Resolved";
-            case PageResolution::Unknown: return "Unknown";
-            case PageResolution::Ambiguous: return "Ambiguous";
-            case PageResolution::Stopped: return "Stopped";
-            case PageResolution::Failed: return "Failed";
-            }
-
-            UF_UNREACHABLE_MSG("Unknown PageResolution value");
         }
 
         [[nodiscard]]
@@ -282,67 +266,6 @@ namespace uf::trace
                 "targetGeneration",
                 std::format("{}", frame.targetGeneration().value())
             );
-        }
-
-        // The per-page evidence array of engine.page_resolved, built as one JSON
-        // literal because the builder writes flat members and this is the schema's
-        // only nested list of objects. The order is the resolver's own page order,
-        // which is the catalog's, so it is stable across runs.
-        [[nodiscard]]
-        auto serializePageScores(
-            std::span<TraceEvent::Page::Score const> scores
-        ) -> std::string
-        {
-            auto text  = std::string{"["};
-            auto first = true;
-            for (auto const& score : scores)
-            {
-                if (!first)
-                {
-                    text += ',';
-                }
-                first = false;
-
-                text += "{\"pageId\":";
-                text += escapeJsonString(score.pageId.value().toString());
-                text += score.candidate ? ",\"candidate\":true" : ",\"candidate\":false";
-                if (score.worstAnchor.has_value())
-                {
-                    text += ",\"worstAnchor\":";
-                    text += escapeJsonString(score.worstAnchor->value().toString());
-                }
-                if (score.worstAnchorSad.has_value())
-                {
-                    text += std::format(",\"worstAnchorSad\":{}", *score.worstAnchorSad);
-                }
-                if (score.worstAnchorMaximumSad.has_value())
-                {
-                    text += std::format(
-                        ",\"worstAnchorMaximumSad\":{}",
-                        *score.worstAnchorMaximumSad
-                    );
-                }
-                text += '}';
-            }
-
-            text += ']';
-            return text;
-        }
-
-        auto addPage(
-            TraceLineBuilder& builder,
-            TraceEvent::Page const& page
-        ) -> void
-        {
-            builder.addString("pageOutcome", pageResolutionName(page.outcome));
-            if (page.pageId.has_value())
-            {
-                builder.addString("pageId", page.pageId->value().toString());
-            }
-            if (!page.scores.empty())
-            {
-                builder.addLiteral("pageScores", serializePageScores(page.scores));
-            }
         }
 
         auto addReading(
@@ -618,11 +541,6 @@ namespace uf::trace
             addFrame(builder, *event.frame);
         }
 
-        if (event.page.has_value())
-        {
-            addPage(builder, *event.page);
-        }
-
         if (event.action.has_value())
         {
             addAction(builder, *event.action);
@@ -746,11 +664,6 @@ namespace uf::trace
             {
                 builder.addString("contentHash", *event.annotation->contentHash);
             }
-        }
-
-        if (event.elementId.has_value())
-        {
-            builder.addString("elementId", event.elementId->value().toString());
         }
 
         if (event.templateHash.has_value())

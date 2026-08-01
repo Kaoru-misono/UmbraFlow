@@ -1,19 +1,14 @@
-#include "../annotation/test-helpers.hpp"
+#include "../domain/test-helpers.hpp"
 
 #include <args.hpp>
 #include <check.hpp>
 #include <file-frame-source.hpp>
 #include <run.hpp>
 
-#include <annotation/authoring-compiler.hpp>
-#include <annotation/authoring-document.hpp>
-#include <annotation/capabilities.hpp>
-#include <annotation/content-hash.hpp>
-#include <annotation/resource.hpp>
-
 #include <core/error/error.hpp>
 #include <core/types/integer.hpp>
 
+#include <domain/content-hash.hpp>
 #include <domain/error.hpp>
 #include <domain/space.hpp>
 
@@ -46,8 +41,6 @@
 // three boundaries it has to cross to be useful.
 namespace uf::cli
 {
-    namespace anno = annotation;
-
     namespace
     {
         // The synthetic geometry every project below is built at.
@@ -127,7 +120,7 @@ namespace uf::cli
         [[nodiscard]]
         auto fixtureFingerprint() -> ProjectFingerprint
         {
-            return anno::test::fingerprint(k_screenSize, k_screenSize, 96, 96);
+            return test::fingerprint(k_screenSize, k_screenSize, 96, 96);
         }
 
         // One way an element can look, and which screen carries it.
@@ -196,7 +189,7 @@ namespace uf::cli
             SyntheticElement const& element
         ) -> PixelRect
         {
-            return anno::test::pixelRect(
+            return test::pixelRect(
                 element.column * (k_rectSize - 3U),
                 element.row * (k_rectSize - 3U),
                 project.rectSize,
@@ -305,7 +298,7 @@ namespace uf::cli
             for (auto index = std::size_t{0}; index < project.screens; ++index)
             {
                 auto const bytes = screenPng(project, index);
-                auto const hash  = anno::sha256(bytes);
+                auto const hash  = sha256(bytes);
                 REQUIRE(hash.has_value());
                 auto const hex = hash->hex();
                 writeFile(root / "assets" / "screens" / (hex + ".png"), bytes);
@@ -736,7 +729,7 @@ namespace uf::cli
             auto project    = twentyElementProject();
             project.screens = 5;
             auto const stray = screenPng(project, 4);
-            auto const hash  = anno::sha256(stray);
+            auto const hash  = sha256(stray);
             REQUIRE(hash.has_value());
             writeFile(
                 directory.path() / "assets" / "screens" / (hash->hex() + ".png"),

@@ -126,7 +126,7 @@ namespace uf::task
             };
             auto encoded = image::encodeRgbaPng("screen.png", 3, 1, rgba);
             REQUIRE(encoded.has_value());
-            auto const hash = anno::sha256(*encoded);
+            auto const hash = sha256(*encoded);
             REQUIRE(hash.has_value());
 
             auto const hex = hash->hex();

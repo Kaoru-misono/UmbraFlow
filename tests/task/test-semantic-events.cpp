@@ -125,7 +125,7 @@ namespace uf::task
         [[nodiscard]]
         auto unknownFrames(std::size_t count, FrameId frameId) -> std::vector<Frame>
         {
-            auto const fingerprint = anno::test::fingerprint(3, 1, 96, 96);
+            auto const fingerprint = test::fingerprint(3, 1, 96, 96);
             auto frames            = std::vector<Frame>{};
             for (auto index = std::size_t{0}; index < count; ++index)
             {

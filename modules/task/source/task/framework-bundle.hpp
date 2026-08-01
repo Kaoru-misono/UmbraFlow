@@ -30,7 +30,7 @@ namespace uf::task
 
         // Lowercase hex SHA-256 of `source`, computed by the generator at build
         // time. tests/task/test-framework-bundle.cpp recomputes it with
-        // annotation::sha256, which is what keeps the build-time and run-time
+        // sha256, which is what keeps the build-time and run-time
         // hash definitions from drifting apart.
         std::string_view sourceHash{};
     };

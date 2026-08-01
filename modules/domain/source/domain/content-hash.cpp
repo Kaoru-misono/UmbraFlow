@@ -5,8 +5,6 @@
 #include <core/safety/checked-access.hpp>
 #include <core/types/integer.hpp>
 
-#include <domain/error.hpp>
-
 #include <algorithm>
 #include <array>
 #include <bit>
@@ -17,7 +15,7 @@
 #include <string>
 #include <string_view>
 
-namespace uf::annotation
+namespace uf
 {
     namespace
     {

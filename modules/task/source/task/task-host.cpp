@@ -9,7 +9,7 @@
 #include "task-context.hpp"
 #include "task-loader.hpp"
 
-#include <annotation/content-hash.hpp>
+#include <domain/content-hash.hpp>
 
 #include <core/error/error.hpp>
 #include <core/error/result.hpp>
@@ -680,7 +680,7 @@ namespace uf::task
         auto source = std::string{routine.source};
         UF_TRY_VALUE(
             sourceHash,
-            annotation::sha256(std::as_bytes(std::span{source}))
+            sha256(std::as_bytes(std::span{source}))
         );
         auto const chunk = LoadedTask{
             .name   = std::string{routine.name},

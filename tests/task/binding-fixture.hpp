@@ -1,13 +1,10 @@
 #pragma once
 
-#include "../annotation/test-helpers.hpp"
+#include "../domain/test-helpers.hpp"
 
 #include <task/framework-bundle.hpp>
 #include <task/script-bindings.hpp>
 #include <task/task-context.hpp>
-
-#include <annotation/content-hash.hpp>
-#include <annotation/recognition-runtime.hpp>
 
 #include <core/error/result.hpp>
 #include <core/numeric/checked-arithmetic.hpp>
@@ -15,6 +12,7 @@
 #include <core/time/monotonic-time.hpp>
 #include <core/types/integer.hpp>
 
+#include <domain/content-hash.hpp>
 #include <domain/error.hpp>
 #include <domain/frame.hpp>
 #include <domain/ids.hpp>
@@ -67,8 +65,6 @@
 // one-by-one grey template blobs a script matches against it.
 namespace uf::task
 {
-    namespace anno = annotation;
-
     // The grey levels the fixture frames are painted with. They are distinct, so
     // a template cut from one scores zero where it was painted and nonzero
     // everywhere else -- which is what lets a case say "this template is on this
@@ -82,11 +78,19 @@ namespace uf::task
         return static_cast<std::byte>(value);
     }
 
+    // One template PNG beside the content hash that addresses it on disk, which
+    // is the pair `assets/templates/<hex>.png` is named from.
+    struct FixtureTemplate final
+    {
+        ContentHash            hash;
+        std::vector<std::byte> pngBytes{};
+    };
+
     // A one-by-one grey RGBA template addressed by its content hash, encoded
     // exactly as an authored template is, so a script that loads it searches for
     // the same pixels the real loop would.
     [[nodiscard]]
-    inline auto encodedTemplate(uint8 gray) -> anno::EncodedRuntimeTemplate
+    inline auto encodedTemplate(uint8 gray) -> FixtureTemplate
     {
         auto const rgba = std::vector<std::byte>{
             asByte(gray),
@@ -96,9 +100,9 @@ namespace uf::task
         };
         auto encoded = image::encodeRgbaPng("task-binding-template.png", 1, 1, rgba);
         REQUIRE(encoded.has_value());
-        auto const hash = anno::sha256(*encoded);
+        auto const hash = sha256(*encoded);
         REQUIRE(hash.has_value());
-        return anno::EncodedRuntimeTemplate{
+        return FixtureTemplate{
             .hash     = *hash,
             .pngBytes = *std::move(encoded),
         };

@@ -10,7 +10,7 @@
 #include <core/time/poll-sleep.hpp>
 #include <core/types/integer.hpp>
 
-#include <annotation/content-hash.hpp>
+#include <domain/content-hash.hpp>
 
 #include <domain/error.hpp>
 #include <domain/key.hpp>
@@ -157,7 +157,7 @@ namespace uf::task
             image::encodeRgbaPng("cycle crop", region.width, region.height, rgba)
         );
 
-        auto const hash = annotation::sha256(png);
+        auto const hash = sha256(png);
         if (!hash)
         {
             return fail(

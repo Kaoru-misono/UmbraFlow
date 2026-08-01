@@ -87,9 +87,9 @@ namespace uf::cli
         // for a run that never reads text. Absent by default, because the
         // weights are tens of megabytes and a run that reads nothing must not
         // pay for them; cycle_read refuses on its own terms instead. When
-        // present, the layout is the one modules/ocr/external commits and
-        // entry/input-agent's OcrTextReader already resolves: `ocrModels /
-        // "ppocr-v6-small-rec" / {inference.onnx, inference.yml}`.
+        // present, the layout is the one modules/ocr/external commits and the
+        // build stages beside this binary: `ocrModels / "ppocr-v6-small-rec" /
+        // {inference.onnx, inference.yml}`.
         std::optional<std::filesystem::path> ocrModels{};
 
         auto operator==(RunArgs const&) const -> bool = default;

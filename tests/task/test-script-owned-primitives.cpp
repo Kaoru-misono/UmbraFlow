@@ -10,8 +10,7 @@
 #include <core/time/monotonic-time.hpp>
 #include <core/types/integer.hpp>
 
-#include <annotation/content-hash.hpp>
-
+#include <domain/content-hash.hpp>
 #include <domain/detection.hpp>
 #include <domain/error.hpp>
 #include <domain/frame.hpp>
@@ -134,7 +133,7 @@ namespace uf::task
             readout.lines.emplace_back(
                 ocr::TextLine{
                     .text         = std::move(text),
-                    .bounds       = anno::test::pixelRect(0, 0, 3, 1),
+                    .bounds       = test::pixelRect(0, 0, 3, 1),
                     .confidenceBp = confidenceBp,
                 }
             );
@@ -244,7 +243,7 @@ namespace uf::task
         [[nodiscard]]
         auto hexOf(std::span<std::byte const> bytes) -> std::string
         {
-            auto const hash = anno::sha256(bytes);
+            auto const hash = sha256(bytes);
             REQUIRE(hash.has_value());
             return hash->toString();
         }
@@ -349,7 +348,7 @@ namespace uf::task
             auto const found = context.cycleMatch(
                 *ticket,
                 loaded->ticket,
-                anno::test::pixelRect(0, 0, 3, 1)
+                test::pixelRect(0, 0, 3, 1)
             );
             REQUIRE(found.has_value());
             REQUIRE(found->has_value());
@@ -377,7 +376,7 @@ namespace uf::task
             auto const found = context.cycleMatch(
                 *ticket,
                 loaded->ticket,
-                anno::test::pixelRect(0, 0, 3, 1)
+                test::pixelRect(0, 0, 3, 1)
             );
             REQUIRE(found.has_value());
             CHECK_FALSE(found->has_value());
@@ -406,7 +405,7 @@ namespace uf::task
             auto const found = context.cycleMatch(
                 *ticket,
                 loaded->ticket,
-                anno::test::pixelRect(0, 0, 3, 1)
+                test::pixelRect(0, 0, 3, 1)
             );
             REQUIRE_FALSE(found.has_value());
             CHECK(
@@ -430,7 +429,7 @@ namespace uf::task
             auto const stale = context.cycleMatch(
                 *ticket,
                 loaded->ticket,
-                anno::test::pixelRect(0, 0, 3, 1)
+                test::pixelRect(0, 0, 3, 1)
             );
             REQUIRE_FALSE(stale.has_value());
             CHECK(
@@ -442,7 +441,7 @@ namespace uf::task
             auto const foreign = context.cycleMatch(
                 *reopened,
                 TemplateTicket{.generation = 0, .ordinal = 99},
-                anno::test::pixelRect(0, 0, 3, 1)
+                test::pixelRect(0, 0, 3, 1)
             );
             REQUIRE_FALSE(foreign.has_value());
             CHECK(
@@ -467,7 +466,7 @@ namespace uf::task
             REQUIRE(ticket.has_value());
             auto const reading = context.cycleRead(
                 *ticket,
-                anno::test::pixelRect(0, 0, 3, 1)
+                test::pixelRect(0, 0, 3, 1)
             );
             REQUIRE(reading.has_value());
             REQUIRE(reading->has_value());
@@ -480,7 +479,7 @@ namespace uf::task
             REQUIRE(p_ocr->layouts().size() == 1U);
             CHECK(p_ocr->layouts().front() == ocr::TextLayout::SingleLine);
             REQUIRE(p_ocr->rects().size() == 1U);
-            CHECK(p_ocr->rects().front() == anno::test::pixelRect(0, 0, 3, 1));
+            CHECK(p_ocr->rects().front() == test::pixelRect(0, 0, 3, 1));
         }
 
         TEST_CASE("A cycle_read past its per-cycle budget is a failure, never a miss")
@@ -507,7 +506,7 @@ namespace uf::task
 
             auto const ticket = context.openCycle();
             REQUIRE(ticket.has_value());
-            auto const rect = anno::test::pixelRect(0, 0, 3, 1);
+            auto const rect = test::pixelRect(0, 0, 3, 1);
 
             auto const first = context.cycleRead(*ticket, rect);
             REQUIRE(first.has_value());
@@ -547,7 +546,7 @@ namespace uf::task
             REQUIRE(ticket.has_value());
             auto const reading = context.cycleRead(
                 *ticket,
-                anno::test::pixelRect(0, 0, 3, 1)
+                test::pixelRect(0, 0, 3, 1)
             );
             REQUIRE_FALSE(reading.has_value());
             CHECK(
@@ -564,7 +563,7 @@ namespace uf::task
 
             auto const ticket = context.openCycle();
             REQUIRE(ticket.has_value());
-            auto const rect      = anno::test::pixelRect(0, 0, 3, 1);
+            auto const rect      = test::pixelRect(0, 0, 3, 1);
             auto const unbacked = context.cycleRead(*ticket, rect);
             REQUIRE_FALSE(unbacked.has_value());
             CHECK(
@@ -594,7 +593,7 @@ namespace uf::task
             auto const found = context.cycleMatch(
                 *ticket,
                 loaded->ticket,
-                anno::test::pixelRect(0, 0, 3, 1)
+                test::pixelRect(0, 0, 3, 1)
             );
             REQUIRE(found.has_value());
             REQUIRE(found->has_value());
@@ -642,7 +641,7 @@ namespace uf::task
             auto const found = context.cycleMatch(
                 *first,
                 loaded->ticket,
-                anno::test::pixelRect(0, 0, 3, 1)
+                test::pixelRect(0, 0, 3, 1)
             );
             REQUIRE(found.has_value());
             REQUIRE(found->has_value());
@@ -702,7 +701,7 @@ namespace uf::task
                 auto built = buildHarness(
                     matchableFrames(),
                     HarnessSpec{
-                        .liveFingerprint = anno::test::fingerprint(3, 1, 120, 120),
+                        .liveFingerprint = test::fingerprint(3, 1, 120, 120),
                     }
                 );
                 REQUIRE(built.session.has_value());

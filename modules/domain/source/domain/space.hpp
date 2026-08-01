@@ -283,12 +283,11 @@ namespace uf
     // capture taken at any other geometry describes different pixels and the
     // model must not be compared against it.
     //
-    // It lives in domain rather than beside a model because two layers now hold
-    // one: the annotation catalog carries the geometry a v3 project was compiled
-    // at, and the script-owned page model states its own at the top of
-    // page-model.toml. The engine compares a live measurement against whichever
-    // its caller supplied, and that comparison must not drag either model's
-    // vocabulary into the engine.
+    // It lives in domain rather than beside the model that states it, because
+    // the model is a Luau value: the script-owned page model declares its
+    // geometry at the top of page-model.toml and hands it down. The engine
+    // compares a live measurement against whatever its caller supplied, and that
+    // comparison must not drag the model's vocabulary into the engine.
     class ProjectFingerprint final
     {
         uint32 m_width;

@@ -14,8 +14,6 @@
 
 #include <core/error/result.hpp>
 
-#include <annotation/resource.hpp>
-
 #include <domain/ids.hpp>
 #include <domain/space.hpp>
 

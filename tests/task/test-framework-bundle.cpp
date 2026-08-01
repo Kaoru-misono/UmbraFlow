@@ -1,7 +1,8 @@
 #include <task/framework-bundle.hpp>
 
-#include <annotation/content-hash.hpp>
 #include <core/error/error.hpp>
+
+#include <domain/content-hash.hpp>
 
 #include <doctest/doctest.h>
 
@@ -18,7 +19,7 @@ namespace uf::task
         [[nodiscard]]
         auto hexDigestOf(std::string_view text) -> std::string
         {
-            auto const digest = annotation::sha256(std::as_bytes(std::span{text}));
+            auto const digest = sha256(std::as_bytes(std::span{text}));
             REQUIRE(digest.has_value());
             return digest->hex();
         }
@@ -82,10 +83,10 @@ namespace uf::task
     }
 
     // The load-bearing case: the digest scripts/embed_luau.py recorded at build
-    // time must equal the one annotation::sha256 computes at run time. A failure
+    // time must equal the one sha256 computes at run time. A failure
     // here means the Python and C++ hash definitions have drifted, or that
     // embedding did not reproduce the source bytes exactly.
-    TEST_CASE("each recorded hash equals annotation::sha256 of the embedded source")
+    TEST_CASE("each recorded hash equals sha256 of the embedded source")
     {
         for (auto const& entry : frameworkBundleEntries())
         {

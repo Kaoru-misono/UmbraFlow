@@ -371,7 +371,7 @@ namespace uf::task
             REQUIRE(secondTicket.has_value());
             REQUIRE(firstTicket->ordinal == secondTicket->ordinal);
 
-            auto const crossed = second.cycleRead(*firstTicket, anno::test::pixelRect(0, 0, 1, 1));
+            auto const crossed = second.cycleRead(*firstTicket, test::pixelRect(0, 0, 1, 1));
             REQUIRE_FALSE(crossed.has_value());
             CHECK(
                 automationErrorKind(crossed.error())
@@ -382,7 +382,7 @@ namespace uf::task
             // generation's own ticket of the same ordinal reaches the engine,
             // which refuses it for its own reason (no OCR adapter is bound) and
             // never for the ledger's.
-            auto const own = second.cycleRead(*secondTicket, anno::test::pixelRect(0, 0, 1, 1));
+            auto const own = second.cycleRead(*secondTicket, test::pixelRect(0, 0, 1, 1));
             REQUIRE_FALSE(own.has_value());
             CHECK(
                 automationErrorKind(own.error())

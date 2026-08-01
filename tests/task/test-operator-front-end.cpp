@@ -76,7 +76,7 @@ namespace uf::task
         [[nodiscard]]
         auto epochResolvingFrame() -> Frame
         {
-            auto const fingerprint = anno::test::fingerprint(3, 1, 96, 96);
+            auto const fingerprint = test::fingerprint(3, 1, 96, 96);
             auto const transform   = CoordinateTransform::create(
                 Point<DesktopSpace>{0.0F, 0.0F},
                 static_cast<float>(fingerprint.width()),
@@ -93,7 +93,7 @@ namespace uf::task
                 FrameId{51},
                 CaptureSessionId{7},
                 TargetGeneration::fromValue(3),
-                anno::test::instantAt(MonotonicInstant::Duration{0}),
+                test::instantAt(MonotonicInstant::Duration{0}),
                 fingerprint.width(),
                 fingerprint.height(),
                 static_cast<std::size_t>(fingerprint.width())

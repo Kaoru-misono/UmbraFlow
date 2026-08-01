@@ -4,9 +4,8 @@
 #include <core/safety/annotations.hpp>
 #include <core/types/integer.hpp>
 
-#include <annotation/resource.hpp>
-
 #include <domain/frame.hpp>
+#include <domain/space.hpp>
 
 #include <engine/ports.hpp>
 

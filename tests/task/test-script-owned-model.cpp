@@ -171,7 +171,7 @@ namespace uf::task
             readout.lines.emplace_back(
                 ocr::TextLine{
                     .text         = std::move(text),
-                    .bounds       = anno::test::pixelRect(0, 0, 3, 1),
+                    .bounds       = test::pixelRect(0, 0, 3, 1),
                     .confidenceBp = confidenceBp,
                 }
             );

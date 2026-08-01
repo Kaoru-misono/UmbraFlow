@@ -264,7 +264,6 @@ namespace uf::trace
 
         case TraceEventKind::RunResourcesValidated:
         case TraceEventKind::EngineObserved:
-        case TraceEventKind::EnginePageResolved:
         case TraceEventKind::EngineActionFound:
         case TraceEventKind::EngineTextRead:
         case TraceEventKind::EngineActionAuthorized:

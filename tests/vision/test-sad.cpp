@@ -2079,9 +2079,9 @@ namespace uf
 
     TEST_CASE("the mirrored colour-key ramp holds full weight then falls to nothing")
     {
-        // Pinned against annotation::ColourKey::alphaFor, which is the rule's
-        // source of truth. A change there that is not mirrored here shows up as
-        // one of these values moving.
+        // The values were measured against the authoring-side ColourKey that
+        // retired with the annotation module; colourKeyAlpha is now the rule's
+        // one implementation, so a change to it shows up as one of these moving.
         auto const white = std::array{
             std::pair{uint32{0}, uint8{255}},
             std::pair{uint32{12}, uint8{255}},

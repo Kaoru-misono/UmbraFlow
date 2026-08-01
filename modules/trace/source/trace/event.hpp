@@ -3,8 +3,6 @@
 #include <core/safety/annotations.hpp>
 #include <core/types/integer.hpp>
 
-#include <annotation/resource.hpp>
-
 #include <domain/error.hpp>
 #include <domain/frame.hpp>
 #include <domain/ids.hpp>
@@ -34,12 +32,16 @@ namespace uf::trace
     // verb before the engine ever sees it. The version is emitted first on every
     // line so a downstream consumer can reject a line it does not understand.
     //
-    // Bumped from v1 on 2026-07-31 when the annotated thing stopped being spelled
-    // `recognizer` on this wire: `recognizerId` is now `elementId` and the
-    // resources line's `recognizers` array is now `elements`. Renaming a field is
-    // a wire change whatever the field means, so v1 readers are turned away by
-    // the version rather than handed a line missing the key they look for.
-    inline constexpr auto k_traceSchema = std::string_view{"umbraflow-trace/v2"};
+    // Bumped from v2 on 2026-08-01 when the page model moved to the trusted Luau
+    // layer and this stream stopped carrying it: engine.page_resolved, the
+    // pageOutcome / pageId / pageScores members it wrote, and the elementId
+    // member every other kind could carry are gone, because a page and an
+    // element are no longer C++ identities and nothing in the product emits one.
+    // Removing a field is a wire change exactly as v1's rename was, so a v2
+    // reader is turned away by the version rather than left waiting for a key
+    // that will not come. Templates are named on the wire by templateHash, which
+    // is what a script-loaded template's identity actually is.
+    inline constexpr auto k_traceSchema = std::string_view{"umbraflow-trace/v3"};
 
     // The single JSON member holding every field that may legitimately differ
     // between two runs of the same task at the same seed. It exists so the wall
@@ -111,26 +113,26 @@ namespace uf::trace
 
         // An agent driving a target in order to measure it, and to write down
         // what it measured: `umbra-flow explore` running one Luau chunk per
-        // queue line against a live target, and the m0-demo input agent that
-        // preceded it.
+        // queue line against a live target.
         //
-        // It DOES reach a project now. It was outside the host when this enum
-        // was written -- the input agent stamped its own answer stream rather
-        // than a trace line -- and work order 4b brought it in: an exploration
-        // session loads a project, latches this front-end on the generation
-        // exactly as the other two do, and consumes the same capability surface
-        // plus the privileged verbs (docs/plans/2026-08-01-agent-front-end-and-
-        // exploration.md). The attribution a reader already knew did not change,
-        // which is what that older note promised.
+        // It DOES reach a project. It was outside the host when this enum was
+        // written -- the retired input agent stamped its own answer stream
+        // rather than a trace line -- and work order 4b brought it in: an
+        // exploration session loads a project, latches this front-end on the
+        // generation exactly as the other two do, and consumes the same
+        // capability surface plus the privileged verbs
+        // (docs/plans/2026-08-01-agent-front-end-and-exploration.md). The
+        // attribution a reader already knew did not change, which is what that
+        // older note promised.
         Annotation,
     };
 
     // The wire spelling of one front-end, and the only place any of the three is
     // spelled. It is public rather than private to the serializer because a
     // front-end has to be named outside a trace line as well: task::TaskHost
-    // names the one that already holds a generation when it refuses the other,
-    // and the m0-demo input agent stamps its own. Two spellings of one closed set
-    // is how a third value comes to be reported as the second.
+    // names the one that already holds a generation when it refuses the other.
+    // Two spellings of one closed set is how a third value comes to be reported
+    // as the second.
     [[nodiscard]]
     auto frontEndWireName(FrontEnd frontEnd) noexcept -> std::string_view;
 
@@ -140,7 +142,6 @@ namespace uf::trace
         RunResourcesValidated,
         RunFinished,
         EngineObserved,
-        EnginePageResolved,
         EngineActionFound,
         EngineTextRead,
         EngineActionAuthorized,
@@ -170,24 +171,10 @@ namespace uf::trace
         AnnotationRegionSaved,
     };
 
-    // How one page-resolution attempt ended. Resolved / Unknown / Ambiguous were
-    // three separate event kinds in engine-trace/v1; Stopped and Failed carried
-    // the kinds RecognitionStopped and Failure, which named the stage only by
-    // where they happened to sit in the stream. Folding all five into the outcome
-    // of engine.page_resolved keeps every distinction and adds one the old schema
-    // could not express: which stage a stop or failure came from.
-    enum class PageResolution : uint8
-    {
-        Resolved = 1,
-        Unknown,
-        Ambiguous,
-        Stopped,
-        Failed,
-    };
-
-    // How one action-target search ended, on the same reasoning as PageResolution:
-    // Found / Absent were separate kinds, Stopped and Failed were the stage-blind
-    // RecognitionStopped and Failure.
+    // How one action-target search ended. Found and Absent were separate event
+    // kinds in engine-trace/v1, and Stopped and Failed were the stage-blind
+    // RecognitionStopped and Failure; folding all four into one kind's outcome
+    // keeps every distinction and adds the stage a stop or failure came from.
     enum class ActionSearch : uint8
     {
         Found = 1,
@@ -225,37 +212,6 @@ namespace uf::trace
     // groups the event carries.
     struct TraceEvent final
     {
-        // The result of one page-resolution attempt. pageId is present only for
-        // Resolved; scores carry the evidence behind whichever outcome it was.
-        struct Page final
-        {
-            // One evaluated page's contribution to the attempt: the page the
-            // resolver considered, whether it survived as a candidate, and the
-            // required anchor that scored worst against its own ceiling. The
-            // worst required anchor is what a non-resolution turns on, so it is
-            // what "why did my page not resolve" actually asks for, while the
-            // full per-anchor evidence stays off the wire because a trace line is
-            // read rather than queried. A page rejected by a forbidden anchor
-            // still reports its required anchors, so candidate=false with a
-            // passing score means a forbidden anchor hit.
-            //
-            // The anchor triple is absent only when the page declares no required
-            // anchor. Nothing defaults: PageId has no default constructor, and
-            // omitting `candidate` would assert a page was ruled out.
-            struct Score final
-            {
-                annotation::PageId                   pageId;
-                bool                                 candidate;
-                std::optional<annotation::ElementId> worstAnchor{};
-                std::optional<uint64>                worstAnchorSad{};
-                std::optional<uint64>                worstAnchorMaximumSad{};
-            };
-
-            PageResolution                    outcome;
-            std::optional<annotation::PageId> pageId{};
-            std::vector<Score>                scores{};
-        };
-
         // The result of one action-target search. The score pair is present
         // whenever the search ran to completion (Found or Absent); matchedRect
         // only for Found.
@@ -329,13 +285,12 @@ namespace uf::trace
         // One call from the script layer into the host capability surface, with
         // the argument identity the primitive was handed. The identity is what
         // makes a native call joinable without relying on position: a host-side
-        // guard -- the cycle-ledger lookup behind cycle_page, cycle_find,
+        // guard -- the cycle-ledger lookup behind cycle_match, cycle_read,
         // cycle_click and cycle_close -- fails the call before the engine is
         // reached, so its task.native_call is the only line the failure produces
         // and nothing else would say which cycle the script tried to use.
         // cycle_open mints its own ordinal rather than receiving one, so it
-        // carries none. The element a find was handed travels on
-        // TraceEvent::elementId.
+        // carries none.
         struct NativeCall final
         {
             std::string       verb{};
@@ -438,7 +393,6 @@ namespace uf::trace
         // definition of "which frame" instead of two that can drift.
         std::optional<FrameIdentity> frame{};
 
-        std::optional<Page>       page{};
         std::optional<Action>     action{};
         std::optional<Reading>    reading{};
         std::optional<Run>        run{};
@@ -447,15 +401,14 @@ namespace uf::trace
         std::optional<Framework>  framework{};
         std::optional<Annotation> annotation{};
 
-        // Fields that cut across the groups above: the element a page stop, an
-        // action search or an authorization refusal names; why a recognition
-        // search stopped early; how the run ended; and the failure detail any
-        // event may carry.
-        std::optional<annotation::ElementId> elementId{};
-
-        // The SHA-256 of the template a raw match searched for. It replaces
-        // elementId on that path: a template the script layer loaded belongs to
-        // no catalog element, so its content hash is the only name it has.
+        // Fields that cut across the groups above: the template a raw match
+        // searched for, why a recognition search stopped early, how the run
+        // ended, and the failure detail any event may carry.
+        //
+        // A template is named by the SHA-256 of the bytes the script layer
+        // loaded, because that is the only name it has: it belongs to no
+        // catalog element, and since umbraflow-trace/v3 no element identity
+        // reaches this wire at all.
         std::optional<std::string> templateHash{};
 
         std::optional<SadSearchStopReason> stopReason{};

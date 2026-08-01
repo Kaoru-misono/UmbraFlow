@@ -2,7 +2,7 @@
 
 #include <core/error/result.hpp>
 
-#include <annotation/content-hash.hpp>
+#include <domain/content-hash.hpp>
 
 #include <cstddef>
 #include <filesystem>
@@ -26,9 +26,9 @@ namespace uf::task
     // meaningful default; build it through loadTask.
     struct LoadedTask final
     {
-        std::string             name{};
-        std::string             source{};
-        annotation::ContentHash hash;
+        std::string name{};
+        std::string source{};
+        ContentHash hash;
     };
 
     // Resolves `taskName` to <projectRoot>/tasks/<taskName>.luau and loads it. The
@@ -38,7 +38,7 @@ namespace uf::task
     // with no matching file fails InvalidResource too, and the message lists the
     // task names that do exist so the operator can correct the spelling. The
     // source is read under k_maximumTaskSourceBytes and its content hash computed
-    // with the repository's annotation::sha256 facility. The CLI never executes a
+    // with the repository's sha256 facility. The CLI never executes a
     // loose-path script: a task is always addressed as (project, name).
     [[nodiscard]]
     auto loadTask(

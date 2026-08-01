@@ -34,14 +34,22 @@ namespace uf
     // zero staying an exact-colour match. Distance is the sum of the three
     // channel distances, so 765 is the widest tolerance that means anything.
     //
-    // This is the rule's one implementation. annotation::ColourKey::alphaFor
-    // delegates here and documents why the ramp exists; the dependency runs
-    // annotation -> vision, so the call can only go that way.
+    // This is the rule's one implementation, and since the annotation module
+    // retired it is also the only one: the authoring-side ColourKey that used to
+    // delegate here went with it, and the key a template was baked under now
+    // lives in the trusted Luau layer as data.
     //
-    // It lives in vision rather than annotation because probeColour needs it to
-    // answer how many pixels a key selects, which is the question that whole
-    // function exists for. Taking the weights as a caller-supplied plane was the
-    // alternative and would have left this module unable to answer it.
+    // The ramp is not decoration. A hard cut makes an author's tolerance control
+    // jump in steps, and it cuts through the antialiased skirt of a glyph, where
+    // the pixels just past the cut are still mostly glyph -- on the measured menu
+    // entry a tolerance of 12 around the white text takes 93.9% of the glyph and
+    // leaves a rim of edge pixels at distance 13..24. Those are the pixels the
+    // ramp readmits, at the weight they deserve.
+    //
+    // It lives in vision because probeColour needs it to answer how many pixels a
+    // key selects, which is the question that whole function exists for. Taking
+    // the weights as a caller-supplied plane was the alternative and would have
+    // left this module unable to answer it.
     [[nodiscard]]
     auto colourKeyAlpha(
         Bgra8Pixel pixel,
@@ -51,8 +59,8 @@ namespace uf
         uint32 tolerance
     ) noexcept -> uint8;
 
-    // The widest colour-key tolerance that means anything, matching
-    // annotation::ColourKey.
+    // The widest colour-key tolerance that means anything: a distance is the sum
+    // of three channel distances, so 765 already admits every colour.
     inline constexpr auto k_maximumColourKeyTolerance = uint32{765};
 
     // A rectangle of pixels that held still across every analysed frame, in the

@@ -605,11 +605,11 @@ namespace uf::test
     // both backgrounds. Row major, tightly packed, three bytes per pixel in
     // red, green, blue order.
     //
-    // These are the two crops tests/workbench/colour-key-fixture.hpp already
-    // holds, decoded once from its PNG bytes rather than captured again. They
-    // are repeated here because test-vision links only the vision module and
-    // so cannot decode a PNG, and because the colour primitives have nothing
-    // to measure on the grey planes above. What keeps the copy honest is that
+    // These are the two crops the retired workbench colour-key fixture held,
+    // decoded once from its PNG bytes rather than captured again. They are
+    // spelled out here because test-vision links only the vision module and so
+    // cannot decode a PNG, and because the colour primitives have nothing to
+    // measure on the grey planes above. What keeps the copy honest is that
     // bgra8ToGray8 over the first plane must reproduce k_sortieLabel's
     // templateHex byte for byte, which a test asserts: the two fixtures cannot
     // drift into different crops without that failing.
