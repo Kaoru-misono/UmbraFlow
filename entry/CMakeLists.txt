@@ -84,6 +84,14 @@ target_include_directories(${PROJECT_NAME} PRIVATE "${APPLICATION_INFO_DIRECTORY
 target_link_libraries(${PROJECT_NAME} PRIVATE ${CLI_LIBRARY} ${PROJECT_NAME}_core)
 target_compile_features(${PROJECT_NAME} PRIVATE cxx_std_23)
 
+# cli_support links engine publicly, and engine links ocr publicly, so this
+# executable resolves onnxruntime.dll from its own directory at process start;
+# see cmake/runtime-payload.cmake for why that copy cannot be left to some
+# other target's build order.
+if(TARGET ${PROJECT_NAME}_ocr_onnxruntime)
+    cpp_stage_runtime_libraries(${PROJECT_NAME} ${UF_OCR_ONNXRUNTIME_SHARED_LIBRARIES})
+endif()
+
 if(TARGET ${PROJECT_NAME}_controller)
     set(INPUT_AGENT_LIBRARY ${PROJECT_NAME}_input_agent_support)
     set(INPUT_AGENT_EXECUTABLE ${PROJECT_NAME}_input_agent)
@@ -239,6 +247,15 @@ if(TARGET ${PROJECT_NAME}_controller)
     target_link_libraries(${INPUT_AGENT_EXECUTABLE} PRIVATE ${INPUT_AGENT_LIBRARY})
     target_compile_features(${INPUT_AGENT_EXECUTABLE} PRIVATE cxx_std_23)
 
+    # ${INPUT_AGENT_LIBRARY}'s own payload target already stages these DLLs
+    # into the shared runtime output directory this executable also lands in
+    # (see add_dependencies above), so this call is belt-and-braces: it makes
+    # this executable correct on its own terms rather than by sharing a
+    # directory with another target's copy step.
+    if(TARGET ${PROJECT_NAME}_ocr_onnxruntime)
+        cpp_stage_runtime_libraries(${INPUT_AGENT_EXECUTABLE} ${UF_OCR_ONNXRUNTIME_SHARED_LIBRARIES})
+    endif()
+
     set(M0_DEMO_LIBRARY ${PROJECT_NAME}_m0_demo_support)
     set(M0_DEMO_EXECUTABLE ${PROJECT_NAME}_m0_demo)
 
@@ -293,6 +310,11 @@ if(TARGET ${PROJECT_NAME}_controller)
     set_target_properties(${M0_DEMO_EXECUTABLE} PROPERTIES OUTPUT_NAME "m0-demo")
     target_link_libraries(${M0_DEMO_EXECUTABLE} PRIVATE ${M0_DEMO_LIBRARY})
     target_compile_features(${M0_DEMO_EXECUTABLE} PRIVATE cxx_std_23)
+
+    # M0_DEMO_LIBRARY links ${INPUT_AGENT_LIBRARY}, which brings ocr with it.
+    if(TARGET ${PROJECT_NAME}_ocr_onnxruntime)
+        cpp_stage_runtime_libraries(${M0_DEMO_EXECUTABLE} ${UF_OCR_ONNXRUNTIME_SHARED_LIBRARIES})
+    endif()
 endif()
 
 if(WIN32 AND TARGET ${PROJECT_NAME}_annotation)
@@ -379,4 +401,10 @@ if(WIN32 AND TARGET ${PROJECT_NAME}_annotation)
     )
     target_link_libraries(${AUTHORING_EXECUTABLE} PRIVATE ${AUTHORING_LIBRARY})
     target_compile_features(${AUTHORING_EXECUTABLE} PRIVATE cxx_std_23)
+
+    # AUTHORING_LIBRARY links cli_support, which links engine, which links
+    # ocr publicly.
+    if(TARGET ${PROJECT_NAME}_ocr_onnxruntime)
+        cpp_stage_runtime_libraries(${AUTHORING_EXECUTABLE} ${UF_OCR_ONNXRUNTIME_SHARED_LIBRARIES})
+    endif()
 endif()

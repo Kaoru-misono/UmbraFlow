@@ -51,6 +51,7 @@ endif()
 include(cmake/ccache.cmake)
 include(cmake/safety-profile.cmake)
 include(cmake/build.cmake)
+include(cmake/runtime-payload.cmake)
 
 set(CPP_MODULE_ROOTS
     "${CMAKE_SOURCE_DIR}/modules"

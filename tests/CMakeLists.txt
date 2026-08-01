@@ -105,6 +105,11 @@ cpp_add_test(
         ${PROJECT_NAME}_engine
         ${PROJECT_NAME}_image
 )
+# engine links ocr publicly, so this test resolves onnxruntime.dll from its
+# own directory at process start; see cmake/runtime-payload.cmake.
+if(TARGET ${PROJECT_NAME}_ocr_onnxruntime)
+    cpp_stage_runtime_libraries(test-engine ${UF_OCR_ONNXRUNTIME_SHARED_LIBRARIES})
+endif()
 
 set(CLI_TEST_SOURCES
     cli/test-args.cpp
@@ -122,6 +127,10 @@ cpp_add_test(
     LIBS
         ${PROJECT_NAME}_cli_support
 )
+# cli_support links engine publicly, which links ocr publicly.
+if(TARGET ${PROJECT_NAME}_ocr_onnxruntime)
+    cpp_stage_runtime_libraries(test-cli ${UF_OCR_ONNXRUNTIME_SHARED_LIBRARIES})
+endif()
 
 if(TARGET ${PROJECT_NAME}_script)
     cpp_add_test(
@@ -161,6 +170,10 @@ if(TARGET ${PROJECT_NAME}_task)
             ${PROJECT_NAME}_task
             ${PROJECT_NAME}_image
     )
+    # task links engine publicly, which links ocr publicly.
+    if(TARGET ${PROJECT_NAME}_ocr_onnxruntime)
+        cpp_stage_runtime_libraries(test-task ${UF_OCR_ONNXRUNTIME_SHARED_LIBRARIES})
+    endif()
 endif()
 
 if(TARGET ${PROJECT_NAME}_controller)
@@ -249,6 +262,11 @@ if(TARGET ${PROJECT_NAME}_workbench_support)
                 ${PROJECT_NAME}_authoring_support
                 ${PROJECT_NAME}_image
         )
+        # authoring_support links cli_support, which links engine, which
+        # links ocr publicly.
+        if(TARGET ${PROJECT_NAME}_ocr_onnxruntime)
+            cpp_stage_runtime_libraries(test-authoring ${UF_OCR_ONNXRUNTIME_SHARED_LIBRARIES})
+        endif()
     endif()
 
     # Local-only real-screenshot regression. The fixture directory holds real
@@ -291,13 +309,8 @@ if(TARGET ${PROJECT_NAME}_workbench_support)
             UF_OCR_MODEL_ROOT="${CMAKE_SOURCE_DIR}/modules/ocr/external/models"
         )
         # onnxruntime resolves beside the executable, so the runtime DLLs are
-        # copied rather than assumed to be on PATH.
-        add_custom_command(TARGET test-ocr-real POST_BUILD
-            COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                ${UF_OCR_ONNXRUNTIME_SHARED_LIBRARIES}
-                $<TARGET_FILE_DIR:test-ocr-real>
-            VERBATIM
-        )
+        # copied rather than assumed to be on PATH; see cmake/runtime-payload.cmake.
+        cpp_stage_runtime_libraries(test-ocr-real ${UF_OCR_ONNXRUNTIME_SHARED_LIBRARIES})
         set_tests_properties(test-ocr-real PROPERTIES
             LABELS "REAL"
             TIMEOUT 300
