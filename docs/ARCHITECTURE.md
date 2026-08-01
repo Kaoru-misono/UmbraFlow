@@ -11,33 +11,30 @@ values. Module manifests continue to own reusable-library metadata and versions
 independently. This boundary was fixed by developer decision on 2026-07-28.
 
 ```text
-entry/${PROJECT_NAME}       -> core, engine, task; + controller (Windows adapters)
-entry/input-agent (Windows) -> controller, ocr, trace, image (umbra-input-agent)
-entry/m0-demo (Windows)     -> entry/input-agent, vision, image (frozen M0 substrate demo)
-entry/workbench (Windows)   -> annotation, image (authoring backend library only)
-entry/authoring (Windows)   -> entry/workbench, entry/cli, image (umbra-authoring)
+entry/${PROJECT_NAME}       -> core, engine, task, image; + controller (Windows adapters)
 domain                -> core
-vision                -> core, domain
+vision                -> core, domain, image
 image                 -> core, domain
-annotation            -> core, domain, vision, image
 ocr                   -> core, domain, vision
-trace                 -> core, domain, annotation, vision
-engine                -> core, domain, annotation, ocr, trace
+trace                 -> core, domain, vision
+engine                -> core, domain, ocr, trace, vision
 script                -> core, domain
-task                  -> core, domain, annotation, engine, script, trace
+task                  -> core, domain, engine, script, trace, image
 controller (Windows)  -> core, domain
 tests                 -> modules under test
 ```
 
-> Note (2026-08-01): the graph above is the **pre-migration** one and stands
-> until the script-owned migration retires `modules/annotation`'s model layer.
-> The target graph — C++ keeps `script` / `vision` / `ocr` / `controller` /
-> `engine` / `task`, and `engine -> annotation` goes away — is
-> [script-owned page model](plans/2026-07-31-script-owned-page-model.md) §三.
-> Redraw this section when that plan's retirement list (its §九) is executed.
+This is the shape
+[script-owned page model](plans/2026-07-31-script-owned-page-model.md) §三 drew:
+C++ holds pixels, tickets and guarantees, and nothing else knows what a page is.
+`modules/annotation` is gone (2026-08-01) along with the authoring binaries it
+served; element, page, reference, appearance and edge are trusted-Luau types in
+`modules/task/runtime/`, persisted to `page-model.toml`. One binary survives,
+`umbra-flow`, with four subcommands: `run` a task, `drive` it by hand, `explore`
+it as an Agent, `check` the falsification matrix.
 
 Edges list every declared module dependency, including private ones such as
-`annotation -> image`. Vendored third-party targets, such as `image_stb` and the
+`vision -> image`. Vendored third-party targets, such as `image_stb` and the
 Luau libraries, are omitted. (Corrected 2026-07-31: Dear ImGui was named here
 until the workbench GUI was archived in `b57b67b`; the submodule is gone from
 this branch.) `scripts/check_modules.py`
@@ -59,19 +56,19 @@ not declare link dependencies. `scripts/check_modules.py` enforces both rules.
 - `modules/ocr/`: a rectangle of pixels in, lines of text with confidences out.
   The `IOcrEngine` port and its `TextLine` vocabulary are platform-free; the
   PP-OCRv6_small adapter and ONNX Runtime stay behind its FFI boundary, and its
-  model payloads are committed under `external/`. Its caller is the
-  `umbra-input-agent` `read` verb.
+  model payloads are committed under `external/`. Its caller is `umbra-flow`'s
+  `--ocr-models` binding (`entry/cli/platform/ocr-engine-binding.*`), shared by
+  the `run`, `drive` and `explore` subcommands so `cycle_read` runs under the
+  same guarantees on all three.
 - `modules/image/`: platform-free PNG I/O, pixel-layout conversion, and
   deterministic rectangular cropping; vendored codecs stay behind its FFI boundary.
-- `modules/annotation/`: platform-free annotation catalog validation, page
-  resolution evidence, action-authorization contracts, canonical authoring and
-  runtime documents, and deterministic template compilation.
 - `modules/trace/`: the single JSONL evidence stream every layer writes into,
   schema `umbraflow-trace/v2` — `TraceRecorder` stamps a run's sequence, run
   id, generation id, wall clock and open framework-step scope onto every event
   before a sink sees it; `TraceStreamValidator` enforces the stream protocol,
   including which stages may request a `framework.*` event; `FrontEnd` records
-  which front-end (task, operator, or annotation session) drove the run; and
+  which front-end -- a project task, an operator, or the agent behind
+  `umbra-flow explore` (`trace::FrontEnd::Annotation`) -- drove the run; and
   `FileTraceSink` appends one line per event and flushes after each write.
 - `modules/engine/`: platform-free automation engine — the `IFrameSource` and
   `IActionSink` ports over one bound capture target, the runtime manifest
@@ -95,42 +92,51 @@ not declare link dependencies. `scripts/check_modules.py` enforces both rules.
   handles and gates every engine call behind an observation-cycle ledger
   (`cycle_open` / `cycle_find` / `cycle_click` / `cycle_close`); and
   `OperatorSession` is the same capability surface's front-end for a driver
-  sending commands from outside the process.
+  sending commands from outside the process. The framework a project script
+  runs on is itself trusted Luau rather than C++: `modules/task/runtime/`
+  (`ctx`, `task`, `mint`, `model`, `navigation`, `observe`, `oracle`,
+  `project`, `regress`, `explore`, `scribe`) is a set of framework modules
+  compiled into the binary as a bundle, holding every policy opinion C++
+  deliberately does not -- step/retry/wait, the element and page vocabulary,
+  the page graph, the project file's own TOML format, and the falsification
+  matrix that regresses every mark against every screen -- while C++ keeps
+  only the guarantees a script must not be trusted with. `page-model.toml` is
+  that project file, read and written end to end by the framework's own
+  `project` module; C++ reads only its geometry fingerprint and its element
+  and page names, through `readPageModelFacts`, before a VM exists. `explore`
+  and `scribe` publish only into the exploration environment
+  `TaskHost::startExplorationSession` boots -- the wider private surface
+  (`cycle_crop`, `probe`) and the agent's own authoring loop -- which is what
+  makes `ExplorationSession`, run one Luau chunk at a time by `umbra-flow
+  explore`, the third front-end rather than a mode of the other two.
 - `modules/controller/`: Windows-only discovery, target lifecycle, Windows
   Graphics Capture sessions, and strict-background input.
-- `entry/`: executable targets and composition roots. `cli/` is the product
-  entry `umbra-flow`; its `run` subcommand composes engine ports over the
-  controller (WGC frame source, lease-forwarding click sink, JSONL trace).
-  `input-agent/` is the `umbra-input-agent` annotation front-end: it serves one
-  authoring session's command queue against a raw window, and it is the third
-  `trace::FrontEnd`. Its `read` verb is `modules/ocr`'s composition root: it
-  resolves the model payload beside the executable and brings the engine up on
-  first use, so a session that only captures pays nothing and a missing payload
-  fails one command rather than the launch. It also owns the entry-level
-  substrate it shares with the demo below -- frame PNG output, path
-  confinement, target selection and capture-session setup, JSON string
-  escaping, error text, and the command-line parsing primitives. `m0-demo/` is the frozen M0 substrate demo
-  kept as the real-machine acceptance reference: the fixed
-  home -> result -> reset loop and the `capture` diagnostic, and nothing else
-  since the front-end left it on 2026-07-31. The demo links the front-end's
-  library and never the reverse, so retiring the demo is a delete rather than
-  another extraction. The Windows-only `workbench/` is the annotation
-  authoring backend library (`${PROJECT_NAME}_workbench_support`): the editing
-  layer, the falsification matrix in `preview.*`, source ingestion, and
-  publication of validated authoring projects through a narrow platform
-  file-publication boundary; content-addressed assets precede the runtime
-  manifest commit point. `authoring/` is the `umbra-authoring` development
-  tool, the only way to author a project; it drives that library so every
-  write goes through `AuthoringDocument`'s validation.
-
-  > Corrected 2026-07-31: `workbench/` hosted the `umbra-workbench` GUI (Dear
-  > ImGui + D3D11) until `b57b67b` archived it — the panels, the window shell,
-  > the texture cache, the file dialog, the one-shot capture source, and the
-  > imgui submodule. Only the backend below that line remains, because
-  > `umbra-authoring` already linked it. Git history holds the GUI. Deciding
-  > artifact:
-  > [capability model plan](plans/2026-07-31-annotation-model-capabilities.md)
-  > §四之二.1.
+- `entry/`: executable targets and composition roots. `cli/` is the sole
+  binary, `umbra-flow`, and the composition root for its four subcommands, one
+  front-end each: `run` composes engine ports over the controller (WGC frame
+  source, lease-forwarding click sink, JSONL trace) and drives a project task
+  through `task::TaskHost`; `drive` binds a target the same way and hands the
+  ports to an `OperatorSession`, driven by commands appended to a queue file;
+  `explore` binds a target the same way again and hands the ports to an
+  `ExplorationSession`, driven by Luau chunks appended to a queue file; and
+  `check` binds no target at all -- its frames come from
+  `<project>/assets/screens` through `FileFrameSource`, and it runs the
+  falsification matrix as a trusted framework routine through
+  `TaskHost::runFrameworkRoutine`, which makes it the one subcommand that
+  builds and runs on every host. Every subcommand's arguments are parsed by
+  the primitives in `args.hpp`, and every failure is rendered by the same
+  `formatRunError`; `drive` and `explore` additionally speak one JSON-line
+  result protocol, escaped by `json-text.*`. `run`, `drive` and `explore`
+  share the substrate that binds a live target: picking the one capturable
+  candidate whose title matches the selector (`candidate-selection.*`), and
+  the Windows-only `platform/` composition that resolves it into the two
+  engine ports and a live fingerprint (`target-binding.*`,
+  `wgc-frame-source.hpp`, `controller-action-sink.*`,
+  `windows-target-geometry.*`), installs the Ctrl-C handler
+  (`windows-console-cancellation.*`), and binds the `--ocr-models` engine
+  `cycle_read` runs on (`ocr-engine-binding.*`); on a non-Windows host a
+  `*-unsupported.cpp` reports each of those three subcommands as unsupported,
+  while `check` still builds and runs.
 - `tests/`: deterministic offline tests.
 - `cmake/`: module loading, platform selection, caching, warnings, hardening,
   sanitizers, and static-analysis policy.
