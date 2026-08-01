@@ -62,11 +62,11 @@
   受祝福证据;OCR 独立预算(每周期 8 次,耗尽是 `RecognitionIncomplete` 不是 miss);trace 走
   加法(`engine.text_read` + 可缺席字段)。CLI 经 `--ocr-models` 接入 OCR(run 与 drive 都有)。
   `cycle_page` / `cycle_find` 的退役归工单 4,原样活着。
-- **工单 2 — 第二层 Luau 的 element / page / appearance 模型。无卡点半区已落地
-  (2026-08-01,`bf471f3`)**:`model.luau` / `observe.luau` / `project.luau`
-  (`umbraflow-project/l2-v1`,未知键逐字节保留,`extra` 保留子表),已入框架发布名单。
-  **仍卡:页面图的形状**(§十.1——边至少有三种触发方式,「盖上去」和「走过去」是两种边),
-  **待开发者讨论**;`Page.new` 留了显式接缝。
+- **工单 2 — 第二层 Luau 的 element / page / appearance 模型。已完成
+  (2026-08-01,`bf471f3` + `88863cf`)**:`model` / `observe` / `project` 加页面图
+  `navigation`(Edge/Graph/栈,深度护栏在触发前查,栈是信念观察是真相)与
+  `observe.walk_edge`(interrupted 结局、逐页连击判定);工具函数抽进未发布的
+  `mint`。页面图形状已由开发者裁决(script-owned §十.1 的 2026-08-01 注)。
 - **工单 3 — 证伪矩阵迁到新基座(§七)。** 分数留 C++,判分归第二层 Luau,入口仍是 CLI 动词。
   **前置:工单 2。** 追加范围(2026-08-01,工单 2 发现):`observe.find` 不再结构性要求本票据
   先解析页面,「同帧页面证据」降级成了约定——执法手段(层 2 账本或 click 前置检查)在此工单定。
@@ -89,9 +89,9 @@
   顺带:出擊那格读出低置信错字——read 矩形要框纯文字,不要连图标,归 Agent 手册。
 - **两条小裁决已定(2026-08-01,开发者授权自行决定)**:deploy_danger 合并后的 9900 bp
   阈值**认下**(量出来的数,行为变化有意为之);onnxruntime.dll 部署步**并入工单 3**。
-- **release bin 缺 onnxruntime.dll 随附**:PATH 上的旧 1.17.1 被加载进程崩溃(API 28 不符),
-  当晚手工拷贝 `build/wo1b-debug/bin/onnxruntime*.dll` 过去。TODO(cpp-debt):给可执行目标加
-  DLL 部署步。
+- **release bin 缺 onnxruntime.dll 随附——已还清(`1df9ef0`)**:根因是共享 bin/ 只被
+  input-agent 的拷贝步顺带喂饱,孤立构建目标时回落 PATH 加载旧 1.17.1 崩溃;
+  `cpp_stage_runtime_libraries` 把拷贝挂到每个可达 ocr 的目标自己身上。
 
 长期挂着的阻塞(不属于任何一张工单):
 

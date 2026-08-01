@@ -222,6 +222,12 @@ element 的粒度,未定。
 
 代码一行未动。本文 review 通过之后才开工。
 
+> **落地记录(2026-08-01)。** review 已于 2026-08-01 融合审定完成,随后开工:§四 的
+> 第一层原语面(`1e71fb8` + CLI 接线 `3118423`)、第二层模型 `model` / `observe` /
+> `project`(`bf471f3`)与页面图 `navigation` + `walk_edge`(`88863cf`)均已落地并经
+> 真机只读验证(页面 Resolved + live OCR 满置信)。§九 退役与 §七 矩阵迁移仍未动,
+> 见 `docs/TODO.md` 工单 3 / 工单 4。
+
 ## 十二、2026-08-01 融合裁决
 
 同[目标形态 — 三层系统与 Agent 操作者](2026-08-01-three-layers-and-agent-operator.md)
