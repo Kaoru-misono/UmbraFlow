@@ -11,6 +11,10 @@
 
 一条一项,细节在指到的提交或 pitfall 里,不在这里。
 
+> 本节记的是**当时发生过什么**。其中 `umbra-authoring`、`umbra-input-agent`、
+> `m0-demo`、workbench 标注后端与 `modules/annotation` 都已于 2026-08-01 随工单 4c
+> 删除(`a80ea07`),量出来的事实仍然有效,二进制不必再去找。
+
 - **Rust→C++ 移植**:domain / vision / controller / m0-demo。
 - **WGC 真机截图**:卡厄思梦境 1600×900 客户区已验证。
 - **提权 input-agent 后台点击验收**(2026-07-21 通过):严格后台 `PostMessage`、K2 delta=0、
@@ -48,7 +52,8 @@
   `TargetGeneration`(按键不指名坐标),键名集合 52 个——2026-07-31 按真机界面加入 `ENTER` /
   `ESC` / `CAPS` / `SHIFT`。
 - **OCR 接入**(`35c3447`):`IOcrEngine` 端口与 `TextLine` 词汇是平台无关的,PP-OCRv6_small +
-  ONNX Runtime 适配器藏在 FFI 边界后,组合根是 `umbra-input-agent` 的 `read` 动词。
+  ONNX Runtime 适配器藏在 FFI 边界后;组合根现在是 `umbra-flow` 的 `--ocr-models`
+  绑定(`entry/cli/platform/ocr-engine-binding.*`)。
 - **标注前端成为第三个 `trace::FrontEnd`**:`FrontEnd::Annotation` 已加,input agent 后端拆成
   `IInputAgentDrive` 与 `AnnotationSession` 两层;它自己的动词与事件仍未做。
 
@@ -103,11 +108,17 @@
   `sortie --click(sortie_enter_button)--> deploy` 这条边并落盘,`walk-agent-edge`
   任务走它,授权点击 (801,817),画面从出擊页跳到戰鬥員配置页。整条链——量像素、定键、
   写元素、写边、走边——全部由 Agent 自己完成。
-- **工单 4c — §九 删除波。未开始。** 前置:`scribe` 的引用/边动词。删 v4 标注生产线
-  (`entry/authoring` 绘制动词与 v4 `check`、`entry/workbench` 标注后端、
-  `modules/annotation` 模型层与 recognition 栈、两个旧 schema 读写路径、
-  `entry/input-agent` 与 `entry/m0-demo`),trace v3 修剪,依赖图定格,文档批
-  (CONTEXT 的 oracle/regress/回执欠账一并清)。
+- **工单 4c — §九 删除波。已完成(2026-08-01,`a80ea07`)。** 删除 151 文件 / 54462 行:
+  `modules/annotation` 整体、`entry/authoring`、`entry/workbench`、`entry/input-agent`、
+  `entry/m0-demo` 及其测试;trace 升 v3(去掉已无发射方的页面分数与 `elementId`)。
+  两处搬迁:`ContentHash` 去 **domain** 而非 core(它返回 `Result`,而 core 没有错误
+  词汇);`ElementId` / `PageId` 直接死掉——trace v3 删掉了它们唯一的消费者。
+  OCR 模型 staging 跟着 `umbra-flow` 走,`--ocr-models` 在构建树里照常可用。
+  **依赖图已定格成 script-owned §三 的形状**,10 个模块无环,只剩一个二进制
+  `umbra-flow`(run / drive / explore / check),CI 目标 18 → 13。
+  **随之出现的能力缺口:滚轮**——`controller::scroll` 原语与测试都在,但删掉
+  input-agent 后无人可达;2026-08-01 文档 §七 本来就把滚轮列为已计划动词,
+  补一个 `cycle_scroll` 即可(未做)。抓帧唤醒那条经验规则同理仍未移植进探索通道。
 
 - **第一条真边已走通(2026-08-01,真机)**:`walk-first-edge` 任务全程走新栈——
   l2 文件 → 图 → 栈 → 等 home → walk_edge → 回执授权点击 (1438,240) → sortie
