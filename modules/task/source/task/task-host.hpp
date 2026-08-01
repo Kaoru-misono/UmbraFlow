@@ -34,6 +34,10 @@ namespace uf::task
     // on this.
     class OperatorSession;
 
+    // The agent front-end's session, defined in task/exploration-session.hpp.
+    // Declared here for the same reason OperatorSession is.
+    class ExplorationSession;
+
     // The event stream a resident host subscribes to. Deliberately declared and
     // never defined. subscribeEvents' shape is frozen here because the verb set
     // must not change between the one-run-per-process P0 and the resident P2
@@ -99,6 +103,14 @@ namespace uf::task
         // maximumPixelComparisons on purpose; see k_defaultMaximumReadsPerCycle
         // in task/task-context.hpp for why the two cannot share a pool.
         uint32 maximumReadsPerCycle{k_defaultMaximumReadsPerCycle};
+
+        // The per-cycle crop budget, a third dimension on the same reasoning.
+        // Only an exploration session can spend it -- a run VM has no crop verb
+        // -- but it lives here rather than on the exploration spec because a run
+        // config is where every recognition and delivery bound is stated, and a
+        // budget kept somewhere else would be the one a reader had to go looking
+        // for.
+        uint32 maximumCropsPerCycle{k_defaultMaximumCropsPerCycle};
 
         // There is no page-wait budget here. How long a task waits for a page
         // and how often it re-observes are decided by the task, in Luau, where
@@ -337,6 +349,31 @@ namespace uf::task
             GenerationId generation,
             TaskRunConfig config
         ) -> Result<std::unique_ptr<OperatorSession>>;
+
+        // Binds `generation`'s project to the agent front-end and hands back the
+        // session it drives.
+        //
+        // It is startOperatorSession's sibling in everything except what the
+        // session then does: this one owns a Luau VM, booted with the wider
+        // private surface and the two extra published modules, and runs one
+        // agent-supplied chunk per call. See task/exploration-session.hpp for
+        // what that widening is and where it is confined.
+        //
+        // It claims the ANNOTATION front-end, which is the third value of the
+        // exclusion the other two already obey: a generation a task run or an
+        // operator already drives refuses this, and this refuses them. That value
+        // existed before this verb did -- the m0-demo input agent stamped it on
+        // its own answer stream -- and reaching the host is what finally gives it
+        // a generation to latch.
+        //
+        // Unlike startTask this does not block: the session is returned live and
+        // the caller feeds it chunks, then calls ExplorationSession::finish to
+        // close the run bracket.
+        [[nodiscard]]
+        auto startExplorationSession(
+            GenerationId generation,
+            TaskRunConfig config
+        ) -> Result<std::unique_ptr<ExplorationSession>>;
 
         // Spends `generation`: the engine returns Cancelled from its next verb
         // and the VM interrupt hard-breaks the running task thread. Idempotent,

@@ -598,7 +598,27 @@ function observe.click(ctx: any, ticket: any, receipt: any, hit: any)
         ctx:cycle_click(ticket, hit.match)
         return
     end
-    ctx:cycle_click_point(ticket, hit.click_x, hit.click_y)
+
+    -- The bare-point delivery for an element with no template: one verified by
+    -- its expected text has a rectangle and no match handle, so the click lands
+    -- where the page model says the element is
+    -- (docs/plans/2026-08-01-three-layers-and-agent-operator.md 5, decision 4).
+    --
+    -- IT GOES THROUGH `native` AND NOT THROUGH `ctx`, and that is the whole
+    -- confinement. `ctx` is published into every project environment, so a
+    -- forward there would be a bare click a business task could call directly,
+    -- skipping every check above. The private surface is a closure upvalue of
+    -- this chunk and a key of no table either environment can name, so this is
+    -- the one route to the primitive in run mode -- and it runs only after the
+    -- receipt, the hit and the interact edge have all been checked.
+    if native == nil then
+        error(
+            "observe.click needs the host's private surface to deliver a click "
+                .. "at an element with no template; this VM has no bound session",
+            2
+        )
+    end
+    native.cycle_click_point(ticket, hit.click_x, hit.click_y)
 end
 
 local function requireWholeAtLeast(

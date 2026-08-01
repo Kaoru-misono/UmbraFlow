@@ -1,5 +1,6 @@
 #include <task/cycle-ledger.hpp>
 #include <task/native-call-trace.hpp>
+#include <task/pixel-probe.hpp>
 #include <task/script-bindings.hpp>
 #include <task/task-context.hpp>
 #include <task/template-store.hpp>
@@ -88,6 +89,7 @@ namespace uf::task
         // registry entry, for the same reason.
         constexpr auto k_matchType   = "uf.match";
         constexpr auto k_readingType = "uf.reading";
+        constexpr auto k_probeType   = "uf.probe";
 
         // The single global name the DATA installer registers, and therefore the
         // one host name the project environment whitelists. Spelled once here so
@@ -130,6 +132,18 @@ namespace uf::task
 
         constexpr auto k_readingUserdataTag = 3;
         static_assert(k_readingUserdataTag > 0 && k_readingUserdataTag < LUA_UTAG_LIMIT);
+
+        constexpr auto k_probeUserdataTag = 4;
+        static_assert(k_probeUserdataTag > 0 && k_probeUserdataTag < LUA_UTAG_LIMIT);
+
+        // The colour tolerance a probe uses when the caller named a key but no
+        // tolerance, matching the v4 authoring line's own `--tolerance` default
+        // so a measurement taken through either route reports the same counts.
+        //
+        // It is the ONE default on this verb, and it is a default about the
+        // measurement rather than about the answer: what counts as enough
+        // selected pixels is never decided here.
+        constexpr auto k_defaultProbeTolerance = uint32{12};
 
         // Pushes an error kind's wire spelling as a Lua string. The domain returns
         // a view rather than a C string, so push it with its length instead of
@@ -706,6 +720,26 @@ namespace uf::task
             return *value;
         }
 
+        // Reads one 0-255 colour channel at `index`.
+        [[nodiscard]]
+        auto checkColourChannel(
+            lua_State* state,
+            int index,
+            std::string const& what
+        ) -> uint8
+        {
+            auto const value = checkPixelExtent(state, index, what);
+            if (value > 255U)
+            {
+                raiseTierB(
+                    state,
+                    AutomationErrorKind::InvalidResource,
+                    what + " must be a channel value between 0 and 255"
+                );
+            }
+            return static_cast<uint8>(value);
+        }
+
         // Reads four numbers starting at `first` as one rectangle.
         //
         // Four scalars rather than one table, because section 5's second
@@ -1114,6 +1148,160 @@ namespace uf::task
             }
             traceHostCall(state, context, call, trace::NativeCallOutcome::Succeeded);
             return 0;
+        }
+
+        // cycle_crop(ticket, x, y, width, height) -> (blob, hash). The agent's
+        // eye: the pixels of one rectangle, encoded as a PNG, plus the lowercase
+        // hex SHA-256 of exactly those bytes.
+        //
+        // ONLY THE EXPLORATION SURFACE HAS IT. Handing raw pixels to a business
+        // script would give it a way to decide things no evidence can falsify,
+        // which is the whole content of the pixel row in the two-trust-mode table
+        // (docs/plans/2026-08-01-three-layers-and-agent-operator.md 2). A run
+        // VM's private surface does not carry this key, so a framework module
+        // that reached for it finds nil.
+        //
+        // TWO RETURNS, AND THE SECOND IS NOT A CONVENIENCE. A template asset is
+        // named by the content hash of its own bytes, and the sandbox leaves Luau
+        // no hash function at all -- so a caller that could not be told the hash
+        // could not write the file. The host already computed it for the trace
+        // line, and handing over the same value is what keeps the file name and
+        // the evidence from being two truths that could disagree.
+        //
+        // It does not consume the cycle: see TaskContext::cycleCrop.
+        auto cycleCropFn(lua_State* state) -> int
+        {
+            auto* context = boundContext(state);
+            guardFatal(state, context);
+
+            auto* ticket    = checkBox<CycleTicket>(state, 1, k_cycleType, "cycle");
+            auto const rect = checkPixelRect(state, 2, "cycle_crop region");
+
+            auto const call = NativeCallIdentity{
+                .verb         = "cycle_crop",
+                .cycleOrdinal = ticket->ordinal,
+            };
+
+            auto result = context->cycleCrop(*ticket, rect);
+            if (!result)
+            {
+                traceHostCallFailure(state, context, call, result.error());
+            }
+
+            // The trace line carries the prefixed spelling every other
+            // content-hash line uses, and the script gets the BARE hex.
+            //
+            // They are two renderings of one value rather than two values, and
+            // the difference is not cosmetic: a template asset lives at
+            // assets/templates/<64 hex>.png, and a name carrying the "sha256:"
+            // prefix would be a path no loader reads. The script layer is the
+            // one that has to spell the file name, so it gets the spelling that
+            // IS the file name.
+            auto const traceHash = result->hash.toString();
+            auto const scriptHash = result->hash.hex();
+            auto const done       = NativeCallIdentity{
+                .verb         = "cycle_crop",
+                .cycleOrdinal = ticket->ordinal,
+                .byteCount    = static_cast<uint64>(result->png.size()),
+                .contentHash  = traceHash,
+            };
+            traceHostCall(state, context, done, trace::NativeCallOutcome::Succeeded);
+
+            // SAFETY: reinterpreting the byte buffer as characters for one
+            // lua_pushlstring call. Lua copies the bytes into VM-owned string
+            // storage before returning, so no view survives this statement.
+            auto const* p_chars = reinterpret_cast<char const*>(result->png.data());
+            lua_pushlstring(state, p_chars, result->png.size());
+            lua_pushlstring(state, scriptHash.data(), scriptHash.size());
+            return 2;
+        }
+
+        // probe(blob, x, y, width, height[, key_r, key_g, key_b, tolerance])
+        // -> probe handle. Colour statistics over one rectangle of one PNG.
+        //
+        // PURE, AND SO IT TAKES NO TICKET. Every other verb on this surface is
+        // about the live target and is fenced by the cycle that observed it; this
+        // one is arithmetic over bytes the caller already holds, so requiring an
+        // open cycle would be ceremony that made a measurement depend on a frame
+        // it never reads. It is privileged nonetheless, for the same reason
+        // cycle_crop is: the only way to hold pixels here is to have cropped
+        // them.
+        //
+        // THE KEY IS OPTIONAL AND ITS ABSENCE IS VISIBLE. With no key the handle
+        // carries the census fields alone and no selection fields at all, so a
+        // caller cannot read "no key was passed" as "the key selected nothing".
+        // The census is what an agent probes FIRST -- the plan's loop is crop,
+        // then probe to fix the key and the threshold -- and a verb that demanded
+        // a key would be useless for choosing one.
+        //
+        // NOTHING HERE IS A THRESHOLD. The handle reports counts; whether a count
+        // is good enough is the caller's, and the caller writes what it decided
+        // into the project file where it can be argued with.
+        auto probeFn(lua_State* state) -> int
+        {
+            auto* context = boundContext(state);
+            guardFatal(state, context);
+
+            auto const blob = checkText(state, 1, "probe blob");
+            auto const rect = checkPixelRect(state, 2, "probe region");
+
+            auto key = std::optional<ProbeColourKey>{};
+            if (!lua_isnoneornil(state, 6))
+            {
+                key = ProbeColourKey{
+                    .red   = checkColourChannel(state, 6, "probe key red"),
+                    .green = checkColourChannel(state, 7, "probe key green"),
+                    .blue  = checkColourChannel(state, 8, "probe key blue"),
+                    .tolerance = lua_isnoneornil(state, 9)
+                        ? k_defaultProbeTolerance
+                        : checkPixelExtent(state, 9, "probe tolerance"),
+                };
+            }
+
+            auto const call = NativeCallIdentity{
+                .verb      = "probe",
+                .byteCount = static_cast<uint64>(blob.size()),
+            };
+
+            auto result = probePngRegion(
+                std::as_bytes(std::span{blob}),
+                rect,
+                key
+            );
+            if (!result)
+            {
+                traceHostCallFailure(state, context, call, result.error());
+            }
+            traceHostCall(state, context, call, trace::NativeCallOutcome::Succeeded);
+
+            // The carrier holds no payload: nothing in C++ ever reads a probe
+            // back, so the fields below are the whole of it -- the same shape a
+            // reading handle takes, for the same reason.
+            beginFieldHandle<uint8>(state, uint8{0}, k_probeUserdataTag);
+            addNumberField(state, "image_width", result->imageWidth);
+            addNumberField(state, "image_height", result->imageHeight);
+            addNumberField(state, "rect_pixels", result->rectPixels);
+            addNumberField(state, "distinct_colours", result->distinctColours);
+            addNumberField(state, "dominant_red", result->dominantRed);
+            addNumberField(state, "dominant_green", result->dominantGreen);
+            addNumberField(state, "dominant_blue", result->dominantBlue);
+            addNumberField(state, "dominant_pixels", result->dominantPixels);
+            if (result->fullySelectedPixels.has_value())
+            {
+                addNumberField(
+                    state,
+                    "fully_selected_pixels",
+                    *result->fullySelectedPixels
+                );
+                addNumberField(
+                    state,
+                    "ramp_selected_pixels",
+                    *result->rampSelectedPixels
+                );
+                addNumberField(state, "selected_weight", *result->selectedWeight);
+            }
+            finishFieldHandle(state, context, k_probeType);
+            return 1;
         }
 
         // cycle_click(ticket, match) -> (). Consumes the cycle and delivers the
@@ -1973,8 +2161,32 @@ namespace uf::task
         // It is frozen for the same reason the uf table is: a framework bug
         // that rebound a primitive would silently redefine what "click" means,
         // and freezing turns that into an immediate error instead.
+        // WHERE THE TWO ENVIRONMENTS DIFFER, AND THE ONLY PLACE THEY DO.
+        //
+        // `mode` decides whether two keys exist on the table this builds. It is
+        // not a permission check and there is no refusal anywhere below: a Run
+        // surface simply never binds cycle_crop or probe, so a framework module
+        // that named one of them reads nil. That is what section 2 rule 2 of
+        // docs/plans/2026-08-01-three-layers-and-agent-operator.md asks for: the
+        // privileged verbs do not exist rather than being refused one call at a
+        // time.
+        //
+        // The third privileged verb, cycle_click_point, is bound on both -- see
+        // its installation below for why, and for where its own confinement
+        // actually lives.
+        //
+        // Everything else on the surface is identical between the two, because
+        // the exploration environment is the run surface PLUS these three and
+        // never a different set (docs/plans/2026-08-01-agent-front-end-and-
+        // exploration.md 1). An agent must meet exactly the guarantees a task
+        // meets on every verb they share, or what it measures would be a
+        // statement about a system the product does not ship.
         [[nodiscard]]
-        auto buildPrivateSurface(lua_State* state, TaskContext* context) -> Status
+        auto buildPrivateSurface(
+            lua_State* state,
+            TaskContext* context,
+            ScriptTrustMode mode
+        ) -> Status
         {
             UF_TRY(installSessionMetatables(state));
 
@@ -2021,6 +2233,16 @@ namespace uf::task
                 "uf_cycle_click",
                 context
             );
+            // Bound on BOTH surfaces, and this is not an oversight. The trusted
+            // framework needs it in run mode: an element verified by its expected
+            // text carries no match handle, so observe.click delivers at the
+            // rectangle the page model gave it, and that is the locked decision 4
+            // of docs/plans/2026-08-01-three-layers-and-agent-operator.md 5. What
+            // makes it privileged is that no BUSINESS environment can name it --
+            // it is a closure upvalue of the framework and nothing published into
+            // a project environment forwards it, which is that document's section
+            // 2 rule stated exactly. The exploration environment publishes a
+            // forward for it; the run environment publishes none.
             installPrimitive(
                 state,
                 surface,
@@ -2029,6 +2251,25 @@ namespace uf::task
                 "uf_cycle_click_point",
                 context
             );
+            if (mode == ScriptTrustMode::Exploration)
+            {
+                installPrimitive(
+                    state,
+                    surface,
+                    "cycle_crop",
+                    &cycleCropFn,
+                    "uf_cycle_crop",
+                    context
+                );
+                installPrimitive(
+                    state,
+                    surface,
+                    "probe",
+                    &probeFn,
+                    "uf_probe",
+                    context
+                );
+            }
             installPrimitive(
                 state,
                 surface,
@@ -2121,7 +2362,7 @@ namespace uf::task
         };
     }
 
-    auto scriptPrivateCapabilities(TaskContext& context)
+    auto scriptPrivateCapabilities(TaskContext& context, ScriptTrustMode mode)
         -> script::PrivateCapabilityInstaller
     {
         // Lifetime: the closure stores this address, which the caller guarantees
@@ -2129,9 +2370,9 @@ namespace uf::task
         // TaskContext is non-movable, so the pointer stays valid for the VM's life;
         // it is a non-owning observation, never an owner.
         TaskContext* const contextPtr = &context;
-        return [contextPtr](lua_State* state) -> Status
+        return [contextPtr, mode](lua_State* state) -> Status
         {
-            return buildPrivateSurface(state, contextPtr);
+            return buildPrivateSurface(state, contextPtr, mode);
         };
     }
 }

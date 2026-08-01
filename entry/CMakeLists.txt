@@ -22,8 +22,16 @@ add_library(${CLI_LIBRARY} STATIC
     cli/drive.hpp
     cli/drive-protocol.cpp
     cli/drive-protocol.hpp
+    cli/explore.cpp
+    cli/explore.hpp
+    cli/explore-cursor.cpp
+    cli/explore-cursor.hpp
+    cli/explore-protocol.cpp
+    cli/explore-protocol.hpp
     cli/file-frame-source.cpp
     cli/file-frame-source.hpp
+    cli/json-text.cpp
+    cli/json-text.hpp
     cli/run.cpp
     cli/run.hpp
 )
@@ -52,6 +60,7 @@ if(WIN32 AND TARGET ${PROJECT_NAME}_controller)
             cli/candidate-selection.cpp
             cli/candidate-selection.hpp
             cli/drive-windows.cpp
+            cli/explore-windows.cpp
             cli/run-windows.cpp
             cli/platform/controller-action-sink.cpp
             cli/platform/controller-action-sink.hpp
@@ -75,6 +84,7 @@ else()
     target_sources(${CLI_LIBRARY}
         PRIVATE
             cli/drive-unsupported.cpp
+            cli/explore-unsupported.cpp
             cli/run-unsupported.cpp
     )
 endif()

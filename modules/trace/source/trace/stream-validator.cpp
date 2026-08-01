@@ -107,6 +107,68 @@ namespace uf::trace
         return ok();
     }
 
+    auto TraceStreamValidator::requireAnnotation() const -> Status
+    {
+        if (m_frontEnd != FrontEnd::Annotation)
+        {
+            return fail(
+                AutomationErrorKind::InternalInvariant,
+                "an annotation event reached a stream no exploration session drove"
+            );
+        }
+        return ok();
+    }
+
+    auto TraceStreamValidator::refuseAnnotationVocabularyClash() const -> Status
+    {
+        if (m_frontEnd == FrontEnd::Annotation)
+        {
+            return fail(
+                AutomationErrorKind::InternalInvariant,
+                "engine.action_delivered reached the exploration stream, where a "
+                "delivered click is annotation.click_delivered"
+            );
+        }
+        return ok();
+    }
+
+    auto TraceStreamValidator::requireAnnotationPayload(
+        TraceEvent const& event
+    ) const -> Status
+    {
+        if (!event.annotation.has_value())
+        {
+            return fail(
+                AutomationErrorKind::InternalInvariant,
+                "an annotation event carries no annotation payload"
+            );
+        }
+        if (event.kind == TraceEventKind::AnnotationClickDelivered)
+        {
+            if (!event.annotation->point.has_value())
+            {
+                return fail(
+                    AutomationErrorKind::InternalInvariant,
+                    "annotation.click_delivered carries no point, which is the "
+                    "whole of what it records"
+                );
+            }
+            return ok();
+        }
+        if (
+            !event.annotation->rect.has_value()
+            || !event.annotation->contentHash.has_value()
+        )
+        {
+            return fail(
+                AutomationErrorKind::InternalInvariant,
+                "annotation.region_saved needs both the rect it copied and the "
+                "hash of the bytes it produced; either alone names no evidence"
+            );
+        }
+        return ok();
+    }
+
     auto TraceStreamValidator::admit(
         TraceEvent const& event
     ) -> Result<std::vector<std::string>>
@@ -182,6 +244,24 @@ namespace uf::trace
             UF_TRY(requireFramework());
             return requirePayload(event);
 
+        case TraceEventKind::EngineActionDelivered:
+            // The mirror of the rule below, and the half that gives "never
+            // engine.action_delivered" teeth. On the exploration stream a
+            // delivered click is written under the annotation vocabulary, so
+            // this spelling reaching that stream means an emitter chose the
+            // wrong one -- which is a bug in this binary and not something a
+            // reader should have to notice for themselves.
+            return refuseAnnotationVocabularyClash();
+
+        case TraceEventKind::AnnotationClickDelivered:
+        case TraceEventKind::AnnotationRegionSaved:
+            // Stated against the one front-end that has these verbs, exactly as
+            // requireFramework is stated against FrontEnd::Task: a front-end
+            // added later is refused by construction rather than by someone
+            // remembering to list it.
+            UF_TRY(requireAnnotation());
+            return requireAnnotationPayload(event);
+
         case TraceEventKind::RunResourcesValidated:
         case TraceEventKind::EngineObserved:
         case TraceEventKind::EnginePageResolved:
@@ -189,7 +269,6 @@ namespace uf::trace
         case TraceEventKind::EngineTextRead:
         case TraceEventKind::EngineActionAuthorized:
         case TraceEventKind::EngineActionRejected:
-        case TraceEventKind::EngineActionDelivered:
         case TraceEventKind::EngineKeyDelivered:
         case TraceEventKind::EngineObservationInvalidated:
         case TraceEventKind::TaskNativeCall:

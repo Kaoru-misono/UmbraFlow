@@ -167,6 +167,35 @@ namespace uf::engine
 
     };
 
+    // One rectangle of one frame's pixels, copied out of the observation that
+    // held them.
+    //
+    // WHY THE PIXELS LEAVE THIS MODULE AT ALL. Every other verb here answers a
+    // question ABOUT the frame -- where a template matched, what text a region
+    // holds -- and hands back the answer rather than the evidence. This one
+    // hands back the evidence, because its caller is the exploration front-end,
+    // whose whole purpose is that an agent with no model yet can look at the
+    // screen (docs/plans/2026-08-01-three-layers-and-agent-operator.md 2). It is
+    // the reason the primitive above it is loaded in one environment and not the
+    // other; nothing about it is available to a business script.
+    //
+    // The pixels are BGRA8, packed, with no row padding: stride is width * 4.
+    // A Gray8 frame is widened rather than refused, on the same reasoning the
+    // text read widens one -- a capture format the caller did not choose must
+    // not change what a verb can answer.
+    struct CroppedRegion final
+    {
+        // The frame these pixels came from. It has no default constructor, so a
+        // construction site that leaves it out does not compile, and the crop's
+        // own trace line joins to the capture through it.
+        FrameIdentity frame;
+
+        uint32 width{};
+        uint32 height{};
+
+        std::vector<std::byte> pixels{};
+    };
+
     // The record of one delivered click: the frame it was authorized against and
     // the client-space point posted to the sink.
     struct ActReceipt final
@@ -315,7 +344,37 @@ namespace uf::engine
             PixelRect rect
         ) -> Result<std::optional<TextReading>>;
 
+        // Copies `rect` of the frame `observation` holds and hands the pixels
+        // back.
+        //
+        // It does NOT spend the observation and it does not touch the action
+        // sink: reading pixels changes nothing on the target, so the frame is
+        // still the frame afterwards and the same cycle can go on to click. The
+        // one thing it can refuse is a rectangle the frame does not contain.
+        //
+        // It emits NOTHING. Every other verb here writes its own engine.* line,
+        // and this one does not, because the honest line for a crop belongs to
+        // the vocabulary of the front-end that has the verb:
+        // annotation.region_saved, written by the layer that also knows the
+        // encoded bytes and their hash. Writing an engine.* line here as well
+        // would put the same act in the record twice under two names.
+        [[nodiscard]]
+        auto cropRegion(
+            Observation const& observation,
+            PixelRect rect
+        ) -> Result<CroppedRegion>;
+
         // Delivers one click at `point`, spending `observation`.
+        //
+        // WHICH LINE THE DELIVERY IS WRITTEN UNDER depends on the front-end that
+        // owns the stream, and this is the only place it is decided. On a task
+        // or an operator stream a delivered click is engine.action_delivered; on
+        // the exploration stream it is annotation.click_delivered, because there
+        // the caller is an agent naming a coordinate with no element and no page
+        // behind it, and engine.action_delivered would claim a recognition that
+        // never happened (docs/plans/2026-08-01-agent-front-end-and-
+        // exploration.md 1). The stream validator refuses the other spelling on
+        // each stream, so the choice cannot be got wrong quietly.
         //
         // WHAT IT ENFORCES, and what it deliberately does not. A requested stop
         // refuses before any sink call, a foreign handle is an

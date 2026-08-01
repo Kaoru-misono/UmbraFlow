@@ -2,6 +2,7 @@
 
 #include "../annotation/test-helpers.hpp"
 
+#include <task/exploration-session.hpp>
 #include <task/framework-bundle.hpp>
 #include <task/operator-session.hpp>
 #include <task/task-host.hpp>
@@ -524,6 +525,69 @@ exercised = ["interact"]
             CHECK_FALSE(std::filesystem::exists(temp.path() / "task.jsonl"));
         }
 
+        SUBCASE("a task run refuses an exploration session afterwards")
+        {
+            // The third front-end obeys the same rule, and it has to be checked
+            // on its own rather than inferred: an agent session holds the same
+            // single-open-cycle ledger a task does, so admitting one beside a
+            // task would be two policy sources contending for one frame.
+            auto const temp = TemporaryDir{"exclusion-task-then-agent"};
+            publishProject(temp.path(), "daily", k_taskSource);
+
+            auto host             = TaskHost{};
+            auto const generation = host.loadProject(temp.path());
+            REQUIRE(generation.has_value());
+
+            auto const report = host.startTask(
+                *generation,
+                "daily",
+                runConfig(temp.path() / "task.jsonl")
+            );
+            REQUIRE(report.has_value());
+
+            auto refused = host.startExplorationSession(
+                *generation,
+                runConfig(temp.path() / "explore.jsonl")
+            );
+            REQUIRE_FALSE(refused.has_value());
+            CHECK(
+                automationErrorKind(refused.error())
+                == AutomationErrorKind::UnsupportedCapability
+            );
+            CHECK_FALSE(std::filesystem::exists(temp.path() / "explore.jsonl"));
+        }
+
+        SUBCASE("an exploration session refuses a task run and an operator afterwards")
+        {
+            auto const temp = TemporaryDir{"exclusion-agent-first"};
+            publishProject(temp.path(), "daily", k_taskSource);
+
+            auto host             = TaskHost{};
+            auto const generation = host.loadProject(temp.path());
+            REQUIRE(generation.has_value());
+
+            auto session = host.startExplorationSession(
+                *generation,
+                runConfig(temp.path() / "explore.jsonl")
+            );
+            REQUIRE(session.has_value());
+
+            auto const refusedTask = host.startTask(
+                *generation,
+                "daily",
+                runConfig(temp.path() / "task.jsonl")
+            );
+            REQUIRE_FALSE(refusedTask.has_value());
+            CHECK_FALSE(std::filesystem::exists(temp.path() / "task.jsonl"));
+
+            auto refusedOperator = host.startOperatorSession(
+                *generation,
+                runConfig(temp.path() / "operator.jsonl")
+            );
+            REQUIRE_FALSE(refusedOperator.has_value());
+            CHECK_FALSE(std::filesystem::exists(temp.path() / "operator.jsonl"));
+        }
+
         SUBCASE("the same front-end twice is allowed")
         {
             // A generation legitimately runs several tasks in sequence. What it must
@@ -585,6 +649,78 @@ exercised = ["interact"]
         }
         CHECK(lines.front().contains("\"kind\":\"run.started\""));
         CHECK(lines.back().contains("\"kind\":\"run.finished\""));
+    }
+
+    TEST_CASE("an exploration session runs one chunk at a time under one bracket")
+    {
+        auto const temp = TemporaryDir{"exploration-bracket"};
+        publishProject(temp.path(), "daily", k_taskSource);
+
+        auto host             = TaskHost{};
+        auto const generation = host.loadProject(temp.path());
+        REQUIRE(generation.has_value());
+
+        auto const tracePath = temp.path() / "explore.jsonl";
+        auto session = host.startExplorationSession(*generation, runConfig(tracePath));
+        REQUIRE(session.has_value());
+
+        // Each chunk runs under a project environment built fresh for it, so a
+        // global one chunk writes never reaches the next. What DOES survive is
+        // everything the host owns, which the ledger ordinal below shows.
+        auto const first = (*session)->evaluate("carried = 7 return 1", "one");
+        REQUIRE(first.has_value());
+        CHECK(first->number() == 1.0);
+
+        auto const second = (*session)->evaluate(
+            "return carried == nil and 'gone' or 'leaked'",
+            "two"
+        );
+        REQUIRE(second.has_value());
+        REQUIRE(second->text() != nullptr);
+        CHECK(*second->text() == "gone");
+
+        // A chunk that leaves a cycle open costs its own line and nothing more:
+        // the host sweeps the bracket, so the next chunk opens a cycle of its
+        // own instead of meeting a framework-bug refusal.
+        auto const leaky = (*session)->evaluate("ctx:cycle_open() return true", "three");
+        REQUIRE(leaky.has_value());
+        auto const after = (*session)->evaluate(
+            "local t = ctx:cycle_open() ctx:cycle_close(t) return true",
+            "four"
+        );
+        REQUIRE(after.has_value());
+        CHECK(after->boolean() == true);
+        CHECK_FALSE((*session)->terminalKind().has_value());
+
+        // A chunk that raises is an ordinary outcome; the session goes on.
+        auto const raised = (*session)->evaluate("error('deliberate')", "five");
+        CHECK_FALSE(raised.has_value());
+        auto const recovered = (*session)->evaluate("return 'still here'", "six");
+        REQUIRE(recovered.has_value());
+
+        // A value no result line can carry is refused by TYPE rather than
+        // rendered as something plausible.
+        auto const table = (*session)->evaluate("return {}", "seven");
+        CHECK_FALSE(table.has_value());
+
+        auto const report = (*session)->finish(std::nullopt);
+        CHECK(report.outcome() == TaskRunOutcome::Completed);
+        CHECK(report.taskName.empty());
+        CHECK(report.seed != 0U);
+
+        auto const lines = traceLines(tracePath);
+        REQUIRE_FALSE(lines.empty());
+        for (auto const& line : lines)
+        {
+            CAPTURE(line);
+            CHECK(line.contains("\"frontEnd\":\"annotation\""));
+        }
+        CHECK(lines.front().contains("\"kind\":\"run.started\""));
+        CHECK(lines.back().contains("\"kind\":\"run.finished\""));
+
+        // A framework DID run here, unlike on an operator stream, so the run
+        // identity names the build the agent's chunks executed against.
+        CHECK(lines.front().contains("\"frameworkHash\""));
     }
 
     TEST_CASE("TaskHost cancel spends the generation and queryTask reports it")

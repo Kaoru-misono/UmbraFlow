@@ -341,6 +341,29 @@ namespace uf::cli
         };
     }
 
+    auto parseExploreArguments(std::span<std::string const> raw) -> Result<ExploreArgs>
+    {
+        // Parsed through the drive reader, because the flag set IS the drive flag
+        // set: same target binding, same project, same two IPC files, same
+        // recognition and delivery bounds. Only what a queue LINE means differs,
+        // and that is the protocol's business rather than the parser's. A second
+        // copy of ten flags is a second place a default could drift.
+        UF_TRY_VALUE(shared, parseDriveArguments(raw));
+
+        return ExploreArgs{
+            .project            = std::move(shared.project),
+            .selector           = std::move(shared.selector),
+            .queue              = std::move(shared.queue),
+            .results            = std::move(shared.results),
+            .budget             = shared.budget,
+            .recognitionTimeout = shared.recognitionTimeout,
+            .maxFrameAge        = shared.maxFrameAge,
+            .idleTimeout        = shared.idleTimeout,
+            .trace              = std::move(shared.trace),
+            .ocrModels          = std::move(shared.ocrModels),
+        };
+    }
+
     auto parseCheckArguments(std::span<std::string const> raw) -> Result<CheckArgs>
     {
         auto project = std::optional<std::filesystem::path>{};
@@ -448,6 +471,36 @@ namespace uf::cli
             "                                default: no OCR engine, cycle_read refuses\n";
     }
 
+    auto exploreUsageText() noexcept -> std::string_view
+    {
+        return
+            "Usage:\n"
+            "  umbra-flow explore --project DIR --selector TITLE-SUBSTRING "
+            "--queue PATH --results PATH [options]\n"
+            "\n"
+            "Executes Luau chunks arriving as JSON lines appended to --queue, one\n"
+            "per line as {\"id\":\"...\",\"chunk\":\"...\"}, writing one JSON result\n"
+            "line per chunk to --results. The chunks run in the exploration\n"
+            "environment: every verb a task has, plus a bare-coordinate click, a\n"
+            "region crop and a pixel probe. Never runs a task.\n"
+            "\n"
+            "Required:\n"
+            "  --project DIR                Annotation project directory\n"
+            "  --selector TITLE-SUBSTRING   Substring of the target window title\n"
+            "  --queue PATH                 Chunk queue this session tails\n"
+            "  --results PATH               Result lines; must not already exist\n"
+            "\n"
+            "Options:\n"
+            "  --budget N                   Pixel comparison ceiling per recognition\n"
+            "  --recognition-timeout MS     Per-recognition deadline; default: 2000\n"
+            "  --max-frame-age MS           Action frame age ceiling; default: 750\n"
+            "  --idle-timeout S             End after an idle queue; default: 120\n"
+            "  --trace PATH                 Trace JSONL path; default: "
+            "umbra-flow-trace.jsonl\n"
+            "  --ocr-models DIR             \"models\" directory enabling cycle_read;\n"
+            "                                default: no OCR engine, cycle_read refuses\n";
+    }
+
     auto checkUsageText() noexcept -> std::string_view
     {
         return
@@ -477,6 +530,8 @@ namespace uf::cli
         auto text = std::string{runUsageText()};
         text += '\n';
         text += driveUsageText();
+        text += '\n';
+        text += exploreUsageText();
         text += '\n';
         text += checkUsageText();
         return text;

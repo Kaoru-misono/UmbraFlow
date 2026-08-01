@@ -254,7 +254,7 @@ namespace uf::task
             auto config = taskVmConfig(context);
             config.installPrivateCapabilities =
                 script::testing::scriptedPrivateCapabilities(
-                    scriptPrivateCapabilities(context),
+                    scriptPrivateCapabilities(context, ScriptTrustMode::Run),
                     std::string{k_fakeSurfaceSource},
                     "fake-capability-surface"
                 );

@@ -130,6 +130,28 @@ namespace uf::task
         ++m_open->reads;
     }
 
+    auto CycleLedger::cropsCharged() const noexcept -> uint32
+    {
+        UF_ASSERT(m_open.has_value());
+        return m_open->crops;
+    }
+
+    auto CycleLedger::chargeCrop() noexcept -> void
+    {
+        UF_ASSERT(m_open.has_value());
+        ++m_open->crops;
+    }
+
+    auto CycleLedger::closeOpen() noexcept -> bool
+    {
+        if (!m_open.has_value())
+        {
+            return false;
+        }
+        m_open.reset();
+        return true;
+    }
+
     auto CycleLedger::spend(CycleTicket ticket) -> Result<engine::Observation>
     {
         UF_TRY(requireOpen(ticket));

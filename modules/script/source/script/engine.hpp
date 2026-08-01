@@ -1,6 +1,7 @@
 #pragma once
 
 #include <core/error/result.hpp>
+#include <core/safety/annotations.hpp>
 #include <core/types/integer.hpp>
 
 #include <domain/error.hpp>
@@ -12,6 +13,7 @@
 #include <stop_token>
 #include <string>
 #include <string_view>
+#include <variant>
 #include <vector>
 
 // Luau's opaque VM handle, forward-declared so this public header never pulls in
@@ -122,6 +124,41 @@ namespace uf::script
 
         // The module's UTF-8 source text.
         std::string_view source{};
+    };
+
+    // The value one chunk returned, restricted to what a text protocol can carry
+    // back to whoever asked for the chunk to run.
+    //
+    // FOUR SHAPES AND NOT MORE. A Luau chunk may return a table, a function or a
+    // host handle, and none of those has an honest rendering as one line of
+    // JSON: a table would have to be walked (and could be cyclic, or hold a
+    // handle), a function has no value at all, and a handle names something that
+    // dies with the run. So the runner REFUSES them by type and says so, rather
+    // than serialising a plausible-looking approximation. A caller that wants
+    // more out of a chunk formats it into a string inside the chunk, where the
+    // formatting is a decision the script layer made and can be read.
+    //
+    // Absent is a chunk that returned nothing, which is different from one that
+    // returned false or an empty string; a caller reporting a result line needs
+    // to be able to say so.
+    class ScriptValue final
+    {
+        std::variant<std::monostate, bool, double, std::string> m_value{};
+
+    public:
+        ScriptValue() noexcept = default;
+
+        explicit ScriptValue(bool value) noexcept;
+        explicit ScriptValue(double value) noexcept;
+        explicit ScriptValue(std::string value) noexcept;
+
+        [[nodiscard]] auto absent() const noexcept -> bool;
+        [[nodiscard]] auto boolean() const noexcept -> std::optional<bool>;
+        [[nodiscard]] auto number() const noexcept -> std::optional<double>;
+
+        // The borrow lasts as long as this value does.
+        [[nodiscard]]
+        auto text() const noexcept UF_LIFETIME_BOUND -> std::string const*;
     };
 
     // Tunables for one task VM generation. Every field is live: the cancellation
@@ -254,5 +291,19 @@ namespace uf::script
             std::string_view source,
             std::string_view chunkName
         ) -> Result<double>;
+
+        // The same run, reporting what the chunk returned rather than coercing
+        // it to a number. It exists for a front-end that hands a chunk back an
+        // answer -- `umbra-flow explore` writes one result line per queued chunk
+        // -- where "the script returned the string 'home'" and "the script
+        // returned 0" are different answers and runNumber renders both as 0.0.
+        //
+        // A returned value this cannot carry is a FAILURE naming the Luau type,
+        // not a silent absent: see ScriptValue for why the set is closed.
+        [[nodiscard]]
+        auto runValue(
+            std::string_view source,
+            std::string_view chunkName
+        ) -> Result<ScriptValue>;
     };
 }

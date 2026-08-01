@@ -1,5 +1,7 @@
 #pragma once
 
+#include <core/types/integer.hpp>
+
 #include <script/engine.hpp>
 
 #include <string>
@@ -8,6 +10,31 @@
 namespace uf::task
 {
     class TaskContext;
+
+    // Which of the two Luau environments a VM is being booted for, and therefore
+    // which primitives its private capability surface carries.
+    //
+    // THIS IS THE ENFORCEMENT, NOT A LABEL. Design section 2 rule 2 of
+    // docs/plans/2026-08-01-three-layers-and-agent-operator.md says the
+    // privileged verbs must not EXIST in the business environment rather than be
+    // refused there call by call, and this enum is where that becomes true: a Run
+    // surface is built without those keys, so there is nothing for a refusal to
+    // guard and nothing for a framework bug to reach. The difference is
+    // observable in one place -- buildPrivateSurface -- and nowhere else.
+    //
+    // Run is first so a default-initialised value is the narrow surface. A
+    // caller that forgets to say which environment it wants gets the one that
+    // grants less.
+    enum class ScriptTrustMode : uint8
+    {
+        // A business task or a host routine: the primitives every operator of
+        // this system may reach.
+        Run,
+
+        // An agent measuring a target it has no model of yet: the Run surface
+        // plus the bare-coordinate click, the crop and the probe.
+        Exploration,
+    };
 
     // The two surfaces a task VM is booted with, and the line between them.
     //
@@ -73,7 +100,11 @@ namespace uf::task
     // installer configures, because the VM's host functions dereference that
     // pointer on every primitive call; the TaskContext is non-movable so the
     // address stays stable.
+    //
+    // `mode` decides which primitives are on the surface at all. See
+    // ScriptTrustMode: an Exploration surface carries three keys a Run surface
+    // does not have, and a Run surface has no way to reach them.
     [[nodiscard]]
-    auto scriptPrivateCapabilities(TaskContext& context)
+    auto scriptPrivateCapabilities(TaskContext& context, ScriptTrustMode mode)
         -> script::PrivateCapabilityInstaller;
 }

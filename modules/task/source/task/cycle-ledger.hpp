@@ -76,6 +76,14 @@ namespace uf::task
             // poll is normal, and a bound spanning the whole run would either
             // stop that loop or be so large it stops nothing.
             uint32 reads{};
+
+            // How many crops have been charged to this cycle, on exactly the
+            // same reasoning. A crop is megabytes of pixels encoded into a PNG,
+            // so it is its own budget dimension for the reason a read is: the
+            // units are not comparable, and one number covering a SAD
+            // comparison, a line read and a whole-panel encode describes none of
+            // them.
+            uint32 crops{};
         };
 
         uint64                   m_generation;
@@ -143,6 +151,26 @@ namespace uf::task
         [[nodiscard]] auto readsCharged() const noexcept -> uint32;
 
         auto chargeRead() noexcept -> void;
+
+        // The same pair for the crop budget. Same precondition, same reason the
+        // count belongs to the ledger rather than to a caller.
+        [[nodiscard]] auto cropsCharged() const noexcept -> uint32;
+
+        auto chargeCrop() noexcept -> void;
+
+        // Releases whatever cycle is open, reporting whether there was one.
+        //
+        // IT IS NOT REACHABLE FROM ANY SCRIPT and must not become so. Every
+        // script-facing release names a ticket, which is what makes closing an
+        // act about a cycle the caller actually holds. This one names none
+        // because its caller holds none: the exploration front-end runs one
+        // agent-supplied chunk per queue line, and a chunk that opened a cycle
+        // and raised before closing it would otherwise leave the ledger holding
+        // a frame that the NEXT chunk's cycle_open reports as a framework bug --
+        // spending the whole session over one bad line. Sweeping between lines
+        // is the host cleaning up after a bracket it owns, which is the same
+        // thing the destructor does when the generation is torn down.
+        auto closeOpen() noexcept -> bool;
 
         // Spends the cycle `ticket` names: the frame leaves the ledger and the
         // ticket dies here, before the input that follows can do anything with

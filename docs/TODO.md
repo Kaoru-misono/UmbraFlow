@@ -75,10 +75,33 @@
   拆页(声明处有记)。跨边界成本实测 ~723µs/格,其中 ~650µs 是每调用固定开销
   (trace 两行 + 逐行 flush + 指纹检查),批量原语按 §十.5 只记不做。
   遗留文档账:CONTEXT.md 还不认识 oracle/regress/回执,工单 4 的文档批一起补。
-- **工单 4 — §九 退役清单执行。** `modules/annotation` 的模型层、`modules/task` 的
-  `CapabilitySurface`、`preview.*` 的判分部分与 `entry/authoring` 的 page/element 绘制动词、
-  `engine` 的 `resolvePage` 与 `findAction`;依赖图上的 `engine -> annotation` 随之去掉。
-  **前置:工单 2 与工单 3 落地。**
+- **工单 4a — 旧动词退役。已完成(2026-08-01,`73c7c6f`)。**
+  `cycle_page` / `cycle_find` / `wait_for_page` / `CapabilitySurface`(含 `uf.elements`、
+  `uf.pages`)/ engine 的 `resolvePage`、`findAction`、`act` 与 catalog 点击路径全部退役;
+  `cycle_click` 只吃 match。模板胶水迁 `vision/template-match`、`ProjectFingerprint` 迁
+  `domain/space`、`FrameIdentity` 迁 `domain/frame`,**`engine -> annotation` 边已切断**
+  (engine manifest = core domain ocr trace vision),指纹改由 l2 文件提供。预 VM 校验器
+  改看 `page-model.toml`(`task/page-model-file`,C++ 只扁平扫名)。drive 收缩为七个裸动词。
+  九处突变九红。**遗留**:trace 的 `Page::Score` / `elementId` 仍用 annotation 类型,
+  产品已无发射方,随 trace v3 修剪。
+- **工单 4b — Agent 前端与探索环境。实现已落地(2026-08-01,`9b5c8bc`),
+  真机验收已通过。** 形状见
+  [Agent 前端与探索环境](plans/2026-08-01-agent-front-end-and-exploration.md)。
+  新原语 `cycle_crop`(带 sha256,自有每周期预算,不消费周期)与 `probe`(色键统计,
+  无键时选择字段缺席而非补零);`ScriptTrustMode` 分环境,`explore` / `scribe` 只在
+  探索环境,裸点击不再对**任何**项目环境可命名(顺手堵了 `ctx:cycle_click_point` 曾
+  公开给所有项目环境的洞);`umbra-flow explore` 队列通道走 `FrontEnd::Annotation`,
+  其流**结构性拒绝** `engine.action_delivered`。14 突变 14 红。
+  **真机验收(2026-08-01)**:探索通道 crop → census(5259 色,主色 250,245,254)→
+  白键探针(29140 像素中 8901 全选)→ OCR「進入」92.8% → `scribe` 写入新元素
+  `sortie_enter_button`(interact+read,阈值 9000)→ 重载确认 → 手工补引用与四条期望 →
+  `umbra-flow check` 100 格 `accepted=true` 零发现。
+  **仍缺**:`scribe` 不会写页面引用与边(本次手工补),补齐后才做删除波。
+- **工单 4c — §九 删除波。未开始。** 前置:`scribe` 的引用/边动词。删 v4 标注生产线
+  (`entry/authoring` 绘制动词与 v4 `check`、`entry/workbench` 标注后端、
+  `modules/annotation` 模型层与 recognition 栈、两个旧 schema 读写路径、
+  `entry/input-agent` 与 `entry/m0-demo`),trace v3 修剪,依赖图定格,文档批
+  (CONTEXT 的 oracle/regress/回执欠账一并清)。
 
 - **第一条真边已走通(2026-08-01,真机)**:`walk-first-edge` 任务全程走新栈——
   l2 文件 → 图 → 栈 → 等 home → walk_edge → 回执授权点击 (1438,240) → sortie

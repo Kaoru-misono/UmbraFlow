@@ -127,4 +127,16 @@ namespace uf::script
         InterruptState const* control,
         RaisedErrorClassifier const* classify
     ) -> Result<double>;
+
+    // The same run under a fresh project environment, reporting the chunk's last
+    // returned value instead of coercing it to a number. A value whose Luau type
+    // ScriptValue does not carry is a failure naming that type.
+    [[nodiscard]]
+    auto runValueInProjectEnvironment(
+        lua_State* mainState,
+        std::string_view source,
+        std::string_view chunkName,
+        InterruptState const* control,
+        RaisedErrorClassifier const* classify
+    ) -> Result<ScriptValue>;
 }

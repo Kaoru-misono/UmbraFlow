@@ -85,6 +85,24 @@ namespace uf::task
     [[nodiscard]]
     auto frameworkProjectGlobals() -> std::vector<std::string>;
 
+    // The same list for an exploration VM, plus `explore` and `scribe`.
+    //
+    // THE DIFFERENCE BETWEEN THE TWO LISTS IS THE ISOLATION. A project
+    // environment is an explicit whitelist with no metatable, so it holds no
+    // route to anything not named in it; publishing a framework export copies
+    // the value rather than opening a chain. So the run environment does not
+    // merely refuse `explore.click_point` -- it has no `explore` at all, and no
+    // path from anything it does have to the module's table. That is section 7 of
+    // docs/plans/2026-07-29-three-layer-task-system.md doing the work section 2
+    // of the agent-operator document asks for.
+    //
+    // Both modules load in EVERY VM, because the bundle is one bundle. What they
+    // reach differs: `explore` forwards primitives that are absent from a run
+    // VM's private surface, so on such a VM its verbs raise instead of acting --
+    // and nothing on a run VM can call them anyway, since nothing names it.
+    [[nodiscard]]
+    auto explorationProjectGlobals() -> std::vector<std::string>;
+
     // Parses one framework module with the same vendored Luau parser the host
     // uses at load time, and reports the first syntax error together with its
     // line and column. `chunkName` only labels the diagnostic.

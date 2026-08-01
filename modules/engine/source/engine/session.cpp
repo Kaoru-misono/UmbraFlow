@@ -553,6 +553,86 @@ namespace uf::engine
         return std::optional<TextReading>{*std::move(reading->line)};
     }
 
+    auto EngineSession::cropRegion(
+        Observation const& observation,
+        PixelRect rect
+    ) -> Result<CroppedRegion>
+    {
+        UF_TRY(ensureUsable(observation, "cropRegion"));
+
+        auto const& frame    = observation.m_frame;
+        auto const  identity = FrameIdentity::fromFrame(frame);
+
+        return withBgraFrame(
+            frame,
+            [rect, identity](BgraImage const& image) -> Result<CroppedRegion>
+            {
+                if (
+                    rect.right() > image.width()
+                    || rect.bottom() > image.height()
+                )
+                {
+                    return fail(
+                        AutomationErrorKind::InvalidResource,
+                        std::format(
+                            "the crop region {}x{}+{}+{} does not fit inside the "
+                            "{}x{} frame",
+                            rect.width(),
+                            rect.height(),
+                            rect.x(),
+                            rect.y(),
+                            image.width(),
+                            image.height()
+                        )
+                    );
+                }
+
+                auto const rowBytes = checkedMultiply(
+                    checkedCast<std::size_t>(rect.width()).value_or(0U),
+                    std::size_t{4}
+                );
+                auto const total = rowBytes.has_value()
+                    ? checkedMultiply(
+                          *rowBytes,
+                          checkedCast<std::size_t>(rect.height()).value_or(0U)
+                      )
+                    : std::nullopt;
+                if (!total.has_value())
+                {
+                    return fail(
+                        AutomationErrorKind::InvalidResource,
+                        "the crop region's byte size overflows"
+                    );
+                }
+
+                auto pixels = std::vector<std::byte>(*total, std::byte{0});
+                for (auto row = uint32{0}; row < rect.height(); ++row)
+                {
+                    for (auto column = uint32{0}; column < rect.width(); ++column)
+                    {
+                        auto const pixel = image.pixelAt(
+                            rect.x() + column,
+                            rect.y() + row
+                        );
+                        auto const base = (std::size_t{row} * *rowBytes)
+                            + (std::size_t{column} * 4U);
+                        checkedAt(pixels, base)      = std::byte{pixel.blue};
+                        checkedAt(pixels, base + 1U) = std::byte{pixel.green};
+                        checkedAt(pixels, base + 2U) = std::byte{pixel.red};
+                        checkedAt(pixels, base + 3U) = std::byte{pixel.alpha};
+                    }
+                }
+
+                return CroppedRegion{
+                    .frame  = identity,
+                    .width  = rect.width(),
+                    .height = rect.height(),
+                    .pixels = std::move(pixels),
+                };
+            }
+        );
+    }
+
     auto EngineSession::clickPoint(
         Observation&& observation,
         PixelPoint point
@@ -626,11 +706,24 @@ namespace uf::engine
         // post-click emit, exactly as in act().
         observation.m_invalidated = true;
 
+        // The one place the delivered click's spelling is chosen. See the header
+        // for why the exploration stream gets its own vocabulary; the annotation
+        // line carries the FRAME point the caller named as well as the client
+        // point the desktop received, because on that stream the first of the
+        // two is what the agent believed it was doing.
         auto clickEvent = identityEvent(
-            trace::TraceEventKind::EngineActionDelivered,
+            m_recorder.frontEnd() == trace::FrontEnd::Annotation
+                ? trace::TraceEventKind::AnnotationClickDelivered
+                : trace::TraceEventKind::EngineActionDelivered,
             identity
         );
         clickEvent.clickClient = clientPoint;
+        if (m_recorder.frontEnd() == trace::FrontEnd::Annotation)
+        {
+            clickEvent.annotation = trace::TraceEvent::Annotation{
+                .point = point,
+            };
+        }
         UF_TRY(emit(clickEvent));
 
         UF_TRY(

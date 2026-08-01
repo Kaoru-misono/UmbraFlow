@@ -399,12 +399,37 @@ namespace uf::task
     inline auto taskVmConfig(TaskContext& context) -> script::EngineConfig
     {
         return script::EngineConfig{
-            .frameworkModules           = frameworkScriptModules(),
-            .installHostTables          = scriptHostTableInstaller(),
-            .installPrivateCapabilities = scriptPrivateCapabilities(context),
-            .projectGlobals             = scriptProjectGlobals(),
-            .frameworkProjectGlobals    = frameworkProjectGlobals(),
-            .classifyRaisedError        = scriptRaisedErrorClassifier(),
+            .frameworkModules  = frameworkScriptModules(),
+            .installHostTables = scriptHostTableInstaller(),
+            .installPrivateCapabilities = scriptPrivateCapabilities(
+                context,
+                ScriptTrustMode::Run
+            ),
+            .projectGlobals          = scriptProjectGlobals(),
+            .frameworkProjectGlobals = frameworkProjectGlobals(),
+            .classifyRaisedError     = scriptRaisedErrorClassifier(),
+        };
+    }
+
+    // The VM the agent front-end boots: the wider private surface, and the two
+    // modules only an exploration environment publishes.
+    //
+    // It is the same assembly ExplorationSession::create performs, spelled here
+    // so a test asserts against the surface the host actually ships rather than
+    // one a fixture invented.
+    [[nodiscard]]
+    inline auto explorationVmConfig(TaskContext& context) -> script::EngineConfig
+    {
+        return script::EngineConfig{
+            .frameworkModules  = frameworkScriptModules(),
+            .installHostTables = scriptHostTableInstaller(),
+            .installPrivateCapabilities = scriptPrivateCapabilities(
+                context,
+                ScriptTrustMode::Exploration
+            ),
+            .projectGlobals          = scriptProjectGlobals(),
+            .frameworkProjectGlobals = explorationProjectGlobals(),
+            .classifyRaisedError     = scriptRaisedErrorClassifier(),
         };
     }
 

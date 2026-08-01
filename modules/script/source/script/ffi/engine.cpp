@@ -13,7 +13,10 @@
 #include <cstddef>
 #include <limits>
 #include <memory>
+#include <optional>
+#include <string>
 #include <utility>
+#include <variant>
 
 // Luau's C headers are third-party and do not build clean under the project's
 // /W4 /WX profile; a manifest-driven module has no CMakeLists to mark them
@@ -121,6 +124,43 @@ namespace uf::script
         ~Impl() = default;
     };
 
+    ScriptValue::ScriptValue(bool value) noexcept
+        : m_value{value}
+    {
+    }
+
+    ScriptValue::ScriptValue(double value) noexcept
+        : m_value{value}
+    {
+    }
+
+    ScriptValue::ScriptValue(std::string value) noexcept
+        : m_value{std::move(value)}
+    {
+    }
+
+    auto ScriptValue::absent() const noexcept -> bool
+    {
+        return std::holds_alternative<std::monostate>(m_value);
+    }
+
+    auto ScriptValue::boolean() const noexcept -> std::optional<bool>
+    {
+        auto const* p_value = std::get_if<bool>(&m_value);
+        return p_value != nullptr ? std::optional<bool>{*p_value} : std::nullopt;
+    }
+
+    auto ScriptValue::number() const noexcept -> std::optional<double>
+    {
+        auto const* p_value = std::get_if<double>(&m_value);
+        return p_value != nullptr ? std::optional<double>{*p_value} : std::nullopt;
+    }
+
+    auto ScriptValue::text() const noexcept -> std::string const*
+    {
+        return std::get_if<std::string>(&m_value);
+    }
+
     Engine::Engine(std::unique_ptr<Impl> p_impl) noexcept
         : m_impl{std::move(p_impl)}
     {
@@ -196,6 +236,35 @@ namespace uf::script
 
         // runNumberOnThread already reported the cancel; this only spends the
         // generation, so every later call refuses without touching the VM.
+        if (m_impl->m_control.broken)
+        {
+            m_impl->m_terminal = true;
+        }
+
+        return result;
+    }
+
+    auto Engine::runValue(
+        std::string_view source,
+        std::string_view chunkName
+    ) -> Result<ScriptValue>
+    {
+        if (m_impl->m_terminal)
+        {
+            return fail(
+                AutomationErrorKind::Cancelled,
+                "engine is terminal: a prior task was hard-cancelled"
+            );
+        }
+
+        auto result = runValueInProjectEnvironment(
+            m_impl->m_state.get(),
+            source,
+            chunkName,
+            &m_impl->m_control,
+            &m_impl->m_classifyRaisedError
+        );
+
         if (m_impl->m_control.broken)
         {
             m_impl->m_terminal = true;

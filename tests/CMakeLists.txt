@@ -115,6 +115,7 @@ set(CLI_TEST_SOURCES
     cli/test-args.cpp
     cli/test-check.cpp
     cli/test-drive-protocol.cpp
+    cli/test-explore-protocol.cpp
 )
 # selectCandidate operates on the controller's TargetCandidate and is compiled
 # into cli_support only on Windows, so its test is registered only there.
@@ -159,6 +160,8 @@ if(TARGET ${PROJECT_NAME}_task)
             task/test-task-binding.cpp
             task/test-task-host.cpp
             task/test-determinism-harness.cpp
+            task/test-exploration.cpp
+            task/test-annotation-routines.cpp
             task/test-framework-bundle.cpp
             task/test-framework-context.cpp
             task/test-framework-surface.cpp

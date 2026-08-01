@@ -1,5 +1,6 @@
 #include "task-host.hpp"
 
+#include "exploration-session.hpp"
 #include "framework-bundle.hpp"
 #include "operator-session.hpp"
 #include "page-model-file.hpp"
@@ -440,13 +441,19 @@ namespace uf::task
             // leave a run bracket that never closed.
             auto vm = script::Engine::create(
                 script::EngineConfig{
-                    .cancellation               = cancellation(),
-                    .frameworkModules           = frameworkScriptModules(),
-                    .installHostTables          = scriptHostTableInstaller(),
-                    .installPrivateCapabilities = scriptPrivateCapabilities(context),
-                    .projectGlobals             = scriptProjectGlobals(),
-                    .frameworkProjectGlobals    = frameworkProjectGlobals(),
-                    .classifyRaisedError        = scriptRaisedErrorClassifier(),
+                    .cancellation      = cancellation(),
+                    .frameworkModules  = frameworkScriptModules(),
+                    .installHostTables = scriptHostTableInstaller(),
+                    // Run, always. Every VM this function boots is a business
+                    // task or a first-party routine, and the widened surface
+                    // exists only where ExplorationSession boots one.
+                    .installPrivateCapabilities = scriptPrivateCapabilities(
+                        context,
+                        ScriptTrustMode::Run
+                    ),
+                    .projectGlobals          = scriptProjectGlobals(),
+                    .frameworkProjectGlobals = frameworkProjectGlobals(),
+                    .classifyRaisedError     = scriptRaisedErrorClassifier(),
                 }
             );
             if (!vm)
@@ -728,6 +735,45 @@ namespace uf::task
             OperatorSession::Spec{
                 .projectId          = p_generation->projectId(),
                 .projectFingerprint = p_generation->model().fingerprint,
+                .cancellation       = p_generation->cancellation(),
+            },
+            runId,
+            generation
+        );
+    }
+
+    auto TaskHost::startExplorationSession(
+        GenerationId generation,
+        TaskRunConfig config
+    ) -> Result<std::unique_ptr<ExplorationSession>>
+    {
+        auto* const p_generation = findGeneration(generation);
+        if (p_generation == nullptr)
+        {
+            return fail(
+                AutomationErrorKind::InvalidResource,
+                std::format(
+                    "no loaded project for generation {}",
+                    generation.value()
+                )
+            );
+        }
+
+        UF_TRY(p_generation->claimFrontEnd(trace::FrontEnd::Annotation));
+
+        auto const runId = TaskRunId{m_nextRunValue};
+        ++m_nextRunValue;
+
+        return ExplorationSession::create(
+            std::move(config),
+            ExplorationSession::Spec{
+                .projectId          = p_generation->projectId(),
+                .projectFingerprint = p_generation->model().fingerprint,
+                .projectRoot        = p_generation->projectRoot(),
+                // Drawn here rather than fixed, on the same terms a task run's
+                // seed is: an agent that reaches for `random` must be replayable
+                // from a number the trace recorded.
+                .seed               = drawRunSeed(),
                 .cancellation       = p_generation->cancellation(),
             },
             runId,

@@ -5,8 +5,10 @@
 
 #include <cstddef>
 #include <cstdlib>
+#include <format>
 #include <optional>
 #include <string>
+#include <utility>
 
 // Luau's C headers are third-party and do not build clean under the project's
 // /W4 /WX profile; a manifest-driven module has no CMakeLists to mark them
@@ -564,6 +566,73 @@ namespace uf::script
         return lua_gettop(thread) >= 1
             ? lua_tonumber(thread, -1)
             : 0.0;
+    }
+
+    auto runValueInProjectEnvironment(
+        lua_State* mainState,
+        std::string_view source,
+        std::string_view chunkName,
+        InterruptState const* control,
+        RaisedErrorClassifier const* classify
+    ) -> Result<ScriptValue>
+    {
+        int const stackBase = lua_gettop(mainState);
+        auto stackGuard = scopeExit(
+            [mainState, stackBase]() noexcept
+            {
+                lua_settop(mainState, stackBase);
+            }
+        );
+
+        UF_TRY(pushProjectEnvironment(mainState));
+        UF_TRY_VALUE(
+            thread,
+            resumeChunkOnThread(
+                mainState,
+                lua_gettop(mainState),
+                std::nullopt,
+                source,
+                chunkName,
+                control,
+                classify
+            )
+        );
+
+        if (lua_gettop(thread) < 1)
+        {
+            return ScriptValue{};
+        }
+
+        switch (lua_type(thread, -1))
+        {
+        case LUA_TNIL:
+            return ScriptValue{};
+        case LUA_TBOOLEAN:
+            return ScriptValue{lua_toboolean(thread, -1) != 0};
+        case LUA_TNUMBER:
+            return ScriptValue{lua_tonumber(thread, -1)};
+        case LUA_TSTRING:
+        {
+            std::size_t length = 0;
+            // SAFETY: the value was just confirmed to be a string, so
+            // lua_tolstring performs no conversion and returns the VM-owned
+            // bytes with their length. They are copied into the ScriptValue
+            // before the stack guard drops the thread.
+            char const* p_text = lua_tolstring(thread, -1, &length);
+            return ScriptValue{std::string{p_text, length}};
+        }
+        default:
+            break;
+        }
+
+        return fail(
+            AutomationErrorKind::InvalidResource,
+            std::format(
+                "the chunk returned a {}, which no result line can carry; return "
+                "nil, a boolean, a number or a string",
+                lua_typename(thread, lua_type(thread, -1))
+            )
+        );
     }
 
     auto runNumberInProjectEnvironment(

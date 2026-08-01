@@ -440,13 +440,22 @@ function ctx:cycle_read(ticket, x, y, width, height)
     return native.cycle_read(ticket, x, y, width, height)
 end
 
--- Clicking a bare coordinate is the framework's privilege and never a project's.
--- This forward exists so the host's contract can be driven directly, exactly as
--- the block's other forwards are; the project environment reaches `ctx` but the
--- wrappers a business task is meant to use are the ones that name an element.
-function ctx:cycle_click_point(ticket, x, y)
-    return native.cycle_click_point(ticket, x, y)
-end
+-- THERE IS NO ctx:cycle_click_point, AND ITS ABSENCE IS THE POINT.
+--
+-- There was one, and it was a hole. `ctx` is published into every project
+-- environment, so a forward here was a forward a BUSINESS task could call --
+-- which is exactly the thing section 2 rule 2 of
+-- docs/plans/2026-08-01-three-layers-and-agent-operator.md says must not exist:
+-- the privileged verbs are not supposed to be refused in the business
+-- environment, they are supposed to be unreachable from it. The old comment
+-- claimed the privilege was the framework's while the code handed it to every
+-- task that asked.
+--
+-- Where it went: `observe.click` reaches the primitive through its own chunk
+-- argument, which is a closure upvalue of trusted code and a key of no table
+-- either environment can name; and `explore.click_point` forwards it for the
+-- agent, in a module only the exploration environment publishes. Do not add a
+-- forward back here.
 
 function ctx:project_read(name)
     return native.project_read(name)

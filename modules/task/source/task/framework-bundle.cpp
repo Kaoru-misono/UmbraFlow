@@ -37,6 +37,16 @@ namespace uf::task
         // reaches them through this list rather than through a private route.
         constexpr auto k_oracleModule  = "oracle";
         constexpr auto k_regressModule = "regress";
+        // The two modules ONLY the exploration environment publishes. `explore`
+        // is the forwards for the privileged primitives -- the bare-coordinate
+        // click, the crop and the probe -- and `scribe` is the measure-and-author
+        // loop built on top of them. Neither is in the run list, which is the
+        // whole of how a business script is kept from naming a bare click: the
+        // project environment is a whitelist with no metatable, so a name that is
+        // not published is not reachable by any route
+        // (docs/plans/2026-07-29-three-layer-task-system.md 7).
+        constexpr auto k_exploreModule = "explore";
+        constexpr auto k_scribeModule  = "scribe";
     }
 
     auto frameworkScriptModules() -> std::vector<script::FrameworkModule>
@@ -69,5 +79,13 @@ namespace uf::task
             std::string{k_oracleModule},
             std::string{k_regressModule},
         };
+    }
+
+    auto explorationProjectGlobals() -> std::vector<std::string>
+    {
+        auto names = frameworkProjectGlobals();
+        names.emplace_back(k_exploreModule);
+        names.emplace_back(k_scribeModule);
+        return names;
     }
 }

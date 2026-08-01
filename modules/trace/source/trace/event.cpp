@@ -97,6 +97,10 @@ namespace uf::trace
             case TraceEventKind::FrameworkInterruptExhausted:
                 return "framework.interrupt_exhausted";
             case TraceEventKind::FrameworkSettled: return "framework.settled";
+            case TraceEventKind::AnnotationClickDelivered:
+                return "annotation.click_delivered";
+            case TraceEventKind::AnnotationRegionSaved:
+                return "annotation.region_saved";
             }
 
             UF_UNREACHABLE_MSG("Unknown TraceEventKind value");
@@ -708,6 +712,39 @@ namespace uf::trace
                     "durationMillis",
                     std::format("{}", *event.framework->durationMillis)
                 );
+            }
+        }
+
+        if (event.annotation.has_value())
+        {
+            if (event.annotation->point.has_value())
+            {
+                builder.addLiteral(
+                    "pointX",
+                    std::format("{}", event.annotation->point->x())
+                );
+                builder.addLiteral(
+                    "pointY",
+                    std::format("{}", event.annotation->point->y())
+                );
+            }
+            if (event.annotation->rect.has_value())
+            {
+                builder.addLiteral(
+                    "regionRect",
+                    serializePixelRect(*event.annotation->rect)
+                );
+            }
+            if (event.annotation->byteCount.has_value())
+            {
+                builder.addLiteral(
+                    "byteCount",
+                    std::format("{}", *event.annotation->byteCount)
+                );
+            }
+            if (event.annotation->contentHash.has_value())
+            {
+                builder.addString("contentHash", *event.annotation->contentHash);
             }
         }
 

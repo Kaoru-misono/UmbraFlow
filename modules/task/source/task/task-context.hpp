@@ -87,6 +87,29 @@ namespace uf::task
     // TaskContextConfig, once a real page needs more.
     inline constexpr auto k_defaultMaximumReadsPerCycle = uint32{8};
 
+    // How many crops one observation cycle may charge before the host refuses
+    // the next one.
+    //
+    // A THIRD BUDGET DIMENSION, for the reason the read budget is a second one:
+    // the units do not compare. A SAD comparison is nanoseconds, a line read is
+    // 2-13 milliseconds, and a crop is a copy plus a PNG encode over a rectangle
+    // whose size the caller chose -- so a single pool covering all three would
+    // let one whole-panel crop starve a page's template matching and then blame
+    // whichever anchor was searching when the pool ran dry.
+    //
+    // Exhaustion is RecognitionIncomplete and never an empty answer. A crop that
+    // was refused because the host stopped looking has established nothing about
+    // the screen, exactly as a stopped search has, and returning "no pixels"
+    // would be a fail-open answer on a verb with no score to contradict it.
+    //
+    // CALIBRATION: eight is a conservative placeholder awaiting the first real
+    // annotation session. It is above the widest measured pattern -- crop the
+    // panel, then crop each of the candidate slots inside it once -- and low
+    // enough that a loop cropping per poll cannot turn one cycle into several
+    // megabytes of encoding. Raise it here, or per run through
+    // TaskContextConfig, once a real page needs more.
+    inline constexpr auto k_defaultMaximumCropsPerCycle = uint32{8};
+
     // Host-side configuration for one TaskContext: the single cancellation
     // source shared with the owned EngineSession and the VM interrupt, plus this
     // run's RNG seed. A default-constructed stop token never requests a stop, so
@@ -118,6 +141,9 @@ namespace uf::task
         // See k_defaultMaximumReadsPerCycle for why this is a dimension of its
         // own rather than a share of the pixel-comparison pool.
         uint32 maximumReadsPerCycle{k_defaultMaximumReadsPerCycle};
+
+        // See k_defaultMaximumCropsPerCycle, on the same reasoning again.
+        uint32 maximumCropsPerCycle{k_defaultMaximumCropsPerCycle};
     };
 
     // Host-owned bridge between one task VM and one EngineSession. It owns the
@@ -156,6 +182,23 @@ namespace uf::task
         struct LoadedTemplate final
         {
             TemplateTicket ticket{};
+
+            annotation::ContentHash hash;
+        };
+
+        // What one cycleCrop produced: the PNG a script holds, and the content
+        // hash of exactly those bytes.
+        //
+        // The hash comes back rather than staying in the trace line because the
+        // caller needs it to NAME the file it is about to write: a template
+        // asset lives at assets/templates/<hex>.png, and the sandbox gives Luau
+        // no hash function of its own. Recomputing it in the script layer is not
+        // merely wasteful, it is impossible -- so the one place that already
+        // computed it hands it over, and the file name and the trace line are
+        // then the same fact rather than two that could disagree.
+        struct CroppedBlob final
+        {
+            std::vector<std::byte> png{};
 
             annotation::ContentHash hash;
         };
@@ -234,6 +277,38 @@ namespace uf::task
             CycleTicket ticket,
             PixelRect rect
         ) -> Result<std::optional<engine::TextReading>>;
+
+        // Copies `rect` of the frame `ticket`'s cycle retains, encodes it as a
+        // PNG, and hands back the bytes with their content hash.
+        //
+        // WHO MAY REACH THIS. Only the exploration environment: it is the one
+        // verb that hands raw pixels to the script layer, and a business script
+        // holding pixels would be able to make a decision no evidence in the
+        // trace could falsify (docs/plans/2026-08-01-three-layers-and-agent-
+        // operator.md 2). The primitive is not installed on a run VM's private
+        // surface at all, which is what makes the rule structural rather than a
+        // refusal a caller has to be told about.
+        //
+        // It does NOT spend the cycle. Reading pixels changes nothing on the
+        // target, so the same cycle can go on to click; the crop budget rather
+        // than consumption is what bounds it, and an exhausted budget fails
+        // RecognitionIncomplete -- the kind an exhausted comparison budget uses,
+        // and never an empty answer.
+        //
+        // It writes annotation.region_saved: the rect it copied, the size and
+        // hash of the bytes, and the frame identity they came from. That line is
+        // the whole record of the crop, because the bytes themselves go to the
+        // agent rather than into the stream.
+        [[nodiscard]]
+        auto cycleCrop(CycleTicket ticket, PixelRect rect) -> Result<CroppedBlob>;
+
+        // Releases whatever cycle is open and reports whether there was one.
+        //
+        // NOT a script verb and never installed as a primitive: see
+        // CycleLedger::closeOpen for why this exists and who is allowed to call
+        // it, which is the exploration session between two agent-supplied
+        // chunks and nothing else.
+        auto sweepOpenCycle() noexcept -> bool;
 
         // Decodes one template PNG into this generation's template store and
         // returns the ticket naming it, with the content hash of the blob for

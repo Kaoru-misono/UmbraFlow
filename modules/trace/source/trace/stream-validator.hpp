@@ -62,9 +62,11 @@ namespace uf::trace
     //   - InternalInvariant is a PROTOCOL breach: a second run.started, an event
     //     after run.finished, a step finish naming other than the innermost open
     //     step, a retry attempt that continues no open scope or exceeds its
-    //     declared attempts, an interrupt handled that no match opened, and a
-    //     framework.* event on a stream no task drove. Only the framework or the
-    //     host can produce one, so it is a bug in this binary.
+    //     declared attempts, an interrupt handled that no match opened, a
+    //     framework.* event on a stream no task drove, an annotation.* event on
+    //     a stream no exploration session drove, and engine.action_delivered on
+    //     the one stream that DOES have the annotation vocabulary. Only the
+    //     framework or the host can produce one, so it is a bug in this binary.
     //
     // The front-end is part of the protocol rather than only part of the stamp.
     // framework.* events describe the trusted Luau framework's own structure --
@@ -105,6 +107,23 @@ namespace uf::trace
         // class comment for why the front-end is a protocol rule, and why the
         // test is against FrontEnd::Task rather than against the others.
         [[nodiscard]] auto requireFramework() const -> Status;
+
+        // The same rule for the two annotation.* kinds, stated against the one
+        // front-end that has those verbs.
+        [[nodiscard]] auto requireAnnotation() const -> Status;
+
+        // Refuses engine.action_delivered on the exploration stream. It is the
+        // other half of the same decision: the annotation vocabulary exists so a
+        // bare coordinate is not recorded as an action against something the
+        // model recognised, and a rule that only ADMITTED the honest spelling
+        // would leave the dishonest one admissible beside it.
+        [[nodiscard]] auto refuseAnnotationVocabularyClash() const -> Status;
+
+        // The fields each annotation kind must carry. A click that names no
+        // point and a saved region that names no rect or no hash are events with
+        // no content, and an empty line is worse evidence than a refused one.
+        [[nodiscard]]
+        auto requireAnnotationPayload(TraceEvent const& event) const -> Status;
 
         [[nodiscard]] auto startStep(TraceEvent::Framework const& payload) -> Status;
         [[nodiscard]] auto finishStep(TraceEvent::Framework const& payload) -> Status;

@@ -2,6 +2,7 @@
 #include "application-info.hpp"
 #include "check.hpp"
 #include "drive.hpp"
+#include "explore.hpp"
 #include "run.hpp"
 
 #include <core/numeric/checked-cast.hpp>
@@ -91,6 +92,38 @@ namespace uf::cli
         }
 
         [[nodiscard]]
+        auto dispatchExplore(std::span<std::string const> raw) -> ExitCode
+        {
+            auto const args = parseExploreArguments(raw);
+            if (!args)
+            {
+                std::cerr << formatRunError(args.error()) << '\n';
+                std::cerr << exploreUsageText();
+                return exitCodeForError(args.error(), false);
+            }
+
+            auto const report = exploreProduct(*args);
+            if (!report)
+            {
+                std::cerr << formatRunError(report.error()) << '\n';
+                return exitCodeForError(report.error(), runCancellationRequested());
+            }
+
+            if (report->failure)
+            {
+                std::cerr << formatRunError(*report->failure) << '\n';
+            }
+            std::cout << std::format(
+                "explore: queue=\"{}\" results=\"{}\" seed={} trace=\"{}\"\n",
+                args->queue.string(),
+                args->results.string(),
+                report->seed,
+                report->tracePath.string()
+            );
+            return exitCodeForReport(*report, runCancellationRequested());
+        }
+
+        [[nodiscard]]
         auto dispatchCheck(std::span<std::string const> raw) -> ExitCode
         {
             auto const args = parseCheckArguments(raw);
@@ -148,6 +181,10 @@ namespace uf::cli
             if (raw.front() == "drive")
             {
                 return dispatchDrive(raw.subspan(1));
+            }
+            if (raw.front() == "explore")
+            {
+                return dispatchExplore(raw.subspan(1));
             }
             if (raw.front() == "check")
             {

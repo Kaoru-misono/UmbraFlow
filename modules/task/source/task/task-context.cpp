@@ -18,6 +18,9 @@
 
 #include <engine/session.hpp>
 
+#include <image/pixels.hpp>
+#include <image/png.hpp>
+
 #include <trace/event.hpp>
 #include <trace/recorder.hpp>
 
@@ -121,6 +124,72 @@ namespace uf::task
         }
         m_cycles.chargeRead();
         return m_session.readText(m_cycles.observation(), rect);
+    }
+
+    auto TaskContext::cycleCrop(
+        CycleTicket ticket,
+        PixelRect rect
+    ) -> Result<CroppedBlob>
+    {
+        UF_TRY(m_cycles.requireOpen(ticket));
+
+        // Charged before the engine is reached, so an exhausted budget costs no
+        // copy and no encode. Same kind and same reasoning as the read budget:
+        // the host stopped looking, and an empty answer would claim the region
+        // was inspected.
+        if (m_cycles.cropsCharged() >= m_config.maximumCropsPerCycle)
+        {
+            return fail(
+                AutomationErrorKind::RecognitionIncomplete,
+                std::format(
+                    "this observation cycle has already spent its budget of {} "
+                    "crops; open a new cycle to crop again",
+                    m_config.maximumCropsPerCycle
+                )
+            );
+        }
+        m_cycles.chargeCrop();
+
+        UF_TRY_VALUE(region, m_session.cropRegion(m_cycles.observation(), rect));
+        UF_TRY_VALUE(rgba, image::bgra8ToRgba8(std::move(region.pixels)));
+        UF_TRY_VALUE(
+            png,
+            image::encodeRgbaPng("cycle crop", region.width, region.height, rgba)
+        );
+
+        auto const hash = annotation::sha256(png);
+        if (!hash)
+        {
+            return fail(
+                AutomationErrorKind::InternalInvariant,
+                "the bytes a crop encoded could not be hashed"
+            );
+        }
+
+        // The crop's whole record. It is written AFTER the encode because the
+        // hash and the byte count are what make the line worth having: a reader
+        // matching a template asset in the project directory against the frame
+        // it was cut from has nothing else to match on.
+        auto event = trace::TraceEvent{
+            .kind  = trace::TraceEventKind::AnnotationRegionSaved,
+            .frame = region.frame,
+            .annotation = trace::TraceEvent::Annotation{
+                .rect        = rect,
+                .contentHash = hash->toString(),
+                .byteCount   = static_cast<uint64>(png.size()),
+            },
+        };
+        UF_TRY(m_recorder.emit(event));
+
+        return CroppedBlob{
+            .png  = std::move(png),
+            .hash = *hash,
+        };
+    }
+
+    auto TaskContext::sweepOpenCycle() noexcept -> bool
+    {
+        return m_cycles.closeOpen();
     }
 
     auto TaskContext::loadTemplate(

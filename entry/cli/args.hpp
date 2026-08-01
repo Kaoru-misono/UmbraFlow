@@ -159,6 +159,49 @@ namespace uf::cli
 
     [[nodiscard]] auto driveUsageText() noexcept -> std::string_view;
 
+    // Parsed inputs for the `explore` subcommand: the agent front-end.
+    //
+    // IT IS `drive` WITH ONE THING CHANGED, and the change is what the queue
+    // holds. A drive queue holds commands -- one primitive each, arguments as
+    // scalars -- and an explore queue holds Luau CHUNKS, which is the whole
+    // difference between an operator and an agent: an agent composes verbs, and
+    // the composition is the thing being tested (docs/plans/2026-08-01-three-
+    // layers-and-agent-operator.md 3). Every recognition and delivery bound below
+    // is the same field with the same default `run` and `drive` pass, because the
+    // three front-ends must not be able to run under different guarantees.
+    //
+    // --ocr-models is here for the same reason it is on the other two, and it
+    // matters more: reading a region is how an agent checks the text a teaching
+    // document claims is on screen.
+    //
+    // There is no --task and no --chunk. A session is a queue or it is nothing:
+    // a one-shot chunk flag would be a second way in with no cursor behind it,
+    // and a restart would replay it.
+    struct ExploreArgs final
+    {
+        std::filesystem::path project{};
+        std::string           selector{};
+
+        std::filesystem::path queue{};
+        std::filesystem::path results{};
+
+        uint64                     budget{k_defaultPixelComparisonBudget};
+        MonotonicInstant::Duration recognitionTimeout{k_defaultRunRecognitionTimeout};
+        MonotonicInstant::Duration maxFrameAge{k_defaultRunMaxFrameAge};
+        MonotonicInstant::Duration idleTimeout{k_defaultDriveIdleTimeout};
+
+        std::filesystem::path trace{k_defaultTracePath};
+
+        std::optional<std::filesystem::path> ocrModels{};
+
+        auto operator==(ExploreArgs const&) const -> bool = default;
+    };
+
+    [[nodiscard]]
+    auto parseExploreArguments(std::span<std::string const> raw) -> Result<ExploreArgs>;
+
+    [[nodiscard]] auto exploreUsageText() noexcept -> std::string_view;
+
     // Parsed inputs for the `check` subcommand: the falsification matrix over a
     // whole project.
     //

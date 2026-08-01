@@ -109,16 +109,19 @@ namespace uf::trace
         // `umbra-flow drive`.
         Operator,
 
-        // An authoring session driving a target in order to measure it: the
-        // m0-demo input agent serving a command queue while an author reads the
-        // frames it answers with.
+        // An agent driving a target in order to measure it, and to write down
+        // what it measured: `umbra-flow explore` running one Luau chunk per
+        // queue line against a live target, and the m0-demo input agent that
+        // preceded it.
         //
-        // It reaches no project, so it has no generation for TaskHost to latch
-        // and no capability surface to consume; what it shares with the other two
-        // is exactly the question this enum answers, which is who drove the
-        // target. Until it joins the host it stamps its own answer stream rather
-        // than a trace line, and the value it stamps is this one -- so the day it
-        // does join, the attribution a reader already knows does not change.
+        // It DOES reach a project now. It was outside the host when this enum
+        // was written -- the input agent stamped its own answer stream rather
+        // than a trace line -- and work order 4b brought it in: an exploration
+        // session loads a project, latches this front-end on the generation
+        // exactly as the other two do, and consumes the same capability surface
+        // plus the privileged verbs (docs/plans/2026-08-01-agent-front-end-and-
+        // exploration.md). The attribution a reader already knew did not change,
+        // which is what that older note promised.
         Annotation,
     };
 
@@ -154,6 +157,17 @@ namespace uf::trace
         FrameworkInterruptHandled,
         FrameworkInterruptExhausted,
         FrameworkSettled,
+
+        // The two verbs the exploration front-end has and no other does. They
+        // are spelled `annotation.*` rather than folded into `engine.*` because
+        // the engine vocabulary describes an action taken against something the
+        // model recognised, and neither of these is: a bare coordinate names no
+        // element and no page, and a crop establishes nothing about the screen
+        // at all. Writing either as engine.action_delivered would put a
+        // recognition in the record that never happened
+        // (docs/plans/2026-08-01-agent-front-end-and-exploration.md 1).
+        AnnotationClickDelivered,
+        AnnotationRegionSaved,
     };
 
     // How one page-resolution attempt ended. Resolved / Unknown / Ambiguous were
@@ -390,6 +404,30 @@ namespace uf::trace
             std::optional<uint64> durationMillis{};
         };
 
+        // What one exploration verb touched. Present on the two annotation.*
+        // kinds and nowhere else.
+        //
+        // The point and the rect are FRAME pixels -- what the agent asked for --
+        // while a delivered click additionally records the client point it was
+        // posted at on TraceEvent::clickClient, exactly as engine.action_delivered
+        // does. Both spellings reach the wire because they answer different
+        // questions: the frame point is what the agent believed it was clicking,
+        // and the client point is what the desktop received.
+        struct Annotation final
+        {
+            std::optional<PixelPoint> point{};
+            std::optional<PixelRect>  rect{};
+
+            // The SHA-256 of the PNG a crop produced. It is the whole of what
+            // makes a saved region attributable: the bytes went to the agent
+            // rather than into this stream, so the hash is the only thing that
+            // ties a file the agent later wrote to the frame it came from.
+            std::optional<std::string> contentHash{};
+
+            // How many bytes that PNG was.
+            std::optional<uint64> byteCount{};
+        };
+
         TraceEventKind kind;
 
         // The capture this event belongs to. Present on every engine.* event, and
@@ -407,6 +445,7 @@ namespace uf::trace
         std::optional<Resources>  resources{};
         std::optional<NativeCall> nativeCall{};
         std::optional<Framework>  framework{};
+        std::optional<Annotation> annotation{};
 
         // Fields that cut across the groups above: the element a page stop, an
         // action search or an authorization refusal names; why a recognition
