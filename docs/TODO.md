@@ -64,7 +64,8 @@
 - **工单 1 — 第一层原语面(§四)。已落地(2026-08-01,`1e71fb8` + `3118423`)。**
   `template_load` / `cycle_match` / `cycle_read` / `cycle_click_point`(裸点,仅第二层持有)/
   `project_read` / `project_write`(路径 confinement);`cycle_click` 接受本票据的 match 当
-  受祝福证据;OCR 独立预算(每周期 8 次,耗尽是 `RecognitionIncomplete` 不是 miss);trace 走
+  受祝福证据;OCR 独立预算(耗尽是 `RecognitionIncomplete` 不是 miss;上限 2026-08-01 随
+  `cycle_read_lines` 从 8 提到 32,理由写在 `k_defaultMaximumReadsPerCycle` 上);trace 走
   加法(`engine.text_read` + 可缺席字段)。CLI 经 `--ocr-models` 接入 OCR(run 与 drive 都有)。
   `cycle_page` / `cycle_find` 的退役归工单 4,原样活着。
 - **工单 2 — 第二层 Luau 的 element / page / appearance 模型。已完成
@@ -144,8 +145,8 @@
 - **真机只读验证(release + chaos-v14 + `--ocr-models`)已两层全通(2026-08-01)**:
   机制层——绑窗、抓帧、live 帧 `cycle_read`、`engine.text_read` 证据、置信度守门
   (2.7–4.1ms/次);内容层——菜单唤醒后 12 个连续周期页面 Resolved,「故事」矩形
-  连读 6 次 `conf=10000bp` 全对。待机 CG 与点击唤醒的抓帧相关性记入
-  [`pitfalls/capture-and-target-selection.md`](pitfalls/capture-and-target-selection.md)。
+  连读 6 次 `conf=10000bp` 全对。待机 CG 与点击唤醒的抓帧相关性属于目标自身的
+  行为,记在工程目录下的 `PITFALLS.md`(2026-08-01 从主仓库迁出)。
   顺带:出擊那格读出低置信错字——read 矩形要框纯文字,不要连图标,归 Agent 手册。
 - **两条小裁决已定(2026-08-01,开发者授权自行决定)**:deploy_danger 合并后的 9900 bp
   阈值**认下**(量出来的数,行为变化有意为之);onnxruntime.dll 部署步**并入工单 3**。
@@ -156,9 +157,41 @@
 长期挂着的阻塞(不属于任何一张工单):
 
 - **真机验收需要开发者**——实现方够不到目标机器,凡带「真机」字样的验收都要排队等人。
-- **OCR 整块模式未接线**——`TextLayout::Block` 目前直接返回 `UnsupportedCapability`,只有
-  `SingleLine` 可用(det 模型已在 `modules/ocr/external/models/`,适配器还没跑它)。
+- ~~**OCR 整块模式未接线**~~——已接线(2026-08-01)。适配器跑 det 模型,`TextLayout::Block`
+  返回区域里每一行文字与它自己的矩形(目标像素,不是裁剪相对);原语是
+  `cycle_read_lines`,第二层动词是 `observe.read_lines`。预算按「定位算一次、每找到一行
+  再算一次」从同一个读预算里扣,超限是响亮的 `RecognitionIncomplete` 而不是截断的列表。
+  det 模型和 rec 模型一起随 `umbra-flow` 部署,`--ocr-models` 少一半就在启动时点名拒绝。
 - **CI 计费挂起**——2026-07-24 起每个 job 即刻失败,门禁只能本地跑;账单恢复后 `gh run rerun`。
+- **探索会话的 Luau 堆不跨 chunk 回收,裁几十张整帧就撑爆**(2026-08-01 真机实测;
+  开发者裁决:之后补回收机制)。症状:循环里反复 `explore.crop(0,0,1600,900)`——
+  每张约 1.8MB 的 PNG 字符串——之后**任何**分配都失败,连单次 200×200 的 `crop`
+  加 `probe` 都报 `not enough memory`;重开会话拿到干净 VM 立刻恢复。错误句子只说
+  「not enough memory」,不说是谁吃掉的,定位花了三个 chunk。
+  形状:**chunk 之间是天然的回收点**——每个 chunk 是一段独立程序,除工程文件外不该
+  有东西跨过它存活,在那里做一次完整 GC 既便宜又有边界;顺带把当前堆用量报进结果行
+  或 trace,让 Agent 看得见自己在逼近上限。
+
+标注通道的三处缺口已补(2026-08-01):
+
+- **文字元素现在能被声明了**——`scribe.claim_text(built, screen, element, state, text)`
+  和 `scribe.claim` 并列,分法与 `author_text_element`/`author_element` 同一条:
+  一格只由一种证据量,选了哪种要写在那一行里。判定仍全在 `oracle.Expectation.new`,
+  scribe 只过字段。纯探索通道现在能把一个工程从零标到底。
+- **`check` 的每周期读预算改成从被检的文件里读**——`k_defaultMaximumReadsPerCycle`
+  的 8 是给「读一次轮询一次」的 wait 循环设的上限;矩阵不是循环,它每屏开一个观察、
+  每个元素最多读一次,所以需要多少是文件的属性。`check` 现在按工程声明的元素数取
+  上限(`TaskHost::projectElementCount`),并把这个数一起格式化进例程——例程用
+  `oracle.Claims.most_reads_on_one_screen` 在开第一屏之前比一次,不够就点名两个数字
+  拒绝。超限依旧是响亮的控制错误,永远不会变成静默的 miss。
+  换屏重开周期这条路走不通:帧来自按文件名顺序一次一张的目录,重开就是下一屏的像素。
+- **空工程的骨架和那句读不懂的报错**——`umbra-flow explore` 开工前铺
+  `assets/templates/`、`assets/screens/`、`frames/`
+  (`entry/cli/project-skeleton.*`;模型层不建目录,`ProjectFileStore` 也不能建——
+  「写入没跑出工程外」正是靠 canonicalize 一个真实存在的父目录证明的)。
+  拒绝本身也重写了:点名缺的是哪个目录、用调用方写的工程相对拼法。
+  `script error: (non-string error value)` 的根因是 `lua_tostring` 不走元方法,
+  已由 `script::RaisedError` 把宿主自己那句话带到边界上。
 
 ## P0-C — 卡厄斯梦境完整每日
 

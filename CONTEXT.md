@@ -274,16 +274,23 @@ _Avoid_: pathfinding in the host (a `go(any page)` verb — the framework offers
 `walk_edge` only), per-page depth or z-order declarations, modelling an overlay
 as an ordinary edge
 
-**Falsification matrix (`oracle`, `regress`, `umbra-flow check`)**:
+**Falsification matrix (`oracle`, `reading`, `recognition`, `regress`,
+`umbra-flow check`)**:
 The screens a model is measured against, what each cell is supposed to show
 (`match` / `absent` / `unclaimed`), and the walk that measures them. Scores are
-layer one (`cycle_match` over file-backed frames); judging is layer two, and two
-rules fire without any expectation at all: two appearances of one element may
-not both hit one screen, and a winner must beat every rival by the separation
-factor.
+layer one (`cycle_match` over file-backed frames); judging is layer two, and four
+rules fire without any `[[expect]]` at all: two appearances of one element may
+not both hit one screen, a winner must beat every rival by the separation factor,
+one region may not be claimed to read one text on two screens that are two pages,
+and a screen that says which PAGE it is of must have that page resolve on it.
+A screen's `page` is optional (a capture of a page nobody has annotated yet is
+still measurable) and is what separates two views of one page — a scrolling grid
+photographed twice — from two pages resting on one word.
 _Avoid_: recording measurements back into the file as expectations (a run that
-writes down what it measured agrees with itself by construction), `umbra-authoring
-check` (the v4 verb this replaced)
+writes down what it measured agrees with itself by construction), reading an
+undeclared `page` as "same page as the other one" (silence is not a fact),
+checking that a screen resolves NO other page (an overlay legitimately resolves
+its base page), `umbra-authoring check` (the v4 verb this replaced)
 
 **Exploration environment (`explore`, `scribe`)**:
 The second trusted-Luau environment, the Agent's operating table: every verb a

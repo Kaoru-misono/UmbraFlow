@@ -248,50 +248,6 @@ that were round-tripped through a legacy code page.
 Real-machine: `umbra-flow run --selector <CJK-title>` with the correct
 characters resolves the target; there is no encoding step in the tool to fix.
 
-## The game hides its whole HUD when idle, so an idle capture has no UI to match
-
-### Symptom
-
-Every page anchor misses on a freshly captured frame, with scores far above the
-threshold (199001 against a 69003 ceiling). The frame decodes fine, is the right
-size, and looks correct — it is the game, rendered, in the right resolution. A
-brightness scan of the menu strip finds no near-white pixels at all, and a
-colour key that selected 5578 pixels while authoring selects zero.
-
-The trap is that this reads exactly like a matching bug. Nothing about the
-capture reports an error.
-
-### Root cause
-
-卡厄思梦境 hides its entire HUD a few seconds after the last input, leaving only
-the full-screen character artwork. Captured while idle, the frame genuinely has
-no UI in it. Measured on 2026-07-30: the HUD was gone again before a second
-`m0-demo capture` process could start — roughly one second.
-
-A slow pan/zoom on the artwork also runs continuously, so three frames taken 1.8
-seconds apart share almost no byte-identical pixels. That is real motion, not
-capture noise, and it is why a full-rectangle template over artwork is
-unusable — the same measurement that makes the colour key necessary.
-
-### Fix
-
-Wake the HUD with a click, and capture while it is up. The click has to land
-while a capture run is already in flight, because a separate process cannot
-start before the HUD is gone again. `E:\umbraflow-projects\chaos\wake-capture.ps1`
-does this: start the capture job, sleep ~900 ms, post the click, collect the
-frames. Frame 1 is normally pre-click and unusable; frames 2 and later carry
-the HUD.
-
-A task that starts from an idle screen faces the same problem and needs the
-same wake click before its first `wait_for_page`.
-
-### Regression check
-
-Real-machine: capture the idle window and match any page anchor — it misses
-with a score in the six figures. Capture through the wake helper and the same
-anchor hits at score 0. Both halves matter; the second alone does not prove the
-first was the cause.
-
 ## `--pid` alone cannot select this game's window
 
 ### Symptom
@@ -380,34 +336,17 @@ against `out_before` and `out_after`. The anchor hits before and misses after,
 which is the page having changed. A bare hand-rolled sequence with a hold
 between DOWN and UP leaves the anchor hitting both.
 
-## 待机 CG 与「点击唤醒」的抓帧相关性
+## A target's own behaviour does not belong in this file
 
-### Symptom
+This file records toolchain pitfalls: window selection, capture, delivery,
+build. How a **particular game** behaves — how long until it hides its HUD, how
+long its UI takes to fade in, which rectangles never hold still — belongs to
+that project and is written in the project's own directory, for example
+`E:\umbraflow-projects\chaos-daily\PITFALLS.md`.
 
-主菜单闲置几秒后淡出成一张无文字的全屏 CG(待机画面)。此时页面解析 Unknown、
-`cycle_read` 全部空读零置信——这是系统的正确行为,不是缺陷。要恢复菜单需要一次
-点击唤醒,但唤醒点击的成败呈现一个反直觉的相关性(2026-08-01 实测,5 次点击):
+This repository is a reusable foundation. Knowledge that stops being true when
+the target changes costs every future reader context it cannot repay.
 
-- 带 `out_before`/`out_after` 抓帧的 input-agent 点击:**3/3 唤醒成功**。
-- 不带抓帧的裸点击(仅 PostMessage + settle):**2/2 毫无反应**,哪怕换坐标、
-  哪怕另一个进程(umbra-flow)正对同一窗口持有 WGC 会话。
-
-### Root cause
-
-未定论。倾向的解释:游戏对「自认为不可见」的窗口节流输入处理,而 input-agent
-自己的 WGC 抓帧会话恰好在点击前后把窗口标成「正被显示」;第三方进程的 WGC 会话
-不产生同样效果,说明判定可能绑定在发送输入的那条会话/进程上。机制层面只是假说,
-相关性本身是 5/5 的实测。
-
-### Fix
-
-要唤醒待机菜单,让 input-agent 的点击**总是带 `out_before`/`out_after`**——反正
-before/after 帧也是天然的效果证据。验证型任务(umbra-flow 循环读取)要在唤醒
-点击落地之后的清醒窗口内撞上画面:菜单一旦被唤醒并出现对话气泡,实测可保持
-至少 5 秒(12 个连续周期全部 Resolved)。
-
-### Regression check
-
-裸 CG 上先发一次不带抓帧的点击、再发一次带抓帧的点击,各自 settle 后抓帧比对:
-前者画面不变,后者菜单出现。若两者都能唤醒,说明游戏版本已改变该行为,本节可以
-降级为历史记录。
+A section whose symptom involves one game but whose lesson is about our own CLI
+or controller — a pid mapping to several windows, a hand-rolled click path
+being the wrong path — stays here.

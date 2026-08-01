@@ -56,10 +56,17 @@ not declare link dependencies. `scripts/check_modules.py` enforces both rules.
 - `modules/ocr/`: a rectangle of pixels in, lines of text with confidences out.
   The `IOcrEngine` port and its `TextLine` vocabulary are platform-free; the
   PP-OCRv6_small adapter and ONNX Runtime stay behind its FFI boundary, and its
-  model payloads are committed under `external/`. Its caller is `umbra-flow`'s
+  model payloads are committed under `external/`. Two layouts, and the caller
+  chooses: `SingleLine` recognises a rectangle the caller drew, and `Block` runs
+  the detection model over a region first and reports every line it found with
+  that line's own rectangle in the image's coordinates -- which is what a region
+  whose contents move (a grid that scrolls continuously) needs, because there no
+  rectangle per name is a model of anything. Its caller is `umbra-flow`'s
   `--ocr-models` binding (`entry/cli/platform/ocr-engine-binding.*`), shared by
-  the `run`, `drive` and `explore` subcommands so `cycle_read` runs under the
-  same guarantees on all three.
+  all four subcommands so both read verbs run under the same guarantees on
+  every one -- including `check`, whose falsification matrix measures a cell no
+  template can answer by reading the region and comparing the engine's
+  confidence against the element's own floor.
 - `modules/image/`: platform-free PNG I/O, pixel-layout conversion, and
   deterministic rectangular cropping; vendored codecs stay behind its FFI boundary.
 - `modules/trace/`: the single JSONL evidence stream every layer writes into,
@@ -94,8 +101,9 @@ not declare link dependencies. `scripts/check_modules.py` enforces both rules.
   `OperatorSession` is the same capability surface's front-end for a driver
   sending commands from outside the process. The framework a project script
   runs on is itself trusted Luau rather than C++: `modules/task/runtime/`
-  (`ctx`, `task`, `mint`, `model`, `navigation`, `observe`, `oracle`,
-  `project`, `regress`, `explore`, `scribe`) is a set of framework modules
+  (`ctx`, `task`, `evidence`, `hits`, `mint`, `model`, `navigation`, `observe`,
+  `oracle`, `project`, `reading`, `recognition`, `regress`, `explore`,
+  `scribe`) is a set of framework modules
   compiled into the binary as a bundle, holding every policy opinion C++
   deliberately does not -- step/retry/wait, the element and page vocabulary,
   the page graph, the project file's own TOML format, and the falsification
@@ -109,6 +117,10 @@ not declare link dependencies. `scripts/check_modules.py` enforces both rules.
   (`cycle_crop`, `probe`) and the agent's own authoring loop -- which is what
   makes `ExplorationSession`, run one Luau chunk at a time by `umbra-flow
   explore`, the third front-end rather than a mode of the other two.
+  `evidence` publishes into neither, for the reason `mint` does not and a
+  stronger one: it is the ledger of which hits and receipts the framework minted
+  and on which frame, so a project able to name it could mint a hit claiming
+  interact on an element no page ever authorised.
 - `modules/controller/`: Windows-only discovery, target lifecycle, Windows
   Graphics Capture sessions, and strict-background input.
 - `entry/`: executable targets and composition roots. `cli/` is the sole
@@ -118,12 +130,25 @@ not declare link dependencies. `scripts/check_modules.py` enforces both rules.
   through `task::TaskHost`; `drive` binds a target the same way and hands the
   ports to an `OperatorSession`, driven by commands appended to a queue file;
   `explore` binds a target the same way again and hands the ports to an
-  `ExplorationSession`, driven by Luau chunks appended to a queue file; and
+  `ExplorationSession`, driven by Luau chunks appended to a queue file, and
+  lays out the directories a session writes into first
+  (`project-skeleton.*`) because `task::ProjectFileStore` refuses a name whose
+  parent does not exist and nothing below the CLI may create one; and
   `check` binds no target at all -- its frames come from
   `<project>/assets/screens` through `FileFrameSource`, and it runs the
   falsification matrix as a trusted framework routine through
   `TaskHost::runFrameworkRoutine`, which makes it the one subcommand that
-  builds and runs on every host. Every subcommand's arguments are parsed by
+  builds and runs on every host. It measures two kinds of cell: a template
+  distance, and what a region reads when the element has no template, judged
+  against the text the project file claims for that screen and the element's
+  read floor -- so a project holding a text claim needs `--ocr-models`, and a
+  check started without one is refused by name before the first screen rather
+  than reporting those cells as unmeasured. Its per-cycle read budget is taken
+  from the project rather than from the default that bounds a wait loop: the
+  matrix reads each element at most once per screen, so the ceiling that
+  follows is the project's own element count, and the routine compares it
+  against the widest screen's claims before the first capture.
+  Every subcommand's arguments are parsed by
   the primitives in `args.hpp`, and every failure is rendered by the same
   `formatRunError`; `drive` and `explore` additionally speak one JSON-line
   result protocol, escaped by `json-text.*`. `run`, `drive` and `explore`
@@ -133,10 +158,13 @@ not declare link dependencies. `scripts/check_modules.py` enforces both rules.
   engine ports and a live fingerprint (`target-binding.*`,
   `wgc-frame-source.hpp`, `controller-action-sink.*`,
   `windows-target-geometry.*`), installs the Ctrl-C handler
-  (`windows-console-cancellation.*`), and binds the `--ocr-models` engine
-  `cycle_read` runs on (`ocr-engine-binding.*`); on a non-Windows host a
+  (`windows-console-cancellation.*`); on a non-Windows host a
   `*-unsupported.cpp` reports each of those three subcommands as unsupported,
-  while `check` still builds and runs.
+  while `check` still builds and runs. The `--ocr-models` engine the text reads
+  run on is bound by `platform/ocr-engine-binding.*`, which is declared outside
+  that block because `check` needs it too and defined inside it plus an
+  `-unsupported.cpp` sibling -- so elsewhere an absent flag still yields the null
+  engine every subcommand handles and a supplied one is refused by name.
 - `tests/`: deterministic offline tests.
 - `cmake/`: module loading, platform selection, caching, warnings, hardening,
   sanitizers, and static-analysis policy.
