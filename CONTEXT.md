@@ -10,7 +10,9 @@ task scripts written in Luau drive the loop through a minimal capability API.
 
 **Capability namespace (`uf`)**:
 The single read-only global root through which a project task script reaches
-the host: `uf.pages`, `uf.elements`, `uf.task`, and `uf.errors`. A script
+the host: `uf.task` and `uf.errors`. (`uf.pages` and `uf.elements` were host-built
+tables until 2026-08-01; pages and elements are trusted-Luau values now, reached
+through `project.load_project`, and the tables are gone rather than empty.) A script
 sees nothing of the host outside this root, and effects reach it only through
 the `ctx` object passed into a task's `run`. `uf` is the same product
 abbreviation as the C++ `uf::` namespace, used deliberately in both languages.
@@ -185,19 +187,18 @@ _Avoid_: step id, step address, step key (all three imply the uniqueness the
 
 ### Annotation model
 
-Added 2026-07-31 with the capability model. Deciding artifact:
-`docs/plans/2026-07-31-annotation-model-capabilities.md`. Renamed the same day
-to one vocabulary: the thing is an **element** everywhere, and *recognition*
-survives only where it names the activity (`RecognitionCatalog`,
-`RecognitionRuntime`, `recognition-runtime.cpp`), never the thing.
+Added 2026-07-31 with the capability model; **relocated 2026-08-01**. Semantics:
+`docs/plans/2026-07-31-annotation-model-capabilities.md`. Where they live:
+`docs/plans/2026-07-31-script-owned-page-model.md`. The nouns below and what
+they mean did not change; their spellings did.
 
-Relocation pending (2026-08-01):
-`docs/plans/2026-07-31-script-owned-page-model.md` moves *element* and *page* up
-to the trusted Luau framework, which makes them layer-two concepts rather than
-C++ types. The nouns below and what they mean do not change; their C++ spellings
-go away when that migration executes its retirement list.
+Element, page, reference, appearance and edge are **trusted-Luau types** now —
+`modules/task/runtime/{model,navigation,oracle}.luau` — persisted to
+`umbraflow-project/l2-v1` (`page-model.toml`, written by `project.luau`). C++
+keeps pixels, tickets and guarantees, and the `annotation::` spellings that
+appear below are history, not alternatives.
 
-**Element (`annotation::Element`, `annotation::ElementId`)**:
+**Element (`model.Element`)**:
 What an author draws: one rectangle of the target's screen, the set of uses it
 may be put to, and the appearances it can take. It is project-level — nothing on
 it says which page it belongs to. This is the noun the authoring CLI, the
@@ -208,21 +209,15 @@ text or only receives a click recognizes nothing, and is located by the page it
 sits on), region, annotation (the old three-way kind), `RecognizerId` (renamed
 to `ElementId`)
 
-**Compiled element (`annotation::CompiledElement`)**:
-What the compiler emits for one element into the runtime manifest, and what the
-runtime matches with. Exactly one is emitted per element, under the element's
-own id; the per-(element, page) derived id the earlier model used is gone with
-`derivedRuntimeRecognizerId`. The distinction from *element* is real and load
-bearing: a compiled element is generated and read-only, an element is authored.
-The runtime side carries the same adjective throughout —
-`CompiledAppearance`, `CompiledElementSpec`, `RuntimeElementSpec`,
-`RuntimeElementAsset`, `RuntimeAppearanceAsset`.
-_Avoid_: `RecognizerDefinition` and `RecognizerVariant` (the spellings until
-2026-07-31), recognizer (it named the compiled artifact for one day, between
-the capability model landing and this rename; it names nothing now), using
-either for the thing an author draws
+**Compiled element (retired 2026-08-01)**:
+The compiler that emitted one runtime artifact per element is gone with the v4
+authoring line: the layer-two model IS the runtime form, and a template is a
+PNG blob `template_load` turns into a handle. Kept as an entry because the word
+appears throughout the plans written before the migration.
+_Avoid_: `CompiledElement`, `CompiledAppearance`, `RuntimeElementSpec`,
+`RecognizerDefinition` (all deleted), reading any of them as a live type
 
-**Capability set (`ElementCapabilities` / `ExercisedCapabilities`)**:
+**Capability set (`element.capabilities` / `reference.exercised`)**:
 The three uses one patch of pixels can be put to — `identify`, `interact`,
 `read` — held as a set rather than a choice, so an element that both names its
 page and can be clicked is one element matched once per cycle. Each capability
@@ -235,7 +230,7 @@ _Avoid_: `AnnotationType`, `ElementKind`, `AnchorElement`, `InteractiveElement`,
 `InfoElement`, `PageAnchor`/`ActionTarget`/`InfoRegion` as element kinds (the
 2026-07-26 three-way enum, replaced 2026-07-31), bitmask
 
-**Page reference (`annotation::PageReference`)**:
+**Page reference (`model.Reference`)**:
 One page's use of one element: `{pageId, elementId, holding, exercised,
 searchRoi?, appearance?}`. It is the edge the model is built on — authorisation IS
 the reference, and a page's signature is *derived* from the references whose
@@ -253,7 +248,7 @@ public factory now, because a second way to state one fact could disagree with
 the first), placement (the pre-2026-07-31 name for the same row, when it carried
 neither holding nor exercised capabilities)
 
-**Appearance (`annotation::Appearance`)**:
+**Appearance (`model.Appearance`)**:
 One named appearance of one element. An appearance changes what a patch of
 pixels LOOKS like; it does not change where that patch is or what it means.
 Named rather than indexed because for a 1x/2x/3x speed button the matched form
@@ -265,3 +260,38 @@ _Avoid_: variant (the spelling until 2026-07-31; the CLI verb was already
 `element appearance`, and the word also collides with `std::variant` — which
 keeps its own name, as does the UUID variant field), form, appearance-kind,
 template list (an appearance is more than its template rectangle)
+
+**Page graph and stack (`navigation.Edge`, `navigation.stack_new`)**:
+Where an edge leads is a falsifiable fact about the game and lives in the
+project file; whether to take it is policy and lives in a task. An edge names
+its from-page, a SET of destinations, a trigger (`click` a reference / `key` a
+name / `spontaneous`) and a kind (`navigate` / `push` / `pop`). Overlays push
+and pop against a runtime stack with a declared depth cap, and a `pop` names no
+destination because the target is whatever the stack shows beneath it. **The
+stack is belief and an observation is truth**: resolving any non-overlay base
+page resets it to that page.
+_Avoid_: pathfinding in the host (a `go(any page)` verb — the framework offers
+`walk_edge` only), per-page depth or z-order declarations, modelling an overlay
+as an ordinary edge
+
+**Falsification matrix (`oracle`, `regress`, `umbra-flow check`)**:
+The screens a model is measured against, what each cell is supposed to show
+(`match` / `absent` / `unclaimed`), and the walk that measures them. Scores are
+layer one (`cycle_match` over file-backed frames); judging is layer two, and two
+rules fire without any expectation at all: two appearances of one element may
+not both hit one screen, and a winner must beat every rival by the separation
+factor.
+_Avoid_: recording measurements back into the file as expectations (a run that
+writes down what it measured agrees with itself by construction), `umbra-authoring
+check` (the v4 verb this replaced)
+
+**Exploration environment (`explore`, `scribe`)**:
+The second trusted-Luau environment, the Agent's operating table: every verb a
+task has, plus the privileged ones — a bare-coordinate click, `explore.crop`
+(pixels out) and `explore.probe` (colour statistics). A business environment can
+name none of them. Its runs stamp `FrontEnd::Annotation`, whose trace stream
+structurally refuses `engine.action_delivered`, because a bare click has no
+element and no page and the vocabulary has to stay honest.
+_Avoid_: handing a task raw pixels or a bare click, `engine.action_delivered`
+for an exploratory click, "operator mode" (the drive front-end is a different
+consumer, and it has no model access at all)
