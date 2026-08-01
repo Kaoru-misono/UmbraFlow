@@ -67,9 +67,14 @@
   `navigation`(Edge/Graph/栈,深度护栏在触发前查,栈是信念观察是真相)与
   `observe.walk_edge`(interrupted 结局、逐页连击判定);工具函数抽进未发布的
   `mint`。页面图形状已由开发者裁决(script-owned §十.1 的 2026-08-01 注)。
-- **工单 3 — 证伪矩阵迁到新基座(§七)。** 分数留 C++,判分归第二层 Luau,入口仍是 CLI 动词。
-  **前置:工单 2。** 追加范围(2026-08-01,工单 2 发现):`observe.find` 不再结构性要求本票据
-  先解析页面,「同帧页面证据」降级成了约定——执法手段(层 2 账本或 click 前置检查)在此工单定。
+- **工单 3 — 证伪矩阵迁到新基座(§七)。已完成(2026-08-01,`f630782`)。**
+  `oracle`(屏与三态期望进 l2 文件)+ `regress`(层 2 判分:两两落空规则、分离系数)+
+  `umbra-flow check`(文件帧源上的可信框架例程)。同帧页面证据回到**执法**:
+  `resolve_page` 铸同票据回执,`observe.click` 与 `walk_edge` 都要;代价是 walk_edge
+  会在触发帧重解析出发页——浮层压着时走不了被盖页的边,出路是先 pop 或按 §四之二.6
+  拆页(声明处有记)。跨边界成本实测 ~723µs/格,其中 ~650µs 是每调用固定开销
+  (trace 两行 + 逐行 flush + 指纹检查),批量原语按 §十.5 只记不做。
+  遗留文档账:CONTEXT.md 还不认识 oracle/regress/回执,工单 4 的文档批一起补。
 - **工单 4 — §九 退役清单执行。** `modules/annotation` 的模型层、`modules/task` 的
   `CapabilitySurface`、`preview.*` 的判分部分与 `entry/authoring` 的 page/element 绘制动词、
   `engine` 的 `resolvePage` 与 `findAction`;依赖图上的 `engine -> annotation` 随之去掉。
