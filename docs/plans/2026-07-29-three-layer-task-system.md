@@ -1680,8 +1680,8 @@ pause 的实现(只留 §13 的签名,以及「framework 的观察周期边界�
   `module-trace` 的建议范围。
 
 未做、留给后续:那两页本身(等阶段 3d 落地再写,免得写完立刻过期);
-`scripts/generate_code_atlas/data/{engine,entry-cli}.json` 与 `tour_content.py` 仍在讲
-被删的 `waitForPage` 循环,需要一次 `generate-code-atlas` 重跑;
+`scripts/generate_code_atlas/` 曾在讲被删的 `waitForPage` 循环——**2026-08-01 已连
+生成器一并删除**,与知识库同一条裁决,不再需要重跑;
 `.claude/skills/correct-doc-drift/SKILL.md` 拿「`waitForPage` 的内层轮询循环」当
 doc-vs-code 矛盾的范例,而今天矛盾的方向反过来了(代码没有循环、文档还写着),
 那是技能文件,属治理范围。
@@ -1711,7 +1711,7 @@ doc-vs-code 矛盾的范例,而今天矛盾的方向反过来了(代码没有循
   (十二个原语、`umbraflow-trace/v1` 的事件族、校验状态机)已经稳定,而阶段 4 是**用**
   这个表面写第一个真日常、标定常数,改的是数值不是形状;等阶段 4 只会让这两页在最需要
   它们的那个时候(照着 trace 读一次真机失败)刚好还不存在。
-- `scripts/generate_code_atlas/data/*.json` 与 `tour_content.py` 仍在讲被删的
-  `waitForPage` 循环。阶段 3 已完成,**现在值得跑一次 `generate-code-atlas`**——
-  代码地图集重建的成本只在架构稳定时才划算,而它现在稳定了。
+- ~~`scripts/generate_code_atlas/` 讲着被删的 `waitForPage` 循环,值得重跑~~
+  —— **已作废(2026-08-01)**:生成器随知识库一并删除。理由与当时相反地成立:
+  script-owned 迁移把架构整个换了一遍,地图集在框架重建期只是维护负担。
 - `.claude/skills/correct-doc-drift/SKILL.md` 的反向范例,同上一批,仍未处理(技能文件)。
