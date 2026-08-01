@@ -291,3 +291,128 @@ authored against, and a frame that genuinely lacks the UI. The negative half is
 what catches this, and it has to be *genuinely* UI-free — a frame captured while
 the HUD was fading in still contains most of the glyph and will match, which
 looks like a false positive but is not one.
+
+## A page that resolves is not the page in front of you when an overlay is up
+
+> Recorded 2026-08-01, driving one 出擊 run of 卡厄思梦境 page by page from a
+> layer-three dispatcher. The four entries below all come from that session; how
+> to choose the elements they act on is
+> [element choice and thresholds](element-choice-and-thresholds.md).
+
+### Symptom
+
+A dispatcher that resolves a page and then does the one thing that page wants
+pressed the same button **eight times** in a row.
+
+An in-camp confirmation floats over the camp. The camp's own prompt stays
+visible underneath it, so the camp page went on resolving — correctly — and the
+dispatcher went on taking the camp's branch, whose action the confirmation was
+covering.
+
+### Root cause
+
+A page signature is a conjunction over the marks that identify that page, never
+an inventory of everything on its screen. So resolution answers "are this page's
+marks present", which is not the same question as "is this page the frontmost
+thing". An overlay that leaves the base page's marks visible leaves the base page
+resolving, and both answers are right.
+
+### Fix
+
+Order the candidates a dispatcher walks so that **overlays are tried before the
+pages they can cover**. The first page that resolves wins the step, so the order
+is part of the answer rather than a performance detail.
+
+### Regression check
+
+With the overlay up, resolving the base page must still succeed — that is the
+model being correct, not a defect to fix — while the dispatcher's walk must
+select the overlay. A walk that selects the base page under an overlay is the
+failure, and it is invisible in any test that resolves one page at a time.
+
+## Order the pages a dispatcher tries by how specific their anchor is
+
+### Symptom
+
+A screen that has a page of its own is claimed by a different page, and the
+dispatcher acts on the wrong branch.
+
+### Root cause
+
+The walk stops at the first page that resolves, so a page whose anchor the game
+draws on several screens matches a larger set than the pages anchored on their
+own text. Asked early, it swallows them.
+
+Ordering by how common a screen is — the intuitive order, because it is the fast
+one — has nothing to do with this. Frequency does not bound what an anchor
+matches.
+
+### Fix
+
+Order by anchor specificity: overlays first (above), then every page anchored on
+a sentence only it prints, then pages anchored on a shared mark **last**, where
+they only catch what nothing else claimed.
+
+### Regression check
+
+Move a shared-anchor page to the front of the order and require a screen
+belonging to a sentence-anchored page to be misreported. If nothing changes, the
+anchors are already disjoint and the ordering is carrying no weight — which is
+worth knowing too.
+
+## Counting a collection is not evidence that an action happened
+
+### Symptom
+
+Three successful actions were logged as refusals, and the loop retried each of
+them.
+
+The check was the size of the hand before and after playing a card. The card
+played deals a card as it resolves, so the hand is the same size afterwards, and
+"nothing changed" was read as "the click did not land".
+
+### Root cause
+
+A collection's size is evidence about the collection, not about the action. Any
+action whose effect replaces what it consumed is invisible to it, and the failure
+direction is the dangerous one: a successful action reported as refused is
+retried, so the run does the thing twice.
+
+### Fix
+
+Compare the count of the **name**, not the size of the collection. The card that
+was selected is one fewer after it is played, whatever else arrived.
+
+### Regression check
+
+Test against an action that replaces what it consumes. A check that still passes
+when the collection's size is held constant is measuring the action; one that
+fails was measuring the collection.
+
+## A guard needs its own evidence
+
+### Symptom
+
+A key pressed as a "cancel" opened a menu containing an abandon-run button.
+
+ESC cancels a card selection. With **nothing** selected it opens an information
+panel instead, and that panel offers abandoning the run. The script pressed ESC
+on the belief that it had something selected.
+
+### Root cause
+
+The key's meaning depends on state the script never read. "I have not seen
+anything go wrong" is not evidence that a key is safe to press; it is the absence
+of evidence, and it reads identically in the state where the key is destructive.
+
+### Fix
+
+Guard on a positive reading of the state that makes the key mean what you want.
+Here the screen prints a keyboard legend **exactly while a card is up**, so
+reading that legend is the guard: no legend, no ESC.
+
+### Regression check
+
+Exercise the guard in the state where the key is *not* safe and require it to
+refuse to press. A guard proven only in the state where the action was harmless
+has not been proven at all.
