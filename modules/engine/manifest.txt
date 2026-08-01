@@ -6,8 +6,16 @@ version = 0.1.0
 [build]
 unity_build = false
 
+# annotation is gone from this list as of the script-owned page model's first
+# retirement wave (docs/plans/2026-07-31-script-owned-page-model.md 9). The
+# engine loads no catalog, resolves no page and authorises against no reference:
+# what it still needs -- the frame identity, the project fingerprint, the
+# decoded template and the search -- lives in domain and vision.
+#
 # ocr is public because the session's constructor names IOcrEngine: reading text
 # off an observation is an engine verb, and the engine binds the port its caller
-# supplies exactly as it binds the frame source and the action sink.
+# supplies exactly as it binds the frame source and the action sink. vision is
+# public for the same reason: matchTemplate names GrayTemplateImage, so a caller
+# holding one has to see the type.
 [dependencies]
-public = core domain annotation ocr trace
+public = core domain ocr trace vision

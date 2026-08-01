@@ -269,7 +269,7 @@ namespace uf::trace
         // the parameter.
         auto addFrame(
             TraceLineBuilder& builder,
-            annotation::FrameIdentity const& frame
+            FrameIdentity const& frame
         ) -> void
         {
             builder.addLiteral("frameId", std::format("{}", frame.frameId().value()));

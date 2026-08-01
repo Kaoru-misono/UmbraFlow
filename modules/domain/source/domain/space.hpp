@@ -277,4 +277,52 @@ namespace uf
         [[nodiscard]]
         auto operator()(PixelRect const& rect) const noexcept -> std::size_t;
     };
+
+    // The geometry a page model was authored at: the target's client extent and
+    // its DPI. Every rectangle in a model is measured in those pixels, so a
+    // capture taken at any other geometry describes different pixels and the
+    // model must not be compared against it.
+    //
+    // It lives in domain rather than beside a model because two layers now hold
+    // one: the annotation catalog carries the geometry a v3 project was compiled
+    // at, and the script-owned page model states its own at the top of
+    // page-model.toml. The engine compares a live measurement against whichever
+    // its caller supplied, and that comparison must not drag either model's
+    // vocabulary into the engine.
+    class ProjectFingerprint final
+    {
+        uint32 m_width;
+        uint32 m_height;
+        uint32 m_dpiX;
+        uint32 m_dpiY;
+
+        constexpr ProjectFingerprint(
+            uint32 width,
+            uint32 height,
+            uint32 dpiX,
+            uint32 dpiY
+        ) noexcept
+            : m_width{width}
+            , m_height{height}
+            , m_dpiX{dpiX}
+            , m_dpiY{dpiY}
+        {
+        }
+
+    public:
+        auto operator<=>(ProjectFingerprint const&) const = default;
+
+        [[nodiscard]]
+        static auto create(
+            uint32 width,
+            uint32 height,
+            uint32 dpiX,
+            uint32 dpiY
+        ) -> Result<ProjectFingerprint>;
+
+        [[nodiscard]] constexpr auto width() const noexcept -> uint32 { return m_width; }
+        [[nodiscard]] constexpr auto height() const noexcept -> uint32 { return m_height; }
+        [[nodiscard]] constexpr auto dpiX() const noexcept -> uint32 { return m_dpiX; }
+        [[nodiscard]] constexpr auto dpiY() const noexcept -> uint32 { return m_dpiY; }
+    };
 }

@@ -39,7 +39,7 @@ namespace uf::cli
 
     FileFrameSource::FileFrameSource(
         std::vector<std::filesystem::path> files,
-        annotation::ProjectFingerprint fingerprint
+        ProjectFingerprint fingerprint
     ) noexcept
         : m_files{std::move(files)}
         , m_fingerprint{fingerprint}
@@ -48,7 +48,7 @@ namespace uf::cli
 
     auto FileFrameSource::create(
         std::filesystem::path const& directory,
-        annotation::ProjectFingerprint const& fingerprint
+        ProjectFingerprint const& fingerprint
     ) -> Result<std::unique_ptr<FileFrameSource>>
     {
         auto error = std::error_code{};

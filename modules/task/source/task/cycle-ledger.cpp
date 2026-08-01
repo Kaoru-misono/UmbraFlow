@@ -4,8 +4,6 @@
 #include <core/error/result.hpp>
 #include <core/types/integer.hpp>
 
-#include <annotation/recognition.hpp>
-
 #include <domain/error.hpp>
 
 #include <engine/session.hpp>
@@ -120,12 +118,6 @@ namespace uf::task
         return m_open->observation;
     }
 
-    auto CycleLedger::rememberPage(annotation::ResolvedPage page) -> void
-    {
-        UF_ASSERT(m_open.has_value());
-        m_open->page = std::move(page);
-    }
-
     auto CycleLedger::readsCharged() const noexcept -> uint32
     {
         UF_ASSERT(m_open.has_value());
@@ -138,51 +130,13 @@ namespace uf::task
         ++m_open->reads;
     }
 
-    auto CycleLedger::resolvedPageId() const noexcept -> std::optional<annotation::PageId>
-    {
-        UF_ASSERT(m_open.has_value());
-        if (!m_open->page.has_value())
-        {
-            return std::nullopt;
-        }
-        return m_open->page->pageId();
-    }
-
-    auto CycleLedger::consume(CycleTicket ticket) -> Result<Consumed>
-    {
-        UF_TRY(requireOpen(ticket));
-
-        if (!m_open->page.has_value())
-        {
-            // The same skipped step the find refusal names, one verb later, so
-            // it carries the same kind: nothing was judged and refused here
-            // either -- the click never reached the authorization check that
-            // could have rejected it.
-            return fail(
-                AutomationErrorKind::PageUnresolved,
-                "this observation cycle has not resolved a page, and the page "
-                "IS a click's authorization evidence -- authorisation is the "
-                "resolved page's reference to the element, and no script can "
-                "supply one. Resolve this cycle's page first, then find and "
-                "click"
-            );
-        }
-
-        // The click consumes the frame by rvalue whatever it then does with it,
-        // so the cycle is spent the moment it is handed over: take both parts
-        // out and drop the entry here, which is what kills the ticket.
-        auto consumed = Consumed{
-            .observation = std::move(m_open->observation),
-            .page        = *std::move(m_open->page),
-        };
-        m_open.reset();
-        return consumed;
-    }
-
     auto CycleLedger::spend(CycleTicket ticket) -> Result<engine::Observation>
     {
         UF_TRY(requireOpen(ticket));
 
+        // The delivery consumes the frame by rvalue whatever it then does with
+        // it, so the cycle is spent the moment it is handed over: take the frame
+        // out and drop the entry here, which is what kills the ticket.
         auto observation = std::move(m_open->observation);
         m_open.reset();
         return observation;

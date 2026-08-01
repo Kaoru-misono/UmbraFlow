@@ -1,5 +1,7 @@
 #pragma once
 
+#include <task/page-model-file.hpp>
+
 #include <core/error/result.hpp>
 
 #include <string>
@@ -8,7 +10,6 @@
 
 namespace uf::task
 {
-    class CapabilitySurface;
 
     // The resource references one task script makes, enumerated by the pre-VM
     // AST validator. Both lists are deduplicated and sorted, so a host trace and
@@ -25,11 +26,15 @@ namespace uf::task
     // Proves, before any Luau VM is created, that `source` (compiled under chunk
     // name `chunkName`) reaches the uf namespace only through the canonical
     // literal spellings -- uf.elements.<name>, uf.pages.<name> and
-    // uf.errors.<kind> direct member access -- and that every named resource
-    // resolves against `surface`. This is the S0 resource closure
-    // (annotation-design 4): every reference is enumerated and closed here, so a
-    // missing resource is caught before the VM exists; runtime nil remains only
-    // defense in depth.
+    // uf.errors.<kind> direct member access -- and that every named resource is
+    // one `model` declares. Every reference is enumerated and closed here, so a
+    // script naming a page or an element the project file does not declare fails
+    // before the VM exists (docs/plans/2026-07-31-script-owned-page-model.md 6).
+    //
+    // The names come from the project file rather than from a C++ catalog as of
+    // the script-owned page model. The pass itself did not change, which is what
+    // that section predicted: it always resolved a literal against a list of
+    // names, and only the list moved.
     //
     // An error-kind leaf is resolved against AutomationErrorKind's wire spellings
     // for the same reason, so a typo fails here rather than becoming a nil that
@@ -51,6 +56,6 @@ namespace uf::task
     auto validateScriptResources(
         std::string_view source,
         std::string_view chunkName,
-        CapabilitySurface const& surface
+        PageModelFacts const& model
     ) -> Result<ScriptResourceReport>;
 }

@@ -1,8 +1,9 @@
 #include "task-host.hpp"
 
-#include "capability-surface.hpp"
 #include "framework-bundle.hpp"
 #include "operator-session.hpp"
+#include "page-model-file.hpp"
+#include "script-bindings.hpp"
 #include "script-validator.hpp"
 #include "task-context.hpp"
 #include "task-loader.hpp"
@@ -17,7 +18,6 @@
 #include <domain/error.hpp>
 #include <domain/ids.hpp>
 
-#include <engine/runtime-loader.hpp>
 #include <engine/session.hpp>
 
 #include <script/engine.hpp>
@@ -161,10 +161,9 @@ namespace uf::task
     }
 
     // One loaded project instance. It owns everything a run of that project
-    // needs and nothing a single run owns: the recognition runtime and the
-    // capability surface survive every run, while the trace recorder, the engine
-    // session, the task context and the VM are built and destroyed inside one
-    // startTask call.
+    // needs and nothing a single run owns: the facts read out of the page model
+    // survive every run, while the trace recorder, the engine session, the task
+    // context and the VM are built and destroyed inside one startTask call.
     //
     // Non-movable, and therefore held through a unique_ptr by the host: it
     // contains an std::stop_callback bound to its own stop source, so its
@@ -196,8 +195,7 @@ namespace uf::task
         GenerationId          m_id;
         std::filesystem::path m_projectRoot;
         std::string           m_projectId;
-        engine::LoadedRuntime m_runtime;
-        CapabilitySurface     m_surface;
+        PageModelFacts        m_model;
 
         std::stop_source                       m_stop{};
         std::stop_callback<ExternalStopBridge> m_externalStop;
@@ -213,15 +211,13 @@ namespace uf::task
             GenerationId id,
             std::filesystem::path projectRoot,
             std::string projectId,
-            engine::LoadedRuntime runtime,
-            CapabilitySurface surface,
+            PageModelFacts model,
             std::stop_token externalCancellation
         )
             : m_id{id}
             , m_projectRoot{std::move(projectRoot)}
             , m_projectId{std::move(projectId)}
-            , m_runtime{std::move(runtime)}
-            , m_surface{std::move(surface)}
+            , m_model{std::move(model)}
             , m_externalStop{
                   std::move(externalCancellation),
                   ExternalStopBridge{&m_stop},
@@ -255,16 +251,9 @@ namespace uf::task
         }
 
         [[nodiscard]]
-        auto runtime() const noexcept UF_LIFETIME_BOUND
-            -> engine::LoadedRuntime const&
+        auto model() const noexcept UF_LIFETIME_BOUND -> PageModelFacts const&
         {
-            return m_runtime;
-        }
-
-        [[nodiscard]]
-        auto surface() const noexcept UF_LIFETIME_BOUND -> CapabilitySurface const&
-        {
-            return m_surface;
+            return m_model;
         }
 
         [[nodiscard]] auto cancellation() const noexcept -> std::stop_token
@@ -387,19 +376,19 @@ namespace uf::task
             );
             UF_TRY(recorder->emit(runResourcesValidatedEvent(resources)));
 
-            // The session takes the runtime by value, so the generation hands it
-            // a copy and keeps its own: a generation outlives its runs and must
-            // still have a runtime for the next one. The copy is per run, never
-            // per frame.
+            // The project fingerprint is the generation's, read out of the page
+            // model when the project loaded; the live one is the front-end's
+            // measurement of the bound target. The engine compares the two and
+            // never learns where either came from.
             UF_TRY_VALUE(
                 session,
                 engine::EngineSession::create(
-                    m_runtime,
                     std::move(config.frameSource),
                     std::move(config.actionSink),
                     *recorder,
                     engine::EngineSessionConfig{
                         .liveFingerprint         = config.liveFingerprint,
+                        .projectFingerprint      = m_model.fingerprint,
                         .maximumPixelComparisons = config.maximumPixelComparisons,
                         .recognitionTimeout      = config.recognitionTimeout,
                         .maxActionFrameAge       = config.maxActionFrameAge,
@@ -451,15 +440,13 @@ namespace uf::task
             // leave a run bracket that never closed.
             auto vm = script::Engine::create(
                 script::EngineConfig{
-                    .cancellation      = cancellation(),
-                    .frameworkModules  = frameworkScriptModules(),
-                    .installHostTables = m_surface.installer(),
-                    .installPrivateCapabilities =
-                        CapabilitySurface::privateCapabilities(context),
-                    .projectGlobals          = CapabilitySurface::projectGlobals(),
-                    .frameworkProjectGlobals = frameworkProjectGlobals(),
-                    .classifyRaisedError     =
-                        CapabilitySurface::raisedErrorClassifier(),
+                    .cancellation               = cancellation(),
+                    .frameworkModules           = frameworkScriptModules(),
+                    .installHostTables          = scriptHostTableInstaller(),
+                    .installPrivateCapabilities = scriptPrivateCapabilities(context),
+                    .projectGlobals             = scriptProjectGlobals(),
+                    .frameworkProjectGlobals    = frameworkProjectGlobals(),
+                    .classifyRaisedError        = scriptRaisedErrorClassifier(),
                 }
             );
             if (!vm)
@@ -557,15 +544,19 @@ namespace uf::task
         TaskHostConfig const& config
     ) -> Result<GenerationId>
     {
-        UF_TRY_VALUE(loaded, engine::loadRuntimeProject(projectRoot));
-        UF_TRY_VALUE(
-            surface,
-            CapabilitySurface::create(loaded.runtime.manifest().catalog())
-        );
+        UF_TRY_VALUE(model, readPageModelFacts(projectRoot));
 
-        auto projectId = std::string{
-            loaded.runtime.manifest().catalog().projectId().value()
-        };
+        // The project's name in the trace is its directory's, because that is
+        // the whole of what identifies a project now: the v3 manifest that used
+        // to carry a project id is not read at runtime any more, and inventing a
+        // second identity in the page model would be a fact nobody maintains.
+        // An empty filename (a root path, a trailing separator) falls back to
+        // the path itself rather than to an unattributed run.
+        auto projectId = projectRoot.filename().string();
+        if (projectId.empty())
+        {
+            projectId = projectRoot.string();
+        }
 
         auto const id = GenerationId{m_nextGenerationValue};
         ++m_nextGenerationValue;
@@ -574,8 +565,7 @@ namespace uf::task
                 id,
                 projectRoot,
                 std::move(projectId),
-                std::move(loaded),
-                std::move(surface),
+                std::move(model),
                 config.externalCancellation
             )
         );
@@ -607,16 +597,16 @@ namespace uf::task
 
         // Source the task from its owning project and validate every uf
         // reference before anything observable exists: a missing or unsafe task
-        // name, or a reference the capability surface cannot resolve, must fail
-        // before a VM is created (annotation-design 4) and before a trace file
-        // is opened, so a misspelled name leaves no evidence behind.
+        // name, or a reference the page model does not declare, must fail before
+        // a VM is created and before a trace file is opened, so a misspelled
+        // name leaves no evidence behind.
         UF_TRY_VALUE(loadedTask, loadTask(p_generation->projectRoot(), taskName));
         UF_TRY_VALUE(
             resourceReport,
             validateScriptResources(
                 loadedTask.source,
                 loadedTask.name,
-                p_generation->surface()
+                p_generation->model()
             )
         );
 
@@ -639,7 +629,7 @@ namespace uf::task
 
     auto TaskHost::projectFingerprint(
         GenerationId generation
-    ) -> Result<annotation::ProjectFingerprint>
+    ) -> Result<ProjectFingerprint>
     {
         auto* const p_generation = findGeneration(generation);
         if (p_generation == nullptr)
@@ -652,7 +642,7 @@ namespace uf::task
                 )
             );
         }
-        return p_generation->runtime().runtime.manifest().catalog().fingerprint();
+        return p_generation->model().fingerprint;
     }
 
     auto TaskHost::runFrameworkRoutine(
@@ -696,7 +686,7 @@ namespace uf::task
             validateScriptResources(
                 chunk.source,
                 chunk.name,
-                p_generation->surface()
+                p_generation->model()
             )
         );
 
@@ -733,16 +723,12 @@ namespace uf::task
         auto const runId = TaskRunId{m_nextRunValue};
         ++m_nextRunValue;
 
-        // The session takes the runtime by value for the same reason a task run does:
-        // a generation outlives its sessions and must still have a runtime for the
-        // next one, so it hands over a copy and keeps its own.
         return OperatorSession::create(
-            p_generation->runtime(),
             std::move(config),
             OperatorSession::Spec{
-                .projectId    = p_generation->projectId(),
-                .surface      = p_generation->surface(),
-                .cancellation = p_generation->cancellation(),
+                .projectId          = p_generation->projectId(),
+                .projectFingerprint = p_generation->model().fingerprint,
+                .cancellation       = p_generation->cancellation(),
             },
             runId,
             generation

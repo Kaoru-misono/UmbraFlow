@@ -10,8 +10,6 @@
 #include <core/types/integer.hpp>
 
 #include <annotation/content-hash.hpp>
-#include <annotation/resource.hpp>
-#include <annotation/recognition.hpp>
 
 #include <domain/error.hpp>
 #include <domain/key.hpp>
@@ -205,43 +203,15 @@ namespace uf::task
         [[nodiscard]]
         auto closeCycle(CycleTicket ticket) noexcept -> bool;
 
-        // Resolves the page of the frame `ticket`'s cycle retains and records it
-        // in the ledger as that cycle's click authorization evidence. An empty
-        // optional is Unknown or Ambiguous -- a completed resolution the engine
-        // already traced, not a failure. A ticket naming no open cycle fails
-        // StaleObservation.
-        [[nodiscard]]
-        auto cyclePage(
-            CycleTicket ticket
-        ) -> Result<std::optional<annotation::ResolvedPage>>;
-
-        // Searches the frame `ticket`'s cycle retains for one action target. An
-        // empty optional is a completed miss (the caller maps it to nil), not a
-        // failure.
-        //
-        // RESOLVE THE PAGE BEFORE YOU FIND. The search runs against the page
-        // THIS cycle resolved, because everything a find needs is on the page's
-        // reference to the element -- the refined search region, the pinned
-        // appearance, and the interact authorisation -- so a cycle with no page
-        // fails PageUnresolved. The page is deliberately not resolved on the
-        // caller's behalf: resolution walks the whole anchor order and is the
-        // most expensive part of a cycle, and hiding it here would report a page
-        // that would not resolve as a find that failed.
-        [[nodiscard]]
-        auto cycleFind(
-            CycleTicket ticket,
-            annotation::ElementId elementId
-        ) -> Result<std::optional<engine::ActionFound>>;
-
         // Searches `searchRoi` of the frame `ticket`'s cycle retains for the
         // template `templateTicket` names. An empty optional is a completed
         // search with no candidate position; a budget, deadline or cancel stop is
         // a FAILURE, never a miss.
         //
-        // It requires no resolved page. Everything cycleFind reads off a page's
-        // reference row -- the refined region, the pinned appearance, the
-        // interact edge -- is supplied here by the caller instead, because in the
-        // script-owned model the caller is the layer that owns those facts.
+        // It requires no resolved page. The refined region, the pinned
+        // appearance and the interact edge that a page's reference row used to
+        // supply are the caller's now, because in the script-owned model the
+        // caller is the layer that owns those facts.
         [[nodiscard]]
         auto cycleMatch(
             CycleTicket ticket,
@@ -286,31 +256,7 @@ namespace uf::task
             std::span<std::byte const> bytes
         ) -> Status;
 
-        // Spends the cycle `ticket` names and delivers the click.
-        //
-        // It takes no page. The authorization evidence is the page that cycle
-        // itself resolved, which the ledger holds, so a script cannot supply a
-        // page drawn from another frame: there is no parameter to supply one
-        // through, and under the one-cycle rule there is no other frame to draw
-        // one from. The four-requisite authorization is therefore satisfied by
-        // construction rather than checked. A cycle that has resolved no page
-        // has no evidence and fails PageUnresolved -- the same skipped step
-        // cycleFind names, and not ActionRejected, because a click refused here
-        // never reached the authorization that could have rejected it.
-        //
-        // `hitCycleOrdinal` is the ordinal the hit handle carries and must be the
-        // open cycle's own; anything else names a cycle that no longer exists and
-        // fails StaleObservation. The cycle is spent whatever the click's
-        // outcome, because act consumes the frame by rvalue.
-        [[nodiscard]]
-        auto cycleClick(
-            CycleTicket ticket,
-            uint64 hitCycleOrdinal,
-            engine::ActionFound const& action
-        ) -> Result<engine::ActReceipt>;
-
-        // Spends the cycle `ticket` names and delivers a click at `point`, with
-        // no annotation evidence behind the coordinate.
+        // Spends the cycle `ticket` names and delivers a click at `point`.
         //
         // WHO MAY REACH THIS. It is the layer-two-held privilege: the trusted
         // Luau framework binds it as a closure upvalue and the environment a
@@ -342,11 +288,9 @@ namespace uf::task
         //
         // It requires the ticket to name the generation's OPEN cycle, and that is
         // the whole of what it requires. There is no hit ordinal, because there is
-        // no hit: a keystroke names no screen position, so nothing has to have been
-        // found on this frame. There is no page requirement either -- an annotation
-        // project declares which elements a page authorizes, and it declares
-        // nothing at all about keys, so a resolved page here would be evidence with
-        // nothing to check it against.
+        // no hit: a keystroke names no screen position, so nothing has to have
+        // been found on this frame, and no fingerprint check applies for the same
+        // reason.
         //
         // Requiring the open cycle is not ceremony. It is what puts the keystroke
         // in the single-open-cycle ordering with every observation and click around

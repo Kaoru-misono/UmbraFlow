@@ -6,5 +6,11 @@ version = 0.1.0
 [build]
 unity_build = false
 
+# image is private because it appears nowhere in this module's headers: only
+# template-match.cpp reaches it, to decode one template PNG into the two planes
+# the matcher consumes. Decoding lives here rather than in image because the
+# result is a matcher input -- a Gray8 plane plus its alpha weights -- and there
+# was exactly one definition of that decoding before it moved out of annotation.
 [dependencies]
 public = core domain
+private = image

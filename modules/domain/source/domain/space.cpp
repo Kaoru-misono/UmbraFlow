@@ -469,4 +469,28 @@ namespace uf
 
         return hash;
     }
+
+    auto ProjectFingerprint::create(
+        uint32 width,
+        uint32 height,
+        uint32 dpiX,
+        uint32 dpiY
+    ) -> Result<ProjectFingerprint>
+    {
+        if (width == 0 || height == 0 || dpiX == 0 || dpiY == 0)
+        {
+            return fail(
+                AutomationErrorKind::InvalidResource,
+                std::format(
+                    "project fingerprint must be non-zero: {}x{} at {}x{} DPI",
+                    width,
+                    height,
+                    dpiX,
+                    dpiY
+                )
+            );
+        }
+
+        return ProjectFingerprint{width, height, dpiX, dpiY};
+    }
 }

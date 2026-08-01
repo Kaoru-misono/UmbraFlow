@@ -1,85 +1,72 @@
-#include "../annotation/test-helpers.hpp"
-
-#include <task/capability-surface.hpp>
+#include <task/page-model-file.hpp>
 #include <task/script-validator.hpp>
-
-#include <annotation/capabilities.hpp>
-#include <annotation/catalog.hpp>
 
 #include <domain/error.hpp>
 
 #include <doctest/doctest.h>
 
-#include <optional>
 #include <string>
 #include <string_view>
-#include <utility>
 #include <vector>
 
 namespace uf::task
 {
     namespace
     {
-        namespace at = annotation::test;
+        // The page model the validator resolves against: three elements and one
+        // page, written the way a project file writes them.
+        //
+        // IT IS THE PROJECT FILE AND NO LONGER A CATALOG. Which names a script may
+        // spell is a fact about that file now
+        // (docs/plans/2026-07-31-script-owned-page-model.md 6), so the fixture is
+        // the text rather than a compiled catalog -- and every name the file
+        // declares is resolvable, where the catalog surface exposed only elements
+        // declaring interact. `home_marker` is here to prove exactly that: an
+        // element that only identifies is a name a script may write.
+        constexpr auto k_pageModel = std::string_view{R"toml(
+schema = "umbraflow-project/l2-v1"
+base_resolution = [4, 4]
+base_dpi = [96, 96]
 
-        constexpr auto k_anchorId = "00000000-0000-0000-0000-000000000001";
-        constexpr auto k_dailyId  = "00000000-0000-0000-0000-000000000002";
-        constexpr auto k_battleId = "00000000-0000-0000-0000-000000000003";
-        constexpr auto k_pageId   = "00000000-0000-0000-0000-000000000101";
+[[element]]
+name = "home_marker"
+capabilities = ["identify"]
+rect = [0, 0, 4, 4]
 
-        // The same minimal catalog the binding tests use: one identify-only
-        // element (never findable), two interactive ones (daily_button,
-        // battle), and one page (home). The surface built from it is exactly
-        // what the script sees, so the validator resolves against the identical
-        // name set.
-        auto buildSurface() -> CapabilitySurface
+[[element]]
+name = "daily_button"
+capabilities = ["interact"]
+rect = [0, 0, 4, 4]
+
+[element.extra]
+name = "extra_alias"
+
+[[element]]
+name = "battle"
+capabilities = ["interact"]
+rect = [0, 0, 4, 4]
+
+[[appearance]]
+element = "battle"
+name = "default"
+source = "assets/templates/battle.png"
+threshold = 9000
+
+[[page]]
+name = "home"
+
+[[reference]]
+page = "home"
+element = "battle"
+holding = "owned"
+exercised = ["interact"]
+)toml"};
+
+        auto buildModel() -> PageModelFacts
         {
-            auto const fingerprint = at::fingerprint();
-            auto const pageId      = at::pageId(k_pageId);
-            auto const anchorId    = at::elementId(k_anchorId);
-            auto const dailyId     = at::elementId(k_dailyId);
-            auto const battleId    = at::elementId(k_battleId);
-
-            auto elements = std::vector<annotation::CompiledElement>{};
-            elements.push_back(at::element(
-                fingerprint,
-                anchorId,
-                "home_marker",
-                at::capabilities(annotation::Identify{}),
-                at::pixelRect(0, 0, 4, 4),
-                {at::compiledAppearance("default", at::pixelRect(0, 0, 1, 1))}
-            ));
-            elements.push_back(at::element(
-                fingerprint,
-                dailyId,
-                "daily_button",
-                at::capabilities(std::nullopt, annotation::Interact{}),
-                at::pixelRect(0, 0, 4, 4),
-                {at::compiledAppearance("default", at::pixelRect(1, 1, 1, 1))}
-            ));
-            elements.push_back(at::element(
-                fingerprint,
-                battleId,
-                "battle",
-                at::capabilities(std::nullopt, annotation::Interact{}),
-                at::pixelRect(0, 0, 4, 4),
-                {at::compiledAppearance("default", at::pixelRect(2, 2, 1, 1))}
-            ));
-
-            auto const catalog = at::catalog(
-                fingerprint,
-                std::move(elements),
-                {at::page(pageId, "home")},
-                {
-                    at::reference(pageId, anchorId, at::identifiesAs()),
-                    at::reference(pageId, dailyId, at::interacts()),
-                    at::reference(pageId, battleId, at::interacts()),
-                }
-            );
-
-            auto surface = CapabilitySurface::create(catalog);
-            REQUIRE(surface.has_value());
-            return *std::move(surface);
+            auto model = parsePageModelFacts(k_pageModel);
+            REQUIRE(model.has_value());
+            return *std::move(model);
         }
 
         // Validates `source` and asserts it was rejected as InvalidResource whose
@@ -87,12 +74,12 @@ namespace uf::task
         // the specific offending reference, not merely "some error", so a change
         // that rejects for the wrong reason is caught.
         auto expectRejected(
-            CapabilitySurface const& surface,
+            PageModelFacts const& model,
             std::string_view source,
             std::vector<std::string_view> needles
         ) -> void
         {
-            auto const report = validateScriptResources(source, "task", surface);
+            auto const report = validateScriptResources(source, "task", model);
             REQUIRE_FALSE(report.has_value());
             CHECK(
                 automationErrorKind(report.error())
@@ -107,50 +94,85 @@ namespace uf::task
             }
         }
 
+        TEST_CASE("A page model that names one thing twice is refused")
+        {
+            // A duplicate would leave a literal resolving against two different
+            // rows, which is a model with no single answer about its own pixels.
+            // The refusal names the offender, because the file is hand-edited.
+            auto const duplicated = std::string{k_pageModel}
+                + "\n[[element]]\nname = \"battle\"\n"
+                  "capabilities = [\"interact\"]\nrect = [0, 0, 4, 4]\n";
+            auto const refused = parsePageModelFacts(duplicated);
+            REQUIRE_FALSE(refused.has_value());
+            CHECK(
+                automationErrorKind(refused.error())
+                == AutomationErrorKind::InvalidResource
+            );
+            CHECK(std::string{refused.error().message()}.contains("battle"));
+
+            // The control: the same file without the extra section loads.
+            CHECK(parsePageModelFacts(k_pageModel).has_value());
+        }
+
+        TEST_CASE("A page model that states no geometry is refused")
+        {
+            // The fingerprint is what the engine's compatibility check compares
+            // a live measurement against, so a model that states none has
+            // nothing to be compared to. Guessing one would defeat the check
+            // silently, which is why the absence is a refusal and not a default.
+            auto       without = std::string{k_pageModel};
+            auto const at      = without.find("base_resolution");
+            REQUIRE(at != std::string::npos);
+            without.erase(at, without.find('\n', at) - at);
+
+            auto const refused = parsePageModelFacts(without);
+            REQUIRE_FALSE(refused.has_value());
+            CHECK(
+                automationErrorKind(refused.error())
+                == AutomationErrorKind::InvalidResource
+            );
+            CHECK(
+                std::string{refused.error().message()}.contains("base_resolution")
+            );
+
+            // And the geometry it does state is the geometry it reports, rather
+            // than one this reader chose.
+            auto const model = parsePageModelFacts(k_pageModel);
+            REQUIRE(model.has_value());
+            CHECK(model->fingerprint.width() == 4);
+            CHECK(model->fingerprint.height() == 4);
+            CHECK(model->fingerprint.dpiX() == 96);
+        }
+
         TEST_CASE("A canonical task script validates and enumerates its references")
         {
-            auto const surface = buildSurface();
+            auto const model = buildModel();
 
             // A task the way one is written now that the framework owns policy:
-            // an interrupt declared against a page, a step around a wait, and
-            // the uf root appearing only as the two-level resource literals --
-            // inside a declaration field, inside a ctx argument, inside a handle
-            // method's argument, and once repeated.
+            // a step around a wait, and the uf root appearing only as the
+            // two-level resource literals -- inside a table field, inside a ctx
+            // argument, and once repeated.
             constexpr std::string_view source = R"lua(
-                local popup = task.interrupt {
-                    id = "battle_prompt",
-                    when = uf.pages.home,
-                    handle = function(ctx, cycle)
-                        local close = cycle:find(uf.elements.battle)
-                        if close ~= nil then
-                            cycle:click(close)
-                        end
-                    end,
-                }
-
                 return task.define {
-                    interrupts = { popup },
                     run = function(ctx)
                         ctx:step("daily", function()
                             ctx:retry({ attempts = 2 }, function()
-                                ctx:wait_for_page(
-                                    uf.pages.home,
-                                    { timeout_ms = 1000 },
-                                    function(home)
-                                        local hit =
-                                            home:find(uf.elements.daily_button)
-                                        if hit ~= nil then
-                                            home:click(hit)
-                                        end
-                                    end
-                                )
+                                observe.wait_until(ctx, {
+                                    page = uf.pages.home,
+                                    element = uf.elements.daily_button,
+                                    consecutive = 2,
+                                    timeout_ms = 1000,
+                                    interval_ms = 100,
+                                })
+                                local other = uf.elements.battle
+                                return other
                             end)
                         end)
                     end,
                 }
             )lua";
 
-            auto const report = validateScriptResources(source, "daily", surface);
+            auto const report = validateScriptResources(source, "daily", model);
             REQUIRE(report.has_value());
             CHECK(
                 report->elements
@@ -161,10 +183,10 @@ namespace uf::task
 
         TEST_CASE("A script touching no resources validates with an empty report")
         {
-            auto const surface = buildSurface();
+            auto const model = buildModel();
 
             auto const report =
-                validateScriptResources("local x = 1 + 2\nreturn x", "noop", surface);
+                validateScriptResources("local x = 1 + 2\nreturn x", "noop", model);
             REQUIRE(report.has_value());
             CHECK(report->elements.empty());
             CHECK(report->pages.empty());
@@ -172,7 +194,7 @@ namespace uf::task
 
         TEST_CASE("The retired root spelling resolves nothing and policing follows uf")
         {
-            auto const surface = buildSurface();
+            auto const model = buildModel();
 
             // `umbra` was this root's spelling before 2026-07-29. Nothing answers
             // to it now: it is an ordinary unknown global, so the validator walks
@@ -184,7 +206,7 @@ namespace uf::task
             auto const retired = validateScriptResources(
                 "return uf.pages.home ~= nil and umbra.elements.battle",
                 "retired-root",
-                surface
+                model
             );
             REQUIRE(retired.has_value());
             CHECK(retired->elements.empty());
@@ -193,7 +215,7 @@ namespace uf::task
             auto const current = validateScriptResources(
                 "return uf.elements.battle",
                 "current-root",
-                surface
+                model
             );
             REQUIRE(current.has_value());
             CHECK(current->elements == std::vector<std::string>{"battle"});
@@ -201,7 +223,7 @@ namespace uf::task
 
         TEST_CASE("A method call on the uf root is rejected: there are no verbs")
         {
-            auto const surface = buildSurface();
+            auto const model = buildModel();
 
             // The root carries data alone now, so a colon call on it names
             // nothing that could exist. It is rejected here rather than left to
@@ -210,7 +232,7 @@ namespace uf::task
             SUBCASE("a verb that used to exist")
             {
                 expectRejected(
-                    surface,
+                    model,
                     "return uf:cycle_open()",
                     {"uf", "two-level"}
                 );
@@ -218,7 +240,7 @@ namespace uf::task
             SUBCASE("a verb that never existed")
             {
                 expectRejected(
-                    surface,
+                    model,
                     "uf:frobnicate()\nreturn 0",
                     {"uf", "two-level"}
                 );
@@ -227,7 +249,7 @@ namespace uf::task
 
         TEST_CASE("The framework context is not the uf namespace and is not policed")
         {
-            auto const surface = buildSurface();
+            auto const model = buildModel();
 
             // ctx is a project global the framework published; it exposes no
             // resource name, so there is nothing here for a closure pass to
@@ -237,10 +259,10 @@ namespace uf::task
             auto const report = validateScriptResources(
                 "local d = ctx:deadline(1000)\n"
                 "local r = ctx:random(1, 6)\n"
-                "ctx:wait_for_page(uf.pages.home, {}, function() end)\n"
+                "observe.wait_until(ctx, { page = uf.pages.home })\n"
                 "return r",
                 "context-calls",
-                surface
+                model
             );
             REQUIRE(report.has_value());
             CHECK(report->elements.empty());
@@ -249,7 +271,7 @@ namespace uf::task
 
         TEST_CASE("An error-kind literal validates and enumerates no resource")
         {
-            auto const surface = buildSurface();
+            auto const model = buildModel();
 
             // uf.errors.<kind> is the third approved two-level literal. It
             // names host vocabulary rather than a project resource, so it must
@@ -261,7 +283,7 @@ namespace uf::task
                 "end\n"
                 "return 0",
                 "errors",
-                surface
+                model
             );
             REQUIRE(report.has_value());
             CHECK(report->elements.empty());
@@ -270,12 +292,12 @@ namespace uf::task
 
         TEST_CASE("A misspelled error kind is rejected before the VM exists")
         {
-            auto const surface = buildSurface();
+            auto const model = buildModel();
             // Left as a runtime nil this would make every comparison against it
             // silently false, which is exactly the failure the pre-VM pass closes
             // for a missing element.
             expectRejected(
-                surface,
+                model,
                 "return uf.errors.time_out",
                 {"time_out", "error kind"}
             );
@@ -283,44 +305,60 @@ namespace uf::task
 
         TEST_CASE("A reference to a missing element is rejected by name")
         {
-            auto const surface = buildSurface();
+            auto const model = buildModel();
             expectRejected(
-                surface,
-                "return ctx:cycle_find(cycle, uf.elements.does_not_exist)",
+                model,
+                "return uf.elements.does_not_exist",
                 {"does_not_exist", "element"}
             );
         }
 
         TEST_CASE("A reference to a missing page is rejected by name")
         {
-            auto const surface = buildSurface();
+            auto const model = buildModel();
             expectRejected(
-                surface,
+                model,
                 "local p = uf.pages.does_not_exist\nreturn p",
                 {"does_not_exist", "page"}
             );
         }
 
-        TEST_CASE("A page anchor is not exposed under uf.elements")
+        TEST_CASE("Every element the project file declares is a name a script may write")
         {
-            auto const surface = buildSurface();
-            // home_marker is a real catalog element, but a page anchor, so it
-            // is never a findable handle; the validator rejects it as missing.
+            auto const model = buildModel();
+
+            // home_marker only identifies. The retired capability surface exposed
+            // element handles for interactive elements alone, so this name used to
+            // be REJECTED here; the project file draws no such line, and neither
+            // does this pass. The `name` under [element.extra] is not one of them:
+            // a project's own fields are its business and never a resource.
+            auto const report = validateScriptResources(
+                "return uf.elements.home_marker",
+                "anchor",
+                model
+            );
+            REQUIRE(report.has_value());
+            CHECK(report->elements == std::vector<std::string>{"home_marker"});
+
+            // A project's own field under `extra` is never a resource, however
+            // exactly it copies a key this layer owns. The fixture's element
+            // carries `name = "extra_alias"` there, and the reader must not have
+            // read it as the element's own.
             expectRejected(
-                surface,
-                "return ctx:cycle_find(cycle, uf.elements.home_marker)",
-                {"home_marker", "element"}
+                model,
+                "return uf.elements.extra_alias",
+                {"extra_alias", "declares no element"}
             );
         }
 
         TEST_CASE("Aliasing the namespace or a sub-table is rejected")
         {
-            auto const surface = buildSurface();
+            auto const model = buildModel();
 
             SUBCASE("binding the bare namespace to a local")
             {
                 expectRejected(
-                    surface,
+                    model,
                     "local u = uf\nreturn u.elements.battle",
                     {"uf"}
                 );
@@ -328,7 +366,7 @@ namespace uf::task
             SUBCASE("binding a sub-table to a local")
             {
                 expectRejected(
-                    surface,
+                    model,
                     "local r = uf.elements\nreturn r.battle",
                     {"uf"}
                 );
@@ -336,20 +374,20 @@ namespace uf::task
             SUBCASE("passing the namespace as an argument")
             {
                 expectRejected(
-                    surface,
+                    model,
                     "for _ in pairs(uf) do end\nreturn 0",
                     {"uf"}
                 );
             }
             SUBCASE("returning the namespace")
             {
-                expectRejected(surface, "return uf", {"uf"});
+                expectRejected(model, "return uf", {"uf"});
             }
         }
 
         TEST_CASE("Reaching the namespace through the _G global alias is rejected")
         {
-            auto const surface = buildSurface();
+            auto const model = buildModel();
 
             // `_G` is Luau's reflexive handle to the whole global table. Every one
             // of these chains reaches `uf` WITHOUT a literal uf root, so the
@@ -360,12 +398,12 @@ namespace uf::task
             // would not pass this test.
             SUBCASE("indexing the namespace through the _G alias")
             {
-                expectRejected(surface, "return _G.uf.pages.home", {"_G"});
+                expectRejected(model, "return _G.uf.pages.home", {"_G"});
             }
             SUBCASE("aliasing the namespace off _G")
             {
                 expectRejected(
-                    surface,
+                    model,
                     "local u = _G.uf\nreturn u.elements.battle",
                     {"_G"}
                 );
@@ -373,7 +411,7 @@ namespace uf::task
             SUBCASE("dynamically indexing a resource table off _G")
             {
                 expectRejected(
-                    surface,
+                    model,
                     "local n = 'bat' .. 'tle'\nreturn _G.uf.elements[n]",
                     {"_G"}
                 );
@@ -381,18 +419,18 @@ namespace uf::task
             SUBCASE("iterating a resource table off _G")
             {
                 expectRejected(
-                    surface,
+                    model,
                     "for k in pairs(_G.uf.elements) do end\nreturn 0",
                     {"_G"}
                 );
             }
             SUBCASE("computed-indexing the namespace off _G")
             {
-                expectRejected(surface, "return _G['uf']", {"_G"});
+                expectRejected(model, "return _G['uf']", {"_G"});
             }
             SUBCASE("rawget past _G to the namespace")
             {
-                expectRejected(surface, "return rawget(_G, 'uf')", {"_G"});
+                expectRejected(model, "return rawget(_G, 'uf')", {"_G"});
             }
             SUBCASE("a missing resource off _G is rejected pre-VM, not left as runtime nil")
             {
@@ -400,7 +438,7 @@ namespace uf::task
                 // become a runtime nil, defeating the pre-VM missing-resource
                 // promise; the alias door is closed before the leaf is ever reached.
                 expectRejected(
-                    surface,
+                    model,
                     "return _G.uf.elements.does_not_exist",
                     {"_G"}
                 );
@@ -409,9 +447,9 @@ namespace uf::task
 
         TEST_CASE("Computed indexing into a resource table is rejected")
         {
-            auto const surface = buildSurface();
+            auto const model = buildModel();
             expectRejected(
-                surface,
+                model,
                 "local name = 'battle'\nreturn uf.elements[name]",
                 {"uf", "two-level"}
             );
@@ -419,12 +457,12 @@ namespace uf::task
 
         TEST_CASE("Indexing past a two-level handle literal is rejected")
         {
-            auto const surface = buildSurface();
+            auto const model = buildModel();
             // uf.elements.battle is a valid handle, but the only permitted
             // spelling is the two-level literal itself; reading a field off it is
             // a deeper chain and rejected as the wrong shape.
             expectRejected(
-                surface,
+                model,
                 "return uf.elements.battle.foo",
                 {"uf", "two-level"}
             );
@@ -432,9 +470,9 @@ namespace uf::task
 
         TEST_CASE("An unknown resource sub-namespace is rejected")
         {
-            auto const surface = buildSurface();
+            auto const model = buildModel();
             expectRejected(
-                surface,
+                model,
                 "return uf.templates.foo",
                 {"uf.templates", "namespace"}
             );
@@ -442,11 +480,11 @@ namespace uf::task
 
         TEST_CASE("Calling a one-level field of the namespace is rejected")
         {
-            auto const surface = buildSurface();
+            auto const model = buildModel();
             // uf.elements as a value is a one-level field access, and it is
             // rejected whether it is called, aliased, or returned.
             expectRejected(
-                surface,
+                model,
                 "return uf.elements(uf)",
                 {"uf"}
             );
@@ -454,8 +492,8 @@ namespace uf::task
 
         TEST_CASE("A syntax error is rejected as an invalid resource")
         {
-            auto const surface = buildSurface();
-            expectRejected(surface, "if x then", {"syntax error"});
+            auto const model = buildModel();
+            expectRejected(model, "if x then", {"syntax error"});
         }
     }
 }

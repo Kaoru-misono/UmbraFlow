@@ -267,196 +267,6 @@ namespace uf::cli
                 return ok();
             }
         };
-
-        [[nodiscard]]
-        auto timedOut(
-            std::string_view operation,
-            std::string message
-        ) -> DriveExecution
-        {
-            return DriveExecution{
-                .resultLine = serializeDriveResult(
-                    operation,
-                    DriveResult{
-                        .errorKind = std::string{
-                            automationErrorWireName(AutomationErrorKind::Timeout)
-                        },
-                        .message = std::move(message),
-                    }
-                ),
-            };
-        }
-
-        // LAYER TWO: wait until `page` resolves, leaving the matched cycle OPEN.
-        //
-        // It composes layer one and nothing else: cycle_open, cycle_page, cycle_close,
-        // deadline and wait, in the order an operator would write them by hand. Every
-        // number it uses came from the command -- there is no default here, and a
-        // wait_page that omitted timeout_ms or poll_ms never reached this function
-        // because the parser refused it.
-        //
-        // The matched cycle stays open on purpose: the point of the command is to leave
-        // the operator holding a fresh observation of the page it asked for, ready for a
-        // find, a click or a key. Every unmatched cycle is closed before the next poll.
-        [[nodiscard]]
-        auto executeWaitPage(
-            task::OperatorSession& session,
-            DriveWaitPageCommand const& command
-        ) -> DriveExecution
-        {
-            auto const operation = std::string_view{"wait_page"};
-
-            auto deadline = session.deadline(command.timeout);
-            if (!deadline)
-            {
-                return refused(operation, std::move(deadline).error());
-            }
-
-            while (true)
-            {
-                auto cycle = session.cycleOpen();
-                if (!cycle)
-                {
-                    return refused(operation, std::move(cycle).error());
-                }
-
-                auto resolved = session.cyclePage(*cycle);
-                if (!resolved)
-                {
-                    static_cast<void>(session.cycleClose(*cycle));
-                    return refused(operation, std::move(resolved).error());
-                }
-
-                auto matched = session.pageIs(*resolved, command.page);
-                if (!matched)
-                {
-                    static_cast<void>(session.cycleClose(*cycle));
-                    return refused(operation, std::move(matched).error());
-                }
-                if (*matched)
-                {
-                    return succeeded(
-                        operation,
-                        DriveResult{
-                            .cycle        = *cycle,
-                            .resolvedPage = true,
-                            .page         = *resolved,
-                        }
-                    );
-                }
-
-                auto closed = session.cycleClose(*cycle);
-                if (!closed)
-                {
-                    return refused(operation, std::move(closed).error());
-                }
-
-                auto budget = session.wait(*deadline, command.pollInterval);
-                if (!budget)
-                {
-                    return refused(operation, std::move(budget).error());
-                }
-                if (!*budget)
-                {
-                    return timedOut(
-                        operation,
-                        std::format(
-                            "page \"{}\" did not resolve before the wait deadline",
-                            command.page
-                        )
-                    );
-                }
-            }
-        }
-
-        // LAYER TWO: find `element` and click it, in one command.
-        //
-        // It composes cycle_open, cycle_page, cycle_find, cycle_click, cycle_close,
-        // deadline and wait. cycle_page is not optional here and not a policy choice:
-        // the click's authorization evidence IS the page that cycle resolved, so a
-        // click without it is refused by the ledger. Resolving is therefore a
-        // mechanical requirement of clicking rather than a decision this command makes.
-        //
-        // The caller does NOT say which page it expects. Naming one would be policy --
-        // deciding which screen the click is legal on -- and this command decides no
-        // policy; an operator that cares says so with wait_page first.
-        [[nodiscard]]
-        auto executeFindClick(
-            task::OperatorSession& session,
-            DriveFindClickCommand const& command
-        ) -> DriveExecution
-        {
-            auto const operation = std::string_view{"find_click"};
-
-            auto deadline = session.deadline(command.timeout);
-            if (!deadline)
-            {
-                return refused(operation, std::move(deadline).error());
-            }
-
-            while (true)
-            {
-                auto cycle = session.cycleOpen();
-                if (!cycle)
-                {
-                    return refused(operation, std::move(cycle).error());
-                }
-
-                auto resolved = session.cyclePage(*cycle);
-                if (!resolved)
-                {
-                    static_cast<void>(session.cycleClose(*cycle));
-                    return refused(operation, std::move(resolved).error());
-                }
-
-                auto hit = session.cycleFind(*cycle, command.element);
-                if (!hit)
-                {
-                    static_cast<void>(session.cycleClose(*cycle));
-                    return refused(operation, std::move(hit).error());
-                }
-
-                if (hit->has_value())
-                {
-                    auto const hitId = **hit;
-                    auto clicked     = session.cycleClick(*cycle, hitId);
-                    if (!clicked)
-                    {
-                        // The click may or may not have spent the cycle; cycle_close is
-                        // idempotent, so closing is the safe answer either way.
-                        static_cast<void>(session.cycleClose(*cycle));
-                        return refused(operation, std::move(clicked).error());
-                    }
-                    return succeeded(
-                        operation,
-                        DriveResult{.cycle = *cycle, .hit = hitId}
-                    );
-                }
-
-                auto closed = session.cycleClose(*cycle);
-                if (!closed)
-                {
-                    return refused(operation, std::move(closed).error());
-                }
-
-                auto budget = session.wait(*deadline, command.pollInterval);
-                if (!budget)
-                {
-                    return refused(operation, std::move(budget).error());
-                }
-                if (!*budget)
-                {
-                    return timedOut(
-                        operation,
-                        std::format(
-                            "element \"{}\" was not on screen before the wait "
-                            "deadline",
-                            command.element
-                        )
-                    );
-                }
-            }
-        }
     }
 
     auto validateDriveIpcPaths(DriveArgs const& args) -> Result<DriveIpcPaths>
@@ -549,39 +359,6 @@ namespace uf::cli
             return succeeded(operation, DriveResult{.released = *released});
         }
 
-        if (auto const* p_page = std::get_if<DriveCyclePageCommand>(&command))
-        {
-            auto resolved = session.cyclePage(p_page->cycle);
-            if (!resolved)
-            {
-                return refused(operation, std::move(resolved).error());
-            }
-            return succeeded(
-                operation,
-                DriveResult{.resolvedPage = true, .page = *resolved}
-            );
-        }
-
-        if (auto const* p_find = std::get_if<DriveCycleFindCommand>(&command))
-        {
-            auto hit = session.cycleFind(p_find->cycle, p_find->element);
-            if (!hit)
-            {
-                return refused(operation, std::move(hit).error());
-            }
-            return succeeded(operation, DriveResult{.hit = *hit});
-        }
-
-        if (auto const* p_click = std::get_if<DriveCycleClickCommand>(&command))
-        {
-            auto clicked = session.cycleClick(p_click->cycle, p_click->hit);
-            if (!clicked)
-            {
-                return refused(operation, std::move(clicked).error());
-            }
-            return succeeded(operation, DriveResult{});
-        }
-
         if (auto const* p_key = std::get_if<DriveKeyCommand>(&command))
         {
             auto pressed = session.key(p_key->cycle, p_key->key);
@@ -612,27 +389,17 @@ namespace uf::cli
             return succeeded(operation, DriveResult{.deadline = *minted});
         }
 
-        if (auto const* p_wait = std::get_if<DriveWaitCommand>(&command))
-        {
-            auto budget = session.wait(p_wait->deadline, p_wait->pollInterval);
-            if (!budget)
-            {
-                return refused(operation, std::move(budget).error());
-            }
-            return succeeded(operation, DriveResult{.budget = *budget});
-        }
-
-        if (auto const* p_waitPage = std::get_if<DriveWaitPageCommand>(&command))
-        {
-            return executeWaitPage(session, *p_waitPage);
-        }
-
-        auto const* p_findClick = std::get_if<DriveFindClickCommand>(&command);
+        auto const* p_wait = std::get_if<DriveWaitCommand>(&command);
         UF_CHECK_MSG(
-            p_findClick != nullptr,
+            p_wait != nullptr,
             "the drive protocol produced a command with no execution path"
         );
-        return executeFindClick(session, *p_findClick);
+        auto budget = session.wait(p_wait->deadline, p_wait->pollInterval);
+        if (!budget)
+        {
+            return refused(operation, std::move(budget).error());
+        }
+        return succeeded(operation, DriveResult{.budget = *budget});
     }
 
     auto driveSession(

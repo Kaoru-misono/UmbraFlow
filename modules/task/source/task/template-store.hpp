@@ -4,7 +4,9 @@
 #include <core/safety/annotations.hpp>
 #include <core/types/integer.hpp>
 
-#include <annotation/recognition-runtime.hpp>
+#include <annotation/content-hash.hpp>
+
+#include <vision/template-match.hpp>
 
 #include <cstddef>
 #include <span>
@@ -56,15 +58,26 @@ namespace uf::task
     // NOT thread-safe: every method runs on the VM's owning thread.
     class TemplateStore final
     {
+        // One decoded template beside the hash of the blob it came from. The
+        // hash is the store's rather than the image's because vision decodes and
+        // hashes nothing: identical bytes must return the same ticket, and this
+        // is what answers "have I already decoded these".
         struct Entry final
         {
-            uint64                        ordinal{};
-            annotation::GrayTemplateImage image;
+            uint64                  ordinal{};
+            annotation::ContentHash hash;
+            GrayTemplateImage       image;
         };
 
         uint64             m_generation;
         uint64             m_nextOrdinal{1};
         std::vector<Entry> m_entries{};
+
+        // The entry `ticket` names, or null. Both public lookups route through
+        // it so "which entry is this ticket" has one answer.
+        [[nodiscard]]
+        auto findEntry(TemplateTicket ticket) const noexcept UF_LIFETIME_BOUND
+            -> Entry const*;
 
     public:
         TemplateStore() noexcept;
@@ -83,6 +96,17 @@ namespace uf::task
         // borrow lasts until the next load() on this store.
         [[nodiscard]]
         auto find(TemplateTicket ticket) const noexcept UF_LIFETIME_BOUND
-            -> annotation::GrayTemplateImage const*;
+            -> GrayTemplateImage const*;
+
+        // The content hash of the blob `ticket`'s template was decoded from,
+        // with the same null answer and the same borrow contract as find().
+        //
+        // It is a second lookup rather than a field of the decoded image because
+        // vision, which owns the decoding, hashes nothing and must not name a
+        // project's content-address type. Only template_load asks, once per
+        // distinct blob, so the second scan costs nothing that matters.
+        [[nodiscard]]
+        auto hashOf(TemplateTicket ticket) const noexcept UF_LIFETIME_BOUND
+            -> annotation::ContentHash const*;
     };
 }

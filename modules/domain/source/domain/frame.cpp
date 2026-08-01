@@ -200,4 +200,25 @@ namespace uf
     auto Frame::pixelFormat() const noexcept -> PixelFormat { return m_pixelFormat; }
     auto Frame::pixels() const noexcept -> std::shared_ptr<FrameBuffer const> { return m_pixels; }
     auto Frame::transform() const noexcept -> CoordinateTransform { return m_transform; }
+
+    auto FrameIdentity::fromFrame(Frame const& frame) noexcept -> FrameIdentity
+    {
+        return FrameIdentity{
+            frame.sessionId(),
+            frame.targetGeneration(),
+            frame.id()
+        };
+    }
+
+    auto FrameIdentity::sessionId() const noexcept -> CaptureSessionId
+    {
+        return m_sessionId;
+    }
+
+    auto FrameIdentity::targetGeneration() const noexcept -> TargetGeneration
+    {
+        return m_targetGeneration;
+    }
+
+    auto FrameIdentity::frameId() const noexcept -> FrameId { return m_frameId; }
 }

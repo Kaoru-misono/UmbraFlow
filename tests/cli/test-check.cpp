@@ -125,7 +125,7 @@ namespace uf::cli
         }
 
         [[nodiscard]]
-        auto fixtureFingerprint() -> anno::ProjectFingerprint
+        auto fixtureFingerprint() -> ProjectFingerprint
         {
             return anno::test::fingerprint(k_screenSize, k_screenSize, 96, 96);
         }
@@ -293,88 +293,6 @@ namespace uf::cli
             return std::format("assets/marks/{}-{}.png", element.name, appearance.name);
         }
 
-        // Publishes the annotation project TaskHost::loadProject reads.
-        //
-        // It is deliberately minimal and shares nothing with the page model
-        // below: what the matrix needs from it is the project's identity and its
-        // fingerprint, because the screens being measured were captured at that
-        // geometry. Everything the matrix actually walks lives in the layer-two
-        // file.
-        auto publishAnnotationProject(std::filesystem::path const& root) -> void
-        {
-            auto const fingerprint = fixtureFingerprint();
-            auto const sourceId    = anno::test::sourceId(
-                "00000000-0000-0000-0000-0000000000a1"
-            );
-
-            // The source is a whole screen at the project's own geometry,
-            // because the compiler validates that an authoring source carries
-            // the fingerprint the project declares.
-            auto const sourceBytes = solidPng(k_screenSize, uint8{7});
-            auto const sourceHash  = anno::sha256(sourceBytes);
-            REQUIRE(sourceHash.has_value());
-
-            auto source = anno::AuthoringSource::create(
-                anno::AuthoringSourceSpec{
-                    .id          = sourceId,
-                    .contentHash = *sourceHash,
-                    .fingerprint = fingerprint,
-                    .provenance  = anno::ImportedSourceProvenance{},
-                }
-            );
-            REQUIRE(source.has_value());
-
-            auto const anchorId =
-                anno::test::elementId("00000000-0000-0000-0000-0000000000b1");
-            auto const pageId =
-                anno::test::pageId("00000000-0000-0000-0000-0000000000c1");
-
-            auto document = anno::AuthoringDocument::create(
-                anno::test::projectId("personal.check"),
-                fingerprint,
-                {*source},
-                {
-                    anno::test::element(
-                        fingerprint,
-                        anchorId,
-                        "host_anchor",
-                        anno::test::capabilities(anno::Identify{}),
-                        anno::test::pixelRect(0, 0, k_markSize, k_markSize),
-                        {
-                            anno::test::appearance(
-                                "default",
-                                sourceId,
-                                anno::test::pixelRect(0, 0, k_markSize, k_markSize)
-                            ),
-                        }
-                    ),
-                },
-                {anno::test::page(pageId, "host_page")},
-                {anno::test::reference(pageId, anchorId, anno::test::identifiesAs())},
-                {}
-            );
-            REQUIRE(document.has_value());
-
-            auto const asset = anno::AuthoringSourceAsset{
-                .id       = sourceId,
-                .pngBytes = sourceBytes,
-            };
-            auto const compiled = anno::compileAuthoringDocument(
-                *document,
-                std::span{&asset, std::size_t{1}}
-            );
-            REQUIRE(compiled.has_value());
-
-            writeText(
-                root / "generated" / "annotations.runtime.toml",
-                compiled->runtimeManifestToml
-            );
-            for (auto const& templateAsset : compiled->templateAssets)
-            {
-                writeFile(root / templateAsset.relativePath, templateAsset.pngBytes);
-            }
-        }
-
         // Writes every screen PNG and returns the content hash of each, in screen
         // order.
         [[nodiscard]]
@@ -406,6 +324,15 @@ namespace uf::cli
         ) -> std::string
         {
             auto text = std::string{"schema = \"umbraflow-project/l2-v1\"\n"};
+
+            // The geometry every rectangle below is measured at. The host reads
+            // it out of this file rather than out of a compiled manifest, so a
+            // project file without it does not load at all.
+            text += std::format(
+                "base_resolution = [{}, {}]\nbase_dpi = [96, 96]\n",
+                k_screenSize,
+                k_screenSize
+            );
 
             for (auto const& element : project.elements)
             {
@@ -502,8 +429,6 @@ namespace uf::cli
             SyntheticProject const& project
         ) -> std::string
         {
-            publishAnnotationProject(root);
-
             for (auto const& element : project.elements)
             {
                 for (auto const& appearance : element.appearances)

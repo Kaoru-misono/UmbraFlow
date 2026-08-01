@@ -2,7 +2,6 @@
 
 #include "native-call-trace.hpp"
 
-#include <task/capability-surface.hpp>
 #include <task/cycle-ledger.hpp>
 #include <task/task-context.hpp>
 #include <task/task-host.hpp>
@@ -12,13 +11,10 @@
 #include <core/time/monotonic-time.hpp>
 #include <core/types/integer.hpp>
 
-#include <annotation/recognition.hpp>
-
 #include <domain/error.hpp>
 #include <domain/ids.hpp>
 #include <domain/key.hpp>
 
-#include <engine/runtime-loader.hpp>
 #include <engine/session.hpp>
 
 #include <trace/event.hpp>
@@ -117,21 +113,18 @@ namespace uf::task
         CreateTag,
         std::unique_ptr<trace::TraceRecorder> recorder,
         engine::EngineSession session,
-        CapabilitySurface surface,
         TaskContextConfig contextConfig,
         std::filesystem::path tracePath,
         uint64 seed
     ) noexcept
         : m_recorder{std::move(recorder)}
         , m_context{std::move(session), *m_recorder, std::move(contextConfig)}
-        , m_surface{std::move(surface)}
         , m_tracePath{std::move(tracePath)}
         , m_seed{seed}
     {
     }
 
     auto OperatorSession::create(
-        engine::LoadedRuntime loadedRuntime,
         TaskRunConfig config,
         Spec spec,
         TaskRunId runId,
@@ -150,19 +143,17 @@ namespace uf::task
 
         // No run.resources_validated line. That event records the closure of uf
         // references a task SOURCE was validated against before its VM existed;
-        // there is no source here, and every name an operator writes is checked
-        // against the same surface at the moment it writes it, so the event has
-        // nothing to say and an empty one would misreport a validation that never
-        // happened.
+        // there is no source here, so the event has nothing to say and an empty
+        // one would misreport a validation that never happened.
         UF_TRY_VALUE(
             session,
             engine::EngineSession::create(
-                std::move(loadedRuntime),
                 std::move(config.frameSource),
                 std::move(config.actionSink),
                 *recorder,
                 engine::EngineSessionConfig{
                     .liveFingerprint         = config.liveFingerprint,
+                    .projectFingerprint      = spec.projectFingerprint,
                     .maximumPixelComparisons = config.maximumPixelComparisons,
                     .recognitionTimeout      = config.recognitionTimeout,
                     .maxActionFrameAge       = config.maxActionFrameAge,
@@ -175,7 +166,6 @@ namespace uf::task
             CreateTag{},
             std::move(recorder),
             std::move(session),
-            std::move(spec.surface),
             TaskContextConfig{
                 .cancellation = spec.cancellation,
             },
@@ -223,47 +213,6 @@ namespace uf::task
         return CycleTicket{.generation = m_ticket->generation, .ordinal = ordinal};
     }
 
-    auto OperatorSession::findElement(
-        std::string_view name
-    ) const -> Result<annotation::ElementId>
-    {
-        auto const exposed = m_surface.elements();
-        auto const found   = std::ranges::find(
-            exposed,
-            name,
-            &ElementHandleSpec::name
-        );
-        if (found == exposed.end())
-        {
-            return invalid(
-                std::format(
-                    "this project exposes no action-target element named \"{}\"",
-                    name
-                )
-            );
-        }
-        return found->id;
-    }
-
-    auto OperatorSession::findPage(
-        std::string_view name
-    ) const -> Result<annotation::PageId>
-    {
-        auto const exposed = m_surface.pages();
-        auto const found   = std::ranges::find(
-            exposed,
-            name,
-            &PageHandleSpec::name
-        );
-        if (found == exposed.end())
-        {
-            return invalid(
-                std::format("this project exposes no page named \"{}\"", name)
-            );
-        }
-        return found->id;
-    }
-
     auto OperatorSession::cycleOpen() -> Result<uint64>
     {
         UF_TRY(requireLiveGeneration(m_context));
@@ -281,11 +230,6 @@ namespace uf::task
         // cannot do this -- its raise skips the return, so the framework never
         // receives the ticket -- and the difference costs no refusal: the failure is
         // the same IoFailure either way, only the recovery is better here.
-        //
-        // Every hit a previous cycle minted names a cycle that no longer exists, so
-        // from here on it can only ever be refused. Dropping them now keeps the table
-        // at one cycle's worth of hits rather than one session's.
-        m_hits.clear();
         m_ticket = *result;
 
         UF_TRY(recordNativeCall(m_context, call, trace::NativeCallOutcome::Succeeded));
@@ -311,134 +255,6 @@ namespace uf::task
             )
         );
         return released;
-    }
-
-    auto OperatorSession::cyclePage(
-        uint64 cycleOrdinal
-    ) -> Result<ResolvedPageName>
-    {
-        UF_TRY(requireLiveGeneration(m_context));
-
-        auto const call = NativeCallIdentity{
-            .verb         = "cycle_page",
-            .cycleOrdinal = cycleOrdinal,
-        };
-
-        auto result = m_context.cyclePage(ticketFor(cycleOrdinal));
-        if (!result)
-        {
-            recordNativeCallFailure(m_context, call, result.error());
-            return std::unexpected{std::move(result).error()};
-        }
-
-        auto const resolved = *std::move(result);
-        if (!resolved.has_value())
-        {
-            UF_TRY(recordNativeCall(m_context, call, trace::NativeCallOutcome::Empty));
-            return ResolvedPageName{};
-        }
-        UF_TRY(recordNativeCall(m_context, call, trace::NativeCallOutcome::Succeeded));
-
-        auto const exposed = m_surface.pages();
-        auto const named   = std::ranges::find(
-            exposed,
-            resolved->pageId(),
-            &PageHandleSpec::id
-        );
-        if (named == exposed.end())
-        {
-            // Unreachable while the surface is built from the same catalog the
-            // resolver evaluated. Reporting it rather than inventing a name keeps a
-            // catalog and a surface that disagreed from looking like a resolution.
-            return fail(
-                AutomationErrorKind::InternalInvariant,
-                "the resolved page is not on this project's exposed page surface"
-            );
-        }
-        return ResolvedPageName{named->name};
-    }
-
-    auto OperatorSession::cycleFind(
-        uint64 cycleOrdinal,
-        std::string_view elementName
-    ) -> Result<std::optional<uint64>>
-    {
-        UF_TRY(requireLiveGeneration(m_context));
-
-        // Resolved before the call is recorded, exactly as the Luau primitive
-        // validates its handle argument before building the identity: a name that
-        // addresses nothing is a bad argument rather than a call that happened.
-        UF_TRY_VALUE(elementId, findElement(elementName));
-
-        auto const call = NativeCallIdentity{
-            .verb         = "cycle_find",
-            .cycleOrdinal = cycleOrdinal,
-            .elementId    = elementId,
-        };
-
-        auto result = m_context.cycleFind(ticketFor(cycleOrdinal), elementId);
-        if (!result)
-        {
-            recordNativeCallFailure(m_context, call, result.error());
-            return std::unexpected{std::move(result).error()};
-        }
-
-        auto found = *std::move(result);
-        if (!found.has_value())
-        {
-            UF_TRY(recordNativeCall(m_context, call, trace::NativeCallOutcome::Empty));
-            return std::optional<uint64>{};
-        }
-        UF_TRY(recordNativeCall(m_context, call, trace::NativeCallOutcome::Succeeded));
-
-        auto const hitId = m_nextHitId;
-        ++m_nextHitId;
-        m_hits.emplace_back(
-            StoredHit{
-                .id           = hitId,
-                .cycleOrdinal = cycleOrdinal,
-                .action       = *std::move(found),
-            }
-        );
-        return std::optional<uint64>{hitId};
-    }
-
-    auto OperatorSession::cycleClick(uint64 cycleOrdinal, uint64 hitId) -> Status
-    {
-        UF_TRY(requireLiveGeneration(m_context));
-
-        auto const held = std::ranges::find(m_hits, hitId, &StoredHit::id);
-        if (held == m_hits.end())
-        {
-            return invalid(
-                std::format(
-                    "no hit {} was found in this session's open cycle",
-                    hitId
-                )
-            );
-        }
-
-        auto const call = NativeCallIdentity{
-            .verb         = "cycle_click",
-            .cycleOrdinal = cycleOrdinal,
-            .hitCycleOrdinal = held->cycleOrdinal,
-        };
-
-        // The hit's own cycle ordinal reaches the ledger unaltered, so the four
-        // requisites are checked here exactly as they are for a Luau click: the
-        // ticket must name the open cycle, the hit must have come from it, and that
-        // cycle must have resolved a page.
-        auto result = m_context.cycleClick(
-            ticketFor(cycleOrdinal),
-            held->cycleOrdinal,
-            held->action
-        );
-        if (!result)
-        {
-            recordNativeCallFailure(m_context, call, result.error());
-            return std::unexpected{std::move(result).error()};
-        }
-        return recordNativeCall(m_context, call, trace::NativeCallOutcome::Succeeded);
     }
 
     auto OperatorSession::key(uint64 cycleOrdinal, KeyName keyName) -> Status
@@ -553,19 +369,6 @@ namespace uf::task
         bool const budgetRemains = m_context.waitUntil(until, clamped);
         UF_TRY(requireNotCancelled(m_context));
         return budgetRemains;
-    }
-
-    auto OperatorSession::pageIs(
-        ResolvedPageName const& resolved,
-        std::string_view name
-    ) const -> Result<bool>
-    {
-        UF_TRY(findPage(name));
-        if (!resolved.has_value())
-        {
-            return false;
-        }
-        return *resolved == name;
     }
 
     auto OperatorSession::tracePath() const noexcept -> std::filesystem::path const&

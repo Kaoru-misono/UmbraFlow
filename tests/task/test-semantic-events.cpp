@@ -1,6 +1,6 @@
 #include "binding-fixture.hpp"
 
-#include <task/capability-surface.hpp>
+#include <task/script-bindings.hpp>
 #include <task/framework-bundle.hpp>
 #include <task/task-context.hpp>
 
@@ -70,10 +70,9 @@ namespace uf::task
         )lua"};
 
         [[nodiscard]]
-        auto probeVmConfig(CapabilitySurface const& surface, TaskContext& context)
-            -> script::EngineConfig
+        auto probeVmConfig(TaskContext& context) -> script::EngineConfig
         {
-            auto config = taskVmConfig(surface, context);
+            auto config = taskVmConfig(context);
             config.frameworkModules.emplace_back(
                 script::FrameworkModule{.name = "probe", .source = k_probeSource}
             );
@@ -84,11 +83,11 @@ namespace uf::task
         [[nodiscard]]
         auto runWithProbe(
             TaskContext& context,
-            Built& built,
+            Built& /*built*/,
             std::string_view source
         ) -> double
         {
-            auto engine = script::Engine::create(probeVmConfig(built.surface, context));
+            auto engine = script::Engine::create(probeVmConfig(context));
             REQUIRE(engine.has_value());
             auto const result = engine->runNumber(source, "semantic-events");
             REQUIRE(result.has_value());
@@ -202,7 +201,7 @@ namespace uf::task
             // One nested pair of steps with a native call inside them, one
             // declared pause, and one retry that exhausts its two attempts on a
             // retryable failure. Between them they exercise every framework event
-            // a task without interrupts can produce.
+            // a task can produce.
             constexpr std::string_view source = R"lua(
                 ctx:step('outer', function()
                     ctx:step('inner', function()
@@ -219,7 +218,10 @@ namespace uf::task
                         tries += 1
                         local ticket = ctx:cycle_open()
                         ctx:cycle_close(ticket)
-                        ctx:cycle_page(ticket)
+                        -- A closed ticket names no open cycle, so this raises the
+                        -- retryable StaleObservation the retry policy is waiting
+                        -- for.
+                        ctx:cycle_read(ticket, 0, 0, 1, 1)
                     end)
                 end)
                 if ok ~= false then return 0 end

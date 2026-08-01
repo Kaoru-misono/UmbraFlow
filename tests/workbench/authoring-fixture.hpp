@@ -48,7 +48,7 @@ namespace uf::workbench::test
 
     // Pixels a page can be recognised by.
     inline auto markElement(
-        annotation::ProjectFingerprint fingerprint,
+        ProjectFingerprint fingerprint,
         annotation::ElementId id,
         std::string name,
         annotation::SourceId sourceId,
@@ -68,7 +68,7 @@ namespace uf::workbench::test
 
     // Pixels an action can be delivered to.
     inline auto clickableElement(
-        annotation::ProjectFingerprint fingerprint,
+        ProjectFingerprint fingerprint,
         annotation::ElementId id,
         std::string name,
         annotation::SourceId sourceId,
@@ -94,7 +94,7 @@ namespace uf::workbench::test
     // workbench seeds one for every rectangle it draws, and an element with no
     // appearance is the separate page-located case.
     inline auto readableElement(
-        annotation::ProjectFingerprint fingerprint,
+        ProjectFingerprint fingerprint,
         annotation::ElementId id,
         std::string name,
         annotation::SourceId sourceId,

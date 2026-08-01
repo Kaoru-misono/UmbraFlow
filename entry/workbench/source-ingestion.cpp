@@ -39,7 +39,7 @@ namespace uf::workbench
         {
             UF_TRY_VALUE(
                 fingerprint,
-                annotation::ProjectFingerprint::create(
+                ProjectFingerprint::create(
                     width,
                     height,
                     dpi,

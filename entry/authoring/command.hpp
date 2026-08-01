@@ -93,7 +93,7 @@ namespace uf::authoring
         std::filesystem::path root{};
         std::string           projectId{};
 
-        annotation::ProjectFingerprint fingerprint;
+        ProjectFingerprint fingerprint;
     };
 
     struct ShowProject final

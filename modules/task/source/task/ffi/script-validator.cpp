@@ -1,6 +1,6 @@
 #include <task/script-validator.hpp>
 
-#include <task/capability-surface.hpp>
+#include <task/page-model-file.hpp>
 
 #include <core/error/error.hpp>
 #include <core/error/result.hpp>
@@ -148,15 +148,18 @@ namespace uf::task
             std::optional<std::string> m_failure{};
 
         public:
-            explicit ResourceVisitor(CapabilitySurface const& surface)
+            // The views borrow `model`'s strings, which the caller keeps alive
+            // for the whole parse -- the visitor is built, used and dropped
+            // inside validateScriptResources below.
+            explicit ResourceVisitor(PageModelFacts const& model)
             {
-                for (auto const& spec : surface.elements())
+                for (auto const& name : model.elementNames)
                 {
-                    m_elementNames.insert(spec.name);
+                    m_elementNames.insert(name);
                 }
-                for (auto const& spec : surface.pages())
+                for (auto const& name : model.pageNames)
                 {
-                    m_pageNames.insert(spec.name);
+                    m_pageNames.insert(name);
                 }
             }
 
@@ -311,10 +314,10 @@ namespace uf::task
                 );
             }
 
-            // Resolves an element or page leaf `name` against the surface's
-            // exposed set, recording the reference on success and a precise
-            // missing-resource failure otherwise. Split so the pages branch reuses
-            // it; see classifyResourceAccess for the dispatch.
+            // Resolves an element or page leaf `name` against the set the
+            // project file declares, recording the reference on success and a
+            // precise missing-resource failure otherwise. Split so the pages
+            // branch reuses it; see classifyResourceAccess for the dispatch.
             void resolveElement(std::string_view name, Luau::Location const& location)
             {
                 if (m_elementNames.contains(name))
@@ -324,8 +327,8 @@ namespace uf::task
                 }
                 recordFailure(
                     location,
-                    "no element named '" + std::string{name}
-                        + "' is exposed under uf.elements"
+                    "this project's page model declares no element named '"
+                        + std::string{name} + "'"
                 );
             }
 
@@ -338,8 +341,8 @@ namespace uf::task
                 }
                 recordFailure(
                     location,
-                    "no page named '" + std::string{name}
-                        + "' is exposed under uf.pages"
+                    "this project's page model declares no page named '"
+                        + std::string{name} + "'"
                 );
             }
 
@@ -371,7 +374,7 @@ namespace uf::task
     auto validateScriptResources(
         std::string_view source,
         std::string_view chunkName,
-        CapabilitySurface const& surface
+        PageModelFacts const& model
     ) -> Result<ScriptResourceReport>
     {
         auto const chunk = std::string{chunkName};
@@ -411,7 +414,7 @@ namespace uf::task
                 );
             }
 
-            auto visitor = ResourceVisitor{surface};
+            auto visitor = ResourceVisitor{model};
             result.root->visit(&visitor);
 
             if (auto const& failure = visitor.failure())

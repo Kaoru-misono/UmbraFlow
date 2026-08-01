@@ -78,7 +78,7 @@ namespace uf::cli
         }
     }
 
-    TEST_CASE("every layer-one primitive has a command with the primitive's own name")
+    TEST_CASE("every primitive has a command with the primitive's own name")
     {
         // "Verbatim" is the claim, so the names are pinned: an operator writes the
         // primitive's name, not a synonym, and a rename on either side breaks here.
@@ -91,31 +91,6 @@ namespace uf::cli
         CHECK(
             std::get<DriveCycleCloseCommand>(*closed)
             == DriveCycleCloseCommand{.cycle = 3}
-        );
-
-        auto const page = parseDriveCommand(R"({"op":"cycle_page","cycle":3})");
-        REQUIRE(page.has_value());
-        CHECK(
-            std::get<DriveCyclePageCommand>(*page)
-            == DriveCyclePageCommand{.cycle = 3}
-        );
-
-        auto const found = parseDriveCommand(
-            R"({"op":"cycle_find","cycle":3,"element":"end_turn"})"
-        );
-        REQUIRE(found.has_value());
-        CHECK(
-            std::get<DriveCycleFindCommand>(*found)
-            == DriveCycleFindCommand{.cycle = 3, .element = "end_turn"}
-        );
-
-        auto const clicked = parseDriveCommand(
-            R"({"op":"cycle_click","cycle":3,"hit":7})"
-        );
-        REQUIRE(clicked.has_value());
-        CHECK(
-            std::get<DriveCycleClickCommand>(*clicked)
-            == DriveCycleClickCommand{.cycle = 3, .hit = 7}
         );
 
         auto const settled = parseDriveCommand(R"({"op":"settle","ms":250})");
@@ -183,34 +158,22 @@ namespace uf::cli
         }
     }
 
-    TEST_CASE("a convenience command missing a policy field is rejected, not defaulted")
+    TEST_CASE("the retired model verbs are refused rather than silently accepted")
     {
-        // THE point of the two-layer design. A convenience command carries no policy
-        // defaults of its own, so every timeout and poll interval is the caller's;
-        // modules/task/runtime/ctx.luau keeps the only copy of those numbers. A missing
-        // field must therefore produce a refusal, never a value this binary chose.
-        auto const complete = parseDriveCommand(
-            R"({"op":"wait_page","page":"battle","timeout_ms":30000,"poll_ms":500})"
-        );
-        REQUIRE(complete.has_value());
-        CHECK(
-            std::get<DriveWaitPageCommand>(*complete)
-            == DriveWaitPageCommand{
-                .page         = "battle",
-                .timeout      = millis(30'000),
-                .pollInterval = millis(500),
-            }
-        );
-
-        for (auto const line : std::array<std::string_view, 6>{
-            // wait_page: each of the three required fields, omitted in turn.
-            R"({"op":"wait_page","timeout_ms":30000,"poll_ms":500})",
-            R"({"op":"wait_page","page":"battle","poll_ms":500})",
-            R"({"op":"wait_page","page":"battle","timeout_ms":30000})",
-            // find_click: the same, for its own three.
-            R"({"op":"find_click","timeout_ms":5000,"poll_ms":250})",
-            R"({"op":"find_click","element":"end_turn","poll_ms":250})",
-            R"({"op":"find_click","element":"end_turn","timeout_ms":5000})",
+        // cycle_page, cycle_find, cycle_click and the two convenience commands
+        // built on them went with the C++ page model
+        // (docs/plans/2026-07-31-script-owned-page-model.md 9). An operator
+        // script written against the old protocol must be TOLD, not quietly
+        // dropped: every one of them now falls through to the unrecognized-op
+        // refusal, and the fields they used to carry are unrecognized too.
+        for (auto const line : std::array<std::string_view, 7>{
+            R"({"op":"cycle_page","cycle":3})",
+            R"({"op":"cycle_find","cycle":3,"element":"end_turn"})",
+            R"({"op":"cycle_click","cycle":3,"hit":7})",
+            R"({"op":"wait_page","page":"battle","timeout_ms":30000,"poll_ms":500})",
+            R"({"op":"find_click","element":"end_turn","timeout_ms":5000,"poll_ms":250})",
+            R"({"op":"cycle_close","cycle":3,"element":"end_turn"})",
+            R"({"op":"cycle_close","cycle":3,"hit":7})",
         })
         {
             CAPTURE(line);
@@ -221,19 +184,6 @@ namespace uf::cli
                 == AutomationErrorKind::InvalidResource
             );
         }
-
-        auto const findClick = parseDriveCommand(
-            R"({"op":"find_click","element":"end_turn","timeout_ms":5000,"poll_ms":250})"
-        );
-        REQUIRE(findClick.has_value());
-        CHECK(
-            std::get<DriveFindClickCommand>(*findClick)
-            == DriveFindClickCommand{
-                .element   = "end_turn",
-                .timeout      = millis(5'000),
-                .pollInterval = millis(250),
-            }
-        );
     }
 
     TEST_CASE("the command reader refuses a line it cannot read exactly")
@@ -267,36 +217,25 @@ namespace uf::cli
             == R"({"op":"cycle_open","ok":true,"cycle":2})"
         );
 
-        // A resolved page and an unresolved one must not read alike: null is a
-        // completed resolution the engine already traced, not a failure.
+        // A verb whose answer is a boolean must not read like one whose answer is
+        // absent: `released` and `budget` are written out either way.
         CHECK(
             serializeDriveResult(
-                "cycle_page",
-                DriveResult{
-                    .ok           = true,
-                    .resolvedPage = true,
-                    .page         = std::string{"battle"},
-                }
+                "cycle_close",
+                DriveResult{.ok = true, .released = false}
             )
-            == R"({"op":"cycle_page","ok":true,"page":"battle"})"
-        );
-        CHECK(
-            serializeDriveResult(
-                "cycle_page",
-                DriveResult{.ok = true, .resolvedPage = true}
-            )
-            == R"({"op":"cycle_page","ok":true,"page":null})"
+            == R"({"op":"cycle_close","ok":true,"released":false})"
         );
 
         // The failure kind is the domain's own wire spelling, so an operator reads the
         // same string the trace line and a task's Tier B error carry.
         auto const failed = driveFailure(
-            "cycle_click",
+            "key",
             fail(AutomationErrorKind::StaleObservation, "gone").error()
         );
         CHECK(
             failed
-            == R"({"op":"cycle_click","ok":false,"error":"stale_observation","message":"gone"})"
+            == R"({"op":"key","ok":false,"error":"stale_observation","message":"gone"})"
         );
     }
 

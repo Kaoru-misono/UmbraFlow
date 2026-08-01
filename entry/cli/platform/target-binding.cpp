@@ -46,7 +46,7 @@ namespace uf::cli::platform
         auto const dpi = chosen.dpi().value();
         UF_TRY_VALUE(
             liveFingerprint,
-            annotation::ProjectFingerprint::create(
+            ProjectFingerprint::create(
                 client.width(),
                 client.height(),
                 dpi,

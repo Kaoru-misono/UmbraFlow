@@ -3,10 +3,10 @@
 #include <core/safety/annotations.hpp>
 #include <core/types/integer.hpp>
 
-#include <annotation/recognition.hpp>
 #include <annotation/resource.hpp>
 
 #include <domain/error.hpp>
+#include <domain/frame.hpp>
 #include <domain/ids.hpp>
 #include <domain/key.hpp>
 #include <domain/space.hpp>
@@ -394,11 +394,11 @@ namespace uf::trace
 
         // The capture this event belongs to. Present on every engine.* event, and
         // the join key that lets a reader tie an engine event to the frame it
-        // observed. It is annotation's own FrameIdentity rather than a trace-local
+        // observed. It is domain's own FrameIdentity rather than a trace-local
         // copy of its three fields: the identity has no default constructor, so a
         // site that leaves any part of it out does not compile, and there is one
         // definition of "which frame" instead of two that can drift.
-        std::optional<annotation::FrameIdentity> frame{};
+        std::optional<FrameIdentity> frame{};
 
         std::optional<Page>       page{};
         std::optional<Action>     action{};

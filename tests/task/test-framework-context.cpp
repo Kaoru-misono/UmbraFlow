@@ -1,6 +1,6 @@
 #include "binding-fixture.hpp"
 
-#include <task/capability-surface.hpp>
+#include <task/script-bindings.hpp>
 #include <task/task-context.hpp>
 
 #include <core/error/result.hpp>
@@ -24,8 +24,14 @@
 #include <vector>
 
 // The trusted Luau framework's policy layer, driven through a real task VM:
-// ctx:step, ctx:cycle, ctx:wait_for_page and the interrupt registry, over real
-// recognition and the real cycle ledger.
+// ctx:step and ctx:cycle over the real cycle ledger.
+//
+// `ctx:wait_for_page` and the interrupt registry were most of what this file
+// drove, and both retired with the C++ page model
+// (docs/plans/2026-07-31-script-owned-page-model.md 9). Their successors --
+// observe.wait_until and the interrupt flag walk_edge consults -- are exercised
+// against a real session in test-script-owned-model.cpp, including the K-in-a-row
+// streak, the host-minted timeout and the absence of any default budget.
 //
 // Every case is driven from fake ENGINE ports and asserts only on facts the host
 // can see -- how many frames were served, how many clicks were delivered,
@@ -38,13 +44,13 @@
 // The companion file is test-framework-surface.cpp, which drives the SAME
 // framework against a scripted stand-in for the private capability surface and
 // asserts the primitive call sequence instead. What stays here is what a fake
-// surface cannot reach: real page recognition, real hit authorization, and the
-// ledger's own answer about the frame it is holding.
+// surface cannot reach: the real ledger's own answer about the frame it is
+// holding, and the real terminal latch.
 namespace uf::task
 {
     namespace
     {
-        // A build over one of the two runtimes, with observing pointers to the
+        // A build over the fixture geometry, with observing pointers to the
         // frame source and the click sink. The frame count is what several cases
         // below assert against: a refusal that still spent a capture would be a
         // weaker guarantee than the one under test.
@@ -61,15 +67,13 @@ namespace uf::task
         // completes here is also a run whose step, retry and interrupt sequence
         // the host accepted -- and the interrupt case reads the sink directly.
         [[nodiscard]]
-        auto buildOver(RuntimeParts parts, std::vector<Frame> frames)
-            -> FrameworkBuild
+        auto buildOver(std::vector<Frame> frames) -> FrameworkBuild
         {
             auto frameSource     = std::make_unique<FakeFrameSource>(std::move(frames));
             auto* const p_frames = frameSource.get();
             auto traceSink       = std::make_unique<RecordingTraceSink>();
             auto* const p_traces = traceSink.get();
-            auto built           = buildBindingOver(
-                std::move(parts),
+            auto built           = buildBindingWith(
                 std::move(frameSource),
                 std::stop_token{},
                 std::move(traceSink)
@@ -101,7 +105,7 @@ namespace uf::task
         [[nodiscard]]
         auto unknownFrames(std::size_t count, FrameId frameId) -> std::vector<Frame>
         {
-            auto const fingerprint = anno::test::fingerprint(3, 1, 96, 96);
+            auto const fingerprint = fixtureFingerprint();
             auto frames            = std::vector<Frame>{};
             for (std::size_t index = 0; index < count; ++index)
             {
@@ -152,7 +156,7 @@ namespace uf::task
 
         TEST_CASE("ctx:cycle closes its cycle on every exit path")
         {
-            auto framework = buildOver(singlePageRuntime(), resolvingFrames(FrameId{60}));
+            auto framework = buildOver(resolvingFrames(FrameId{60}));
             REQUIRE(framework.built.session.has_value());
             TaskContext context{
                 *std::move(framework.built.session),
@@ -164,8 +168,6 @@ namespace uf::task
             // holds the 8 MiB frame.
             constexpr std::string_view normal = R"lua(
                 return ctx:cycle(function(cycle)
-                    local page = cycle:page()
-                    if page == nil or not page:is(uf.pages.page_a) then return 0 end
                     return 1
                 end)
             )lua";
@@ -182,11 +184,11 @@ namespace uf::task
             CHECK(runBound(context, framework.built, luauError) == doctest::Approx(1.0));
             CHECK_FALSE(context.hasOpenCycle());
 
-            // A Tier B raise from a primitive INSIDE the block: a find handed
-            // something that is not an element.
+            // A Tier B raise from a primitive INSIDE the block: a match handed
+            // something that is not a cycle ticket.
             constexpr std::string_view tierB = R"lua(
                 local ok, err = ctx:try(function()
-                    ctx:cycle(function(cycle) cycle:find(nil) end)
+                    ctx:cycle(function() ctx:cycle_match(nil, nil, 0, 0, 1, 1) end)
                 end)
                 if ok ~= false then return 0 end
                 if type(err) ~= 'userdata' then return 0 end
@@ -205,7 +207,7 @@ namespace uf::task
 
         TEST_CASE("A nested ctx:cycle fails in Luau, not at the host's invariant")
         {
-            auto framework = buildOver(singlePageRuntime(), resolvingFrames(FrameId{61}));
+            auto framework = buildOver(resolvingFrames(FrameId{61}));
             REQUIRE(framework.built.session.has_value());
             TaskContext context{
                 *std::move(framework.built.session),
@@ -252,237 +254,9 @@ namespace uf::task
             CHECK(framework.frames->captureCount() == 2U);
         }
 
-        TEST_CASE("ctx:wait_for_page resolves on a later frame and runs its block there")
-        {
-            auto frames = unknownFrames(2, FrameId{62});
-            frames.emplace_back(
-                grayFrame(
-                    anno::test::fingerprint(3, 1, 96, 96),
-                    resolvingPixels(),
-                    FrameId{63}
-                )
-            );
-            auto framework = buildOver(singlePageRuntime(), std::move(frames));
-            REQUIRE(framework.built.session.has_value());
-            TaskContext context{
-                *std::move(framework.built.session),
-                *framework.built.recorder,
-            };
-
-            constexpr std::string_view source = R"lua(
-                local ran = 0
-                task.define {
-                    run = function(ctx)
-                        ctx:step('daily', function()
-                            ctx:wait_for_page(
-                                uf.pages.page_a,
-                                { timeout_ms = 60000, poll_ms = 0 },
-                                function(home)
-                                    local hit = home:find(uf.elements.action_target)
-                                    if hit == nil then return end
-                                    home:click(hit)
-                                    ran = 1
-                                end
-                            )
-                        end)
-                    end,
-                }
-                return ran
-            )lua";
-
-            CHECK(runBound(context, framework.built, source) == doctest::Approx(1.0));
-            CHECK(framework.built.clicks->clickCount() == 1);
-            CHECK(framework.frames->captureCount() == 3U);
-            CHECK_FALSE(context.hasOpenCycle());
-        }
-
-        TEST_CASE("ctx:wait_for_page times out as a Tier B error the host minted")
-        {
-            auto framework = buildOver(singlePageRuntime(), unknownFrames(1, FrameId{64}));
-            REQUIRE(framework.built.session.has_value());
-            TaskContext context{
-                *std::move(framework.built.session),
-                *framework.built.recorder,
-            };
-
-            // A zero budget takes exactly one turn: the loop observes once, the
-            // deadline is already spent, and the timeout is raised. It is a real
-            // automation error rather than a Luau string -- host-minted
-            // userdata, the domain's own `timeout` spelling, retryable false
-            // (Timeout's FailureResponse is Abort) -- which is what lets a
-            // project catch it and a retry policy name it.
-            constexpr std::string_view source = R"lua(
-                local ok, err = ctx:try(function()
-                    ctx:wait_for_page(
-                        uf.pages.page_a,
-                        { timeout_ms = 0 },
-                        function() end
-                    )
-                end)
-                if ok ~= false then return 0 end
-                if type(err) ~= 'userdata' then return 0 end
-                if err.kind ~= uf.errors.timeout then return 0 end
-                if err.retryable ~= false then return 0 end
-                if getmetatable(err) ~= 'uf.error' then return 0 end
-
-                -- A timed-out wait left nothing open, so a bare open still works.
-                local ticket = ctx:cycle_open()
-                ctx:cycle_close(ticket)
-                return 1
-            )lua";
-
-            CHECK(runBound(context, framework.built, source) == doctest::Approx(1.0));
-            CHECK(framework.frames->captureCount() == 2U);
-            CHECK_FALSE(context.hasOpenCycle());
-        }
-
-        TEST_CASE("An interrupt handles a popup during a wait and the wait continues")
-        {
-            // The capability the whole three-layer design exists for. The popup
-            // appears on the first frame, in the middle of a wait for another
-            // page; its handler dismisses it; the wait then keeps polling and
-            // finds its target two frames later.
-            auto const fingerprint = anno::test::fingerprint(3, 1, 96, 96);
-            auto frames            = std::vector<Frame>{};
-            frames.emplace_back(grayFrame(fingerprint, popupPixels(), FrameId{65}));
-            frames.emplace_back(grayFrame(fingerprint, unknownPixels(), FrameId{66}));
-            frames.emplace_back(grayFrame(fingerprint, resolvingPixels(), FrameId{67}));
-
-            auto framework = buildOver(interruptRuntime(), std::move(frames));
-            REQUIRE(framework.built.session.has_value());
-            TaskContext context{
-                *std::move(framework.built.session),
-                *framework.built.recorder,
-            };
-
-            constexpr std::string_view source = R"lua(
-                local handled = 0
-                local clicked = 0
-
-                local popup = task.interrupt {
-                    id = 'popup',
-                    when = uf.pages.popup,
-                    max_hits = 3,
-                    handle = function(ctx, cycle)
-                        handled += 1
-                        local close = cycle:find(uf.elements.close_dialog)
-                        if close ~= nil then
-                            cycle:click(close)
-                        end
-                    end,
-                }
-
-                task.define {
-                    interrupts = { popup },
-                    run = function(ctx)
-                        ctx:wait_for_page(
-                            uf.pages.page_a,
-                            { timeout_ms = 60000, poll_ms = 0 },
-                            function(home)
-                                local hit = home:find(uf.elements.action_target)
-                                if hit ~= nil then
-                                    home:click(hit)
-                                    clicked += 1
-                                end
-                            end
-                        )
-                    end,
-                }
-
-                if handled ~= 1 then return 0 end
-                if clicked ~= 1 then return 0 end
-                return 1
-            )lua";
-
-            CHECK(runBound(context, framework.built, source) == doctest::Approx(1.0));
-
-            // Two clicks: the popup's close button and the target's own. One
-            // alone would mean either the popup was never handled or the wait
-            // never continued past it.
-            CHECK(framework.built.clicks->clickCount() == 2);
-            CHECK(framework.frames->captureCount() == 3U);
-            CHECK_FALSE(context.hasOpenCycle());
-
-            // And it is in the record as a match that was handled. The pair is
-            // what the host's state machine checks -- a close must follow a match
-            // of the same id -- so a framework that emitted one without the other
-            // would have failed this run rather than reaching these lines.
-            CHECK(
-                semanticKinds(framework.traces->events())
-                == std::vector<trace::TraceEventKind>{
-                    trace::TraceEventKind::FrameworkInterruptMatched,
-                    trace::TraceEventKind::FrameworkInterruptHandled,
-                }
-            );
-        }
-
-        TEST_CASE("An interrupt stops firing once its hit budget is spent")
-        {
-            // A popup whose handler never actually dismisses it. Without a hit
-            // budget it would be re-handled on every poll for the whole wait;
-            // max_hits is what turns "this handler is not working" into a bounded
-            // number of attempts and then a timeout.
-            auto const fingerprint = anno::test::fingerprint(3, 1, 96, 96);
-            auto frames            = std::vector<Frame>{};
-            frames.emplace_back(grayFrame(fingerprint, popupPixels(), FrameId{68}));
-
-            auto framework = buildOver(interruptRuntime(), std::move(frames));
-            REQUIRE(framework.built.session.has_value());
-            TaskContext context{
-                *std::move(framework.built.session),
-                *framework.built.recorder,
-            };
-
-            constexpr std::string_view source = R"lua(
-                local handled = 0
-
-                local popup = task.interrupt {
-                    id = 'popup',
-                    when = uf.pages.popup,
-                    max_hits = 2,
-                    handle = function() handled += 1 end,
-                }
-
-                local timedOut = 0
-                task.define {
-                    interrupts = { popup },
-                    run = function(ctx)
-                        local ok, err = ctx:try(function()
-                            ctx:wait_for_page(
-                                uf.pages.page_a,
-                                { timeout_ms = 200, poll_ms = 0 },
-                                function() end
-                            )
-                        end)
-                        if ok == false and err.kind == uf.errors.timeout then
-                            timedOut = 1
-                        end
-                    end,
-                }
-
-                if timedOut ~= 1 then return 0 end
-                if handled ~= 2 then return 0 end
-                return 1
-            )lua";
-
-            CHECK(runBound(context, framework.built, source) == doctest::Approx(1.0));
-            CHECK(framework.built.clicks->clickCount() == 0);
-            CHECK_FALSE(context.hasOpenCycle());
-
-            // A popup that keeps matching after its budget is spent is recorded
-            // as matched-and-exhausted rather than silently skipped, which is the
-            // whole difference between "the handler is not working" and "the
-            // popup went away".
-            auto const kinds = semanticKinds(framework.traces->events());
-            REQUIRE(kinds.size() >= 3U);
-            CHECK(kinds[0] == trace::TraceEventKind::FrameworkInterruptMatched);
-            CHECK(kinds[1] == trace::TraceEventKind::FrameworkInterruptHandled);
-            CHECK(kinds.back() == trace::TraceEventKind::FrameworkInterruptExhausted);
-        }
-
         TEST_CASE("ctx:step nests strictly and leaves no step open behind a raise")
         {
-            auto framework = buildOver(singlePageRuntime(), unknownFrames(1, FrameId{70}));
+            auto framework = buildOver(unknownFrames(1, FrameId{70}));
             REQUIRE(framework.built.session.has_value());
             TaskContext context{
                 *std::move(framework.built.session),
@@ -527,7 +301,9 @@ namespace uf::task
 
                 -- The same for a Tier B raise from a primitive.
                 local caught = ctx:try(function()
-                    ctx:step('tier_b', function() ctx:cycle_page(nil) end)
+                    ctx:step('tier_b', function()
+                        ctx:cycle_match(nil, nil, 0, 0, 1, 1)
+                    end)
                 end)
                 if caught ~= false then return 0 end
                 if path() ~= '' then return 0 end
@@ -537,21 +313,16 @@ namespace uf::task
             CHECK(runBound(context, framework.built, source) == doctest::Approx(1.0));
         }
 
-        TEST_CASE("A cancel inside the wait loop ends the run and no retry recovers it")
+        TEST_CASE("A cancel inside an observation loop ends the run and no retry recovers it")
         {
             auto stop = std::stop_source{};
             auto frameSource = std::make_unique<StopOnFirstCaptureFrameSource>(
-                grayFrame(
-                    anno::test::fingerprint(3, 1, 96, 96),
-                    unknownPixels(),
-                    FrameId{71}
-                ),
+                grayFrame(fixtureFingerprint(), unknownPixels(), FrameId{71}),
                 stop
             );
             auto* const p_frames = frameSource.get();
 
-            auto built = buildBindingOver(
-                singlePageRuntime(),
+            auto built = buildBindingWith(
                 std::move(frameSource),
                 stop.get_token(),
                 std::make_unique<DiscardingTraceSink>()
@@ -564,25 +335,23 @@ namespace uf::task
             };
 
             // The stop is requested from inside the first capture, so it lands
-            // while the framework's wait loop is running. mark() is the
+            // while the script's own observation loop is running. mark() is the
             // discriminator: it is reached only if the script kept executing
             // past the cancel, and a retry policy with five attempts is exactly
             // the shape that would try to.
             constexpr std::string_view source = R"lua(
                 local swallowed = pcall(function()
                     ctx:retry({ attempts = 5 }, function()
-                        ctx:wait_for_page(
-                            uf.pages.page_a,
-                            { timeout_ms = 60000, poll_ms = 10 },
-                            function() end
-                        )
+                        for _ = 1, 10 do
+                            ctx:cycle(function() end)
+                        end
                     end)
                 end)
                 mark()
                 return 1
             )lua";
 
-            auto const run = runWithMark(context, built.surface, stop.get_token(), source);
+            auto const run = runWithMark(context, stop.get_token(), source);
             REQUIRE_FALSE(run.result.has_value());
             CHECK(
                 automationErrorKind(run.result.error())
@@ -597,11 +366,7 @@ namespace uf::task
         {
             auto stop = std::stop_source{};
             auto frameSource = std::make_unique<StopOnFirstCaptureFrameSource>(
-                grayFrame(
-                    anno::test::fingerprint(3, 1, 96, 96),
-                    unknownPixels(),
-                    FrameId{72}
-                ),
+                grayFrame(fixtureFingerprint(), unknownPixels(), FrameId{72}),
                 stop
             );
             auto* const p_frames = frameSource.get();
@@ -609,10 +374,9 @@ namespace uf::task
             // No stop token on the ENGINE config and none on the VM interrupt,
             // deliberately: the engine would happily capture again and the
             // interrupt never fires, so the only thing that can refuse the
-            // primitives after the cancelled wait is the terminal latch the
-            // wait itself set.
-            auto built = buildBindingOver(
-                singlePageRuntime(),
+            // primitives after the cancelled loop is the terminal latch the
+            // loop itself set.
+            auto built = buildBindingWith(
                 std::move(frameSource),
                 std::stop_token{},
                 std::make_unique<DiscardingTraceSink>()
@@ -629,11 +393,13 @@ namespace uf::task
                 local swallowed, sentinel = pcall(function()
                     ctx:retry({ attempts = 5 }, function()
                         tries += 1
-                        ctx:wait_for_page(
-                            uf.pages.page_a,
-                            { timeout_ms = 60000, poll_ms = 10 },
-                            function() end
-                        )
+                        for _ = 1, 10 do
+                            ctx:cycle(function() end)
+                            -- The time verbs are what consult the run's cancel
+                            -- source; the observation verbs reach the engine,
+                            -- whose own token is deliberately unarmed here.
+                            ctx:wait(ctx:deadline(10), 10)
+                        end
                     end)
                 end)
                 if swallowed then return 0 end
@@ -646,10 +412,10 @@ namespace uf::task
                 -- And swallowing it bought nothing: the next primitive refuses
                 -- before it reaches the engine.
                 if pcall(function() return ctx:cycle_open() end) then return 0 end
-                local waited = pcall(function()
-                    ctx:wait_for_page(uf.pages.page_a, nil, function() end)
+                local scoped = pcall(function()
+                    ctx:cycle(function() end)
                 end)
-                if waited then return 0 end
+                if scoped then return 0 end
                 return 1
             )lua";
 

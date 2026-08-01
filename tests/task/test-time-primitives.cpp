@@ -1,6 +1,6 @@
 #include "binding-fixture.hpp"
 
-#include <task/capability-surface.hpp>
+#include <task/script-bindings.hpp>
 #include <task/task-context.hpp>
 
 #include <core/error/result.hpp>

@@ -11,8 +11,6 @@
 #include <core/types/integer.hpp>
 
 #include <annotation/content-hash.hpp>
-#include <annotation/resource.hpp>
-#include <annotation/recognition.hpp>
 
 #include <domain/error.hpp>
 #include <domain/key.hpp>
@@ -76,66 +74,6 @@ namespace uf::task
         return m_cycles.close(ticket);
     }
 
-    auto TaskContext::cyclePage(
-        CycleTicket ticket
-    ) -> Result<std::optional<annotation::ResolvedPage>>
-    {
-        UF_TRY(m_cycles.requireOpen(ticket));
-        UF_TRY_VALUE(outcome, m_session.resolvePage(m_cycles.observation()));
-
-        auto const* const p_resolved =
-            std::get_if<annotation::ResolvedPage>(&outcome);
-        if (p_resolved == nullptr)
-        {
-            // Unknown or Ambiguous: a completed resolution the engine already
-            // traced, and the cycle keeps no evidence, so a later click on it
-            // has nothing to authorize against.
-            return std::nullopt;
-        }
-
-        m_cycles.rememberPage(*p_resolved);
-        return *p_resolved;
-    }
-
-    auto TaskContext::cycleFind(
-        CycleTicket ticket,
-        annotation::ElementId elementId
-    ) -> Result<std::optional<engine::ActionFound>>
-    {
-        UF_TRY(m_cycles.requireOpen(ticket));
-
-        // Locating an element is page-scoped: the reference row carries the
-        // search region this page refines and the appearance it pins, and a
-        // page that does not exercise interact on the element has no action
-        // there to find. So the cycle's own resolved page is what the search
-        // runs against -- the same page a click on the result would be
-        // authorized by, and one no script can substitute.
-        //
-        // A cycle that resolved none has nothing to search against. Refusing
-        // here rather than reporting an absence keeps "the search looked and
-        // found nothing" distinct from "the search could not run".
-        //
-        // The message names the missing STEP rather than a refused action,
-        // because that is what happened: nothing was attempted here. The kind
-        // says the same thing, which is why it is PageUnresolved and not
-        // ActionRejected -- the latter is reserved for a page that resolved and
-        // then did not authorise the element, which is a different repair.
-        auto const pageId = m_cycles.resolvedPageId();
-        if (!pageId)
-        {
-            return fail(
-                AutomationErrorKind::PageUnresolved,
-                "this observation cycle has not resolved a page, and finding an "
-                "element is page-scoped: the refined search region, the pinned "
-                "appearance and the interact authorisation all live on the "
-                "page's reference to the element, so a find has nothing to work "
-                "from until a page resolves. Resolve this cycle's page first, "
-                "then find"
-            );
-        }
-        return m_session.findAction(m_cycles.observation(), *pageId, elementId);
-    }
-
     auto TaskContext::cycleMatch(
         CycleTicket ticket,
         TemplateTicket templateTicket,
@@ -190,11 +128,11 @@ namespace uf::task
     ) -> Result<LoadedTemplate>
     {
         UF_TRY_VALUE(ticket, m_templates.load(pngBytes));
-        auto const* p_template = m_templates.find(ticket);
-        UF_CHECK(p_template != nullptr);
+        auto const* p_hash = m_templates.hashOf(ticket);
+        UF_CHECK(p_hash != nullptr);
         return LoadedTemplate{
             .ticket = ticket,
-            .hash   = p_template->hash,
+            .hash   = *p_hash,
         };
     }
 
@@ -213,30 +151,6 @@ namespace uf::task
         return m_projectFiles.write(name, bytes);
     }
 
-    auto TaskContext::cycleClick(
-        CycleTicket ticket,
-        uint64 hitCycleOrdinal,
-        engine::ActionFound const& action
-    ) -> Result<engine::ActReceipt>
-    {
-        // Both the ticket and the hit are checked against the one open cycle
-        // before it is spent, so a stale hit leaves the cycle open for the
-        // framework to close rather than destroying a frame the script still
-        // has a live ticket for.
-        UF_TRY(m_cycles.requireOpen(ticket));
-        UF_TRY(m_cycles.requireOpenOrdinal(hitCycleOrdinal));
-        UF_TRY_VALUE(consumed, m_cycles.consume(ticket));
-
-        // act consumes the frame by rvalue, so the cycle is spent whatever the
-        // outcome; consume already dropped the ledger entry, which is what makes
-        // every later use of this ticket fail StaleObservation.
-        return m_session.act(
-            std::move(consumed.observation),
-            consumed.page,
-            action
-        );
-    }
-
     auto TaskContext::cycleClickPoint(
         CycleTicket ticket,
         std::optional<uint64> hitCycleOrdinal,
@@ -253,26 +167,23 @@ namespace uf::task
             UF_TRY(m_cycles.requireOpenOrdinal(*hitCycleOrdinal));
         }
 
-        // spend rather than consume: the resolved page that consume demands is
-        // the evidence for an ELEMENT, and there is no element here. The rest of
-        // the fence -- fingerprint, lease, single delivery -- is the engine's,
-        // where it is shared with act().
+        // The rest of the fence -- fingerprint, lease, single delivery -- is the
+        // engine's; what the ledger contributes is that the frame leaves it here,
+        // so this ticket delivers nothing else.
         UF_TRY_VALUE(observation, m_cycles.spend(ticket));
         return m_session.clickPoint(std::move(observation), point);
     }
 
     auto TaskContext::cycleKey(CycleTicket ticket, KeyName key) -> Status
     {
-        // spend rather than consume: a keystroke names no coordinate, so there is
-        // no page for it to be authorized against (see the header). The ticket is
-        // still checked against the one open cycle first, so a stale ticket leaves
-        // the cycle open for the framework to close rather than destroying a frame
-        // a live ticket still names.
+        // The ticket is checked against the one open cycle first, so a stale
+        // ticket leaves the cycle open for the framework to close rather than
+        // destroying a frame a live ticket still names.
         UF_TRY_VALUE(observation, m_cycles.spend(ticket));
 
-        // pressKey consumes the frame by rvalue, so the cycle is spent whatever the
-        // outcome; spend already dropped the ledger entry, which is what makes
-        // every later use of this ticket fail StaleObservation.
+        // pressKey consumes the frame by rvalue, so the cycle is spent whatever
+        // the outcome; spend already dropped the ledger entry, which is what
+        // makes every later use of this ticket fail StaleObservation.
         UF_TRY(m_session.pressKey(std::move(observation), key));
         return ok();
     }

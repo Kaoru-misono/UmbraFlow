@@ -1,13 +1,8 @@
-#include "../annotation/test-helpers.hpp"
-
-#include <task/capability-surface.hpp>
+#include <task/script-bindings.hpp>
 #include <task/framework-bundle.hpp>
 
 #include <script/engine.hpp>
 #include <script/testing/environment-probe.hpp>
-
-#include <annotation/capabilities.hpp>
-#include <annotation/catalog.hpp>
 
 #include <core/error/result.hpp>
 #include <core/safety/annotations.hpp>
@@ -34,72 +29,17 @@ namespace uf::task
 {
     namespace
     {
-        namespace at = annotation::test;
-
-        constexpr auto k_anchorId  = "00000000-0000-0000-0000-000000000001";
-        constexpr auto k_dailyId   = "00000000-0000-0000-0000-000000000002";
-        constexpr auto k_battleId  = "00000000-0000-0000-0000-000000000003";
-        constexpr auto k_pageId    = "00000000-0000-0000-0000-000000000101";
-
-        // A minimal but complete catalog: one identify-only element, two
-        // interactive ones, and one page referencing all three. Built from the
-        // annotation module's own test fixtures (tests/annotation/test-helpers.hpp)
-        // so the surface is driven by exactly the catalog shape the engine loads
-        // at runtime.
-        auto buildCatalog() -> annotation::RecognitionCatalog
-        {
-            auto const fingerprint = at::fingerprint();
-            auto const pageId      = at::pageId(k_pageId);
-            auto const anchorId    = at::elementId(k_anchorId);
-            auto const dailyId     = at::elementId(k_dailyId);
-            auto const battleId    = at::elementId(k_battleId);
-
-            auto elements = std::vector<annotation::CompiledElement>{};
-            elements.push_back(at::element(
-                fingerprint,
-                anchorId,
-                "home_marker",
-                at::capabilities(annotation::Identify{}),
-                at::pixelRect(0, 0, 4, 4),
-                {at::compiledAppearance("default", at::pixelRect(0, 0, 1, 1))}
-            ));
-            elements.push_back(at::element(
-                fingerprint,
-                dailyId,
-                "daily_button",
-                at::capabilities(std::nullopt, annotation::Interact{}),
-                at::pixelRect(0, 0, 4, 4),
-                {at::compiledAppearance("default", at::pixelRect(1, 1, 1, 1))}
-            ));
-            elements.push_back(at::element(
-                fingerprint,
-                battleId,
-                "battle",
-                at::capabilities(std::nullopt, annotation::Interact{}),
-                at::pixelRect(0, 0, 4, 4),
-                {at::compiledAppearance("default", at::pixelRect(2, 2, 1, 1))}
-            ));
-
-            return at::catalog(
-                fingerprint,
-                std::move(elements),
-                {at::page(pageId, "home")},
-                {
-                    at::reference(pageId, anchorId, at::identifiesAs()),
-                    at::reference(pageId, dailyId, at::interacts()),
-                    at::reference(pageId, battleId, at::interacts()),
-                }
-            );
-        }
-
-        // Builds an engine whose only host capability is the uf table for the
-        // catalog above.
-        auto engineWithUfRoot(CapabilitySurface const& surface)
-            -> Result<script::Engine>
+        // An engine whose only host capability is the frozen `uf` root.
+        //
+        // The root carries `uf.errors` and nothing else since the script-owned
+        // page model retired the element and page name tables
+        // (docs/plans/2026-07-31-script-owned-page-model.md 9), so these cases
+        // are the whole of what that surface still promises.
+        auto engineWithUfRoot() -> Result<script::Engine>
         {
             auto config              = script::EngineConfig{};
-            config.installHostTables = surface.installer();
-            config.projectGlobals    = CapabilitySurface::projectGlobals();
+            config.installHostTables = scriptHostTableInstaller();
+            config.projectGlobals    = scriptProjectGlobals();
             return script::Engine::create(config);
         }
 
@@ -209,84 +149,14 @@ namespace uf::task
             return spellings;
         }
 
-        TEST_CASE("CapabilitySurface exposes only interactive elements and every page")
+        TEST_CASE("The uf root and its error table reject every write")
         {
-            auto const catalog = buildCatalog();
-            auto surface       = CapabilitySurface::create(catalog);
-            REQUIRE(surface.has_value());
-
-            // An element that only identifies is not findable, so only the two
-            // that declare interact are exposed; every page is exposed.
-            CHECK(surface->elementCount() == 2);
-            CHECK(surface->pageCount() == 1);
-        }
-
-        TEST_CASE("Scripts read named handles and see nil for absent or identify-only names")
-        {
-            auto const catalog = buildCatalog();
-            auto surface       = CapabilitySurface::create(catalog);
-            REQUIRE(surface.has_value());
-
-            auto engine = engineWithUfRoot(*surface);
-            REQUIRE(engine.has_value());
-
-            constexpr std::string_view present[] = {
-                "uf.elements.daily_button ~= nil",
-                "uf.elements.battle ~= nil",
-                "uf.pages.home ~= nil",
-            };
-            for (std::string_view const expr : present)
-            {
-                INFO("expression: ", expr);
-                CHECK(truthy(*engine, expr) == doctest::Approx(1.0));
-            }
-
-            constexpr std::string_view absent[] = {
-                // An element that only identifies is page-internal evidence,
-                // never a findable handle.
-                "uf.elements.home_marker == nil",
-                // Names that do not exist resolve to nil, not an error.
-                "uf.elements.does_not_exist == nil",
-                "uf.pages.does_not_exist == nil",
-            };
-            for (std::string_view const expr : absent)
-            {
-                INFO("expression: ", expr);
-                CHECK(truthy(*engine, expr) == doctest::Approx(1.0));
-            }
-        }
-
-        TEST_CASE("The uf tables and handles reject every write")
-        {
-            auto const catalog = buildCatalog();
-            auto surface       = CapabilitySurface::create(catalog);
-            REQUIRE(surface.has_value());
-
-            auto engine = engineWithUfRoot(*surface);
+            auto engine = engineWithUfRoot();
             REQUIRE(engine.has_value());
 
             SUBCASE("a new key on the uf root is rejected")
             {
                 expectRejected(*engine, "uf.injected = 1\nreturn 0");
-            }
-            SUBCASE("a new key on uf.elements is rejected")
-            {
-                expectRejected(*engine, "uf.elements.injected = 1\nreturn 0");
-            }
-            SUBCASE("overwriting an existing element handle is rejected")
-            {
-                expectRejected(*engine, "uf.elements.daily_button = 1\nreturn 0");
-            }
-            SUBCASE("a new key on uf.pages is rejected")
-            {
-                expectRejected(*engine, "uf.pages.injected = 1\nreturn 0");
-            }
-            SUBCASE("writing a field on a handle is rejected")
-            {
-                expectRejected(
-                    *engine,
-                    "uf.elements.daily_button.x = 1\nreturn 0"
-                );
             }
             SUBCASE("a new key on uf.errors is rejected")
             {
@@ -298,13 +168,22 @@ namespace uf::task
             }
         }
 
+        TEST_CASE("The retired element and page tables are absent rather than empty")
+        {
+            auto engine = engineWithUfRoot();
+            REQUIRE(engine.has_value());
+
+            // An empty table would let `uf.elements.whatever` read as nil and a
+            // script go on believing the surface exists. The tables are gone, so
+            // the ROOT itself answers nil for them -- which is what tells a script
+            // written against the old surface that the model moved.
+            CHECK(truthy(*engine, "uf.elements == nil") == doctest::Approx(1.0));
+            CHECK(truthy(*engine, "uf.pages == nil") == doctest::Approx(1.0));
+        }
+
         TEST_CASE("uf.errors holds exactly one constant per automation error kind")
         {
-            auto const catalog = buildCatalog();
-            auto surface       = CapabilitySurface::create(catalog);
-            REQUIRE(surface.has_value());
-
-            auto engine = engineWithUfRoot(*surface);
+            auto engine = engineWithUfRoot();
             REQUIRE(engine.has_value());
 
             // None missing, and every constant is its own key, so a script writes
@@ -338,11 +217,7 @@ namespace uf::task
 
         TEST_CASE("A trace line and uf.errors spell every error kind identically")
         {
-            auto const catalog = buildCatalog();
-            auto surface       = CapabilitySurface::create(catalog);
-            REQUIRE(surface.has_value());
-
-            auto engine = engineWithUfRoot(*surface);
+            auto engine = engineWithUfRoot();
             REQUIRE(engine.has_value());
 
             // The invariant the two deleted copies of this mapping asserted in
@@ -360,81 +235,6 @@ namespace uf::task
                 INFO("traced kind: ", wire);
                 CHECK(truthy(*engine, expression) == doctest::Approx(1.0));
             }
-        }
-
-        TEST_CASE("Handles are opaque userdata that leak neither metatable nor fields")
-        {
-            auto const catalog = buildCatalog();
-            auto surface       = CapabilitySurface::create(catalog);
-            REQUIRE(surface.has_value());
-
-            auto engine = engineWithUfRoot(*surface);
-            REQUIRE(engine.has_value());
-
-            // A handle is userdata, and its metatable and tostring reveal only the
-            // fixed kind label -- never the internal id or an address.
-            constexpr std::string_view opaque[] = {
-                "type(uf.elements.daily_button) == 'userdata'",
-                "type(uf.pages.home) == 'userdata'",
-                "tostring(uf.elements.daily_button) == 'uf.element'",
-                "tostring(uf.pages.home) == 'uf.page'",
-                "getmetatable(uf.elements.daily_button) == 'uf.element'",
-                "getmetatable(uf.pages.home) == 'uf.page'",
-                // A field read of a handle yields nil (the method table is empty
-                // this wave), never any internal state.
-                "uf.elements.daily_button.id == nil",
-                // pairs() cannot enumerate a userdata's contents.
-                "pcall(function() for _ in pairs(uf.elements.daily_button) do end end) == false",
-            };
-            for (std::string_view const expr : opaque)
-            {
-                INFO("expression: ", expr);
-                CHECK(truthy(*engine, expr) == doctest::Approx(1.0));
-            }
-        }
-
-        TEST_CASE("The handle metatable is protected against replacement")
-        {
-            auto const catalog = buildCatalog();
-            auto surface       = CapabilitySurface::create(catalog);
-            REQUIRE(surface.has_value());
-
-            auto engine = engineWithUfRoot(*surface);
-            REQUIRE(engine.has_value());
-
-            // setmetatable on a handle is refused: the guard cannot be lifted to
-            // reopen the handle for indexing or writing.
-            expectRejected(
-                *engine,
-                "setmetatable(uf.elements.daily_button, {})\nreturn 0"
-            );
-        }
-
-        TEST_CASE("Distinct handles carry distinct identity, equal handles compare equal")
-        {
-            auto const catalog = buildCatalog();
-            auto surface       = CapabilitySurface::create(catalog);
-            REQUIRE(surface.has_value());
-
-            auto engine = engineWithUfRoot(*surface);
-            REQUIRE(engine.has_value());
-
-            // Each named handle is one shared userdata object, so repeated lookups
-            // are identical, while two different names are two different objects.
-            CHECK(
-                truthy(
-                    *engine,
-                    "uf.elements.daily_button == uf.elements.daily_button"
-                )
-                == doctest::Approx(1.0)
-            );
-            CHECK(
-                truthy(
-                    *engine,
-                    "uf.elements.daily_button ~= uf.elements.battle"
-                )
-                == doctest::Approx(1.0)
-            );
         }
 
         // The distinctive value modules/task/runtime/ctx.luau assigns as a
@@ -480,7 +280,7 @@ namespace uf::task
                     -- on a real task VM, `probe` when the same source is loaded
                     -- through the script-layer probe. All of them are listed so
                     -- one scan serves both sides.
-                    frameworkSentinel, frameworkTaskRegistry,
+                    frameworkSentinel,
                     uf, ctx, task, probe,
                     _G, getfenv, setfenv, newproxy, gcinfo, coroutine, debug,
                     _VERSION, assert, error, getmetatable, ipairs, next, pairs,
@@ -495,10 +295,6 @@ namespace uf::task
 
         TEST_CASE("A task VM's project environment reaches ctx and nothing else framework-side")
         {
-            auto const catalog = buildCatalog();
-            auto surface       = CapabilitySurface::create(catalog);
-            REQUIRE(surface.has_value());
-
             auto const entries = frameworkBundleEntries();
             REQUIRE_FALSE(entries.empty());
             auto const context = entries.front();
@@ -531,8 +327,8 @@ namespace uf::task
                 auto engine = script::Engine::create(
                     script::EngineConfig{
                         .frameworkModules        = frameworkScriptModules(),
-                        .installHostTables       = surface->installer(),
-                        .projectGlobals          = CapabilitySurface::projectGlobals(),
+                        .installHostTables       = scriptHostTableInstaller(),
+                        .projectGlobals          = scriptProjectGlobals(),
                         .frameworkProjectGlobals = frameworkProjectGlobals(),
                     }
                 );
@@ -544,17 +340,12 @@ namespace uf::task
 
                 // What the project DOES see of the framework is exactly the two
                 // published exports, named rather than searched for: ctx and
-                // task are there, and the framework globals beside them -- the
-                // sentinel and the registry channel the two modules talk over --
-                // are not.
+                // task are there, and the framework-only global beside them is
+                // not.
                 CHECK(truthy(*engine, "type(ctx) == 'table'") == doctest::Approx(1.0));
                 CHECK(truthy(*engine, "type(task) == 'table'") == doctest::Approx(1.0));
                 CHECK(
                     truthy(*engine, "frameworkSentinel == nil") == doctest::Approx(1.0)
-                );
-                CHECK(
-                    truthy(*engine, "frameworkTaskRegistry == nil")
-                    == doctest::Approx(1.0)
                 );
             }
         }

@@ -50,47 +50,6 @@ namespace uf::annotation
         }
     }
 
-    auto searchStopKind(SadSearchStopReason reason) noexcept -> AutomationErrorKind
-    {
-        switch (reason)
-        {
-        case SadSearchStopReason::Cancelled: return AutomationErrorKind::Cancelled;
-        case SadSearchStopReason::TimedOut: return AutomationErrorKind::Timeout;
-        case SadSearchStopReason::ComparisonBudgetExhausted:
-            return AutomationErrorKind::RecognitionIncomplete;
-        }
-
-        UF_UNREACHABLE_MSG("Unknown SadSearchStopReason value");
-    }
-
-    auto searchStopDescription(SadSearchStopReason reason) noexcept -> std::string_view
-    {
-        switch (reason)
-        {
-        case SadSearchStopReason::Cancelled: return "cancelled";
-        case SadSearchStopReason::TimedOut: return "timed out";
-        case SadSearchStopReason::ComparisonBudgetExhausted: return "budget exhausted";
-        }
-
-        UF_UNREACHABLE_MSG("Unknown SadSearchStopReason value");
-    }
-
-    auto FrameIdentity::fromFrame(Frame const& frame) noexcept -> FrameIdentity
-    {
-        return FrameIdentity{
-            frame.sessionId(),
-            frame.targetGeneration(),
-            frame.id()
-        };
-    }
-
-    auto FrameIdentity::sessionId() const noexcept -> CaptureSessionId { return m_sessionId; }
-    auto FrameIdentity::targetGeneration() const noexcept -> TargetGeneration
-    {
-        return m_targetGeneration;
-    }
-    auto FrameIdentity::frameId() const noexcept -> FrameId { return m_frameId; }
-
     AnchorEvidence::AnchorEvidence(
         ElementId elementId,
         bool hit,

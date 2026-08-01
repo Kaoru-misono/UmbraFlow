@@ -1,6 +1,6 @@
 #include "binding-fixture.hpp"
 
-#include <task/capability-surface.hpp>
+#include <task/script-bindings.hpp>
 #include <task/framework-bundle.hpp>
 #include <task/task-context.hpp>
 
@@ -192,7 +192,6 @@ namespace uf::task
         {
             std::unique_ptr<trace::TraceRecorder> recorder;
             Result<engine::EngineSession>         session;
-            CapabilitySurface                     surface;
             CountingActionSink*                   clicks;
             FakeFrameSource*                      frames;
         };
@@ -200,12 +199,7 @@ namespace uf::task
         [[nodiscard]]
         auto buildHarness(HarnessSpec spec) -> Harness
         {
-            auto parts = singlePageRuntime();
-            auto surface =
-                CapabilitySurface::create(parts.loaded.runtime.manifest().catalog());
-            REQUIRE(surface.has_value());
-
-            auto const fingerprint = anno::test::fingerprint(3, 1, 96, 96);
+            auto const fingerprint = fixtureFingerprint();
             auto       frames  = std::vector<Frame>{};
             auto       frameId = uint64{500};
             for (auto& pixels : spec.framePixels)
@@ -227,12 +221,12 @@ namespace uf::task
                 trace::FrontEnd::Task
             );
             auto session = engine::EngineSession::create(
-                std::move(parts.loaded),
                 std::move(frameSource),
                 std::move(actionSink),
                 *recorder,
                 engine::EngineSessionConfig{
-                    .liveFingerprint         = parts.fingerprint,
+                    .liveFingerprint         = fingerprint,
+                    .projectFingerprint      = fingerprint,
                     .maximumPixelComparisons = spec.maximumPixelComparisons,
                     .recognitionTimeout      = std::chrono::duration_cast<
                         MonotonicInstant::Duration
@@ -243,7 +237,6 @@ namespace uf::task
             return Harness{
                 .recorder = std::move(recorder),
                 .session  = std::move(session),
-                .surface  = *std::move(surface),
                 .clicks   = p_clicks,
                 .frames   = p_frames,
             };
@@ -264,10 +257,9 @@ namespace uf::task
         // second, unchecked way to shape a model in front of a project script
         // for no gain.
         [[nodiscard]]
-        auto modelVmConfig(CapabilitySurface const& surface, TaskContext& context)
-            -> script::EngineConfig
+        auto modelVmConfig(TaskContext& context) -> script::EngineConfig
         {
-            auto config = taskVmConfig(surface, context);
+            auto config = taskVmConfig(context);
             config.frameworkProjectGlobals.emplace_back("model");
             config.frameworkProjectGlobals.emplace_back("navigation");
             config.frameworkProjectGlobals.emplace_back("observe");
@@ -276,10 +268,10 @@ namespace uf::task
         }
 
         [[nodiscard]]
-        auto runModel(TaskContext& context, Harness& harness, std::string_view source)
+        auto runModel(TaskContext& context, Harness& /*harness*/, std::string_view source)
             -> Result<double>
         {
-            auto engine = script::Engine::create(modelVmConfig(harness.surface, context));
+            auto engine = script::Engine::create(modelVmConfig(context));
             REQUIRE(engine.has_value());
             return engine->runNumber(source, "script-owned-model");
         }

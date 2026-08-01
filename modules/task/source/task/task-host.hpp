@@ -28,9 +28,10 @@
 
 namespace uf::task
 {
-    // The operator front-end's consumer of the capability surface, defined in
-    // task/operator-session.hpp. Declared here so startOperatorSession can hand one
-    // back without this header depending on that one, which depends on this.
+    // The operator front-end's consumer of the private capability surface,
+    // defined in task/operator-session.hpp. Declared here so startOperatorSession
+    // can hand one back without this header depending on that one, which depends
+    // on this.
     class OperatorSession;
 
     // The event stream a resident host subscribes to. Deliberately declared and
@@ -88,7 +89,7 @@ namespace uf::task
         // on its own terms rather than the run refusing to start.
         std::unique_ptr<ocr::IOcrEngine> ocrEngine{};
 
-        annotation::ProjectFingerprint liveFingerprint;
+        ProjectFingerprint liveFingerprint;
 
         uint64                     maximumPixelComparisons{};
         MonotonicInstant::Duration recognitionTimeout{};
@@ -193,10 +194,10 @@ namespace uf::task
 
     // The host API for the script layer: load a project, run its tasks, cancel
     // and query them. It owns everything a run needs that is not the desktop
-    // itself -- the loaded recognition runtime, the capability surface, the run
-    // and generation identities, the trace recorder, the engine session, the
-    // task context and the VM -- so the same run is reachable from a CLI, from a
-    // resident host, and from a test.
+    // itself -- the facts read out of the page model, the run and generation
+    // identities, the trace recorder, the engine session, the task context and
+    // the VM -- so the same run is reachable from a CLI, from a resident host,
+    // and from a test.
     //
     // The verb set is fixed. pause, resume and subscribeEvents are P2 features
     // and return the existing UnsupportedCapability kind today. That is a
@@ -235,11 +236,16 @@ namespace uf::task
 
         ~TaskHost();
 
-        // Reads the published annotation project at `projectRoot`, builds its
-        // recognition runtime and the script-visible capability surface, and
-        // registers both as one generation. Nothing observable happens here: a
-        // bad project fails before any target is bound and before any trace file
-        // is opened.
+        // Reads <projectRoot>/page-model.toml for the two things the host needs
+        // before a VM exists -- the geometry the model was authored at, and the
+        // element and page names a script may spell -- and registers them as one
+        // generation. Nothing observable happens here: a bad project fails before
+        // any target is bound and before any trace file is opened.
+        //
+        // It reads no generated/annotations.runtime.toml. The v3 manifest still
+        // exists for the v4 authoring line, and is no longer a runtime input
+        // (docs/plans/2026-07-31-script-owned-page-model.md 9); the model a run
+        // works from is the one layer two loads for itself through project_read.
         [[nodiscard]]
         auto loadProject(
             std::filesystem::path const& projectRoot,
@@ -260,7 +266,8 @@ namespace uf::task
             TaskRunConfig config
         ) -> Result<TaskRunReport>;
 
-        // The geometry `generation`'s project was authored at.
+        // The geometry `generation`'s project was authored at, as its page model
+        // states it.
         //
         // A live front-end measures this from the window it bound and hands it
         // back as TaskRunConfig::liveFingerprint, which is what makes the
@@ -272,7 +279,7 @@ namespace uf::task
         [[nodiscard]]
         auto projectFingerprint(
             GenerationId generation
-        ) -> Result<annotation::ProjectFingerprint>;
+        ) -> Result<ProjectFingerprint>;
 
         // Runs one of the host's own trusted routines against `generation`'s
         // project and reports how it ended and what it answered.
@@ -301,7 +308,8 @@ namespace uf::task
         // session it drives. The operator is a SIBLING consumer of the same private
         // capability surface a task's Luau framework consumes, never a route into
         // Luau; see task/operator-session.hpp for what that means and what it
-        // deliberately does not include.
+        // deliberately does not include -- which is now most of it, since the
+        // model-dependent verbs retired with the model.
         //
         // WHY THIS IS THE MUTUAL EXCLUSION, AND WHY IT IS HERE. A generation holds
         // the single-open-cycle ledger, so two policy sources driving one generation

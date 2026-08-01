@@ -22,7 +22,7 @@ namespace uf::cli::platform
         std::unique_ptr<engine::IFrameSource> frameSource;
         std::unique_ptr<engine::IActionSink>  actionSink;
 
-        annotation::ProjectFingerprint liveFingerprint;
+        ProjectFingerprint liveFingerprint;
     };
 
     // Declares per-monitor DPI awareness, resolves the target by title substring,

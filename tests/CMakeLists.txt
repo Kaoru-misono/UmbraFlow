@@ -78,6 +78,7 @@ cpp_add_test(
         annotation/test-colour-key-join.cpp
         annotation/test-content-hash.cpp
         annotation/test-recognition.cpp
+        annotation/test-runtime-project.cpp
         annotation/test-recognition-runtime.cpp
         annotation/test-regression-runner.cpp
         annotation/test-runtime-manifest.cpp
@@ -99,7 +100,6 @@ cpp_add_test(
 cpp_add_test(
     NAME test-engine
     SOURCES
-        engine/test-runtime-loader.cpp
         engine/test-session.cpp
     LIBS
         ${PROJECT_NAME}_engine

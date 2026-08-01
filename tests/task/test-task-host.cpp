@@ -72,20 +72,61 @@ namespace uf::task
 
         constexpr auto k_projectId = std::string_view{"personal.task_host"};
 
-        // The task every run in this file drives: one observation cycle, one page
-        // check, one action search, one click. It names both a page and an
-        // element, so the run.resources_validated line carries a non-empty
-        // closure of each.
+        // The task every run in this file drives: load the template the project
+        // file names, observe once, match it, click it. It also NAMES a page and
+        // an element through the two-level literals, so the
+        // run.resources_validated line carries a non-empty closure of each --
+        // which is the pre-VM pass resolving them against page-model.toml.
         constexpr auto k_taskSource = std::string_view{
+            // The two literals sit in a function the run never calls: the pre-VM
+            // pass reads them off the AST, which is where the closure is decided,
+            // while the VM never evaluates them -- the `uf` root carries no name
+            // tables to evaluate them against any more
+            // (docs/plans/2026-07-31-script-owned-page-model.md 9).
+            "local function names()\n"
+            "    return uf.pages.home, uf.elements.daily_button\n"
+            "end\n"
+            "local template = ctx:template_load(ctx:project_read(\"assets/daily.png\"))\n"
             "local cycle = ctx:cycle_open()\n"
-            "local page = ctx:cycle_page(cycle)\n"
-            "if page == nil then ctx:cycle_close(cycle) return 0 end\n"
-            "if not page:is(uf.pages.home) then ctx:cycle_close(cycle) return 0 end\n"
-            "local hit = ctx:cycle_find(cycle, uf.elements.daily_button)\n"
+            "local hit = ctx:cycle_match(cycle, template, 0, 0, 3, 2)\n"
             "if hit == nil then ctx:cycle_close(cycle) return 0 end\n"
             "ctx:cycle_click(cycle, hit)\n"
             "return 1\n"
         };
+
+        // The page model the host reads, and the whole of what it reads out of
+        // it: the geometry every rectangle was measured at, and the names a
+        // script may spell. Everything else in the file is layer two's.
+        constexpr auto k_pageModel = std::string_view{R"toml(
+schema = "umbraflow-project/l2-v1"
+base_resolution = [3, 2]
+base_dpi = [96, 96]
+
+[[element]]
+name = "home_marker"
+capabilities = ["identify"]
+rect = [0, 0, 3, 2]
+
+[[element]]
+name = "daily_button"
+capabilities = ["interact"]
+rect = [0, 0, 3, 2]
+
+[[appearance]]
+element = "daily_button"
+name = "default"
+source = "assets/daily.png"
+threshold = 10000
+
+[[page]]
+name = "home"
+
+[[reference]]
+page = "home"
+element = "daily_button"
+holding = "owned"
+exercised = ["interact"]
+)toml"};
 
         class TemporaryDir final
         {
@@ -177,108 +218,37 @@ namespace uf::task
         }
 
         [[nodiscard]]
-        auto fixtureFingerprint() -> anno::ProjectFingerprint
+        auto fixtureFingerprint() -> ProjectFingerprint
         {
             return anno::test::fingerprint(3, 2, 96, 96);
         }
 
-        // Publishes a project at `root` holding one page `home`, whose reference
-        // to `home_marker` is required identity evidence and whose reference to
-        // `daily_button` exercises interact, then writes `tasks/<name>.luau`.
-        // This is the on-disk shape TaskHost addresses: it never executes a
-        // loose-path script.
+        // Publishes a project at `root`: the page model the host reads, the one
+        // template the task searches for, and `tasks/<name>.luau`. This is the
+        // on-disk shape TaskHost addresses -- it never executes a loose-path
+        // script, and it reads no generated/annotations.runtime.toml any more
+        // (docs/plans/2026-07-31-script-owned-page-model.md 9).
         auto publishProject(
             std::filesystem::path const& root,
             std::string_view taskName,
             std::string_view taskSource
         ) -> void
         {
-            auto const fingerprint = fixtureFingerprint();
-            auto const sourceId    = anno::test::sourceId(k_sourceId);
-            auto pngBytes = sourcePixelsRgba();
-            auto encoded  = image::encodeRgbaPng("task-host-source.png", 3, 2, pngBytes);
-            REQUIRE(encoded.has_value());
-            auto const sourceHash = anno::sha256(*encoded);
-            REQUIRE(sourceHash.has_value());
+            writeText(root / "page-model.toml", k_pageModel);
 
-            auto source = anno::AuthoringSource::create(
-                anno::AuthoringSourceSpec{
-                    .id          = sourceId,
-                    .contentHash = *sourceHash,
-                    .fingerprint = fingerprint,
-                    .provenance  = anno::ImportedSourceProvenance{},
-                }
-            );
-            REQUIRE(source.has_value());
-
-            auto const anchorId = anno::test::elementId(k_anchorId);
-            auto const actionId = anno::test::elementId(k_actionId);
-            auto const pageId   = anno::test::pageId(k_pageId);
-            auto const click    = anno::TemplateOffset::create(1, 1, 2, 2);
-            REQUIRE(click.has_value());
-
-            auto document = anno::AuthoringDocument::create(
-                anno::test::projectId(std::string{k_projectId}),
-                fingerprint,
-                {*source},
-                {
-                    anno::test::element(
-                        fingerprint,
-                        anchorId,
-                        "home_marker",
-                        anno::test::capabilities(anno::Identify{}),
-                        anno::test::pixelRect(0, 0, 3, 2),
-                        {
-                            anno::test::appearance(
-                                "default",
-                                sourceId,
-                                anno::test::pixelRect(0, 0, 1, 1)
-                            ),
-                        }
-                    ),
-                    anno::test::element(
-                        fingerprint,
-                        actionId,
-                        "daily_button",
-                        anno::test::capabilities(
-                            std::nullopt,
-                            anno::Interact{.clickOffset = *click}
-                        ),
-                        anno::test::pixelRect(0, 0, 3, 2),
-                        {
-                            anno::test::appearance(
-                                "default",
-                                sourceId,
-                                anno::test::pixelRect(1, 0, 2, 2)
-                            ),
-                        }
-                    ),
-                },
-                {anno::test::page(pageId, "home")},
-                {
-                    anno::test::reference(pageId, anchorId, anno::test::identifiesAs()),
-                    anno::test::reference(pageId, actionId, anno::test::interacts()),
-                },
-                {}
-            );
-            REQUIRE(document.has_value());
-
-            auto const asset = anno::AuthoringSourceAsset{
-                .id       = sourceId,
-                .pngBytes = *std::move(encoded),
+            // A one-by-one template of the source frame's first pixel, so a match
+            // over the whole frame lands at a known position.
+            auto const rgba    = sourcePixelsRgba();
+            auto const cropped = std::vector<std::byte>{
+                rgba[0],
+                rgba[1],
+                rgba[2],
+                rgba[3],
             };
-            auto const assets   = std::span{&asset, std::size_t{1}};
-            auto const compiled = anno::compileAuthoringDocument(*document, assets);
-            REQUIRE(compiled.has_value());
+            auto encoded = image::encodeRgbaPng("task-host-template.png", 1, 1, cropped);
+            REQUIRE(encoded.has_value());
+            writeFile(root / "assets" / "daily.png", *encoded);
 
-            writeText(
-                root / "generated" / "annotations.runtime.toml",
-                compiled->runtimeManifestToml
-            );
-            for (auto const& templateAsset : compiled->templateAssets)
-            {
-                writeFile(root / templateAsset.relativePath, templateAsset.pngBytes);
-            }
             writeText(
                 root / "tasks" / (std::string{taskName} + ".luau"),
                 taskSource
@@ -596,10 +566,9 @@ namespace uf::task
 
         auto cycle = (*session)->cycleOpen();
         REQUIRE(cycle.has_value());
-        auto const page = (*session)->cyclePage(*cycle);
-        REQUIRE(page.has_value());
-        REQUIRE(page->has_value());
-        CHECK(**page == std::string{"home"});
+        auto const closed = (*session)->cycleClose(*cycle);
+        REQUIRE(closed.has_value());
+        CHECK(*closed);
 
         auto const report = (*session)->finish(std::nullopt);
         CHECK(report.outcome() == TaskRunOutcome::Completed);
@@ -846,9 +815,11 @@ namespace uf::task
         auto const expectedKinds = std::vector<std::string_view>{
             "run.started",
             "run.resources_validated",
-            "engine.observed",
+            // project_read and template_load reach no engine verb, so each is a
+            // task.native_call standing on its own before the first capture.
             "task.native_call",
-            "engine.page_resolved",
+            "task.native_call",
+            "engine.observed",
             "task.native_call",
             "engine.action_found",
             "task.native_call",
@@ -877,7 +848,11 @@ namespace uf::task
                 R"(,"projectId":"{}","taskName":"daily")"
                 R"(,"sourceHash":"{}","frameworkVersion":"{}")"
                 R"(,"frameworkHash":"{}","luauVersion":"{}","seed":{}}})",
-                k_projectId,
+                // The project's own directory name: the v3 manifest that used to
+                // carry a project id is no longer a runtime input, so this is the
+                // whole of what identifies a project on the wire
+                // (docs/plans/2026-07-31-script-owned-page-model.md 9).
+                temp.path().filename().string(),
                 report->sourceHash,
                 frameworkVersion(),
                 frameworkBundleHash(),
@@ -900,7 +875,7 @@ namespace uf::task
         // The engine event that opened the observation and the one that
         // delivered the click name the same frame, which is what lets a reader
         // attribute the click to the evidence it was authorized against.
-        CHECK(lines[2].contains(R"("frameId":91)"));
+        CHECK(lines[4].contains(R"("frameId":91)"));
         CHECK(lines[9].contains(R"("frameId":91)"));
     }
 }

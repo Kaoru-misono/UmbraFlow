@@ -12,6 +12,7 @@
 #include <annotation/recognition.hpp>
 #include <annotation/recognition-runtime.hpp>
 #include <annotation/resource.hpp>
+#include <annotation/runtime-project.hpp>
 
 #include <core/error/contracts.hpp>
 #include <core/numeric/checked-arithmetic.hpp>
@@ -24,8 +25,6 @@
 #include <domain/frame.hpp>
 #include <domain/space.hpp>
 #include <domain/time.hpp>
-
-#include <engine/runtime-loader.hpp>
 
 #include <image/pixels.hpp>
 #include <image/png.hpp>
@@ -194,7 +193,7 @@ namespace uf::authoring
         }
 
         [[nodiscard]]
-        auto fingerprintJson(annotation::ProjectFingerprint fingerprint) -> std::string
+        auto fingerprintJson(ProjectFingerprint fingerprint) -> std::string
         {
             auto const members = std::array{
                 JsonMember{
@@ -1071,7 +1070,7 @@ namespace uf::authoring
         [[nodiscard]]
         auto searchRoiOf(
             ElementDraw const& draw,
-            annotation::ProjectFingerprint fingerprint
+            ProjectFingerprint fingerprint
         ) -> Result<PixelRect>
         {
             if (draw.searchRoi)
@@ -1123,7 +1122,7 @@ namespace uf::authoring
         [[nodiscard]]
         auto frameFromPng(
             std::filesystem::path const& path,
-            annotation::ProjectFingerprint fingerprint
+            ProjectFingerprint fingerprint
         ) -> Result<Frame>
         {
             UF_TRY_VALUE_CONTEXT(
@@ -1191,11 +1190,11 @@ namespace uf::authoring
         ) -> std::unexpected<Error>
         {
             return fail(
-                annotation::searchStopKind(stop.reason),
+                searchStopKind(stop.reason),
                 std::format(
                     "recognition stopped on {}: {}",
                     stop.elementId.value().toString(),
-                    annotation::searchStopDescription(stop.reason)
+                    searchStopDescription(stop.reason)
                 )
             );
         }
@@ -1358,7 +1357,7 @@ namespace uf::authoring
             annotation::RecognitionRuntime const& runtime,
             annotation::CompiledElement const& element,
             Frame const& frame,
-            annotation::RecognitionPolicy const& policy,
+            RecognitionPolicy const& policy,
             annotation::PageId pageId
         ) -> Result<MatchOutcome>
         {
@@ -1396,7 +1395,7 @@ namespace uf::authoring
             annotation::RecognitionRuntime const& runtime,
             annotation::CompiledElement const& element,
             Frame const& frame,
-            annotation::RecognitionPolicy const& policy
+            RecognitionPolicy const& policy
         ) -> Result<MatchOutcome>
         {
             UF_TRY_VALUE(
@@ -1448,7 +1447,7 @@ namespace uf::authoring
             annotation::RecognitionRuntime const& runtime,
             annotation::CompiledElement const& element,
             Frame const& frame,
-            annotation::RecognitionPolicy const& policy,
+            RecognitionPolicy const& policy,
             std::optional<std::string> const& requestedPage
         ) -> Result<MatchOutcome>
         {
@@ -1576,9 +1575,9 @@ namespace uf::authoring
             // runtime element now, so the two lists share their names; what
             // this still answers is whether the published manifest loads at all,
             // and what the compiler made of each appearance.
-            UF_TRY_VALUE(runtime, engine::loadRuntimeProject(command.root));
+            UF_TRY_VALUE(runtime, annotation::loadRuntimeProject(command.root));
             auto runtimeElements = std::vector<std::string>{};
-            for (auto const& element : runtime.runtime.manifest().catalog().elements())
+            for (auto const& element : runtime.manifest().catalog().elements())
             {
                 runtimeElements.emplace_back(runtimeElementJson(element));
             }
@@ -2194,8 +2193,8 @@ namespace uf::authoring
             MatchElement const& command
         ) -> Result<std::string>
         {
-            UF_TRY_VALUE(loaded, engine::loadRuntimeProject(command.root));
-            auto const& catalog    = loaded.runtime.manifest().catalog();
+            UF_TRY_VALUE(loaded, annotation::loadRuntimeProject(command.root));
+            auto const& catalog    = loaded.manifest().catalog();
             auto const elements = catalog.elements();
 
             auto const found = std::ranges::find_if(
@@ -2220,10 +2219,10 @@ namespace uf::authoring
             UF_TRY_VALUE(
                 outcome,
                 matchElement(
-                    loaded.runtime,
+                    loaded,
                     *found,
                     frame,
-                    annotation::RecognitionPolicy{
+                    RecognitionPolicy{
                         .maximumPixelComparisons = command.budget,
                     },
                     command.page
@@ -2566,7 +2565,7 @@ namespace uf::authoring
                     // No live frame: a capture from the running target is not a
                     // screen the model is authored on and contributes no column.
                     {},
-                    annotation::RecognitionPolicy{
+                    RecognitionPolicy{
                         .maximumPixelComparisons = command.budget,
                     }
                 )

@@ -299,30 +299,6 @@ namespace uf::annotation
 
     auto ResourceName::value() const noexcept -> std::string const& { return m_value; }
 
-    auto ProjectFingerprint::create(
-        uint32 width,
-        uint32 height,
-        uint32 dpiX,
-        uint32 dpiY
-    ) -> Result<ProjectFingerprint>
-    {
-        if (width == 0 || height == 0 || dpiX == 0 || dpiY == 0)
-        {
-            return fail(
-                AutomationErrorKind::InvalidResource,
-                std::format(
-                    "project fingerprint must be non-zero: {}x{} at {}x{} DPI",
-                    width,
-                    height,
-                    dpiX,
-                    dpiY
-                )
-            );
-        }
-
-        return ProjectFingerprint{width, height, dpiX, dpiY};
-    }
-
     auto SimilarityThreshold::create(uint32 basisPoints) -> Result<SimilarityThreshold>
     {
         if (basisPoints > k_basisPointMaximum)

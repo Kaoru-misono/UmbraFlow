@@ -1,6 +1,6 @@
-#include <task/capability-surface.hpp>
 #include <task/cycle-ledger.hpp>
 #include <task/native-call-trace.hpp>
+#include <task/script-bindings.hpp>
 #include <task/task-context.hpp>
 #include <task/template-store.hpp>
 
@@ -13,8 +13,6 @@
 #include <core/types/integer.hpp>
 
 #include <annotation/content-hash.hpp>
-#include <annotation/resource.hpp>
-#include <annotation/recognition.hpp>
 
 #include <domain/error.hpp>
 #include <domain/key.hpp>
@@ -71,20 +69,16 @@ namespace uf::task
         // label is rooted at `uf`, the same script-visible root the DATA table is
         // registered under, so an object names the surface it came from.
         //
-        // The first six are also VM registry keys: a handle kind's metatable is
+        // The first three are also VM registry keys: a handle kind's metatable is
         // shared by every handle of that kind and is registered under its label.
         // k_errorType is not, because a Tier B error carrier's metatable holds
         // that one error's fields and so exists per instance; the label is still
         // what a script sees, and the label is what the framework compares
         // against, but the carrier's identity to C++ is its userdata tag.
-        constexpr auto k_elementType   = "uf.element";
-        constexpr auto k_pageRefType      = "uf.page";
-        constexpr auto k_cycleType        = "uf.cycle";
-        constexpr auto k_resolvedPageType = "uf.resolved_page";
-        constexpr auto k_hitType          = "uf.hit";
-        constexpr auto k_templateType     = "uf.template";
-        constexpr auto k_deadlineType     = "uf.deadline";
-        constexpr auto k_errorType        = "uf.error";
+        constexpr auto k_cycleType    = "uf.cycle";
+        constexpr auto k_templateType = "uf.template";
+        constexpr auto k_deadlineType = "uf.deadline";
+        constexpr auto k_errorType    = "uf.error";
 
         // The two kinds that carry READABLE fields, and so cannot share a
         // registered metatable: the score a match reports and the text a read
@@ -158,23 +152,18 @@ namespace uf::task
         // The payload an action handle carries. It is placement-constructed into
         // a host-owned full userdata and destroyed by destroyBox at GC.
         //
+        // What a match handle carries: the ordinal of the cycle that produced it
+        // plus the position C++ will deliver to. The score and the ceiling ALSO
+        // reach the script, through the handle's frozen fields, because judging a
+        // score is the trusted framework's job now and it cannot judge what it
+        // cannot read.
+        //
         // The move-only Observation is never stored in a handle: it lives in the
         // TaskContext's CycleLedger, and the only handle that names it is the
-        // ticket. A hit therefore carries just the ordinal of the cycle that
+        // ticket. A match therefore carries just the ordinal of the cycle that
         // found it, which is the whole of its staleness check -- with at most one
         // cycle open, an ordinal that is not the open one names a cycle that no
         // longer exists, and there is no second cycle it could have come from.
-        struct HitBox final
-        {
-            uint64              cycleOrdinal{};
-            engine::ActionFound action;
-        };
-
-        // What a match handle carries, on the same reasoning as HitBox: the
-        // ordinal of the cycle that produced it plus the position C++ will
-        // deliver to. The score and the ceiling ALSO reach the script, through
-        // the handle's frozen fields, because judging a score is the trusted
-        // framework's job now and it cannot judge what it cannot read.
         //
         // Trivially destructible, which is what lets it be a tagged userdata and
         // therefore recognizable to C++ by tag rather than by metatable.
@@ -188,8 +177,8 @@ namespace uf::task
         // Runs at VM garbage collection to destroy the value placement-constructed
         // into a handle by pushBoxed.
         //
-        // No handle's destructor releases a frame. Collecting a ticket, a page or
-        // a hit frees only the few bytes of the box: the frame behind them is
+        // No handle's destructor releases a frame. Collecting a ticket or a
+        // template frees only the few bytes of the box: the frame behind them is
         // released by cycle_close or by the click that consumes the cycle,
         // and by the ledger's own destructor when the generation is torn down.
         // That is the point of the cycle protocol -- host memory whose release
@@ -839,93 +828,6 @@ namespace uf::task
             return 0;
         }
 
-        // cycle_page(ticket) -> resolved-page handle, or nil when the frame
-        // resolved to Unknown or Ambiguous (both already traced by the engine, so
-        // neither raises). A successful resolution is also recorded in the ledger
-        // as this cycle's click authorization evidence, which is the only way a
-        // click can ever be authorized.
-        auto cyclePageFn(lua_State* state) -> int
-        {
-            auto* context = boundContext(state);
-            guardFatal(state, context);
-
-            auto* ticket = checkBox<CycleTicket>(state, 1, k_cycleType, "cycle");
-            auto const call = NativeCallIdentity{
-                .verb           = "cycle_page",
-                .cycleOrdinal = ticket->ordinal,
-            };
-
-            auto result = context->cyclePage(*ticket);
-            if (!result)
-            {
-                traceHostCallFailure(state, context, call, result.error());
-            }
-
-            auto resolved = *std::move(result);
-            if (!resolved.has_value())
-            {
-                traceHostCall(state, context, call, trace::NativeCallOutcome::Empty);
-                lua_pushnil(state);
-                return 1;
-            }
-            traceHostCall(state, context, call, trace::NativeCallOutcome::Succeeded);
-            pushBoxed<annotation::ResolvedPage>(
-                state,
-                *std::move(resolved),
-                &destroyBox<annotation::ResolvedPage>,
-                k_resolvedPageType
-            );
-            return 1;
-        }
-
-        // cycle_find(ticket, element) -> hit handle, or nil for a
-        // completed miss (Tier A). A non-element argument is a Tier B
-        // InvalidResource.
-        //
-        // It requires the ticket's cycle to have resolved a page already, and
-        // does not resolve one itself; a cycle with none fails Tier B
-        // PageUnresolved. See TaskContext::cycleFind for why the ordering is the
-        // script's to keep rather than the host's to hide.
-        auto cycleFindFn(lua_State* state) -> int
-        {
-            auto* context = boundContext(state);
-            guardFatal(state, context);
-
-            auto* ticket = checkBox<CycleTicket>(state, 1, k_cycleType, "cycle");
-            auto* element =
-                checkBox<annotation::ElementId>(state, 2, k_elementType, "element");
-            auto const call = NativeCallIdentity{
-                .verb           = "cycle_find",
-                .cycleOrdinal = ticket->ordinal,
-                .elementId   = *element,
-            };
-
-            auto result = context->cycleFind(*ticket, *element);
-            if (!result)
-            {
-                traceHostCallFailure(state, context, call, result.error());
-            }
-
-            auto found = *std::move(result);
-            if (!found.has_value())
-            {
-                traceHostCall(state, context, call, trace::NativeCallOutcome::Empty);
-                lua_pushnil(state);
-                return 1;
-            }
-            traceHostCall(state, context, call, trace::NativeCallOutcome::Succeeded);
-            pushBoxed<HitBox>(
-                state,
-                HitBox{
-                    .cycleOrdinal = ticket->ordinal,
-                    .action       = *std::move(found),
-                },
-                &destroyBox<HitBox>,
-                k_hitType
-            );
-            return 1;
-        }
-
         // template_load(blob) -> template handle. Decodes one template PNG once
         // and names the result for the rest of this generation.
         //
@@ -1214,27 +1116,20 @@ namespace uf::task
             return 0;
         }
 
-        // cycle_click(ticket, hit | match) -> (). Consumes the cycle and delivers
-        // the click.
+        // cycle_click(ticket, match) -> (). Consumes the cycle and delivers the
+        // click at the position the match reports.
         //
-        // There is deliberately NO page argument. The host requires that this
-        // ticket already resolved a page and uses that as the authorization
-        // evidence, so a script cannot hand over evidence from another frame:
-        // there is no parameter to hand it through, and with at most one cycle
-        // open there is no other frame to take it from. A cycle that never
-        // resolved a page fails PageUnresolved, which is the skipped step rather
-        // than a refusal on the merits; ActionRejected stays for a page that DID
-        // resolve and does not authorise the element.
-        //
-        // A MATCH is accepted beside a hit, and takes the point path instead: a
-        // template loaded by the script layer belongs to no catalog element, so
-        // there is no page reference to authorise and no element to name. The
-        // other three requisites are unchanged, including the same-frame ordinal
-        // check -- which is why a match from a spent cycle is refused here rather
-        // than delivered.
+        // IT TAKES A MATCH AND NOTHING ELSE. There is no catalog hit any more:
+        // an element is a layer-two object built out of the project file, so the
+        // only evidence C++ can check is that this template matched on THIS
+        // frame. The other requisites are unchanged -- the same-frame ordinal, the
+        // observation's lease, the project fingerprint, one delivery per cycle --
+        // and "this page authorises this element" is enforced above, in
+        // modules/task/runtime/observe.luau, which is the only place that knows
+        // what a page is.
         //
         // Both ordinals reach the wire: they agree on every delivered click, and
-        // differ exactly when a hit from a spent cycle was refused.
+        // differ exactly when a match from a spent cycle was refused.
         auto cycleClickFn(lua_State* state) -> int
         {
             auto* context = boundContext(state);
@@ -1242,43 +1137,29 @@ namespace uf::task
 
             auto* ticket = checkBox<CycleTicket>(state, 1, k_cycleType, "cycle");
 
-            if (auto const* p_match = matchBoxAt(state, 2))
+            auto const* p_match = matchBoxAt(state, 2);
+            if (p_match == nullptr)
             {
-                auto const matchCall = NativeCallIdentity{
-                    .verb            = "cycle_click",
-                    .cycleOrdinal    = ticket->ordinal,
-                    .hitCycleOrdinal = p_match->cycleOrdinal,
-                };
-                auto matched = context->cycleClickPoint(
-                    *ticket,
-                    p_match->cycleOrdinal,
-                    p_match->found.clickPixel
-                );
-                if (!matched)
-                {
-                    traceHostCallFailure(state, context, matchCall, matched.error());
-                }
-                traceHostCall(
+                raiseTierB(
                     state,
-                    context,
-                    matchCall,
-                    trace::NativeCallOutcome::Succeeded
+                    AutomationErrorKind::InvalidResource,
+                    "expected a match handle"
                 );
-                return 0;
             }
 
-            auto* hit = checkBox<HitBox>(state, 2, k_hitType, "hit or match");
-
             auto const call = NativeCallIdentity{
-                .verb              = "cycle_click",
+                .verb            = "cycle_click",
                 .cycleOrdinal    = ticket->ordinal,
-                .hitCycleOrdinal = hit->cycleOrdinal,
+                .hitCycleOrdinal = p_match->cycleOrdinal,
             };
-
-            auto result = context->cycleClick(*ticket, hit->cycleOrdinal, hit->action);
-            if (!result)
+            auto matched = context->cycleClickPoint(
+                *ticket,
+                p_match->cycleOrdinal,
+                p_match->found.clickPixel
+            );
+            if (!matched)
             {
-                traceHostCallFailure(state, context, call, result.error());
+                traceHostCallFailure(state, context, call, matched.error());
             }
             traceHostCall(state, context, call, trace::NativeCallOutcome::Succeeded);
             return 0;
@@ -1347,17 +1228,6 @@ namespace uf::task
             }
             traceHostCall(state, context, call, trace::NativeCallOutcome::Succeeded);
             return 0;
-        }
-
-        // page:is(pageReference) -> bool. page:is desugars to page.is(page, ref).
-        auto isFn(lua_State* state) -> int
-        {
-            auto* page =
-                checkBox<annotation::ResolvedPage>(state, 1, k_resolvedPageType, "page");
-            auto* reference =
-                checkBox<annotation::PageId>(state, 2, k_pageRefType, "page reference");
-            lua_pushboolean(state, page->pageId() == *reference ? 1 : 0);
-            return 1;
         }
 
         // Converts a script's millisecond count into the monotonic Duration the
@@ -1981,31 +1851,6 @@ namespace uf::task
             lua_setfield(state, metatable, "__metatable");
         }
 
-        // Adds `function` to the __index method table of the metatable at
-        // `metatable`. When `context` is non-null the closure carries it as
-        // lightuserdata upvalue 1, which is how the engine verbs reach the session.
-        auto addMethod(
-            lua_State* state,
-            int metatable,
-            char const* name,
-            lua_CFunction function,
-            TaskContext* context
-        ) -> void
-        {
-            lua_getfield(state, metatable, "__index");
-            if (context != nullptr)
-            {
-                lua_pushlightuserdata(state, context);
-                lua_pushcclosure(state, function, name, 1);
-            }
-            else
-            {
-                lua_pushcfunction(state, function, name);
-            }
-            lua_setfield(state, -2, name);
-            lua_pop(state, 1);
-        }
-
         // Freezes the metatable on the stack top and stores it in the registry
         // under `registryType`, popping it.
         //
@@ -2027,23 +1872,9 @@ namespace uf::task
             return ok();
         }
 
-        // Registers the metatables of the handle kinds the DATA surface mints:
-        // the element and page references named under uf.elements and
-        // uf.pages. Both exist whether or not a session is bound, because a
-        // reference is an identity rather than a capability.
-        [[nodiscard]]
-        auto installResourceMetatables(lua_State* state) -> Status
-        {
-            beginMetatable(state, k_elementType);
-            UF_TRY(finishMetatable(state, k_elementType));
-
-            beginMetatable(state, k_pageRefType);
-            return finishMetatable(state, k_pageRefType);
-        }
-
         // Registers the metatables only a bound session can ever mint: the cycle
-        // ticket, the hit, the resolved page and the deadline. They belong to the
-        // private capability installer because every one of them is produced by a
+        // ticket, the template and the deadline. They belong to the private
+        // capability installer because every one of them is produced by a
         // primitive, so a VM with no session has nothing that could wear them.
         //
         // The Tier B error carrier is absent on purpose. Its metatable is per
@@ -2053,51 +1884,21 @@ namespace uf::task
         // match and reading handles are absent for exactly that reason too: both
         // carry per-instance fields, so both wear a metatable of their own.
         //
-        // Only the resolved page carries a method. A ticket and a hit are pure
-        // names the host hands back to itself, so every operation on a cycle is a
-        // primitive taking the ticket.
+        // None of the three carries a method. They are pure names the host hands
+        // back to itself, so every operation on a cycle is a primitive taking the
+        // ticket. The resolved page's `is` was the one method here, and it went
+        // with the page model.
         [[nodiscard]]
         auto installSessionMetatables(lua_State* state) -> Status
         {
             beginMetatable(state, k_cycleType);
             UF_TRY(finishMetatable(state, k_cycleType));
 
-            beginMetatable(state, k_hitType);
-            UF_TRY(finishMetatable(state, k_hitType));
-
             beginMetatable(state, k_templateType);
             UF_TRY(finishMetatable(state, k_templateType));
 
             beginMetatable(state, k_deadlineType);
-            UF_TRY(finishMetatable(state, k_deadlineType));
-
-            beginMetatable(state, k_resolvedPageType);
-            {
-                int const metatable = lua_gettop(state);
-                addMethod(state, metatable, "is", &isFn, nullptr);
-            }
-            return finishMetatable(state, k_resolvedPageType);
-        }
-
-        // Populates `uf[fieldName]` with a name table of opaque handles, one per
-        // spec, each carrying the metatable registered under `metatableType`.
-        template <typename Spec, typename Id>
-        auto installResourceTable(
-            lua_State* state,
-            int root,
-            char const* fieldName,
-            char const* metatableType,
-            std::vector<Spec> const& specs
-        ) -> void
-        {
-            lua_newtable(state);
-            int const table = lua_gettop(state);
-            for (auto const& spec : specs)
-            {
-                pushBoxed<Id>(state, spec.id, &destroyBox<Id>, metatableType);
-                lua_setfield(state, table, spec.name.c_str());
-            }
-            lua_setfield(state, root, fieldName);
+            return finishMetatable(state, k_deadlineType);
         }
 
         // Populates `uf.errors` with one constant per AutomationErrorKind. Both
@@ -2142,35 +1943,21 @@ namespace uf::task
             lua_setfield(state, surface, fieldName);
         }
 
-        // Assembles the frozen global uf table: elements, pages and error
-        // kinds. Every entry is data. Nothing here can observe or act, which is
-        // why it is safe as a project global.
+        // Assembles the frozen global uf table: the error kinds, and today
+        // nothing else. Every entry is data. Nothing here can observe or act,
+        // which is why it is safe as a project global.
+        //
+        // Its `elements` and `pages` name tables went with the C++ page model.
+        // The root survives them because uf.errors is what a project compares an
+        // error kind against, and because the pre-VM pass still resolves
+        // uf.elements.<name> literals -- against the project file now, see
+        // task/script-validator.hpp.
         [[nodiscard]]
-        auto buildUfData(
-            lua_State* state,
-            std::vector<ElementHandleSpec> const& elements,
-            std::vector<PageHandleSpec> const& pages
-        ) -> Status
+        auto buildUfData(lua_State* state) -> Status
         {
-            UF_TRY(installResourceMetatables(state));
-
             lua_newtable(state);
             int const root = lua_gettop(state);
 
-            installResourceTable<ElementHandleSpec, annotation::ElementId>(
-                state,
-                root,
-                "elements",
-                k_elementType,
-                elements
-            );
-            installResourceTable<PageHandleSpec, annotation::PageId>(
-                state,
-                root,
-                "pages",
-                k_pageRefType,
-                pages
-            );
             installErrorKindTable(state, root);
 
             UF_TRY(script::deepFreeze(state, root));
@@ -2208,22 +1995,6 @@ namespace uf::task
                 "cycle_close",
                 &cycleCloseFn,
                 "uf_cycle_close",
-                context
-            );
-            installPrimitive(
-                state,
-                surface,
-                "cycle_page",
-                &cyclePageFn,
-                "uf_cycle_page",
-                context
-            );
-            installPrimitive(
-                state,
-                surface,
-                "cycle_find",
-                &cycleFindFn,
-                "uf_cycle_find",
                 context
             );
             installPrimitive(
@@ -2329,12 +2100,12 @@ namespace uf::task
         }
     }
 
-    auto CapabilitySurface::projectGlobals() -> std::vector<std::string>
+    auto scriptProjectGlobals() -> std::vector<std::string>
     {
         return std::vector<std::string>{std::string{k_ufRoot}};
     }
 
-    auto CapabilitySurface::raisedErrorClassifier() -> script::RaisedErrorClassifier
+    auto scriptRaisedErrorClassifier() -> script::RaisedErrorClassifier
     {
         return [](lua_State* state, int index) -> std::optional<AutomationErrorKind>
         {
@@ -2342,21 +2113,15 @@ namespace uf::task
         };
     }
 
-    auto CapabilitySurface::installer() const -> script::HostTableInstaller
+    auto scriptHostTableInstaller() -> script::HostTableInstaller
     {
-        // The installer owns its own snapshot of the specs so it stays valid
-        // independently of this surface's lifetime; the specs are plain values.
-        auto elements = m_elements;
-        auto pages    = m_pages;
-        return [elements = std::move(elements), pages = std::move(pages)](
-                   lua_State* state
-               ) -> Status
+        return [](lua_State* state) -> Status
         {
-            return buildUfData(state, elements, pages);
+            return buildUfData(state);
         };
     }
 
-    auto CapabilitySurface::privateCapabilities(TaskContext& context)
+    auto scriptPrivateCapabilities(TaskContext& context)
         -> script::PrivateCapabilityInstaller
     {
         // Lifetime: the closure stores this address, which the caller guarantees

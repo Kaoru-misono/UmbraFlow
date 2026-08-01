@@ -6,23 +6,30 @@
 -- nest -- all of it is Luau, and none of it is C++.
 --
 -- It is Luau for a structural reason rather than for hot reloading. step,
--- cycle, wait_for_page, retry and every interrupt handler take a PROJECT
--- function. Written in C++ each of them would be a C callback into Lua with a
--- deep C stack underneath project code, which is exactly the narrow case where
--- a hard cancel degrades from an uncatchable break into an ordinary catchable
--- error -- turning a rare accident into the normal shape. Luau calling Luau
--- has none of that.
+-- cycle and retry take a PROJECT function. Written in C++ each of them would be
+-- a C callback into Lua with a deep C stack underneath project code, which is
+-- exactly the narrow case where a hard cancel degrades from an uncatchable
+-- break into an ordinary catchable error -- turning a rare accident into the
+-- normal shape. Luau calling Luau has none of that.
 --
 -- The host builds the private capability surface in C++ and hands it to this
 -- chunk as its one argument, so the primitives live in a closure upvalue and
 -- are never a key of any table a project script can name. The table returned
 -- below is frozen by the loader and published into the project environment as
 -- the global `ctx`; it is the whole of what a project task can reach besides
--- the `uf` data tables and the `task` declaration surface.
+-- the `uf` error-kind table and the `task` declaration surface.
+--
+-- WAITING FOR A PAGE IS NOT HERE ANY MORE. `ctx:wait_for_page` rode the
+-- `cycle_page` primitive, and the page model it resolved against moved to layer
+-- two: `observe.wait_until` is the wait now, and `observe.walk_edge` is what
+-- notices an interrupt page during one
+-- (docs/plans/2026-07-31-script-owned-page-model.md 9). What stayed here is the
+-- policy that never mentioned a page -- steps, retry, the scoped cycle, the
+-- time verbs -- because none of it had a model in it to move.
 --
 -- The `native.emit` calls below are how the structure this file maintains --
--- which step is open, which retry attempt this is, which interrupt matched --
--- reaches the run's evidence stream. Two things about them are worth stating
+-- which step is open, which retry attempt this is -- reaches the run's evidence
+-- stream. Two things about them are worth stating
 -- once, here, rather than at each call site.
 --
 -- They are an AUDIT LOG, not a replay log. Replaying a run rests on the seed the
@@ -32,8 +39,8 @@
 --
 -- `emit` is not a passthrough. The host runs a state machine over the requests
 -- and refuses one that does not fit: a finish that does not name the innermost
--- open step, an attempt beyond its policy's declared total, an interrupt closed
--- that no match opened. A refusal that names a framework bug spends the
+-- open step, or an attempt beyond its policy's declared total. A refusal that
+-- names a framework bug spends the
 -- generation before it raises, so no `pcall` in this file or above it can
 -- swallow one and carry on -- which is why every cleanup path below asks
 -- `native.terminal()` before emitting its closing event rather than raising a
@@ -71,12 +78,8 @@ frameworkSentinel = "uf-framework-sentinel-6b21f0"
 local k_defaultTimeoutMillis = 600000
 local k_defaultPollMillis    = 500
 
--- How many attempts a retry policy takes when it names none, and how many times
--- one interrupt may fire in a single run before it is treated as not working.
--- The max_hits ceiling is the reason an interrupt cannot spend a whole wait
--- budget re-handling a popup its handler never actually dismisses.
+-- How many attempts a retry policy takes when it names none.
 local k_defaultRetryAttempts = 3
-local k_defaultMaxHits       = 3
 
 -- The two messages this file owns rather than letting C++ answer for.
 --
@@ -102,11 +105,8 @@ local k_closedCycleMessage =
 -- cycle. It is not a second source of truth for the ledger C++ keeps -- it
 -- cannot be, since the host refuses a second open either way -- it is what lets
 -- the refusal happen HERE, with the sentence above, before a capture is spent.
-local openCycle         = nil
-local stepStack         = {}
-local interrupts        = {}
-local interruptHits     = {}
-local handlingInterrupt = false
+local openCycle = nil
+local stepStack = {}
 
 local ctx = {}
 
@@ -118,8 +118,8 @@ local function requireLive(state)
     end
 end
 
--- The project-facing view of one observation cycle: what `ctx:cycle`,
--- `ctx:wait_for_page` and an interrupt handler are handed.
+-- The project-facing view of one observation cycle: what `ctx:cycle` hands its
+-- block.
 --
 -- The ticket itself never reaches a project. That is not secrecy -- a ticket
 -- confers nothing without the primitives, which no project can name -- it is so
@@ -136,65 +136,20 @@ end
 local function newCycleView(state)
     local view = {}
 
-    -- The page this cycle's frame resolved, or nil for Unknown/Ambiguous. The
-    -- resolution is memoized because it is an engine call with a trace event
-    -- behind it: the wait loop needs the page to match interrupts and to test
-    -- the target, and a project block may want it again, and resolving one
-    -- frame twice would put two engine.page_resolved lines on the wire for one
-    -- observation.
-    function view:page()
-        requireLive(state)
-        if not state.resolved then
-            state.page     = native.cycle_page(state.ticket)
-            state.resolved = true
-        end
-        return state.page
-    end
-
-    -- RESOLVE THE PAGE BEFORE YOU FIND. `cycle:find` requires that THIS cycle
-    -- has already resolved a page, and it does not resolve one for you: a cycle
-    -- with none raises `uf.errors.page_unresolved`.
-    --
-    -- The reason is that a find has nothing to work from without a page. What it
-    -- searches with lives on the PAGE'S REFERENCE to the element, not on the
-    -- element: the refined search region, the appearance this page pins, and the
-    -- interact authorisation are all properties of "page P uses element E", so
-    -- until a page is known there is no row to read them from.
-    --
-    -- Two ways to satisfy it, and the second is the ordinary one:
-    --
-    --     ctx:cycle(function(cycle)
-    --         local page = cycle:page()       -- REQUIRED before find
-    --         if page == nil then return end  -- Unknown/Ambiguous: no page
-    --         local hit = cycle:find(uf.elements.back)
-    --     end)
-    --
-    --     ctx:wait_for_page(uf.pages.home, nil, function(cycle)
-    --         local hit = cycle:find(uf.elements.back)   -- already resolved
-    --     end)
-    --
-    -- `ctx:wait_for_page` and an interrupt handler both hand over a cycle whose
-    -- page is already resolved, so neither needs the extra line. `ctx:cycle`
-    -- resolves nothing, because a cycle is not always opened to identify a page.
-    --
-    -- Resolving is not done for you on purpose. It walks the whole anchor order
-    -- and is the most expensive thing a cycle does, so a `find` that silently
-    -- paid for it would hide the cost of the loop it sits in; and a screen that
-    -- resolves to no page would then surface as a FIND that failed, which is a
-    -- worse sentence to debug than the one above.
-    function view:find(element)
-        requireLive(state)
-        return native.cycle_find(state.ticket, element)
-    end
-
     -- A delivered click CONSUMES the cycle, so the view goes dead here rather
     -- than at the enclosing block's exit. `consumed` is set only after the
     -- primitive returned: a click that failed may or may not have spent the
     -- ledger entry, and `cycle_close` is idempotent, so the close on the way
     -- out is the safe answer for that case.
-    function view:click(hit)
+    --
+    -- The argument is a MATCH -- what `cycle_match` returned on this same cycle
+    -- -- and nothing else. There is no element handle to pass any more: which
+    -- pixels an element is and whether this page may click it are layer two's
+    -- facts, checked in observe.luau, and what C++ still checks is that the
+    -- match came from this frame.
+    function view:click(match)
         requireLive(state)
-        native.cycle_click(state.ticket, hit)
+        native.cycle_click(state.ticket, match)
         state.consumed = true
         state.live     = false
     end
@@ -205,9 +160,10 @@ local function newCycleView(state)
     -- either way -- and the bookkeeping here follows it so the view goes dead at
     -- the same moment the host's cycle does.
     --
-    -- It takes no hit. The whole difference between this and view:click is that a
-    -- key names no position, so there is nothing to have found first; what the
-    -- author writes is the name their target prints, "E" or "3" or "F1".
+    -- It takes no match. The whole difference between this and view:click is
+    -- that a key names no position, so there is nothing to have found first;
+    -- what the author writes is the name their target prints, "E" or "3" or
+    -- "F1".
     function view:key(name)
         requireLive(state)
         native.key(state.ticket, name)
@@ -230,7 +186,6 @@ local function beginCycle(level)
     local state = {
         live     = true,
         consumed = false,
-        resolved = false,
     }
     state.ticket = native.cycle_open()
     state.view   = newCycleView(state)
@@ -251,76 +206,6 @@ local function endCycle(state)
     if not state.consumed then
         native.cycle_close(state.ticket)
     end
-end
-
--- Runs the first registered interrupt whose page matches this cycle, and
--- reports whether one ran.
---
--- First match wins, registration order decides, and an interrupt that has
--- already fired max_hits times matches nothing further -- returning false
--- rather than falling through to a later interrupt, because "first match" is
--- about which interrupt owns this page, not about finding one that still has
--- budget.
---
--- Handlers do not re-enter: a handler is called with the CURRENT cycle, so an
--- interrupt firing inside an interrupt would be a second handler acting on a
--- frame the first one is already acting on.
-local function runInterrupts(state, page)
-    if handlingInterrupt or page == nil then
-        return false
-    end
-
-    for index = 1, #interrupts do
-        local entry = interrupts[index]
-        if page:is(entry.when) then
-            -- The match is recorded before the budget is consulted, so the
-            -- stream shows a popup that WAS recognised and then declined rather
-            -- than a popup that was never seen. Both closing events are
-            -- reachable from here and exactly one of them fires, which is what
-            -- the host's matched/handled/exhausted rule checks.
-            native.emit("interrupt_matched", entry.id)
-
-            local hits = interruptHits[entry.id] or 0
-            if hits >= entry.max_hits then
-                native.emit("interrupt_exhausted", entry.id)
-                return false
-            end
-
-            interruptHits[entry.id] = hits + 1
-            handlingInterrupt = true
-            local ok, err = pcall(entry.handle, ctx, state.view)
-            handlingInterrupt = false
-
-            -- Closed on both exits: a handler that raised still matched, and a
-            -- match left open would be the framework failing to close what it
-            -- opened -- which the host refuses at run.finished.
-            if not native.terminal() then
-                native.emit("interrupt_handled", entry.id)
-            end
-            if not ok then
-                error(err, 0)
-            end
-            return true
-        end
-    end
-    return false
-end
-
--- One turn of the wait loop, run under pcall so the cycle is closed whatever
--- happens inside it. Returns whether the target page was reached, and what the
--- project block returned when it was.
-local function observeCycle(state, target, fn)
-    local page = state.view:page()
-    if runInterrupts(state, page) then
-        -- The handler acted on the screen, so this frame no longer describes
-        -- it. Re-observe rather than testing a target against evidence a click
-        -- just invalidated.
-        return false
-    end
-    if page == nil or not page:is(target) then
-        return false
-    end
-    return true, fn(state.view)
 end
 
 -- ctx:step(name, fn) -> whatever fn returned.
@@ -388,12 +273,10 @@ end
 -- "always closed" and "at most one open" are properties of the API rather than
 -- of the author's discipline.
 --
--- IT DOES NOT RESOLVE THE PAGE. The cycle it hands over has captured a frame and
--- nothing more, so a block that goes straight to `cycle:find` raises
--- `uf.errors.page_unresolved`; call `cycle:page()` first, and check it for nil.
--- That is deliberate rather than an omission -- not every cycle is opened to
--- identify a page, a keystroke needs none at all, and the full argument is at
--- `view:find` above. `ctx:wait_for_page` is the shape that resolves for you.
+-- IT KNOWS NOTHING ABOUT PAGES. The cycle it hands over has captured a frame and
+-- nothing more. Recognising what is on that frame is layer two's work and
+-- belongs to `observe`, which opens and closes its own cycles by the same rule
+-- this block does.
 --
 -- The block's own failure outranks a failure from the close, so an author is
 -- told why their work failed rather than being handed the second-order
@@ -416,75 +299,6 @@ function ctx:cycle(fn)
     return result
 end
 
--- ctx:wait_for_page(page, options, fn) -> whatever fn returned.
---
--- The real wait loop, and the reason this whole layer exists. Every turn opens
--- one cycle, resolves it once, offers it to the interrupt registry, and either
--- hands it to the project block or closes it and sleeps one poll interval
--- against a host-minted deadline.
---
--- What that buys is the one capability the previous architecture could not
--- deliver: a popup that appears in the middle of a long wait is handled, and
--- the wait then CONTINUES. The wait loop used to live in C++ (an engine-side
--- poll with a permanently no-op popup seam), where the interrupt registry could
--- not reach it -- the sweep would have fired once at the start of a wait and
--- never on the polls that matter.
---
--- Options are policy and default here: timeout_ms and poll_ms. There is no host
--- fallback behind them any more.
-function ctx:wait_for_page(target, options, fn)
-    if type(target) ~= "userdata" then
-        error("ctx:wait_for_page needs a uf.pages.<name> handle", 2)
-    end
-    if type(fn) ~= "function" then
-        error("ctx:wait_for_page needs a function to run on the page", 2)
-    end
-
-    local timeoutMillis = k_defaultTimeoutMillis
-    local pollMillis    = k_defaultPollMillis
-    if options ~= nil then
-        if type(options) ~= "table" then
-            error("ctx:wait_for_page options must be a table", 2)
-        end
-        if options.timeout_ms ~= nil then
-            timeoutMillis = options.timeout_ms
-        end
-        if options.poll_ms ~= nil then
-            pollMillis = options.poll_ms
-        end
-    end
-
-    local deadline = native.deadline(timeoutMillis)
-    while true do
-        local state = beginCycle(3)
-        local ok, matched, result = pcall(observeCycle, state, target, fn)
-        local closed, closeError  = pcall(endCycle, state)
-
-        if not ok then
-            error(matched, 0)
-        end
-        if not closed then
-            error(closeError, 0)
-        end
-        if matched then
-            return result
-        end
-
-        -- The deadline is the host's, absolute and unforgeable, and `wait` is
-        -- the only thing that consults it. A false is the budget running out,
-        -- and the timeout is minted by the host so it is a real Tier B error a
-        -- project can catch and a retry can act on -- an `error("timeout")`
-        -- from here would be a plain string and would reach the host as a
-        -- malformed script.
-        if not native.wait(deadline, pollMillis) then
-            native.raise(
-                "timeout",
-                "the page did not resolve before the wait deadline"
-            )
-        end
-    end
-end
-
 -- Whether `err` is worth another attempt under `on`.
 --
 -- The design's correction to its own draft, and the reason it matters: `on`
@@ -493,7 +307,8 @@ end
 -- axis, where only CaptureStalled and StaleObservation are Retry while Timeout
 -- and TargetUnavailable are Abort. If `retryable` were a hard filter, "wait for
 -- a page, and if the game was slow do the whole step again" -- the single most
--- common shape a daily script takes -- could never retry at all.
+-- common shape a daily script takes -- could never retry at all, because the
+-- timeout observe.wait_until mints is an Abort.
 local function retryAllowed(on, err)
     if on == nil then
         return err.retryable == true
@@ -602,25 +417,14 @@ function ctx:cycle_close(ticket)
     return native.cycle_close(ticket)
 end
 
-function ctx:cycle_page(ticket)
-    return native.cycle_page(ticket)
-end
-
--- Same ordering rule as view:find, and it is easier to break here because
--- nothing above this line resolves anything: cycle_page on the ticket first, or
--- this raises uf.errors.page_unresolved.
-function ctx:cycle_find(ticket, element)
-    return native.cycle_find(ticket, element)
-end
-
-function ctx:cycle_click(ticket, hit)
-    return native.cycle_click(ticket, hit)
+-- Takes a match `cycle_match` returned on this same cycle. See view:click.
+function ctx:cycle_click(ticket, match)
+    return native.cycle_click(ticket, match)
 end
 
 -- The script-owned page model's primitives. They forward and decide nothing,
--- like the block they sit in: the element and page vocabulary that will be built
--- on top of them is a later change, and putting a policy here now would fix its
--- shape before anything has used them.
+-- like the block they sit in: the element and page vocabulary built on top of
+-- them lives in `model`, `observe` and `navigation`.
 --
 -- The rectangle is four numbers rather than a table because the private surface
 -- takes only host-minted handles and scalars, and a Luau table is neither.
@@ -715,20 +519,5 @@ function ctx:try(fn)
     end
     error(err, 0)
 end
-
--- The framework-only channel between the task declaration module and this one.
---
--- It is a framework global rather than an export because the exports below are
--- published into the project environment: a project must not be able to install
--- its own interrupt list behind the declaration surface's validation. Modules
--- load in bundle order and this one sorts first, so `task` finds this already
--- bound; a load-order change is caught there, at load, rather than here.
-frameworkTaskRegistry = table.freeze({
-    setInterrupts = function(list)
-        interrupts    = list
-        interruptHits = {}
-    end,
-    defaultMaxHits = k_defaultMaxHits,
-})
 
 return ctx

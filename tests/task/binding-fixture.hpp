@@ -2,16 +2,12 @@
 
 #include "../annotation/test-helpers.hpp"
 
-#include <task/capability-surface.hpp>
 #include <task/framework-bundle.hpp>
+#include <task/script-bindings.hpp>
 #include <task/task-context.hpp>
 
-#include <annotation/resource.hpp>
-#include <annotation/capabilities.hpp>
 #include <annotation/content-hash.hpp>
-#include <annotation/recognition.hpp>
 #include <annotation/recognition-runtime.hpp>
-#include <annotation/runtime-manifest.hpp>
 
 #include <core/error/result.hpp>
 #include <core/numeric/checked-arithmetic.hpp>
@@ -26,7 +22,6 @@
 #include <domain/space.hpp>
 
 #include <engine/ports.hpp>
-#include <engine/runtime-loader.hpp>
 #include <engine/session.hpp>
 
 #include <image/png.hpp>
@@ -47,40 +42,39 @@
 #include <memory>
 #include <optional>
 #include <stop_token>
+#include <format>
 #include <string>
 #include <string_view>
 #include <utility>
 #include <vector>
 
 // Shared test fixture for every modules/task suite that boots a real task VM:
-// the one-page and two-page recognition runtimes, the grey frame builders, the
-// fake frame sources, the recording sinks, and the bound-VM runners.
+// the fixture geometry, the grey frame builders, the template blobs, the fake
+// frame sources, the recording sinks, and the bound-VM runners.
 // test-task-binding.cpp, test-adversarial-surface.cpp,
 // test-determinism-harness.cpp, test-framework-context.cpp,
 // test-framework-surface.cpp and test-veto-blocking.cpp all build sessions from
 // these, so they live here once rather than being copied into each translation
 // unit. Everything is inline or a header-defined type, so including it in more
 // than one TU is safe.
+//
+// IT BUILDS NO RECOGNITION RUNTIME ANY MORE. It used to compile a one-page and a
+// two-page annotation catalog so a session could resolve a page and find an
+// element; both verbs retired with the C++ page model
+// (docs/plans/2026-07-31-script-owned-page-model.md 9), and an engine session now
+// takes a fingerprint and nothing else. What is left of the old fixture is the
+// part that was always about pixels: a three-by-one grey frame, and the
+// one-by-one grey template blobs a script matches against it.
 namespace uf::task
 {
     namespace anno = annotation;
 
-    inline constexpr auto k_anchorId = "00000000-0000-0000-0000-000000000011";
-    inline constexpr auto k_actionId = "00000000-0000-0000-0000-000000000013";
-    inline constexpr auto k_pageId   = "00000000-0000-0000-0000-000000000111";
-
-    // The second page and its two elements, so a popup is a page in its own
-    // right and a target page exists for a wait to be waiting FOR.
-    inline constexpr auto k_popupAnchorId = "00000000-0000-0000-0000-000000000012";
-    inline constexpr auto k_closeDialogId = "00000000-0000-0000-0000-000000000014";
-    inline constexpr auto k_popupPageId   = "00000000-0000-0000-0000-000000000112";
-
-    // Distinct grey levels with an exact-match threshold keep the two pages
-    // mutually exclusive: a frame resolves one of them or neither, never both.
+    // The grey levels the fixture frames are painted with. They are distinct, so
+    // a template cut from one scores zero where it was painted and nonzero
+    // everywhere else -- which is what lets a case say "this template is on this
+    // frame" and "this one is not" without a page model.
     inline constexpr auto k_targetAnchorGray = uint8{2};
     inline constexpr auto k_targetActionGray = uint8{5};
-    inline constexpr auto k_popupAnchorGray  = uint8{20};
-    inline constexpr auto k_popupCloseGray   = uint8{40};
 
     [[nodiscard]]
     constexpr auto asByte(uint8 value) noexcept -> std::byte
@@ -88,9 +82,9 @@ namespace uf::task
         return static_cast<std::byte>(value);
     }
 
-    // A one-by-one grey RGBA template addressed by its content hash, mirroring
-    // the engine session fixtures so page and action evaluation behave exactly
-    // as they do in the real loop.
+    // A one-by-one grey RGBA template addressed by its content hash, encoded
+    // exactly as an authored template is, so a script that loads it searches for
+    // the same pixels the real loop would.
     [[nodiscard]]
     inline auto encodedTemplate(uint8 gray) -> anno::EncodedRuntimeTemplate
     {
@@ -110,219 +104,21 @@ namespace uf::task
         };
     }
 
-    struct RuntimeParts final
-    {
-        engine::LoadedRuntime    loaded;
-        anno::ProjectFingerprint fingerprint;
-    };
-
-    // One element's only appearance. Every element in these fixtures has
-    // exactly one, so its name is fixed here rather than threaded through each
-    // call.
+    // The geometry every fixture frame is captured at, and therefore the
+    // fingerprint every fixture session is configured with on both sides. Three
+    // by one is the smallest frame a one-by-one template can be searched in at
+    // more than one position.
     [[nodiscard]]
-    inline auto soleAppearance() -> anno::CompiledAppearance
+    inline auto fixtureFingerprint() -> ProjectFingerprint
     {
-        return anno::test::compiledAppearance(
-            "default",
-            anno::test::pixelRect(0, 0, 1, 1),
-            anno::test::threshold(10'000)
-        );
-    }
-
-    [[nodiscard]]
-    inline auto soleAppearanceAsset(
-        anno::ContentHash const& templateHash,
-        anno::ContentHash const& sourceHash
-    ) -> std::vector<anno::RuntimeAppearanceAsset>
-    {
-        auto assets = std::vector<anno::RuntimeAppearanceAsset>{};
-        assets.emplace_back(
-            anno::RuntimeAppearanceAsset{
-                .appearanceName = anno::test::resourceName("default"),
-                .templateHash   = templateHash,
-                .sourceHash     = sourceHash,
-            }
-        );
-        return assets;
-    }
-
-    // One page (page_a, whose reference to the grey-2 anchor is required
-    // identity evidence) plus one action target (grey 5) the same page
-    // exercises interact on. A grey [2,5,0] frame resolves page_a and the
-    // target hits at position 1; a grey [0,0,0] frame resolves nothing and the
-    // target misses.
-    [[nodiscard]]
-    inline auto singlePageRuntime() -> RuntimeParts
-    {
-        auto const fingerprint = anno::test::fingerprint(3, 1, 96, 96);
-        auto const anchorA     = anno::test::elementId(k_anchorId);
-        auto const actionT     = anno::test::elementId(k_actionId);
-        auto const pageA       = anno::test::pageId(k_pageId);
-        auto anchorTemplate = encodedTemplate(k_targetAnchorGray);
-        auto actionTemplate = encodedTemplate(k_targetActionGray);
-        auto const sourceBytes = std::array{asByte(42)};
-        auto const sourceHash  = anno::sha256(sourceBytes);
-        REQUIRE(sourceHash.has_value());
-
-        auto manifest = anno::RuntimeManifest::create(
-            anno::test::projectId("personal.task_binding"),
-            fingerprint,
-            {
-                anno::RuntimeElementSpec{
-                    .definition = anno::test::element(
-                        fingerprint,
-                        anchorA,
-                        "anchor_a",
-                        anno::test::capabilities(anno::Identify{}),
-                        anno::test::pixelRect(0, 0, 3, 1),
-                        {soleAppearance()}
-                    ),
-                    .appearances = soleAppearanceAsset(anchorTemplate.hash, *sourceHash),
-                },
-                anno::RuntimeElementSpec{
-                    .definition = anno::test::element(
-                        fingerprint,
-                        actionT,
-                        "action_target",
-                        anno::test::capabilities(std::nullopt, anno::Interact{}),
-                        anno::test::pixelRect(0, 0, 3, 1),
-                        {soleAppearance()}
-                    ),
-                    .appearances = soleAppearanceAsset(actionTemplate.hash, *sourceHash),
-                },
-            },
-            {anno::test::page(pageA, "page_a")},
-            {
-                anno::test::reference(pageA, anchorA, anno::test::identifiesAs()),
-                anno::test::reference(pageA, actionT, anno::test::interacts()),
-            }
-        );
-        REQUIRE(manifest.has_value());
-        auto templates = std::vector<anno::EncodedRuntimeTemplate>{};
-        templates.emplace_back(std::move(anchorTemplate));
-        templates.emplace_back(std::move(actionTemplate));
-        auto runtime = anno::RecognitionRuntime::create(
-            *std::move(manifest),
-            std::move(templates)
-        );
-        REQUIRE(runtime.has_value());
-        return RuntimeParts{
-            .loaded      = engine::LoadedRuntime{.runtime = *std::move(runtime)},
-            .fingerprint = fingerprint,
-        };
-    }
-
-    // Two pages -- the target page_a and a popup -- with one action target each,
-    // which is the smallest catalog an interrupt can be addressed in: an
-    // interrupt names the page it recognizes, so proving one fires needs a
-    // second page for it to name.
-    [[nodiscard]]
-    inline auto interruptRuntime() -> RuntimeParts
-    {
-        auto const fingerprint  = anno::test::fingerprint(3, 1, 96, 96);
-        auto const targetAnchor = anno::test::elementId(k_anchorId);
-        auto const targetAction = anno::test::elementId(k_actionId);
-        auto const popupAnchor  = anno::test::elementId(k_popupAnchorId);
-        auto const popupClose   = anno::test::elementId(k_closeDialogId);
-        auto const targetPage   = anno::test::pageId(k_pageId);
-        auto const popupPage    = anno::test::pageId(k_popupPageId);
-
-        auto targetAnchorTemplate = encodedTemplate(k_targetAnchorGray);
-        auto targetActionTemplate = encodedTemplate(k_targetActionGray);
-        auto popupAnchorTemplate  = encodedTemplate(k_popupAnchorGray);
-        auto popupCloseTemplate   = encodedTemplate(k_popupCloseGray);
-
-        auto const sourceBytes = std::array{asByte(42)};
-        auto const sourceHash  = anno::sha256(sourceBytes);
-        REQUIRE(sourceHash.has_value());
-
-        auto const anchorSpec = [&](anno::ElementId id,
-                                    std::string_view name,
-                                    anno::ContentHash templateHash)
-        {
-            return anno::RuntimeElementSpec{
-                .definition = anno::test::element(
-                    fingerprint,
-                    id,
-                    std::string{name},
-                    anno::test::capabilities(anno::Identify{}),
-                    anno::test::pixelRect(0, 0, 3, 1),
-                    {soleAppearance()}
-                ),
-                .appearances = soleAppearanceAsset(templateHash, *sourceHash),
-            };
-        };
-        auto const actionSpec = [&](anno::ElementId id,
-                                    std::string_view name,
-                                    anno::ContentHash templateHash)
-        {
-            return anno::RuntimeElementSpec{
-                .definition = anno::test::element(
-                    fingerprint,
-                    id,
-                    std::string{name},
-                    anno::test::capabilities(std::nullopt, anno::Interact{}),
-                    anno::test::pixelRect(0, 0, 3, 1),
-                    {soleAppearance()}
-                ),
-                .appearances = soleAppearanceAsset(templateHash, *sourceHash),
-            };
-        };
-
-        auto manifest = anno::RuntimeManifest::create(
-            anno::test::projectId("personal.framework_context"),
-            fingerprint,
-            {
-                anchorSpec(targetAnchor, "anchor_a", targetAnchorTemplate.hash),
-                actionSpec(targetAction, "action_target", targetActionTemplate.hash),
-                anchorSpec(popupAnchor, "anchor_popup", popupAnchorTemplate.hash),
-                actionSpec(popupClose, "close_dialog", popupCloseTemplate.hash),
-            },
-            {
-                anno::test::page(targetPage, "page_a"),
-                anno::test::page(popupPage, "popup"),
-            },
-            {
-                anno::test::reference(
-                    targetPage,
-                    targetAnchor,
-                    anno::test::identifiesAs()
-                ),
-                anno::test::reference(
-                    targetPage,
-                    targetAction,
-                    anno::test::interacts()
-                ),
-                anno::test::reference(
-                    popupPage,
-                    popupAnchor,
-                    anno::test::identifiesAs()
-                ),
-                anno::test::reference(popupPage, popupClose, anno::test::interacts()),
-            }
-        );
-        REQUIRE(manifest.has_value());
-
-        auto templates = std::vector<anno::EncodedRuntimeTemplate>{};
-        templates.emplace_back(std::move(targetAnchorTemplate));
-        templates.emplace_back(std::move(targetActionTemplate));
-        templates.emplace_back(std::move(popupAnchorTemplate));
-        templates.emplace_back(std::move(popupCloseTemplate));
-
-        auto runtime = anno::RecognitionRuntime::create(
-            *std::move(manifest),
-            std::move(templates)
-        );
-        REQUIRE(runtime.has_value());
-        return RuntimeParts{
-            .loaded      = engine::LoadedRuntime{.runtime = *std::move(runtime)},
-            .fingerprint = fingerprint,
-        };
+        auto const fingerprint = ProjectFingerprint::create(3, 1, 96, 96);
+        REQUIRE(fingerprint.has_value());
+        return *fingerprint;
     }
 
     [[nodiscard]]
     inline auto grayFrame(
-        anno::ProjectFingerprint fingerprint,
+        ProjectFingerprint fingerprint,
         std::vector<std::byte> pixels,
         FrameId frameId
     ) -> Frame
@@ -371,29 +167,14 @@ namespace uf::task
         };
     }
 
-    // A frame that resolves page_a while the action target is nowhere on it.
-    //
-    // It is what a find that COMPLETES and matches nothing needs now: locating
-    // an element runs against the page's reference to it, so a frame that
-    // resolves no page refuses the search instead of missing, and "the search
-    // looked and found nothing" can only be observed on a page that resolved.
+    // A frame carrying the anchor grey and nothing else, so a search for the
+    // action template COMPLETES and matches nothing.
     [[nodiscard]]
     inline auto resolvedTargetlessPixels() -> std::vector<std::byte>
     {
         return std::vector<std::byte>{
             asByte(k_targetAnchorGray),
             asByte(0),
-            asByte(0),
-        };
-    }
-
-    // A frame that resolves the popup page and hits its close button.
-    [[nodiscard]]
-    inline auto popupPixels() -> std::vector<std::byte>
-    {
-        return std::vector<std::byte>{
-            asByte(k_popupAnchorGray),
-            asByte(k_popupCloseGray),
             asByte(0),
         };
     }
@@ -609,33 +390,31 @@ namespace uf::task
     // The EngineConfig a real task VM boots with, assembled in one place so no
     // test can accidentally assert against a surface shape the host does not
     // ship: the real framework bundle under the framework environment, the
-    // private capability surface handed to it as a chunk argument, the uf
-    // data tables as a project global, and the framework's own ctx published
-    // beside them.
+    // private capability surface handed to it as a chunk argument, the uf data
+    // table as a project global, and the framework's own ctx published beside it.
     //
     // `context` must outlive the Engine built from the returned config, because
-    // the private surface holds its address (see CapabilitySurface).
+    // the private surface holds its address (see task/script-bindings.hpp).
     [[nodiscard]]
-    inline auto taskVmConfig(CapabilitySurface const& surface, TaskContext& context)
-        -> script::EngineConfig
+    inline auto taskVmConfig(TaskContext& context) -> script::EngineConfig
     {
         return script::EngineConfig{
-            .frameworkModules  = frameworkScriptModules(),
-            .installHostTables = surface.installer(),
-            .installPrivateCapabilities =
-                CapabilitySurface::privateCapabilities(context),
-            .projectGlobals          = CapabilitySurface::projectGlobals(),
-            .frameworkProjectGlobals = frameworkProjectGlobals(),
-            .classifyRaisedError     = CapabilitySurface::raisedErrorClassifier(),
+            .frameworkModules           = frameworkScriptModules(),
+            .installHostTables          = scriptHostTableInstaller(),
+            .installPrivateCapabilities = scriptPrivateCapabilities(context),
+            .projectGlobals             = scriptProjectGlobals(),
+            .frameworkProjectGlobals    = frameworkProjectGlobals(),
+            .classifyRaisedError        = scriptRaisedErrorClassifier(),
         };
     }
 
     [[nodiscard]]
-    inline auto baseConfig(anno::ProjectFingerprint fingerprint)
+    inline auto baseConfig(ProjectFingerprint fingerprint)
         -> engine::EngineSessionConfig
     {
         return engine::EngineSessionConfig{
-            .liveFingerprint         = fingerprint,
+            .liveFingerprint    = fingerprint,
+            .projectFingerprint = fingerprint,
             .maximumPixelComparisons = 1'000,
             .recognitionTimeout      = std::chrono::duration_cast<
                 MonotonicInstant::Duration
@@ -688,10 +467,8 @@ namespace uf::task
         }
     };
 
-    // The run's recorder, a constructed EngineSession over it, the surface
-    // built from its own catalog, and a non-owning observer of the click sink.
-    // The surface is captured before the runtime moves into the session, so
-    // both name the same element and page identities.
+    // The run's recorder, a constructed EngineSession over it, and a non-owning
+    // observer of the click sink.
     //
     // The recorder is declared first and held through a unique_ptr: the
     // session borrows it (see engine/session.hpp), so it must outlive the
@@ -700,33 +477,23 @@ namespace uf::task
     {
         std::unique_ptr<trace::TraceRecorder> recorder;
         Result<engine::EngineSession>         session;
-        CapabilitySurface                     surface;
         CountingActionSink*                   clicks;
     };
 
-    // Builds the session over `parts` from `frameSource` with `cancellation`
-    // armed on the engine config, recording into `traceSink`. One recorder
-    // serves both the engine session and the TaskContext built over it, which is
-    // what puts their events into a single ordered stream.
-    //
-    // `parts` is taken by value because this is a move-in ownership boundary:
-    // the recognition runtime ends up inside the session.
+    // Builds a session over the fixture geometry from `frameSource` with
+    // `cancellation` armed on the engine config, recording into `traceSink`. One
+    // recorder serves both the engine session and the TaskContext built over it,
+    // which is what puts their events into a single ordered stream.
     [[nodiscard]]
-    inline auto buildBindingOver(
-        RuntimeParts parts,
+    inline auto buildBindingWith(
         std::unique_ptr<engine::IFrameSource> frameSource,
         std::stop_token cancellation,
         std::unique_ptr<trace::ITraceSink> traceSink
     ) -> Built
     {
-        auto surface = CapabilitySurface::create(
-            parts.loaded.runtime.manifest().catalog()
-        );
-        REQUIRE(surface.has_value());
-
         auto actionSink      = std::make_unique<CountingActionSink>();
         auto* const p_clicks = actionSink.get();
-        auto config         = baseConfig(parts.fingerprint);
+        auto config         = baseConfig(fixtureFingerprint());
         config.cancellation = std::move(cancellation);
         auto recorder        = std::make_unique<trace::TraceRecorder>(
             std::move(traceSink),
@@ -735,7 +502,6 @@ namespace uf::task
             trace::FrontEnd::Task
         );
         auto session = engine::EngineSession::create(
-            std::move(parts.loaded),
             std::move(frameSource),
             std::move(actionSink),
             *recorder,
@@ -744,26 +510,8 @@ namespace uf::task
         return Built{
             .recorder = std::move(recorder),
             .session  = std::move(session),
-            .surface  = *std::move(surface),
             .clicks   = p_clicks,
         };
-    }
-
-    // The same, over the one-page runtime every suite but the interrupt cases
-    // uses.
-    [[nodiscard]]
-    inline auto buildBindingWith(
-        std::unique_ptr<engine::IFrameSource> frameSource,
-        std::stop_token cancellation,
-        std::unique_ptr<trace::ITraceSink> traceSink
-    ) -> Built
-    {
-        return buildBindingOver(
-            singlePageRuntime(),
-            std::move(frameSource),
-            std::move(cancellation),
-            std::move(traceSink)
-        );
     }
 
     [[nodiscard]]
@@ -776,15 +524,88 @@ namespace uf::task
         );
     }
 
-    // One frame that resolves page_a and hits the action target.
+    // One frame carrying both the anchor and the action grey, so a search for
+    // either template matches on it.
     [[nodiscard]]
     inline auto resolvingFrames(FrameId frameId) -> std::vector<Frame>
     {
         auto frames = std::vector<Frame>{};
-        frames.emplace_back(
-            grayFrame(anno::test::fingerprint(3, 1, 96, 96), resolvingPixels(), frameId)
-        );
+        frames.emplace_back(grayFrame(fixtureFingerprint(), resolvingPixels(), frameId));
         return frames;
+    }
+
+    // The PNG bytes of the one-by-one grey template a script loads through
+    // `template_load` to search a fixture frame for. It goes through the same
+    // encoder the fixture frames are painted from, so a match is exact.
+    [[nodiscard]]
+    inline auto templateBlob(uint8 gray) -> std::vector<std::byte>
+    {
+        return encodedTemplate(gray).pngBytes;
+    }
+
+    // Those PNG bytes as a Luau string literal, so a script can load the
+    // template without a project directory on disk.
+    //
+    // Every byte is written as a three-digit decimal escape, PADDED. The padding
+    // is not cosmetic: an unpadded escape followed by a digit byte would be read
+    // as one larger number, so some blobs would silently decode to different
+    // pixels and others would not.
+    [[nodiscard]]
+    inline auto templateLiteral(uint8 gray) -> std::string
+    {
+        auto const blob = templateBlob(gray);
+        auto       out  = std::string{"\""};
+        for (auto const byte : blob)
+        {
+            out += std::format("\\{:03}", static_cast<unsigned>(byte));
+        }
+        out += '"';
+        return out;
+    }
+
+    // `body` with the fixture template's blob bound as the Luau local TEMPLATE,
+    // so a script can load it with `ctx:template_load(TEMPLATE)` and search a
+    // fixture frame for it. Spelled once here because almost every case that
+    // matches or clicks has to load one first.
+    [[nodiscard]]
+    inline auto withTemplate(
+        std::string_view body,
+        uint8 gray = k_targetActionGray
+    ) -> std::string
+    {
+        return "local TEMPLATE = " + templateLiteral(gray) + "\n"
+            + std::string{body};
+    }
+
+    // A template larger than any region a three-by-one fixture frame can offer,
+    // as a Luau string literal.
+    //
+    // It is what a COMPLETED search with no candidate position needs: a template
+    // that fits always reports its best position and a distance, so an empty
+    // answer from cycle_match means the region could hold the template nowhere
+    // at all. Judging a distance is layer two's, which is why "not found" is not
+    // something this layer can say.
+    [[nodiscard]]
+    inline auto oversizedTemplateLiteral() -> std::string
+    {
+        auto rgba = std::vector<std::byte>{};
+        for (auto index = 0; index < 4; ++index)
+        {
+            rgba.emplace_back(asByte(k_targetActionGray));
+            rgba.emplace_back(asByte(k_targetActionGray));
+            rgba.emplace_back(asByte(k_targetActionGray));
+            rgba.emplace_back(asByte(255));
+        }
+        auto encoded = image::encodeRgbaPng("oversized.png", 2, 2, rgba);
+        REQUIRE(encoded.has_value());
+
+        auto out = std::string{"\""};
+        for (auto const byte : *encoded)
+        {
+            out += std::format("\\{:03}", static_cast<unsigned>(byte));
+        }
+        out += '"';
+        return out;
     }
 
     // Runs `source` on a real task VM bound to `built`'s session and returns
@@ -792,10 +613,10 @@ namespace uf::task
     // this call, so anything the host still holds afterwards is held by the
     // host, not by a live Lua handle.
     [[nodiscard]]
-    inline auto runBound(TaskContext& context, Built& built, std::string_view source)
+    inline auto runBound(TaskContext& context, Built& /*built*/, std::string_view source)
         -> double
     {
-        auto engine = script::Engine::create(taskVmConfig(built.surface, context));
+        auto engine = script::Engine::create(taskVmConfig(context));
         REQUIRE(engine.has_value());
         auto const result = engine->runNumber(source, "task-binding");
         REQUIRE(result.has_value());
@@ -808,11 +629,11 @@ namespace uf::task
     [[nodiscard]]
     inline auto runBoundResult(
         TaskContext& context,
-        Built& built,
+        Built& /*built*/,
         std::string_view source
     ) -> Result<double>
     {
-        auto engine = script::Engine::create(taskVmConfig(built.surface, context));
+        auto engine = script::Engine::create(taskVmConfig(context));
         REQUIRE(engine.has_value());
         return engine->runNumber(source, "task-binding");
     }
@@ -834,13 +655,12 @@ namespace uf::task
     [[nodiscard]]
     inline auto runWithMark(
         TaskContext& context,
-        CapabilitySurface const& surface,
         std::stop_token cancellation,
         std::string_view source
     ) -> DiscriminatorRun
     {
         uint64 markCount        = 0;
-        auto   config           = taskVmConfig(surface, context);
+        auto   config           = taskVmConfig(context);
         auto   surfaceInstaller = std::move(config.installHostTables);
         config.cancellation     = std::move(cancellation);
         config.installHostTables =

@@ -1,6 +1,6 @@
 #include "binding-fixture.hpp"
 
-#include <task/capability-surface.hpp>
+#include <task/script-bindings.hpp>
 #include <task/task-context.hpp>
 
 #include <core/error/result.hpp>
@@ -46,9 +46,9 @@
 //                stopped forwarding the run's stop would fail this case.
 //   cycle_close  the trace recorder. The verb releases a frame and records one
 //                line; the recorder is the only host call in it that can wait.
-//   cycle_page   the trace recorder, for the same reason. Recognition itself is
+//   cycle_match  the trace recorder, for the same reason. The search itself is
 //                bounded by EngineSessionConfig's deadline and comparison cap.
-//   cycle_find   the trace recorder, as above.
+//   cycle_read   the trace recorder, as above.
 //   cycle_click  IActionSink::click -- the real input delivery.
 //   wait         its own sliced sleep (core::pollSleep).
 //   settle       its own sliced sleep.
@@ -272,7 +272,7 @@ namespace uf::task
         // Blocks inside emit(), on the first event matching its target.
         //
         // The recorder is the only blocking surface inside cycle_close,
-        // cycle_page, cycle_find and emit: none of those verbs reaches a port of
+        // cycle_match, cycle_read and emit: none of those verbs reaches a port of
         // its own, so the host call they all make is the one that records what
         // they did. Like the action sink, ITraceSink::emit carries no
         // cancellation channel of its own.
@@ -315,16 +315,14 @@ namespace uf::task
             }
         };
 
-        // The recorder, the session over the one-page runtime, and the surface
-        // built from its catalog. The recorder is held through a unique_ptr
-        // because the session borrows it, exactly as binding-fixture's Built
-        // does; this suite needs its own because it varies the ACTION sink,
+        // The recorder and the session over it. The recorder is held through a
+        // unique_ptr because the session borrows it, exactly as binding-fixture's
+        // Built does; this suite needs its own because it varies the ACTION sink,
         // which the shared builder always supplies itself.
         struct VetoParts final
         {
             std::unique_ptr<trace::TraceRecorder> recorder;
             Result<engine::EngineSession>         session;
-            CapabilitySurface                     surface;
         };
 
         [[nodiscard]]
@@ -335,13 +333,7 @@ namespace uf::task
             std::stop_token cancellation
         ) -> VetoParts
         {
-            auto parts   = singlePageRuntime();
-            auto surface = CapabilitySurface::create(
-                parts.loaded.runtime.manifest().catalog()
-            );
-            REQUIRE(surface.has_value());
-
-            auto config         = baseConfig(parts.fingerprint);
+            auto config         = baseConfig(fixtureFingerprint());
             config.cancellation = std::move(cancellation);
 
             auto recorder = std::make_unique<trace::TraceRecorder>(
@@ -351,7 +343,6 @@ namespace uf::task
                 trace::FrontEnd::Task
             );
             auto session = engine::EngineSession::create(
-                std::move(parts.loaded),
                 std::move(frameSource),
                 std::move(actionSink),
                 *recorder,
@@ -360,7 +351,6 @@ namespace uf::task
             return VetoParts{
                 .recorder = std::move(recorder),
                 .session  = std::move(session),
-                .surface  = *std::move(surface),
             };
         }
 
@@ -397,7 +387,7 @@ namespace uf::task
             };
 
             auto const start = MonotonicInstant::now();
-            auto       run   = runWithMark(context, parts.surface, gate.token(), source);
+            auto       run   = runWithMark(context, gate.token(), source);
             auto const elapsed = MonotonicInstant::now().saturatingDurationSince(start);
             return BlockedRun{
                 .elapsed   = elapsed,
@@ -427,17 +417,13 @@ namespace uf::task
         [[nodiscard]]
         auto oneFrame(FrameId frameId) -> Frame
         {
-            return grayFrame(
-                anno::test::fingerprint(3, 1, 96, 96),
-                resolvingPixels(),
-                frameId
-            );
+            return grayFrame(fixtureFingerprint(), resolvingPixels(), frameId);
         }
 
         // The frame source for every case whose block is somewhere else: it
-        // serves one frame that resolves page_a and hits the action target, so
-        // the script can reach the verb under test without any of the setup
-        // blocking on its way there.
+        // serves one frame the fixture template is on, so the script can reach
+        // the verb under test without any of the setup blocking on its way
+        // there.
         [[nodiscard]]
         auto servingFrameSource() -> std::unique_ptr<engine::IFrameSource>
         {
@@ -494,43 +480,17 @@ namespace uf::task
             expectPromptCancelledExit(run);
         }
 
-        TEST_CASE("Veto #6: a blocked cycle_page still exits inside the budget")
+        TEST_CASE("Veto #6: a blocked cycle_match still exits inside the budget")
         {
             auto gate = CancelGate{StopTrigger::OnFirstBlock};
 
-            constexpr std::string_view source = R"lua(
+            auto const source = std::string{"local TEMPLATE = "}
+                + templateLiteral(k_targetActionGray) + "\n" + R"lua(
+                local template = ctx:template_load(TEMPLATE)
                 local ticket = ctx:cycle_open()
-                mark()
-                pcall(function() return ctx:cycle_page(ticket) end)
-                mark()
-                return 1
-            )lua";
-
-            auto const run = runBlocked(
-                gate,
-                servingFrameSource(),
-                std::make_unique<CountingActionSink>(),
-                std::make_unique<BlockingTraceSink>(
-                    &gate,
-                    BlockingTraceSink::Target{.nativeVerb = "cycle_page"}
-                ),
-                source
-            );
-
-            CHECK(gate.blocked());
-            expectPromptCancelledExit(run);
-        }
-
-        TEST_CASE("Veto #6: a blocked cycle_find still exits inside the budget")
-        {
-            auto gate = CancelGate{StopTrigger::OnFirstBlock};
-
-            constexpr std::string_view source = R"lua(
-                local ticket = ctx:cycle_open()
-                ctx:cycle_page(ticket)
                 mark()
                 pcall(function()
-                    return ctx:cycle_find(ticket, uf.elements.action_target)
+                    return ctx:cycle_match(ticket, template, 0, 0, 3, 1)
                 end)
                 mark()
                 return 1
@@ -542,7 +502,37 @@ namespace uf::task
                 std::make_unique<CountingActionSink>(),
                 std::make_unique<BlockingTraceSink>(
                     &gate,
-                    BlockingTraceSink::Target{.nativeVerb = "cycle_find"}
+                    BlockingTraceSink::Target{.nativeVerb = "cycle_match"}
+                ),
+                source
+            );
+
+            CHECK(gate.blocked());
+            expectPromptCancelledExit(run);
+        }
+
+        TEST_CASE("Veto #6: a blocked cycle_read still exits inside the budget")
+        {
+            auto gate = CancelGate{StopTrigger::OnFirstBlock};
+
+            // The session binds no OCR adapter, so the read refuses -- but it
+            // refuses THROUGH the trace recorder, which is the blocking surface
+            // under test. What is being timed is the exit, not the answer.
+            constexpr std::string_view source = R"lua(
+                local ticket = ctx:cycle_open()
+                mark()
+                pcall(function() return ctx:cycle_read(ticket, 0, 0, 1, 1) end)
+                mark()
+                return 1
+            )lua";
+
+            auto const run = runBlocked(
+                gate,
+                servingFrameSource(),
+                std::make_unique<CountingActionSink>(),
+                std::make_unique<BlockingTraceSink>(
+                    &gate,
+                    BlockingTraceSink::Target{.nativeVerb = "cycle_read"}
                 ),
                 source
             );
@@ -555,13 +545,14 @@ namespace uf::task
         {
             auto gate = CancelGate{StopTrigger::OnFirstBlock};
 
-            // The click needs a resolved page and a real hit to reach the sink at
+            // The click needs a real match from this frame to reach the sink at
             // all, so gate.blocked() below is also the proof that the whole
             // authorization path ran before delivery blocked.
-            constexpr std::string_view source = R"lua(
+            auto const source = std::string{"local TEMPLATE = "}
+                + templateLiteral(k_targetActionGray) + "\n" + R"lua(
+                local template = ctx:template_load(TEMPLATE)
                 local ticket = ctx:cycle_open()
-                ctx:cycle_page(ticket)
-                local hit = ctx:cycle_find(ticket, uf.elements.action_target)
+                local hit = ctx:cycle_match(ticket, template, 0, 0, 3, 1)
                 if hit == nil then return 0 end
                 mark()
                 pcall(function() ctx:cycle_click(ticket, hit) end)

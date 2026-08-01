@@ -1,6 +1,6 @@
 #include "../annotation/test-helpers.hpp"
 
-#include <runtime-loader.hpp>
+#include <annotation/runtime-project.hpp>
 
 #include <annotation/authoring-compiler.hpp>
 #include <annotation/authoring-document.hpp>
@@ -38,7 +38,7 @@
 #include <variant>
 #include <vector>
 
-namespace uf::engine
+namespace uf::annotation
 {
     namespace
     {
@@ -253,7 +253,7 @@ namespace uf::engine
         // order (B=3, G=2, R=1). Its grey value equals the anchor template's, so
         // the anchor matches with zero sum-of-absolute-differences.
         [[nodiscard]]
-        auto matchingFrame(anno::ProjectFingerprint fingerprint) -> Frame
+        auto matchingFrame(ProjectFingerprint fingerprint) -> Frame
         {
             auto const transform = CoordinateTransform::create(
                 Point<DesktopSpace>{0.0F, 0.0F},
@@ -298,7 +298,7 @@ namespace uf::engine
         }
     }
 
-    TEST_CASE("engine loads a published project and recognizes a page")
+    TEST_CASE("annotation loads a published project and recognizes a page")
     {
         auto const temp     = TemporaryDir{"round-trip"};
         auto const fixture  = projectFixture();
@@ -312,10 +312,10 @@ namespace uf::engine
 
         auto const fingerprint = anno::test::fingerprint(3, 2, 96, 96);
         auto const frame       = matchingFrame(fingerprint);
-        auto const outcome     = loaded->runtime.recognizePage(
+        auto const outcome     = loaded->recognizePage(
             frame,
             fingerprint,
-            anno::RecognitionPolicy{.maximumPixelComparisons = 100}
+            RecognitionPolicy{.maximumPixelComparisons = 100}
         );
         REQUIRE(outcome.has_value());
         REQUIRE(std::holds_alternative<anno::ResolvedPage>(*outcome));
@@ -325,7 +325,7 @@ namespace uf::engine
         );
     }
 
-    TEST_CASE("engine rejects a corrupt runtime manifest and names its path")
+    TEST_CASE("loading rejects a corrupt runtime manifest and names its path")
     {
         auto const temp = TemporaryDir{"corrupt"};
         auto const manifestPath = temp.path()
@@ -340,7 +340,7 @@ namespace uf::engine
         CHECK(*kind == AutomationErrorKind::InvalidResource);
     }
 
-    TEST_CASE("engine reports a missing template file by path")
+    TEST_CASE("loading reports a missing template file by path")
     {
         auto const temp     = TemporaryDir{"missing-template"};
         auto const fixture  = projectFixture();
@@ -361,7 +361,7 @@ namespace uf::engine
         CHECK(loaded.error().message().contains("assets/templates"));
     }
 
-    TEST_CASE("engine rejects a template whose bytes do not match its hash")
+    TEST_CASE("loading rejects a template whose bytes do not match its hash")
     {
         auto const temp     = TemporaryDir{"tampered-template"};
         auto const fixture  = projectFixture();
@@ -384,7 +384,7 @@ namespace uf::engine
         CHECK(*kind == AutomationErrorKind::InvalidResource);
     }
 
-    TEST_CASE("engine rejects an oversized runtime manifest before reading it")
+    TEST_CASE("loading rejects an oversized runtime manifest before reading it")
     {
         auto const temp         = TemporaryDir{"oversized"};
         auto const manifestPath = temp.path()

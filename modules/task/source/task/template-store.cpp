@@ -6,7 +6,8 @@
 #include <core/types/integer.hpp>
 
 #include <annotation/content-hash.hpp>
-#include <annotation/recognition-runtime.hpp>
+
+#include <vision/template-match.hpp>
 
 #include <domain/error.hpp>
 
@@ -50,7 +51,7 @@ namespace uf::task
             m_entries,
             [&hash](Entry const& entry) noexcept -> bool
             {
-                return entry.image.hash == hash;
+                return entry.hash == hash;
             }
         );
         if (existing != m_entries.end())
@@ -73,12 +74,13 @@ namespace uf::task
             );
         }
 
-        UF_TRY_VALUE(image, annotation::decodeTemplateImage(pngBytes, hash));
+        UF_TRY_VALUE(image, decodeTemplateImage(pngBytes, hash.toString()));
         auto const ordinal = m_nextOrdinal;
         ++m_nextOrdinal;
         m_entries.emplace_back(
             Entry{
                 .ordinal = ordinal,
+                .hash    = hash,
                 .image   = std::move(image),
             }
         );
@@ -90,7 +92,23 @@ namespace uf::task
 
     auto TemplateStore::find(
         TemplateTicket ticket
-    ) const noexcept -> annotation::GrayTemplateImage const*
+    ) const noexcept -> GrayTemplateImage const*
+    {
+        auto const* p_entry = findEntry(ticket);
+        return p_entry == nullptr ? nullptr : &p_entry->image;
+    }
+
+    auto TemplateStore::hashOf(
+        TemplateTicket ticket
+    ) const noexcept -> annotation::ContentHash const*
+    {
+        auto const* p_entry = findEntry(ticket);
+        return p_entry == nullptr ? nullptr : &p_entry->hash;
+    }
+
+    auto TemplateStore::findEntry(
+        TemplateTicket ticket
+    ) const noexcept -> Entry const*
     {
         if (ticket.generation != m_generation)
         {
@@ -105,6 +123,6 @@ namespace uf::task
         {
             return nullptr;
         }
-        return &found->image;
+        return &*found;
     }
 }

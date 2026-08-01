@@ -8,11 +8,6 @@
 #include <core/time/monotonic-time.hpp>
 #include <core/types/integer.hpp>
 
-#include <annotation/authorization.hpp>
-#include <annotation/catalog.hpp>
-#include <annotation/recognition.hpp>
-#include <annotation/recognition-runtime.hpp>
-
 #include <domain/detection.hpp>
 #include <domain/error.hpp>
 #include <domain/frame.hpp>
@@ -27,6 +22,7 @@
 
 #include <vision/bgra-image.hpp>
 #include <vision/sad.hpp>
+#include <vision/template-match.hpp>
 
 #include <algorithm>
 #include <chrono>
@@ -59,7 +55,7 @@ namespace uf::engine
         [[nodiscard]]
         auto identityEvent(
             trace::TraceEventKind kind,
-            annotation::FrameIdentity identity
+            FrameIdentity identity
         ) -> trace::TraceEvent
         {
             return trace::TraceEvent{
@@ -70,7 +66,7 @@ namespace uf::engine
 
         // Hands `continuation` the frame's pixels as a BGRA8 view, widening a
         // Gray8 frame into a buffer that lives on this stack frame for the whole
-        // synchronous call. It mirrors annotation's withGrayFrame, and for the
+        // synchronous call. It mirrors vision's withGrayFrame, and for the
         // same reason: the view must not outlive the storage behind it, and a
         // continuation is the only shape that says so structurally.
         //
@@ -152,96 +148,12 @@ namespace uf::engine
 
             UF_UNREACHABLE_MSG("Unknown PixelFormat value");
         }
-
-        // The required anchor of `evaluation` that scored worst against its own
-        // ceiling, which is the one a non-resolution turns on. An anchor whose
-        // search produced no comparable position at all carries no score and is
-        // worse than any scored one, so it wins immediately. Returns nullopt when
-        // the page declares no required anchor.
-        [[nodiscard]]
-        auto worstRequiredAnchor(
-            annotation::PageEvaluation const& evaluation
-        ) noexcept -> std::optional<annotation::AnchorEvidence>
-        {
-            auto worst = std::optional<annotation::AnchorEvidence>{};
-            for (auto const& anchor : evaluation.required())
-            {
-                if (!worst)
-                {
-                    worst = anchor;
-                    continue;
-                }
-                if (!worst->sadScore().has_value())
-                {
-                    break;
-                }
-                if (
-                    !anchor.sadScore().has_value()
-                    || *anchor.sadScore() > *worst->sadScore()
-                )
-                {
-                    worst = anchor;
-                }
-            }
-            return worst;
-        }
-
-        // The per-page evidence behind one completed page-resolution attempt, in
-        // the resolver's own page order. It answers the operator's first question
-        // on a non-resolution -- which page was close and by how much -- which the
-        // outcome name alone cannot.
-        [[nodiscard]]
-        auto pageScores(
-            annotation::PageResolutionEvidence const& evidence
-        ) -> std::vector<trace::TraceEvent::Page::Score>
-        {
-            auto scores = std::vector<trace::TraceEvent::Page::Score>{};
-            scores.reserve(evidence.pages().size());
-            for (auto const& evaluation : evidence.pages())
-            {
-                auto score = trace::TraceEvent::Page::Score{
-                    .pageId    = evaluation.pageId(),
-                    .candidate = evaluation.candidate(),
-                };
-                if (auto const worst = worstRequiredAnchor(evaluation))
-                {
-                    score.worstAnchor           = worst->elementId();
-                    score.worstAnchorSad        = worst->sadScore();
-                    score.worstAnchorMaximumSad = worst->maximumSad();
-                }
-                scores.emplace_back(std::move(score));
-            }
-            return scores;
-        }
     }
-
-    ActionFound::ActionFound(
-        annotation::AnchorEvidence evidence,
-        annotation::ActionDetection actionDetection,
-        PixelPoint clickPixel
-    ) noexcept
-        : m_evidence{std::move(evidence)}
-        , m_actionDetection{std::move(actionDetection)}
-        , m_clickPixel{clickPixel}
-    {
-    }
-
-    auto ActionFound::evidence() const noexcept -> annotation::AnchorEvidence const&
-    {
-        return m_evidence;
-    }
-
-    auto ActionFound::actionDetection() const noexcept -> annotation::ActionDetection const&
-    {
-        return m_actionDetection;
-    }
-
-    auto ActionFound::clickPixel() const noexcept -> PixelPoint { return m_clickPixel; }
 
     Observation::Observation(
         Frame frame,
         ObservationLease lease,
-        annotation::FrameIdentity frameIdentity,
+        FrameIdentity frameIdentity,
         std::shared_ptr<detail::EngineSessionIdentity const> sessionIdentity
     ) noexcept
         : m_frame{std::move(frame)}
@@ -282,7 +194,6 @@ namespace uf::engine
     }
 
     EngineSession::EngineSession(
-        LoadedRuntime loadedRuntime,
         std::shared_ptr<detail::EngineSessionIdentity const> identity,
         std::unique_ptr<IFrameSource> frameSource,
         std::unique_ptr<IActionSink> actionSink,
@@ -290,8 +201,7 @@ namespace uf::engine
         trace::TraceRecorder& recorder,
         EngineSessionConfig config
     ) noexcept
-        : m_loadedRuntime{std::move(loadedRuntime)}
-        , m_identity{std::move(identity)}
+        : m_identity{std::move(identity)}
         , m_frameSource{std::move(frameSource)}
         , m_actionSink{std::move(actionSink)}
         , m_ocrEngine{std::move(ocrEngine)}
@@ -401,14 +311,9 @@ namespace uf::engine
         return attempt;
     }
 
-    auto EngineSession::catalog() const noexcept -> annotation::RecognitionCatalog const&
+    auto EngineSession::makeRecognitionPolicy() const -> RecognitionPolicy
     {
-        return m_loadedRuntime.runtime.manifest().catalog();
-    }
-
-    auto EngineSession::makeRecognitionPolicy() const -> annotation::RecognitionPolicy
-    {
-        return annotation::RecognitionPolicy{
+        return RecognitionPolicy{
             .maximumPixelComparisons = m_config.maximumPixelComparisons,
             .deadline                = MonotonicInstant::now().checkedAdd(m_config.recognitionTimeout),
             .cancellation            = m_config.cancellation,
@@ -428,7 +333,6 @@ namespace uf::engine
     // product run builds now comes from TaskHost, so there is no path left that
     // opens a trace on the first engine.observed.
     auto EngineSession::create(
-        LoadedRuntime loadedRuntime,
         std::unique_ptr<IFrameSource> frameSource,
         std::unique_ptr<IActionSink> actionSink,
         trace::TraceRecorder& recorder,
@@ -445,7 +349,6 @@ namespace uf::engine
         }
 
         return EngineSession{
-            std::move(loadedRuntime),
             std::make_shared<detail::EngineSessionIdentity>(),
             std::move(frameSource),
             std::move(actionSink),
@@ -500,255 +403,54 @@ namespace uf::engine
             lease,
             ObservationLease::forFrame(frame, m_config.maxActionFrameAge)
         );
-        auto const identity = annotation::FrameIdentity::fromFrame(frame);
+        auto const identity = FrameIdentity::fromFrame(frame);
 
         UF_TRY(emit(identityEvent(trace::TraceEventKind::EngineObserved, identity)));
 
         return Observation{std::move(frame), lease, identity, m_identity};
     }
 
-    auto EngineSession::resolvePage(
-        Observation const& observation
-    ) -> Result<annotation::PageOutcome>
-    {
-        UF_TRY(ensureUsable(observation, "resolvePage"));
-
-        auto const& frame    = observation.m_frame;
-        auto const identity = annotation::FrameIdentity::fromFrame(frame);
-        auto attempt = m_loadedRuntime.runtime.evaluatePage(
-            frame,
-            m_config.liveFingerprint,
-            makeRecognitionPolicy()
-        );
-        // Every exit of a page-resolution attempt writes one engine.page_resolved
-        // event whose outcome names how it ended, so a reader never has to infer
-        // the stage a stop or failure came from.
-        if (!attempt)
-        {
-            auto event      = identityEvent(trace::TraceEventKind::EnginePageResolved, identity);
-            event.page      = trace::TraceEvent::Page{
-                .outcome = trace::PageResolution::Failed,
-            };
-            event.errorKind = automationErrorKind(attempt.error());
-            event.message   = std::string{attempt.error().message()};
-            UF_TRY(emit(event));
-            return std::unexpected{std::move(attempt).error()};
-        }
-
-        if (
-            auto const* p_stop = std::get_if<annotation::PageRecognitionStop>(
-                &attempt->result
-            )
-        )
-        {
-            auto event         = identityEvent(trace::TraceEventKind::EnginePageResolved, identity);
-            event.page         = trace::TraceEvent::Page{
-                .outcome = trace::PageResolution::Stopped,
-            };
-            event.elementId = p_stop->elementId;
-            event.stopReason   = p_stop->reason;
-            UF_TRY(emit(event));
-            return fail(
-                annotation::searchStopKind(p_stop->reason),
-                std::format(
-                    "page recognition stopped: {}",
-                    annotation::searchStopDescription(p_stop->reason)
-                )
-            );
-        }
-
-        auto outcome    = std::get<annotation::PageOutcome>(std::move(attempt->result));
-        auto resolution = trace::PageResolution::Unknown;
-        auto pageId     = std::optional<annotation::PageId>{};
-        if (auto const* p_resolved = std::get_if<annotation::ResolvedPage>(&outcome))
-        {
-            resolution = trace::PageResolution::Resolved;
-            pageId     = p_resolved->pageId();
-        }
-        else if (std::holds_alternative<annotation::AmbiguousPages>(outcome))
-        {
-            resolution = trace::PageResolution::Ambiguous;
-        }
-
-        // Every alternative of a completed attempt carries the same evidence, so
-        // the scores reach the line whether the page resolved, stayed unknown, or
-        // came out ambiguous -- the two non-resolutions being exactly the cases an
-        // operator has to explain.
-        auto const& evidence = std::visit(
-            [](auto const& alternative) noexcept
-                -> annotation::PageResolutionEvidence const&
-            {
-                return alternative.evidence();
-            },
-            outcome
-        );
-
-        auto event = identityEvent(trace::TraceEventKind::EnginePageResolved, identity);
-        event.page = trace::TraceEvent::Page{
-            .outcome = resolution,
-            .pageId  = pageId,
-            .scores  = pageScores(evidence),
-        };
-        UF_TRY(emit(event));
-        return outcome;
-    }
-
-    auto EngineSession::findAction(
-        Observation const& observation,
-        annotation::PageId pageId,
-        annotation::ElementId elementId
-    ) -> Result<std::optional<ActionFound>>
-    {
-        UF_TRY(ensureUsable(observation, "findAction"));
-
-        auto const& frame    = observation.m_frame;
-        auto const identity = annotation::FrameIdentity::fromFrame(frame);
-        auto attempt = m_loadedRuntime.runtime.evaluateActionTarget(
-            frame,
-            m_config.liveFingerprint,
-            pageId,
-            elementId,
-            makeRecognitionPolicy()
-        );
-        // As with resolvePage, every exit writes one engine.action_found event
-        // whose outcome names how the search ended.
-        if (!attempt)
-        {
-            auto event         = identityEvent(trace::TraceEventKind::EngineActionFound, identity);
-            event.action       = trace::TraceEvent::Action{
-                .outcome = trace::ActionSearch::Failed,
-            };
-            event.elementId = elementId;
-            event.errorKind = automationErrorKind(attempt.error());
-            event.message   = std::string{attempt.error().message()};
-            UF_TRY(emit(event));
-            return std::unexpected{std::move(attempt).error()};
-        }
-
-        if (
-            auto const* p_stop = std::get_if<annotation::PageRecognitionStop>(
-                &attempt->result
-            )
-        )
-        {
-            auto event         = identityEvent(trace::TraceEventKind::EngineActionFound, identity);
-            event.action       = trace::TraceEvent::Action{
-                .outcome = trace::ActionSearch::Stopped,
-            };
-            event.elementId = p_stop->elementId;
-            event.stopReason   = p_stop->reason;
-            UF_TRY(emit(event));
-            return fail(
-                annotation::searchStopKind(p_stop->reason),
-                std::format(
-                    "action target search stopped: {}",
-                    annotation::searchStopDescription(p_stop->reason)
-                )
-            );
-        }
-
-        auto const& evidence = std::get<annotation::AnchorEvidence>(attempt->result);
-        if (!evidence.hit())
-        {
-            auto event         = identityEvent(trace::TraceEventKind::EngineActionFound, identity);
-            event.action       = trace::TraceEvent::Action{
-                .outcome    = trace::ActionSearch::Absent,
-                .sadScore   = evidence.sadScore(),
-                .maximumSad = evidence.maximumSad(),
-            };
-            event.elementId = elementId;
-            UF_TRY(emit(event));
-            return std::optional<ActionFound>{std::nullopt};
-        }
-
-        auto const* p_element = catalog().findElement(elementId);
-        // evaluateActionTarget has already proven that this page references the
-        // element and exercises interact on it, so its definition is
-        // necessarily present here.
-        UF_CHECK(p_element != nullptr);
-        auto const matchedRect = evidence.matchedRect();
-        UF_CHECK(matchedRect.has_value());
-
-        UF_TRY_VALUE(
-            clickPixel,
-            annotation::resolveClickPixel(*p_element, *matchedRect)
-        );
-        UF_TRY_VALUE(frameRect, pixelRectToFrameRect(*matchedRect));
-        UF_TRY_VALUE(label, Label::create(std::string{p_element->name().value()}));
-
-        auto detection = Detection{
-            frame.sessionId(),
-            frame.targetGeneration(),
-            frame.id(),
-            std::move(label),
-            frameRect,
-            evidence.displayConfidence().value_or(0.0F),
-        };
-        UF_TRY_VALUE(
-            actionDetection,
-            annotation::ActionDetection::create(
-                catalog(),
-                elementId,
-                std::move(detection)
-            )
-        );
-
-        auto event         = identityEvent(trace::TraceEventKind::EngineActionFound, identity);
-        event.action       = trace::TraceEvent::Action{
-            .outcome     = trace::ActionSearch::Found,
-            .sadScore    = evidence.sadScore(),
-            .maximumSad  = evidence.maximumSad(),
-            .matchedRect = *matchedRect,
-        };
-        event.elementId = elementId;
-        UF_TRY(emit(event));
-
-        return std::optional<ActionFound>{
-            ActionFound{evidence, std::move(actionDetection), clickPixel}
-        };
-    }
-
     auto EngineSession::matchTemplate(
         Observation const& observation,
-        annotation::GrayTemplateImage const& templateImage,
+        GrayTemplateImage const& templateImage,
         PixelRect searchRoi
     ) -> Result<std::optional<MatchFound>>
     {
         UF_TRY(ensureUsable(observation, "matchTemplate"));
 
         auto const& frame    = observation.m_frame;
-        auto const  identity = annotation::FrameIdentity::fromFrame(frame);
-        auto const  hashText = templateImage.hash.toString();
+        auto const  identity = FrameIdentity::fromFrame(frame);
 
-        // The compatibility gate a catalog-driven search gets from inside
-        // evaluateActionTarget. A raw match reaches no catalog entry point, so it
-        // asks for itself rather than being the one search that runs on a frame
-        // the project may not be compared against.
-        auto compatible = m_loadedRuntime.runtime.ensureCompatibleFrame(
+        // The compatibility gate. A search on a frame of the wrong geometry still
+        // returns a number, so skipping it is invisible; it runs here, on the
+        // fingerprint the host read out of the page model, because this is the
+        // only search left in the module.
+        auto compatible = ensureCompatibleFrame(
             frame,
-            m_config.liveFingerprint
+            m_config.liveFingerprint,
+            m_config.projectFingerprint
         );
         auto attempt = compatible
-            ? annotation::matchTemplateOnFrame(
+            ? matchTemplateOnFrame(
                   frame,
                   templateImage,
                   searchRoi,
                   makeRecognitionPolicy()
               )
-            : Result<annotation::TemplateMatchAttempt>{
+            : Result<TemplateMatchAttempt>{
                   std::unexpected{std::move(compatible).error()}
               };
 
         // Every exit writes one engine.action_found whose outcome names how the
-        // search ended, exactly as findAction does; the template hash stands in
-        // for the element id a raw template does not have.
+        // search ended; the template's identity stands in for the element id a
+        // raw template does not have.
         if (!attempt)
         {
             auto event   = identityEvent(trace::TraceEventKind::EngineActionFound, identity);
             event.action = trace::TraceEvent::Action{
                 .outcome = trace::ActionSearch::Failed,
             };
-            event.templateHash = hashText;
+            event.templateHash = templateImage.identity;
             event.errorKind    = automationErrorKind(attempt.error());
             event.message      = std::string{attempt.error().message()};
             UF_TRY(emit(event));
@@ -763,19 +465,19 @@ namespace uf::engine
             event.action = trace::TraceEvent::Action{
                 .outcome = trace::ActionSearch::Stopped,
             };
-            event.templateHash = hashText;
+            event.templateHash = templateImage.identity;
             event.stopReason   = *p_stop;
             UF_TRY(emit(event));
             return fail(
-                annotation::searchStopKind(*p_stop),
+                searchStopKind(*p_stop),
                 std::format(
                     "template match stopped: {}",
-                    annotation::searchStopDescription(*p_stop)
+                    searchStopDescription(*p_stop)
                 )
             );
         }
 
-        auto const& match = std::get<std::optional<annotation::TemplateMatch>>(
+        auto const& match = std::get<std::optional<TemplateMatch>>(
             attempt->result
         );
         if (!match)
@@ -784,7 +486,7 @@ namespace uf::engine
             event.action = trace::TraceEvent::Action{
                 .outcome = trace::ActionSearch::Absent,
             };
-            event.templateHash = hashText;
+            event.templateHash = templateImage.identity;
             UF_TRY(emit(event));
             return std::optional<MatchFound>{std::nullopt};
         }
@@ -802,7 +504,7 @@ namespace uf::engine
             .maximumSad  = match->maximumSad,
             .matchedRect = match->matchedRect,
         };
-        event.templateHash = hashText;
+        event.templateHash = templateImage.identity;
         UF_TRY(emit(event));
 
         return std::optional<MatchFound>{
@@ -823,7 +525,7 @@ namespace uf::engine
         UF_TRY(ensureUsable(observation, "readText"));
 
         auto const& frame    = observation.m_frame;
-        auto const  identity = annotation::FrameIdentity::fromFrame(frame);
+        auto const  identity = FrameIdentity::fromFrame(frame);
         auto        reading  = readTextOnFrame(frame, rect);
         if (!reading)
         {
@@ -851,108 +553,6 @@ namespace uf::engine
         return std::optional<TextReading>{*std::move(reading->line)};
     }
 
-    auto EngineSession::act(
-        Observation&& observation,
-        annotation::ResolvedPage const& page,
-        ActionFound const& action
-    ) -> Result<ActReceipt>
-    {
-        // An external stop requested before delivery takes precedence over every
-        // other outcome: fail closed before authorization and any sink call so a
-        // cancelled run never posts input. This reads only session state, not the
-        // observation, so it may run ahead of the foreign-observation guard below.
-        if (m_config.cancellation.stop_requested())
-        {
-            return fail(
-                AutomationErrorKind::Cancelled,
-                "cancelled before delivery"
-            );
-        }
-
-        // D0: an observation carries the stable identity token of the session
-        // that vended it. Acting on a handle from another session is a programming
-        // error, so reject it before any other check touches the foreign handle.
-        // A consumed or moved-from handle is dead on the same terms.
-        UF_TRY(ensureUsable(observation, "act"));
-
-        auto const identity = observation.m_frameIdentity;
-        auto const delivery = annotation::ActionDeliveryState{
-            .liveFingerprint  = m_config.liveFingerprint,
-            .sessionId        = identity.sessionId(),
-            .targetGeneration = identity.targetGeneration(),
-            .frameId          = identity.frameId(),
-            .now              = MonotonicInstant::now(),
-        };
-        auto authorized = annotation::authorizeCoordinateAction(
-            catalog(),
-            page,
-            action.actionDetection(),
-            observation.m_lease,
-            delivery
-        );
-        if (!authorized)
-        {
-            auto event      = identityEvent(trace::TraceEventKind::EngineActionRejected, identity);
-            event.elementId = action.actionDetection().elementId();
-            event.errorKind = automationErrorKind(authorized.error());
-            event.message   = std::string{authorized.error().message()};
-            UF_TRY(emit(event));
-            return std::unexpected{std::move(authorized).error()};
-        }
-
-        UF_TRY(emit(identityEvent(trace::TraceEventKind::EngineActionAuthorized, identity)));
-
-        UF_TRY_VALUE(framePoint, pixelPointToFramePoint(action.clickPixel()));
-        auto const clientPoint = observation.m_frame.transform().frameToClient(framePoint);
-
-        // Revalidate the bound target instance at the delivery edge, immediately
-        // before the sink call, to close the HWND-reuse window between observation
-        // and delivery. This runs for every adapter, so a target replaced after
-        // authorization is rejected here with zero sink calls.
-        auto revalidation = m_frameSource->validateTargetInstance();
-        if (!revalidation)
-        {
-            auto event      = identityEvent(trace::TraceEventKind::EngineActionRejected, identity);
-            event.elementId = action.actionDetection().elementId();
-            event.errorKind = automationErrorKind(revalidation.error());
-            event.message   = std::string{revalidation.error().message()};
-            UF_TRY(emit(event));
-            return std::unexpected{std::move(revalidation).error()};
-        }
-
-        // Forward the lease so the delivery layer re-runs the D0 injection-layer
-        // fence (frameId, targetGeneration, and age) at post time as layer 2.
-        UF_TRY(m_actionSink->click(clientPoint, observation.m_lease));
-
-        // D0/D1: the click has landed, so consume the handle before any fallible
-        // post-click trace emit. If an engine.action_delivered or
-        // engine.observation_invalidated emit then fails, the error still
-        // propagates, but a retry with a surviving alias finds the handle already
-        // dead and cannot double-deliver.
-        observation.m_invalidated = true;
-
-        auto clickEvent = identityEvent(
-            trace::TraceEventKind::EngineActionDelivered,
-            identity
-        );
-        clickEvent.clickClient = clientPoint;
-        UF_TRY(emit(clickEvent));
-
-        UF_TRY(
-            emit(
-                identityEvent(
-                    trace::TraceEventKind::EngineObservationInvalidated,
-                    identity
-                )
-            )
-        );
-
-        return ActReceipt{
-            .frameId    = identity.frameId(),
-            .clickPoint = clientPoint,
-        };
-    }
-
     auto EngineSession::clickPoint(
         Observation&& observation,
         PixelPoint point
@@ -972,21 +572,21 @@ namespace uf::engine
         auto const identity = observation.m_frameIdentity;
 
         // What survives of the coordinate authorization once the element and the
-        // page have moved up a layer: the target must still be the geometry this
-        // project was authored against, and the frame the coordinate was derived
-        // from must still be within its lease. Both are refused here, with zero
-        // sink calls, exactly as authorizeCoordinateAction refuses them.
-        if (m_config.liveFingerprint != catalog().fingerprint())
+        // page have moved up a layer: the target must still be the geometry the
+        // page model was authored against, and the frame the coordinate was
+        // derived from must still be within its lease. Both are refused here,
+        // with zero sink calls.
+        if (m_config.liveFingerprint != m_config.projectFingerprint)
         {
             auto event      = identityEvent(trace::TraceEventKind::EngineActionRejected, identity);
             event.errorKind = AutomationErrorKind::TargetCompatibilityUnverified;
             event.message   = std::string{
-                "live size or DPI does not match the annotation project fingerprint"
+                "live size or DPI does not match the page model's fingerprint"
             };
             UF_TRY(emit(event));
             return fail(
                 AutomationErrorKind::TargetCompatibilityUnverified,
-                "live size or DPI does not match the annotation project fingerprint"
+                "live size or DPI does not match the page model's fingerprint"
             );
         }
 

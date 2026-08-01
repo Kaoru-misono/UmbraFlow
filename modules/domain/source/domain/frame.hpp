@@ -117,6 +117,42 @@ namespace uf
         [[nodiscard]] auto pixels() const noexcept -> std::shared_ptr<FrameBuffer const>;
         [[nodiscard]] auto transform() const noexcept -> CoordinateTransform;
     };
+
+    // Which capture one piece of evidence belongs to: the capture session, the
+    // target generation within it, and the frame.
+    //
+    // It is the join key every layer stamps onto its own record, and it is one
+    // type rather than three loose fields precisely so a site that leaves a part
+    // of it out does not compile -- there is no default constructor. It lives in
+    // domain because the frame does: naming a frame is not a fact about any
+    // model of the screen, and the layers that name one must not need a model's
+    // vocabulary to do it.
+    class FrameIdentity final
+    {
+        CaptureSessionId m_sessionId;
+        TargetGeneration m_targetGeneration;
+        FrameId          m_frameId;
+
+    public:
+        constexpr FrameIdentity(
+            CaptureSessionId sessionId,
+            TargetGeneration targetGeneration,
+            FrameId frameId
+        ) noexcept
+            : m_sessionId{sessionId}
+            , m_targetGeneration{targetGeneration}
+            , m_frameId{frameId}
+        {
+        }
+
+        auto operator<=>(FrameIdentity const&) const = default;
+
+        [[nodiscard]] static auto fromFrame(Frame const& frame) noexcept -> FrameIdentity;
+
+        [[nodiscard]] auto sessionId() const noexcept -> CaptureSessionId;
+        [[nodiscard]] auto targetGeneration() const noexcept -> TargetGeneration;
+        [[nodiscard]] auto frameId() const noexcept -> FrameId;
+    };
 }
 
 UF_REFLECT_ENUM(

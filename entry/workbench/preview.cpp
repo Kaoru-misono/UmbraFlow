@@ -68,7 +68,7 @@ namespace uf::workbench
 
         [[nodiscard]]
         auto previewFrame(
-            annotation::ProjectFingerprint fingerprint,
+            ProjectFingerprint fingerprint,
             std::span<std::byte const> pngBytes
         ) -> Result<Frame>
         {
@@ -180,8 +180,8 @@ namespace uf::workbench
         auto evaluatePageOn(
             annotation::RecognitionRuntime& runtime,
             Frame const& frame,
-            annotation::ProjectFingerprint fingerprint,
-            annotation::RecognitionPolicy const& policy
+            ProjectFingerprint fingerprint,
+            RecognitionPolicy const& policy
         ) -> Result<PreviewResult>
         {
             auto const anchorCount =
@@ -796,9 +796,9 @@ namespace uf::workbench
         auto evaluateActionsOn(
             annotation::RecognitionRuntime& runtime,
             Frame const& frame,
-            annotation::ProjectFingerprint fingerprint,
+            ProjectFingerprint fingerprint,
             std::span<ActionSearch const> searches,
-            annotation::RecognitionPolicy const& policy
+            RecognitionPolicy const& policy
         ) -> Result<ActionEvaluation>
         {
             auto evaluation = ActionEvaluation{};
@@ -932,7 +932,7 @@ namespace uf::workbench
             std::optional<annotation::PageId> expectedPage,
             std::span<PreviewAnchorRow const> anchorRows,
             std::span<AppearanceSearch const> searches,
-            annotation::RecognitionPolicy const& policy
+            RecognitionPolicy const& policy
         ) -> Result<std::vector<ModelCheckCell>>
         {
             auto const fingerprint = document.catalog().fingerprint();
@@ -1192,9 +1192,9 @@ namespace uf::workbench
     }
 
     auto pagePolicyFor(
-        annotation::RecognitionPolicy const& perSearchPolicy,
+        RecognitionPolicy const& perSearchPolicy,
         std::size_t anchorSearchCount
-    ) -> annotation::RecognitionPolicy
+    ) -> RecognitionPolicy
     {
         auto scaled       = perSearchPolicy;
         auto const searches = checkedCast<uint64>(anchorSearchCount);
@@ -1424,7 +1424,7 @@ namespace uf::workbench
         std::span<annotation::AuthoringSourceAsset const> sourceAssets,
         annotation::SourceId selectedSourceId,
         std::optional<annotation::ElementId> selectedElementId,
-        annotation::RecognitionPolicy const& policy
+        RecognitionPolicy const& policy
     ) -> Result<PreviewResult>
     {
         auto const selected = std::ranges::find(
@@ -1510,7 +1510,7 @@ namespace uf::workbench
         std::span<annotation::AuthoringSourceAsset const> sourceAssets,
         annotation::ElementId elementId,
         annotation::SourceId screenId,
-        annotation::RecognitionPolicy const& policy
+        RecognitionPolicy const& policy
     ) -> Result<PreviewAnchorRow>
     {
         auto const screen = std::ranges::find(
@@ -1701,7 +1701,7 @@ namespace uf::workbench
         annotation::AuthoringDocument const& document,
         std::span<annotation::AuthoringSourceAsset const> sourceAssets,
         std::span<std::byte const> liveFrameBytes,
-        annotation::RecognitionPolicy const& policy
+        RecognitionPolicy const& policy
     ) -> Result<ModelCheck>
     {
         UF_TRY_VALUE(runtime, buildRuntime(document, sourceAssets));

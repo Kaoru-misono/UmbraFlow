@@ -29,49 +29,6 @@ namespace uf::annotation
         std::vector<std::byte> pngBytes{};
     };
 
-    // One template PNG after decoding: the Gray8 plane the matcher compares
-    // against a frame, plus the alpha plane it weights each pixel by.
-    //
-    // It is at namespace scope rather than nested in RecognitionRuntime because
-    // it now has a second consumer: the script-owned page model loads templates
-    // that belong to no catalog element, so the engine holds them outside any
-    // recognition runtime and matches them through matchTemplateOnFrame.
-    struct GrayTemplateImage final
-    {
-        ContentHash hash;
-
-        uint32                 width{};
-        uint32                 height{};
-        std::vector<std::byte> pixels{};
-
-        // The decoded template's alpha channel, Gray8 shaped like pixels. Empty
-        // when every pixel is opaque, which selects the unmasked matcher and the
-        // behaviour projects authored before masks had.
-        std::vector<std::byte> mask{};
-    };
-
-    // Decodes one template PNG into the planes the matcher consumes, and is the
-    // single definition of that decoding: the recognition runtime's own template
-    // closure goes through it, so a template the script layer loads is the same
-    // pixels the runtime would have loaded from the same bytes.
-    //
-    // `hash` is the content hash the caller already computed over `pngBytes`; it
-    // is carried into the result rather than recomputed, because the two callers
-    // reach it differently -- the runtime reads it off the manifest, the script
-    // layer hashes the blob it was handed.
-    [[nodiscard]]
-    auto decodeTemplateImage(
-        std::span<std::byte const> pngBytes,
-        ContentHash const& hash
-    ) -> Result<GrayTemplateImage>;
-
-    struct RecognitionPolicy final
-    {
-        uint64                          maximumPixelComparisons{};
-        std::optional<MonotonicInstant> deadline{};
-        std::stop_token                 cancellation{};
-    };
-
     struct PageRecognitionStop final
     {
         ElementId           elementId;
@@ -98,50 +55,6 @@ namespace uf::annotation
         uint64              completedPixelComparisons{};
     };
 
-    // Where one template matched and how far off it was. There is no threshold
-    // here on purpose: a raw match reports the distance and the ceiling it is
-    // measured against, and deciding whether that counts as a hit is the script
-    // layer's, which is what "scores stay in layer one, judging moves to layer
-    // two" means.
-    struct TemplateMatch final
-    {
-        PixelRect matchedRect;
-
-        uint64 sadScore{};
-
-        // The largest score the comparison could have produced: the template's
-        // pixel count times the maximum per-pixel distance. It is what makes two
-        // scores from differently sized templates comparable at all.
-        uint64 maximumSad{};
-    };
-
-    struct TemplateMatchAttempt final
-    {
-        // A control stop is a failed attempt, never a completed match. An empty
-        // optional inside the first alternative is a completed search that had
-        // no candidate position at all, which is the region being smaller than
-        // the template.
-        std::variant<std::optional<TemplateMatch>, SadSearchStopReason> result;
-
-        uint64 completedPixelComparisons{};
-    };
-
-    // Searches `searchRoi` of `frame` for `templateImage` and reports the best
-    // position with its score, or the control stop that ended the search.
-    //
-    // It knows nothing about elements, pages or appearances, which is the whole
-    // point: it is the primitive the script-owned page model rebuilds those on
-    // top of. The budget and the stop token come from `policy`, exactly as they
-    // do for the catalog-driven paths, so a raw match cannot outrun the bound a
-    // page resolution honours.
-    [[nodiscard]]
-    auto matchTemplateOnFrame(
-        Frame const& frame,
-        GrayTemplateImage const& templateImage,
-        PixelRect searchRoi,
-        RecognitionPolicy const& policy
-    ) -> Result<TemplateMatchAttempt>;
-
     class RecognitionRuntime final
     {
         // Searching one element across its appearances: either the folded
@@ -156,12 +69,22 @@ namespace uf::annotation
             uint64 completedPixelComparisons{};
         };
 
-        RuntimeManifest                m_manifest;
-        std::vector<GrayTemplateImage> m_templates;
+        // One decoded template beside the hash it was published under. The
+        // hash is here rather than on the decoded image because vision, which
+        // owns the decoding, hashes nothing and must not name a project's
+        // content-address type; the closure below is what pairs the two.
+        struct StoredTemplate final
+        {
+            ContentHash       hash;
+            GrayTemplateImage image;
+        };
+
+        RuntimeManifest             m_manifest;
+        std::vector<StoredTemplate> m_templates;
 
         RecognitionRuntime(
             RuntimeManifest manifest,
-            std::vector<GrayTemplateImage> templates
+            std::vector<StoredTemplate> templates
         ) noexcept;
 
         [[nodiscard]]
@@ -202,14 +125,11 @@ namespace uf::annotation
         [[nodiscard]]
         auto manifest() const noexcept UF_LIFETIME_BOUND -> RuntimeManifest const&;
 
-        // Whether `frame` may be compared against this project at all: the live
-        // geometry has to be the fingerprint the project was authored at, and
-        // the frame has to have the extent that fingerprint names.
-        //
-        // Public because a raw template match runs on the same frames without
-        // going through any catalog entry point, and that path must not be the
-        // one place the compatibility gate is skipped. Every entry point below
-        // still calls it for itself.
+        // Whether `frame` may be compared against this project at all,
+        // answered by vision::ensureCompatibleFrame against this catalog's own
+        // fingerprint. It stays a member so the manifest's fingerprint is read
+        // in one place; the rule itself is shared with every other caller of
+        // that free function.
         [[nodiscard]]
         auto ensureCompatibleFrame(
             Frame const& frame,

@@ -199,7 +199,7 @@ namespace uf::trace
         // everywhere.
         auto event = TraceEvent{
             .kind  = TraceEventKind::EngineActionFound,
-            .frame = annotation::FrameIdentity{
+            .frame = FrameIdentity{
                 CaptureSessionId{uint64{7}},
                 TargetGeneration::fromValue(3),
                 FrameId{uint64{42}},
@@ -589,7 +589,7 @@ namespace uf::trace
         // covered, which made a typo in either shippable in silence.
         auto const event = TraceEvent{
             .kind  = TraceEventKind::EngineObserved,
-            .frame = annotation::FrameIdentity{
+            .frame = FrameIdentity{
                 CaptureSessionId{uint64{7}},
                 TargetGeneration::fromValue(3),
                 FrameId{uint64{17}},
@@ -608,7 +608,7 @@ namespace uf::trace
     {
         auto const event = TraceEvent{
             .kind  = TraceEventKind::EngineObservationInvalidated,
-            .frame = annotation::FrameIdentity{
+            .frame = FrameIdentity{
                 CaptureSessionId{uint64{7}},
                 TargetGeneration::fromValue(3),
                 FrameId{uint64{17}},
@@ -629,7 +629,7 @@ namespace uf::trace
         // engine-trace/v1 spent three kinds (PageResolved, PageUnknown,
         // PageAmbiguous) plus the stage-blind RecognitionStopped and Failure on
         // this one step. All five survive as outcomes of one kind.
-        auto const frame = annotation::FrameIdentity{
+        auto const frame = FrameIdentity{
             CaptureSessionId{uint64{7}},
             TargetGeneration::fromValue(3),
             FrameId{uint64{17}},
@@ -770,7 +770,7 @@ namespace uf::trace
 
     TEST_CASE("engine.action_found keeps every outcome the old kinds distinguished")
     {
-        auto const frame = annotation::FrameIdentity{
+        auto const frame = FrameIdentity{
             CaptureSessionId{uint64{7}},
             TargetGeneration::fromValue(3),
             FrameId{uint64{17}},

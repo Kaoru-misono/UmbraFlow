@@ -51,7 +51,7 @@ namespace uf::workbench
 
         [[nodiscard]]
         auto startingRects(
-            annotation::ProjectFingerprint fingerprint
+            ProjectFingerprint fingerprint
         ) -> Result<StartingRects>
         {
             auto const width  = fingerprint.width();

@@ -1,6 +1,6 @@
 #include "binding-fixture.hpp"
 
-#include <task/capability-surface.hpp>
+#include <task/script-bindings.hpp>
 #include <task/task-context.hpp>
 
 #include <script/engine.hpp>
@@ -152,8 +152,8 @@ namespace uf::task
         // one per expression rather than folded into one long script.
         struct Attack final
         {
-            std::string_view label;
-            std::string_view expression;
+            std::string label;
+            std::string expression;
         };
 
         // Runs every attack against `context`'s bound session and requires each
@@ -269,6 +269,32 @@ namespace uf::task
             return forms;
         }
 
+        // The one attack in the mutation list that needs a template blob, so it
+        // is a function rather than a literal.
+        [[nodiscard]]
+        auto templateAttackSource() -> std::string
+        {
+            return "(function()\n"
+                   "    local cycle = ctx:cycle_open()\n"
+                   "    local template = ctx:template_load("
+                   + templateLiteral(k_targetActionGray)
+                   + ")\n"
+                     "    local hit = ctx:cycle_match(cycle, template, 0, 0, 3, 1)\n"
+                     "    local sealed =\n"
+                     "        tostring(cycle) == 'uf.cycle'\n"
+                     "        and tostring(template) == 'uf.template'\n"
+                     "        and getmetatable(cycle) == 'uf.cycle'\n"
+                     "        and not pcall(function() cycle.ordinal = 99 end)\n"
+                     "        and not pcall(rawset, template, 'ordinal', 99)\n"
+                     "        and not pcall(setmetatable, cycle, {})\n"
+                     "        -- Control: the match still answers its readable fields.\n"
+                     "        and hit ~= nil and hit.score == 0\n"
+                     "        and not pcall(function() hit.score = 1 end)\n"
+                     "    ctx:cycle_close(cycle)\n"
+                     "    return sealed\n"
+                     "end)()";
+        }
+
         TEST_CASE("ctx is the whole published framework surface and yields nothing more")
         {
             auto built = buildBinding(resolvingFrames(FrameId{200}));
@@ -280,7 +306,7 @@ namespace uf::task
             // route from ctx back into the framework: replace what a method does,
             // read a method's captured surface, or get a second, writable ctx
             // whose methods still answer.
-            constexpr Attack attacks[] = {
+            auto const attacks = std::vector<Attack>{
                 // Controls first: an attack list against an object that answered
                 // nothing would pass every refusal below.
                 {"control: ctx is a table", "type(ctx) == 'table'"},
@@ -390,7 +416,9 @@ namespace uf::task
             TaskContext context{*std::move(built.session), *built.recorder};
 
             auto const prelude = "local target = '" + std::string{k_frameworkSentinel}
-                                 + "'\n" + std::string{k_reachabilityScan};
+                                 + "'\nlocal TEMPLATE = "
+                                 + templateLiteral(k_targetActionGray) + "\n"
+                                 + std::string{k_reachabilityScan};
 
             SUBCASE("control: the scanner finds the value through each of those routes")
             {
@@ -421,8 +449,9 @@ namespace uf::task
                 // as much as a field is.
                 auto const source = prelude + R"lua(
                     local cycle = ctx:cycle_open()
-                    local page = ctx:cycle_page(cycle)
-                    local hit = ctx:cycle_find(cycle, uf.elements.action_target)
+                    local template = ctx:template_load(TEMPLATE)
+                    local hit = ctx:cycle_match(cycle, template, 0, 0, 3, 1)
+                    local deadline = ctx:deadline(1000)
 
                     local roots = {
                         -- The framework global BY NAME, first. A project
@@ -430,11 +459,10 @@ namespace uf::task
                         -- it here, and no walk from any value would: the chain
                         -- hangs off the environment table itself, which a
                         -- project script has no name for.
-                        frameworkSentinel, frameworkTaskRegistry,
-                        ctx, task, uf, uf.pages, uf.elements, uf.errors,
+                        frameworkSentinel,
+                        ctx, task, uf, uf.errors,
                         table.clone(ctx), table.clone(task), table.clone(uf),
-                        cycle, page, hit,
-                        uf.pages.page_a, uf.elements.action_target,
+                        cycle, template, hit, deadline,
                         -- library indirection, including the string metatable a
                         -- sandboxed VM leaves readable
                         ('').format, getmetatable(''), getmetatable('').__index,
@@ -461,7 +489,7 @@ namespace uf::task
                         raised[#raised + 1] = tostring(err)
                     end
                     keep(function() ctx:cycle_close(nil) end)
-                    keep(function() ctx:cycle_find(cycle, uf.pages.page_a) end)
+                    keep(function() ctx:cycle_match(cycle, cycle, 0, 0, 1, 1) end)
                     keep(function() ctx:random(5, 1) end)
                     keep(function() return ctx:try(nil) end)
                     keep(function() return uf.missing.field end)
@@ -490,7 +518,7 @@ namespace uf::task
             // these attacks are what holds that to it -- including the string
             // metatable, which the sandbox freezes without protecting, so it
             // stays readable and must stay unwritable.
-            constexpr Attack attacks[] = {
+            auto const attacks = std::vector<Attack>{
                 {"control: the libraries are readable",
                  "type(string.format) == 'function' and type(table.concat) == 'function'"
                  " and type(math.floor) == 'function' and type(os.difftime) == 'function'"},
@@ -543,10 +571,12 @@ namespace uf::task
             // test-task-binding.cpp; what this adds is the routes that produce a
             // value of the RIGHT type -- the other host userdata a script legally
             // holds, and Luau's own non-table opaque values.
-            constexpr std::string_view source = R"lua(
+            auto const source = std::string{"local TEMPLATE = "}
+                + templateLiteral(k_targetActionGray) + "\n" + R"lua(
                 local cycle = ctx:cycle_open()
-                local page = ctx:cycle_page(cycle)
-                local hit = ctx:cycle_find(cycle, uf.elements.action_target)
+                local template = ctx:template_load(TEMPLATE)
+                local hit = ctx:cycle_match(cycle, template, 0, 0, 3, 1)
+                local deadline = ctx:deadline(1000)
                 ctx:cycle_click(cycle, hit)
 
                 -- Control: the genuine carrier IS classified by this exact path.
@@ -557,11 +587,9 @@ namespace uf::task
                 -- Every other userdata a project script can name is userdata too,
                 -- and each wears a label of its own. try must refuse all of them.
                 local impostors = {
-                    uf.pages.page_a,
-                    uf.elements.action_target,
                     cycle,
-                    page,
-                    hit,
+                    template,
+                    deadline,
                 }
                 for _, impostor in ipairs(impostors) do
                     if type(impostor) ~= 'userdata' then return 0 end
@@ -611,7 +639,7 @@ namespace uf::task
                 auto const result = runBoundResult(
                     context,
                     built,
-                    "error(uf.pages.page_a)"
+                    "error(ctx:deadline(1000))"
                 );
                 REQUIRE_FALSE(result.has_value());
                 CHECK(
@@ -626,10 +654,11 @@ namespace uf::task
                 REQUIRE(built.session.has_value());
                 TaskContext context{*std::move(built.session), *built.recorder};
 
-                constexpr std::string_view source = R"lua(
+                auto const source = std::string{"local TEMPLATE = "}
+                    + templateLiteral(k_targetActionGray) + "\n" + R"lua(
                     local cycle = ctx:cycle_open()
-                    local page = ctx:cycle_page(cycle)
-                    local hit = ctx:cycle_find(cycle, uf.elements.action_target)
+                    local template = ctx:template_load(TEMPLATE)
+                    local hit = ctx:cycle_match(cycle, template, 0, 0, 3, 1)
                     ctx:cycle_click(cycle, hit)
                     local ok, real = ctx:try(function() ctx:cycle_click(cycle, hit) end)
                     if ok ~= false or real == nil then return 1 end
@@ -651,69 +680,42 @@ namespace uf::task
             REQUIRE(built.session.has_value());
             TaskContext context{*std::move(built.session), *built.recorder};
 
-            // Handles and the uf data tables are identities the host hands out.
-            // A script that could write one could redirect a click; a script that
-            // could add one could name an element the catalog never authorized.
-            constexpr Attack attacks[] = {
-                {"control: the data tables are readable",
-                 "uf.pages.page_a ~= nil and uf.elements.action_target ~= nil"
-                 " and uf.errors.timeout == 'timeout'"},
+            // The uf root and the live handles are identities the host hands
+            // out. A script that could write one could redirect a click; a script
+            // that could add a key to the error table could make a comparison
+            // against it silently false.
+            //
+            // The element and page handle tables are gone from this list because
+            // they are gone from the surface
+            // (docs/plans/2026-07-31-script-owned-page-model.md 9); what replaced
+            // them as the opaque host object a project holds is the cycle ticket,
+            // the template and the match.
+            auto const attacks = std::vector<Attack>{
+                {"control: the error table is readable",
+                 "uf.errors.timeout == 'timeout'"},
                 {"uf is frozen", "table.isfrozen(uf)"},
-                {"uf.pages is frozen", "table.isfrozen(uf.pages)"},
-                {"uf.elements is frozen", "table.isfrozen(uf.elements)"},
                 {"uf.errors is frozen", "table.isfrozen(uf.errors)"},
                 {"a root field cannot be replaced",
-                 "not pcall(function() uf.pages = {} end)"},
+                 "not pcall(function() uf.errors = {} end)"},
                 {"a root field cannot be added",
                  "not pcall(function() uf.escalate = print end)"},
                 {"rawset cannot reach the root",
-                 "not pcall(rawset, uf, 'pages', {})"},
-                {"a page cannot be added",
-                 "not pcall(function() uf.pages.forged = uf.pages.page_a end)"},
-                {"an element cannot be replaced",
-                 "not pcall(rawset, uf.elements, 'action_target', uf.pages.page_a)"},
+                 "not pcall(rawset, uf, 'errors', {})"},
                 {"an error constant cannot be replaced",
                  "not pcall(function() uf.errors.timeout = 'cancelled' end)"},
-                {"a handle refuses a field write",
-                 "not pcall(function() uf.pages.page_a.pageId = 1 end)"},
-                {"a handle refuses rawset",
-                 "not pcall(rawset, uf.pages.page_a, 'pageId', 1)"},
-                {"a handle refuses a new metatable",
-                 "not pcall(setmetatable, uf.pages.page_a, {})"},
-                {"a handle hands out a label, not its metatable",
-                 "getmetatable(uf.pages.page_a) == 'uf.page'"
-                 " and getmetatable(uf.elements.action_target) == 'uf.element'"},
-                {"a handle's printed form is its label and nothing else",
-                 "tostring(uf.pages.page_a) == 'uf.page'"
-                 " and tostring(uf.elements.action_target) == 'uf.element'"},
-                {"a live ticket and hit are just as opaque",
-                 "(function()\n"
-                 "    local cycle = ctx:cycle_open()\n"
-                 "    local page = ctx:cycle_page(cycle)\n"
-                 "    local hit = ctx:cycle_find(cycle, uf.elements.action_target)\n"
-                 "    local sealed =\n"
-                 "        tostring(cycle) == 'uf.cycle'\n"
-                 "        and tostring(hit) == 'uf.hit'\n"
-                 "        and tostring(page) == 'uf.resolved_page'\n"
-                 "        and getmetatable(cycle) == 'uf.cycle'\n"
-                 "        and not pcall(function() cycle.ordinal = 99 end)\n"
-                 "        and not pcall(rawset, hit, 'cycleOrdinal', 99)\n"
-                 "        and not pcall(setmetatable, page, {})\n"
-                 "        -- Control: the page still answers its one real method.\n"
-                 "        and page:is(uf.pages.page_a)\n"
-                 "    ctx:cycle_close(cycle)\n"
-                 "    return sealed\n"
-                 "end)()"},
+                {"an error constant cannot be added through rawset",
+                 "not pcall(rawset, uf.errors, 'forged', 'forged')"},
+                {"a live ticket, template and match are opaque",
+                 templateAttackSource()},
                 // A clone of uf IS obtainable, because uf carries no protected
-                // metatable. It confers nothing: the sub-tables it copies are the
-                // same frozen ones, and a handle is an identity, not a capability.
-                {"a clone of uf shares the same frozen tables",
+                // metatable. It confers nothing: the sub-table it copies is the
+                // same frozen one.
+                {"a clone of uf shares the same frozen table",
                  "(function()\n"
                  "    local copy = table.clone(uf)\n"
-                 "    return copy.pages == uf.pages\n"
-                 "        and copy.elements == uf.elements\n"
-                 "        and table.isfrozen(copy.pages)\n"
-                 "        and not pcall(function() copy.pages.forged = 1 end)\n"
+                 "    return copy.errors == uf.errors\n"
+                 "        and table.isfrozen(copy.errors)\n"
+                 "        and not pcall(function() copy.errors.forged = 1 end)\n"
                  "end)()"},
             };
 
@@ -729,11 +731,11 @@ namespace uf::task
             // invariant (no primitive calls back into Lua) exists to prevent.
             constexpr std::string_view body =
                 "        local c = ctx:cycle_open()\n"
-                "        local p = ctx:cycle_page(c)\n"
-                "        if p == nil or not p:is(uf.pages.page_a) then\n"
-                "            opened = -100\n"
-                "        else\n"
+                "        local d = ctx:deadline(1000)\n"
+                "        if c ~= nil and d ~= nil then\n"
                 "            opened = opened + 1\n"
+                "        else\n"
+                "            opened = -100\n"
                 "        end\n"
                 "        ctx:cycle_close(c)\n";
 
@@ -779,11 +781,7 @@ namespace uf::task
             {
                 INFO("non-yieldable form: ", form.name);
                 auto frameSource = std::make_unique<CancelOnceFrameSource>(
-                    grayFrame(
-                        anno::test::fingerprint(3, 1, 96, 96),
-                        resolvingPixels(),
-                        FrameId{211}
-                    )
+                    grayFrame(fixtureFingerprint(), resolvingPixels(), FrameId{211})
                 );
                 auto* const p_frames = frameSource.get();
                 auto built           = buildBindingWith(
@@ -805,11 +803,7 @@ namespace uf::task
         TEST_CASE("No nest of catchers converts a swallowed cancellation into control")
         {
             auto frameSource = std::make_unique<CancelOnceFrameSource>(
-                grayFrame(
-                    anno::test::fingerprint(3, 1, 96, 96),
-                    resolvingPixels(),
-                    FrameId{212}
-                )
+                grayFrame(fixtureFingerprint(), resolvingPixels(), FrameId{212})
             );
             auto* const p_frames = frameSource.get();
             auto built           = buildBindingWith(
@@ -854,10 +848,8 @@ namespace uf::task
                 -- single further primitive: they all still refuse.
                 if pcall(open) then return 0 end
                 if pcall(function() return ctx:cycle_close(nil) end) then return 0 end
-                local waited = pcall(function()
-                    ctx:wait_for_page(uf.pages.page_a, nil, function() end)
-                end)
-                if waited then return 0 end
+                local scoped = pcall(function() ctx:cycle(function() end) end)
+                if scoped then return 0 end
                 return 1
             )lua";
 
@@ -917,8 +909,7 @@ namespace uf::task
 
                 return runWithMark(
                     context,
-                    built.surface,
-                    requestStop ? stop.get_token() : std::stop_token{},
+                                        requestStop ? stop.get_token() : std::stop_token{},
                     source
                 );
             };
@@ -966,7 +957,7 @@ namespace uf::task
             {
                 auto stop  = std::stop_source{};
                 auto frame = grayFrame(
-                    anno::test::fingerprint(3, 1, 96, 96),
+                    fixtureFingerprint(),
                     resolvingPixels(),
                     FrameId{214}
                 );
@@ -989,10 +980,11 @@ namespace uf::task
                     TaskContextConfig{.cancellation = stop.get_token()},
                 };
 
-                constexpr std::string_view source = R"lua(
+                auto const source = std::string{"local TEMPLATE = "}
+                    + templateLiteral(k_targetActionGray) + "\n" + R"lua(
                     local cycle = ctx:cycle_open()
-                    local page = ctx:cycle_page(cycle)
-                    local hit = ctx:cycle_find(cycle, uf.elements.action_target)
+                    local template = ctx:template_load(TEMPLATE)
+                    local hit = ctx:cycle_match(cycle, template, 0, 0, 3, 1)
                     ctx:cycle_click(cycle, hit)
 
                     -- A genuine host-minted carrier, in hand before anything is
@@ -1018,7 +1010,7 @@ namespace uf::task
                     return 1
                 )lua";
 
-                return runWithMark(context, built.surface, stop.get_token(), source);
+                return runWithMark(context, stop.get_token(), source);
             };
 
             SUBCASE("control: with no stop armed the carrier does name the run's kind")
@@ -1058,7 +1050,7 @@ namespace uf::task
 
             auto const runWithBudget = [&](uint64 budgetTicks) -> Result<double>
             {
-                auto config                 = taskVmConfig(built.surface, context);
+                auto config                 = taskVmConfig(context);
                 config.interruptBudgetTicks = budgetTicks;
                 config.maxRuntime           = std::chrono::hours{1};
                 auto engine                 = script::Engine::create(config);
@@ -1083,7 +1075,7 @@ namespace uf::task
             {
                 // Without this the case above would pass on a VM that failed
                 // every run for some unrelated reason.
-                auto config                 = taskVmConfig(built.surface, context);
+                auto config                 = taskVmConfig(context);
                 config.interruptBudgetTicks = 200'000;
                 config.maxRuntime = std::chrono::hours{1};
                 auto engine       = script::Engine::create(config);

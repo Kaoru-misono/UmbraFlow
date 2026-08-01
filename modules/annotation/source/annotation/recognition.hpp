@@ -10,6 +10,7 @@
 #include <domain/frame.hpp>
 
 #include <vision/sad.hpp>
+#include <vision/template-match.hpp>
 
 #include <optional>
 #include <span>
@@ -17,54 +18,12 @@
 #include <variant>
 #include <vector>
 
+// searchStopKind and searchStopDescription are vision's now
+// (vision/template-match.hpp). A stop reason is a fact about a pixel search, so
+// its classification moved with the search itself; the calls below are
+// unqualified and resolve to uf:: from inside this namespace.
 namespace uf::annotation
 {
-    // The single classification of a stopped anchor search. Recognition
-    // failures and regression control flow both read it instead of deciding
-    // per stop reason at each site.
-    //
-    // No reason maps to a kind whose failureResponse is StepFailed, and each
-    // reason has a kind of its own. That is the load-bearing property, not an
-    // accident of the three current reasons: a stop means the search never
-    // decided, so a caller must not read it as the step having been ruled out.
-    // A completed search that matched nothing is not routed through here at all
-    // -- it is an AnchorEvidence whose hit() is false, and page resolution turns
-    // that into UnknownPage with no error.
-    [[nodiscard]]
-    auto searchStopKind(SadSearchStopReason reason) noexcept -> AutomationErrorKind;
-
-    // The returned view is backed by static string literals, so it outlives
-    // every caller and needs no owner to be kept alive.
-    [[nodiscard]]
-    auto searchStopDescription(SadSearchStopReason reason) noexcept -> std::string_view;
-
-    class FrameIdentity final
-    {
-        CaptureSessionId m_sessionId;
-        TargetGeneration m_targetGeneration;
-        FrameId          m_frameId;
-
-    public:
-        constexpr FrameIdentity(
-            CaptureSessionId sessionId,
-            TargetGeneration targetGeneration,
-            FrameId frameId
-        ) noexcept
-            : m_sessionId{sessionId}
-            , m_targetGeneration{targetGeneration}
-            , m_frameId{frameId}
-        {
-        }
-
-        auto operator<=>(FrameIdentity const&) const = default;
-
-        [[nodiscard]] static auto fromFrame(Frame const& frame) noexcept -> FrameIdentity;
-
-        [[nodiscard]] auto sessionId() const noexcept -> CaptureSessionId;
-        [[nodiscard]] auto targetGeneration() const noexcept -> TargetGeneration;
-        [[nodiscard]] auto frameId() const noexcept -> FrameId;
-    };
-
     class AnchorEvidence final
     {
         friend class AnchorEvaluation;

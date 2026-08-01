@@ -1,10 +1,10 @@
-#include "runtime-loader.hpp"
+#include "runtime-project.hpp"
 
 #include <core/error/result.hpp>
 
-#include <annotation/content-hash.hpp>
-#include <annotation/recognition-runtime.hpp>
-#include <annotation/runtime-manifest.hpp>
+#include "content-hash.hpp"
+#include "recognition-runtime.hpp"
+#include "runtime-manifest.hpp"
 
 #include <domain/error.hpp>
 
@@ -20,15 +20,14 @@
 #include <utility>
 #include <vector>
 
-namespace uf::engine
+namespace uf::annotation
 {
     namespace
     {
         // Mirrors image::k_maximumPngFileBytes (64 MiB) from <image/png.hpp>.
-        // image is a private dependency of annotation, so engine cannot include
-        // that header without adding image to its own dependency set; the value
-        // is duplicated here deliberately and must track the image module's
-        // encoded-size quota. RecognitionRuntime::create decodes each template
+        // image is a private dependency of this module, so a public header
+        // cannot name that constant; the value is duplicated here deliberately
+        // and must track the image module's encoded-size quota. Decoding runs
         // under that same quota, so a template accepted by this read still faces
         // the authoritative bound.
         inline constexpr auto k_maximumTemplateFileBytes = std::size_t{64} * 1024U * 1024U;
@@ -119,17 +118,17 @@ namespace uf::engine
 
     auto loadRuntimeProject(
         std::filesystem::path const& projectRoot
-    ) -> Result<LoadedRuntime>
+    ) -> Result<RecognitionRuntime>
     {
         auto const manifestPath = projectRoot / "generated" / "annotations.runtime.toml";
         UF_TRY_VALUE(
             manifestToml,
             readCappedFile(manifestPath, k_maximumRuntimeManifestBytes)
         );
-        UF_TRY_VALUE(manifest, annotation::parseRuntimeManifest(manifestToml));
+        UF_TRY_VALUE(manifest, parseRuntimeManifest(manifestToml));
 
-        auto encodedTemplates = std::vector<annotation::EncodedRuntimeTemplate>{};
-        auto loadedHashes     = std::vector<annotation::ContentHash>{};
+        auto encodedTemplates = std::vector<EncodedRuntimeTemplate>{};
+        auto loadedHashes     = std::vector<ContentHash>{};
         for (auto const& asset : manifest.assets())
         {
             if (std::ranges::contains(loadedHashes, asset.templateHash))
@@ -145,20 +144,16 @@ namespace uf::engine
             );
             auto const view = std::as_bytes(std::span{templateText});
             encodedTemplates.emplace_back(
-                annotation::EncodedRuntimeTemplate{
+                EncodedRuntimeTemplate{
                     .hash     = asset.templateHash,
                     .pngBytes = std::vector<std::byte>{view.begin(), view.end()},
                 }
             );
         }
 
-        UF_TRY_VALUE(
-            runtime,
-            annotation::RecognitionRuntime::create(
-                std::move(manifest),
-                std::move(encodedTemplates)
-            )
+        return RecognitionRuntime::create(
+            std::move(manifest),
+            std::move(encodedTemplates)
         );
-        return LoadedRuntime{.runtime = std::move(runtime)};
     }
 }

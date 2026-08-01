@@ -32,10 +32,10 @@ namespace uf::workbench
 
     struct EditableSource final
     {
-        annotation::SourceId           id;
-        annotation::ContentHash        contentHash;
-        annotation::ProjectFingerprint fingerprint;
-        annotation::SourceProvenance   provenance{};
+        annotation::SourceId         id;
+        annotation::ContentHash      contentHash;
+        ProjectFingerprint           fingerprint;
+        annotation::SourceProvenance provenance{};
     };
 
     // One appearance of one element, held the way the draft holds everything
@@ -142,7 +142,7 @@ namespace uf::workbench
     struct AuthoringDraft final
     {
         annotation::ProjectId           projectId;
-        annotation::ProjectFingerprint  fingerprint;
+        ProjectFingerprint              fingerprint;
         std::vector<EditableSource>     sources{};
         std::vector<EditableElement>    elements{};
         std::vector<EditableReference>  references{};

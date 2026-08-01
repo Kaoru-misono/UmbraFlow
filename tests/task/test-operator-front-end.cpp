@@ -1,6 +1,6 @@
 #include "binding-fixture.hpp"
 
-#include <task/capability-surface.hpp>
+#include <task/script-bindings.hpp>
 #include <task/operator-session.hpp>
 #include <task/task-context.hpp>
 #include <task/task-host.hpp>
@@ -106,13 +106,12 @@ namespace uf::task
             return *std::move(frame);
         }
 
-        // The task side: a TaskContext over the one-page runtime, plus the surface a
-        // VM would boot with and an observer of the click sink.
+        // The task side: a TaskContext over the fixture geometry, plus observers
+        // of the click sink and the trace sink.
         struct TaskSide final
         {
             std::unique_ptr<trace::TraceRecorder> recorder;
             std::unique_ptr<TaskContext>          context;
-            CapabilitySurface                     surface;
             CountingActionSink*                   actions;
             RecordingTraceSink*                   traces;
         };
@@ -123,15 +122,9 @@ namespace uf::task
             MonotonicInstant::Duration maxActionFrameAge
         ) -> TaskSide
         {
-            auto parts   = singlePageRuntime();
-            auto surface = CapabilitySurface::create(
-                parts.loaded.runtime.manifest().catalog()
-            );
-            REQUIRE(surface.has_value());
-
             auto actionSink      = std::make_unique<CountingActionSink>();
             auto* const p_clicks = actionSink.get();
-            auto config              = baseConfig(parts.fingerprint);
+            auto config              = baseConfig(fixtureFingerprint());
             config.maxActionFrameAge = maxActionFrameAge;
 
             auto traceSink       = std::make_unique<RecordingTraceSink>();
@@ -143,7 +136,6 @@ namespace uf::task
                 trace::FrontEnd::Task
             );
             auto session = engine::EngineSession::create(
-                std::move(parts.loaded),
                 std::make_unique<FakeFrameSource>(std::move(frames)),
                 std::move(actionSink),
                 *recorder,
@@ -158,7 +150,6 @@ namespace uf::task
             return TaskSide{
                 .recorder = std::move(recorder),
                 .context  = std::move(context),
-                .surface  = *std::move(surface),
                 .actions  = p_clicks,
                 .traces   = p_traces,
             };
@@ -180,25 +171,18 @@ namespace uf::task
             MonotonicInstant::Duration maxActionFrameAge
         ) -> OperatorSide
         {
-            auto parts   = singlePageRuntime();
-            auto surface = CapabilitySurface::create(
-                parts.loaded.runtime.manifest().catalog()
-            );
-            REQUIRE(surface.has_value());
-
             auto actionSink      = std::make_unique<CountingActionSink>();
             auto* const p_clicks = actionSink.get();
             auto const tracePath = uniqueTracePath();
             std::filesystem::remove(tracePath);
 
             auto session = OperatorSession::create(
-                std::move(parts.loaded),
                 TaskRunConfig{
                     .frameSource = std::make_unique<FakeFrameSource>(
                         std::move(frames)
                     ),
                     .actionSink      = std::move(actionSink),
-                    .liveFingerprint = parts.fingerprint,
+                    .liveFingerprint = fixtureFingerprint(),
                     .maximumPixelComparisons = 1'000,
                     .recognitionTimeout      = std::chrono::duration_cast<
                         MonotonicInstant::Duration
@@ -207,8 +191,8 @@ namespace uf::task
                     .tracePath         = tracePath,
                 },
                 OperatorSession::Spec{
-                    .projectId = "personal.task_binding",
-                    .surface   = *std::move(surface),
+                    .projectId          = "chaos-fixture",
+                    .projectFingerprint = fixtureFingerprint(),
                 },
                 TaskRunId{5},
                 GenerationId{1}
@@ -248,111 +232,41 @@ namespace uf::task
         }
     }
 
-    TEST_CASE("an action with no same-frame page is refused identically on both paths")
-    {
-        // The four-requisite authorization's page evidence is the page THAT cycle
-        // resolved. Neither path resolves one here, so neither has evidence, and the
-        // refusal has to be the same because it comes from the same ledger.
-        //
-        // The refusal lands on the find rather than the click: authorisation IS
-        // the page's reference to the element, so with no page there is no
-        // reference to locate it by. The kind is PageUnresolved rather than
-        // ActionRejected because neither path attempted anything -- a find only
-        // looks -- and the point is unchanged: one ledger, one answer, whichever
-        // front end asked.
-        auto const taskKind = [&]
-        {
-            auto side = buildTaskSide(resolvingFrames(FrameId{31}), lenientFrameAge());
-            auto const source = std::string{
-                "local cycle = ctx:cycle_open()\n"
-                "local hit = ctx:cycle_find(cycle, uf.elements.action_target)\n"
-                "ctx:cycle_click(cycle, hit)\n"
-                "return 1\n"
-            };
-            auto engine = script::Engine::create(
-                taskVmConfig(side.surface, *side.context)
-            );
-            REQUIRE(engine.has_value());
-            auto const result = engine->runNumber(source, "operator-parity");
-            REQUIRE_FALSE(result.has_value());
-            CHECK(side.actions->clickCount() == 0U);
-            return automationErrorKind(result.error());
-        }();
-
-        auto const operatorKind = [&]
-        {
-            auto side  = buildOperatorSide(
-                resolvingFrames(FrameId{31}),
-                lenientFrameAge()
-            );
-            auto cycle = side.session->cycleOpen();
-            REQUIRE(cycle.has_value());
-            auto const found = side.session->cycleFind(*cycle, "action_target");
-            REQUIRE_FALSE(found.has_value());
-            CHECK(side.actions->clickCount() == 0U);
-            return automationErrorKind(found.error());
-        }();
-
-        CHECK(taskKind == AutomationErrorKind::PageUnresolved);
-        CHECK(taskKind != AutomationErrorKind::ActionRejected);
-        CHECK(operatorKind == taskKind);
-    }
-
-    TEST_CASE("a click on an expired frame is refused identically on both paths")
+    TEST_CASE("a click on an expired frame is refused on the task path")
     {
         // A zero maximum action frame age makes the lease of an epoch-stamped frame
-        // expired at the delivery edge. Both paths resolve a page and find the target
-        // first, so the only thing left to refuse them is the lease itself.
-        auto const taskKind = [&]
-        {
-            auto frames = std::vector<Frame>{};
-            frames.emplace_back(epochResolvingFrame());
-            auto side = buildTaskSide(
-                std::move(frames),
-                MonotonicInstant::Duration::zero()
-            );
-            auto const source = std::string{
-                "local cycle = ctx:cycle_open()\n"
-                "local page = ctx:cycle_page(cycle)\n"
-                "local hit = ctx:cycle_find(cycle, uf.elements.action_target)\n"
-                "ctx:cycle_click(cycle, hit)\n"
-                "return 1\n"
-            };
-            auto engine = script::Engine::create(
-                taskVmConfig(side.surface, *side.context)
-            );
-            REQUIRE(engine.has_value());
-            auto const result = engine->runNumber(source, "operator-parity");
-            REQUIRE_FALSE(result.has_value());
-            CHECK(side.actions->clickCount() == 0U);
-            return automationErrorKind(result.error());
-        }();
-
-        auto const operatorKind = [&]
-        {
-            auto frames = std::vector<Frame>{};
-            frames.emplace_back(epochResolvingFrame());
-            auto side  = buildOperatorSide(
-                std::move(frames),
-                MonotonicInstant::Duration::zero()
-            );
-            auto cycle = side.session->cycleOpen();
-            REQUIRE(cycle.has_value());
-            auto const page = side.session->cyclePage(*cycle);
-            REQUIRE(page.has_value());
-            REQUIRE(page->has_value());
-            auto hit = side.session->cycleFind(*cycle, "action_target");
-            REQUIRE(hit.has_value());
-            REQUIRE(hit->has_value());
-
-            auto const clicked = side.session->cycleClick(*cycle, **hit);
-            REQUIRE_FALSE(clicked.has_value());
-            CHECK(side.actions->clickCount() == 0U);
-            return automationErrorKind(clicked.error());
-        }();
-
-        CHECK(taskKind == AutomationErrorKind::StaleObservation);
-        CHECK(operatorKind == taskKind);
+        // expired at the delivery edge. The script matches the template first, so
+        // the only thing left to refuse the click is the lease itself.
+        //
+        // THE OPERATOR HALF OF THIS PARITY IS GONE, and the absence is the point:
+        // an operator can no longer produce a match at all, because searching for
+        // one means naming a template a project file holds and this front-end
+        // reaches no project file
+        // (docs/plans/2026-07-31-script-owned-page-model.md 9). What survives on
+        // both paths -- the open cycle a key demands, and the ledger's answer
+        // about a spent one -- is compared in the cases below.
+        auto frames = std::vector<Frame>{};
+        frames.emplace_back(epochResolvingFrame());
+        auto side = buildTaskSide(
+            std::move(frames),
+            MonotonicInstant::Duration::zero()
+        );
+        auto const source = withTemplate(
+            "local template = ctx:template_load(TEMPLATE)\n"
+            "local cycle = ctx:cycle_open()\n"
+            "local hit = ctx:cycle_match(cycle, template, 0, 0, 3, 1)\n"
+            "ctx:cycle_click(cycle, hit)\n"
+            "return 1\n"
+        );
+        auto engine = script::Engine::create(taskVmConfig(*side.context));
+        REQUIRE(engine.has_value());
+        auto const result = engine->runNumber(source, "operator-parity");
+        REQUIRE_FALSE(result.has_value());
+        CHECK(side.actions->clickCount() == 0U);
+        CHECK(
+            automationErrorKind(result.error())
+            == AutomationErrorKind::StaleObservation
+        );
     }
 
     TEST_CASE("key requires an open cycle on both paths")
@@ -370,9 +284,7 @@ namespace uf::task
                 "ctx:key(cycle, \"E\")\n"
                 "return 1\n"
             };
-            auto engine = script::Engine::create(
-                taskVmConfig(side.surface, *side.context)
-            );
+            auto engine = script::Engine::create(taskVmConfig(*side.context));
             REQUIRE(engine.has_value());
             auto const result = engine->runNumber(source, "operator-parity");
             REQUIRE_FALSE(result.has_value());
@@ -447,11 +359,11 @@ namespace uf::task
         CHECK(again.error().message().contains("delivered input"));
     }
 
-    TEST_CASE("a key needs no resolved page, which is where it differs from a click")
+    TEST_CASE("a key needs nothing found on its frame, only an open cycle")
     {
         // Stated as its own case because it is the design decision, not an accident:
-        // the click in the first case above was refused for want of page evidence, and
-        // this key on an identically unresolved cycle is delivered.
+        // a click needs a match this frame produced, and a key on a cycle that
+        // matched nothing at all is delivered.
         auto side = buildOperatorSide(
             resolvingFrames(FrameId{36}),
             lenientFrameAge()
@@ -493,9 +405,7 @@ namespace uf::task
             "end)\n"
             "return delivered\n"
         };
-        auto engine = script::Engine::create(
-            taskVmConfig(side.surface, *side.context)
-        );
+        auto engine = script::Engine::create(taskVmConfig(*side.context));
         REQUIRE(engine.has_value());
         auto const result = engine->runNumber(source, "operator-parity");
         REQUIRE(result.has_value());
@@ -529,31 +439,6 @@ namespace uf::task
         CHECK(*closed);
     }
 
-    TEST_CASE("an operator names exactly what a task names, and nothing else")
-    {
-        auto side = buildOperatorSide(
-            resolvingFrames(FrameId{38}),
-            lenientFrameAge()
-        );
-
-        auto cycle = side.session->cycleOpen();
-        REQUIRE(cycle.has_value());
-
-        // A page anchor is in the catalog and deliberately not on the exposed
-        // surface, so an operator cannot address it any more than a task can.
-        auto const anchor = side.session->cycleFind(*cycle, "anchor_a");
-        REQUIRE_FALSE(anchor.has_value());
-        CHECK(
-            automationErrorKind(anchor.error()) == AutomationErrorKind::InvalidResource
-        );
-
-        auto const missing = side.session->cycleFind(*cycle, "no_such_target");
-        REQUIRE_FALSE(missing.has_value());
-        CHECK(
-            automationErrorKind(missing.error()) == AutomationErrorKind::InvalidResource
-        );
-    }
-
     TEST_CASE("every operator trace line is attributed to the operator front-end")
     {
         auto side = buildOperatorSide(
@@ -563,8 +448,6 @@ namespace uf::task
 
         auto cycle = side.session->cycleOpen();
         REQUIRE(cycle.has_value());
-        auto const page = side.session->cyclePage(*cycle);
-        REQUIRE(page.has_value());
         auto const pressed = side.session->key(*cycle, keyName("E"));
         REQUIRE(pressed.has_value());
         auto const report = side.session->finish(std::nullopt);

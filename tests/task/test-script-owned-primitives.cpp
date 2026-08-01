@@ -1,6 +1,6 @@
 #include "binding-fixture.hpp"
 
-#include <task/capability-surface.hpp>
+#include <task/script-bindings.hpp>
 #include <task/cycle-ledger.hpp>
 #include <task/project-files.hpp>
 #include <task/task-context.hpp>
@@ -146,8 +146,8 @@ namespace uf::task
         // dead lease, a budget of zero comparisons, or an OCR adapter.
         struct HarnessSpec final
         {
-            std::optional<anno::ProjectFingerprint> liveFingerprint{};
-            uint64                                  maximumPixelComparisons{1'000};
+            std::optional<ProjectFingerprint> liveFingerprint{};
+            uint64                            maximumPixelComparisons{1'000};
             MonotonicInstant::Duration maxActionFrameAge{k_defaultMaxActionFrameAge};
             std::unique_ptr<ocr::IOcrEngine> ocrEngine{};
         };
@@ -156,19 +156,13 @@ namespace uf::task
         {
             std::unique_ptr<trace::TraceRecorder> recorder;
             Result<engine::EngineSession>         session;
-            CapabilitySurface                     surface;
             CountingActionSink*                   clicks;
         };
 
         [[nodiscard]]
         auto buildHarness(std::vector<Frame> frames, HarnessSpec spec) -> Harness
         {
-            auto parts   = singlePageRuntime();
-            auto surface = CapabilitySurface::create(
-                parts.loaded.runtime.manifest().catalog()
-            );
-            REQUIRE(surface.has_value());
-
+            auto const fingerprint = fixtureFingerprint();
             auto actionSink      = std::make_unique<CountingActionSink>();
             auto* const p_clicks = actionSink.get();
             auto recorder        = std::make_unique<trace::TraceRecorder>(
@@ -178,14 +172,12 @@ namespace uf::task
                 trace::FrontEnd::Task
             );
             auto session = engine::EngineSession::create(
-                std::move(parts.loaded),
                 std::make_unique<FakeFrameSource>(std::move(frames)),
                 std::move(actionSink),
                 *recorder,
                 engine::EngineSessionConfig{
-                    .liveFingerprint = spec.liveFingerprint.value_or(
-                        parts.fingerprint
-                    ),
+                    .liveFingerprint         = spec.liveFingerprint.value_or(fingerprint),
+                    .projectFingerprint      = fingerprint,
                     .maximumPixelComparisons = spec.maximumPixelComparisons,
                     .recognitionTimeout      = std::chrono::duration_cast<
                         MonotonicInstant::Duration
@@ -197,7 +189,6 @@ namespace uf::task
             return Harness{
                 .recorder = std::move(recorder),
                 .session  = std::move(session),
-                .surface  = *std::move(surface),
                 .clicks   = p_clicks,
             };
         }
@@ -208,14 +199,14 @@ namespace uf::task
             auto frames = std::vector<Frame>{};
             frames.emplace_back(
                 grayFrame(
-                    anno::test::fingerprint(3, 1, 96, 96),
+                    fixtureFingerprint(),
                     resolvingPixels(),
                     FrameId{91}
                 )
             );
             frames.emplace_back(
                 grayFrame(
-                    anno::test::fingerprint(3, 1, 96, 96),
+                    fixtureFingerprint(),
                     resolvingPixels(),
                     FrameId{92}
                 )
@@ -862,7 +853,7 @@ namespace uf::task
                 return 1
             )lua";
 
-            auto engineVm = script::Engine::create(taskVmConfig(built.surface, context));
+            auto engineVm = script::Engine::create(taskVmConfig(context));
             REQUIRE(engineVm.has_value());
             auto const result = engineVm->runNumber(source, "script-owned-primitives");
             REQUIRE(result.has_value());

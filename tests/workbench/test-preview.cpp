@@ -139,9 +139,9 @@ namespace uf::workbench
         }
 
         [[nodiscard]]
-        auto continuingPolicy(uint64 budget) -> annotation::RecognitionPolicy
+        auto continuingPolicy(uint64 budget) -> RecognitionPolicy
         {
-            return annotation::RecognitionPolicy{
+            return RecognitionPolicy{
                 .maximumPixelComparisons = budget,
             };
         }
@@ -298,7 +298,7 @@ namespace uf::workbench
         [[nodiscard]]
         auto wideSource(
             annotation::SourceId id,
-            annotation::ProjectFingerprint fingerprint,
+            ProjectFingerprint fingerprint,
             std::vector<std::byte> const& pngBytes
         ) -> annotation::AuthoringSource
         {
@@ -474,7 +474,7 @@ namespace uf::workbench
         [[nodiscard]]
         auto sourceFrom(
             annotation::SourceId id,
-            annotation::ProjectFingerprint fingerprint,
+            ProjectFingerprint fingerprint,
             std::vector<std::byte> const& pngBytes
         ) -> annotation::AuthoringSource
         {

@@ -660,7 +660,7 @@ namespace uf::authoring
             }
             UF_TRY_VALUE(
                 fingerprint,
-                annotation::ProjectFingerprint::create(width, height, dpi, dpi)
+                ProjectFingerprint::create(width, height, dpi, dpi)
             );
 
             return InitProject{

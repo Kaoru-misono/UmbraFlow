@@ -20,30 +20,35 @@ namespace uf::cli
     // this is a malformed line rather than a large one.
     inline constexpr auto k_maxDriveCommandBytes = std::size_t{64} * 1024U;
 
-    // THE OPERATOR COMMAND PROTOCOL, IN TWO LAYERS.
+    // THE OPERATOR COMMAND PROTOCOL.
     //
-    // LAYER ONE is the private capability surface, verbatim: one command per
-    // primitive, with the same name, the same arguments and the same failure modes as
-    // the Luau surface has. The opaque handles a task holds become integer ids,
-    // because an operator has only text; nothing else changes, nothing is composed,
-    // and nothing is bypassed. Every layer-one command below maps to exactly one
-    // task::OperatorSession verb, which maps to exactly one TaskContext call -- the
-    // same call ctx.luau makes.
+    // It is the private capability surface, verbatim: one command per primitive,
+    // with the same name, the same arguments and the same failure modes as the Luau
+    // surface has. The opaque handles a task holds become integer ids, because an
+    // operator has only text; nothing else changes, nothing is composed, and nothing
+    // is bypassed. Every command below maps to exactly one task::OperatorSession
+    // verb, which maps to exactly one TaskContext call -- the same call ctx.luau
+    // makes.
     //
-    // LAYER TWO is convenience: waiting for a page, and finding-then-clicking
-    // an element, each in one command instead of a hand-written loop.
+    // IT USED TO HAVE A SECOND LAYER, and this is what happened to it. `wait_page`
+    // and `find_click` composed the primitives into "wait until this page resolves"
+    // and "find this element, then click it". Both rode `cycle_page` and
+    // `cycle_find`, which retired with the C++ page model
+    // (docs/plans/2026-07-31-script-owned-page-model.md 9), and there is nothing
+    // for them to compose any more: an element and a page are layer-two Luau
+    // objects, and this front-end runs no Luau.
     //
-    // THE CONSTRAINT THAT MAKES LAYER TWO SAFE, and the point of the whole design: a
-    // convenience command carries NO POLICY DEFAULTS OF ITS OWN. Every timeout, poll
-    // interval and retry count is a REQUIRED field. modules/task/runtime/ctx.luau
-    // keeps its defaults and stays the only place task-side policy lives, so there is
-    // no second copy of that policy in C++ to drift out of step with it. A command
-    // that omits a required policy field is REJECTED -- never filled in. If a default
-    // ever looks wanted here, that is the signal the field belongs in the command.
+    // NOTHING WAS INVENTED IN THEIR PLACE. What survives is the set of primitives
+    // that never named a model -- observing, keying, and the time verbs -- and an
+    // operator that needs to recognise a page reaches for `umbra-flow run` and a
+    // task, until the exploration environment gives the operator its own route to
+    // the layer-two model.
     //
-    // Layer two composes layer-one verbs and nothing else, which is what keeps it
-    // from being a second capability surface: it decides when to stop looping, and
-    // the caller decides every number that decision uses.
+    // The rule that governed the retired layer is kept here because it will govern
+    // its successor: a convenience command carries NO POLICY DEFAULTS OF ITS OWN.
+    // Every timeout and poll interval is a REQUIRED field, so there is no second
+    // copy of task-side policy in C++ to drift out of step with
+    // modules/task/runtime.
 
     struct DriveCycleOpenCommand final
     {
@@ -55,29 +60,6 @@ namespace uf::cli
         uint64 cycle{};
 
         auto operator==(DriveCycleCloseCommand const&) const -> bool = default;
-    };
-
-    struct DriveCyclePageCommand final
-    {
-        uint64 cycle{};
-
-        auto operator==(DriveCyclePageCommand const&) const -> bool = default;
-    };
-
-    struct DriveCycleFindCommand final
-    {
-        uint64      cycle{};
-        std::string element{};
-
-        auto operator==(DriveCycleFindCommand const&) const -> bool = default;
-    };
-
-    struct DriveCycleClickCommand final
-    {
-        uint64 cycle{};
-        uint64 hit{};
-
-        auto operator==(DriveCycleClickCommand const&) const -> bool = default;
     };
 
     // A keystroke names no position, so this command carries no coordinate and no
@@ -114,27 +96,6 @@ namespace uf::cli
         auto operator==(DriveWaitCommand const&) const -> bool = default;
     };
 
-    // LAYER TWO. Both fields below that name a duration are REQUIRED, and the
-    // constructor-free aggregate shape is not what enforces that -- the parser is.
-    // See the header comment.
-    struct DriveWaitPageCommand final
-    {
-        std::string                page{};
-        MonotonicInstant::Duration timeout{};
-        MonotonicInstant::Duration pollInterval{};
-
-        auto operator==(DriveWaitPageCommand const&) const -> bool = default;
-    };
-
-    struct DriveFindClickCommand final
-    {
-        std::string                element{};
-        MonotonicInstant::Duration timeout{};
-        MonotonicInstant::Duration pollInterval{};
-
-        auto operator==(DriveFindClickCommand const&) const -> bool = default;
-    };
-
     struct DriveQuitCommand final
     {
         auto operator==(DriveQuitCommand const&) const -> bool = default;
@@ -143,15 +104,10 @@ namespace uf::cli
     using DriveCommand = std::variant<
         DriveCycleOpenCommand,
         DriveCycleCloseCommand,
-        DriveCyclePageCommand,
-        DriveCycleFindCommand,
-        DriveCycleClickCommand,
         DriveKeyCommand,
         DriveSettleCommand,
         DriveDeadlineCommand,
         DriveWaitCommand,
-        DriveWaitPageCommand,
-        DriveFindClickCommand,
         DriveQuitCommand
     >;
 
@@ -167,21 +123,14 @@ namespace uf::cli
     //
     // The optional members are the values a verb can produce; each command sets only
     // the ones its own verb has. They are all optional because there is one line
-    // shape rather than twelve: an operator reads results with one parser.
+    // shape rather than seven: an operator reads results with one parser.
     struct DriveResult final
     {
         bool                  ok{};
         std::optional<uint64> cycle{};
-        std::optional<uint64> hit{};
         std::optional<uint64> deadline{};
         std::optional<bool>   released{};
         std::optional<bool>   budget{};
-
-        // Present and possibly null for a command that resolved a page: null is the
-        // Unknown or Ambiguous outcome, which is a completed resolution rather than a
-        // failure, so the two must not read alike.
-        bool                       resolvedPage{false};
-        std::optional<std::string> page{};
 
         // The domain's own wire spelling of the failure kind, so an operator reads
         // the same string the trace line and a task's Tier B error carry.

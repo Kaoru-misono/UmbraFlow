@@ -4,8 +4,6 @@
 #include <core/safety/annotations.hpp>
 #include <core/types/integer.hpp>
 
-#include <annotation/recognition.hpp>
-
 #include <engine/session.hpp>
 
 #include <optional>
@@ -56,16 +54,20 @@ namespace uf::task
     // backstop when a generation is torn down mid-script.
     class CycleLedger final
     {
-        // The one open cycle: the frame it retains and, once it has been
-        // resolved, the page that is this cycle's click authorization evidence.
-        // `page` stays empty until the cycle resolves one, and a click with no
-        // page is refused -- that emptiness is what makes unauthorized delivery
-        // impossible rather than merely checked.
+        // The one open cycle: the frame it retains, and how much of the cycle's
+        // own read budget has been spent on it.
+        //
+        // It carried a resolved page until the script-owned page model's first
+        // retirement wave. That page was the click's authorisation evidence while
+        // C++ owned the model; the model is layer two's now, so the evidence is
+        // the receipt observe.resolve_page mints against this cycle's ticket
+        // (modules/task/runtime/observe.luau) and the ledger has nothing to hold.
+        // What the ledger still owns is the part a Luau table could not be
+        // trusted with: one frame, spent once.
         struct OpenCycle final
         {
-            engine::Observation                     observation;
-            uint64                                  ordinal{};
-            std::optional<annotation::ResolvedPage> page{};
+            engine::Observation observation;
+            uint64              ordinal{};
 
             // How many text reads have already been charged to this cycle.
             //
@@ -87,15 +89,6 @@ namespace uf::task
         auto namesOpenCycle(CycleTicket ticket) const noexcept -> bool;
 
     public:
-        // What consume() hands back: the frame moved out of the ledger and the
-        // page that cycle resolved. Both are required to authorize a click and
-        // neither can be supplied by a script, which is the point.
-        struct Consumed final
-        {
-            engine::Observation      observation;
-            annotation::ResolvedPage page;
-        };
-
         // Mints this ledger's generation stamp. One ledger lives and dies with
         // one VM generation, so a fresh stamp per instance is what makes a
         // ticket from a spent generation rejectable instead of accidentally
@@ -141,11 +134,6 @@ namespace uf::task
         auto observation() const noexcept UF_LIFETIME_BOUND
             -> engine::Observation const&;
 
-        // Records `page` as the open cycle's click authorization evidence. Same
-        // precondition as observation(): the caller has already validated its
-        // ticket against this ledger.
-        auto rememberPage(annotation::ResolvedPage page) -> void;
-
         // How many text reads the open cycle has already spent, and the charge
         // for one more. Same precondition as observation().
         //
@@ -156,37 +144,15 @@ namespace uf::task
 
         auto chargeRead() noexcept -> void;
 
-        // The page the open cycle resolved, or empty when it has resolved none.
-        // Same precondition as observation().
-        //
-        // It hands back the identity rather than the evidence because locating
-        // an element only has to name which page's reference row applies;
-        // delivering against that page still goes through consume(), which
-        // yields the evidence itself.
-        [[nodiscard]]
-        auto resolvedPageId() const noexcept -> std::optional<annotation::PageId>;
-
         // Spends the cycle `ticket` names: the frame leaves the ledger and the
-        // ticket dies here, before the click that follows can do anything with
+        // ticket dies here, before the input that follows can do anything with
         // the frame. Fails StaleObservation for a ticket that names no open
-        // cycle, and PageUnresolved when the cycle has resolved no page,
-        // because then the click has no authorization evidence and no script
-        // can supply any. PageUnresolved rather than ActionRejected: the click
-        // never reached the authorization check, so nothing about it was
-        // judged, and a script has to be able to tell a skipped step from a
-        // page that genuinely does not authorise the element.
-        [[nodiscard]] auto consume(CycleTicket ticket) -> Result<Consumed>;
-
-        // Spends the cycle `ticket` names without demanding a resolved page, for
-        // an input that names no screen position.
+        // cycle.
         //
-        // It is a SEPARATE entry point rather than a flag on consume, because the
-        // page requirement is not optional for a click and never becomes so: a
-        // caller reaching for this instead is stating that its input has no
-        // coordinate to authorize, and the two spellings keep that statement
-        // visible at the call site. It still fails StaleObservation for a ticket
-        // that names no open cycle, and the frame still leaves the ledger, so one
-        // observation delivers at most one input whichever verb spent it.
+        // One entry point serves the click and the keystroke alike. There were
+        // two while a click additionally required the page this cycle had
+        // resolved; that requirement moved to layer two, so a second spelling
+        // would now differ from the first in nothing at all.
         [[nodiscard]] auto spend(CycleTicket ticket) -> Result<engine::Observation>;
     };
 }

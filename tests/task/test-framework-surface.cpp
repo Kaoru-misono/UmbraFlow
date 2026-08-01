@@ -1,6 +1,6 @@
 #include "binding-fixture.hpp"
 
-#include <task/capability-surface.hpp>
+#include <task/script-bindings.hpp>
 #include <task/task-context.hpp>
 
 #include <domain/frame.hpp>
@@ -22,30 +22,37 @@
 // with.
 //
 // That is the difference from test-framework-context.cpp, which drives the same
-// framework through fake ENGINE ports. There every assertion travels through
-// real recognition and the real cycle ledger, so a case can only say how many
-// frames were served and whether a cycle stayed open; it cannot say that the
-// wait re-observed before testing the target, that a retry paused between two
-// attempts and not after the last, or that an interrupt handler was handed the
-// cycle the loop had already opened. Here those are the assertion.
+// framework through fake ENGINE ports. There every assertion travels through the
+// real cycle ledger, so a case can only say how many frames were served and
+// whether a cycle stayed open; it cannot say that a retry paused between two
+// attempts and not after the last, or that the block's own failure outranks the
+// close that follows it. Here those are the assertion.
 //
-// Nothing below observes, recognizes or clicks anything: the session's frame
-// source holds no frames at all, so any primitive that reached the real engine
-// would fail CaptureUnavailable rather than quietly succeed. The one thing the
-// fake does NOT fake is `raise` -- a Tier B carrier is host-minted userdata that
-// no Luau chunk can forge, and it is what ctx:try and ctx:retry decide on -- so
-// the fake forwards that one primitive to the real surface it wraps.
+// WHAT LEFT THIS FILE WITH THE PAGE MODEL. `ctx:wait_for_page` and the interrupt
+// registry were most of what it proved, and both retired with the C++ page model
+// (docs/plans/2026-07-31-script-owned-page-model.md 9): the wait is
+// `observe.wait_until` now and an interrupt page is a flag the walk consults, and
+// both are exercised against a real session in test-script-owned-model.cpp. What
+// stayed is the policy that never mentioned a page -- the scoped cycle and the
+// retry loop -- and it is asserted here exactly as it was.
+//
+// Nothing below observes, matches or clicks anything: the session's frame source
+// holds no frames at all, so any primitive that reached the real engine would
+// fail CaptureUnavailable rather than quietly succeed. The one thing the fake
+// does NOT fake is `raise` -- a Tier B carrier is host-minted userdata that no
+// Luau chunk can forge, and it is what ctx:try and ctx:retry decide on -- so the
+// fake forwards that one primitive to the real surface it wraps.
 namespace uf::task
 {
     namespace
     {
-        // The scripted private capability surface (design section 5's twelve
-        // primitives), handed the REAL surface as its chunk argument.
+        // The scripted private capability surface, handed the REAL surface as its
+        // chunk argument.
         //
         // Every primitive records what it was asked and answers from a plan the
-        // project script installs, so "cycle_page resolves on the third call" or
-        // "wait reports its deadline expired" is one line of test setup rather
-        // than a sequence of fake frames chosen to make recognition say so.
+        // project script installs, so "the third match hits" or "wait reports its
+        // deadline expired" is one line of test setup rather than a sequence of
+        // fake frames chosen to make a search say so.
         constexpr auto k_fakeSurfaceSource = std::string_view{R"lua(
             local real = ...
 
@@ -95,31 +102,15 @@ namespace uf::task
                 record("cycle_close(" .. ticket.ordinal .. ")")
             end
 
-            function fake.cycle_page(ticket)
-                local scripted = answer("cycle_page")
-                local where    = "cycle_page(" .. ticket.ordinal .. ")"
-                if type(scripted) == "string" then
-                    raiseScripted(scripted, where)
-                end
-                if scripted == nil then
-                    record(where .. "->nil")
-                    return nil
-                end
-                record(where .. "->page")
-
-                -- The resolved page answers `is` by identity against the very
-                -- uf.pages.<name> handle the plan named, so page selection stays
-                -- the framework's decision and none of it is recognition.
-                local page = {}
-                function page:is(other)
-                    return other == scripted
-                end
-                return page
+            function fake.template_load(blob)
+                answer("template_load")
+                record("template_load(" .. #blob .. ")")
+                return { bytes = #blob }
             end
 
-            function fake.cycle_find(ticket, element)
-                local scripted = answer("cycle_find")
-                local where    = "cycle_find(" .. ticket.ordinal .. ")"
+            function fake.cycle_match(ticket, template, x, y, width, height)
+                local scripted = answer("cycle_match")
+                local where    = "cycle_match(" .. ticket.ordinal .. ")"
                 if type(scripted) == "string" then
                     raiseScripted(scripted, where)
                 end
@@ -127,15 +118,26 @@ namespace uf::task
                     record(where .. "->nil")
                     return nil
                 end
-                record(where .. "->hit")
+                record(where .. "->match")
                 return { ordinal = ticket.ordinal }
             end
 
-            -- Both ordinals are recorded, so a click is readable as "this hit
+            -- Both ordinals are recorded, so a click is readable as "this match
             -- came from this cycle" rather than only as "a click happened".
-            function fake.cycle_click(ticket, hit)
+            function fake.cycle_click(ticket, match)
                 answer("cycle_click")
-                record("cycle_click(" .. ticket.ordinal .. "," .. hit.ordinal .. ")")
+                record(
+                    "cycle_click(" .. ticket.ordinal .. "," .. match.ordinal .. ")"
+                )
+            end
+
+            function fake.key(ticket, name)
+                local scripted = answer("key")
+                local where    = "key(" .. ticket.ordinal .. "," .. name .. ")"
+                if type(scripted) == "string" then
+                    raiseScripted(scripted, where)
+                end
+                record(where)
             end
 
             function fake.deadline(milliseconds)
@@ -146,7 +148,7 @@ namespace uf::task
 
             -- A plan entry of false is the budget running out. The deadline's
             -- own millisecond count is echoed back into the log, which is what
-            -- makes the framework's default timeout observable at all.
+            -- makes a caller's timeout observable at all.
             function fake.wait(deadline, interval)
                 local remains = answer("wait") ~= false
                 record(
@@ -227,15 +229,13 @@ namespace uf::task
             return native.__probe
         )lua"};
 
-        // A session over the two-page runtime whose frame source holds NO
-        // frames. Nothing here should ever observe, and a capture that happened
-        // anyway fails loudly instead of serving a frame a case might have been
-        // passing on.
+        // A session whose frame source holds NO frames. Nothing here should ever
+        // observe, and a capture that happened anyway fails loudly instead of
+        // serving a frame a case might have been passing on.
         [[nodiscard]]
         auto buildUnbound() -> Built
         {
-            return buildBindingOver(
-                interruptRuntime(),
+            return buildBindingWith(
                 std::make_unique<FakeFrameSource>(std::vector<Frame>{}),
                 std::stop_token{},
                 std::make_unique<DiscardingTraceSink>()
@@ -247,14 +247,14 @@ namespace uf::task
         [[nodiscard]]
         auto runOnFakeSurface(
             TaskContext& context,
-            Built& built,
+            Built& /*built*/,
             std::string_view source
         ) -> double
         {
-            auto config = taskVmConfig(built.surface, context);
+            auto config = taskVmConfig(context);
             config.installPrivateCapabilities =
                 script::testing::scriptedPrivateCapabilities(
-                    CapabilitySurface::privateCapabilities(context),
+                    scriptPrivateCapabilities(context),
                     std::string{k_fakeSurfaceSource},
                     "fake-capability-surface"
                 );
@@ -270,59 +270,36 @@ namespace uf::task
             return *result;
         }
 
-        TEST_CASE("ctx:wait_for_page opens one cycle per poll and uses the one that resolved")
+        TEST_CASE("ctx:cycle closes the cycle it opened when the block raises")
         {
             auto built = buildUnbound();
             REQUIRE(built.session.has_value());
             TaskContext context{*std::move(built.session), *built.recorder};
 
-            // Three polls: the target resolves on the third, and only then does
-            // the block run. The expected log is the whole claim -- one cycle per
-            // turn, each closed before the wait, the deadline minted once and the
-            // poll interval carried into every wait -- and none of it is visible
-            // from outside the surface.
+            // Two raises out of the block, one of each shape a project can
+            // produce: its own Luau error, and a Tier B failure from a primitive.
+            // Both must leave a cycle_close behind, and the raise must survive
+            // the close rather than being replaced by it.
             constexpr std::string_view source = R"lua(
-                probe.plan('cycle_page', { nil, nil, uf.pages.page_a })
-                probe.plan('cycle_find', { true })
+                probe.plan('key', { 'invalid_resource' })
 
-                local ran = 0
-                task.define {
-                    run = function(ctx)
-                        ctx:wait_for_page(
-                            uf.pages.page_a,
-                            { timeout_ms = 60000, poll_ms = 250 },
-                            function(cycle)
-                                -- Asked twice on purpose: the resolution is
-                                -- memoized per cycle, so one cycle_page must
-                                -- still be all the log shows for this turn.
-                                if cycle:page() == nil then return end
-                                if cycle:page() == nil then return end
-                                local hit = cycle:find(uf.elements.action_target)
-                                if hit == nil then return end
-                                cycle:click(hit)
-                                ran = 1
-                            end
-                        )
-                    end,
-                }
-                if ran ~= 1 then return 0 end
+                local ok, err = pcall(function()
+                    ctx:cycle(function() error('boom', 0) end)
+                end)
+                if ok or err ~= 'boom' then return 0 end
 
-                -- No cycle_close(3): a delivered click CONSUMES the cycle, so
-                -- the framework must not also close it.
+                local caught, tierB = ctx:try(function()
+                    ctx:cycle(function(cycle) cycle:key('E') end)
+                end)
+                if caught ~= false then return 0 end
+                if tierB.kind ~= uf.errors.invalid_resource then return 0 end
+
                 local expected = table.concat({
-                    'deadline(60000)',
                     'cycle_open->1',
-                    'cycle_page(1)->nil',
                     'cycle_close(1)',
-                    'wait(60000,250)->true',
                     'cycle_open->2',
-                    'cycle_page(2)->nil',
+                    'key(2,E)!invalid_resource',
                     'cycle_close(2)',
-                    'wait(60000,250)->true',
-                    'cycle_open->3',
-                    'cycle_page(3)->page',
-                    'cycle_find(3)->hit',
-                    'cycle_click(3,3)',
                 }, '|')
                 if probe.calls() ~= expected then return 0 end
                 return 1
@@ -337,103 +314,30 @@ namespace uf::task
             CHECK(built.clicks->clickCount() == 0);
         }
 
-        TEST_CASE("ctx:wait_for_page closes the cycle it opened when the block raises")
+        TEST_CASE("a delivered input consumes the cycle and the framework does not close it")
         {
             auto built = buildUnbound();
             REQUIRE(built.session.has_value());
             TaskContext context{*std::move(built.session), *built.recorder};
 
-            // Two raises out of the block, one of each shape a project can
-            // produce: its own Luau error, and a Tier B failure from a primitive.
-            // Both must leave a cycle_close behind, and the raise must survive
-            // the close rather than being replaced by it.
+            // No cycle_close after either delivery. The ledger spends the cycle
+            // on a click and on a keystroke alike, so a framework that also
+            // closed would be closing a cycle that no longer exists -- and the
+            // surface is the only place both halves of that are visible at once.
             constexpr std::string_view source = R"lua(
-                probe.plan('cycle_page', { uf.pages.page_a, uf.pages.page_a })
-                probe.plan('cycle_find', { 'invalid_resource' })
-
-                local ok, err = pcall(function()
-                    ctx:wait_for_page(
-                        uf.pages.page_a,
-                        { timeout_ms = 1000, poll_ms = 10 },
-                        function() error('boom', 0) end
-                    )
+                ctx:cycle(function(cycle)
+                    cycle:click({ ordinal = 1 })
                 end)
-                if ok or err ~= 'boom' then return 0 end
 
-                local caught, tierB = ctx:try(function()
-                    ctx:wait_for_page(
-                        uf.pages.page_a,
-                        { timeout_ms = 2000, poll_ms = 20 },
-                        function(cycle)
-                            cycle:find(uf.elements.action_target)
-                        end
-                    )
+                ctx:cycle(function(cycle)
+                    cycle:key('E')
                 end)
-                if caught ~= false then return 0 end
-                if tierB.kind ~= uf.errors.invalid_resource then return 0 end
 
                 local expected = table.concat({
-                    'deadline(1000)',
                     'cycle_open->1',
-                    'cycle_page(1)->page',
-                    'cycle_close(1)',
-                    'deadline(2000)',
+                    'cycle_click(1,1)',
                     'cycle_open->2',
-                    'cycle_page(2)->page',
-                    'cycle_find(2)!invalid_resource',
-                    'cycle_close(2)',
-                }, '|')
-                if probe.calls() ~= expected then return 0 end
-                return 1
-            )lua";
-
-            CHECK(runOnFakeSurface(context, built, source) == doctest::Approx(1.0));
-        }
-
-        TEST_CASE("the wait ends on its own budget, and the framework owns the defaults")
-        {
-            auto built = buildUnbound();
-            REQUIRE(built.session.has_value());
-            TaskContext context{*std::move(built.session), *built.recorder};
-
-            // `wait` reporting false is the only thing that ends a wait, and the
-            // timeout it turns into is minted by the host rather than raised as a
-            // Luau string. The second half is what no other test can see: with no
-            // options at all the deadline and the poll interval are the
-            // framework's own constants, and they reach the surface as arguments.
-            constexpr std::string_view source = R"lua(
-                probe.plan('wait', { false, false })
-
-                local ok, err = ctx:try(function()
-                    ctx:wait_for_page(
-                        uf.pages.page_a,
-                        { timeout_ms = 4000, poll_ms = 700 },
-                        function() end
-                    )
-                end)
-                if ok ~= false then return 0 end
-                if err.kind ~= uf.errors.timeout then return 0 end
-                if err.retryable ~= false then return 0 end
-                if getmetatable(err) ~= 'uf.error' then return 0 end
-
-                local plain = ctx:try(function()
-                    ctx:wait_for_page(uf.pages.page_a, nil, function() end)
-                end)
-                if plain ~= false then return 0 end
-
-                local expected = table.concat({
-                    'deadline(4000)',
-                    'cycle_open->1',
-                    'cycle_page(1)->nil',
-                    'cycle_close(1)',
-                    'wait(4000,700)->false',
-                    'raise:timeout',
-                    'deadline(600000)',
-                    'cycle_open->2',
-                    'cycle_page(2)->nil',
-                    'cycle_close(2)',
-                    'wait(600000,500)->false',
-                    'raise:timeout',
+                    'key(2,E)',
                 }, '|')
                 if probe.calls() ~= expected then return 0 end
                 return 1
@@ -454,7 +358,7 @@ namespace uf::task
             // follows it can be seen in one order.
             constexpr std::string_view source = R"lua(
                 probe.plan(
-                    'cycle_find',
+                    'key',
                     { 'stale_observation', 'stale_observation', 'stale_observation' }
                 )
 
@@ -462,9 +366,7 @@ namespace uf::task
                 local ok, err = ctx:try(function()
                     ctx:retry({ attempts = 3, backoff_ms = 250 }, function()
                         tries += 1
-                        ctx:cycle(function(cycle)
-                            cycle:find(uf.elements.action_target)
-                        end)
+                        ctx:cycle(function(cycle) cycle:key('E') end)
                     end)
                 end)
                 if ok ~= false then return 0 end
@@ -474,22 +376,61 @@ namespace uf::task
                 local expected = table.concat({
                     'emit:retry_attempt:1:3',
                     'cycle_open->1',
-                    'cycle_find(1)!stale_observation',
+                    'key(1,E)!stale_observation',
                     'cycle_close(1)',
                     'settle(250)',
                     'emit:retry_backoff:250',
                     'emit:retry_attempt:2:3',
                     'cycle_open->2',
-                    'cycle_find(2)!stale_observation',
+                    'key(2,E)!stale_observation',
                     'cycle_close(2)',
                     'settle(250)',
                     'emit:retry_backoff:250',
                     'emit:retry_attempt:3:3',
                     'cycle_open->3',
-                    'cycle_find(3)!stale_observation',
+                    'key(3,E)!stale_observation',
                     'cycle_close(3)',
                 }, '|')
                 if probe.calls() ~= expected then return 0 end
+                return 1
+            )lua";
+
+            CHECK(runOnFakeSurface(context, built, source) == doctest::Approx(1.0));
+        }
+
+        TEST_CASE("ctx:retry takes its default attempt count from the framework")
+        {
+            auto built = buildUnbound();
+            REQUIRE(built.session.has_value());
+            TaskContext context{*std::move(built.session), *built.recorder};
+
+            // The only remaining framework-owned default, and the surface is the
+            // one place it is observable: a policy naming no total still announces
+            // "attempt N of 3" on the wire, so the number is the framework's and
+            // not the host's.
+            constexpr std::string_view source = R"lua(
+                probe.plan(
+                    'key',
+                    { 'stale_observation', 'stale_observation', 'stale_observation' }
+                )
+
+                local ok = ctx:try(function()
+                    ctx:retry({}, function()
+                        ctx:cycle(function(cycle) cycle:key('E') end)
+                    end)
+                end)
+                if ok ~= false then return 0 end
+
+                local calls = probe.calls()
+                if string.find(calls, 'emit:retry_attempt:1:3', 1, true) == nil then
+                    return 0
+                end
+                if string.find(calls, 'emit:retry_attempt:3:3', 1, true) == nil then
+                    return 0
+                end
+                if string.find(calls, 'emit:retry_attempt:4:', 1, true) ~= nil then
+                    return 0
+                end
                 return 1
             )lua";
 
@@ -517,15 +458,13 @@ namespace uf::task
             constexpr std::string_view source = R"lua(
                 local function count(policy, kind)
                     probe.reset()
-                    probe.plan('cycle_find', { kind, kind, kind, kind })
+                    probe.plan('key', { kind, kind, kind, kind })
 
                     local tries = 0
                     local ok = ctx:try(function()
                         ctx:retry(policy, function()
                             tries += 1
-                            ctx:cycle(function(cycle)
-                                cycle:find(uf.elements.action_target)
-                            end)
+                            ctx:cycle(function(cycle) cycle:key('E') end)
                         end)
                     end)
                     if ok ~= false then return -1 end
@@ -556,89 +495,10 @@ namespace uf::task
                 local expected = table.concat({
                     'emit:retry_attempt:1:3',
                     'cycle_open->1',
-                    'cycle_find(1)!stale_observation',
+                    'key(1,E)!stale_observation',
                     'cycle_close(1)',
                 }, '|')
                 if probe.calls() ~= expected then return 0 end
-                return 1
-            )lua";
-
-            CHECK(runOnFakeSurface(context, built, source) == doctest::Approx(1.0));
-        }
-
-        TEST_CASE("an interrupt handler is handed the cycle the wait already opened")
-        {
-            auto built = buildUnbound();
-            REQUIRE(built.session.has_value());
-            TaskContext context{*std::move(built.session), *built.recorder};
-
-            // The capability the three-layer design exists for, asserted as the
-            // call sequence rather than as a frame count. Between the popup
-            // resolving and the handler's find there is NO cycle_open, and the
-            // ordinals say the handler acted on cycle 1 -- which is the whole of
-            // "the handler is offered the current cycle". The handler's click
-            // consumes that cycle, so no close follows it, and the wait then
-            // polls once more and finds its target on cycle 2.
-            constexpr std::string_view source = R"lua(
-                probe.plan('cycle_page', { uf.pages.popup, uf.pages.page_a })
-                probe.plan('cycle_find', { true, true })
-
-                local handled = 0
-                local clicked = 0
-
-                local popup = task.interrupt {
-                    id = 'popup',
-                    when = uf.pages.popup,
-                    max_hits = 3,
-                    handle = function(ctx, cycle)
-                        handled += 1
-                        local close = cycle:find(uf.elements.close_dialog)
-                        if close ~= nil then
-                            cycle:click(close)
-                        end
-                    end,
-                }
-
-                task.define {
-                    interrupts = { popup },
-                    run = function(ctx)
-                        ctx:wait_for_page(
-                            uf.pages.page_a,
-                            { timeout_ms = 30000, poll_ms = 100 },
-                            function(cycle)
-                                local hit = cycle:find(uf.elements.action_target)
-                                if hit ~= nil then
-                                    cycle:click(hit)
-                                    clicked += 1
-                                end
-                            end
-                        )
-                    end,
-                }
-
-                if handled ~= 1 then return 0 end
-                if clicked ~= 1 then return 0 end
-
-                local expected = table.concat({
-                    'deadline(30000)',
-                    'cycle_open->1',
-                    'cycle_page(1)->page',
-                    'emit:interrupt_matched:popup',
-                    'cycle_find(1)->hit',
-                    'cycle_click(1,1)',
-                    'emit:interrupt_handled:popup',
-                    'wait(30000,100)->true',
-                    'cycle_open->2',
-                    'cycle_page(2)->page',
-                    'cycle_find(2)->hit',
-                    'cycle_click(2,2)',
-                }, '|')
-                if probe.calls() ~= expected then return 0 end
-
-                -- The closing event was emitted only after the framework asked
-                -- whether the generation was still live, which is what keeps a
-                -- cancelled handler from raising over its own cause.
-                if probe.terminal_calls() < 1 then return 0 end
                 return 1
             )lua";
 

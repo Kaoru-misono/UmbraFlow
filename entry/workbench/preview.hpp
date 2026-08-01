@@ -107,9 +107,9 @@ namespace uf::workbench
     // starving searches is the defect this exists to remove.
     [[nodiscard]]
     auto pagePolicyFor(
-        annotation::RecognitionPolicy const& perSearchPolicy,
+        RecognitionPolicy const& perSearchPolicy,
         std::size_t anchorSearchCount
-    ) -> annotation::RecognitionPolicy;
+    ) -> RecognitionPolicy;
 
     // Compiles the document with its in-memory sources, builds a recognition
     // runtime, and evaluates the page against the selected source's image. When
@@ -122,7 +122,7 @@ namespace uf::workbench
         std::span<annotation::AuthoringSourceAsset const> sourceAssets,
         annotation::SourceId selectedSourceId,
         std::optional<annotation::ElementId> selectedElementId,
-        annotation::RecognitionPolicy const& policy
+        RecognitionPolicy const& policy
     ) -> Result<PreviewResult>;
 
     // One region's score against one captured screen, searched on its own.
@@ -143,7 +143,7 @@ namespace uf::workbench
         std::span<annotation::AuthoringSourceAsset const> sourceAssets,
         annotation::ElementId elementId,
         annotation::SourceId screenId,
-        annotation::RecognitionPolicy const& policy
+        RecognitionPolicy const& policy
     ) -> Result<PreviewAnchorRow>;
 
     // What an author sees while picking a colour key: the template rectangle
@@ -522,6 +522,6 @@ namespace uf::workbench
         annotation::AuthoringDocument const& document,
         std::span<annotation::AuthoringSourceAsset const> sourceAssets,
         std::span<std::byte const> liveFrameBytes,
-        annotation::RecognitionPolicy const& policy
+        RecognitionPolicy const& policy
     ) -> Result<ModelCheck>;
 }

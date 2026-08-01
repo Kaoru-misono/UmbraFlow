@@ -1,6 +1,6 @@
 #include "binding-fixture.hpp"
 
-#include <task/capability-surface.hpp>
+#include <task/script-bindings.hpp>
 #include <task/task-context.hpp>
 
 #include <script/engine.hpp>
@@ -43,17 +43,15 @@ namespace uf::task
 {
     namespace
     {
-        // The representative script. It walks a PageUnknown -> PageResolved
-        // transition (cycle 1 then cycle 2), records a find that completes with
-        // no match and a successful recognition + click, and reads ctx:settle /
+        // The representative script. It observes three frames, records two
+        // template searches that complete far from the template and one that
+        // completes exactly on it and is clicked, and reads ctx:settle /
         // ctx:random -- the two host facilities that make determinism a real risk
         // rather than a triviality.
         //
-        // The miss sits on cycle 2 rather than on the unknown frame because
-        // locating an element runs against the resolved page's reference to it:
-        // an unknown page refuses the search instead of missing, so a completed
-        // miss can only be observed on a page that resolved without the target
-        // on it.
+        // The template is loaded once and matched on each frame, which is the
+        // script-owned model's own shape: a search names pixels rather than an
+        // element, so a completed miss is simply a frame the template is not on.
         //
         // settle() is the declarative pause, and a zero-millisecond one is still
         // a traced native call: its line carries the duration the script asked
@@ -63,34 +61,37 @@ namespace uf::task
         // draws a fixed number of values and lets each decide whether to run one
         // extra observation cycle, so the emitted native call sequence encodes
         // the random stream and depends on the seed and nothing else.
-        constexpr std::string_view k_harnessScript = R"lua(
+        [[nodiscard]]
+        auto harnessScript() -> std::string
+        {
+            return "local tpl = ctx:template_load(" + templateLiteral(k_targetActionGray)
+                + ")\n" + R"lua(
             ctx:settle(0)
 
-            -- Cycle 1: an unknown page.
+            -- Cycle 1: a frame the template is nowhere on, so its best position
+            -- is a nonzero distance away.
             local c1 = ctx:cycle_open()
-            local page1 = ctx:cycle_page(c1)
-            if page1 ~= nil then error("frame 1 must be an unknown page") end
+            local miss1 = ctx:cycle_match(c1, tpl, 0, 0, 3, 1)
+            if miss1 == nil or miss1.score == 0 then
+                error("frame 1 must not carry the template")
+            end
             ctx:cycle_close(c1)
 
-            -- Cycle 2: page_a resolves without the target on it, so the find
-            -- completes with no match.
+            -- Cycle 2: the same, on a different frame.
             local c2 = ctx:cycle_open()
-            local page2 = ctx:cycle_page(c2)
-            if page2 == nil or not page2:is(uf.pages.page_a) then
-                error("frame 2 must resolve page_a")
+            local miss2 = ctx:cycle_match(c2, tpl, 0, 0, 3, 1)
+            if miss2 == nil or miss2.score == 0 then
+                error("frame 2 must not carry the template")
             end
-            local miss = ctx:cycle_find(c2, uf.elements.action_target)
-            if miss ~= nil then error("frame 2 find must miss") end
             ctx:cycle_close(c2)
 
-            -- Cycle 3: resolves page_a, the target hits, one click is delivered.
+            -- Cycle 3: the template IS on the frame -- distance zero -- and one
+            -- click is delivered.
             local c3 = ctx:cycle_open()
-            local page3 = ctx:cycle_page(c3)
-            if page3 == nil or not page3:is(uf.pages.page_a) then
-                error("frame 3 must resolve page_a")
+            local hit = ctx:cycle_match(c3, tpl, 0, 0, 3, 1)
+            if hit == nil or hit.score ~= 0 then
+                error("frame 3 must carry the template")
             end
-            local hit = ctx:cycle_find(c3, uf.elements.action_target)
-            if hit == nil then error("frame 3 target must hit") end
             ctx:cycle_click(c3, hit)
 
             -- Seed-dependent tail: a fixed number of draws, each deciding whether
@@ -106,10 +107,10 @@ namespace uf::task
 
             return 1
         )lua";
+        }
 
-        // The fixed synthetic frame sequence: one unknown frame, one that
-        // resolves page_a without the action target on it, then one that
-        // resolves page_a with it. Materialized fresh on every call so each frame's
+        // The fixed synthetic frame sequence: two frames the template is not on,
+        // then one it is. Materialized fresh on every call so each frame's
         // capture instant is current -- the 750 ms action-frame lease
         // (k_defaultMaxActionFrameAge) would otherwise expire partway through a
         // long veto loop and make late runs diverge from early ones. The pixel
@@ -119,26 +120,24 @@ namespace uf::task
         [[nodiscard]]
         auto planFrames() -> std::vector<Frame>
         {
-            auto const fp = anno::test::fingerprint(3, 1, 96, 96);
+            auto const fp = fixtureFingerprint();
             auto frames   = std::vector<Frame>{};
             frames.emplace_back(grayFrame(fp, unknownPixels(), FrameId{101}));
             frames.emplace_back(grayFrame(fp, resolvedTargetlessPixels(), FrameId{102}));
+            // FrameId 103 carries the template; the two above do not.
             frames.emplace_back(grayFrame(fp, resolvingPixels(), FrameId{103}));
             return frames;
         }
 
         // A session over the fixed frame plan wired to a recording action sink and
         // one recorder shared with the TaskContext, so the harness reads back both
-        // every delivered click point and the whole merged trace. The surface is
-        // built from the runtime's own catalog before the runtime moves into the
-        // session, exactly as the binding fixture does. The recorder is declared
-        // first and held through a unique_ptr: the session borrows it and must
-        // die first, and its address must survive this struct being moved.
+        // every delivered click point and the whole merged trace. The recorder is
+        // declared first and held through a unique_ptr: the session borrows it and
+        // must die first, and its address must survive this struct being moved.
         struct RecordingBuild final
         {
             std::unique_ptr<trace::TraceRecorder> recorder;
             Result<engine::EngineSession>         session;
-            CapabilitySurface                     surface;
             RecordingActionSink*                  clicks;
             RecordingTraceSink*                   traces;
         };
@@ -146,12 +145,6 @@ namespace uf::task
         [[nodiscard]]
         auto buildRecordingSession() -> RecordingBuild
         {
-            auto parts   = singlePageRuntime();
-            auto surface = CapabilitySurface::create(
-                parts.loaded.runtime.manifest().catalog()
-            );
-            REQUIRE(surface.has_value());
-
             auto        actionSink = std::make_unique<RecordingActionSink>();
             auto        traceSink  = std::make_unique<RecordingTraceSink>();
             auto* const p_clicks   = actionSink.get();
@@ -163,16 +156,14 @@ namespace uf::task
                 trace::FrontEnd::Task
             );
             auto session = engine::EngineSession::create(
-                std::move(parts.loaded),
                 std::make_unique<FakeFrameSource>(planFrames()),
                 std::move(actionSink),
                 *recorder,
-                baseConfig(parts.fingerprint)
+                baseConfig(fixtureFingerprint())
             );
             return RecordingBuild{
                 .recorder = std::move(recorder),
                 .session  = std::move(session),
-                .surface  = *std::move(surface),
                 .clicks   = p_clicks,
                 .traces   = p_traces,
             };
@@ -228,9 +219,9 @@ namespace uf::task
                 TaskContextConfig{.randomSeed = seed},
             };
 
-            auto vm = script::Engine::create(taskVmConfig(built.surface, context));
+            auto vm = script::Engine::create(taskVmConfig(context));
             REQUIRE(vm.has_value());
-            auto const result = vm->runNumber(k_harnessScript, "determinism-harness");
+            auto const result = vm->runNumber(harnessScript(), "determinism-harness");
             REQUIRE(result.has_value());
 
             return canonicalize(*built.clicks, built.traces->events());

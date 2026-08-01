@@ -6,8 +6,6 @@
 #include <core/error/result.hpp>
 #include <core/types/integer.hpp>
 
-#include <annotation/recognition.hpp>
-
 #include <domain/error.hpp>
 #include <domain/key.hpp>
 
@@ -43,10 +41,9 @@ namespace uf::task
     // struct never outlives the call that builds it.
     struct NativeCallIdentity final
     {
-        std::string_view                     verb;
-        std::optional<uint64>                cycleOrdinal{};
-        std::optional<uint64>                hitCycleOrdinal{};
-        std::optional<annotation::ElementId> elementId{};
+        std::string_view      verb;
+        std::optional<uint64> cycleOrdinal{};
+        std::optional<uint64> hitCycleOrdinal{};
 
         // The pause a settle declared, in whole milliseconds. A settle reaches no
         // engine verb, so this is the only evidence it happened, and a replay

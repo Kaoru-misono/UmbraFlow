@@ -94,7 +94,7 @@ namespace uf::workbench
             auto const report = annotation::runAuthoringRegressions(
                 loaded->document,
                 loaded->sources,
-                annotation::RecognitionPolicy{
+                RecognitionPolicy{
                     .maximumPixelComparisons = k_comparisonBudget,
                     .deadline                = deadline,
                 }

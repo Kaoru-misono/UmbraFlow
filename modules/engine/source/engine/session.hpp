@@ -1,17 +1,11 @@
 #pragma once
 
 #include "ports.hpp"
-#include "runtime-loader.hpp"
 
 #include <core/error/result.hpp>
 #include <core/safety/annotations.hpp>
 #include <core/time/monotonic-time.hpp>
 #include <core/types/integer.hpp>
-
-#include <annotation/authorization.hpp>
-#include <annotation/catalog.hpp>
-#include <annotation/recognition.hpp>
-#include <annotation/recognition-runtime.hpp>
 
 #include <domain/detection.hpp>
 #include <domain/frame.hpp>
@@ -23,6 +17,8 @@
 
 #include <trace/event.hpp>
 #include <trace/recorder.hpp>
+
+#include <vision/template-match.hpp>
 
 #include <chrono>
 #include <cstddef>
@@ -70,7 +66,18 @@ namespace uf::engine
     // construction site; every other field carries a safe in-class default.
     struct EngineSessionConfig final
     {
-        annotation::ProjectFingerprint liveFingerprint;
+        ProjectFingerprint liveFingerprint;
+
+        // The geometry the page model this session serves was authored at.
+        //
+        // It is supplied rather than read off a loaded project because the
+        // engine no longer loads one: the model is layer two's, stated at the top
+        // of its own project file, and the host reads it there
+        // (docs/plans/2026-07-31-script-owned-page-model.md 4). Every guarantee
+        // that used to consult the catalog's fingerprint -- the click edge's
+        // compatibility refusal and the raw match's -- consults this instead, so
+        // the check is unchanged and only its source moved.
+        ProjectFingerprint projectFingerprint;
 
         uint64                     maximumPixelComparisons{};
         MonotonicInstant::Duration recognitionTimeout{};
@@ -80,43 +87,16 @@ namespace uf::engine
         std::stop_token cancellation{};
     };
 
-    // The result of a successful action-target search on one observation: the raw
-    // anchor evidence, the authorization-ready detection bound to its element
-    // identity, and the single deterministic click pixel derived from the match.
-    // None of its members has a default, so it is only ever built by findAction.
-    class ActionFound final
-    {
-        annotation::AnchorEvidence  m_evidence;
-        annotation::ActionDetection m_actionDetection;
-        PixelPoint                  m_clickPixel;
-
-    public:
-        ActionFound(
-            annotation::AnchorEvidence evidence,
-            annotation::ActionDetection actionDetection,
-            PixelPoint clickPixel
-        ) noexcept;
-
-        [[nodiscard]]
-        auto evidence() const noexcept UF_LIFETIME_BOUND -> annotation::AnchorEvidence const&;
-
-        [[nodiscard]]
-        auto actionDetection() const noexcept UF_LIFETIME_BOUND
-            -> annotation::ActionDetection const&;
-
-        [[nodiscard]] auto clickPixel() const noexcept -> PixelPoint;
-    };
-
     // Where one raw template match landed on one frame, what it scored, and the
     // ceiling that score is read against.
     //
     // It carries no element and no page, because a template loaded by the script
-    // layer belongs to neither. What it does carry is the same grade of evidence
-    // an ActionFound does -- a rectangle this frame produced, a distance, and the
-    // maximum that distance could have been -- so the click that consumes it is
-    // fenced by the same same-frame, lease and fingerprint checks. Whether the
-    // score counts as a hit is the caller's judgement and deliberately not
-    // decided here.
+    // layer belongs to neither -- and after the page model moved to Luau there is
+    // no other shape of evidence left in this module. What it carries is a
+    // rectangle this frame produced, a distance, and the maximum that distance
+    // could have been, so the click that consumes it is fenced by the same
+    // same-frame, lease and fingerprint checks. Whether the score counts as a hit
+    // is the caller's judgement and deliberately not decided here.
     struct MatchFound final
     {
         PixelRect  matchedRect;
@@ -166,14 +146,14 @@ namespace uf::engine
 
         Frame                                                m_frame;
         ObservationLease                                     m_lease;
-        annotation::FrameIdentity                            m_frameIdentity;
+        FrameIdentity                                        m_frameIdentity;
         std::shared_ptr<detail::EngineSessionIdentity const> m_sessionIdentity;
         bool                                                 m_invalidated{false};
 
         Observation(
             Frame frame,
             ObservationLease lease,
-            annotation::FrameIdentity frameIdentity,
+            FrameIdentity frameIdentity,
             std::shared_ptr<detail::EngineSessionIdentity const> sessionIdentity
         ) noexcept;
 
@@ -222,7 +202,6 @@ namespace uf::engine
     {
         friend class Observation;
 
-        LoadedRuntime                                        m_loadedRuntime;
         std::shared_ptr<detail::EngineSessionIdentity const> m_identity;
         std::unique_ptr<IFrameSource>                        m_frameSource;
         std::unique_ptr<IActionSink>                         m_actionSink;
@@ -238,7 +217,6 @@ namespace uf::engine
         EngineSessionConfig   m_config;
 
         EngineSession(
-            LoadedRuntime loadedRuntime,
             std::shared_ptr<detail::EngineSessionIdentity const> identity,
             std::unique_ptr<IFrameSource> frameSource,
             std::unique_ptr<IActionSink> actionSink,
@@ -248,11 +226,7 @@ namespace uf::engine
         ) noexcept;
 
         [[nodiscard]]
-        auto catalog() const noexcept UF_LIFETIME_BOUND
-            -> annotation::RecognitionCatalog const&;
-
-        [[nodiscard]]
-        auto makeRecognitionPolicy() const -> annotation::RecognitionPolicy;
+        auto makeRecognitionPolicy() const -> RecognitionPolicy;
 
         [[nodiscard]]
         auto emit(trace::TraceEvent const& event) -> Status;
@@ -300,7 +274,6 @@ namespace uf::engine
         // without one refuses readText rather than pretending to read.
         [[nodiscard]]
         static auto create(
-            LoadedRuntime loadedRuntime,
             std::unique_ptr<IFrameSource> frameSource,
             std::unique_ptr<IActionSink> actionSink,
             trace::TraceRecorder& recorder,
@@ -311,46 +284,20 @@ namespace uf::engine
         [[nodiscard]]
         auto observe() -> Result<Observation>;
 
-        [[nodiscard]]
-        auto resolvePage(
-            Observation const& observation
-        ) -> Result<annotation::PageOutcome>;
-
-        // Locates one element as `pageId` uses it, on the frame `observation`
-        // holds.
-        //
-        // The page is a parameter because the per-page facts moved onto the
-        // reference row: that row carries the search region this page refines
-        // and the appearance it pins, and a page that does not exercise
-        // interact on the element has no action here to locate at all. Passing
-        // a page the frame did not resolve therefore searches the wrong
-        // reference, which is why every caller passes the page ITS cycle
-        // resolved.
-        //
-        // It authorizes nothing. A located hit is still refused at delivery
-        // unless act()'s resolved page references the element for interaction,
-        // so this parameter selects a reference row rather than granting one.
-        [[nodiscard]]
-        auto findAction(
-            Observation const& observation,
-            annotation::PageId pageId,
-            annotation::ElementId elementId
-        ) -> Result<std::optional<ActionFound>>;
-
         // Searches `searchRoi` of the frame `observation` holds for
         // `templateImage`, reporting the best position it found or nothing when
         // the region could hold no candidate at all.
         //
-        // It is the raw half of findAction, and the difference is what the
-        // script-owned page model needs: no catalog lookup, no page, no
-        // appearance, no threshold. A control stop -- the comparison budget, the
+        // It is the whole of what this module searches for: no catalog lookup,
+        // no page, no appearance, no threshold, because all four moved to layer
+        // two with the model. A control stop -- the comparison budget, the
         // recognition deadline, a requested cancel -- is a FAILURE and never a
         // miss, because a search that stopped looking has not established that
         // the template is absent.
         [[nodiscard]]
         auto matchTemplate(
             Observation const& observation,
-            annotation::GrayTemplateImage const& templateImage,
+            GrayTemplateImage const& templateImage,
             PixelRect searchRoi
         ) -> Result<std::optional<MatchFound>>;
 
@@ -368,31 +315,23 @@ namespace uf::engine
             PixelRect rect
         ) -> Result<std::optional<TextReading>>;
 
-        [[nodiscard]]
-        auto act(
-            Observation&& observation,
-            annotation::ResolvedPage const& page,
-            ActionFound const& action
-        ) -> Result<ActReceipt>;
-
-        // Delivers one click at `point`, spending `observation`, with no
-        // annotation evidence behind the coordinate.
+        // Delivers one click at `point`, spending `observation`.
         //
-        // WHAT IT STILL ENFORCES, and what it deliberately does not. It keeps
-        // every guarantee act() keeps that does not mention the catalog: a
-        // requested stop refuses before any sink call, a foreign handle is an
+        // WHAT IT ENFORCES, and what it deliberately does not. A requested stop
+        // refuses before any sink call, a foreign handle is an
         // InternalInvariant, a consumed handle is StaleObservation, the live
         // fingerprint must match the project's, the observation's lease must
         // still be valid at delivery, the bound target instance is revalidated
         // immediately before the post, and the observation is spent so one frame
         // delivers at most one input.
         //
-        // What it drops is the one requirement that moved out of C++: that a
-        // resolved page reference the element being clicked. There is no element
-        // here to reference. That is why this is a SEPARATE verb rather than an
-        // optional page on act() -- the privilege of naming a bare coordinate is
-        // held by the trusted framework layer and never handed to a business
-        // script, and two spellings keep which one a caller reached for visible.
+        // What it does NOT enforce is that a resolved page authorises the element
+        // being clicked, because there is no element here and no page: both moved
+        // to layer two with the model. The privilege of naming a bare coordinate
+        // is therefore the trusted framework's and is never handed to a business
+        // script -- modules/task/runtime/observe.luau is where "only click what
+        // this page authorises" is enforced now
+        // (docs/plans/2026-08-01-three-layers-and-agent-operator.md 2).
         [[nodiscard]]
         auto clickPoint(
             Observation&& observation,
@@ -401,10 +340,11 @@ namespace uf::engine
 
         // Delivers one keystroke, spending `observation`.
         //
-        // ITS AUTHORIZATION CONTRACT, and how it differs from act()'s. Stated here
-        // because this is the only place both verbs are visible at once.
+        // ITS AUTHORIZATION CONTRACT, and how it differs from clickPoint()'s.
+        // Stated here because this is the only place both verbs are visible at
+        // once.
         //
-        // Shared with act(), and for the same reasons:
+        // Shared with clickPoint(), and for the same reasons:
         //   - a requested stop refuses before any sink call, so a cancelled run
         //     never posts input;
         //   - an observation from another session is an InternalInvariant, and an
@@ -417,10 +357,10 @@ namespace uf::engine
         //     frame that survived it would describe a target that no longer exists.
         //
         // Deliberately NOT shared, because a keystroke names no screen position:
-        //   - there is no page authorization and no same-frame detection. Those
-        //     answer "is the thing I am about to click still where I saw it, and is
-        //     it allowed on this page" -- questions a virtual key does not raise,
-        //     and which could only be honoured here by inventing a detection;
+        //   - there is no fingerprint check. That question asks whether a
+        //     coordinate measured against this project still means what it meant;
+        //     a virtual key names no coordinate, so there is nothing for the
+        //     geometry to invalidate;
         //   - the observation's lease is not enforced. A lease bounds a
         //     coordinate's shelf life; a key's meaning does not decay with layout.
         //     Enforcing it would refuse keystrokes for a reason that cannot apply

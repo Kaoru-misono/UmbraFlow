@@ -5,6 +5,8 @@
 #include <core/types/integer.hpp>
 #include <core/types/strong-value.hpp>
 
+#include <domain/space.hpp>
+
 #include <array>
 #include <compare>
 #include <cstddef>
@@ -85,43 +87,6 @@ namespace uf::annotation
 
         [[nodiscard]]
         auto value() const noexcept UF_LIFETIME_BOUND -> std::string const&;
-    };
-
-    class ProjectFingerprint final
-    {
-        uint32 m_width;
-        uint32 m_height;
-        uint32 m_dpiX;
-        uint32 m_dpiY;
-
-        constexpr ProjectFingerprint(
-            uint32 width,
-            uint32 height,
-            uint32 dpiX,
-            uint32 dpiY
-        ) noexcept
-            : m_width{width}
-            , m_height{height}
-            , m_dpiX{dpiX}
-            , m_dpiY{dpiY}
-        {
-        }
-
-    public:
-        auto operator<=>(ProjectFingerprint const&) const = default;
-
-        [[nodiscard]]
-        static auto create(
-            uint32 width,
-            uint32 height,
-            uint32 dpiX,
-            uint32 dpiY
-        ) -> Result<ProjectFingerprint>;
-
-        [[nodiscard]] constexpr auto width() const noexcept -> uint32 { return m_width; }
-        [[nodiscard]] constexpr auto height() const noexcept -> uint32 { return m_height; }
-        [[nodiscard]] constexpr auto dpiX() const noexcept -> uint32 { return m_dpiX; }
-        [[nodiscard]] constexpr auto dpiY() const noexcept -> uint32 { return m_dpiY; }
     };
 
     class SimilarityThreshold final

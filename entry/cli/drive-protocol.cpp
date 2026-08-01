@@ -64,15 +64,11 @@ namespace uf::cli
         struct ParsedFields final
         {
             std::optional<std::string> operation{};
-            std::optional<std::string> element{};
-            std::optional<std::string> page{};
             std::optional<std::string> key{};
             std::optional<uint64>      cycle{};
-            std::optional<uint64>      hit{};
             std::optional<uint64>      deadline{};
             std::optional<uint64>      millis{};
             std::optional<uint64>      pollMillis{};
-            std::optional<uint64>      timeoutMillis{};
         };
 
         // A strict reader for the one JSON shape this protocol uses: a flat object of
@@ -357,16 +353,6 @@ namespace uf::cli
                     UF_TRY_VALUE(value, parseString());
                     return setOnce(fields.operation, std::move(value), field);
                 }
-                if (field == "element")
-                {
-                    UF_TRY_VALUE(value, parseString());
-                    return setOnce(fields.element, std::move(value), field);
-                }
-                if (field == "page")
-                {
-                    UF_TRY_VALUE(value, parseString());
-                    return setOnce(fields.page, std::move(value), field);
-                }
                 if (field == "key")
                 {
                     UF_TRY_VALUE(value, parseString());
@@ -376,11 +362,6 @@ namespace uf::cli
                 {
                     UF_TRY_VALUE(value, parseWholeNumber(field));
                     return setOnce(fields.cycle, value, field);
-                }
-                if (field == "hit")
-                {
-                    UF_TRY_VALUE(value, parseWholeNumber(field));
-                    return setOnce(fields.hit, value, field);
                 }
                 if (field == "deadline")
                 {
@@ -396,11 +377,6 @@ namespace uf::cli
                 {
                     UF_TRY_VALUE(value, parseWholeNumber(field));
                     return setOnce(fields.pollMillis, value, field);
-                }
-                if (field == "timeout_ms")
-                {
-                    UF_TRY_VALUE(value, parseWholeNumber(field));
-                    return setOnce(fields.timeoutMillis, value, field);
                 }
                 return invalidCommand(
                     std::format("command has unrecognized field \"{}\"", field)
@@ -492,36 +468,6 @@ namespace uf::cli
             return millisDuration(*value, field);
         }
 
-        // Reads one required POLICY field of a layer-two command.
-        //
-        // This is the whole of "a convenience command carries no policy defaults of
-        // its own": there is no value_or here and there must never be one. A caller
-        // that omits a policy field is told to supply it rather than handed a number
-        // this file chose, because modules/task/runtime/ctx.luau owns the only copy of
-        // those numbers and a second copy here would drift out of step with it.
-        [[nodiscard]]
-        auto requirePolicyMillis(
-            std::optional<uint64> const& value,
-            std::string_view field,
-            std::string_view operation
-        ) -> Result<MonotonicInstant::Duration>
-        {
-            if (!value)
-            {
-                return invalidCommand(
-                    std::format(
-                        "the {} command requires field {}; it has no default, "
-                        "because every timeout and poll interval is the caller's "
-                        "policy and the task framework owns the only copy of those "
-                        "numbers",
-                        operation,
-                        field
-                    )
-                );
-            }
-            return millisDuration(*value, field);
-        }
-
         [[nodiscard]]
         auto requireName(
             std::optional<std::string> const& value,
@@ -567,15 +513,11 @@ namespace uf::cli
         // command would let an operator believe a pause it asked for happened.
         struct FieldUse final
         {
-            bool element{false};
-            bool page{false};
             bool key{false};
             bool cycle{false};
-            bool hit{false};
             bool deadline{false};
             bool millis{false};
             bool pollMillis{false};
-            bool timeoutMillis{false};
         };
 
         [[nodiscard]]
@@ -596,18 +538,11 @@ namespace uf::cli
                 );
             };
 
-            if (fields.element && !allowed.element) { return refuse("element"); }
-            if (fields.page && !allowed.page) { return refuse("page"); }
             if (fields.key && !allowed.key) { return refuse("key"); }
             if (fields.cycle && !allowed.cycle) { return refuse("cycle"); }
-            if (fields.hit && !allowed.hit) { return refuse("hit"); }
             if (fields.deadline && !allowed.deadline) { return refuse("deadline"); }
             if (fields.millis && !allowed.millis) { return refuse("ms"); }
             if (fields.pollMillis && !allowed.pollMillis) { return refuse("poll_ms"); }
-            if (fields.timeoutMillis && !allowed.timeoutMillis)
-            {
-                return refuse("timeout_ms");
-            }
             return ok();
         }
 
@@ -637,46 +572,6 @@ namespace uf::cli
                 );
                 UF_TRY_VALUE(cycle, requireId(fields.cycle, "cycle", operation));
                 return DriveCycleCloseCommand{.cycle = cycle};
-            }
-            if (operation == "cycle_page")
-            {
-                UF_TRY(
-                    rejectUnusedFields(fields, FieldUse{.cycle = true}, operation)
-                );
-                UF_TRY_VALUE(cycle, requireId(fields.cycle, "cycle", operation));
-                return DriveCyclePageCommand{.cycle = cycle};
-            }
-            if (operation == "cycle_find")
-            {
-                UF_TRY(
-                    rejectUnusedFields(
-                        fields,
-                        FieldUse{.element = true, .cycle = true},
-                        operation
-                    )
-                );
-                UF_TRY_VALUE(cycle, requireId(fields.cycle, "cycle", operation));
-                UF_TRY_VALUE(
-                    element,
-                    requireName(fields.element, "element", operation)
-                );
-                return DriveCycleFindCommand{
-                    .cycle   = cycle,
-                    .element = std::move(element),
-                };
-            }
-            if (operation == "cycle_click")
-            {
-                UF_TRY(
-                    rejectUnusedFields(
-                        fields,
-                        FieldUse{.cycle = true, .hit = true},
-                        operation
-                    )
-                );
-                UF_TRY_VALUE(cycle, requireId(fields.cycle, "cycle", operation));
-                UF_TRY_VALUE(hit, requireId(fields.hit, "hit", operation));
-                return DriveCycleClickCommand{.cycle = cycle, .hit = hit};
             }
             if (operation == "key")
             {
@@ -736,66 +631,6 @@ namespace uf::cli
                     .pollInterval = pollInterval,
                 };
             }
-            if (operation == "wait_page")
-            {
-                UF_TRY(
-                    rejectUnusedFields(
-                        fields,
-                        FieldUse{
-                            .page          = true,
-                            .pollMillis    = true,
-                            .timeoutMillis = true,
-                        },
-                        operation
-                    )
-                );
-                UF_TRY_VALUE(page, requireName(fields.page, "page", operation));
-                UF_TRY_VALUE(
-                    timeout,
-                    requirePolicyMillis(fields.timeoutMillis, "timeout_ms", operation)
-                );
-                UF_TRY_VALUE(
-                    pollInterval,
-                    requirePolicyMillis(fields.pollMillis, "poll_ms", operation)
-                );
-                return DriveWaitPageCommand{
-                    .page         = std::move(page),
-                    .timeout      = timeout,
-                    .pollInterval = pollInterval,
-                };
-            }
-            if (operation == "find_click")
-            {
-                UF_TRY(
-                    rejectUnusedFields(
-                        fields,
-                        FieldUse{
-                            .element       = true,
-                            .pollMillis    = true,
-                            .timeoutMillis = true,
-                        },
-                        operation
-                    )
-                );
-                UF_TRY_VALUE(
-                    element,
-                    requireName(fields.element, "element", operation)
-                );
-                UF_TRY_VALUE(
-                    timeout,
-                    requirePolicyMillis(fields.timeoutMillis, "timeout_ms", operation)
-                );
-                UF_TRY_VALUE(
-                    pollInterval,
-                    requirePolicyMillis(fields.pollMillis, "poll_ms", operation)
-                );
-                return DriveFindClickCommand{
-                    .element      = std::move(element),
-                    .timeout      = timeout,
-                    .pollInterval = pollInterval,
-                };
-            }
-
             return invalidCommand(
                 std::format("command has unrecognized op \"{}\"", operation)
             );
@@ -874,18 +709,6 @@ namespace uf::cli
                 {
                     return "cycle_close";
                 }
-                else if constexpr (std::same_as<Command, DriveCyclePageCommand>)
-                {
-                    return "cycle_page";
-                }
-                else if constexpr (std::same_as<Command, DriveCycleFindCommand>)
-                {
-                    return "cycle_find";
-                }
-                else if constexpr (std::same_as<Command, DriveCycleClickCommand>)
-                {
-                    return "cycle_click";
-                }
                 else if constexpr (std::same_as<Command, DriveKeyCommand>)
                 {
                     return "key";
@@ -901,14 +724,6 @@ namespace uf::cli
                 else if constexpr (std::same_as<Command, DriveWaitCommand>)
                 {
                     return "wait";
-                }
-                else if constexpr (std::same_as<Command, DriveWaitPageCommand>)
-                {
-                    return "wait_page";
-                }
-                else if constexpr (std::same_as<Command, DriveFindClickCommand>)
-                {
-                    return "find_click";
                 }
                 else
                 {
@@ -933,10 +748,6 @@ namespace uf::cli
         {
             line += std::format(",\"cycle\":{}", *result.cycle);
         }
-        if (result.hit.has_value())
-        {
-            line += std::format(",\"hit\":{}", *result.hit);
-        }
         if (result.deadline.has_value())
         {
             line += std::format(",\"deadline\":{}", *result.deadline);
@@ -948,12 +759,6 @@ namespace uf::cli
         if (result.budget.has_value())
         {
             line += *result.budget ? ",\"budget\":true" : ",\"budget\":false";
-        }
-        if (result.resolvedPage)
-        {
-            line += ",\"page\":";
-            line += result.page.has_value() ? escapeJsonString(*result.page)
-                                            : std::string{"null"};
         }
         if (result.errorKind.has_value())
         {

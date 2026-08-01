@@ -38,7 +38,7 @@ namespace uf::cli
     class FileFrameSource final : public engine::IFrameSource
     {
         std::vector<std::filesystem::path> m_files;
-        annotation::ProjectFingerprint     m_fingerprint;
+        ProjectFingerprint                 m_fingerprint;
         std::size_t                        m_served{0};
 
     public:
@@ -50,7 +50,7 @@ namespace uf::cli
         // as running out.
         FileFrameSource(
             std::vector<std::filesystem::path> files,
-            annotation::ProjectFingerprint fingerprint
+            ProjectFingerprint fingerprint
         ) noexcept;
 
         // Collects every `*.png` directly inside `directory`, sorted by file
@@ -68,7 +68,7 @@ namespace uf::cli
         [[nodiscard]]
         static auto create(
             std::filesystem::path const& directory,
-            annotation::ProjectFingerprint const& fingerprint
+            ProjectFingerprint const& fingerprint
         ) -> Result<std::unique_ptr<FileFrameSource>>;
 
         [[nodiscard]]

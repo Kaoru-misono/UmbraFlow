@@ -56,10 +56,9 @@ namespace uf::cli
 
     // Executes one parsed command and returns the result line to append.
     //
-    // Exposed for its own sake as much as for the loop's: it is where layer two is
-    // shown to be built out of layer one and nothing else. Every convenience command
-    // below calls only OperatorSession verbs, and every number it loops on came from
-    // the command.
+    // Exposed for the loop's sake and for its own: every command maps to exactly
+    // one OperatorSession verb, and this is where that can be read off in one
+    // place.
     struct DriveExecution final
     {
         std::string resultLine{};
