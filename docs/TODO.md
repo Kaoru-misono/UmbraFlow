@@ -80,6 +80,12 @@
   `engine` 的 `resolvePage` 与 `findAction`;依赖图上的 `engine -> annotation` 随之去掉。
   **前置:工单 2 与工单 3 落地。**
 
+- **第一条真边已走通(2026-08-01,真机)**:`walk-first-edge` 任务全程走新栈——
+  l2 文件 → 图 → 栈 → 等 home → walk_edge → 回执授权点击 (1438,240) → sortie
+  连击确认,exit 0;trace 干净(1 次授权 1 次投递 1 次作废,33 次 cycle_match)。
+  证据:`E:\umbraflow-projects\chaos-v14\walk-trace.jsonl` 与落地帧。旧引擎动词
+  (cycle_page/cycle_find)全程未参与——script-owned 的运行路径自此是活的。
+
 迁移配套(2026-08-01 夜):
 
 - **chaos-v14 已按 v4 重放重建**(`E:\umbraflow-projects\chaos-v14`,3 页 22 元素,全命中,
