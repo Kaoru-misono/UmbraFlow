@@ -196,6 +196,19 @@ return #verdict.findings
                     "a falsification check measures screens and scrolls nothing"
                 );
             }
+
+            [[nodiscard]]
+            auto longPress(
+                Point<ClientSpace> /*point*/,
+                MonotonicInstant::Duration /*hold*/,
+                ObservationLease const& /*lease*/
+            ) -> Status override
+            {
+                return fail(
+                    AutomationErrorKind::UnsupportedCapability,
+                    "a falsification check measures screens and presses nothing"
+                );
+            }
         };
 
         // The per-cycle text-read budget one check runs under, taken from the
