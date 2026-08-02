@@ -1311,6 +1311,786 @@ namespace uf::task
             CHECK(*verified == doctest::Approx(1.0));
         }
 
+        // THE SHAPE THAT KNOWS WHAT IT LOOKS LIKE AND NOT WHERE IT IS.
+        //
+        // A minimap mark is matched at coordinates the script works out for each
+        // frame, and a confirm button drawn once sits somewhere different on
+        // every screen that shows it. Both carry a template and neither carries a
+        // rectangle -- and until this verb existed the agent channel could not
+        // write one: `author_element` has no spelling for "no rectangle", so such
+        // an element had to be hand-edited into the TOML, and every one that went
+        // through the channel instead came out carrying the rectangle it happened
+        // to be cropped from, which the model then states as a fact and which is
+        // false.
+        //
+        // WHY THE REFUSED PAGE ROW IS IN THE MIDDLE OF THE ROUND TRIP. It is the
+        // only thing that can tell "the element has no rectangle" from "the
+        // element has the one it was cut from": an element carrying that rectangle
+        // takes the row happily, loads, searches and matches, and is wrong only in
+        // what it CLAIMS about the model. So the case asks `Page.new` -- which
+        // refuses a row that neither inherits a rectangle nor states one -- and
+        // only then writes the row that says where.
+        TEST_CASE("An agent authors a shape each row places for itself")
+        {
+            auto const directory  = TemporaryDirectory{"uf-scribe-unplaced"};
+            auto const screenHash = seedScreen(directory.path());
+            seedProject(directory.path(), screenHash);
+
+            auto harness = buildHarness();
+            REQUIRE(harness.session.has_value());
+            TaskContext context{
+                *std::move(harness.session),
+                *harness.recorder,
+                TaskContextConfig{.projectRoot = directory.path()},
+            };
+
+            constexpr std::string_view author = R"lua(
+                local built = project.load_project(ctx)
+
+                local ticket = ctx:cycle_open()
+                local measured = scribe.measure(
+                    ctx,
+                    ticket,
+                    { x = 1, y = 0, width = 1, height = 1 }
+                )
+                ctx:cycle_close(ticket)
+
+                -- The same measurement, the same template asset and the same
+                -- caller-chosen threshold `author_element` would have used. The
+                -- one difference is the one the verb is named for.
+                local shape = scribe.author_unplaced_element(ctx, measured, {
+                    name         = "drifting",
+                    capabilities = { "interact" },
+                    threshold    = 10000,
+                })
+                if shape.rect ~= nil then return 0 end
+                if #shape.appearances ~= 1 then return 0 end
+                if shape.appearances[1].source ~= measured.source then return 0 end
+                if shape.appearances[1].threshold ~= 10000 then return 0 end
+                scribe.add_element(built, shape)
+
+                -- A row that inherits no rectangle and states none has nowhere to
+                -- look, and the sentence is `Page.new`'s. An element that had
+                -- quietly kept the crop's rectangle would sail through here.
+                local ok, err = pcall(function()
+                    scribe.add_page(built, {
+                        name       = "map",
+                        references = {
+                            {
+                                element   = built.element_by_name["anchor"],
+                                holding   = "referenced",
+                                exercised = { "identify" },
+                                identify  = "required",
+                            },
+                            {
+                                element   = shape,
+                                holding   = "owned",
+                                exercised = { "interact" },
+                            },
+                        },
+                    })
+                end)
+                if ok then return 0 end
+                if string.find(tostring(err), "says no rect_override", 1, true) == nil then
+                    return 0
+                end
+                if built.page_by_name["map"] ~= nil then return 0 end
+
+                -- And the same page with the row that does say where.
+                scribe.add_page(built, {
+                    name       = "map",
+                    references = {
+                        {
+                            element   = built.element_by_name["anchor"],
+                            holding   = "referenced",
+                            exercised = { "identify" },
+                            identify  = "required",
+                        },
+                        {
+                            element       = shape,
+                            holding       = "owned",
+                            exercised     = { "interact" },
+                            rect_override = { x = 1, y = 0, width = 1, height = 1 },
+                        },
+                    },
+                })
+
+                -- Two claims about ONE element on ONE screen, which is legal only
+                -- because the rectangle is part of the cell: the falsifiable form
+                -- of "this shape is the one that drifts" is that it matches here
+                -- and stays away from there.
+                scribe.claim(built, "home_screen", shape, "match", nil, {
+                    x = 1, y = 0, width = 1, height = 1,
+                })
+                scribe.claim(built, "home_screen", shape, "absent", nil, {
+                    x = 0, y = 0, width = 1, height = 1,
+                })
+
+                scribe.save(ctx, built)
+                return 1
+            )lua";
+
+            auto const authored = runExploration(context, author);
+            REQUIRE(authored.has_value());
+            CHECK(*authored == doctest::Approx(1.0));
+
+            // The pixels went into the project under their own hash, exactly as
+            // the placed verb stores them: what this element declines to state is
+            // the position, never the crop.
+            auto entries = std::vector<std::filesystem::path>{};
+            for (
+                auto const& entry :
+                std::filesystem::directory_iterator{
+                    directory.path() / "assets" / "templates"
+                }
+            )
+            {
+                entries.emplace_back(entry.path());
+            }
+            CHECK(entries.size() == 2U);
+
+            // A FRESH VM over a FRESH session: everything below comes off disk.
+            auto reloadHarness = buildHarness();
+            REQUIRE(reloadHarness.session.has_value());
+            TaskContext reloaded{
+                *std::move(reloadHarness.session),
+                *reloadHarness.recorder,
+                TaskContextConfig{.projectRoot = directory.path()},
+            };
+
+            constexpr std::string_view verify = R"lua(
+                local built = project.load_project(ctx)
+
+                if project.encode(built) ~= ctx:project_read(project.file_name) then
+                    return 0
+                end
+
+                -- The absence survived the file. A saved rectangle here would be
+                -- the fact nothing can contradict, back again.
+                local shape = built.element_by_name["drifting"]
+                if shape == nil then return 0 end
+                if shape.rect ~= nil then return 0 end
+                if #shape.appearances ~= 1 then return 0 end
+                if shape.appearances[1].threshold ~= 10000 then return 0 end
+
+                local row = model.Page.reference_for(
+                    built.page_by_name["map"],
+                    shape
+                )
+                if row == nil then return 0 end
+                if row.rect_override.x ~= 1 then return 0 end
+                if row.rect_override.width ~= 1 then return 0 end
+
+                local rects =
+                    oracle.Claims.rects_for(built.claims, "home_screen", "drifting")
+                if #rects ~= 2 then return 0 end
+
+                local at = oracle.Claims.state_for
+                if at(built.claims, "home_screen", "drifting", nil,
+                    { x = 1, y = 0, width = 1, height = 1 }) ~= oracle.state_match
+                then
+                    return 0
+                end
+                if at(built.claims, "home_screen", "drifting", nil,
+                    { x = 0, y = 0, width = 1, height = 1 }) ~= oracle.state_absent
+                then
+                    return 0
+                end
+
+                -- And the matrix measured it where each claim said, which is what
+                -- makes the two sentences evidence rather than annotation.
+                local verdict = regress.check(ctx, built)
+                if not verdict.accepted then return 0 end
+                if verdict.elements ~= 2 then return 0 end
+                if verdict.claimed ~= 3 then return 0 end
+                return 1
+            )lua";
+
+            auto const verified = runExploration(reloaded, verify);
+            REQUIRE(verified.has_value());
+            CHECK(*verified == doctest::Approx(1.0));
+        }
+
+        // The two sentences that keep the third verb from being the first one
+        // with a field left out.
+        TEST_CASE("The unplaced verb refuses a rectangle and still demands a threshold")
+        {
+            auto const directory  = TemporaryDirectory{"uf-scribe-unplaced-refusal"};
+            auto const screenHash = seedScreen(directory.path());
+            seedProject(directory.path(), screenHash);
+
+            auto harness = buildHarness();
+            REQUIRE(harness.session.has_value());
+            TaskContext context{
+                *std::move(harness.session),
+                *harness.recorder,
+                TaskContextConfig{.projectRoot = directory.path()},
+            };
+
+            constexpr std::string_view source = R"lua(
+                local built = project.load_project(ctx)
+
+                local ticket = ctx:cycle_open()
+                local measured = scribe.measure(
+                    ctx,
+                    ticket,
+                    { x = 1, y = 0, width = 1, height = 1 }
+                )
+                ctx:cycle_close(ticket)
+
+                -- A caller that names a rectangle wanted the verb that USES one.
+                -- Dropping it would author an element the line does not describe,
+                -- and the line is the only place a reader ever looks.
+                local ok, err = pcall(function()
+                    return scribe.author_unplaced_element(ctx, measured, {
+                        name         = "confused",
+                        capabilities = { "interact" },
+                        threshold    = 10000,
+                        rect         = { x = 1, y = 0, width = 1, height = 1 },
+                    })
+                end)
+                if ok then return 0 end
+                local wrongVerb = "states no rectangle of its own, so its spec carries no rect"
+                if string.find(tostring(err), wrongVerb, 1, true) == nil then
+                    return 0
+                end
+
+                -- The threshold contract is the one this file already had, and
+                -- the sentence names the verb that was actually called.
+                local floorOk, floorErr = pcall(function()
+                    return scribe.author_unplaced_element(ctx, measured, {
+                        name         = "nameless",
+                        capabilities = { "interact" },
+                    })
+                end)
+                if floorOk then return 0 end
+                local noDefault = "scribe.author_unplaced_element needs threshold"
+                if string.find(tostring(floorErr), noDefault, 1, true) == nil then
+                    return 0
+                end
+
+                -- Neither refusal reached the write: both land before the crop is
+                -- stored, so a rejected line leaves the project as it was.
+                if #built.elements ~= 1 then return 0 end
+                return 1
+            )lua";
+
+            auto const refused = runExploration(context, source);
+            REQUIRE(refused.has_value());
+            CHECK(*refused == doctest::Approx(1.0));
+
+            // The anchor's template and nothing else: a refused author writes no
+            // asset, which is what makes the refusal free to retry.
+            auto entries = std::vector<std::filesystem::path>{};
+            for (
+                auto const& entry :
+                std::filesystem::directory_iterator{
+                    directory.path() / "assets" / "templates"
+                }
+            )
+            {
+                entries.emplace_back(entry.path());
+            }
+            CHECK(entries.size() == 1U);
+        }
+
+        // THE SECOND FACE OF ONE ELEMENT, AND THE PAGES THAT HAVE TO FOLLOW IT.
+        //
+        // An element is frozen and a page's reference row holds the element
+        // ITSELF, so adding an appearance cannot be an append: the element is
+        // rebuilt and every page that named it has to be re-pointed at the
+        // replacement. Skipping that half is invisible in the file -- a row names
+        // its element by NAME, so the project saves and loads correctly either
+        // way -- and shows up only as a page that goes on searching yesterday's
+        // appearance list.
+        //
+        // WHICH IS WHY THE ELEMENT IS BUILT SO THAT ITS FIRST APPEARANCE CANNOT
+        // MATCH. The badge is searched at the action-grey pixel and its first
+        // template was cut from the black one, so a page still holding the old
+        // element finds NOTHING, and a page holding the new one finds the grey
+        // face by name. `#appearances == 2` would pass with every page stranded;
+        // this cannot.
+        TEST_CASE("A second appearance reaches every page that referenced the element")
+        {
+            auto const directory  = TemporaryDirectory{"uf-scribe-appearance"};
+            auto const screenHash = seedScreen(directory.path());
+            seedGraphProject(directory.path(), screenHash);
+
+            auto harness = buildHarness();
+            REQUIRE(harness.session.has_value());
+            TaskContext context{
+                *std::move(harness.session),
+                *harness.recorder,
+                TaskContextConfig{.projectRoot = directory.path()},
+            };
+
+            constexpr std::string_view author = R"lua(
+                local built = project.load_project(ctx)
+
+                -- Cut from the black pixel, searched at the grey one.
+                local dark = ctx:cycle_open()
+                local unseen = scribe.measure(
+                    ctx,
+                    dark,
+                    { x = 2, y = 0, width = 1, height = 1 }
+                )
+                ctx:cycle_close(dark)
+
+                local badge = scribe.author_element(ctx, unseen, {
+                    name         = "badge",
+                    capabilities = { "identify", "interact" },
+                    rect         = { x = 1, y = 0, width = 1, height = 1 },
+                    appearance   = "dark",
+                    threshold    = 10000,
+                })
+                scribe.add_element(built, badge)
+                scribe.add_reference(built, "home", badge, {
+                    holding   = "owned",
+                    exercised = { "interact" },
+                })
+                scribe.add_edge(built, {
+                    from        = "home",
+                    to          = { "detail" },
+                    via         = "click",
+                    via_element = "badge",
+                    kind        = "navigate",
+                })
+
+                -- Nothing this element declares is where it is searched.
+                local first = ctx:cycle_open()
+                local before = observe.find(
+                    ctx,
+                    first,
+                    built.page_by_name["home"],
+                    built.element_by_name["badge"]
+                )
+                ctx:cycle_close(first)
+                if before ~= nil then return 0 end
+
+                local second = ctx:cycle_open()
+                local seen = scribe.measure(
+                    ctx,
+                    second,
+                    { x = 1, y = 0, width = 1, height = 1 }
+                )
+                ctx:cycle_close(second)
+
+                local stale   = built.element_by_name["badge"]
+                local rebuilt = scribe.add_appearance(ctx, built, "badge", seen, {
+                    name      = "grey",
+                    threshold = 10000,
+                })
+
+                -- The element that came back is the one the model now holds, and
+                -- it is not the one the caller was holding a line ago.
+                if rebuilt == stale then return 0 end
+                if built.element_by_name["badge"] ~= rebuilt then return 0 end
+                if #rebuilt.appearances ~= 2 then return 0 end
+                if #stale.appearances ~= 1 then return 0 end
+                if rebuilt.appearances[2].name ~= "grey" then return 0 end
+                for _, element in built.elements do
+                    if element.name == "badge" and element ~= rebuilt then
+                        return 0
+                    end
+                end
+
+                -- THE POINT. The page's own row holds the replacement, so the
+                -- search the page authorises is over the appearance list the
+                -- model now carries.
+                local home = built.page_by_name["home"]
+                local row  = model.Page.reference_for(home, rebuilt)
+                if row == nil or row.element ~= rebuilt then return 0 end
+
+                local third = ctx:cycle_open()
+                local hit = observe.find(ctx, third, home, rebuilt)
+                ctx:cycle_close(third)
+                if hit == nil then return 0 end
+                if hit.appearance ~= "grey" then return 0 end
+
+                -- Every edge names the pages and the element this model holds
+                -- NOW, and a click edge's row belongs to the page that holds it.
+                for _, edge in built.graph.edges do
+                    if edge.from ~= built.graph.page_by_name[edge.from.name] then
+                        return 0
+                    end
+                    for _, target in edge.to or {} do
+                        if target ~= built.graph.page_by_name[target.name] then
+                            return 0
+                        end
+                    end
+                    if edge.via_element ~= nil then
+                        local named = built.element_by_name[edge.via_element.name]
+                        if edge.via_element ~= named then return 0 end
+                        local holder = built.graph.page_by_name[edge.from.name]
+                        local held   = false
+                        for _, held_row in holder.references do
+                            if held_row == edge.via_reference then held = true end
+                        end
+                        if not held then return 0 end
+                    end
+                end
+
+                -- The rebuild ran every row of the page through Page.new again,
+                -- so this is where the page's own unknown line and its project
+                -- field would have been lost.
+                if home.extra.owner ~= "kaoru" then return 0 end
+                if #home.residual ~= 1 then return 0 end
+                if home.residual[1] ~= 'mood = "cheerful"' then return 0 end
+                local anchored = model.Page.reference_for(
+                    home,
+                    built.element_by_name["anchor"]
+                )
+                if anchored == nil then return 0 end
+                if anchored.extra.lane ~= 3 then return 0 end
+                if anchored.residual[1] ~= 'note = "the top-left corner"' then
+                    return 0
+                end
+
+                -- A claim about the face just added. Expectation.new resolves the
+                -- appearance against the element it is handed, so this is a
+                -- second reading on whether the caller holds the current one.
+                scribe.claim(built, "home_screen", rebuilt, "match", "grey")
+                scribe.save(ctx, built)
+                return 1
+            )lua";
+
+            auto const authored = runExploration(context, author);
+            REQUIRE(authored.has_value());
+            CHECK(*authored == doctest::Approx(1.0));
+
+            // A FRESH VM over a FRESH session: everything below comes off disk.
+            auto reloadHarness = buildHarness();
+            REQUIRE(reloadHarness.session.has_value());
+            TaskContext reloaded{
+                *std::move(reloadHarness.session),
+                *reloadHarness.recorder,
+                TaskContextConfig{.projectRoot = directory.path()},
+            };
+
+            constexpr std::string_view verify = R"lua(
+                local built = project.load_project(ctx)
+
+                -- Byte-stable: what this build wrote is what it writes again
+                -- from what it read back.
+                if project.encode(built) ~= ctx:project_read(project.file_name) then
+                    return 0
+                end
+
+                local badge = built.element_by_name["badge"]
+                if badge == nil then return 0 end
+                if #badge.appearances ~= 2 then return 0 end
+                if badge.appearances[1].name ~= "dark" then return 0 end
+                if badge.appearances[2].name ~= "grey" then return 0 end
+                if badge.appearances[2].threshold ~= 10000 then return 0 end
+                if badge.rect.x ~= 1 then return 0 end
+
+                local home = built.page_by_name["home"]
+                local row  = model.Page.reference_for(home, badge)
+                if row == nil or row.element ~= badge then return 0 end
+
+                -- The claim naming this element still lines up with it, on the
+                -- appearance that was added after the claim's own element was
+                -- first written.
+                local state = oracle.Claims.state_for(
+                    built.claims,
+                    "home_screen",
+                    "badge",
+                    "grey"
+                )
+                if state ~= oracle.state_match then return 0 end
+
+                -- Reloaded from the file, the page still finds the second face.
+                local ticket = ctx:cycle_open()
+                local hit = observe.find(ctx, ticket, home, badge)
+                ctx:cycle_close(ticket)
+                if hit == nil then return 0 end
+                if hit.appearance ~= "grey" then return 0 end
+
+                local verdict = regress.check(ctx, built)
+                if not verdict.accepted then return 0 end
+                return 1
+            )lua";
+
+            auto const verified = runExploration(reloaded, verify);
+            REQUIRE(verified.has_value());
+            CHECK(*verified == doctest::Approx(1.0));
+        }
+
+        // WHAT A REBUILT ELEMENT WOULD LOSE SILENTLY.
+        //
+        // Adding an appearance hands the element's own fields back to
+        // `Element.new`, so the rebuild is exactly where a project's `extra`, an
+        // element's unknown line and an appearance's unknown line would fall
+        // out -- and the file would still parse, still load, and still match.
+        // That is the silent deletion the format exists to prevent, happening in
+        // memory rather than on disk, so the seed here is written to carry one of
+        // each. Everything is already in the writer's canonical order, so the
+        // file is its own round-trip baseline.
+        TEST_CASE("A rebuilt element keeps the lines nobody was looking at")
+        {
+            auto const directory  = TemporaryDirectory{"uf-scribe-appearance-carry"};
+            auto const screenHash = seedScreen(directory.path());
+
+            auto const action = encodedTemplate(k_targetActionGray);
+            writeFile(
+                directory.path() / "assets" / "templates"
+                    / (action.hash.hex() + ".png"),
+                std::span<std::byte const>{action.pngBytes}
+            );
+
+            auto const seeded = std::string{}
+                + "schema = \"umbraflow-project/l2-v1\"\n"
+                + "\n"
+                + "[[element]]\n"
+                + "name = \"crest\"\n"
+                + "capabilities = [\"identify\"]\n"
+                + "rect = [1, 0, 1, 1]\n"
+                + "hue = \"grey\"\n"
+                + "\n"
+                + "[element.extra]\n"
+                + "lane = 3\n"
+                + "\n"
+                + "[[appearance]]\n"
+                + "element = \"crest\"\n"
+                + "name = \"first\"\n"
+                + "source = \"assets/templates/" + action.hash.hex() + ".png\"\n"
+                + "threshold = 10000\n"
+                + "edge = \"soft\"\n"
+                + "\n"
+                + "[[page]]\n"
+                + "name = \"home\"\n"
+                + "\n"
+                + "[[reference]]\n"
+                + "page = \"home\"\n"
+                + "element = \"crest\"\n"
+                + "holding = \"owned\"\n"
+                + "exercised = [\"identify\"]\n"
+                + "identify = \"required\"\n"
+                + "\n"
+                + "[[screen]]\n"
+                + "name = \"home_screen\"\n"
+                + "hash = \"" + screenHash + "\"\n";
+
+            writeFile(
+                directory.path() / "page-model.toml",
+                std::as_bytes(std::span{std::string_view{seeded}})
+            );
+
+            auto harness = buildHarness();
+            REQUIRE(harness.session.has_value());
+            TaskContext context{
+                *std::move(harness.session),
+                *harness.recorder,
+                TaskContextConfig{.projectRoot = directory.path()},
+            };
+
+            constexpr std::string_view author = R"lua(
+                local built = project.load_project(ctx)
+
+                local ticket = ctx:cycle_open()
+                local measured = scribe.measure(
+                    ctx,
+                    ticket,
+                    { x = 2, y = 0, width = 1, height = 1 }
+                )
+                ctx:cycle_close(ticket)
+
+                local rebuilt = scribe.add_appearance(ctx, built, "crest", measured, {
+                    name      = "second",
+                    threshold = 9000,
+                })
+                if #rebuilt.appearances ~= 2 then return 0 end
+
+                -- The element's own project field and unknown line, and the
+                -- unknown line on the appearance that was already there.
+                if rebuilt.extra.lane ~= 3 then return 0 end
+                if #rebuilt.residual ~= 1 then return 0 end
+                if rebuilt.residual[1] ~= 'hue = "grey"' then return 0 end
+                if #rebuilt.appearances[1].residual ~= 1 then return 0 end
+                if rebuilt.appearances[1].residual[1] ~= 'edge = "soft"' then
+                    return 0
+                end
+                -- And what the element already said about itself.
+                if rebuilt.rect.x ~= 1 then return 0 end
+                if not rebuilt.capabilities.identify then return 0 end
+
+                scribe.save(ctx, built)
+                return 1
+            )lua";
+
+            auto const authored = runExploration(context, author);
+            REQUIRE(authored.has_value());
+            CHECK(*authored == doctest::Approx(1.0));
+
+            auto reloadHarness = buildHarness();
+            REQUIRE(reloadHarness.session.has_value());
+            TaskContext reloaded{
+                *std::move(reloadHarness.session),
+                *reloadHarness.recorder,
+                TaskContextConfig{.projectRoot = directory.path()},
+            };
+
+            constexpr std::string_view verify = R"lua(
+                local built = project.load_project(ctx)
+                if project.encode(built) ~= ctx:project_read(project.file_name) then
+                    return 0
+                end
+
+                local crest = built.element_by_name["crest"]
+                if #crest.appearances ~= 2 then return 0 end
+                if crest.appearances[2].threshold ~= 9000 then return 0 end
+                if crest.extra.lane ~= 3 then return 0 end
+                if crest.residual[1] ~= 'hue = "grey"' then return 0 end
+                if crest.appearances[1].residual[1] ~= 'edge = "soft"' then
+                    return 0
+                end
+                return 1
+            )lua";
+
+            auto const verified = runExploration(reloaded, verify);
+            REQUIRE(verified.has_value());
+            CHECK(*verified == doctest::Approx(1.0));
+        }
+
+        // Every way of adding an appearance nothing could address afterwards.
+        //
+        // ONE CHUNK RETURNING A BITMASK, one bit per refusal, because a chunk
+        // that returned 0 for the first failure would say a refusal is missing
+        // without saying which. The expected value below is every bit set; a
+        // failure prints the actual number and the missing bit names the rule.
+        //
+        //   1  an element name the project does not declare
+        //   2  an appearance name the element already has
+        //   4  no threshold, which this module never defaults
+        //   8  no name, on the second face of an element
+        //   16 a spec naming what the measurement settles
+        //   32 an element with no appearances at all
+        //   64 a superseded element handed back to add_reference
+        //
+        // The last one is the other half of the re-pointing: `add_appearance` is
+        // what makes an element stale, so a row written from one an agent was
+        // still holding is a page searching an appearance list the file no longer
+        // carries -- and it saves and loads correctly, so only identity sees it.
+        TEST_CASE("Adding an appearance refuses what nothing could address")
+        {
+            auto const directory  = TemporaryDirectory{"uf-scribe-appearance-refusal"};
+            auto const screenHash = seedScreen(directory.path());
+            seedGraphProject(directory.path(), screenHash);
+
+            auto harness = buildHarness();
+            REQUIRE(harness.session.has_value());
+            TaskContext context{
+                *std::move(harness.session),
+                *harness.recorder,
+                TaskContextConfig{.projectRoot = directory.path()},
+            };
+
+            constexpr std::string_view source = R"lua(
+                local built = project.load_project(ctx)
+
+                local ticket = ctx:cycle_open()
+                local measured = scribe.measure(
+                    ctx,
+                    ticket,
+                    { x = 1, y = 0, width = 1, height = 1 }
+                )
+                ctx:cycle_close(ticket)
+
+                -- A refusal only counts when it is the refusal that was meant,
+                -- so each one is matched against a phrase only it says.
+                local function refuses(bit, needle, body)
+                    local ok, err = pcall(body)
+                    if ok then return 0 end
+                    if string.find(tostring(err), needle, 1, true) == nil then
+                        return 0
+                    end
+                    return bit
+                end
+
+                local score = 0
+
+                score += refuses(1, "declares no element named", function()
+                    scribe.add_appearance(ctx, built, "nobody", measured, {
+                        name      = "second",
+                        threshold = 10000,
+                    })
+                end)
+
+                score += refuses(2, "already has an appearance named", function()
+                    scribe.add_appearance(ctx, built, "anchor", measured, {
+                        name      = "plain",
+                        threshold = 10000,
+                    })
+                    scribe.add_appearance(ctx, built, "anchor", measured, {
+                        name      = "plain",
+                        threshold = 10000,
+                    })
+                end)
+
+                score += refuses(4, "it has no default", function()
+                    scribe.add_appearance(ctx, built, "anchor", measured, {
+                        name = "thresholdless",
+                    })
+                end)
+
+                score += refuses(8, "unaddressable", function()
+                    scribe.add_appearance(ctx, built, "anchor", measured, {
+                        threshold = 10000,
+                    })
+                end)
+
+                score += refuses(16, "someone else's picture", function()
+                    scribe.add_appearance(ctx, built, "anchor", measured, {
+                        name      = "captioned",
+                        threshold = 10000,
+                        source    = "assets/templates/elsewhere.png",
+                    })
+                end)
+
+                -- An element positioned BY its page, which pixels would silently
+                -- reposition everywhere it is used.
+                local titled = scribe.author_text_element({
+                    name          = "title",
+                    capabilities  = { "read" },
+                    expected_text = "Home",
+                })
+                scribe.add_element(built, titled)
+                score += refuses(32, "declares no appearances", function()
+                    scribe.add_appearance(ctx, built, "title", measured, {
+                        name      = "printed",
+                        threshold = 10000,
+                    })
+                end)
+
+                -- The stale-element half: an element authored, filed, and then
+                -- superseded by a successful add_appearance, still held in the
+                -- variable the agent authored it into.
+                local superseded = scribe.author_element(ctx, measured, {
+                    name         = "mark",
+                    capabilities = { "identify", "interact" },
+                    appearance   = "first",
+                    threshold    = 10000,
+                })
+                scribe.add_element(built, superseded)
+                scribe.add_appearance(ctx, built, "mark", measured, {
+                    name      = "second",
+                    threshold = 10000,
+                })
+                score += refuses(64, "is not the one this project holds", function()
+                    scribe.add_reference(built, "home", superseded, {
+                        holding   = "referenced",
+                        exercised = { "interact" },
+                    })
+                end)
+
+                return score
+            )lua";
+
+            auto const refused = runExploration(context, source);
+            REQUIRE(refused.has_value());
+            CHECK(*refused == doctest::Approx(127.0));
+        }
+
         TEST_CASE("A page row is refused before the project is touched")
         {
             auto const directory  = TemporaryDirectory{"uf-scribe-row-refusal"};

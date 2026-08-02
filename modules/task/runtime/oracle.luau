@@ -75,6 +75,7 @@ local k_screenKeys: { [string]: boolean } = {
 local k_expectationKeys: { [string]: boolean } = {
     screen     = true,
     element    = true,
+    rect       = true,
     appearance = true,
     text       = true,
     state      = true,
@@ -123,7 +124,36 @@ export type Screen = {
     residual: { string },
 }
 
+-- A rectangle in target pixels: the same four numbers `model.Rect` is. It is
+-- restated rather than named because a chunk loaded under the framework
+-- environment cannot name another chunk's exported types -- there is no module
+-- resolver in this VM, only a global binding. What is NOT restated is the check:
+-- `model.check_rect` is what every rectangle in the project passes through, so
+-- the two files cannot come to disagree about what a rectangle is.
+export type Rect = {
+    x: number,
+    y: number,
+    width: number,
+    height: number,
+}
+
 -- What the model states about one cell of the matrix.
+--
+-- `rect` IS WHERE THE CELL WAS MEASURED, and it exists for the element that
+-- draws no rectangle of its own. A minimap cell is searched at a rectangle the
+-- script works out for each frame, because the map pans and a cell's position is
+-- a fact about the FRAME rather than about the model -- so the only place that
+-- position can be written down and falsified is a claim about ONE stored screen:
+-- "on these pixels, this shape matches at these coordinates". An element that
+-- draws its own rectangle states none here, because then the element already
+-- said it and two answers would be one too many.
+--
+-- IT IS ALSO WHAT MAKES A SECOND CLAIM ABOUT ONE ELEMENT ON ONE SCREEN LEGAL,
+-- and that is the point rather than a side effect: the shape a minimap tells
+-- apart is the same shape everywhere, so the measurement worth taking is "it
+-- matches HERE and stays away from THERE" -- two claims, one element, one
+-- screen, two rectangles. The cell a claim occupies is therefore keyed by its
+-- rectangle as well as by its appearance.
 --
 -- `appearance` and `text` name the two VERIFICATION SOURCES, and a cell is about
 -- exactly one of them, so at most one of the pair is ever set:
@@ -145,6 +175,7 @@ export type Screen = {
 export type Expectation = {
     screen: string,
     element: string,
+    rect: Rect?,
     appearance: string?,
     text: string?,
     state: string,
@@ -159,12 +190,20 @@ export type Expectation = {
 -- cell: every claim has a state, and only a claim about what a region reads has
 -- a text. Keying both the same way is what lets a walk ask for the text of the
 -- cell it is standing on without first finding the expectation.
+--
+-- `rects_by_subject` is the third, and it is keyed by screen and element ALONE
+-- because it answers a question the other two cannot be asked: "which rectangles
+-- does this file want this element measured at on this screen". A walk cannot
+-- reach a cell without first knowing the rectangle the cell is filed under, so
+-- something has to hand it the list, and the list is a property of the pairing
+-- rather than of any one cell.
 export type Claims = {
     screens: { Screen },
     screen_by_name: { [string]: Screen },
     expectations: { Expectation },
     state_by_cell: { [string]: string },
     text_by_cell: { [string]: string },
+    rects_by_subject: { [string]: { Rect } },
 }
 
 local mintedScreens: { [any]: boolean } = {}
@@ -198,14 +237,50 @@ function oracle.screen_path(hash: string): string
     return k_screenDirectory .. hash .. k_screenSuffix
 end
 
+-- One rectangle as the text a key is built from, and the empty string when there
+-- is none. Published because two other modules file things by the same rectangle
+-- -- `reading` tells one region's claims apart from another's, and `regress`
+-- looks a cell up by the rectangle it just measured at -- and three spellings of
+-- "which rectangle" is three ways for a lookup to miss the row it wanted, which
+-- reads as a cell nobody claimed rather than as a defect.
+function oracle.rect_key(rect: any): string
+    if rect == nil then
+        return ""
+    end
+    return tostring(rect.x)
+        .. ","
+        .. tostring(rect.y)
+        .. ","
+        .. tostring(rect.width)
+        .. ","
+        .. tostring(rect.height)
+end
+
 -- The key one cell is filed under. NUL separates the parts because none of the
--- three can contain it, so two different cells cannot collide by concatenation.
+-- four can contain it, so two different cells cannot collide by concatenation.
+--
+-- THE RECTANGLE IS PART OF THE KEY, which is what lets one element be claimed
+-- twice on one screen. Two claims about one shape at two coordinates are two
+-- measurements and not a contradiction; two claims at ONE rectangle still are,
+-- and `Claims.new` still refuses them.
 local function cellKey(
     screen: string,
     element: string,
-    appearance: string?
+    appearance: string?,
+    rect: any
 ): string
-    return screen .. "\0" .. element .. "\0" .. (appearance or "")
+    return screen
+        .. "\0"
+        .. element
+        .. "\0"
+        .. (appearance or "")
+        .. "\0"
+        .. oracle.rect_key(rect)
+end
+
+-- The key the rectangles of one (screen, element) pairing are collected under.
+local function subjectKey(screen: string, element: string): string
+    return screen .. "\0" .. element
 end
 
 local Screen = {}
@@ -332,6 +407,12 @@ oracle.Expectation = Expectation
 --   * A NAMED APPEARANCE MUST BE ONE THE ELEMENT HAS. A misspelled appearance
 --     would otherwise file its claim under a cell the walk never visits, which
 --     is the same silence as having written nothing.
+--   * EXACTLY ONE THING SAYS WHERE THE CELL WAS MEASURED. An element that draws
+--     its own rectangle is measured there and may not be given a second answer
+--     here; an element that draws none has nowhere to be searched until this
+--     claim says so, and a claim that does not is a row the matrix can only
+--     report as unmeasurable -- which is the permanently green cell this
+--     constructor has refused since it existed, arriving through a new door.
 function Expectation.new(spec: { [string]: any }): Expectation
     if type(spec) ~= "table" then
         error("Expectation.new needs a table of fields", 2)
@@ -455,6 +536,40 @@ function Expectation.new(spec: { [string]: any }): Expectation
         end
     end
 
+    -- Where this cell is measured, asked after the verification source because
+    -- the two are independent: a shape with no rectangle of its own may be
+    -- claimed by a template or by a reading, and the answer to "where" is the
+    -- same question either way.
+    if spec.rect ~= nil then
+        if element.rect ~= nil then
+            error(
+                what
+                    .. " states a rectangle for element '"
+                    .. element.name
+                    .. "', which draws its own; a cell is measured at ONE region "
+                    .. "and the element already said which, so a second answer "
+                    .. "here would let a claim quietly move the measurement it is "
+                    .. "judged by",
+                2
+            )
+        end
+        local rectProblem = model.check_rect(what .. " rect", spec.rect)
+        if rectProblem ~= nil then
+            error(rectProblem, 2)
+        end
+    elseif element.rect == nil then
+        error(
+            what
+                .. " claims an outcome for element '"
+                .. element.name
+                .. "', which draws no rectangle of its own and is given none "
+                .. "here; there is nowhere to look, so nothing could ever "
+                .. "contradict this claim -- say where the shape is on this "
+                .. "screen with rect = { x = , y = , width = , height = }",
+            2
+        )
+    end
+
     local extraProblem = mint.check_extra(what, spec.extra)
     if extraProblem ~= nil then
         error(extraProblem, 2)
@@ -467,6 +582,9 @@ function Expectation.new(spec: { [string]: any }): Expectation
     local expectation = table.freeze({
         screen     = screen.name,
         element    = element.name,
+        rect       = if spec.rect ~= nil
+            then model.frozen_rect(spec.rect)
+            else nil,
         appearance = spec.appearance,
         text       = spec.text,
         state      = spec.state,
@@ -551,6 +669,12 @@ function Claims.new(spec: { [string]: any }): Claims
     local expectations: { Expectation }     = {}
     local stateByCell: { [string]: string } = {}
     local textByCell: { [string]: string }  = {}
+
+    -- The rectangles this file wants each (screen, element) pairing measured at,
+    -- and the set that keeps one rectangle out of that list twice.
+    local rectsBySubject: { [string]: { Rect } } = {}
+    local rectSeen: { [string]: boolean }        = {}
+
     local claimed = spec.expectations :: { any }
     for index = 1, #claimed do
         local expectation = claimed[index]
@@ -575,7 +699,8 @@ function Claims.new(spec: { [string]: any }): Claims
         local key = cellKey(
             expectation.screen,
             expectation.element,
-            expectation.appearance
+            expectation.appearance,
+            expectation.rect
         )
         if stateByCell[key] ~= nil then
             error(
@@ -583,9 +708,16 @@ function Claims.new(spec: { [string]: any }): Claims
                     .. expectation.element
                     .. "' on screen '"
                     .. expectation.screen
-                    .. "' is claimed twice; one cell has one expectation, and "
-                    .. "two of them means the model is whichever line was read "
-                    .. "last",
+                    .. "' is claimed twice"
+                    .. (
+                        if expectation.rect ~= nil
+                            then " at ["
+                                .. oracle.rect_key(expectation.rect)
+                                .. "]"
+                            else ""
+                    )
+                    .. "; one cell has one expectation, and two of them means the "
+                    .. "model is whichever line was read last",
                 2
             )
         end
@@ -593,28 +725,61 @@ function Claims.new(spec: { [string]: any }): Claims
         if expectation.text ~= nil then
             textByCell[key] = expectation.text
         end
+        -- Collected in the order the file names them, each one once. The order
+        -- is the file's rather than sorted, because a verdict is read beside the
+        -- file that produced it and a reader following one element down the
+        -- report should meet its cells in the order they were written.
+        if expectation.rect ~= nil then
+            local subject = subjectKey(
+                expectation.screen,
+                expectation.element
+            )
+            local rects = rectsBySubject[subject]
+            if rects == nil then
+                rects                   = {}
+                rectsBySubject[subject] = rects
+            end
+            local seen = subject .. "\0" .. oracle.rect_key(expectation.rect)
+            if not rectSeen[seen] then
+                rectSeen[seen] = true
+                table.insert(rects, expectation.rect)
+            end
+        end
         expectations[index] = expectation
     end
 
+    -- Frozen in place rather than replaced, because a walk holds the list this
+    -- returns and nothing outside may grow it afterwards.
+    for _, rects in rectsBySubject do
+        table.freeze(rects)
+    end
+
     local claims = table.freeze({
-        screens        = table.freeze(screens),
-        screen_by_name = table.freeze(screenByName),
-        expectations   = table.freeze(expectations),
-        state_by_cell  = table.freeze(stateByCell),
-        text_by_cell   = table.freeze(textByCell),
+        screens          = table.freeze(screens),
+        screen_by_name   = table.freeze(screenByName),
+        expectations     = table.freeze(expectations),
+        state_by_cell    = table.freeze(stateByCell),
+        text_by_cell     = table.freeze(textByCell),
+        rects_by_subject = table.freeze(rectsBySubject),
     })
     mintedClaims[claims] = true
     return claims
 end
 
 -- What the model states about one cell, or "unclaimed" when it states nothing.
+--
+-- `rect` is the rectangle the cell was measured at, and it is nil for every
+-- element that draws its own -- which is every element a project had before a
+-- rectangle could be absent, so a caller with no rectangle in hand asks exactly
+-- the question it always did.
 function Claims.state_for(
     claims: Claims,
     screen: string,
     element: string,
-    appearance: string?
+    appearance: string?,
+    rect: any
 ): string
-    local state = claims.state_by_cell[cellKey(screen, element, appearance)]
+    local state = claims.state_by_cell[cellKey(screen, element, appearance, rect)]
     if state == nil then
         return oracle.state_unclaimed
     end
@@ -627,13 +792,41 @@ end
 -- It takes no appearance, and that is the ruling rather than a convenience: a
 -- cell is measured by ONE verification source, so the cell a text belongs to is
 -- always the folded one. Asking for the text of an appearance cell would be
--- asking a question `Expectation.new` refuses to let anyone answer.
+-- asking a question `Expectation.new` refuses to let anyone answer. It does take
+-- the rectangle, because one region drawn once and placed nine times reads nine
+-- different things and the rectangle is what tells those nine claims apart.
 function Claims.text_for(
     claims: Claims,
     screen: string,
-    element: string
+    element: string,
+    rect: any
 ): string?
-    return claims.text_by_cell[cellKey(screen, element, nil)]
+    return claims.text_by_cell[cellKey(screen, element, nil, rect)]
+end
+
+-- Every rectangle this file wants `element` measured at on `screen`, in the
+-- order the file names them, and an empty list when it names none.
+--
+-- IT IS THE WALK'S ONLY ENTRY INTO A SHAPE WITH NO RECTANGLE OF ITS OWN. An
+-- element that draws one is measured there on every screen, claimed or not,
+-- which is where the matrix catches a mark answering somewhere nobody thought to
+-- look. An element that draws none cannot be measured anywhere until something
+-- says where -- there is no such thing as searching "in general" -- so its cells
+-- exist exactly where its claims put them, and its falsification pressure comes
+-- from the author writing both the rectangle it must match and the ones it must
+-- not.
+--
+-- A fresh list each call, so nothing outside can reorder what a walk reads.
+function Claims.rects_for(
+    claims: Claims,
+    screen: string,
+    element: string
+): { Rect }
+    local rects = claims.rects_by_subject[subjectKey(screen, element)]
+    if rects == nil then
+        return {}
+    end
+    return table.clone(rects)
 end
 
 -- Whether anything this project claims can only be measured by reading a region.

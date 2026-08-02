@@ -199,15 +199,35 @@ keeps pixels, tickets and guarantees, and the `annotation::` spellings that
 appear below are history, not alternatives.
 
 **Element (`model.Element`)**:
-What an author draws: one rectangle of the target's screen, the set of uses it
-may be put to, and the appearances it can take. It is project-level — nothing on
-it says which page it belongs to. This is the noun the authoring CLI, the
-authoring document, the editing layer, the script surface (`uf.elements`), and
-the trace (`elementId`) all speak in.
+What an author draws: the set of uses one patch of the target's screen may be
+put to, the appearances it can take, and — where the element has one — the
+rectangle to look in. It is project-level — nothing on it says which page it
+belongs to. This is the noun the authoring CLI, the authoring document, the
+editing layer, the script surface (`uf.elements`), and the trace (`elementId`)
+all speak in.
 _Avoid_: recognizer (the pre-2026-07-31 spelling; an element that only reads
 text or only receives a click recognizes nothing, and is located by the page it
 sits on), region, annotation (the old three-way kind), `RecognizerId` (renamed
 to `ElementId`)
+
+> Corrected 2026-08-02: `rect` used to be required, and this entry used to open
+> with "one rectangle of the target's screen". It has only ever meant WHERE TO
+> LOOK — `observe.find` searches it and reports the hit's own position — so some
+> elements have no answer of their own: a minimap cell is matched at coordinates
+> the script works out per frame because the map pans, and one confirm button
+> drawn once sits somewhere different on every screen that shows it. Both used to
+> carry the rectangle they were cut from, which the model then stated as a fact
+> nothing could contradict.
+>
+> **A rectangle is supplied by the element, by the page reference
+> (`rect_override`), or by the falsification claim (`oracle.Expectation.rect`),
+> and for any one use exactly one of the three supplies it.** Absent on the
+> element therefore means "the caller says where", never "nobody said": `Page.new`
+> refuses a row that neither inherits one nor states one, `Expectation.new`
+> refuses a cell that does the same, and an element with no rectangle can never be
+> part of a page signature, because the identify sweep runs before the page is
+> known and so has only the element's own to search. In code:
+> `modules/task/runtime/{model,oracle,observe,project,regress}.luau`.
 
 **Compiled element (retired 2026-08-01)**:
 The compiler that emitted one runtime artifact per element is gone with the v4
@@ -286,6 +306,14 @@ and a screen that says which PAGE it is of must have that page resolve on it.
 A screen's `page` is optional (a capture of a page nobody has annotated yet is
 still measurable) and is what separates two views of one page — a scrolling grid
 photographed twice — from two pages resting on one word.
+A cell is `(screen, element, appearance?, rect?)`, and the rectangle is in it
+because an element that draws none of its own is measured wherever its claims
+place it: one screen can hold several rows naming one element, which is how "this
+shape matches HERE and stays away from THERE" becomes two measurements instead of
+an argument. "One region reads one text on two screens" is therefore keyed by the
+region — nine confirm buttons are one element and nine rectangles, and reporting
+those as nine models that cannot tell nine screens apart is a rule an author
+switches off.
 _Avoid_: recording measurements back into the file as expectations (a run that
 writes down what it measured agrees with itself by construction), reading an
 undeclared `page` as "same page as the other one" (silence is not a fact),

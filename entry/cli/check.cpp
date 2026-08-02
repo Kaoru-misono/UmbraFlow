@@ -218,11 +218,19 @@ return #verdict.findings
         // where a claim asked. Once more for the page a screen declares itself to
         // be, whose identify rows are elements of this same file and can be no
         // more numerous, and which is resolved on the screen's own observation
-        // because that is the frame the claim is about. Anything above the sum is
-        // a matrix reading one region a third time in one cycle, which is a
-        // framework bug and is precisely what a budget is for -- so exhaustion
-        // stays the loud RecognitionIncomplete refusal it already was, and never
-        // becomes a cell quietly reported as a miss.
+        // because that is the frame the claim is about.
+        //
+        // THE FIRST FACTOR IS A HEURISTIC AND NO LONGER A BOUND, since an element
+        // may draw no rectangle of its own and then be claimed several times on
+        // one screen, each claim naming its own region -- a confirm button drawn
+        // once and read on nine of them. The exact count is a fact about the file
+        // rather than about the element list, so the routine below asks the model
+        // for it (`oracle.Claims.most_reads_on_one_screen`) and refuses in its own
+        // words when this number is short of it. What is left uncovered is a
+        // screen whose cell reads FIT while its cell reads plus its declared
+        // page's reads do not; that runs out mid-walk, which is the loud
+        // RecognitionIncomplete refusal it has always been rather than a cell
+        // quietly reported as a miss.
         //
         // A project declaring no elements gets a budget of zero, which is the
         // honest answer: there is no element for a claim to be about, so there is

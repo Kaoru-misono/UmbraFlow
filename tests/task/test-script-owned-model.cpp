@@ -630,6 +630,29 @@ namespace uf::task
                 capabilities = { "identify", "read" },
                 rect = { x = 0, y = 0, width = 3, height = 1 },
             }
+            -- One confirm button drawn once and placed by whoever uses it: no
+            -- rectangle of its own, so a row that references it has to say where
+            -- it sits on that page.
+            local confirm = model.Element.new{
+                name = "confirm",
+                capabilities = { "interact" },
+                appearances = {
+                    {
+                        name = "only",
+                        source = "gray5.png",
+                        template = template("gray5.png"),
+                        threshold = 10000,
+                    },
+                },
+            }
+            -- The same, verified by text rather than by pixels, so a refusal
+            -- about identifying with it fails on the rectangle rather than on
+            -- having nothing to read.
+            local floating = model.Element.new{
+                name = "floating",
+                capabilities = { "identify", "read" },
+                expected_text = "confirm",
+            }
             local function anchorRow(overrides)
                 local row = {
                     element = anchor,
@@ -816,6 +839,40 @@ namespace uf::task
                     .fragment = "no appearances and no expected text here",
                 },
                 Refusal{
+                    .label = "a row placing an element that draws no rectangle nowhere",
+                    .body  = R"lua(
+                        return model.Page.new{
+                            name = "battle",
+                            references = {
+                                anchorRow({}),
+                                {
+                                    element = confirm,
+                                    holding = "owned",
+                                    exercised = { "interact" },
+                                },
+                            },
+                        }
+                    )lua",
+                    .fragment = "and says no rect_override",
+                },
+                Refusal{
+                    .label = "identifying by an element that draws no rectangle",
+                    .body  = R"lua(
+                        return model.Page.new{
+                            name = "battle",
+                            references = {
+                                {
+                                    element = floating,
+                                    holding = "owned",
+                                    exercised = { "identify" },
+                                    identify = "required",
+                                },
+                            },
+                        }
+                    )lua",
+                    .fragment = "which draws no rectangle of its own; an identify",
+                },
+                Refusal{
                     .label = "an identify reference refining the search rectangle",
                     .body  = R"lua(
                         return model.Page.new{
@@ -996,6 +1053,203 @@ namespace uf::task
             )lua");
 
             auto const result = runModel(context, built, source);
+            REQUIRE(result.has_value());
+            CHECK(*result == doctest::Approx(1.0));
+        }
+
+        TEST_CASE("An element that draws no rectangle is placed by each row that uses it")
+        {
+            // THE FAILURE THIS EXISTS FOR. `rect` has only ever meant where to
+            // LOOK, and some shapes have no answer of their own: one confirm
+            // button drawn once sits somewhere different on every screen that
+            // shows it. Carrying the rectangle it happened to be cut from made
+            // the model state a fact nothing could contradict, and nine copies of
+            // one element made it state that fact nine times.
+            //
+            // Two pages place the same pixels at two rectangles here, and the
+            // find answers where each row says. Delete the rect_override branch
+            // in observe.searchRect and both halves go red at once: the first
+            // finds nothing at [1, 0] and the second raises on a nil rectangle.
+            auto const directory = TemporaryDirectory{"uf-model-placed-element"};
+            seedTemplates(directory.path());
+            auto built = buildHarness(
+                HarnessSpec{
+                    .framePixels = {pixels(2, 5, 0)},
+                    .projectRoot = directory.path(),
+                }
+            );
+            REQUIRE(built.session.has_value());
+            auto* const p_clicks = built.clicks;
+            TaskContext context{
+                *std::move(built.session),
+                *built.recorder,
+                TaskContextConfig{.projectRoot = directory.path()},
+            };
+
+            auto const result = runModel(context, built, script(R"lua(
+                local anchor = model.Element.new{
+                    name = "anchor",
+                    capabilities = { "identify" },
+                    rect = { x = 0, y = 0, width = 3, height = 1 },
+                    appearances = {
+                        {
+                            name = "only",
+                            source = "gray2.png",
+                            template = template("gray2.png"),
+                            threshold = 10000,
+                        },
+                    },
+                }
+                local confirm = model.Element.new{
+                    name = "confirm",
+                    capabilities = { "interact" },
+                    appearances = {
+                        {
+                            name = "only",
+                            source = "gray5.png",
+                            template = template("gray5.png"),
+                            threshold = 10000,
+                        },
+                    },
+                }
+                if confirm.rect ~= nil then return 0 end
+
+                local function pageAt(name, holding, rect)
+                    return model.Page.new{
+                        name = name,
+                        references = {
+                            {
+                                element = anchor,
+                                holding = "referenced",
+                                exercised = { "identify" },
+                                identify = "required",
+                            },
+                            {
+                                element = confirm,
+                                holding = holding,
+                                exercised = { "interact" },
+                                rect_override = rect,
+                            },
+                        },
+                    }
+                end
+                local here = pageAt(
+                    "here",
+                    "owned",
+                    { x = 1, y = 0, width = 1, height = 1 }
+                )
+                local elsewhere = pageAt(
+                    "elsewhere",
+                    "referenced",
+                    { x = 0, y = 0, width = 1, height = 1 }
+                )
+
+                local ticket = ctx:cycle_open()
+
+                -- The page that says these pixels sit at x = 0 is looking at the
+                -- wrong pixel, and says so rather than finding the button two
+                -- columns over. One element, two rows, two answers.
+                if observe.resolve_page(ctx, ticket, elsewhere) == nil then
+                    return 0
+                end
+                if observe.find(ctx, ticket, elsewhere, confirm) ~= nil then
+                    return 0
+                end
+
+                local receipt = observe.resolve_page(ctx, ticket, here)
+                if receipt == nil then return 0 end
+                local hit = observe.find(ctx, ticket, here, confirm)
+                if hit == nil then return 0 end
+                if hit.positioned_by ~= "pixels" then return 0 end
+                if hit.x ~= 1 then return 0 end
+                observe.click(ctx, ticket, receipt, hit)
+                return 1
+            )lua"));
+            REQUIRE(result.has_value());
+            CHECK(*result == doctest::Approx(1.0));
+            CHECK(p_clicks->clickCount() == 1U);
+        }
+
+        TEST_CASE("Reading an unplaced element needs the row that places it")
+        {
+            // The read verbs take a BARE element as well as a page's row, so they
+            // are the one door a shape with no rectangle can reach without the
+            // row that gives it one. `Page.new` guards the other door; this one
+            // has to answer for itself, because the alternative is indexing a nil
+            // field inside cycle_read and reporting it as a host failure.
+            auto const directory = TemporaryDirectory{"uf-model-unplaced-read"};
+            seedTemplates(directory.path());
+            auto built = buildHarness(
+                HarnessSpec{
+                    .framePixels = {pixels(2, 5, 0)},
+                    .ocrEngine   = std::make_unique<FakeOcrEngine>(
+                        oneLineReadout("confirm", 9'600)
+                    ),
+                    .projectRoot = directory.path(),
+                }
+            );
+            REQUIRE(built.session.has_value());
+            TaskContext context{
+                *std::move(built.session),
+                *built.recorder,
+                TaskContextConfig{.projectRoot = directory.path()},
+            };
+
+            auto const result = runModel(context, built, script(R"lua(
+                local confirm = model.Element.new{
+                    name = "confirm",
+                    capabilities = { "interact", "read" },
+                }
+                local anchor = model.Element.new{
+                    name = "anchor",
+                    capabilities = { "identify" },
+                    rect = { x = 0, y = 0, width = 3, height = 1 },
+                    appearances = {
+                        {
+                            name = "only",
+                            source = "gray2.png",
+                            template = template("gray2.png"),
+                            threshold = 10000,
+                        },
+                    },
+                }
+                local page = model.Page.new{
+                    name = "battle",
+                    references = {
+                        {
+                            element = anchor,
+                            holding = "owned",
+                            exercised = { "identify" },
+                            identify = "required",
+                        },
+                        {
+                            element = confirm,
+                            holding = "owned",
+                            exercised = { "interact", "read" },
+                            rect_override = { x = 0, y = 0, width = 3, height = 1 },
+                        },
+                    },
+                }
+
+                local ticket = ctx:cycle_open()
+                local ok, err = pcall(function()
+                    return observe.read_element(ctx, ticket, confirm)
+                end)
+                if ok then return 0 end
+                if type(err) ~= "string" then return 0 end
+                if string.find(err, "draws no rectangle of its own", 1, true) == nil then
+                    return 0
+                end
+
+                -- And the same element read through the row that places it comes
+                -- back, so the refusal is about the missing rectangle rather than
+                -- about the element.
+                local row = model.Page.reference_for(page, confirm)
+                local reading = observe.read_element(ctx, ticket, row)
+                if reading == nil then return 0 end
+                if reading.text ~= "confirm" then return 0 end
+                return 1
+            )lua"));
             REQUIRE(result.has_value());
             CHECK(*result == doctest::Approx(1.0));
         }
@@ -5835,6 +6089,200 @@ namespace uf::task
             CHECK(*result == doctest::Approx(1.0));
         }
 
+        TEST_CASE("The matrix measures a shape with no rectangle where each claim says")
+        {
+            // THE CELL A SHAPE WITH NO AUTHORED REGION ENTERS THE MATRIX BY. A
+            // minimap cell is matched at coordinates the script works out for
+            // each frame, because the map pans -- so the only falsifiable form of
+            // the fact is "on THESE stored pixels, this shape matches HERE and
+            // stays away from THERE". That is two claims about one element on one
+            // screen, which is the shape `Claims.new` used to refuse outright.
+            //
+            // THE SESSION HAS NO OCR ENGINE, so a walk that took a reading here
+            // could not finish: this half is pixels and nothing else.
+            auto const directory = TemporaryDirectory{"uf-model-matrix-placed"};
+            seedTemplates(directory.path());
+            auto const hashes = seedScreens(directory.path());
+
+            auto built = buildHarness(
+                HarnessSpec{
+                    .framePixels = {pixels(2, 5, 0), pixels(2, 5, 0)},
+                    .projectRoot = directory.path(),
+                }
+            );
+            REQUIRE(built.session.has_value());
+            TaskContext context{
+                *std::move(built.session),
+                *built.recorder,
+                TaskContextConfig{.projectRoot = directory.path()},
+            };
+
+            auto const result = runModel(context, built, matrixScript(hashes, R"lua(
+                local drifting = model.Element.new{
+                    name = "drifting",
+                    capabilities = { "identify" },
+                    appearances = {
+                        {
+                            name = "cell",
+                            source = "gray5.png",
+                            template = ctx:template_load(
+                                ctx:project_read("gray5.png")
+                            ),
+                            threshold = 10000,
+                        },
+                    },
+                }
+                -- The frame carries grey 5 at x = 1 and grey 2 at x = 0, so the
+                -- two claims below are a hit and a miss of the SAME template on
+                -- the SAME screen, and only the rectangle separates them.
+                local verdict = matrix({
+                    oracle.Expectation.new{
+                        screen = first,
+                        element = drifting,
+                        rect = { x = 1, y = 0, width = 1, height = 1 },
+                        state = "match",
+                    },
+                    oracle.Expectation.new{
+                        screen = first,
+                        element = drifting,
+                        rect = { x = 0, y = 0, width = 1, height = 1 },
+                        state = "absent",
+                    },
+                }, { drifting })
+                if not verdict.accepted then return 0 end
+                if #verdict.findings ~= 0 then return 0 end
+
+                -- Two rows for one element on one screen, plus the row for the
+                -- screen no claim places it on.
+                if #verdict.cells ~= 3 then return 0 end
+
+                local found = verdict.cells[1]
+                if found.screen ~= "battle" then return 0 end
+                if found.outcome ~= "hit" then return 0 end
+                if found.verdict ~= "expected" then return 0 end
+                if found.appearance ~= "cell" then return 0 end
+                if found.search_x ~= 1 then return 0 end
+                if found.search_width ~= 1 then return 0 end
+
+                local away = verdict.cells[2]
+                if away.screen ~= "battle" then return 0 end
+                if away.outcome ~= "miss" then return 0 end
+                if away.verdict ~= "expected" then return 0 end
+                if away.search_x ~= 0 then return 0 end
+
+                -- The screen nobody placed it on: no region to search, so
+                -- nothing was measured rather than a miss nobody looked for.
+                local absent = verdict.cells[3]
+                if absent.screen ~= "battle_log" then return 0 end
+                if absent.outcome ~= "no_pixels" then return 0 end
+                if absent.expected ~= "unclaimed" then return 0 end
+                if absent.search_x ~= nil then return 0 end
+
+                -- The searched rectangle is on the rendered row, because two
+                -- rows naming one element on one screen are otherwise two lines
+                -- a reader cannot tell apart.
+                local rendered = regress.render(verdict)
+                if string.find(rendered, '"search_x":1', 1, true) == nil then
+                    return 0
+                end
+                if string.find(rendered, '"search_x":0', 1, true) == nil then
+                    return 0
+                end
+                return 1
+            )lua"));
+            REQUIRE(result.has_value());
+            CHECK(*result == doctest::Approx(1.0));
+        }
+
+        TEST_CASE("One region reads one text on two screens only at one rectangle")
+        {
+            // The text half of the same argument. `reading.confusions` catches
+            // one region claimed to read one text on two screens, because then
+            // that region is not what separates them -- and a page signature
+            // resting on it resolves on whichever screen is in front of the run.
+            //
+            // A shape drawn once and placed many times breaks the premise: nine
+            // confirm buttons are ONE element and nine regions, each reading
+            // "confirm", and reporting that as nine models that cannot tell nine
+            // screens apart is a rule an author switches off. So the rule is
+            // keyed by the region and not by the element.
+            auto const directory = TemporaryDirectory{"uf-model-placed-confusion"};
+            seedTemplates(directory.path());
+            auto const hashes = seedScreens(directory.path());
+
+            constexpr std::string_view k_stamp = R"lua(
+                local stamp = model.Element.new{
+                    name = "stamp",
+                    capabilities = { "read" },
+                }
+                local function reads(screen, x, text, state)
+                    return oracle.Expectation.new{
+                        screen = screen,
+                        element = stamp,
+                        rect = { x = x, y = 0, width = 1, height = 1 },
+                        text = text,
+                        state = state,
+                    }
+                end
+            )lua";
+
+            SUBCASE("two screens claiming one rectangle reads one text cannot be told apart")
+            {
+                auto const result = runMatrix(
+                    directory.path(),
+                    hashes,
+                    {
+                        oneLineReadout("confirm", 9'600),
+                        oneLineReadout("confirm", 9'600),
+                    },
+                    std::string{k_stamp} + R"lua(
+                    local verdict = matrix({
+                        reads(first, 0, "confirm", "match"),
+                        reads(second, 0, "confirm", "match"),
+                    }, { stamp })
+                    if verdict.accepted then return 0 end
+                    if #verdict.findings ~= 1 then return 0 end
+                    local finding = verdict.findings[1]
+                    if finding.kind ~= "ambiguous_text" then return 0 end
+                    if finding.element ~= "stamp" then return 0 end
+                    if string.find(finding.detail, "at [0,0,1,1]", 1, true) == nil then
+                        return 0
+                    end
+                    return 1
+                )lua"
+                );
+                REQUIRE(result.has_value());
+                CHECK(*result == doctest::Approx(1.0));
+            }
+
+            SUBCASE("two rectangles reading one text are two buttons and not one region")
+            {
+                auto const result = runMatrix(
+                    directory.path(),
+                    hashes,
+                    {
+                        oneLineReadout("confirm", 9'600),
+                        oneLineReadout("confirm", 9'600),
+                    },
+                    std::string{k_stamp} + R"lua(
+                    local verdict = matrix({
+                        reads(first, 0, "confirm", "match"),
+                        reads(second, 1, "confirm", "match"),
+                    }, { stamp })
+                    -- Both cells hold, exactly as in the subcase above, and the
+                    -- difference is entirely in what the claims say about WHERE.
+                    if verdict.cells[1].verdict ~= "expected" then return 0 end
+                    if verdict.cells[2].verdict ~= "expected" then return 0 end
+                    if not verdict.accepted then return 0 end
+                    if #verdict.findings ~= 0 then return 0 end
+                    return 1
+                )lua"
+                );
+                REQUIRE(result.has_value());
+                CHECK(*result == doctest::Approx(1.0));
+            }
+        }
+
         // A screen and three elements that differ in exactly one thing each --
         // one verified by pixels, one by what it reads, one that may not be read
         // at all -- so every refusal row below differs from a legal claim in a
@@ -5867,6 +6315,20 @@ namespace uf::task
                 name = "mute",
                 capabilities = { "interact" },
                 rect = { x = 0, y = 0, width = 3, height = 1 },
+            }
+            -- A minimap shape: real pixels, and no rectangle of its own, because
+            -- the map pans and where a cell sits is a fact about the frame.
+            local drifting = model.Element.new{
+                name = "drifting",
+                capabilities = { "identify" },
+                appearances = {
+                    {
+                        name = "cell",
+                        source = "gray2.png",
+                        template = template("gray2.png"),
+                        threshold = 10000,
+                    },
+                },
             }
         )lua";
 
@@ -5945,6 +6407,41 @@ namespace uf::task
                         }
                     )lua",
                     .fragment = "text must be the text this element's region reads",
+                },
+                Refusal{
+                    .label = "a shape with no rectangle claimed nowhere",
+                    .body  = R"lua(
+                        return oracle.Expectation.new{
+                            screen = screen,
+                            element = drifting,
+                            state = "match",
+                        }
+                    )lua",
+                    .fragment = "draws no rectangle of its own and is given none",
+                },
+                Refusal{
+                    .label = "a rectangle claimed for an element that draws its own",
+                    .body  = R"lua(
+                        return oracle.Expectation.new{
+                            screen = screen,
+                            element = marked,
+                            rect = { x = 0, y = 0, width = 1, height = 1 },
+                            state = "match",
+                        }
+                    )lua",
+                    .fragment = "which draws its own; a cell is measured at ONE region",
+                },
+                Refusal{
+                    .label = "a claimed rectangle that is not a rectangle",
+                    .body  = R"lua(
+                        return oracle.Expectation.new{
+                            screen = screen,
+                            element = drifting,
+                            rect = { x = 0, y = 0, width = 0, height = 1 },
+                            state = "match",
+                        }
+                    )lua",
+                    .fragment = "at least one pixel wide",
                 },
             };
         }
@@ -6261,6 +6758,198 @@ namespace uf::task
             CHECK(*result == doctest::Approx(1.0));
 
             CHECK(readFileText(modelPath) == std::string{k_canonicalClaimsProject});
+        }
+
+        // An element with no rectangle of its own, the row that places it, and
+        // two claims about it on one screen: the whole of the new shape, in
+        // canonical form.
+        constexpr std::string_view k_canonicalPlacedProject =
+            "schema = \"umbraflow-project/l2-v1\"\n"
+            "\n"
+            "[[element]]\n"
+            "name = \"anchor\"\n"
+            "capabilities = [\"identify\"]\n"
+            "rect = [0, 0, 3, 1]\n"
+            "\n"
+            "[[appearance]]\n"
+            "element = \"anchor\"\n"
+            "name = \"lit\"\n"
+            "source = \"gray2.png\"\n"
+            "threshold = 10000\n"
+            "\n"
+            "[[element]]\n"
+            "name = \"drifting\"\n"
+            "capabilities = [\"interact\"]\n"
+            "\n"
+            "[[appearance]]\n"
+            "element = \"drifting\"\n"
+            "name = \"cell\"\n"
+            "source = \"gray5.png\"\n"
+            "threshold = 10000\n"
+            "\n"
+            "[[page]]\n"
+            "name = \"battle\"\n"
+            "\n"
+            "[[reference]]\n"
+            "page = \"battle\"\n"
+            "element = \"anchor\"\n"
+            "holding = \"owned\"\n"
+            "exercised = [\"identify\"]\n"
+            "identify = \"required\"\n"
+            "\n"
+            "[[reference]]\n"
+            "page = \"battle\"\n"
+            "element = \"drifting\"\n"
+            "holding = \"owned\"\n"
+            "exercised = [\"interact\"]\n"
+            "rect_override = [1, 0, 1, 1]\n"
+            "\n"
+            "[[screen]]\n"
+            "name = \"map\"\n"
+            "hash = \"dddddddddddddddddddddddddddddddd"
+            "dddddddddddddddddddddddddddddddd\"\n"
+            "\n"
+            "[[expect]]\n"
+            "screen = \"map\"\n"
+            "element = \"drifting\"\n"
+            "rect = [0, 0, 1, 1]\n"
+            "state = \"absent\"\n"
+            "\n"
+            "[[expect]]\n"
+            "screen = \"map\"\n"
+            "element = \"drifting\"\n"
+            "rect = [1, 0, 1, 1]\n"
+            "state = \"match\"\n";
+
+        // The same model as a hand edit leaves it: the elements in the wrong
+        // order, the fields inside a block shuffled, the two claims in the
+        // reverse of the order a save puts them in, and the screen after them.
+        constexpr std::string_view k_unsortedPlacedProject =
+            "schema = \"umbraflow-project/l2-v1\"\n"
+            "\n"
+            "[[element]]\n"
+            "name = \"drifting\"\n"
+            "capabilities = [\"interact\"]\n"
+            "\n"
+            "[[element]]\n"
+            "rect = [0, 0, 3, 1]\n"
+            "name = \"anchor\"\n"
+            "capabilities = [\"identify\"]\n"
+            "\n"
+            "[[appearance]]\n"
+            "element = \"drifting\"\n"
+            "threshold = 10000\n"
+            "name = \"cell\"\n"
+            "source = \"gray5.png\"\n"
+            "\n"
+            "[[appearance]]\n"
+            "element = \"anchor\"\n"
+            "threshold = 10000\n"
+            "name = \"lit\"\n"
+            "source = \"gray2.png\"\n"
+            "\n"
+            "[[page]]\n"
+            "name = \"battle\"\n"
+            "\n"
+            "[[reference]]\n"
+            "page = \"battle\"\n"
+            "element = \"anchor\"\n"
+            "holding = \"owned\"\n"
+            "exercised = [\"identify\"]\n"
+            "identify = \"required\"\n"
+            "\n"
+            "[[reference]]\n"
+            "page = \"battle\"\n"
+            "element = \"drifting\"\n"
+            "rect_override = [1, 0, 1, 1]\n"
+            "holding = \"owned\"\n"
+            "exercised = [\"interact\"]\n"
+            "\n"
+            "[[expect]]\n"
+            "screen = \"map\"\n"
+            "element = \"drifting\"\n"
+            "state = \"match\"\n"
+            "rect = [1, 0, 1, 1]\n"
+            "\n"
+            "[[expect]]\n"
+            "screen = \"map\"\n"
+            "element = \"drifting\"\n"
+            "state = \"absent\"\n"
+            "rect = [0, 0, 1, 1]\n"
+            "\n"
+            "[[screen]]\n"
+            "name = \"map\"\n"
+            "hash = \"dddddddddddddddddddddddddddddddd"
+            "dddddddddddddddddddddddddddddddd\"\n";
+
+        TEST_CASE("A rectangle nobody drew round trips on the row and on the claim")
+        {
+            // BOTH NEW FIELDS AT ONCE, because they are one fact split across two
+            // sections: the element states no rectangle, the row says where it
+            // sits on this page, and the claims say where it was measured on one
+            // screen. Stop writing either line and this does not merely lose a
+            // field -- the file comes back as a row that places nothing and a
+            // claim about a shape with nowhere to look, which `Page.new` and
+            // `Expectation.new` both refuse, so the reload fails outright and the
+            // byte comparison never happens.
+            auto const directory = TemporaryDirectory{"uf-model-placed-roundtrip"};
+            seedTemplates(directory.path());
+            auto const modelPath = directory.path() / "page-model.toml";
+            REQUIRE(k_unsortedPlacedProject != k_canonicalPlacedProject);
+            writeFile(modelPath, std::as_bytes(std::span{k_unsortedPlacedProject}));
+
+            auto built = buildHarness(
+                HarnessSpec{
+                    .framePixels = {pixels(2, 5, 0)},
+                    .projectRoot = directory.path(),
+                }
+            );
+            REQUIRE(built.session.has_value());
+            TaskContext context{
+                *std::move(built.session),
+                *built.recorder,
+                TaskContextConfig{.projectRoot = directory.path()},
+            };
+
+            auto const result = runModel(context, built, R"lua(
+                local built    = project.load_project(ctx)
+                local drifting = built.element_by_name["drifting"]
+                if drifting.rect ~= nil then return 0 end
+                if built.element_by_name["anchor"].rect.width ~= 3 then return 0 end
+
+                -- The row that places it, and the two rectangles it is measured
+                -- at on the one screen this project holds.
+                local row = model.Page.reference_for(
+                    built.page_by_name["battle"],
+                    drifting
+                )
+                if row.rect_override.x ~= 1 then return 0 end
+                if row.rect_override.width ~= 1 then return 0 end
+
+                local rects = oracle.Claims.rects_for(built.claims, "map", "drifting")
+                if #rects ~= 2 then return 0 end
+
+                local at = oracle.Claims.state_for
+                if at(built.claims, "map", "drifting", nil,
+                    { x = 1, y = 0, width = 1, height = 1 }) ~= "match" then
+                    return 0
+                end
+                if at(built.claims, "map", "drifting", nil,
+                    { x = 0, y = 0, width = 1, height = 1 }) ~= "absent" then
+                    return 0
+                end
+
+                project.save_project(ctx, built)
+
+                -- The fixpoint half: the first save normalises a hand edit, and
+                -- the second must change nothing at all.
+                project.save_project(ctx, project.load_project(ctx))
+                return 1
+            )lua");
+            REQUIRE(result.has_value());
+            CHECK(*result == doctest::Approx(1.0));
+
+            CHECK(readFileText(modelPath) == std::string{k_canonicalPlacedProject});
         }
 
         TEST_CASE("The three model modules are in the framework bundle")

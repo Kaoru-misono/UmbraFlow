@@ -193,9 +193,31 @@ local function requireCtx(ctx: any, verb: string)
     end
 end
 
+-- Where a verb looks: the row's rectangle when the page refined one, and the
+-- element's own otherwise.
+--
+-- THE LAST BRANCH IS UNREACHABLE THROUGH A PAGE AND REACHABLE WITHOUT ONE, which
+-- is why it is a sentence rather than a nil. An element may draw no rectangle at
+-- all -- one confirm button reused on nine screens sits somewhere different on
+-- each -- and `Page.new` refuses a row that neither inherits one nor states one,
+-- so every path through `find` arrives with a rectangle by construction. The
+-- read verbs are the ones that also take a BARE element, where there is no row to
+-- have been checked; a caller reaching this with one has asked to read a region
+-- nothing has placed yet, and the alternative to saying so is an index of a nil
+-- field inside `cycle_read`.
 local function searchRect(reference: any, element: any): any
     if reference ~= nil and reference.rect_override ~= nil then
         return reference.rect_override
+    end
+    if element.rect == nil then
+        error(
+            "element '"
+                .. element.name
+                .. "' draws no rectangle of its own, so there is nothing to look "
+                .. "at until a page says where it sits; pass the page's own "
+                .. "reference row rather than the element",
+            3
+        )
     end
     return element.rect
 end
@@ -401,7 +423,9 @@ function observe.resolve_page(ctx: any, ticket: any, page: any): (Receipt?, stri
                 -- the same reason: an identify sweep runs before the page is
                 -- known, so a page's refinement is not available to it -- which
                 -- is why `Page.new` refuses a rect_override on an identify row
-                -- rather than leaving one here to be quietly ignored.
+                -- rather than leaving one here to be quietly ignored, and refuses
+                -- an identify row on an element that draws no rectangle at all.
+                -- Both halves are what make `element.rect` present here.
                 local expected =
                     model.Reference.expected_text(reference) :: string
                 local matched, actual = readsExpected(

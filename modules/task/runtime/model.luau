@@ -203,10 +203,30 @@ export type ColourKey = {
 -- page (see `Reference`), the second because the project's own floor is right
 -- until an element proves otherwise. `Element.read_floor` is how the second one
 -- is asked, so nothing outside has to know the default.
+--
+-- `rect` HAS ONLY EVER MEANT WHERE TO LOOK, AND SOME ELEMENTS HAVE NO ANSWER.
+-- It is a search region: `observe.find` searches it and reports the hit's own
+-- position, so a title box at [125, 14, 300, 56] and a flag anywhere in
+-- [1170, 20, 300, 850] are one field at two extremes rather than two ideas. That
+-- is why it can be absent. A minimap cell is matched at a rectangle the SCRIPT
+-- computes for each frame, because the map pans and a cell's position is a fact
+-- about the FRAME; a confirm button drawn once and reused on nine screens sits
+-- somewhere different on each. Both used to carry the rectangle they happened to
+-- be cut from, which the model then stated as a fact about the element -- and a
+-- fact nothing can contradict is the kind of annotation this repository keeps
+-- deleting.
+--
+-- WHAT REPLACES IT IS NOT NOTHING. A rectangle is supplied by the element, by
+-- the page reference (`rect_override`), or by the falsification claim
+-- (`oracle.Expectation.rect`), and for any one use exactly one of the three
+-- supplies it. So an element that omits it is not an element nobody knows where
+-- to find: `Page.new` refuses a row that neither inherits one nor states one,
+-- and `Expectation.new` refuses a cell that does the same. Absent here means
+-- "the caller says where", never "nobody said".
 export type Element = {
     name: string,
     capabilities: CapabilitySet,
-    rect: Rect,
+    rect: Rect?,
     appearances: { Appearance },
     expected_text: string?,
     read_floor: number?,
@@ -240,6 +260,18 @@ export type Element = {
 -- (docs/plans/2026-07-31-annotation-model-capabilities.md 2.2). The row wins over
 -- the element, and `Reference.expected_text` is the one place that precedence is
 -- written down.
+--
+-- `rect_override` is where THIS page's copy of the region sits. On an element
+-- that draws its own rectangle it is a refinement and is usually absent; on an
+-- element that draws none it is REQUIRED, and that is what stops "a rectangle is
+-- optional" from turning into "nobody said where to look". One drawn confirm
+-- button referenced by nine pages is nine rows each naming its own corner of the
+-- screen, which is the same reasoning that put `expected_text` here: the shared
+-- thing is the element, and where it sits on THIS page is a property of the
+-- pairing. It is refused beside an exercised identify, because the identify
+-- sweep runs before the page is known -- so an element with no rectangle of its
+-- own can never be part of a page signature, and `Page.new` says so in those
+-- words rather than leaving an author to add an override and be refused twice.
 --
 -- `page` is the NAME of the page that declared this row. It is not a field an
 -- author writes -- `Page.new` stamps it, and the file already spells it as the
@@ -373,6 +405,17 @@ local function frozenRect(value: Rect): Rect
     })
 end
 
+-- The rectangle checker and the rectangle freezer, published because a rectangle
+-- is now authored in THREE places and only one of them is here. `oracle` builds
+-- the third -- the rectangle a falsification claim searches at -- and a second
+-- copy of "four whole numbers, on screen, at least one pixel each" is a second
+-- thing that can come to disagree with this one about what a rectangle is. The
+-- checker returns a SENTENCE or nil, exactly as it does for the callers in this
+-- file, so each constructor still raises at its own level and names its own
+-- field.
+model.check_rect  = checkRect
+model.frozen_rect = frozenRect
+
 -- Checks the shape of a recorded colour key and nothing about its worth.
 --
 -- WHETHER A KEY IS A GOOD KEY IS NOT ASKED HERE, and that is the same line the
@@ -483,6 +526,14 @@ model.Element = Element
 --     expected text (docs/plans/2026-08-01-three-layers-and-agent-operator.md
 --     5-4). Both at once is not a stronger element, it is two answers to "did I
 --     find it" with nothing saying which one wins.
+--
+-- `rect` IS THE ONE FIELD WHOSE ABSENCE IS RULED ON SOMEWHERE ELSE, and the
+-- reason is the one that put `expected_text` on a row: this constructor is handed
+-- one element and can see no use of it. "Where do I look" has an answer per USE
+-- -- the identify sweep looks in the element's own rectangle, a click looks in
+-- the row's, a matrix cell looks in the claim's -- so the check belongs at each
+-- of those, and putting a weaker copy here would only refuse the elements the
+-- change exists for. See the type for what supplies it instead.
 function Element.new(spec: { [string]: any }): Element
     if type(spec) ~= "table" then
         error("Element.new needs a table of fields", 2)
@@ -504,9 +555,11 @@ function Element.new(spec: { [string]: any }): Element
         error(capabilityProblem :: string, 2)
     end
 
-    local rectProblem = checkRect("element '" .. name .. "' rect", spec.rect)
-    if rectProblem ~= nil then
-        error(rectProblem, 2)
+    if spec.rect ~= nil then
+        local rectProblem = checkRect("element '" .. name .. "' rect", spec.rect)
+        if rectProblem ~= nil then
+            error(rectProblem, 2)
+        end
     end
 
     local appearances: { Appearance } = {}
@@ -695,7 +748,9 @@ function Element.new(spec: { [string]: any }): Element
     local element = table.freeze({
         name          = name,
         capabilities  = capabilities :: CapabilitySet,
-        rect          = frozenRect(spec.rect :: Rect),
+        rect          = if spec.rect ~= nil
+            then frozenRect(spec.rect :: Rect)
+            else nil,
         appearances   = table.freeze(appearances),
         expected_text = spec.expected_text,
         read_floor    = spec.read_floor,
@@ -953,6 +1008,26 @@ function Page.new(spec: { [string]: any }): Page
                     2
                 )
             end
+            -- The other half of the same sentence, and it has to come first. An
+            -- identify sweep runs BEFORE the page is known, so the only
+            -- rectangle available to it is the element's own -- which means an
+            -- element that draws none can never be part of a signature, whatever
+            -- this row says. Without this the author is refused twice: once for
+            -- omitting the override, and again for supplying it.
+            if element.rect == nil then
+                error(
+                    what
+                        .. " identifies by element '"
+                        .. element.name
+                        .. "', which draws no rectangle of its own; an identify "
+                        .. "sweep runs before the page is known, so it can only "
+                        .. "search the element's OWN rectangle and a row that "
+                        .. "supplies one cannot be part of a page signature -- "
+                        .. "give the element a rect, or identify this page by "
+                        .. "something that has one",
+                    2
+                )
+            end
             if entry.rect_override ~= nil then
                 error(
                     what
@@ -1007,6 +1082,24 @@ function Page.new(spec: { [string]: any }): Page
             if overrideProblem ~= nil then
                 error(overrideProblem, 2)
             end
+        elseif element.rect == nil then
+            -- THE RULE THAT KEEPS "A RECT IS OPTIONAL" FROM MEANING "NOBODY SAID
+            -- WHERE TO LOOK". An element with no rectangle of its own is drawn
+            -- once and placed by whoever uses it, so a row that inherits nothing
+            -- and states nothing leaves `observe.find` with no region to search
+            -- -- and it would be found out as a nil field deep inside a verb
+            -- rather than at the line that wrote the row.
+            error(
+                what
+                    .. " references element '"
+                    .. element.name
+                    .. "', which draws no rectangle of its own, and says no "
+                    .. "rect_override; such an element is placed by whoever uses "
+                    .. "it, so this row is the only thing that can say where it "
+                    .. 'sits on this page -- add rect_override = { x = , y = , '
+                    .. "width = , height = }",
+                2
+            )
         end
 
         local extraProblem = checkExtra(what, entry.extra)

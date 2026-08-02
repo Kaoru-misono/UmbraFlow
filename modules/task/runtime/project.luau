@@ -147,6 +147,12 @@ local k_sectionFields: { [string]: { [string]: boolean } } = {
     -- edge is: it is a fact about a PAIR, and filing it under the element would
     -- make the screen's block depend on which was written first.
     --
+    -- `rect` is WHERE the cell was measured, and it is written straight after
+    -- the two names because it is part of the cell's identity rather than part
+    -- of the measurement: a shape with no rectangle of its own can be claimed
+    -- several times on one screen, and the rectangle is what tells those claims
+    -- apart. An element that draws its own writes none, because it already said.
+    --
     -- `appearance` and `text` name the two things a cell can be measured by --
     -- one template searched alone, or what the region reads on this screen --
     -- and a cell carries at most one of them. They are written next to each
@@ -155,6 +161,7 @@ local k_sectionFields: { [string]: { [string]: boolean } } = {
     expect = {
         screen     = true,
         element    = true,
+        rect       = true,
         appearance = true,
         text       = true,
         state      = true,
@@ -325,7 +332,13 @@ function project.encode(built: any): string
             lines,
             "capabilities = " .. renderValue(capabilityList(element.capabilities))
         )
-        table.insert(lines, "rect = " .. renderValue(rectList(element.rect)))
+        -- Written only when the element drew one. An element that leaves it out
+        -- is placed by whoever uses it -- one confirm button reused on nine
+        -- screens -- and materialising the rectangle it happened to be cut from
+        -- would put back exactly the fact this model stopped stating.
+        if element.rect ~= nil then
+            table.insert(lines, "rect = " .. renderValue(rectList(element.rect)))
+        end
         if element.expected_text ~= nil then
             table.insert(
                 lines,
@@ -490,6 +503,12 @@ function project.encode(built: any): string
     local expectations: { any } = if claims ~= nil
         then table.clone(claims.expectations)
         else {}
+    -- The rectangle is part of the sort key and not only of the row, because one
+    -- element can now be claimed several times on one screen and a sort that
+    -- stopped at the appearance would leave those rows in whatever order the
+    -- list happened to hold -- which is a file whose bytes depend on the order it
+    -- was edited in. It compares as its four numbers rather than as text, so
+    -- [9, 0, 1, 1] sorts before [10, 0, 1, 1].
     table.sort(expectations, function(left, right)
         if left.screen ~= right.screen then
             return left.screen < right.screen
@@ -497,7 +516,20 @@ function project.encode(built: any): string
         if left.element ~= right.element then
             return left.element < right.element
         end
-        return (left.appearance or "") < (right.appearance or "")
+        if (left.appearance or "") ~= (right.appearance or "") then
+            return (left.appearance or "") < (right.appearance or "")
+        end
+        local here  = left.rect
+        local there = right.rect
+        if here == nil or there == nil then
+            return here == nil and there ~= nil
+        end
+        for _, part in { "x", "y", "width", "height" } do
+            if here[part] ~= there[part] then
+                return here[part] < there[part]
+            end
+        end
+        return false
     end)
 
     for _, expectation in expectations do
@@ -505,6 +537,12 @@ function project.encode(built: any): string
         table.insert(lines, "[[expect]]")
         table.insert(lines, "screen = " .. renderString(expectation.screen))
         table.insert(lines, "element = " .. renderString(expectation.element))
+        if expectation.rect ~= nil then
+            table.insert(
+                lines,
+                "rect = " .. renderValue(rectList(expectation.rect))
+            )
+        end
         if expectation.appearance ~= nil then
             table.insert(
                 lines,
@@ -928,10 +966,17 @@ function project.build(ctx: any, document: any): any
             }
         end
 
-        local element = model.Element.new({
+        -- `rect` is read where it is written and required nowhere: an element
+        -- that omits it is placed by whoever uses it, and the rows and claims
+        -- that do the placing are refused by their own constructors when they
+        -- name no rectangle either.
+        local rectValue = section.fields.rect
+        local element   = model.Element.new({
             name          = name,
             capabilities  = requireField(section, "capabilities"),
-            rect          = rectOf(section, "rect", requireField(section, "rect")),
+            rect          = if rectValue ~= nil
+                then rectOf(section, "rect", rectValue)
+                else nil,
             appearances   = appearances,
             expected_text = section.fields.expected_text,
             read_floor    = section.fields.read_floor,
@@ -1150,11 +1195,15 @@ function project.build(ctx: any, document: any): any
                 0
             )
         end
+        local claimRect = section.fields.rect
         table.insert(
             expectations,
             oracle.Expectation.new({
                 screen     = screen,
                 element    = element,
+                rect       = if claimRect ~= nil
+                    then rectOf(section, "rect", claimRect)
+                    else nil,
                 appearance = section.fields.appearance,
                 text       = section.fields.text,
                 state      = requireField(section, "state"),

@@ -47,23 +47,34 @@ export type Measurement = {
 -- `screen` is the first screen that claimed this text and `rival` is the one
 -- that repeated it, in the order the project file lists them, so the same file
 -- reports the same pair every time.
+--
+-- `rect` is the region the two claims share, and it is nil for an element that
+-- draws its own -- which is the only kind that existed when this rule was
+-- written. It is here because the rule is about ONE REGION reading one text on
+-- two screens, and a shape with no rectangle of its own has as many regions as
+-- the file gives it coordinates.
 export type Confusion = {
     element: string,
+    rect: any,
     text: string,
     screen: string,
     rival: string,
 }
 
--- reading.measure(ctx, ticket, element, expected) -> Measurement
+-- reading.measure(ctx, ticket, element, rect, expected) -> Measurement
 --
--- Reads the element's own rectangle on the frame behind `ticket` and says
--- whether it read `expected`.
+-- Reads `rect` on the frame behind `ticket` and says whether it read `expected`
+-- well enough to be believed at `element`'s own floor.
 --
--- IT READS THE ELEMENT'S OWN RECTANGLE AND NOT A PAGE'S REFINEMENT, for the
--- reason `regress`'s template search does: the matrix asks whether this region
--- can be found saying something it should not, so the widest region the model
--- ever reads is the honest one. A page's `rect_override` narrows a click and is
--- refused on an identify row anyway.
+-- THE RECTANGLE IS A PARAMETER AND NOT READ OFF THE ELEMENT, because there are
+-- now two kinds of element and only one of them holds one. An element that draws
+-- its own rectangle is read there -- never at a page's refinement, for the reason
+-- `regress`'s template search is not: the matrix asks whether this region can be
+-- caught saying something it should not, so the widest region the model ever
+-- reads is the honest one. An element that draws none is read where the CLAIM
+-- says, which is the only thing that can say: one confirm button reused on nine
+-- screens sits somewhere different on each. `regress` is what picks between the
+-- two, once, so this verb never has to.
 --
 -- THE READ IS NOT WRAPPED IN `pcall`. `cycle_read` raises when the cycle's read
 -- budget is spent or the host has no engine bound, and a read that never
@@ -75,9 +86,9 @@ function reading.measure(
     ctx: any,
     ticket: any,
     element: any,
+    rect: any,
     expected: string
 ): Measurement
-    local rect  = element.rect
     local found =
         ctx:cycle_read(ticket, rect.x, rect.y, rect.width, rect.height)
     if found == nil then
@@ -128,10 +139,18 @@ end
 -- IT READS THE CLAIMS AND NOT THE SCREENS. Nothing here costs a capture: the
 -- contradiction is already written down, and a run that had to measure it would
 -- only be confirming what the file said twice.
+-- IT IS KEYED BY THE REGION AND NOT BY THE ELEMENT, and on a shape drawn once
+-- and placed many times those are different things. Nine confirm buttons are one
+-- element and nine rectangles: each one reads "確認", and saying so nine times is
+-- nine facts about nine regions rather than one region that cannot tell nine
+-- screens apart. Keyed by the element alone the rule would fire on every one of
+-- them and be switched off, taking with it the case it exists for -- ONE
+-- rectangle claimed to read one text on two screens, where a page signature
+-- resting on it really does resolve on whichever screen is in front.
 function reading.confusions(claims: any): { Confusion }
     local found: { Confusion } = {}
-    -- element and text, NUL separated because neither can contain one, so two
-    -- different pairs cannot collide by concatenation.
+    -- element, rectangle and text, NUL separated because none of the three can
+    -- contain one, so two different triples cannot collide by concatenation.
     local firstClaim: { [string]: string } = {}
 
     for index = 1, #claims.expectations do
@@ -140,13 +159,18 @@ function reading.confusions(claims: any): { Confusion }
             expectation.text ~= nil
             and expectation.state == oracle.state_match
         then
-            local key     = expectation.element .. "\0" .. expectation.text
+            local key = expectation.element
+                .. "\0"
+                .. oracle.rect_key(expectation.rect)
+                .. "\0"
+                .. expectation.text
             local earlier = firstClaim[key]
             if earlier == nil then
                 firstClaim[key] = expectation.screen
             else
                 table.insert(found, {
                     element = expectation.element,
+                    rect    = expectation.rect,
                     text    = expectation.text,
                     screen  = earlier,
                     rival   = expectation.screen,

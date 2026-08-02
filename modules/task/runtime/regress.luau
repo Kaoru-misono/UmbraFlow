@@ -65,6 +65,17 @@
 -- the same way -- hit or miss against what was written down -- and the text half
 -- is measured by `reading`, next door.
 --
+-- AND A SECOND AXIS, BECAUSE NOT EVERY ELEMENT HOLDS A RECTANGLE. One that does
+-- is measured there on every screen, claimed or not, which is what every
+-- unclaimed cell of this matrix rests on. One that does not -- a minimap shape
+-- searched at coordinates the script works out per frame, a confirm button drawn
+-- once and placed on nine screens -- is measured at the rectangles its CLAIMS
+-- name, which is the only place that position can be written down and
+-- contradicted at all. So one screen can hold several rows for one element, each
+-- carrying the region it looked in, and "it matches here and stays away from
+-- there" becomes two cells rather than an argument. Which rectangles a screen
+-- offers is `searchRects`, and it is the one place the choice is made.
+--
 -- LOAD ORDER. `regress` sorts last of the framework modules, which is what lets
 -- it name `model`, `observe`, `oracle`, `reading` and `recognition`. It is the
 -- only module that walks a whole model against a whole set of screens, and it
@@ -100,11 +111,14 @@ local k_subjectAppearance = "appearance"
 local k_outcomeHit  = "hit"
 local k_outcomeMiss = "miss"
 
--- Nothing was measured here at all. It is the row for an element with no
--- templates on a screen whose file claims no text for it: there are no pixels to
--- search for, and a reading needs something to be read AGAINST, which only a
--- claim supplies. The row is still emitted, because a reader comparing two runs
--- needs the inventory to be the same shape.
+-- Nothing was measured here at all. Two rows carry it, and both are cells with no
+-- question in them rather than questions this declined to answer: an element with
+-- no templates on a screen whose file claims no text for it -- there are no
+-- pixels to search for, and a reading needs something to be read AGAINST, which
+-- only a claim supplies -- and an element that draws no rectangle of its own on a
+-- screen no claim gives it one, where there is not even a region to look in. The
+-- row is still emitted, because a reader comparing two runs needs the inventory
+-- to be the same shape.
 local k_outcomeNoPixels = "no_pixels"
 
 local k_verdictExpected  = "expected"
@@ -129,6 +143,19 @@ regress.separation_factor = k_separationFactor
 -- says which of several marks answered; a text row has no such name, so without
 -- the claimed text a reader looking at a miss cannot tell what was expected
 -- without opening the file and finding the cell again.
+--
+-- `search_*` IS WHERE THIS ROW LOOKED, and it is the same argument one step
+-- further. An element that draws no rectangle of its own is measured wherever its
+-- claims put it, so one screen can carry several rows naming ONE element -- "it
+-- matches here" beside "it stays away from there" -- and without the searched
+-- rectangle on the row those are two lines a reader cannot tell apart. It is on
+-- every row rather than only those, because "where did this measurement look" is
+-- worth the same four numbers on a row that inherited them.
+--
+-- It is a separate quartet from `x`/`y`/`width`/`height` because the two answer
+-- opposite questions: this is the region that was SEARCHED, and those are where
+-- the template LANDED -- which is nil on a miss, exactly when a reader most needs
+-- to know where the search happened.
 export type Cell = {
     screen: string,
     element: string,
@@ -146,6 +173,10 @@ export type Cell = {
     y: number?,
     width: number?,
     height: number?,
+    search_x: number?,
+    search_y: number?,
+    search_width: number?,
+    search_height: number?,
 }
 
 -- How far the appearance that answered on one screen beat one rival there.
@@ -211,16 +242,23 @@ export type Verdict = {
 -- each one scored, whether it cleared its own threshold, and how many times the
 -- host boundary was crossed doing it.
 --
--- IT SEARCHES THE ELEMENT'S OWN RECTANGLE AND NOT A PAGE'S REFINEMENT. A
--- reference may narrow the region for a click on one page, and narrowing is
--- what a click wants; the matrix wants the opposite. The question here is
--- whether these pixels can be found somewhere they do not belong, so the widest
--- region the model ever searches is the honest one, and it is also the region
--- an identify sweep uses -- which runs before any page is known and so has no
--- refinement available to it.
-local function measureElement(ctx: any, ticket: any, element: any): { any }
+-- IT NEVER SEARCHES A PAGE'S REFINEMENT. A reference may narrow the region for a
+-- click on one page, and narrowing is what a click wants; the matrix wants the
+-- opposite. The question here is whether these pixels can be found somewhere
+-- they do not belong, so the widest region the model ever searches is the honest
+-- one, and it is also the region an identify sweep uses -- which runs before any
+-- page is known and so has no refinement available to it.
+--
+-- The rectangle is a parameter because a shape with no rectangle of its own is
+-- searched where its CLAIM says, and `searchRects` is the one place that choice
+-- is made.
+local function measureElement(
+    ctx: any,
+    ticket: any,
+    element: any,
+    rect: any
+): { any }
     local measured: { any } = {}
-    local rect = element.rect
     for index = 1, #element.appearances do
         local appearance = element.appearances[index]
         -- Not wrapped in pcall: `cycle_match` raises when a budget, a deadline
@@ -281,7 +319,8 @@ local function pushCell(
     appearance: string?,
     subject: string,
     entry: any,
-    expected: string
+    expected: string,
+    rect: any
 ): Cell
     local match: any = if entry ~= nil then entry.match else nil
     local hit        = entry ~= nil and entry.hit
@@ -305,6 +344,10 @@ local function pushCell(
         y             = if match ~= nil then match.y else nil,
         width         = if match ~= nil then match.width else nil,
         height        = if match ~= nil then match.height else nil,
+        search_x      = if rect ~= nil then rect.x else nil,
+        search_y      = if rect ~= nil then rect.y else nil,
+        search_width  = if rect ~= nil then rect.width else nil,
+        search_height = if rect ~= nil then rect.height else nil,
     }
     table.insert(cells, cell)
     return cell
@@ -326,7 +369,8 @@ local function pushTextCell(
     element: any,
     expectedText: string,
     measured: any,
-    expected: string
+    expected: string,
+    rect: any
 ): Cell
     local cell: Cell = {
         screen        = screen.name,
@@ -345,6 +389,10 @@ local function pushTextCell(
         y             = nil,
         width         = nil,
         height        = nil,
+        search_x      = rect.x,
+        search_y      = rect.y,
+        search_width  = rect.width,
+        search_height = rect.height,
     }
     table.insert(cells, cell)
     return cell
@@ -365,6 +413,39 @@ local function readingPhrase(measured: any): string
         .. '" at '
         .. tostring(measured.confidence)
         .. " basis points of confidence"
+end
+
+-- The phrase every finding about a shape with no rectangle of its own ends with,
+-- and the empty string for every other element.
+--
+-- It is conditional rather than always present because the two cases differ in
+-- what a reader needs: an element that draws its own rectangle has exactly one
+-- row per screen, so naming the rectangle in the sentence would repeat what the
+-- model already says. An element that draws none can have several rows on one
+-- screen, and then the rectangle is the ONLY thing separating one finding from
+-- the next.
+local function whereIn(element: any, rect: any): string
+    if element.rect ~= nil then
+        return ""
+    end
+    return " at [" .. oracle.rect_key(rect) .. "]"
+end
+
+-- The rectangle a claim about this measurement would have written down, which is
+-- what a cell is filed under.
+--
+-- An element that draws its own rectangle is claimed with none of its own --
+-- `Expectation.new` refuses the second answer -- so a lookup for one has to ask
+-- for the cell filed under no rectangle at all, whatever region the walk happens
+-- to be standing in. One function rather than the same conditional at each of the
+-- four lookups, because a walk that asked for the wrong key would find no cell
+-- and report a claimed row as unclaimed, which reads as a quiet model rather than
+-- as a bug.
+local function claimedAt(element: any, rect: any): any
+    if element.rect ~= nil then
+        return nil
+    end
+    return rect
 end
 
 -- Findings carry NAMES rather than the objects they were read off, because one
@@ -416,7 +497,8 @@ end
 local function ownersOf(
     claims: any,
     screen: any,
-    element: any
+    element: any,
+    rect: any
 ): { string }
     local owners: { string } = {}
     for index = 1, #element.appearances do
@@ -426,7 +508,8 @@ local function ownersOf(
                 claims,
                 screen.name,
                 element.name,
-                appearance.name
+                appearance.name,
+                claimedAt(element, rect)
             )
             if state == oracle.state_match then
                 table.insert(owners, appearance.name)
@@ -441,6 +524,7 @@ end
 local function judgeAppearanceSet(
     screen: any,
     element: any,
+    rect: any,
     measured: { any },
     folded: any,
     owners: { string },
@@ -453,6 +537,7 @@ local function judgeAppearanceSet(
 
     local screenName  = screen.name
     local elementName = element.name
+    local where       = whereIn(element, rect)
 
     -- Rule one: at most one appearance may hit. It fires on an unclaimed screen
     -- too, which is the point -- that is where an author's own testing habit
@@ -474,9 +559,11 @@ local function judgeAppearanceSet(
             hits[2],
             "appearances "
                 .. table.concat(hits, ", ")
-                .. " all match this screen; they are two ways ONE rectangle can "
-                .. "look, so a screen matching several of them tells nothing "
-                .. "apart and the fold's answer is whichever scored better today"
+                .. " all match this screen"
+                .. where
+                .. "; they are two ways ONE rectangle can look, so a screen "
+                .. "matching several of them tells nothing apart and the fold's "
+                .. "answer is whichever scored better today"
         )
     end
 
@@ -490,8 +577,9 @@ local function judgeAppearanceSet(
             owners[2],
             "the project file claims appearances "
                 .. table.concat(owners, ", ")
-                .. " both match this screen, and one rectangle wears one "
-                .. "appearance at a time"
+                .. " both match this screen"
+                .. where
+                .. ", and one rectangle wears one appearance at a time"
         )
     end
 
@@ -517,8 +605,9 @@ local function judgeAppearanceSet(
                 .. winnerName
                 .. "' on a screen the project file says '"
                 .. owners[1]
-                .. "' owns, so the click lands on that appearance's rectangle "
-                .. "instead"
+                .. "' owns"
+                .. where
+                .. ", so the click lands on that appearance's rectangle instead"
         )
     end
 
@@ -598,10 +687,13 @@ local function walkTextElement(
     claims: any,
     screen: any,
     element: any,
+    rect: any,
     verdict: Verdict
 )
+    local where        = whereIn(element, rect)
+    local claimRect    = claimedAt(element, rect)
     local expectedText =
-        oracle.Claims.text_for(claims, screen.name, element.name)
+        oracle.Claims.text_for(claims, screen.name, element.name, claimRect)
     if expectedText == nil then
         -- Nothing to search for and nothing claimed to read. The row is emitted
         -- anyway, because a reader comparing two runs needs the inventory to be
@@ -613,7 +705,8 @@ local function walkTextElement(
             nil,
             k_subjectElement,
             nil,
-            oracle.state_unclaimed
+            oracle.state_unclaimed,
+            rect
         )
         return
     end
@@ -622,16 +715,18 @@ local function walkTextElement(
         claims,
         screen.name,
         element.name,
-        nil
+        nil,
+        claimRect
     )
-    local measured = reading.measure(ctx, ticket, element, expectedText)
+    local measured = reading.measure(ctx, ticket, element, rect, expectedText)
     local cell     = pushTextCell(
         verdict.cells,
         screen,
         element,
         expectedText,
         measured,
-        expected
+        expected,
+        rect
     )
 
     if cell.verdict == k_verdictHole then
@@ -644,7 +739,9 @@ local function walkTextElement(
             nil,
             'the project file says this region reads "'
                 .. expectedText
-                .. '" here and it read '
+                .. '" here'
+                .. where
+                .. " and it read "
                 .. readingPhrase(measured)
         )
     elseif cell.verdict == k_verdictMisfire then
@@ -661,11 +758,161 @@ local function walkTextElement(
             nil,
             'the project file says this region does not read "'
                 .. expectedText
-                .. '" here and it read exactly that, at '
+                .. '" here'
+                .. where
+                .. " and it read exactly that, at "
                 .. tostring(measured.confidence)
                 .. " basis points of confidence"
         )
     end
+end
+
+-- Measures one element that has templates, in one region: the folded answer, a
+-- row per appearance when it declares more than one, and the three rules that
+-- hold whatever the file claims.
+--
+-- It is a function of a RECTANGLE rather than of an element, which is what lets
+-- one screen carry several rows for a shape drawn once and placed many times: the
+-- caller walks the rectangles and this measures each. For every element that
+-- draws its own the caller walks exactly one, so this is the whole of the old
+-- body with a parameter in front of it.
+local function walkPixelElement(
+    ctx: any,
+    ticket: any,
+    claims: any,
+    screen: any,
+    element: any,
+    rect: any,
+    verdict: Verdict
+)
+    local where     = whereIn(element, rect)
+    local claimRect = claimedAt(element, rect)
+    local measured  = measureElement(ctx, ticket, element, rect)
+    local folded    = foldMeasured(measured)
+
+    local elementExpected = oracle.Claims.state_for(
+        claims,
+        screen.name,
+        element.name,
+        nil,
+        claimRect
+    )
+    local elementCell = pushCell(
+        verdict.cells,
+        screen,
+        element,
+        if folded ~= nil then folded.appearance.name else nil,
+        k_subjectElement,
+        folded or { match = nil, hit = false },
+        elementExpected,
+        rect
+    )
+    if elementCell.verdict == k_verdictHole then
+        pushFinding(
+            verdict.findings,
+            k_verdictHole,
+            screen.name,
+            element.name,
+            nil,
+            nil,
+            "the project file says this element matches here"
+                .. where
+                .. " and nothing did"
+        )
+    elseif elementCell.verdict == k_verdictMisfire then
+        pushFinding(
+            verdict.findings,
+            k_verdictMisfire,
+            screen.name,
+            element.name,
+            elementCell.appearance,
+            nil,
+            "the project file says this element is absent here"
+                .. where
+                .. " and it matched"
+        )
+    end
+
+    if #measured > 1 then
+        for index = 1, #measured do
+            local entry = measured[index]
+            local name  = entry.appearance.name
+            local state = oracle.Claims.state_for(
+                claims,
+                screen.name,
+                element.name,
+                name,
+                claimRect
+            )
+            local cell = pushCell(
+                verdict.cells,
+                screen,
+                element,
+                name,
+                k_subjectAppearance,
+                entry,
+                state,
+                rect
+            )
+            if cell.verdict == k_verdictHole then
+                pushFinding(
+                    verdict.findings,
+                    k_verdictHole,
+                    screen.name,
+                    element.name,
+                    name,
+                    nil,
+                    "the project file says this appearance matches here"
+                        .. where
+                        .. " and it did not"
+                )
+            elseif cell.verdict == k_verdictMisfire then
+                pushFinding(
+                    verdict.findings,
+                    k_verdictMisfire,
+                    screen.name,
+                    element.name,
+                    name,
+                    nil,
+                    "the project file says this appearance is absent here"
+                        .. where
+                        .. " and it matched"
+                )
+            end
+        end
+    end
+
+    judgeAppearanceSet(
+        screen,
+        element,
+        rect,
+        measured,
+        folded,
+        ownersOf(claims, screen, element, rect),
+        verdict.separations,
+        verdict.findings
+    )
+end
+
+-- The regions one element is measured in on one screen.
+--
+-- AN ELEMENT THAT DRAWS ITS OWN RECTANGLE IS MEASURED THERE, ALWAYS, and that is
+-- the property every unclaimed cell of this matrix rests on: the walk searches it
+-- on every screen whether or not anybody thought to claim it, which is where a
+-- mark answering somewhere it does not belong is caught.
+--
+-- AN ELEMENT THAT DRAWS NONE IS MEASURED WHERE ITS CLAIMS SAY, AND NOWHERE ELSE.
+-- There is no such thing as searching for it "in general" -- a minimap cell's
+-- position is a fact about the frame, so a rectangle from one screen means
+-- nothing on the next -- and the answer to that is not for this walk to invent.
+-- It is the same asymmetry the text half already stands on: the pressure comes
+-- from the author writing the rectangle it must match AND the ones it must miss,
+-- which is exactly the measurement this matrix is for.
+local function searchRects(claims: any, screen: any, element: any): { any }
+    if element.rect ~= nil then
+        return { element.rect }
+    end
+    return oracle.Claims.rects_for(claims, screen.name, element.name)
 end
 
 -- Measures one screen: what it says it IS, then every element, then every
@@ -702,105 +949,46 @@ local function walkScreen(
 
     local claims = built.claims
     for _, element in built.elements do
-        if #element.appearances == 0 then
-            walkTextElement(ctx, ticket, claims, screen, element, verdict)
-        else
-            local measured = measureElement(ctx, ticket, element)
-            local folded   = foldMeasured(measured)
-
-            local elementExpected = oracle.Claims.state_for(
-                claims,
-                screen.name,
-                element.name,
-                nil
-            )
-            local elementCell = pushCell(
+        local rects = searchRects(claims, screen, element)
+        if #rects == 0 then
+            -- A shape drawn once and placed by whoever uses it, on a screen no
+            -- claim places it. There is no region to search and no reading to
+            -- take, so the row says nothing was measured rather than reporting a
+            -- miss nobody looked for.
+            pushCell(
                 verdict.cells,
                 screen,
                 element,
-                if folded ~= nil then folded.appearance.name else nil,
+                nil,
                 k_subjectElement,
-                folded or { match = nil, hit = false },
-                elementExpected
+                nil,
+                oracle.state_unclaimed,
+                nil
             )
-            if elementCell.verdict == k_verdictHole then
-                pushFinding(
-                    verdict.findings,
-                    k_verdictHole,
-                    screen.name,
-                    element.name,
-                    nil,
-                    nil,
-                    "the project file says this element matches here and "
-                        .. "nothing did"
-                )
-            elseif elementCell.verdict == k_verdictMisfire then
-                pushFinding(
-                    verdict.findings,
-                    k_verdictMisfire,
-                    screen.name,
-                    element.name,
-                    elementCell.appearance,
-                    nil,
-                    "the project file says this element is absent here and it "
-                        .. "matched"
-                )
-            end
-
-            if #measured > 1 then
-                for index = 1, #measured do
-                    local entry = measured[index]
-                    local name  = entry.appearance.name
-                    local state = oracle.Claims.state_for(
+        else
+            for _, rect in rects do
+                if #element.appearances == 0 then
+                    walkTextElement(
+                        ctx,
+                        ticket,
                         claims,
-                        screen.name,
-                        element.name,
-                        name
-                    )
-                    local cell = pushCell(
-                        verdict.cells,
                         screen,
                         element,
-                        name,
-                        k_subjectAppearance,
-                        entry,
-                        state
+                        rect,
+                        verdict
                     )
-                    if cell.verdict == k_verdictHole then
-                        pushFinding(
-                            verdict.findings,
-                            k_verdictHole,
-                            screen.name,
-                            element.name,
-                            name,
-                            nil,
-                            "the project file says this appearance matches here "
-                                .. "and it did not"
-                        )
-                    elseif cell.verdict == k_verdictMisfire then
-                        pushFinding(
-                            verdict.findings,
-                            k_verdictMisfire,
-                            screen.name,
-                            element.name,
-                            name,
-                            nil,
-                            "the project file says this appearance is absent "
-                                .. "here and it matched"
-                        )
-                    end
+                else
+                    walkPixelElement(
+                        ctx,
+                        ticket,
+                        claims,
+                        screen,
+                        element,
+                        rect,
+                        verdict
+                    )
                 end
             end
-
-            judgeAppearanceSet(
-                screen,
-                element,
-                measured,
-                folded,
-                ownersOf(claims, screen, element),
-                verdict.separations,
-                verdict.findings
-            )
         end
     end
 end
@@ -922,7 +1110,15 @@ function regress.check(ctx: any, built: any): Verdict
                 confusion.element,
                 nil,
                 confusion.rival,
-                'the project file says this region reads "'
+                "the project file says this region"
+                    .. (
+                        if confusion.rect ~= nil
+                            then " at ["
+                                .. oracle.rect_key(confusion.rect)
+                                .. "]"
+                            else ""
+                    )
+                    .. ' reads "'
                     .. confusion.text
                     .. "\" on screens '"
                     .. confusion.screen
@@ -1076,6 +1272,14 @@ function regress.render(verdict: Verdict): string
             { "y", cell.y },
             { "width", cell.width },
             { "height", cell.height },
+            -- Last, because the searched rectangle is what a reader looks up
+            -- when two rows share a name rather than what they scan a report
+            -- for. Every row above it answers "what happened here"; these four
+            -- answer "which here".
+            { "search_x", cell.search_x },
+            { "search_y", cell.search_y },
+            { "search_width", cell.search_width },
+            { "search_height", cell.search_height },
         }))
     end
 
