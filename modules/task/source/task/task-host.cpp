@@ -423,6 +423,7 @@ namespace uf::task
             auto vm = script::Engine::create(
                 script::EngineConfig{
                     .cancellation      = cancellation(),
+                    .maxRuntime        = config.maxScriptRuntime,
                     .frameworkModules  = frameworkScriptModules(),
                     .installHostTables = scriptHostTableInstaller(),
                     // Run, always. Every VM this function boots is a business

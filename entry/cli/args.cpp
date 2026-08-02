@@ -26,10 +26,11 @@ namespace uf::cli
         [[nodiscard]]
         auto isRunValueFlag(std::string_view flag) noexcept -> bool
         {
-            auto constexpr flags = std::array<std::string_view, 8>{
+            auto constexpr flags = std::array<std::string_view, 9>{
                 "--project",
                 "--selector",
                 "--task",
+                "--max-runtime",
                 "--budget",
                 "--recognition-timeout",
                 "--max-frame-age",
@@ -154,6 +155,7 @@ namespace uf::cli
         auto budget             = k_defaultPixelComparisonBudget;
         auto recognitionTimeout = k_defaultRunRecognitionTimeout;
         auto maxFrameAge        = k_defaultRunMaxFrameAge;
+        auto maxRuntime         = MonotonicInstant::Duration{};
         auto trace              = std::filesystem::path{k_defaultTracePath};
         auto ocrModels          = std::optional<std::filesystem::path>{};
 
@@ -206,6 +208,15 @@ namespace uf::cli
                 );
                 maxFrameAge = parsed;
             }
+            else if (flag == "--max-runtime")
+            {
+                UF_TRY_VALUE(count, parseUnsigned(value, flag));
+                UF_TRY_VALUE(
+                    parsed,
+                    parseDurationCount<std::chrono::milliseconds>(count, flag)
+                );
+                maxRuntime = parsed;
+            }
             else if (flag == "--trace")
             {
                 trace = std::filesystem::path{value};
@@ -228,6 +239,7 @@ namespace uf::cli
             .budget             = budget,
             .recognitionTimeout = recognitionTimeout,
             .maxFrameAge        = maxFrameAge,
+            .maxRuntime         = maxRuntime,
             .trace              = std::move(trace),
             .ocrModels          = std::move(ocrModels),
         };
@@ -439,6 +451,8 @@ namespace uf::cli
             "  --budget N                   Pixel comparison ceiling per recognition\n"
             "  --recognition-timeout MS     Per-recognition deadline; default: 2000\n"
             "  --max-frame-age MS           Action frame age ceiling; default: 750\n"
+            "  --max-runtime MS             Ceiling on the WHOLE run: a task is one\n"
+            "                                unit of script; default: 30 minutes\n"
             "  --trace PATH                 Trace JSONL path; default: "
             "umbra-flow-trace.jsonl\n"
             "  --ocr-models DIR             \"models\" directory enabling the text\n"

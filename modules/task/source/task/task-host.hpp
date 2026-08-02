@@ -17,6 +17,7 @@
 
 #include <trace/event.hpp>
 
+#include <chrono>
 #include <cstddef>
 #include <filesystem>
 #include <memory>
@@ -28,6 +29,11 @@
 
 namespace uf::task
 {
+    // The script layer's own ceiling on one unit of script, restated here so a
+    // run config carries it explicitly rather than inheriting it silently.
+    inline constexpr auto k_defaultMaxScriptRuntime =
+        std::chrono::steady_clock::duration{std::chrono::minutes{30}};
+
     // Defined in task/operator-session.hpp; forward-declared so this header does
     // not depend on one that depends on it.
     class OperatorSession;
@@ -90,6 +96,13 @@ namespace uf::task
         uint64                     maximumPixelComparisons{};
         MonotonicInstant::Duration recognitionTimeout{};
         MonotonicInstant::Duration maxActionFrameAge{k_defaultMaxActionFrameAge};
+
+        // Wall-clock ceiling on the task script. A run is ONE unit of script --
+        // the whole task is one runNumber call -- so this bounds the entire run
+        // rather than a step of it. Thirty minutes is the script layer's own
+        // default and a real daily exceeds it: a 142-step run was cut off
+        // mid-battle. `umbra-flow run --max-runtime` is how a caller raises it.
+        std::chrono::steady_clock::duration maxScriptRuntime{k_defaultMaxScriptRuntime};
 
         // The per-cycle text-read budget, a separate dimension from
         // maximumPixelComparisons on purpose; see k_defaultMaximumReadsPerCycle

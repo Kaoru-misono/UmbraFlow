@@ -70,6 +70,10 @@ namespace uf::cli
         MonotonicInstant::Duration recognitionTimeout{k_defaultRunRecognitionTimeout};
         MonotonicInstant::Duration maxFrameAge{k_defaultRunMaxFrameAge};
 
+        // The whole task is one unit of script, so this bounds the RUN. Zero
+        // leaves the script layer's own default in place.
+        MonotonicInstant::Duration maxRuntime{};
+
         std::filesystem::path trace{k_defaultTracePath};
 
         // The "models" directory cycle_read's OCR engine loads from. Absent by
