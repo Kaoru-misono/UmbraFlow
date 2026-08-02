@@ -217,9 +217,13 @@ local function raiseUnread(verb: string, element: any, rect: any)
     )
 end
 
+-- Level 3, not 2: this is a helper, so the frames are caller -> public verb ->
+-- here, and 2 blames the public verb's own line inside this file rather than the
+-- project script that passed the wrong thing. The other helpers here already
+-- use 3; this one was the exception.
 local function requireCtx(ctx: any, verb: string)
     if type(ctx) ~= "table" then
-        error(verb .. " needs the ctx it should reach the host through", 2)
+        error(verb .. " needs the ctx it should reach the host through", 3)
     end
 end
 

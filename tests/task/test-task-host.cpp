@@ -798,6 +798,38 @@ exercised = ["interact"]
         CHECK(report.outcome() == TaskRunOutcome::Completed);
     }
 
+    TEST_CASE("a framework refusal points at the script that got it wrong")
+    {
+        auto const temp = TemporaryDir{"error-level"};
+        publishProject(temp.path(), "daily", k_taskSource);
+
+        auto host             = TaskHost{};
+        auto const generation = host.loadProject(temp.path());
+        REQUIRE(generation.has_value());
+
+        auto session = host.startExplorationSession(
+            *generation,
+            runConfig(temp.path() / "explore.jsonl")
+        );
+        REQUIRE(session.has_value());
+
+        // Luau stamps the position the raise BLAMES, so the message says whose
+        // mistake it was. A helper that raises at level 2 blames the public verb
+        // it sits under -- a line inside the framework -- and the author reads a
+        // traceback into code they cannot edit.
+        auto const refused = (*session)->evaluate(
+            "observe.resolve_page(nil, nil, nil)",
+            "callersfault"
+        );
+        REQUIRE_FALSE(refused.has_value());
+
+        auto const message = std::string{refused.error().message()};
+        CAPTURE(message);
+        CHECK(message.contains("callersfault"));
+        CHECK_FALSE(message.contains("observe.luau"));
+        CHECK_FALSE(message.contains("[string \"observe\"]"));
+    }
+
     TEST_CASE("a chunk broken with no host call still ends the exploration session")
     {
         auto const temp = TemporaryDir{"exploration-latch"};
