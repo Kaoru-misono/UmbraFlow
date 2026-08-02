@@ -205,6 +205,15 @@ namespace uf::task
         // explorationProjectGlobals() are named in the product. Every other VM in
         // this binary is a Run VM, so the wider surface exists exactly where the
         // agent front-end is and nowhere else.
+        //
+        // NO RUNTIME CEILING OF ITS OWN, on purpose. script::EngineConfig's
+        // maxRuntime bounds one chunk rather than the VM's age, so an agent
+        // session lives as long as the agent keeps working and a chunk that will
+        // not finish is still stopped -- under exactly the ceiling a task run
+        // answers to. A session-shaped number here would be the thing that once
+        // killed a live annotation session mid-flow; what ends an ABANDONED one
+        // is `explore --idle-timeout`, which measures the gap between chunks and
+        // is the only clock that can tell an idle session from a busy one.
         auto vm = script::Engine::create(
             script::EngineConfig{
                 .cancellation      = spec.cancellation,

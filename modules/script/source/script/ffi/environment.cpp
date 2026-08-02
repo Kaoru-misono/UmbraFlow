@@ -250,7 +250,7 @@ namespace uf::script
             }
 
             int const runStatus = lua_resume(thread, nullptr, argumentCount);
-            if (runStatus == LUA_BREAK || (control != nullptr && control->broken))
+            if (runStatus == LUA_BREAK || (control != nullptr && control->broken()))
             {
                 // The interrupt hard-cancelled this thread (stop token, instruction
                 // budget, or deadline). The thread is abandoned -- the caller's
@@ -266,10 +266,19 @@ namespace uf::script
                 // removing it turns six of the seven non-yieldable forms in
                 // tests/script/test-adversarial-substrate.cpp, plus veto #6's own
                 // two cases, from Cancelled into InvalidResource.
-                return fail(
-                    AutomationErrorKind::Cancelled,
+                //
+                // The trigger is NAMED. All three land here identically, and a
+                // sentence that says only "hard-cancelled" leaves the reader to
+                // guess between a stop token, a spent budget and an expired
+                // clock -- which cost three wrong diagnoses of one session.
+                auto reason = std::string{
                     "task hard-cancelled (lua_break); the task thread is abandoned"
-                );
+                };
+                if (control != nullptr)
+                {
+                    reason += " [" + describeBreak(*control) + "]";
+                }
+                return fail(AutomationErrorKind::Cancelled, std::move(reason));
             }
             if (runStatus == LUA_YIELD)
             {

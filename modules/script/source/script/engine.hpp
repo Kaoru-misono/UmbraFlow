@@ -259,12 +259,35 @@ namespace uf::script
         // against the first real task.
         uint64 memoryQuotaBytes{uint64{64} * 1024 * 1024};
 
-        // Instruction budget counted by the interrupt callback (later wave).
-        // Conservative placeholder pending calibration.
+        // Instruction budget counted by the interrupt callback, cumulatively
+        // over the whole VM generation rather than per unit of script. Zero
+        // disables it. Conservative placeholder pending calibration.
+        //
+        // Cumulative is deliberate and is NOT the trap maxRuntime was: this
+        // counts interrupts, so it advances only while Luau is executing and
+        // charges an idle VM nothing. A session long enough to spend it has
+        // genuinely done that much work -- and a break now says which budget
+        // stopped it and what it had counted.
         uint64 interruptBudgetTicks{uint64{100'000'000}};
 
-        // Wall-clock ceiling measured on steady_clock by the interrupt callback
-        // (later wave). Placeholder default.
+        // Wall-clock ceiling on ONE unit of script -- one runNumber or runValue
+        // call -- measured on steady_clock by the interrupt callback. The
+        // framework boot runs under its own window of the same length.
+        //
+        // PER UNIT OF SCRIPT, NOT PER VM, and the difference is not academic.
+        // The deadline used to be anchored once at construction, which is the
+        // same thing only while a generation runs exactly one script -- true of
+        // every task run, false of an exploration session, where one VM answers
+        // an agent chunk by chunk with the agent's own thinking time in between.
+        // A session was therefore charged for wall clock during which no Lua ran
+        // at all, and died at thirty minutes BETWEEN two chunks; every chunk
+        // after that was refused by the terminal latch. A larger number would
+        // only have moved the hour at which it happened, because the quantity
+        // being measured was the wrong one.
+        //
+        // What is unchanged is the guarantee a task run gets: a chunk that will
+        // not finish is still stopped by this clock, whether it is the first the
+        // VM runs or the fortieth.
         std::chrono::steady_clock::duration maxRuntime{std::chrono::minutes{30}};
 
         // The trusted Luau framework, loaded in order under the framework

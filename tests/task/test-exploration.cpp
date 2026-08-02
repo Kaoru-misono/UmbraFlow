@@ -33,6 +33,7 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -1008,6 +1009,51 @@ namespace uf::task
             // and their sum is well past the ceiling they ran under.
             CHECK(*result > 4'000'000.0);
             CHECK(*result > static_cast<double>(config.memoryQuotaBytes));
+        }
+
+        TEST_CASE("An exploration VM outlives a ceiling that would have ended it")
+        {
+            // The session shape the runtime ceiling was killing, on the VM the
+            // agent front-end actually boots: two chunks that each do real work,
+            // separated by an idle gap longer than the whole ceiling. The gap is
+            // the agent reading one answer and writing the next chunk, and no
+            // Luau runs during it, so nothing may be charged for it.
+            //
+            // ExplorationSession::create sets no ceiling of its own and does not
+            // need one -- explorationVmConfig is the same assembly it performs,
+            // and shortening the ceiling here is only how a case that would
+            // otherwise take thirty minutes is asked in half a second.
+            auto harness = buildNoiseHarness();
+            REQUIRE(harness.session.has_value());
+            TaskContext context{
+                *std::move(harness.session),
+                *harness.recorder,
+                TaskContextConfig{},
+            };
+
+            auto config                 = explorationVmConfig(context);
+            config.interruptBudgetTicks = 0;                       // isolate the clock
+            config.maxRuntime           = std::chrono::milliseconds{150};
+
+            auto engine = script::Engine::create(config);
+            REQUIRE(engine.has_value());
+
+            constexpr std::string_view source = R"lua(
+                local ticket = ctx:cycle_open()
+                local blob = explore.crop(ticket, 0, 0, 32, 32)
+                ctx:cycle_close(ticket)
+                return #blob
+            )lua";
+
+            auto const first = engine->runValue(source, "chunk-1");
+            REQUIRE(first.has_value());
+            CHECK(first->number().value_or(0.0) > 0.0);
+
+            std::this_thread::sleep_for(std::chrono::milliseconds{400});
+
+            auto const second = engine->runValue(source, "chunk-2");
+            REQUIRE(second.has_value());
+            CHECK(second->number().value_or(0.0) > 0.0);
         }
 
         TEST_CASE("An annotation event is refused on a stream no agent drove")

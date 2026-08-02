@@ -1,6 +1,8 @@
 #include "cancellation.hpp"
 
 #include <chrono>
+#include <format>
+#include <string>
 
 // Luau's C headers are third-party and do not build clean under the project's
 // /W4 /WX profile; a manifest-driven module has no CMakeLists to mark them
@@ -29,6 +31,38 @@ namespace uf::script
 {
     namespace
     {
+        // Which trigger a break is reported under when more than one is true at
+        // the same safepoint: the host's own stop request outranks a spent
+        // budget, and a spent budget outranks the clock. The break is identical
+        // whichever fired -- this decides only the sentence the host prints.
+        [[nodiscard]]
+        auto reportedCause(
+            bool cancelled,
+            bool overBudget,
+            bool overTime
+        ) noexcept -> InterruptState::BreakCause
+        {
+            if (cancelled)
+            {
+                return InterruptState::BreakCause::StopToken;
+            }
+            if (overBudget)
+            {
+                return InterruptState::BreakCause::InstructionBudget;
+            }
+            if (overTime)
+            {
+                return InterruptState::BreakCause::Deadline;
+            }
+            return InterruptState::BreakCause::None;
+        }
+
+        [[nodiscard]]
+        auto elapsedSeconds(std::chrono::steady_clock::duration span) -> double
+        {
+            return std::chrono::duration<double>{span}.count();
+        }
+
         // VM safepoint callback. Luau shares one lua_Callbacks across every
         // coroutine of the VM, so this fires on whichever task thread is running
         // under lua_resume, and lua_callbacks(state)->userdata is the shared
@@ -65,16 +99,24 @@ namespace uf::script
             bool const cancelled = control->cancellation.stop_requested();
             bool const overBudget =
                 control->budgetTicks != 0 && control->ticks >= control->budgetTicks;
-            bool const overTime =
-                std::chrono::steady_clock::now() >= control->deadline;
+            auto const now      = std::chrono::steady_clock::now();
+            bool const overTime = now >= control->deadline;
 
-            if (cancelled || overBudget || overTime)
+            auto const cause = reportedCause(cancelled, overBudget, overTime);
+            if (cause == InterruptState::BreakCause::None)
             {
-                control->broken = true;
-                // Yield-and-abandon: unwinds to lua_resume with LUA_BREAK; the
-                // host drops this thread and never resumes it.
-                lua_break(state);
+                return;
             }
+
+            // Stamped before the break, because the break does not return here:
+            // lua_break unwinds to lua_resume and the host reads this state to
+            // say what happened.
+            control->cause    = cause;
+            control->brokenAt = now;
+
+            // Yield-and-abandon: unwinds to lua_resume with LUA_BREAK; the host
+            // drops this thread and never resumes it.
+            lua_break(state);
         }
     }
 
@@ -83,5 +125,42 @@ namespace uf::script
         lua_Callbacks* callbacks = lua_callbacks(state);
         callbacks->userdata      = control;
         callbacks->interrupt     = &onInterrupt;
+    }
+
+    auto describeBreak(InterruptState const& control) -> std::string
+    {
+        auto const ranFor = elapsedSeconds(control.brokenAt - control.runStartedAt);
+        auto const vmAge  = elapsedSeconds(control.brokenAt - control.vmStartedAt);
+
+        switch (control.cause)
+        {
+        case InterruptState::BreakCause::StopToken:
+            return std::format(
+                "the host requested cancellation {:.1f}s into this unit of "
+                "script, {:.1f}s into the VM's life",
+                ranFor,
+                vmAge
+            );
+        case InterruptState::BreakCause::InstructionBudget:
+            return std::format(
+                "the instruction budget is spent: {} of {} interrupt ticks, "
+                "counted across the VM's whole {:.1f}s life rather than this "
+                "unit of script alone",
+                control.ticks,
+                control.budgetTicks,
+                vmAge
+            );
+        case InterruptState::BreakCause::Deadline:
+            return std::format(
+                "the wall-clock ceiling expired: this unit of script ran "
+                "{:.1f}s of its {:.1f}s ceiling, {:.1f}s into the VM's life",
+                ranFor,
+                elapsedSeconds(control.deadline - control.runStartedAt),
+                vmAge
+            );
+        case InterruptState::BreakCause::None:
+            break;
+        }
+        return "no interrupt trigger was recorded";
     }
 }

@@ -433,6 +433,95 @@ namespace uf::script
             CHECK(automationErrorKind(result.error()) == AutomationErrorKind::Cancelled);
         }
 
+        TEST_CASE("The wall clock measures the running script, not the VM's age")
+        {
+            // The defect this fixes, at the smallest scale that reproduces it: a
+            // VM answers one chunk, sits idle far longer than its ceiling while
+            // whoever is driving it decides what to send next, and answers
+            // another. Anchoring the deadline at construction charged the VM for
+            // that idle gap and killed the second chunk -- which is how an
+            // `explore` session died at thirty minutes, BETWEEN two chunks.
+            auto config                 = EngineConfig{};
+            config.interruptBudgetTicks = 0;                       // isolate the clock
+            config.maxRuntime           = std::chrono::milliseconds{120};
+
+            auto engine = Engine::create(config);
+            REQUIRE(engine.has_value());
+
+            auto const first = engine->runNumber("return 1", "before-the-gap");
+            REQUIRE(first.has_value());
+
+            std::this_thread::sleep_for(std::chrono::milliseconds{300});
+
+            auto const second = engine->runNumber("return 2", "after-the-gap");
+            REQUIRE(second.has_value());
+            CHECK(*second == doctest::Approx(2.0));
+
+            // The other direction, on the SAME engine and after the same gap:
+            // the clock is re-anchored, not disarmed. A bounded loop long enough
+            // to take seconds unguarded is stopped inside its own ceiling, so a
+            // runaway chunk is still stopped whether it is the first the VM runs
+            // or the third.
+            auto const start   = std::chrono::steady_clock::now();
+            auto const runaway = engine->runNumber(
+                "local n = 0 for i = 1, 100000000 do n = n + 1 end return n",
+                "runaway-after-the-gap"
+            );
+            auto const elapsed = std::chrono::steady_clock::now() - start;
+
+            REQUIRE_FALSE(runaway.has_value());
+            CHECK(automationErrorKind(runaway.error()) == AutomationErrorKind::Cancelled);
+            CHECK(elapsed < std::chrono::milliseconds{2000});
+        }
+
+        TEST_CASE("A hard cancel names the trigger that caused it")
+        {
+            // What the failure SAYS, which is the second half of the defect: all
+            // three triggers land on one lua_break, and a sentence naming none of
+            // them is what produced three wrong diagnoses of a session dying on
+            // the clock.
+            SUBCASE("an expired ceiling names the clock, at both boundaries")
+            {
+                auto config                 = EngineConfig{};
+                config.interruptBudgetTicks = 0;
+                config.maxRuntime           = std::chrono::milliseconds{80};
+
+                auto engine = Engine::create(config);
+                REQUIRE(engine.has_value());
+
+                auto const stopped = engine->runNumber(
+                    "local n = 0 for i = 1, 100000000 do n = n + 1 end return n",
+                    "on-the-clock"
+                );
+                REQUIRE_FALSE(stopped.has_value());
+                CHECK(stopped.error().message().contains("wall-clock ceiling"));
+
+                // And on every call the spent generation refuses afterwards,
+                // which is the only message an agent still gets once its session
+                // is over -- it said nothing at all about the clock before.
+                auto const after = engine->runNumber("return 1", "after-the-clock");
+                REQUIRE_FALSE(after.has_value());
+                CHECK(after.error().message().contains("wall-clock ceiling"));
+            }
+            SUBCASE("a spent instruction budget names the budget instead")
+            {
+                // The contrast that makes the case above worth anything: the
+                // sentence is read off what actually fired, so a constant string
+                // mentioning the clock would fail here.
+                auto config                 = EngineConfig{};
+                config.interruptBudgetTicks = 1000;
+                config.maxRuntime           = std::chrono::hours{1};
+
+                auto engine = Engine::create(config);
+                REQUIRE(engine.has_value());
+
+                auto const stopped = engine->runNumber("while true do end", "on-budget");
+                REQUIRE_FALSE(stopped.has_value());
+                CHECK(stopped.error().message().contains("instruction budget"));
+                CHECK_FALSE(stopped.error().message().contains("wall-clock ceiling"));
+            }
+        }
+
         TEST_CASE("A terminal engine refuses further runs with Cancelled")
         {
             auto config                 = EngineConfig{};

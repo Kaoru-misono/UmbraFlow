@@ -57,6 +57,20 @@ namespace uf::script
                 .value_or(std::numeric_limits<std::size_t>::max());
         }
 
+        // The refusal every call gets once a generation has been spent, naming
+        // what spent it. Shared by runNumber and runValue, because an agent
+        // reading one of them must not learn less than an agent reading the
+        // other.
+        [[nodiscard]]
+        auto terminalRefusal(InterruptState const& control) -> std::unexpected<Error>
+        {
+            return fail(
+                AutomationErrorKind::Cancelled,
+                "engine is terminal: a prior unit of script was hard-cancelled ["
+                    + describeBreak(control) + "]"
+            );
+        }
+
         struct LuaStateDeleter final
         {
             auto operator()(lua_State* p_state) const noexcept -> void
@@ -89,9 +103,14 @@ namespace uf::script
         std::unique_ptr<lua_State, LuaStateDeleter> m_state;
 
         // Live cancellation/budget state the interrupt callback reads. Derived
-        // from the config at construction (the deadline is anchored to now())
-        // and address-stable because Impl is heap-pinned behind unique_ptr.
+        // from the config at construction (the deadline is anchored to now(), so
+        // the framework boot runs under it too) and address-stable because Impl
+        // is heap-pinned behind unique_ptr.
         InterruptState m_control;
+
+        // The configured ceiling on ONE unit of script, kept so every run can
+        // re-anchor the deadline against it.
+        std::chrono::steady_clock::duration m_maxRuntime;
 
         // The host's decoder for a raised value nobody caught. Copied from the
         // config rather than borrowed: create() takes the config by const
@@ -112,6 +131,7 @@ namespace uf::script
                   .budgetTicks  = config.interruptBudgetTicks,
                   .deadline     = std::chrono::steady_clock::now() + config.maxRuntime,
               }
+            , m_maxRuntime{config.maxRuntime}
             , m_classifyRaisedError{config.classifyRaisedError}
         {
         }
@@ -122,6 +142,24 @@ namespace uf::script
         auto operator=(Impl&&) -> Impl& = delete;
 
         ~Impl() = default;
+
+        // Anchor the wall clock at the unit of script about to run.
+        //
+        // The ceiling bounds how long ONE chunk may run, not how long this VM
+        // may exist, and anchoring it once at construction was the same thing
+        // only while a generation ran exactly one script. The exploration
+        // front-end runs many chunks in one VM with an agent's own thinking time
+        // in between, so the construction anchor charged the VM for wall clock
+        // during which no Lua ran at all: a session died at thirty minutes,
+        // between two chunks, and every chunk after it was refused.
+        //
+        // The framework boot keeps the construction anchor above, so nothing is
+        // left unguarded between create() and the first run.
+        auto beginUnitOfScript() noexcept -> void
+        {
+            m_control.runStartedAt = std::chrono::steady_clock::now();
+            m_control.deadline     = m_control.runStartedAt + m_maxRuntime;
+        }
     };
 
     auto HeapUsage::headroomBytes() const noexcept -> uint64
@@ -260,11 +298,10 @@ namespace uf::script
         // been broken, this Engine is terminal and never resumes another thread.
         if (m_impl->m_terminal)
         {
-            return fail(
-                AutomationErrorKind::Cancelled,
-                "engine is terminal: a prior task was hard-cancelled"
-            );
+            return terminalRefusal(m_impl->m_control);
         }
+
+        m_impl->beginUnitOfScript();
 
         auto result = runNumberInProjectEnvironment(
             m_impl->m_state.get(),
@@ -276,7 +313,7 @@ namespace uf::script
 
         // runNumberOnThread already reported the cancel; this only spends the
         // generation, so every later call refuses without touching the VM.
-        if (m_impl->m_control.broken)
+        if (m_impl->m_control.broken())
         {
             m_impl->m_terminal = true;
         }
@@ -291,11 +328,10 @@ namespace uf::script
     {
         if (m_impl->m_terminal)
         {
-            return fail(
-                AutomationErrorKind::Cancelled,
-                "engine is terminal: a prior task was hard-cancelled"
-            );
+            return terminalRefusal(m_impl->m_control);
         }
+
+        m_impl->beginUnitOfScript();
 
         auto result = runValueInProjectEnvironment(
             m_impl->m_state.get(),
@@ -305,7 +341,7 @@ namespace uf::script
             &m_impl->m_classifyRaisedError
         );
 
-        if (m_impl->m_control.broken)
+        if (m_impl->m_control.broken())
         {
             m_impl->m_terminal = true;
         }
