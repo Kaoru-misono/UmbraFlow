@@ -36,15 +36,21 @@ from pathlib import Path
 # stem must be a usable identifier-like key rather than an arbitrary filename.
 MODULE_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_-]*$")
 
-# MSVC caps a string literal -- including the result of adjacent-literal
-# concatenation -- at 65535 bytes (C2026).  Refuse well short of that so the
-# failure is a clear generator error naming the offending file rather than a
-# truncated bundle or an opaque compiler diagnostic.
-MAXIMUM_SOURCE_BYTES = 60000
-
-# MSVC additionally caps a single string literal at 16380 single-byte
-# characters, so each emitted literal stays far below that and the pieces are
-# concatenated by the compiler.
+# MSVC caps a SINGLE string literal at 65535 bytes (C2026).  Adjacent-literal
+# concatenation does NOT count toward that cap, which is what makes an
+# arbitrarily large .luau file embeddable at all.  Both halves are measured
+# rather than assumed, on the MSVC this repository builds with (14.44):
+#
+#   * one literal of 70000 bytes  -> error C2026, string too big
+#   * 500000 bytes emitted as 250 adjacent 2000-byte literals -> compiles clean
+#     at /W4, with static_assert on the concatenated size passing
+#
+# So this constant is the whole of the guard: it holds every emitted literal 32x
+# under the real limit, and there is no per-file limit left to enforce.  A cap on
+# the SOURCE size used to sit beside it, refusing any .luau over 60000 bytes and
+# telling the author to split the module; it was justified by the claim that
+# concatenation counted toward 65535, which the second measurement above
+# falsifies, so it was removed rather than renumbered.
 MAXIMUM_CHUNK_BYTES = 2000
 
 # Separator between a module name and its bytes in the bundle-hash preimage.
@@ -86,12 +92,6 @@ def validate_source(relative_path: str, data: bytes) -> None:
         raise EmbedError(
             f"{relative_path}: contains a CR byte; the repository line-ending "
             "policy is LF only and CR would not survive embedding faithfully"
-        )
-
-    if len(data) > MAXIMUM_SOURCE_BYTES:
-        raise EmbedError(
-            f"{relative_path}: {len(data)} bytes exceeds the {MAXIMUM_SOURCE_BYTES}-byte "
-            "per-file cap imposed by the MSVC string literal limit; split the module"
         )
 
 
