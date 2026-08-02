@@ -278,8 +278,9 @@
 两半只会造出一张 agent 自己也能写的普通表。12 突变 12 红。
 
 顺带纠正一处构建约束。`embed_luau.py` 按「相邻字面量拼接也算进 MSVC 的 65535 上限」这条
-理由,拒绝任何超过 60000 字节的 `.luau`,而 `scribe.luau` 已经到 55159 字节,再加一个动词
-就越线。实测(MSVC 14.44):单条 70000 字节的字面量确实报 C2026,而 500000 字节拆成 250
+理由,拒绝任何超过 60000 字节的 `.luau`,而 `scribe.luau` 一路在往这条线上撞(55159 字节
+是写这一条时手上的量值;`cef4886` 落地后它已是 70652 字节,也就是说上限真正删除时,这个
+文件早已越线一万多字节)。实测(MSVC 14.44):单条 70000 字节的字面量确实报 C2026,而 500000 字节拆成 250
 条相邻的 2000 字节字面量在 `/W4` 下干净通过、拼接长度的 `static_assert` 成立。所以那条按
 文件的上限守的是一条不存在的限制,真正的守卫一直是 `MAXIMUM_CHUNK_BYTES`;上限已删除,
 测量写进了注释。
@@ -327,11 +328,12 @@ dispatcher 一次认一页、做那一页要做的一件事,把这一局走完�
 都在 [`plans/2026-08-02-luau-coding-standard.md`](plans/2026-08-02-luau-coding-standard.md)。
 下面三条是量出来的**缺陷**,不是风格问题,单独列出来等批准:
 
-- [ ] **`observe.luau:192` 的错误层级是错的(活 bug)**——`requireCtx` 抛 level 2,却被
+- [ ] **`observe.luau:285` 的错误层级是错的(活 bug)**——`requireCtx` 抛 level 2,却被
   这个文件里 7 个公开 verb 调用,于是报错指向 framework 自己的源码而不是工程脚本里
-  真正传错的那行。它下面二十行的 `readTarget` 用的是 3,注释写的正是前者违反的规则。
-  全仓库没有任何测试断言过 error level。
-- [ ] **整套不可变约定从未被证伪**——`table.freeze` 用了 37 次,把 `model` /
+  真正传错的那行。同文件四十余行之后的 `readTarget`(330)用的是 3,注释写的正是前者
+  违反的规则。全仓库没有任何测试断言过 error level。
+- [ ] **整套不可变约定从未被证伪**——`table.freeze` 用了 37 次(08-02 普查值;08-03 复核
+  已是 41 次,证伪实验没有重跑),把 `model` /
   `navigation` / `oracle` 里每一个全删掉,测试套件**仍然全绿**。`tests/` 里 14 处
   `isfrozen` 命中没有一处针对 Element / Page / Reference / Hit / Receipt / Edge /
   Graph / Claims。补一组「写入必须抛错」的对抗用例约 20 行。
@@ -383,6 +385,28 @@ dispatcher 一次认一页、做那一页要做的一件事,把这一局走完�
 所以要做的事按这个顺序才划算:先让**取框**这件事不再靠肉眼(当天所有取框错都是在另一屏
 上量的框拿到这一屏用),再谈换模型或调参数。第一条已经有工具了——存档截图加离线量框,
 `camp_rest_*` 那两个元素就是这么标的,全程没碰真机。
+
+## 两个 latch,explore 只看得见一个(2026-08-03 发现,未修)
+
+- [ ] `ExplorationSession::terminalKind()` 只读 `TaskContext::m_terminal`,那是宿主动词
+  (`ffi/uf-tables.cpp` 的 `raiseCancelled` / `raiseInvariant`)写的。引擎自己的 latch
+  (`script/ffi/engine.cpp:316-319`、`344-347`,在 `m_control.broken()` 后置位)传不到
+  会话。于是被**墙钟或指令预算**打断的 chunk 会:引擎 latch 成 terminal,`explore.cpp:364`
+  看不到,会话继续收 chunk,之后每个都拿到 `terminalRefusal`,而每次拒绝又刷新空闲计时
+  —— 会话永不结束,且看起来还活着。
+- 可达性不是理论的:`EngineConfig::interruptBudgetTicks` 默认一亿且**按 VM 世代累计**,
+  explore 会话不覆盖它;`maxRuntime` 30 分钟同样不覆盖,对应真跑飞的 chunk。
+- `entry/cli/explore.cpp:354-358` 的注释声称「会话在 latch 上结束」,对三个触发源里的两个
+  是错的。这是代码漂移不是文档漂移,所以按 `correct-doc-drift` 的规矩记在这里而不是改注释。
+- 修法方向:让会话的 terminal 判定取两个 latch 的并集(引擎需要暴露「这个世代已作废」),
+  证伪测试用 stop token —— 撤掉修改后 `terminalKind()` 为空,测试转红。
+  `operator-session.cpp:190` 和 `task-host.cpp:499` 同一模式,一并检查。
+
+## 项目任务脚本没有 require(2026-08-03 发现)
+
+- [ ] 项目任务是 `<projectRoot>/tasks/<name>.luau` 单个 chunk,宿主全仓库没有 `require`。
+  用户建模文档要求「不同的角色加载不同的出牌策略」,现在只能落成同一文件内的具名表。
+  策略一多,单文件会撑不住。
 
 ## 延迟的健壮性台账
 

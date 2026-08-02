@@ -381,12 +381,16 @@ Deliver a pointer message over the region you intend to scroll, then scroll.
 
 The primitive that says exactly that is a pointer **move**, and
 `controller::movePointer` exists — but it stops at the controller. `IActionSink`
-exposes `click`, `scroll` and `pressKey`, and the script surface exposes
-`cycle_click`, `cycle_click_point`, `cycle_scroll` and `key`, so a chunk today
-cannot ask for a move. Until it is exposed, the only pointer message a caller
-can deliver is a click, which means choosing a point inside the scrollable
-region that does not activate anything — a gutter between cards, empty padding
+exposes `click`, `pressKey`, `scroll` and `longPress`, and the script surface
+exposes `cycle_click`, `cycle_click_point`, `cycle_long_press`, `cycle_scroll`
+and `key`, so a chunk today cannot ask for a move. Until it is exposed, every
+pointer message a caller can deliver also presses the button — a click, or a
+long press at a point — which means choosing a point inside the scrollable
+region that does not activate anything: a gutter between cards, empty padding
 inside the list. That is a workaround and should read as one at the call site.
+A click is the one to reach for; `cycle_long_press` holds the button down for a
+caller-chosen duration, so it is strictly more likely to activate whatever it
+lands on.
 
 ### Regression check
 

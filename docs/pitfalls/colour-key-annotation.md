@@ -59,7 +59,9 @@ giving 0.274 over 211 pixels.
 ### Regression check
 
 Before saving, probe the same rectangle with the same key and read
-`fully_selected_pixels`. Zero means this failure.
+`fully_selected_pixels` and `ramp_selected_pixels`. **Both** zero means this
+failure — that is the sum the host refuses on and the sum `sad.cpp` aborts on,
+because a template whose mask has any weight at all still matches.
 
 > **2026-07-31: the drawing verbs now say it themselves.** `page create` and
 > `page add` measure the mask they just drew and report it under
@@ -76,7 +78,11 @@ Before saving, probe the same rectangle with the same key and read
 > is measured by `explore.crop` now — the exploration primitive an agent cuts
 > its template with, which is also where the key is applied. Read `frames probe`
 > as `explore.probe`, and `authored.mask` as the crop's third return value:
-> `rect_pixels`, `selected_pixels`, `ramp_selected_pixels`, and a `warning`.
+> `key_red`, `key_green`, `key_blue`, `tolerance`, `rect_pixels`,
+> `selected_pixels`, `ramp_selected_pixels`, and a `warning`. The four key
+> fields are the key the HOST applied, defaults filled in, and they are what the
+> authoring layer writes into the appearance — read them off the mask rather
+> than off the argument that was passed.
 >
 > What changed besides the spelling is the verdict on THIS failure. A key that
 > selects no pixel is refused where it was chosen, as an `InvalidResource`

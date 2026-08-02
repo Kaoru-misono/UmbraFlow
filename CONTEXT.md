@@ -252,7 +252,7 @@ _Avoid_: `AnnotationType`, `ElementKind`, `AnchorElement`, `InteractiveElement`,
 
 **Page reference (`model.Reference`)**:
 One page's use of one element: `{pageId, elementId, holding, exercised,
-searchRoi?, appearance?}`. It is the edge the model is built on — authorisation IS
+rect_override?, appearance?}`. It is the edge the model is built on — authorisation IS
 the reference, and a page's signature is *derived* from the references whose
 `exercised` identify carries `Required` or `Forbidden`, never authored. `holding`
 is `Owned | Referenced`: an authoring-side editing guard rail the runtime never
@@ -261,7 +261,9 @@ per element, every other page that uses it `Referenced`. Ownership is not
 exclusivity: every drawn element is `Owned` by the page it was drawn on, so
 reading `Owned` as "refuse to reference these pixels elsewhere" would make
 `page reference` fail for every element there is.
-_Avoid_: `allowed_page_ids` / `allowedPageIds` (the separate authorisation list
+_Avoid_: `searchRoi` (the pre-2026-08-02 name for `rect_override`, and still the
+spelling of an unrelated C++ parameter in engine/vision/task),
+`allowed_page_ids` / `allowedPageIds` (the separate authorisation list
 the reference replaced), `bool shared` (an intent flag that could contradict the
 placements with nothing noticing), `PageSignature::create` (a signature has no
 public factory now, because a second way to state one fact could disagree with
