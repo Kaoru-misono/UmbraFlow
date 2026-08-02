@@ -40,6 +40,18 @@ Reading order: target form, then layer ownership, then the model semantics.
   authoritative**; where that model is implemented is superseded by the script-owned page model
   above.
 
+## Proposals awaiting a decision
+
+Nothing here is an authority. Each records measurement and a proposal; no part of
+it has been approved, and no code has been changed on its account.
+
+- [Luau coding standard — measurements and outline](2026-08-02-luau-coding-standard.md) —
+  2026-08-02 survey of the 15 trusted framework modules across six dimensions, the
+  outline of a standard to sit beside the C++ one, six questions deliberately left
+  unruled, and 15 changes ranked by value. Three of them are defects rather than
+  style, listed separately in [`docs/TODO.md`](../TODO.md). Every row is one
+  approval decision; none are bundled.
+
 ## Retained reference
 
 - [M0 demo port deviations](2026-07-20-m0-demo-port-deviations.md) — frozen real-machine

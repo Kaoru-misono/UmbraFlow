@@ -163,24 +163,42 @@
   再算一次」从同一个读预算里扣,超限是响亮的 `RecognitionIncomplete` 而不是截断的列表。
   det 模型和 rec 模型一起随 `umbra-flow` 部署,`--ocr-models` 少一半就在启动时点名拒绝。
 - **CI 计费挂起**——2026-07-24 起每个 job 即刻失败,门禁只能本地跑;账单恢复后 `gh run rerun`。
-- **探索会话的 Luau 堆不跨 chunk 回收,裁几十张整帧就撑爆**(2026-08-01 真机实测;
-  开发者裁决:之后补回收机制)。症状:循环里反复 `explore.crop(0,0,1600,900)`——
-  每张约 1.8MB 的 PNG 字符串——之后**任何**分配都失败,连单次 200×200 的 `crop`
-  加 `probe` 都报 `not enough memory`;重开会话拿到干净 VM 立刻恢复。错误句子只说
-  「not enough memory」,不说是谁吃掉的,定位花了三个 chunk。
-  形状:**chunk 之间是天然的回收点**——每个 chunk 是一段独立程序,除工程文件外不该
-  有东西跨过它存活,在那里做一次完整 GC 既便宜又有边界;顺带把当前堆用量报进结果行
-  或 trace,让 Agent 看得见自己在逼近上限。
-- **色键蒙版没有接进标注通道**(2026-08-01 真机撞上,开发者裁决:记入代办)。
-  `scribe.author_element` 只会把裁剪原样存成模板,而颜色键烘进模板 alpha 的那套机制
-  (见 `pitfalls/colour-key-annotation.md`)在 v4 标注线删除时失去了唯一的调用方。
-  **代价是可测的**:目标的小地图把节点画成深色网格上的小亮块,84×58 的框里图标只占
+- ~~**探索会话的 Luau 堆不跨 chunk 回收,裁几十张整帧就撑爆**~~——已修(2026-08-02),
+  但**当初记的根因是错的**。症状照录(2026-08-01 真机实测):循环里反复
+  `explore.crop(0,0,1600,900)`——每张约 1.8MB 的 PNG 字符串——之后**任何**分配都失败,
+  连单次 200×200 的 `crop` 加 `probe` 都报 `not enough memory`;重开会话拿到干净 VM
+  立刻恢复。错误句子只说「not enough memory」,不说是谁吃掉的,定位花了三个 chunk。
+  真实根因不是「不跨 chunk 回收」,而是**压力下根本不回收**:记账 allocator 在
+  `memoryQuotaBytes`(默认 64 MiB)处拒绝增长并返回 null,而 Luau 拿到 null 就地
+  `luaD_throw(L, LUA_ERRMEM)`(`VM/src/lmem.cpp:248/505/545`)——它**没有 PUC Lua 那套
+  emergency GC 再重试**。于是那个上限量的是「存活 + 尚未被收掉的垃圾」。这也是为什么
+  只在 chunk 边界补 GC 治不好它:撞上的那个循环在**一个 chunk 内部**。
+  落地三处:`Engine::collectGarbage()` / `heapUsage()` 与 `lua_State` 版自由函数;
+  `ExplorationSession::evaluate` 在扫 cycle 之后整收一次;`cycle_crop` 落字符串前,
+  剩余空间不足待分配字节的四倍时先整收一次。另外每行结果带
+  `"heap":{"used":…,"ceiling":…}`,失败时若剩余 ≤ 上限的 1/8,把两个数字缀在 Luau
+  原句之后。规则与两个证伪陷阱见
+  [`pitfalls/embedded-vm-memory-ceiling.md`](pitfalls/embedded-vm-memory-ceiling.md)。
+- ~~**色键蒙版没有接进标注通道**~~——已接上(2026-08-02)。`explore.crop` 现在收一个
+  可选色键(位置与默认容差和 `probe` 完全一致),把权重烘进裁剪 PNG 的 alpha 通道,
+  `decodeTemplateImage` 读回来就是匹配器的 mask 平面;不带键时字节与从前一致。
+  第三个返回值是**刚画出来的那张蒙版**:`rect_pixels` / `selected_pixels` /
+  `ramp_selected_pixels`,外加一句在计数落到两端之外时才出现的 `warning`。
+  `scribe.measure` 把同一个键同时喂给裁剪和探针(从前只喂探针,于是量的是一件事、
+  存的是另一件),`scribe.author_element` 把宿主**实际用的**那个键写进 appearance,
+  文件里是 `key = [r, g, b, tolerance]`——蒙版在 alpha 里,键在文件里,一年后还能重画。
+  两条标注失败的处置**不同**,理由见
+  [`pitfalls/colour-key-annotation.md`](pitfalls/colour-key-annotation.md):
+  **一个像素都选不中的键当场拒绝**(它烘出来的是全透明模板,任何一次匹配都会在
+  `sad.cpp` 里 abort,那不是质量问题而是根本不可用),**太小/太满的蒙版只警告不拒绝**
+  (计数只是从形状上猜,68% 的橙色填充照样过关,真正的判据是证伪矩阵)。
+  **原来的代价是可测的**:目标的小地图把节点画成深色网格上的小亮块,84×58 的框里图标只占
   一小部分,于是分数被背景主导——同一张模板对「亮节点/暗节点/空格子」打出
   8885 / 8549 / 8582,三者分不开;而右侧那面又大又饱和、几乎填满裁剪框的旗子,
   战斗 9297–9998 对未知 8451–8557,中间有八百基点的空档。
   也就是说**能不能用模板,取决于图标占裁剪框的比例**,而色键正是把这个比例从
-  「图标 vs 整框」变成「图标 vs 图标」的那一步。接上之后小地图那条路才成立——
-  它比看旗子强,因为一次能看清整层有什么,而不只是最像的那一个。
+  「图标 vs 整框」变成「图标 vs 图标」的那一步。**小地图那条路的机制阻塞已解除**,
+  真机重标仍未做。
 - **多 appearance 的折叠搜索在大搜索区域上买不起**(2026-08-01 标注一局出擊时撞上)。
   `find` 对一个元素的每个 appearance 各搜一遍,代价是 **appearance 数 × 搜索区域
   面积**,两个因子都在标注期定死、在调用处看不见。实测:两个 appearance 铺在
@@ -239,10 +257,39 @@ dispatcher 一次认一页、做那一页要做的一件事,把这一局走完�
       换成填满裁剪框的徽记,10000 命中;極限开关的阈值改由真机连采定(存帧 9993,
       真机 9401);手牌区改成整块读,位置从帧里来,不从矩形里来。
 - [ ] **整局连续跑通**:未达成。逐页、逐步都验证过,一局从头到尾还没有落地过。
-- [ ] **小地图那条路仍然不通**:节点图标分不开(亮/暗/空 8885 / 8549 / 8582),
-      卡在下面「色键蒙版没有接进标注通道」那条阻塞上。
+- [ ] **小地图那条路还没重标**:节点图标分不开(亮/暗/空 8885 / 8549 / 8582)。
+      挡路的机制已于 2026-08-02 解除——`explore.crop` 收色键、把蒙版烘进模板 alpha,
+      见上面那条已划掉的阻塞;剩下的是拿一个真机会话按节点自己的亮色重标一遍。
 - [ ] 全程后台、不抢焦点;Unknown / StaleObservation 均 fail-closed 并留下可诊断 trace。
 - [ ] 一局连续稳定跑完,Ctrl-C 500ms 内退出,单轮时长实测。
+
+## Luau 代码规范(2026-08-02 测量完,一行未改)
+
+仓库有 C++ 规范,**没有 Luau 规范**;`modules/task/runtime/*.luau` 那 15 个文件全靠习惯
+维持写法。已按六个维度量过一遍,提纲、故意不裁决的六件事、以及按价值排序的 15 项改动
+都在 [`plans/2026-08-02-luau-coding-standard.md`](plans/2026-08-02-luau-coding-standard.md)。
+下面三条是量出来的**缺陷**,不是风格问题,单独列出来等批准:
+
+- [ ] **`observe.luau:192` 的错误层级是错的(活 bug)**——`requireCtx` 抛 level 2,却被
+  这个文件里 7 个公开 verb 调用,于是报错指向 framework 自己的源码而不是工程脚本里
+  真正传错的那行。它下面二十行的 `readTarget` 用的是 3,注释写的正是前者违反的规则。
+  全仓库没有任何测试断言过 error level。
+- [ ] **整套不可变约定从未被证伪**——`table.freeze` 用了 37 次,把 `model` /
+  `navigation` / `oracle` 里每一个全删掉,测试套件**仍然全绿**。`tests/` 里 14 处
+  `isfrozen` 命中没有一处针对 Element / Page / Reference / Hit / Receipt / Edge /
+  Graph / Claims。补一组「写入必须抛错」的对抗用例约 20 行。
+- [ ] **`mint.frozen_extra` 是浅冻**(`mint.luau:106-115`,6 个调用点)——
+  `Element.new{ extra = { tags = {...} } }` 冻出来的元素,`extra.tags` 还是调用方那张
+  可写的表;而 `project.encode` 的 `renderValue` 把任何表都按数组渲染,嵌套 map 存盘时
+  变成 `[]`。又一次静默删字段,正是 extra/residual 设计要防的东西。
+
+规范的主干不是命名而是**线格式**:数据字段 `snake_case`、Luau 变量绑定永不 `snake_case`
+(672 处字段 0 处驼峰),因为字段名同时是 TOML 键、脚本 API 和类型字段,拼错的后果是
+`project.parse` 把它归进 `residual`、`project.build` 从不读它——文件看着没问题,
+字段没了。这一行相对 C++ 规范是**反的**。
+
+另外要先承认:今天没有任何机制检查 `.luau`——`fix_format.py` 的扩展名列表里没有它,
+也没有任何类型检查跑过,所以 8907 行里每一个 `--!strict` 目前都只是带高亮的注释。
 
 ## P1–P3 后续
 
