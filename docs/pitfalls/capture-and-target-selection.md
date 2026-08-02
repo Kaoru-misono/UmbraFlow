@@ -336,6 +336,66 @@ against `out_before` and `out_after`. The anchor hits before and misses after,
 which is the page having changed. A bare hand-rolled sequence with a hold
 between DOWN and UP leaves the anchor hitting both.
 
+## A posted wheel scrolls nothing until a pointer message has been where it points
+
+### Symptom
+
+`cycle_scroll` returns `ok`, the cycle is spent, the trace records the delivery —
+and the list on screen does not move. Not by one row, not at all. The same list
+scrolls perfectly under a real mouse, which is what makes this expensive: every
+piece of evidence available to the caller says the scroll happened.
+
+Measured on 2026-08-02 against a roster the automation needed to page through:
+
+| what was delivered | result |
+|---|---|
+| wheel, −5 notches, nothing before it | list does not move |
+| wheel, −15 notches, nothing before it | list does not move |
+| one click over the grid, then wheel −5 | list moves a full row, every time |
+
+### Root cause
+
+`WM_MOUSEWHEEL` carries a position, and this path packs it correctly — screen
+coordinates, translated from the client pixel by the window's client origin
+(`controller::scroll`), aimed at the centre of the client area. The position in
+the message is not the problem.
+
+The problem is that a target does not have to use it. A UI that tracks which
+container is under the pointer updates that state from pointer messages, and
+then scrolls **whatever it already believes is hovered**. A real mouse keeps
+that belief true for free: the cursor is physically over the list, so
+`WM_MOUSEMOVE` has been arriving all along. A posted wheel with no pointer
+message before it scrolls wherever the last pointer message left the cursor —
+which, in a background session that has only ever clicked elsewhere, is
+somewhere else entirely.
+
+So the wheel is not unreliable and the target does not "lack wheel support".
+Both of those were concluded on the way to this, along with "the notch count is
+too small", "the list snaps to rows and springs back" and "the list has reached
+its end" — four wrong diagnoses, all consistent with the observation that the
+screen did not change, and all of them dissolved by one click before the wheel.
+
+### Fix
+
+Deliver a pointer message over the region you intend to scroll, then scroll.
+
+The primitive that says exactly that is a pointer **move**, and
+`controller::movePointer` exists — but it stops at the controller. `IActionSink`
+exposes `click`, `scroll` and `pressKey`, and the script surface exposes
+`cycle_click`, `cycle_click_point`, `cycle_scroll` and `key`, so a chunk today
+cannot ask for a move. Until it is exposed, the only pointer message a caller
+can deliver is a click, which means choosing a point inside the scrollable
+region that does not activate anything — a gutter between cards, empty padding
+inside the list. That is a workaround and should read as one at the call site.
+
+### Regression check
+
+Before concluding that a target ignores the wheel, deliver a click inside the
+region and scroll again. If it moves, the wheel was never the subject. Assert
+the difference rather than the absolute: read the region, scroll, read it again,
+and compare — a scroll that "looks like it worked" is exactly the failure this
+entry is about.
+
 ## A target's own behaviour does not belong in this file
 
 This file records toolchain pitfalls: window selection, capture, delivery,
