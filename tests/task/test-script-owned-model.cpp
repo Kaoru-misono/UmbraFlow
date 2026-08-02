@@ -580,6 +580,20 @@ namespace uf::task
                     )lua",
                     .fragment = "repeats the appearance name",
                 },
+                Refusal{
+                    .label = "an extra table that refers back to itself",
+                    .body  = R"lua(
+                        local mine = {}
+                        mine.mine = mine
+                        return model.Element.new{
+                            name = "back",
+                            capabilities = { "interact" },
+                            rect = { x = 0, y = 0, width = 3, height = 1 },
+                            extra = mine,
+                        }
+                    )lua",
+                    .fragment = "nests more than 8 tables deep",
+                },
             };
         }
 
@@ -981,6 +995,57 @@ namespace uf::task
                 REQUIRE(result.has_value());
                 CHECK(*result == doctest::Approx(1.0));
             }
+        }
+
+        TEST_CASE("An element's extra is a snapshot every level down")
+        {
+            // Stop mint.frozen_extra descending into a nested table and the two
+            // writes below succeed, so this goes red.
+            auto const directory = TemporaryDirectory{"uf-model-extra-snapshot"};
+            seedTemplates(directory.path());
+            auto built = refusalHarness(directory.path());
+            REQUIRE(built.session.has_value());
+            TaskContext context{
+                *std::move(built.session),
+                *built.recorder,
+                TaskContextConfig{.projectRoot = directory.path()},
+            };
+
+            auto const result = runModel(context, built, script(R"lua(
+                local mine = { tags = { "boss" }, limits = { retries = 2 } }
+                local element = model.Element.new{
+                    name = "back",
+                    capabilities = { "interact" },
+                    rect = { x = 0, y = 0, width = 3, height = 1 },
+                    extra = mine,
+                }
+
+                -- The table the author kept is still theirs to write, and what
+                -- they write there is not what the element holds.
+                mine.tags[2] = "added after minting"
+                mine.limits.retries = 9
+                if #element.extra.tags ~= 1 then return 0 end
+                if element.extra.limits.retries ~= 2 then return 0 end
+
+                if not table.isfrozen(element.extra) then return 0 end
+                if not table.isfrozen(element.extra.tags) then return 0 end
+                if not table.isfrozen(element.extra.limits) then return 0 end
+
+                -- And the snapshot refuses the write at every level rather than
+                -- only at the one the caller happened to reach first.
+                if pcall(function() element.extra.tags[1] = "rewritten" end) then
+                    return 0
+                end
+                if pcall(function() element.extra.limits.retries = 9 end) then
+                    return 0
+                end
+                if pcall(function() element.extra.limits.added = 1 end) then
+                    return 0
+                end
+                return 1
+            )lua"));
+            REQUIRE(result.has_value());
+            CHECK(*result == doctest::Approx(1.0));
         }
 
         TEST_CASE("Page.new accepts an element layer three derived from ours")
@@ -5093,6 +5158,63 @@ namespace uf::task
             CHECK(readFileText(modelPath) == std::string{k_canonicalProject});
         }
 
+        TEST_CASE("A project file refuses the extra field it would have to drop")
+        {
+            // Let renderValue write any table as an array again and the map
+            // below encodes to `limits = []` with its keys gone instead of
+            // raising, so this goes red.
+            auto const directory = TemporaryDirectory{"uf-model-extra-encode"};
+            seedTemplates(directory.path());
+            auto built = refusalHarness(directory.path());
+            REQUIRE(built.session.has_value());
+            TaskContext context{
+                *std::move(built.session),
+                *built.recorder,
+                TaskContextConfig{.projectRoot = directory.path()},
+            };
+
+            auto const result = runModel(context, built, script(R"lua(
+                local function modelWith(extra)
+                    return {
+                        elements = {
+                            model.Element.new{
+                                name = "slot",
+                                capabilities = { "interact" },
+                                rect = { x = 0, y = 0, width = 3, height = 1 },
+                                extra = extra,
+                            },
+                        },
+                        pages = {},
+                    }
+                end
+
+                -- A list under extra has a line this format can write, and it
+                -- comes back the same list.
+                local written = project.encode(modelWith({ tags = { "boss", "elite" } }))
+                if string.find(written, '\ntags = ["boss", "elite"]\n', 1, true) == nil then
+                    return 0
+                end
+                local section = project.parse(written).sections[1]
+                if section.kind ~= "element" then return 0 end
+                if #section.extra.tags ~= 2 then return 0 end
+                if section.extra.tags[1] ~= "boss" then return 0 end
+                if section.extra.tags[2] ~= "elite" then return 0 end
+
+                -- A map has none, so the save stops and names the key rather
+                -- than writing a file the keys are missing from.
+                local ok, err = pcall(function()
+                    return project.encode(modelWith({ limits = { retries = 2 } }))
+                end)
+                if ok then return 0 end
+                if string.find(tostring(err), 'cannot carry "limits"', 1, true) == nil then
+                    return 0
+                end
+                return 1
+            )lua"));
+            REQUIRE(result.has_value());
+            CHECK(*result == doctest::Approx(1.0));
+        }
+
         // The graph half of the file format, canonical. Three edges, both page
         // flags, one key inside [[edge]] this schema version does not know, and an
         // [edge.extra] subtable that belongs to the project rather than to this
@@ -7339,6 +7461,324 @@ namespace uf::task
             CHECK(*result == doctest::Approx(1.0));
 
             CHECK(readFileText(modelPath) == std::string{k_canonicalPlacedProject});
+        }
+
+        // ------------- what a script is handed is a snapshot of the model
+
+        // The predicate every row below is judged by: the write RAISES, and raises
+        // for the value being readonly rather than for anything else. A new key and
+        // an existing one are refused on one rule, so both are stated. `key` is read
+        // before it is written, so a row naming a field its value never carried
+        // cannot pass on a raise it did not mean.
+        //
+        // The graph model supplies the elements, pages, edges and graph; the screen,
+        // the claims and the one cycle supply the rest.
+        constexpr std::string_view k_snapshotPrelude = R"lua(
+            local function writeRaises(value, key, written)
+                local ok, err = pcall(function() value[key] = written end)
+                if ok then return false end
+                return type(err) == "string"
+                    and string.find(
+                        err,
+                        "attempt to modify a readonly table",
+                        1,
+                        true
+                    ) ~= nil
+            end
+
+            local function refusesEveryWrite(value, key)
+                if type(value) ~= "table" then return false end
+                if value[key] == nil then return false end
+                if not writeRaises(value, "written_by_a_script", true) then
+                    return false
+                end
+                return writeRaises(value, key, value[key])
+            end
+
+            -- An appearance that carries a colour key, a shape verified by what
+            -- it reads, and a shape with no rectangle of its own: the three the
+            -- graph model has no use for and the claims below are measured at.
+            local keyed = model.Element.new{
+                name = "keyed",
+                capabilities = { "identify" },
+                rect = { x = 0, y = 0, width = 3, height = 1 },
+                appearances = {
+                    {
+                        name = "lit",
+                        source = "gray2.png",
+                        template = template("gray2.png"),
+                        threshold = 10000,
+                        key = { red = 1, green = 2, blue = 3, tolerance = 10 },
+                    },
+                },
+            }
+            local caption = model.Element.new{
+                name = "caption",
+                capabilities = { "identify", "read" },
+                rect = { x = 0, y = 0, width = 3, height = 1 },
+            }
+            local floating = model.Element.new{
+                name = "floating",
+                capabilities = { "identify", "read" },
+            }
+
+            local map = oracle.Screen.new{
+                name = "map",
+                hash = string.rep("d", 64),
+            }
+            local claims = oracle.Claims.new{
+                screens = { map },
+                expectations = {
+                    oracle.Expectation.new{
+                        screen = map,
+                        element = mark_base,
+                        appearance = "lit",
+                        state = "match",
+                    },
+                    oracle.Expectation.new{
+                        screen = map,
+                        element = caption,
+                        text = "base",
+                        state = "match",
+                    },
+                    oracle.Expectation.new{
+                        screen = map,
+                        element = floating,
+                        text = "confirm",
+                        rect = { x = 0, y = 0, width = 1, height = 1 },
+                        state = "match",
+                    },
+                },
+            }
+
+            local ticket  = ctx:cycle_open()
+            local receipt = observe.resolve_page(ctx, ticket, base)
+            local hit     = observe.find(ctx, ticket, base, mark_base)
+            ctx:cycle_close(ticket)
+            if receipt == nil or hit == nil then return 0 end
+        )lua";
+
+        // One value the framework hands a project script, and a key it carries. The
+        // key is an EXPRESSION rather than a name, because the lists inside a page,
+        // a graph and a claims table are keyed by index.
+        struct Snapshot final
+        {
+            std::string_view label;
+            std::string_view value;
+            std::string_view key;
+        };
+
+        [[nodiscard]]
+        auto snapshots() -> std::vector<Snapshot>
+        {
+            return {
+                // Drop the freeze around `element` in model.luau's Element.new.
+                Snapshot{
+                    .label = "an element",
+                    .value = "mark_base",
+                    .key   = "'name'",
+                },
+                // Drop the freeze around `set` in model.luau's capabilitySet.
+                Snapshot{
+                    .label = "an element's capability set",
+                    .value = "mark_base.capabilities",
+                    .key   = "'identify'",
+                },
+                // Drop the freeze around `appearances` in model.luau's Element.new.
+                Snapshot{
+                    .label = "an element's appearance list",
+                    .value = "mark_base.appearances",
+                    .key   = "1",
+                },
+                // Drop the freeze around the appearance row in Element.new.
+                Snapshot{
+                    .label = "one appearance",
+                    .value = "mark_base.appearances[1]",
+                    .key   = "'name'",
+                },
+                // Drop the freeze in model.luau's frozenRect.
+                Snapshot{
+                    .label = "an element's rectangle",
+                    .value = "mark_base.rect",
+                    .key   = "'x'",
+                },
+                // Drop the freeze in model.luau's frozenColourKey.
+                Snapshot{
+                    .label = "an appearance's colour key",
+                    .value = "keyed.appearances[1].key",
+                    .key   = "'red'",
+                },
+                // Drop the freeze around `page` in model.luau's Page.new.
+                Snapshot{
+                    .label = "a page",
+                    .value = "base",
+                    .key   = "'name'",
+                },
+                // Drop the freeze around `references` in model.luau's Page.new.
+                Snapshot{
+                    .label = "a page's reference list",
+                    .value = "base.references",
+                    .key   = "1",
+                },
+                // Drop the freeze around `reference` in model.luau's Page.new.
+                Snapshot{
+                    .label = "a page's reference row",
+                    .value = "base.references[1]",
+                    .key   = "'element'",
+                },
+                // Drop the freeze in evidence.luau's mint_hit.
+                Snapshot{
+                    .label = "a hit",
+                    .value = "hit",
+                    .key   = "'element'",
+                },
+                // Drop the freeze in evidence.luau's mint_receipt.
+                Snapshot{
+                    .label = "a receipt",
+                    .value = "receipt",
+                    .key   = "'page'",
+                },
+                // Drop the freeze around `edge` in navigation.luau's Edge.new.
+                Snapshot{
+                    .label = "an edge",
+                    .value = "open_detail",
+                    .key   = "'from'",
+                },
+                // Drop the freeze around `destinations` in navigation's Edge.new.
+                Snapshot{
+                    .label = "an edge's destination set",
+                    .value = "open_detail.to",
+                    .key   = "1",
+                },
+                // Drop the freeze around `graph` in navigation.luau's Graph.new.
+                Snapshot{
+                    .label = "a graph",
+                    .value = "graph",
+                    .key   = "'pages'",
+                },
+                // Drop the freeze around `pages` in navigation.luau's Graph.new.
+                Snapshot{
+                    .label = "a graph's page list",
+                    .value = "graph.pages",
+                    .key   = "1",
+                },
+                // Drop the freeze around `pageByName` in navigation's Graph.new.
+                Snapshot{
+                    .label = "a graph's page index",
+                    .value = "graph.page_by_name",
+                    .key   = "'base'",
+                },
+                // Drop the freeze around `edges` in navigation.luau's Graph.new.
+                Snapshot{
+                    .label = "a graph's edge list",
+                    .value = "graph.edges",
+                    .key   = "1",
+                },
+                // Drop the freeze around `interrupts` in navigation's Graph.new.
+                Snapshot{
+                    .label = "a graph's interrupt list",
+                    .value = "graph.interrupts",
+                    .key   = "1",
+                },
+                // Drop the freeze around `screen` in oracle.luau's Screen.new.
+                Snapshot{
+                    .label = "a screen",
+                    .value = "map",
+                    .key   = "'name'",
+                },
+                // Drop the freeze around `expectation` in Expectation.new.
+                Snapshot{
+                    .label = "an expectation",
+                    .value = "claims.expectations[1]",
+                    .key   = "'screen'",
+                },
+                // Drop the freeze around `claims` in oracle.luau's Claims.new.
+                Snapshot{
+                    .label = "a claims table",
+                    .value = "claims",
+                    .key   = "'screens'",
+                },
+                // Drop the freeze around `screens` in oracle.luau's Claims.new.
+                Snapshot{
+                    .label = "a claims table's screen list",
+                    .value = "claims.screens",
+                    .key   = "1",
+                },
+                // Drop the freeze around `expectations` in oracle's Claims.new.
+                Snapshot{
+                    .label = "a claims table's expectation list",
+                    .value = "claims.expectations",
+                    .key   = "1",
+                },
+                // Drop the freeze around `screenByName` in oracle's Claims.new.
+                Snapshot{
+                    .label = "a claims table's screen index",
+                    .value = "claims.screen_by_name",
+                    .key   = "'map'",
+                },
+                // Drop the freeze around `stateByCell` in oracle's Claims.new.
+                Snapshot{
+                    .label = "a claims table's state index",
+                    .value = "claims.state_by_cell",
+                    .key   = "(next(claims.state_by_cell))",
+                },
+                // Drop the freeze around `textByCell` in oracle's Claims.new.
+                Snapshot{
+                    .label = "a claims table's text index",
+                    .value = "claims.text_by_cell",
+                    .key   = "(next(claims.text_by_cell))",
+                },
+                // Drop the freeze around `rectsBySubject` in oracle's Claims.new.
+                Snapshot{
+                    .label = "a claims table's rectangle index",
+                    .value = "claims.rects_by_subject",
+                    .key   = "(next(claims.rects_by_subject))",
+                },
+                // Drop the freeze over each `rects` list in oracle's Claims.new.
+                Snapshot{
+                    .label = "the rectangles claimed for one subject",
+                    .value = "claims.rects_by_subject[next(claims.rects_by_subject)]",
+                    .key   = "1",
+                },
+            };
+        }
+
+        TEST_CASE("Every value the framework hands a script refuses a write")
+        {
+            // The whole immutability contract, stated as the write it forbids
+            // rather than as the flag that forbids it: `table.isfrozen` says a
+            // value carries the bit, and only a refused write says a project script
+            // cannot edit the model the framework goes on trusting.
+            auto const directory = TemporaryDirectory{"uf-model-frozen-values"};
+            seedTemplates(directory.path());
+
+            for (auto const& snapshot : snapshots())
+            {
+                auto built = buildHarness(
+                    HarnessSpec{
+                        .framePixels = {pixels(2, 5, 0)},
+                        .projectRoot = directory.path(),
+                    }
+                );
+                REQUIRE(built.session.has_value());
+                TaskContext context{
+                    *std::move(built.session),
+                    *built.recorder,
+                    TaskContextConfig{.projectRoot = directory.path()},
+                };
+
+                auto body = std::string{k_snapshotPrelude};
+                body += "if refusesEveryWrite(";
+                body += snapshot.value;
+                body += ", ";
+                body += snapshot.key;
+                body += ") then return 1 end\nreturn 0\n";
+
+                INFO("a script cannot write to ", snapshot.label);
+                auto const result = runModel(context, built, graphScript(body));
+                REQUIRE(result.has_value());
+                CHECK(*result == doctest::Approx(1.0));
+            }
         }
 
         TEST_CASE("The three model modules are in the framework bundle")
