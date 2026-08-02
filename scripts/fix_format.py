@@ -10,8 +10,13 @@ from pathlib import Path
 
 
 CPP_EXTENSIONS = {".c", ".cc", ".cpp", ".cxx", ".h", ".hpp"}
+
+# Indented with spaces by convention, so a tab is a defect rather than a choice.
+# The trusted Luau framework is source the build embeds into the binary, and
+# until it was listed here nothing in the repository checked it at all.
+SPACE_INDENTED_EXTENSIONS = {*CPP_EXTENSIONS, ".luau"}
 TEXT_EXTENSIONS = {
-    *CPP_EXTENSIONS,
+    *SPACE_INDENTED_EXTENSIONS,
     ".bat",
     ".cfg",
     ".cmake",
@@ -133,7 +138,10 @@ def process(path: Path, *, check: bool) -> bool:
         raise ValueError("contains a NUL byte")
 
     original = original_bytes.decode("utf-8")
-    fixed = normalize(original, replace_tabs=path.suffix.lower() in CPP_EXTENSIONS)
+    fixed = normalize(
+        original,
+        replace_tabs=path.suffix.lower() in SPACE_INDENTED_EXTENSIONS,
+    )
     if fixed == original:
         return False
 
