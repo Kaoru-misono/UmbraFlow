@@ -635,6 +635,13 @@ See `error-handling.md` for construction and propagation examples.
 
 - Comments explain why, external constraints, or intentional omissions; never
   paraphrase code.
+- A comment states the constraint, not the investigation that found it. How a
+  bug was misdiagnosed, what a comment used to say, and why an alternative was
+  rejected belong in `docs/pitfalls/` or `docs/plans/`; the comment cites them.
+  A comment that would read the same in another repository is documentation and
+  does not belong in a source file.
+- Keep measured numbers and the one sentence that makes them load-bearing. Drop
+  the measurement's narrative.
 - Comments must be English.
 - Mark a deliberate shortcut as `TODO(cpp-debt): <shortcut> — ceiling: <X>,
   upgrade: <Y>`.
