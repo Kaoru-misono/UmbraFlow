@@ -332,15 +332,25 @@ dispatcher 一次认一页、做那一页要做的一件事,把这一局走完�
   这个文件里 7 个公开 verb 调用,于是报错指向 framework 自己的源码而不是工程脚本里
   真正传错的那行。同文件四十余行之后的 `readTarget`(330)用的是 3,注释写的正是前者
   违反的规则。全仓库没有任何测试断言过 error level。
-- [ ] **整套不可变约定从未被证伪**——`table.freeze` 用了 37 次(08-02 普查值;08-03 复核
-  已是 41 次,证伪实验没有重跑),把 `model` /
-  `navigation` / `oracle` 里每一个全删掉,测试套件**仍然全绿**。`tests/` 里 14 处
-  `isfrozen` 命中没有一处针对 Element / Page / Reference / Hit / Receipt / Edge /
-  Graph / Claims。补一组「写入必须抛错」的对抗用例约 20 行。
-- [ ] **`mint.frozen_extra` 是浅冻**(`mint.luau:106-115`,6 个调用点)——
-  `Element.new{ extra = { tags = {...} } }` 冻出来的元素,`extra.tags` 还是调用方那张
-  可写的表;而 `project.encode` 的 `renderValue` 把任何表都按数组渲染,嵌套 map 存盘时
-  变成 `[]`。又一次静默删字段,正是 extra/residual 设计要防的东西。
+- [x] **整套不可变约定从未被证伪**(2026-08-03 补上)。
+  `tests/task/test-script-owned-model.cpp` 新增用例 "Every value the framework hands
+  a script refuses a write":28 行数据,每行取 framework 交给工程脚本的一个值,先写一个
+  新键、再改一个已有的键,两次都必须抛 `attempt to modify a readonly table`。断言的是
+  **写被拒**,不是 `isfrozen` 那个标志位——契约是拿到的值改不动,只有写证得了。覆盖
+  Element / Page / Reference / Hit / Receipt / Edge / Graph / Claims,以及它们里面嵌的
+  每一层:引用行与引用表、外观行与外观表、能力集、矩形、色键、边的去向集、图的四张表、
+  Claims 的五张索引表。证伪:`model` / `navigation` / `oracle` / `evidence` 四个文件里
+  28 处 `table.freeze` 逐个删掉、逐个重编译,28 次全部只让对应那一行转红,没有一次仍然
+  全绿,也没有一次波及别的行。
+- [x] **`mint.frozen_extra` 是浅冻**(2026-08-03 两半都修了)。`frozen_extra` 现在
+  逐层复制并冻结,深度上限 8 层(与 `mint.derives_from` 同一个理由和同一个数):自引用
+  的表由 `check_extra` 出句子、构造器在 level 2 抛,指向作者自己那行。`project.encode`
+  的 `renderValue` 收一个 `field` 参数,遇到「键不是 1..n 的表」直接拒绝并点名那个键——
+  **选拒绝不选写 inline table**,因为写 inline table 等于给 `l2-v1` 加一种值类型,
+  旧构建读到就整份文件报错;而且 `parseValue` 不认 `{`,得连解析器一起改。
+  证伪(改前实测 score = 15/15):`element.extra.tags == mine.tags` 为真、改调用方的表
+  元素跟着变、直接写 `element.extra.limits.retries` 成功、`project.encode` 写出
+  `limits = []`。改后三个用例全绿,把 framework 那两个文件换回改前版本立刻全红。
 
 规范的主干不是命名而是**线格式**:数据字段 `snake_case`、Luau 变量绑定永不 `snake_case`
 (672 处字段 0 处驼峰),因为字段名同时是 TOML 键、脚本 API 和类型字段,拼错的后果是
